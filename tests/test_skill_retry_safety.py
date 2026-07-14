@@ -94,3 +94,8 @@ def test_infer_ok_flag_honors_success_key():
     assert _infer_ok_flag({"status": "failed"}) is False
     # a plain successful payload stays ok
     assert _infer_ok_flag({"results": [1, 2, 3]}) is True
+    # an EMPTY error/errors field is the absence of an error, not evidence of
+    # one — a skill that populates error=stderr succeeds with "" on a clean run.
+    assert _infer_ok_flag({"ok": True, "error": ""}) is True
+    assert _infer_ok_flag({"ok": True, "error": None, "errors": []}) is True
+    assert _infer_ok_flag({"ok": True, "output": "1 passed", "error": ""}) is True

@@ -54,7 +54,11 @@ def _record_skill_degradation(
 def _infer_ok_flag(result: dict[str, Any]) -> bool:
     # Negative evidence is authoritative. A contradictory payload such as
     # {"ok": True, "success": False} cannot be normalized into success.
-    if result.get("error") is not None or result.get("errors"):
+    # An *empty* error field ("" / [] / None) is the absence of an error, not
+    # evidence of one — several skills populate error=stderr, which is "" on a
+    # clean run (e.g. test_generator: pytest passed, empty stderr). Only a
+    # truthy error/errors payload is negative evidence.
+    if result.get("error") or result.get("errors"):
         return False
     if result.get("failed") is True:
         return False
