@@ -1,12 +1,22 @@
-"""Code truth engine — compile, AST-safety, and lint a candidate's code blocks.
+"""Code truth engine — compile, AST-safety, lint, and (when the candidate
+carries executable claims) sandboxed execution.
 
 Wraps the existing :class:`core.resilience.code_verifier.CodeVerifier` (isolated
 ``py_compile`` + AST safety) and adds an optional ``ruff`` static pass through the
-governed subprocess gateway as a *read-only probe*. It never executes candidate
-code — runtime smoke tests belong to :mod:`core.brain.symbolic_sandbox`.
+governed subprocess gateway as a *read-only probe*.
+
+Checked-semantics contract (Verifier Foundry finding, 2026-07-14): a candidate
+whose blocks contain MODULE-LEVEL executable claims (asserts that would run on
+import) is making a semantic claim statics cannot adjudicate. Such blocks are
+executed in the :mod:`core.brain.symbolic_sandbox` (vetted, isolated CPython,
+governed gateway). When execution is impossible — unsafe block, sandbox
+unavailable, timeout — a PASSING static verdict demotes to ``checked=False``:
+"compiles clean" must never masquerade as "verified correct". Provable static
+failures still fail hard regardless.
 """
 from __future__ import annotations
 
+import ast
 import re
 from typing import Any
 
@@ -31,15 +41,57 @@ def extract_code_blocks(text: str) -> list[str]:
     return []
 
 
+def has_module_level_asserts(code: str) -> bool:
+    """True when the block contains asserts that would EXECUTE on a plain run:
+    statements at module level (including inside module-level if/try/loop
+    bodies, e.g. an ``if __name__ == "__main__"`` harness), but not asserts
+    tucked inside function/class definitions that nothing calls."""
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return False
+
+    def _walk(stmts: list[ast.stmt]) -> bool:
+        for node in stmts:
+            if isinstance(node, ast.Assert):
+                return True
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue  # not executed on import unless called
+            for field_name in ("body", "orelse", "finalbody"):
+                child = getattr(node, field_name, None)
+                if child and _walk(child):
+                    return True
+            for handler in getattr(node, "handlers", []) or []:
+                if _walk(handler.body):
+                    return True
+        return False
+
+    return _walk(tree.body)
+
+
 class CodeTruthEngine:
     name = "code"
     domains = ("code", "code_audit", "code_patch", "debug")
 
-    def __init__(self, *, run_ruff: bool = True) -> None:
+    def __init__(self, *, run_ruff: bool = True, sandbox: Any | None = None) -> None:
         self._run_ruff = run_ruff
+        self._sandbox = sandbox
 
     def handles(self, task_type: str) -> bool:
         return task_type in self.domains
+
+    def _resolve_sandbox(self) -> Any | None:
+        if self._sandbox is not None:
+            return self._sandbox
+        try:
+            from core.brain.symbolic_sandbox import get_symbolic_sandbox
+
+            self._sandbox = get_symbolic_sandbox()
+        except (ImportError, RuntimeError) as exc:
+            record_degradation("code_truth_engine", exc, severity="warning",
+                               action="sandbox unavailable; executable claims will demote checked")
+            self._sandbox = None
+        return self._sandbox
 
     async def verify(self, candidate: str, *, context: dict[str, Any] | None = None) -> VerificationResult:
         blocks = extract_code_blocks(candidate)
@@ -55,6 +107,8 @@ class CodeTruthEngine:
             record_degradation("code_truth_engine", exc)
             return VerificationResult(domain="code", ok=True, checked=False, engine=self.name)
 
+        executed_ok = 0
+        unverified_claims = 0
         for idx, block in enumerate(blocks):
             report = CodeVerifier.verify_importability_report(block, module_name=f"candidate_{idx}")
             if not report.syntax_ok:
@@ -72,9 +126,45 @@ class CodeTruthEngine:
                 ruff_issues = await self._ruff(block)
                 issues.extend(f"block#{idx} lint: {m}" for m in ruff_issues[:3])
 
-        ok = not any(i for i in issues if "syntax" in i or "compile" in i or "unsafe" in i)
-        # Score rewards clean-compiling blocks and penalises lint noise.
+            # Executable self-claims (module-level asserts) demand execution:
+            # "compiles clean" is not a verdict on what the block CLAIMS.
+            if report.syntax_ok and report.ok and not report.warnings \
+                    and has_module_level_asserts(block):
+                outcome, issue = await self._execute_claims(idx, block)
+                if outcome == "pass":
+                    executed_ok += 1
+                    evidence.append(f"block#{idx}: module-level asserts passed in sandbox")
+                elif outcome == "fail":
+                    issues.append(issue or f"block#{idx}: runtime failure")
+                else:  # "unavailable"
+                    unverified_claims += 1
+
+        hard_fail_markers = ("syntax", "compile", "unsafe", "runtime failure")
+        ok = not any(any(m in i for m in hard_fail_markers) for i in issues)
+
+        # Demotion: statics passed but the candidate's executable claims could
+        # not be run — the engine did NOT meaningfully check this candidate.
+        if ok and unverified_claims:
+            return VerificationResult(
+                domain="code",
+                ok=True,
+                checked=False,
+                score=0.5,
+                engine=self.name,
+                issues=issues,
+                evidence=evidence + [
+                    f"{unverified_claims} block(s) carry executable claims that "
+                    "could not be executed — static pass is not a semantic verdict"
+                ],
+                detail={"blocks": len(blocks), "compiled_ok": compiled_ok,
+                        "unverified_executable_claims": unverified_claims},
+            )
+
+        # Score rewards clean-compiling blocks, penalises lint noise, and
+        # credits genuine execution evidence.
         score = (compiled_ok / max(1, len(blocks))) * (0.9 if not issues else 0.6)
+        if executed_ok:
+            score = min(0.98, score + 0.05 * executed_ok)
         return VerificationResult(
             domain="code",
             ok=ok,
@@ -83,8 +173,32 @@ class CodeTruthEngine:
             engine=self.name,
             issues=issues,
             evidence=evidence,
-            detail={"blocks": len(blocks), "compiled_ok": compiled_ok},
+            detail={"blocks": len(blocks), "compiled_ok": compiled_ok,
+                    "executed_ok": executed_ok},
         )
+
+    async def _execute_claims(self, idx: int, block: str) -> tuple[str, str]:
+        """Run an assert-bearing block in the symbolic sandbox.
+
+        Returns ("pass", ""), ("fail", issue) for a proven runtime failure, or
+        ("unavailable", "") when no trustworthy execution could happen
+        (sandbox missing, block refused, timeout, infra error)."""
+        sandbox = self._resolve_sandbox()
+        if sandbox is None:
+            return "unavailable", ""
+        try:
+            result = await sandbox.run(block)
+        except (OSError, RuntimeError, ValueError, TypeError) as exc:
+            record_degradation("code_truth_engine", exc, severity="warning",
+                               action="sandbox execution errored; claims unverified")
+            return "unavailable", ""
+        if getattr(result, "refused", False) or getattr(result, "timed_out", False):
+            return "unavailable", ""
+        if getattr(result, "ok", False):
+            return "pass", ""
+        tb = (getattr(result, "traceback", "") or getattr(result, "stderr", "")
+              or "nonzero exit").strip().splitlines()
+        return "fail", f"block#{idx}: runtime failure: {tb[-1] if tb else 'nonzero exit'}"
 
     async def _ruff(self, code: str) -> list[str]:
         """Static lint via ruff as a governed read-only probe; best-effort."""

@@ -33,6 +33,98 @@ async def test_code_engine_noop_when_no_code():
     assert res.ok and not res.checked
 
 
+# ── checked-semantics for executable claims (Verifier Foundry finding) ──────
+
+class _FakeSandboxResult:
+    def __init__(self, ok, refused=False, timed_out=False, traceback=""):
+        self.ok = ok
+        self.refused = refused
+        self.timed_out = timed_out
+        self.traceback = traceback
+        self.stderr = traceback
+
+
+class _FakeSandbox:
+    def __init__(self, result):
+        self._result = result
+        self.ran = 0
+
+    async def run(self, code):
+        self.ran += 1
+        return self._result
+
+
+_BUGGY_ASSERT = "```python\ndef add(a, b):\n    return a - b\n\nassert add(2, 3) == 5\n```"
+_CORRECT_ASSERT = "```python\ndef add(a, b):\n    return a + b\n\nassert add(2, 3) == 5\n```"
+
+
+@pytest.mark.asyncio
+async def test_assert_bearing_block_without_execution_is_not_checked():
+    """The foundry's live catch: statics-only must not claim it verified a
+    candidate whose central claim is an unexecuted assert."""
+    engine = CodeTruthEngine(run_ruff=False, sandbox=_FakeSandbox(
+        _FakeSandboxResult(ok=False, refused=True)))  # execution refused
+    res = await engine.verify(_BUGGY_ASSERT)
+    assert res.checked is False, "unexecutable claims must demote checked"
+    assert res.ok is True  # no PROVABLE failure was found — but nothing verified
+    assert any("could not be executed" in e for e in res.evidence)
+
+
+@pytest.mark.asyncio
+async def test_assert_bearing_block_failing_in_sandbox_fails_hard():
+    engine = CodeTruthEngine(run_ruff=False, sandbox=_FakeSandbox(
+        _FakeSandboxResult(ok=False, traceback="AssertionError")))
+    res = await engine.verify(_BUGGY_ASSERT)
+    assert res.checked is True
+    assert res.ok is False
+    assert any("runtime failure" in i for i in res.issues)
+
+
+@pytest.mark.asyncio
+async def test_assert_bearing_block_passing_in_sandbox_is_verified():
+    sandbox = _FakeSandbox(_FakeSandboxResult(ok=True))
+    engine = CodeTruthEngine(run_ruff=False, sandbox=sandbox)
+    res = await engine.verify(_CORRECT_ASSERT)
+    assert res.checked is True and res.ok is True
+    assert sandbox.ran == 1
+    assert any("asserts passed in sandbox" in e for e in res.evidence)
+    assert res.detail["executed_ok"] == 1
+
+
+@pytest.mark.asyncio
+async def test_real_sandbox_end_to_end_catches_the_original_repro():
+    """The exact candidate the foundry caught, through the REAL sandbox."""
+    engine = CodeTruthEngine(run_ruff=False)  # real symbolic sandbox
+    res = await engine.verify(_BUGGY_ASSERT)
+    # whichever path the environment allows, the dishonest combination is dead:
+    assert not (res.ok and res.checked), (
+        "a provably buggy assert-bearing candidate must never verify"
+    )
+
+
+@pytest.mark.asyncio
+async def test_plain_function_without_asserts_keeps_static_verdict():
+    engine = CodeTruthEngine(run_ruff=False, sandbox=_FakeSandbox(
+        _FakeSandboxResult(ok=False, refused=True)))
+    res = await engine.verify("```python\ndef add(a, b):\n    return a + b\n```")
+    assert res.checked is True and res.ok is True  # statics ARE the right check
+
+
+def test_module_level_assert_detection():
+    from core.brain.verifiers.code_engine import has_module_level_asserts
+
+    assert has_module_level_asserts("assert 1 == 1")
+    assert has_module_level_asserts(
+        "def f():\n    return 1\n\nif __name__ == '__main__':\n    assert f() == 1")
+    assert has_module_level_asserts(
+        "try:\n    assert compute() > 0\nexcept NameError:\n    pass")
+    # asserts hidden inside definitions nothing calls do not execute on import
+    assert not has_module_level_asserts("def f():\n    assert False")
+    assert not has_module_level_asserts("class C:\n    def m(self):\n        assert False")
+    assert not has_module_level_asserts("x = 1 + 1")
+    assert not has_module_level_asserts("def broken(:")  # syntax error → False
+
+
 def test_extract_code_blocks_fenced_and_inline():
     assert extract_code_blocks("```py\nimport os\n```") == ["import os"]
     assert extract_code_blocks("def f():\n    return 1") == ["def f():\n    return 1"]
