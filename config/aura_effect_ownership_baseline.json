@@ -3073,6 +3073,22 @@
       "scope": "<module>.UnifiedSelf._save_to_disk"
     },
     {
+      "callee": "<file_write_gateway>.ensure_directory_async",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/consciousness/whole_system_phi_service.py",
+      "scope": "<module>.WholeSystemPhiService.persist_latest"
+    },
+    {
+      "callee": "<file_write_gateway>.write_json_async",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/consciousness/whole_system_phi_service.py",
+      "scope": "<module>.WholeSystemPhiService.persist_latest"
+    },
+    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -13369,6 +13385,14 @@
       "scope": "<module>.BranchManager._consult_will"
     },
     {
+      "callee": "core.governance.will.get_will().decide",
+      "canonical_owner": false,
+      "category": "will_decision",
+      "count": 1,
+      "path": "core/consciousness/perturbational_probe.py",
+      "scope": "<module>.PerturbationalProbe._authorize"
+    },
+    {
       "callee": "<will_decision>.decide",
       "canonical_owner": true,
       "category": "will_decision",
@@ -13610,6 +13634,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "2674ba0a685bb34cf077f9d3e70138ff487033bbc9c415fcc58529d87a751916",
+  "inventory_sha256": "614c8a45a215c1d951172dba1d72ccc025d1dd2c778269e106e07813eb5fc139",
   "schema_version": 1
 }

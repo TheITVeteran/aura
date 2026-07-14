@@ -329,6 +329,16 @@ RUNTIME_CONTRACT: list[ServiceRequirement] = [
     ),
     # ── OPTIONAL: Background enrichments ──
     ServiceRequirement(
+        "Whole-System Φ",
+        "whole_system_phi",
+        ServiceTier.OPTIONAL,
+        "Integrated-information estimation over the live channel set "
+        "(exact-MIP Gaussian Φ with surrogate nulls, grain discovery, and "
+        "an internal PCI). Telemetry-grade; loss removes a measurement, not "
+        "a capability.",
+        liveness_check="is_alive",
+    ),
+    ServiceRequirement(
         "Mycelial Network",
         "mycelial_network",
         ServiceTier.OPTIONAL,

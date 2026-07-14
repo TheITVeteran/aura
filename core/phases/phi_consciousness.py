@@ -394,7 +394,27 @@ class PhiConsciousnessPhase(Phase):
           1. PhiCore IIT 4.0 (real TPM + KL-divergence + exhaustive MIP search)
           2. PhiCore surrogate (state-space covariance) if full compute not ready
           3. Lightweight weighted-mean approximation (always available)
+
+        Alongside the scalar (whose 0..1 scale downstream gates depend on),
+        every cycle feeds the whole-system Φ service one channel reading and,
+        when a window is due, computes the provenance-complete estimate
+        off-loop — exact-MIP Gaussian Φ over the full live channel set with
+        surrogate nulls and CIs (core/consciousness/integrated_information.py).
         """
+        try:
+            from core.runtime.service_access import optional_service
+
+            ws = optional_service("whole_system_phi", default=None)
+            if ws is not None:
+                ws.observe_runtime(state)
+                if ws.ready():
+                    estimate = await asyncio.to_thread(ws.maybe_estimate)
+                    if estimate is not None:
+                        await ws.persist_latest()
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as e:
+            record_degradation('phi_consciousness', e, severity="debug",
+                               action="whole-system phi observation skipped")
+
         # Try PhiCore full IIT 4.0 first (real computation)
         phi_core = self._get_phi_core()
         if phi_core is not None:

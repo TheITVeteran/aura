@@ -1103,6 +1103,19 @@ async def _boot_runtime_orchestrator(
         record_degradation("aura_main", exc)
         logger.debug("online_lora_governor registration skipped: %s", exc)
 
+    if _env_flag("AURA_ENABLE_WHOLE_SYSTEM_PHI", True):
+        try:
+            from core.consciousness.whole_system_phi_service import boot_whole_system_phi
+
+            boot_whole_system_phi()
+            logger.info(
+                "🌌 Whole-system Φ online — exact-MIP integrated information "
+                "over the live channel set, with nulls and CIs."
+            )
+        except _AURA_MAIN_BOUNDARY_ERRORS as exc:
+            record_degradation("aura_main", exc)
+            logger.warning("Whole-system Φ boot failed: %s", exc)
+
     if _env_flag("AURA_ENABLE_ULYSSES_COVENANT", True):
         try:
             from core.sovereignty.ulysses import boot_ulysses_covenant

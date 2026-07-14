@@ -55,6 +55,7 @@ Contract version: `runtime-health-v1`
 
 | Service | Container key | Liveness check | Why it matters |
 | :--- | :--- | :--- | :--- |
+| Whole-System Φ | `whole_system_phi` | `is_alive` | Integrated-information estimation over the live channel set (exact-MIP Gaussian Φ with surrogate nulls, grain discovery, and an internal PCI). Telemetry-grade; loss removes a measurement, not a capability. |
 | Mycelial Network | `mycelial_network` | presence only | Infrastructure graph and pathway routing. |
 | Voice Engine | `voice_engine` | presence only | Speech-to-text and text-to-speech capabilities. |
 | Liquid Substrate | `liquid_substrate` | presence only | Dynamic emotional substrate for consciousness simulation. |
