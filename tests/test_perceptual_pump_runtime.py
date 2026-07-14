@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import asyncio
+import threading
+from types import SimpleNamespace
+
 from core.container import ServiceContainer
 from core.perception.multimodal_sync import Modality
 from core.perception.perceptual_pump import (
@@ -401,3 +405,114 @@ def test_throttle_still_honors_memory_pressure_after_lightweight_probe(monkeypat
         assert status_calls == []
     finally:
         ServiceContainer.clear()
+
+
+def test_substrate_injections_are_serialized_off_event_loop_and_shutdown_cleanly(
+    monkeypatch,
+) -> None:
+    pump = PerceptualPump()
+    worker_started = threading.Event()
+    release_worker = threading.Event()
+    calls: list[tuple[str, int, str, int]] = []
+
+    class Engine:
+        def step(self, _body, event, recurrent_cycles):
+            frame_id = int(event.label.rsplit("_", 1)[-1])
+            calls.append(
+                (
+                    "start",
+                    frame_id,
+                    threading.current_thread().name,
+                    threading.get_ident(),
+                )
+            )
+            if frame_id == 1:
+                worker_started.set()
+                assert release_worker.wait(timeout=2.0)
+            calls.append(
+                (
+                    "end",
+                    frame_id,
+                    threading.current_thread().name,
+                    threading.get_ident(),
+                )
+            )
+            assert recurrent_cycles == 2
+            return SimpleNamespace(
+                valence=0.1,
+                arousal=0.2,
+                curiosity=0.3,
+            )
+
+    class Substrate:
+        def inject_perceptual_frame(self, _payload):
+            return None
+
+        def adapt_projections(self, _payload, *, lr):
+            assert lr == 0.005
+
+    async def idle_pump_loop() -> None:
+        await asyncio.Event().wait()
+
+    async def run() -> tuple[int, dict]:
+        loop_thread = threading.get_ident()
+        monkeypatch.setattr(pump, "_pump_loop", idle_pump_loop)
+        await pump.start()
+        executor = pump._substrate_executor
+        assert executor is not None
+
+        first = asyncio.create_task(
+            pump._inject_into_substrate(PerceptualFrame(frame_id=1))
+        )
+        for _ in range(200):
+            if worker_started.is_set():
+                break
+            await asyncio.sleep(0.001)
+        assert worker_started.is_set()
+
+        second = asyncio.create_task(
+            pump._inject_into_substrate(PerceptualFrame(frame_id=2))
+        )
+        heartbeats = 0
+        for _ in range(8):
+            await asyncio.sleep(0.005)
+            heartbeats += 1
+        assert heartbeats == 8
+        assert not first.done()
+        assert not second.done()
+
+        release_worker.set()
+        await asyncio.gather(first, second)
+        status = pump.get_status()
+        await pump.stop()
+
+        assert pump._substrate_executor is None
+        assert getattr(executor, "_shutdown", False) is True
+        return loop_thread, status
+
+    ServiceContainer.clear()
+    ServiceContainer.register_instance("phenomenal_engine", Engine(), required=False)
+    ServiceContainer.register_instance("conscious_substrate", Substrate(), required=False)
+    try:
+        loop_thread, status = asyncio.run(run())
+    finally:
+        release_worker.set()
+        ServiceContainer.clear()
+
+    assert [(stage, frame_id) for stage, frame_id, _thread, _ident in calls] == [
+        ("start", 1),
+        ("end", 1),
+        ("start", 2),
+        ("end", 2),
+    ]
+    worker_names = {thread for _stage, _frame_id, thread, _ident in calls}
+    worker_idents = {ident for _stage, _frame_id, _thread, ident in calls}
+    assert len(worker_names) == 1
+    assert len(worker_idents) == 1
+    assert next(iter(worker_names)).startswith("AuraPerceptualSubstrate")
+    assert loop_thread not in worker_idents
+    worker_status = status["substrate_worker"]
+    assert worker_status["owner"] == "dedicated_single_worker"
+    assert worker_status["ordered"] is True
+    assert worker_status["active"] is False
+    assert worker_status["last_ms"] > 0.0

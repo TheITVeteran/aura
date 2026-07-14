@@ -1112,6 +1112,19 @@ class TestExperienceConsolidatorGuards(unittest.IsolatedAsyncioTestCase):
 
 
 class TestSubstrateStimulusGuards(unittest.IsolatedAsyncioTestCase):
+    async def test_psych_stabilization_runs_off_event_loop(self):
+        from core.consciousness.liquid_substrate import LiquidSubstrate, SubstrateConfig
+
+        substrate = LiquidSubstrate(SubstrateConfig(neuron_count=8))
+
+        with swap(
+            "core.consciousness.liquid_substrate.asyncio.to_thread",
+            new=_AsyncCallRecorder(return_value=None),
+        ) as to_thread:
+            await substrate._stabilize_psych_state(0.05)
+
+        to_thread.assert_awaited_once_with(substrate._stabilize_psych_state_sync, 0.05)
+
     async def test_recurrent_self_model_runs_off_event_loop(self):
         from core.consciousness.liquid_substrate import LiquidSubstrate, SubstrateConfig
 

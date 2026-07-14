@@ -16,7 +16,18 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **Checkpoint 72 removes the
+- Current bounded implementation milestone: **Checkpoint 73 attributes the
+  Checkpoint 66 main-thread NumPy/Torch sample to the 10 Hz perceptual pump's
+  synchronous phenomenal/substrate transaction and closes that owner in source.
+  Perceptual frames now enter one dedicated ordered worker with lifecycle-owned
+  shutdown and latency telemetry. The liquid substrate makes NumPy the explicit
+  canonical state, publishes every writer revision, builds Torch mirrors
+  off-lock on worker paths, and delta-merges dynamics/recurrent transforms when
+  a newer causal mutation arrived during compute. Legacy untracked writes are
+  detected rather than silently overwritten. Psych homeostasis is also
+  worker-offloaded, and the remaining bridge, Will, and metacognitive writers
+  participate in the same revision contract. Exact-main live event-loop and
+  boot-health proof remains open. Checkpoint 72 removes the
   remaining synchronous integrity/CRSM proof work from heartbeat and ordinary
   substrate-status reads. One named stale-while-revalidate owner prewarms the
   complete degradation/CRSM/CAA report; heartbeat and UI collectors return
@@ -74,8 +85,8 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   item remains open or in progress unless its detailed entry explicitly carries
   a completion date and proof.
 - Overall completion percentage: **30% planning estimate as of pushed
-  Checkpoint 72, with exact-build live proof still open**.
-  Checkpoints 67-72 close additional capability, idle-resource, authority,
+  Checkpoint 73, with exact-build live proof still open**.
+  Checkpoints 67-73 close additional capability, idle-resource, authority,
   recursive-learning, and loop-ownership gaps in source, but the signed-app
   plateau failed on repeated event-loop lag, model-lane saturation, and
   readiness recovery; live proof remains open and
@@ -88,7 +99,7 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   generated denominator; new obligations increase it, regressions reopen it,
   and source-green/live-open work never receives full closure credit.
 - Total checkpoint forecast: **approximately 206-276 total checkpoints for the
-  expanded program, with 72 pushed and approximately 134-204 remaining before
+  expanded program, with 73 pushed and approximately 133-203 remaining before
   final soak/release closure**. This includes every
   implementation, cleanup, repair, integration, verification, live,
   portability, release, and soak checkpoint, not only headline milestones.
@@ -137,10 +148,11 @@ Status rules:
 | `STORAGE-GATEWAY-001` | `COMPLETE 2026-07-13` | Removed all seven production-surface direct-write bypasses in local TLS material, self-repair backlog state, flight-recorder emergency output, Program DNA staging, and rollback state. Canonical batch, owned-binary, durable replace/delete, governance, schema, integrity, concurrency, and fault-injection contracts preserve bootstrap/crash/rollback behavior without exemptions. Checkpoint 62 reached zero direct-file-write findings; Checkpoint 63 subsequently brought the complete audited production-surface scanner to zero findings. | `EFFECT-001`, `FAULT-001`, `REPO-001`; Checkpoints 62-63 |
 | `RUNTIME-001` | `IN PROGRESS` | Finish desired-state reconciliation and truthful startup/liveness/readiness/degradation/proof/certification conditions without aggregate false health. | Pass F 2; Matrix 13 |
 | `HEALTH-SURFACE-001` | `IN PROGRESS (SOURCE GREEN; EXACT-MAIN LIVE OPEN) 2026-07-13` | Replace the heavyweight request-time `/api/health` aggregation with bounded, versioned, asynchronously refreshed read models whose public request paths are non-blocking, stale-aware, and available under owner-loop and CPU pressure. The request-time collector, duplicate fixed UI timers, rich service-worker polling, cold service construction, mutation-on-observation, and repeated per-attempt warning cards are removed; single-flight refresh ownership, explicit expiry truth, retry telemetry, jittered client backoff, incident coalescing, bounded reminders, and recovery transitions are source-green. Checkpoint 64 removes the background in-process Cortex owner that starved the conversational worker; Checkpoint 65 removes sampled process-census, goal-lock, and immunity-persistence blockers; Checkpoint 68 backs idle desktop perception off after attributed subprocess churn; Checkpoint 71 prevents deferred action results from recursively re-entering cognition while moving CRSM closure state off-loop; and Checkpoint 72 gives degradation/CRSM/CAA integrity its own prewarmed named snapshot so heartbeat and `CRSMLoraBridge` status never hash or parse training artifacts inline. Expired integrity evidence blocks proof readiness without falsely blocking conversational runtime health. Exact-main signed-app proof must still demonstrate responsive liveness/readiness while cognition, Phi, neural-mesh, MLX recovery, desktop perception, voice, training maintenance, and attribution work are active. | `RUNTIME-001`, `FOREGROUND-LATENCY-001`, `OBSERVE-001`, `UI-001`, `PERF-001`; Checkpoints 61, 64-65, 68, and 71-72; live old-runtime `/api/health` measured `200`, 135883 bytes, 5.3s against a 1.5s UI abort budget with repeated `[health_poll] ... Load failed` on preserved Fable runtime 2026-07-13 |
+| `BOOT-HEALTH-001` | `IN PROGRESS (RECURRING LIVE DEFECT; ROOT CONTRACT CLOSURE OPEN) 2026-07-13` | Make boot and recovery converge through one phased desired-state contract rather than emitting a permanently unhealthy aggregate. Prove `event_loop_monitor` starts, owns the canonical loop, and becomes alive; `unified_runtime_pressure` clears hard-lag and stale generation-gate saturation only from fresh evidence; `runtime_control_plane` reconciles to ready when its required owners are genuinely ready; and the conversation lane exits `warmup_deferred` through bounded successful recovery. Skynet/FictionalSynthesis must consume that canonical phase, freshness, dependency, and hysteresis evidence: it may report a real sustained unhealthy orchestrator, but may neither fire on expected bounded boot convergence nor mask a dependency that never recovers. Require exact-main pulses to transition startup/recovering to healthy without raising lag thresholds, deleting probes, or suppressing the warning. | `RUNTIME-001`, `HEALTH-SURFACE-001`, `FOREGROUND-LATENCY-001`, `CONVERSATION-001`, `FAULT-001`; recurring live pulse at 21:34 on 2026-07-13: control plane not ready, event-loop monitor not alive, 7.0294s hard lag, generation-gate saturation, `warmup_deferred`, and Skynet unhealthy verdict |
 | `LANE-001` | `COMPLETE 2026-07-12` | Preserve atomic fenced reservations, synchronous required eviction/reclamation, all-owner accounting, heartbeats, compensation, terminal receipts, race exclusion, and bounded live physical-release-before-load evidence across future model owners. | Addendum 21-22, `CTX2-LANE-001..004` |
 | `RESOURCE-001` | `COMPLETE 2026-07-13` | Preserve typed attributed RAM, accelerator, thermal, disk, compute, power, process, connection, open-file, cache, and pressure observation; keep ordinary tests hermetic and live-pressure evidence explicitly labelled and conservatively bounded. Checkpoint 64 adds a canonical lightweight target-tree observer; Checkpoint 65 adds a provenance-bearing PID census and targeted process-tree observation so ordinary liveness, sovereignty, shutdown, and supervisor checks do not enrich the full host process table. | Pass F 3; Addendum 22; Checkpoints 34, 64, and 65 |
 | `MEMORY-LEAK-001` | `IN PROGRESS (DOMINANT LIVE OWNER SOURCE-FIXED; EXACT-MAIN PLATEAU OPEN) 2026-07-13` | Attribute and eliminate the measured 350-450 MB/hour idle orchestrator RSS growth without relying on restart, pressure-triggered reclamation, model-worker exclusion, or a raised limit. Checkpoint 64 identified a live orchestrator retaining about 19.7 GB physical footprint, including about 17.2 GB of IOAccelerator regions, while stacks remained in the background non-parametric ingest path for more than 1,098 seconds. The source now forbids model loading in that owner and reuses the resident worker with one causal forward, hard pair/token/position/deadline budgets, foreground preemption, durable ordering, and cache cleanup. The old running process still retains its already-loaded allocation; controlled exact-main restart, remaining allocation/cardinality attribution, bounded-growth regressions, and stable idle plus interaction plateau proof remain mandatory. | `RESOURCE-001`, `RUNTIME-001`, `FAULT-001`, `PERF-001`; two independent 45/70-minute idle windows in `docs/SYSTEMS_MATURITY_2026_07_12.md`; live stack/vmmap attribution and Checkpoint 64 |
-| `FOREGROUND-LATENCY-001` | `IN PROGRESS (MULTIPLE SOURCE CAUSES CLOSED; LIVE NUMPY OWNER OPEN) 2026-07-13` | Eliminate live event-loop stalls that deny normal foreground model admission. Attribute every blocking owner, move blocking probes/work off-loop, preserve truthful lag admission instead of raising thresholds, and prove chat/model load remains available under desktop-access, immunity, telemetry, action execution, and background activity. Ordinary memory observation and blocking actuator bodies are source-offloaded; background MLX admission pressure is a retryable information-level deferral while a foreground denial remains visible. Checkpoint 64 removes an approximately 18-minute quadratic in-orchestrator model job; Checkpoint 65 moves sampled host-process enrichment, goal-store locking, and adaptive-immunity persistence off-loop; Checkpoint 68 removes idle perception subprocess storm cadence; Checkpoint 71 removes deferred-result cognitive redispatch, stale-loop voice executors, and synchronous CRSM scheduler I/O; and Checkpoint 72 removes request-loop integrity/CRSM/CAA inspection plus unowned degradation-repair threads. The CRSM train/fuse process is model-lane admitted and isolated from foreground service ownership, but exact live contention proof remains open. A macOS sample still attributes about 29% of a five-second main-thread window to synchronous NumPy dispatcher work, so Phi/neural/substrate owner attribution and offload remain the next source gate before live closure. | `PERF-001`, `RUNTIME-001`, `FAULT-001`; Checkpoints 51, 57, 60, 64-65, 68, and 71-72; live `event_loop_lag_3.638s` MLX admission denial, 4.304s boot-health overrun, and CP66 main-thread NumPy sample on 2026-07-13 |
+| `FOREGROUND-LATENCY-001` | `IN PROGRESS (SAMPLED NUMPY/TORCH OWNER SOURCE-CLOSED; EXACT-MAIN LIVE OPEN) 2026-07-13` | Eliminate live event-loop stalls that deny normal foreground model admission. Attribute every blocking owner, move blocking probes/work off-loop, preserve truthful lag admission instead of raising thresholds, and prove chat/model load remains available under desktop-access, immunity, telemetry, action execution, and background activity. Ordinary memory observation and blocking actuator bodies are source-offloaded; background MLX admission pressure is a retryable information-level deferral while a foreground denial remains visible. Checkpoint 64 removes an approximately 18-minute quadratic in-orchestrator model job; Checkpoint 65 moves sampled host-process enrichment, goal-store locking, and adaptive-immunity persistence off-loop; Checkpoint 68 removes idle perception subprocess storm cadence; Checkpoint 71 removes deferred-result cognitive redispatch, stale-loop voice executors, and synchronous CRSM scheduler I/O; and Checkpoint 72 removes request-loop integrity/CRSM/CAA inspection plus unowned degradation-repair threads. Checkpoint 73 traces the CP66 main-thread NumPy/Torch frames to the perceptual pump's direct phenomenal/substrate injection, moves the complete causal transaction to one ordered owned worker, removes event-loop Torch mirror rebuilds, moves psych stabilization off-loop, and revision-merges concurrent dynamics so offload cannot lose newer perception/affect. The CRSM train/fuse process is model-lane admitted and isolated from foreground service ownership, but exact live contention, boot-health recovery, and plateau proof remain open. | `PERF-001`, `RUNTIME-001`, `FAULT-001`, `SUBSTRATE-001`; Checkpoints 51, 57, 60, 64-65, 68, and 71-73; live `event_loop_lag_3.638s` MLX admission denial, 4.304s and 7.0294s boot-health overruns, and CP66 main-thread NumPy/Torch sample on 2026-07-13 |
 | `SHUTDOWN-001` | `COMPLETE 2026-07-11` | Preserve monotonic quiescence, reverse-order bounded teardown, terminal evidence, and no post-latch construction or resurrection across all future changes. | Addendum 32, `CTX2-SHUTDOWN-001..003` |
 | `FAULT-001` | `IN PROGRESS` | Drain the FMEA and degradation-policy backlog: root-fix broad catches, swallowed cancellation, false success/health, partial mutation, retry storms, leaks, and noisy fallback at their originating layer. | Pass F 4; Matrix 12 |
 | `ARCH-001` | `IN PROGRESS` | Establish canonical subsystem ownership and typed dependency boundaries; remove duplicate runtime owners, cross-wired service lookups, bypasses, monolith debt, and mixed runtime/proof/research meaning. | Pass F 5; Matrix 11; context architecture criticisms |
@@ -149,7 +161,7 @@ Status rules:
 | `MEMORY-001` | `IN PROGRESS 2026-07-12` | Preserve the encrypted exact-agent relational-memory authority while unifying every remaining memory writer/reader, cross-store semantic retrieval, provenance, conflict/freshness handling, exact live consumption proof, deletion, key rotation, and symmetric observed rollback. | Addendum 26; Checkpoints 42-45 |
 | `CONVERSATION-001` | `IN PROGRESS 2026-07-12` | Achieve sustained human-grade live chat/voice continuity through CognitiveEngine: no identity drift, context loss, repetition, truncation, silent stalls, retry reflexes, fallback takeover, or stream spam. | Pass F 6; Matrix 6 |
 | `SELF-STATE-CHAT-001` | `IN PROGRESS (SOURCE GREEN; LIVE OPEN) 2026-07-13` | Make direct questions about Aura's own condition use one fresh canonical self-state projection with calibrated uncertainty and conversational continuity; host telemetry may support but must never replace the answer. Prove the launched desktop path cannot route "are you okay/feeling fine" into a generic RAM/CPU status response. | `CONVERSATION-001`, `MIND-001`, `STATE-001`; Checkpoint 52; live defect at 00:27-00:28 on 2026-07-13 |
-| `SUBSTRATE-001` | `OPEN` | Make attention, affect, self-model, uncertainty, memory, voice, planning, tool choice, repair, and future policy causally one mind; lesion decorative or disconnected state. | Matrix 2-3; Addendum 20 and 29 |
+| `SUBSTRATE-001` | `IN PROGRESS (CANONICAL REVISIONED STATE SOURCE-GREEN; UNITY + LIVE PROOF OPEN) 2026-07-13` | Make attention, affect, self-model, uncertainty, memory, voice, planning, tool choice, repair, and future policy causally one mind; lesion decorative or disconnected state. Checkpoint 73 establishes one revisioned NumPy state authority for dynamics, recurrence, phenomenal perception, inference feedback, bridge chemistry/field effects, Will metabolism, metacognitive reset, stimulus, observation, idle decay, and psych homeostasis. Worker transforms preserve concurrent causal writes and publish a freshness-labelled Torch mirror rather than silently replacing newer state. Complete writer inventory, typed state gateway integration, downstream causal lesions, persistence/migration, and exact-main unity proof remain open. | Matrix 2-3; Addendum 20 and 29; `STATE-001`, `MIND-001`, `FOREGROUND-LATENCY-001`; Checkpoint 73 |
 | `DESKTOP-001` | `IN PROGRESS 2026-07-12` | Generalize computer use into perception-plan-act-observe-repair loops over browser, files, Notes/Docs/PDF/images, dialogs, focus, permissions, changed layouts, and multi-app workflows. | Pass F 7; Matrix 7; Checkpoint 38 |
 | `OS-AUTOMATION-001` | `IN PROGRESS (SOURCE GREEN; LIVE OPEN) 2026-07-13` | Make every bounded OS inspection/effect use the canonical governed automation and subprocess contracts without blocking the event loop during process creation, leaking child ownership, reducing generality to app-specific scripts, or claiming success before objective effect verification. Exercise periodic browser/window/clipboard perception and foreground desktop actions together under live lag budgets. | `DESKTOP-001`, `EFFECT-001`, `FOREGROUND-LATENCY-001`, `TOOLS-001`; live SIGUSR1 stack in `AppleScriptRunner -> spawn_async -> create_subprocess_exec` on 2026-07-13 |
 | `DESKTOP-ACCESS-001` | `IN PROGRESS (SOURCE GREEN; LIVE OPEN) 2026-07-13` | Eliminate repeated resident-bridge/direct TCC probe timeouts from the launched desktop path. Separate expected permission latency from faults, deduplicate concurrent probes, preserve successful dimensions, use truthful cached/readiness conditions, and prevent one probe timeout from producing duplicate degradation, fault, and affective-strain amplification. | `DESKTOP-001`, `FAULT-001`, `RUNTIME-001`; Checkpoint 51; live `system.desktop_access.*_probe` timeout defects at 00:28 on 2026-07-13 |
@@ -14937,3 +14949,96 @@ Progress and immediate next work:
   observed failure/recovery episode under forced collector pressure.
 - Continue the sampled synchronous NumPy/Phi/neural owner attribution and every
   open master-index unit. Final multi-hour and 24-72 hour soaks remain last.
+
+## Checkpoint 2026-07-13-73: Ordered Perceptual Substrate Worker and Revision-Safe Dynamics
+
+This checkpoint advances `FOREGROUND-LATENCY-001`, `SUBSTRATE-001`,
+`RUNTIME-001`, `FAULT-001`, `ARCH-001`, and `TEST-DEPTH-001`. It closes the
+specific NumPy/Torch owner preserved in the Checkpoint 66 native sample without
+claiming that every live lag source or the signed-app plateau has passed.
+
+Attribution connected the native stack to a production causal path rather than
+an aggregate library label:
+
+- The five-second macOS sample contained 3,634 samples. On the kernel main
+  asyncio thread, a large Python vectorcall branch entered NumPy dispatch,
+  matrix/dot work, array transforms, and Torch scalar/device conversion while
+  repeatedly waiting to reacquire the GIL. The contemporaneous log window
+  contained perceptual/affective activity and UI reads; the HTTP server itself
+  ran on a separate thread.
+- The 10 Hz `PerceptualPump` offloaded sensor collection but every second tick
+  still called `PhenomenalEngine.step()`,
+  `LiquidSubstrate.inject_perceptual_frame()`, and projection adaptation
+  directly on the kernel loop. Substrate injection rebuilt `x_torch` from the
+  full NumPy state synchronously. Other external mutation paths repeated the
+  same conversion.
+- Worker dynamics snapshotted `x`, computed without the state lock, and then
+  replaced `x` unconditionally. Perception, inference feedback, chemistry,
+  Will, or metacognitive state arriving during compute could therefore be lost;
+  moving work to a thread without a commit protocol would have preserved that
+  correctness defect.
+
+The repair establishes one ordered mutation and compute boundary:
+
+- Perceptual-to-phenomenal-to-substrate injection runs on one dedicated
+  single-worker executor. The pump awaits the transaction for causal
+  backpressure, so frames cannot reorder, while the kernel loop remains
+  responsive. Shutdown cancels queued work, waits off-loop for any active
+  transaction, and publishes worker owner, activity, thread, budget, last/max
+  duration, overrun count, and overrun streak.
+- Canonical substrate state is NumPy plus a monotonic revision. Every internal
+  and external writer publishes its source revision. Torch tensors are
+  worker-owned mirrors: conversion happens outside `sync_lock`, and publication
+  succeeds only if the source revision is still current. External feedback,
+  stimulus, perception, observation, and idle paths no longer invoke Torch.
+- Dynamics and recurrent self-model transforms snapshot both state and
+  revision. On commit, a newer state receives the worker's bounded delta rather
+  than being replaced. A value comparison also detects and counts a legacy
+  writer that failed to publish a revision. Merge counts are attributed by
+  transform source and exposed through ordinary substrate status.
+- Qualia collapse and psych homeostasis now mutate under the canonical lock;
+  psych stabilization runs on a worker. Consciousness bridge mesh/chemistry/
+  field coupling, Will metabolism, and metacognitive reset join the same
+  revision contract, closing every direct production writer found by the
+  mutation inventory.
+
+Verification is non-overlapping and exercises the real boundaries:
+
+- Pump lifecycle, ordered worker execution, event-loop heartbeat progress,
+  substrate mirror deferral, no-Torch external feedback, deterministic
+  snapshot/commit race preservation, existing stall prevention, psych
+  offload, and runtime edge contracts pass `124/124` plus one subtest.
+- Embodied dynamics, grounding, functional phenomenology, convergence,
+  substrate architecture, causal closure, inference feedback, boot contracts,
+  governance hardening, real 64-to-512 bridge adaptation, and adjacent recovery
+  selectors pass `149/149`. Total non-overlapping test evidence is `273/273`.
+- Targeted compilation, configured Ruff for the clean runtime/test surfaces,
+  and `git diff --check` pass. The enterprise static ratchet passes; production
+  readiness passes `37/37`; the production-surface scanner reports zero
+  findings and zero exemptions; the closeout rubric passes `20/20`; and the
+  governance inventory remains exactly at its checked-in `1809` calls, `1701`
+  buckets, and `1671` migration-debt calls.
+
+Progress and immediate next work:
+
+- This is pushed Checkpoint `73`. The evidence-weighted planning estimate
+  remains `30%`; the forecast remains `206-276` total checkpoints, with
+  `133-203` remaining before final soak/release closure. Source and deterministic
+  evidence receive no signed-app, portability, release, or soak credit.
+- Close `BOOT-HEALTH-001` from the bottom up. A recurring live pulse still
+  reports `runtime_control_plane` not ready, `event_loop_monitor` not alive,
+  stale hard-lag/generation saturation pressure, conversation
+  `warmup_deferred`, and a Skynet unhealthy verdict. Exact-main proof must show
+  the underlying contracts start, recover, and remain healthy; warning
+  suppression or wider lag thresholds are forbidden substitutes.
+- The separately reported CRSM run is not yet ingestible in this source tree:
+  no matching process is active, but the expected delta manifest, adapter
+  training state, and active fused-model manifest still have July 1 timestamps
+  and no recent adapter/fused directory exists. Keep `ADAPT-001` open until the
+  terminal output and exact artifact/marker transaction are located and
+  verified.
+- Rebuild and launch the signed app only from exact pushed `main`, then inspect
+  both terminal and Neural stream while proving event-loop plateau, health poll
+  recovery, conversation readiness, perceptual causality, and clean shutdown.
+  Final multi-hour and 24-72 hour soaks remain deferred until every shorter gate
+  is green.

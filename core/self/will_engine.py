@@ -182,6 +182,9 @@ class WillEngine:
                         
                         ls.x[ls.idx_energy] = (0.8 * ls.x[ls.idx_energy]) + (0.2 * energy_val)
                         ls.x[ls.idx_curiosity] = (0.8 * ls.x[ls.idx_curiosity]) + (0.2 * curiosity_val)
+                        marker = getattr(ls, "mark_state_mutated_locked", None)
+                        if callable(marker):
+                            marker("will_engine.metabolic_coupling")
                         logger.debug("🧠 [WILL] Synced metabolic state to LiquidSubstrate.")
             except (ImportError, AttributeError, RuntimeError) as sub_err:
                 record_degradation('will_engine', sub_err)

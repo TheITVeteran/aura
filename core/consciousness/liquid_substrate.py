@@ -129,6 +129,13 @@ class LiquidSubstrate:
         self.running: bool = False
         self.thread: asyncio.Task | None = None
         self.sync_lock: threading.Lock = threading.Lock()  # For all state access (sync + async)
+        self._state_revision: int = 0
+        self._torch_state_revision: int = 0
+        self._concurrent_state_merges: int = 0
+        self._untracked_state_mutations: int = 0
+        self._state_merges_by_source: dict[str, int] = {}
+        self._last_state_mutation_source: str = "boot"
+        self._last_state_mutation_at: float = time.time()
         # Last successful snapshot, published for lock-free telemetry reads.
         # Observed live: the event loop froze 5.7s inside _state_snapshot when
         # a background substrate thread held sync_lock through heavy weight
@@ -178,6 +185,8 @@ class LiquidSubstrate:
             if idx < self.config.neuron_count:
                 self.x[idx] = value
                 self.x_torch[idx] = value
+        self._state_revision = 1
+        self._torch_state_revision = 1
 
         # --- IIT Φ / Recurrent Self-Model (Consciousness Integration) ---
         self._prior_state: np.ndarray | None = None
@@ -309,6 +318,131 @@ class LiquidSubstrate:
     def _mark_weight_cache_dirty(self) -> None:
         self._weight_cache_dirty = True
 
+    def mark_state_mutated_locked(self, source: str = "external") -> int:
+        """Publish a canonical NumPy-state mutation while ``sync_lock`` is held.
+
+        NumPy is the authoritative substrate state. ``x_torch`` is a
+        worker-owned compute mirror and may intentionally lag between dynamics
+        ticks; event-loop callers must never rebuild it synchronously.
+        """
+        self._state_revision += 1
+        self._last_state_mutation_source = str(source or "external")
+        self._last_state_mutation_at = time.time()
+        return self._state_revision
+
+    def _refresh_torch_state_from_snapshot(
+        self,
+        *,
+        x_snapshot: np.ndarray,
+        v_snapshot: np.ndarray,
+        state_revision: int,
+    ) -> bool:
+        """Build Torch mirrors off-lock and publish only for the same revision."""
+        x_source = np.ascontiguousarray(x_snapshot, dtype=np.float32)
+        v_source = np.ascontiguousarray(v_snapshot, dtype=np.float32)
+        if self.device.type == "cpu":
+            x_torch = torch.from_numpy(x_source)
+            v_torch = torch.from_numpy(v_source)
+        else:
+            x_torch = torch.from_numpy(x_source).to(self.device)
+            v_torch = torch.from_numpy(v_source).to(self.device)
+
+        with self.sync_lock:
+            if self._state_revision != int(state_revision):
+                return False
+            self.x_torch = x_torch
+            self.v_torch = v_torch
+            self._torch_state_revision = int(state_revision)
+            return True
+
+    def _commit_worker_state_transform(
+        self,
+        *,
+        source_state: np.ndarray,
+        source_revision: int,
+        proposed_state: np.ndarray,
+        source: str,
+        update_velocity: bool,
+        set_last_update: bool = False,
+    ) -> tuple[np.ndarray, bool]:
+        """Commit worker math without erasing concurrent causal mutations.
+
+        Heavy transforms snapshot state, compute without the hot lock, and
+        return here. If another subsystem changed state meanwhile, the worker's
+        bounded delta is applied to the current state instead of replacing it.
+        A value comparison catches legacy writers that forgot to publish a
+        revision and exposes them through telemetry.
+        """
+        source_state = np.nan_to_num(
+            np.asarray(source_state),
+            copy=True,
+            nan=0.0,
+            posinf=1.0,
+            neginf=-1.0,
+        )
+        proposed_state = np.nan_to_num(
+            np.asarray(proposed_state),
+            copy=True,
+            nan=0.0,
+            posinf=1.0,
+            neginf=-1.0,
+        )
+        if source_state.shape != proposed_state.shape:
+            raise ValueError(
+                f"substrate transform shape mismatch: {source_state.shape} != {proposed_state.shape}"
+            )
+
+        with self.sync_lock:
+            current = np.nan_to_num(
+                np.asarray(self.x),
+                copy=True,
+                nan=0.0,
+                posinf=1.0,
+                neginf=-1.0,
+            )
+            if current.shape != source_state.shape:
+                raise ValueError(
+                    f"substrate state changed shape during {source}: "
+                    f"{source_state.shape} -> {current.shape}"
+                )
+
+            revision_changed = self._state_revision != int(source_revision)
+            values_changed = not np.array_equal(current, source_state, equal_nan=True)
+            if values_changed and not revision_changed:
+                self._untracked_state_mutations += 1
+            merged = revision_changed or values_changed
+            if merged:
+                state_delta = proposed_state - source_state
+                committed = np.clip(current + state_delta, -1.0, 1.0)
+                self._concurrent_state_merges += 1
+                self._state_merges_by_source[source] = (
+                    self._state_merges_by_source.get(source, 0) + 1
+                )
+            else:
+                committed = np.clip(proposed_state, -1.0, 1.0)
+
+            if update_velocity:
+                self.v = np.nan_to_num(
+                    committed - current,
+                    copy=False,
+                    nan=0.0,
+                    posinf=0.0,
+                    neginf=0.0,
+                )
+            self.x = committed
+            committed_revision = self.mark_state_mutated_locked(source)
+            if set_last_update:
+                self.last_update = time.time()
+            committed_copy = committed.copy()
+            velocity_copy = self.v.copy()
+
+        self._refresh_torch_state_from_snapshot(
+            x_snapshot=committed_copy,
+            v_snapshot=velocity_copy,
+            state_revision=committed_revision,
+        )
+        return committed_copy, merged
+
     @staticmethod
     def _weight_cache_signature(weights: np.ndarray) -> tuple[Any, ...]:
         arr = np.asarray(weights)
@@ -383,6 +517,17 @@ class LiquidSubstrate:
             "collapse_events": int(self.total_collapse_events),
             "compute_budget_reason": self._last_compute_budget_reason,
             "compute_budget_memory_percent": self._last_compute_budget_memory_percent,
+            "state_revision": int(self._state_revision),
+            "torch_state_revision": int(self._torch_state_revision),
+            "torch_mirror_lag": max(
+                0,
+                int(self._state_revision - self._torch_state_revision),
+            ),
+            "concurrent_state_merges": int(self._concurrent_state_merges),
+            "untracked_state_mutations": int(self._untracked_state_mutations),
+            "state_merges_by_source": dict(self._state_merges_by_source),
+            "last_state_mutation_source": self._last_state_mutation_source,
+            "last_state_mutation_at": float(self._last_state_mutation_at),
         }
 
     def _state_snapshot_nowait(self, max_wait_s: float = 0.05) -> dict[str, Any]:
@@ -628,6 +773,7 @@ class LiquidSubstrate:
             # tensor every tick creates avoidable foreground memory churn.
             with self.sync_lock:
                 state_copy = self.x.copy()
+                source_revision = self._state_revision
                 if (
                     self._weight_cache_dirty
                     or id(self.W) != self._cached_connectivity_array_id
@@ -637,7 +783,10 @@ class LiquidSubstrate:
                 ):
                     self._sync_weight_cache_locked()
                 weights = self.W_torch
-            x_torch = torch.from_numpy(state_copy).to(self.device).float()
+            x_source = np.ascontiguousarray(state_copy, dtype=np.float32)
+            x_torch = torch.from_numpy(x_source)
+            if self.device.type != "cpu":
+                x_torch = x_torch.to(self.device)
 
             recurrent = weights @ x_torch
             activity = torch.tanh(recurrent)
@@ -652,9 +801,7 @@ class LiquidSubstrate:
 
             # Final NaN/Inf safety net on state vectors
             new_x_np = new_x_torch.detach().cpu().numpy()
-            v_np = (new_x_torch - x_torch).detach().cpu().numpy()
             new_x_np = np.nan_to_num(new_x_np, nan=0.0, posinf=1.0, neginf=-1.0)
-            v_np = np.nan_to_num(v_np, nan=0.0, posinf=0.0, neginf=0.0)
             self._integration_steps += 1
 
             connectivity_norm = float(self._cached_connectivity_norm)
@@ -662,7 +809,6 @@ class LiquidSubstrate:
                 if self._integration_steps % 7 == 0:
                     damping = 1.0 - min(0.95, float(self.config.noise_level) * 1.8)
                     new_x_np = new_x_np * damping
-                    v_np = new_x_np - state_copy
 
             # --- Controlled Chaos: structured perturbation ---
             if self._chaos_engine is not None:
@@ -673,14 +819,14 @@ class LiquidSubstrate:
                     record_degradation("liquid_substrate", _ce)
                     logger.debug("Controlled chaos perturbation skipped: %s", _ce)
 
-            # Legacy sync (keep numpy x for downstream consumers)
-            with self.sync_lock:
-                self.x = new_x_np
-                self.v = v_np
-                self.x_torch = new_x_torch.detach().to(self.device)
-                self.v_torch = new_x_torch.detach().to(self.device) - x_torch.detach().to(self.device)
-
-            self.last_update = time.time()
+            self._commit_worker_state_transform(
+                source_state=state_copy,
+                source_revision=source_revision,
+                proposed_state=new_x_np,
+                source="dynamics",
+                update_velocity=True,
+                set_last_update=True,
+            )
 
             # --- Phase XVI: Multi-Scale Qualia Dynamics ---
             # Call synchronous version
@@ -691,67 +837,103 @@ class LiquidSubstrate:
 
     def _update_qualia_metrics_sync(self, dt: float):
         """Implement mathematical proxies for Orch OR, CEMI, and DIT (Synchronous)."""
-        # 1. Orch OR: Quantum Coherence Decay & Collapse
-        noise_impact = (
-            np.mean(np.abs(self._rng.standard_normal(self.config.neuron_count)))
-            * self.config.noise_level
-        )
-        self.microtubule_coherence = max(0.0, self.microtubule_coherence - noise_impact * dt)
+        with self.sync_lock:
+            # 1. Orch OR: Quantum Coherence Decay & Collapse
+            noise_impact = (
+                np.mean(np.abs(self._rng.standard_normal(self.config.neuron_count)))
+                * self.config.noise_level
+            )
+            self.microtubule_coherence = max(
+                0.0,
+                self.microtubule_coherence - noise_impact * dt,
+            )
 
-        if self.microtubule_coherence < 0.4:
-            self.total_collapse_events += 1
-            self.microtubule_coherence = 1.0
-            self.x *= 0.98
+            if self.microtubule_coherence < 0.4:
+                self.total_collapse_events += 1
+                self.microtubule_coherence = 1.0
+                self.x *= 0.98
+                self.mark_state_mutated_locked("qualia_collapse")
 
-        # 2. CEMI: EM Field Magnitude
-        flux = np.linalg.norm(self.v)
-        if not np.isfinite(flux):
-            flux = 0.0
-        self.em_field_magnitude = (self.em_field_magnitude * 0.9) + (flux * 0.1)
+            # 2. CEMI: EM Field Magnitude
+            flux = np.linalg.norm(self.v)
+            if not np.isfinite(flux):
+                flux = 0.0
+            self.em_field_magnitude = (self.em_field_magnitude * 0.9) + (flux * 0.1)
 
-        # 3. DIT: Dendritic Integration Theory (L5 Bursting)
-        active_neurons = np.where((np.abs(self.x) > 0.6) & (np.abs(self.v) > 0.05))[0]
-        self.l5_burst_count = len(active_neurons)
+            # 3. DIT: Dendritic Integration Theory (L5 Bursting)
+            active_neurons = np.where(
+                (np.abs(self.x) > 0.6) & (np.abs(self.v) > 0.05)
+            )[0]
+            self.l5_burst_count = len(active_neurons)
 
     async def _stabilize_psych_state(self, dt: float):
         """Naturally return frustration/curiosity to baseline and regenerate energy.
         This logic is merged from the legacy LiquidState class.
         """
-        # Frustration decays towards 0 (Zen)
-        self.x[self.idx_frustration] *= 1.0 - 0.05 * dt
+        await asyncio.to_thread(self._stabilize_psych_state_sync, dt)
 
-        # Energy/Metabolism logic
+    def _stabilize_psych_state_sync(self, dt: float) -> None:
+        """Apply psych-state homeostasis on a worker, preserving state revision."""
         try:
             from core.container import ServiceContainer
 
             monitor = ServiceContainer.get("metabolic_monitor", None)
             if monitor:
-                health = monitor.get_current_metabolism().health_score
-                target_energy = health
-                current_energy = self.x[self.idx_energy]
-                if current_energy < target_energy:
-                    self.x[self.idx_energy] = min(target_energy, current_energy + (0.005 * dt))
-                else:
-                    self.x[self.idx_energy] = max(target_energy, current_energy - (0.005 * dt))
+                mode = "monitor"
+                target_energy = float(monitor.get_current_metabolism().health_score)
+                fatigue = 0.0
+                stress = 0.0
             elif self.soma:
-                # Phase 16: Proprioceptive Energy Drain
-                fatigue = self.soma.state.fatigue_level
-                stress = self.soma.state.stress_level
-
-                # Stress drains energy faster
-                drain_rate = 0.001 + (0.004 * stress)
-                self.x[self.idx_energy] = max(0.0, self.x[self.idx_energy] - (drain_rate * dt))
-
-                # Fatigue adds to frustration
-                if fatigue > 0.5:
-                    self.x[self.idx_frustration] = min(
-                        1.0, self.x[self.idx_frustration] + (0.01 * fatigue * dt)
-                    )
+                mode = "soma"
+                target_energy = 0.0
+                fatigue = float(self.soma.state.fatigue_level)
+                stress = float(self.soma.state.stress_level)
             else:
-                self.x[self.idx_energy] = min(1.0, self.x[self.idx_energy] + (0.005 * dt))
+                mode = "baseline"
+                target_energy = 1.0
+                fatigue = 0.0
+                stress = 0.0
         except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation("liquid_substrate", e)
             capture_and_log(e, {"module": __name__})
+            return
+
+        with self.sync_lock:
+            before = self.x.copy()
+            # Frustration decays towards 0 (Zen)
+            self.x[self.idx_frustration] *= 1.0 - 0.05 * dt
+
+            if mode == "monitor":
+                current_energy = self.x[self.idx_energy]
+                if current_energy < target_energy:
+                    self.x[self.idx_energy] = min(
+                        target_energy,
+                        current_energy + (0.005 * dt),
+                    )
+                else:
+                    self.x[self.idx_energy] = max(
+                        target_energy,
+                        current_energy - (0.005 * dt),
+                    )
+            elif mode == "soma":
+                drain_rate = 0.001 + (0.004 * stress)
+                self.x[self.idx_energy] = max(
+                    0.0,
+                    self.x[self.idx_energy] - (drain_rate * dt),
+                )
+                if fatigue > 0.5:
+                    self.x[self.idx_frustration] = min(
+                        1.0,
+                        self.x[self.idx_frustration] + (0.01 * fatigue * dt),
+                    )
+            else:
+                self.x[self.idx_energy] = min(
+                    target_energy,
+                    self.x[self.idx_energy] + (0.005 * dt),
+                )
+
+            if not np.array_equal(before, self.x, equal_nan=True):
+                self.mark_state_mutated_locked("psych_stabilization")
 
     async def update(self, delta_frustration=0.0, delta_curiosity=0.0, **kwargs):
         """Standard update cycle with support for direct stimulus injection.
@@ -816,6 +998,7 @@ class LiquidSubstrate:
             return  # FAIL-CLOSED: gate exception → block the mutation
 
         with self.sync_lock:
+            before = self.x.copy()
             # 1. Apply legacy deltas
             self.x[self.idx_frustration] = np.clip(
                 self.x[self.idx_frustration] + delta_frustration, -1.0, 1.0
@@ -840,6 +1023,9 @@ class LiquidSubstrate:
                     # Direct injection with slight smoothing (0.7 coupling) to prevent jarring HUD jumps
                     current = self.x[idx]
                     self.x[idx] = (current * 0.3) + (float(val) * 0.7)
+
+            if not np.array_equal(before, self.x, equal_nan=True):
+                self.mark_state_mutated_locked("external_update")
 
         if abs(delta_frustration) > 0.1:
             logger.info("Substrate Shift: Frustration is now %.2f", self.x[self.idx_frustration])
@@ -983,6 +1169,13 @@ class LiquidSubstrate:
             ),
             "compute_budget_reason": snapshot["compute_budget_reason"],
             "compute_budget_memory_percent": snapshot["compute_budget_memory_percent"],
+            "state_revision": snapshot["state_revision"],
+            "torch_state_revision": snapshot["torch_state_revision"],
+            "torch_mirror_lag": snapshot["torch_mirror_lag"],
+            "concurrent_state_merges": snapshot["concurrent_state_merges"],
+            "untracked_state_mutations": snapshot["untracked_state_mutations"],
+            "state_merges_by_source": snapshot["state_merges_by_source"],
+            "last_state_mutation_source": snapshot["last_state_mutation_source"],
         }
 
     def get_summary(self) -> str:
@@ -1013,6 +1206,7 @@ class LiquidSubstrate:
         """
         with self.sync_lock:
             current = self.x.copy()
+            source_revision = self._state_revision
 
         # Initialize prior state on first call
         if self._prior_state is None:
@@ -1034,9 +1228,13 @@ class LiquidSubstrate:
             )
             blended = current
 
-        with self.sync_lock:
-            self.x = np.clip(blended, -1.0, 1.0)
-            self.x_torch = torch.from_numpy(self.x).to(self.device).float()
+        committed, _merged = self._commit_worker_state_transform(
+            source_state=current,
+            source_revision=source_revision,
+            proposed_state=blended,
+            source="recurrent_self_model",
+            update_velocity=False,
+        )
 
         # Store for next iteration
         self._prior_state = current
@@ -1054,7 +1252,7 @@ class LiquidSubstrate:
                     self._riiu = None
 
             if self._riiu is not None:
-                phi = self._riiu.compute_phi(self.x)
+                phi = self._riiu.compute_phi(committed)
                 # Clamp Φ to prevent runaway values during indefinite operation
                 phi = float(np.clip(phi, 0, 1e6))
                 self._current_phi = phi
@@ -1178,8 +1376,7 @@ class LiquidSubstrate:
             self.x[self.idx_focus] = np.clip(self.x[self.idx_focus], 0.0, 1.0)
             self.x[self.idx_curiosity] = np.clip(self.x[self.idx_curiosity], 0.0, 1.0)
             
-            # Sync torch representation
-            self.x_torch = torch.from_numpy(self.x).to(self.device).float()
+            self.mark_state_mutated_locked("inference_feedback")
             
             logger.debug(
                 "Substrate feedback applied: surprise=%.3f, coherence=%.3f | "
@@ -1256,7 +1453,7 @@ class LiquidSubstrate:
 
         with self.sync_lock:
             self.x = np.clip(self.x + vector * weight * 0.1, -1.0, 1.0)
-            self.x_torch = torch.from_numpy(self.x).to(self.device).float()
+            self.mark_state_mutated_locked("stimulus_injection")
 
         # Track tasks if needed (e.g. if we were launching something here)
         # For now, this is just to ensure Issue 73 logic has a place to live
@@ -1337,7 +1534,7 @@ class LiquidSubstrate:
         weight = 0.25
         with self.sync_lock:
             self.x = np.clip(self.x * (1.0 - weight) + delta * weight, -1.0, 1.0)
-            self.x_torch = torch.from_numpy(self.x).to(self.device).float()
+            self.mark_state_mutated_locked("perceptual_frame")
 
     def inject_observation(self, observation: dict[str, Any]) -> None:
         """Project a grounded sensor observation into the substrate input bus."""
@@ -1347,7 +1544,7 @@ class LiquidSubstrate:
             vec = observation_to_vector(observation, dim=n)
             with self.sync_lock:
                 self.x = np.clip(self.x + vec * 0.1, -1.0, 1.0)
-                self.x_torch = torch.from_numpy(self.x).to(self.device).float()
+                self.mark_state_mutated_locked("grounded_observation")
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as e:
             record_degradation(
                 "liquid_substrate.observation_injection",
@@ -1507,7 +1704,7 @@ class LiquidSubstrate:
                 return
             decay_factor = np.exp(-self.config.decay_rate * idle_seconds)
             self.x = self.x * decay_factor
-            self.x_torch = torch.from_numpy(self.x).to(self.device).float()
+            self.mark_state_mutated_locked("idle_decay")
         logger.info(
             "Applied %.0fs idle decay (factor=%.4f) to substrate state.",
             idle_seconds,

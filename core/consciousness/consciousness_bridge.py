@@ -417,6 +417,9 @@ class ConsciousnessBridge:
                         substrate.x * 0.65 + projection * 0.35,
                         -1.0, 1.0
                     ).astype(np.float64)
+                    marker = getattr(substrate, "mark_state_mutated_locked", None)
+                    if callable(marker):
+                        marker("consciousness_bridge.mesh_projection")
             except _RECOVERABLE_BRIDGE_ERRORS as e:
                 record_degradation('consciousness_bridge', e)
                 logger.debug("Mesh→Substrate integration failed: %s", e)
@@ -557,6 +560,9 @@ class ConsciousnessBridge:
                     substrate.x[substrate.idx_frustration] = (
                         substrate.x[substrate.idx_frustration] * 0.75 + stress * 0.25
                     )
+                    marker = getattr(substrate, "mark_state_mutated_locked", None)
+                    if callable(marker):
+                        marker("consciousness_bridge.neurochemical_vad")
             except _RECOVERABLE_BRIDGE_ERRORS as e:
                 record_degradation('consciousness_bridge', e)
                 logger.debug("Chemicals→Substrate VAD failed: %s", e)
@@ -597,6 +603,9 @@ class ConsciousnessBridge:
                     with substrate.sync_lock:
                         substrate.x *= 0.995  # gentle damping each tick
                         substrate.v *= 0.99   # reduce velocity
+                        marker = getattr(substrate, "mark_state_mutated_locked", None)
+                        if callable(marker):
+                            marker("consciousness_bridge.field_damping")
 
             except _RECOVERABLE_BRIDGE_ERRORS as e:
                 record_degradation('consciousness_bridge', e)

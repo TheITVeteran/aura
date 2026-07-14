@@ -350,8 +350,11 @@ class MetaCognitionEngine:
         logger.error("🚨 CRITICAL COGNITIVE FAILURE: Triggering Reset.")
         substrate = ServiceContainer.get("liquid_substrate", default=None)
         if substrate:
-             # Fix Issue 74: Use .x[idx_energy] or property
-             substrate.x[substrate.idx_energy] = 0.5
+            with substrate.sync_lock:
+                substrate.x[substrate.idx_energy] = 0.5
+                marker = getattr(substrate, "mark_state_mutated_locked", None)
+                if callable(marker):
+                    marker("metacognition.cognitive_reset")
         self.violation_count = 0
     
     def before_reasoning(self, task: str, context: Dict[str, Any]) -> Dict[str, Any]:

@@ -27,8 +27,10 @@ import logging
 import os
 import subprocess
 import sys
+import threading
 import time
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -601,6 +603,13 @@ class PerceptualPump:
         self._synchronizer = MultimodalSynchronizer()
         self._sensor_sequences: dict[str, int] = {}
         self._last_world_event_ids: dict[Modality, str] = {}
+        self._substrate_executor: ThreadPoolExecutor | None = None
+        self._substrate_worker_active: bool = False
+        self._substrate_worker_thread: str | None = None
+        self._substrate_injection_last_ms: float = 0.0
+        self._substrate_injection_max_ms: float = 0.0
+        self._substrate_injection_overruns: int = 0
+        self._substrate_injection_overrun_streak: int = 0
 
         # Cached sub-states (updated at different rates)
         self._screen: ScreenState = ScreenState()
@@ -618,6 +627,11 @@ class PerceptualPump:
         """Start the perceptual pump."""
         if self.running:
             return
+        if self._substrate_executor is None:
+            self._substrate_executor = ThreadPoolExecutor(
+                max_workers=1,
+                thread_name_prefix="AuraPerceptualSubstrate",
+            )
         self.running = True
         self._started_at = time.time()
         ServiceContainer.register_instance("perceptual_pump", self, required=False)
@@ -645,6 +659,16 @@ class PerceptualPump:
                 await self._task
             except asyncio.CancelledError:
                 pass
+        self._task = None
+        executor = self._substrate_executor
+        self._substrate_executor = None
+        if executor is not None:
+            await asyncio.to_thread(
+                executor.shutdown,
+                wait=True,
+                cancel_futures=True,
+            )
+        self._substrate_worker_active = False
         logger.info(
             "👁️ PerceptualPump OFFLINE — produced %d frames, %d substrate injections, %d errors",
             self._frames_produced, self._substrate_injections, self._errors,
@@ -686,6 +710,20 @@ class PerceptualPump:
                 "task_planning",
             ],
             "pump_hz": self.PUMP_HZ,
+            "substrate_worker": {
+                "owner": "dedicated_single_worker",
+                "active": self._substrate_worker_active,
+                "thread": self._substrate_worker_thread,
+                "ordered": True,
+                "last_ms": round(self._substrate_injection_last_ms, 3),
+                "max_ms": round(self._substrate_injection_max_ms, 3),
+                "overruns": self._substrate_injection_overruns,
+                "overrun_streak": self._substrate_injection_overrun_streak,
+                "budget_ms": round(
+                    self.PUMP_DT * self.SUBSTRATE_INJECT_EVERY_N * 1000.0,
+                    3,
+                ),
+            },
         }
 
     # ------------------------------------------------------------------
@@ -1051,8 +1089,23 @@ class PerceptualPump:
         """Map frame → RuntimeBody → PhenomenalEngine → Substrate.
 
         This is the causal grounding path. The substrate ODE state is
-        directly perturbed by physical-world perception.
+        directly perturbed by physical-world perception. The complete
+        phenomenal/substrate transaction runs on one dedicated worker so
+        expensive NumPy/Torch work cannot block the kernel event loop and
+        successive frames cannot reorder their causal effects.
         """
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(
+            self._substrate_executor,
+            self._inject_into_substrate_sync,
+            frame,
+        )
+
+    def _inject_into_substrate_sync(self, frame: PerceptualFrame) -> None:
+        """Execute one ordered perceptual-to-substrate transaction."""
+        started = time.perf_counter()
+        self._substrate_worker_active = True
+        self._substrate_worker_thread = threading.current_thread().name
         try:
             body = frame_to_runtime_body(frame)
             fusion = frame.fusion
@@ -1147,6 +1200,32 @@ class PerceptualPump:
             record_degradation("perceptual_pump.substrate", e)
             if self._errors % 100 == 1:
                 logger.debug("Substrate injection failed: %s", e)
+        finally:
+            elapsed_ms = (time.perf_counter() - started) * 1000.0
+            self._substrate_injection_last_ms = elapsed_ms
+            self._substrate_injection_max_ms = max(
+                self._substrate_injection_max_ms,
+                elapsed_ms,
+            )
+            budget_ms = self.PUMP_DT * self.SUBSTRATE_INJECT_EVERY_N * 1000.0
+            if elapsed_ms > budget_ms:
+                self._substrate_injection_overruns += 1
+                self._substrate_injection_overrun_streak += 1
+                if (
+                    self._substrate_injection_overrun_streak == 1
+                    or self._substrate_injection_overruns % 50 == 0
+                ):
+                    logger.warning(
+                        "Perceptual substrate transaction exceeded budget: %.1fms > %.1fms "
+                        "(overruns=%d, streak=%d)",
+                        elapsed_ms,
+                        budget_ms,
+                        self._substrate_injection_overruns,
+                        self._substrate_injection_overrun_streak,
+                    )
+            else:
+                self._substrate_injection_overrun_streak = 0
+            self._substrate_worker_active = False
 
     def _update_world_state(self, frame: PerceptualFrame) -> None:
         """Push perceptual data into WorldState for downstream consumers."""
