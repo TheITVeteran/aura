@@ -14,10 +14,11 @@ from core.perception.vsr_ctc import Vocabulary
 from core.perception.vsr_trainer import (
     LabeledClip,
     synthesize_clip,
-    torch_available,
 )
 
-pytestmark = pytest.mark.skipif(not torch_available(), reason="torch not installed")
+# torch is an optional ML extra (requirements/ml.txt): import-or-skip the whole
+# module rather than a skipif marker that hides an always-skipped suite.
+pytest.importorskip("torch")
 
 VOCAB = Vocabulary("abcdefgh ")
 

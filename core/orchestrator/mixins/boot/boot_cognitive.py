@@ -255,6 +255,33 @@ class BootCognitiveMixin:
             )
             logger.error("Failed to init weight compounding: %s", e)
 
+    async def _init_crsm_closure(self):
+        """Start the autonomous CRSM→LoRA loop closer.
+
+        Default-OFF (AURA_CRSM_AUTOCLOSE): when enabled, it closes the capture
+        loop the health poll reports as OPEN — running the bounded, Will-
+        governed, deep-idle CRSM delta train/fuse the monitor computes. Without
+        it, captured experience is never crystallized into weights on its own.
+        """
+        try:
+            from core.learning.crsm_closure_scheduler import (
+                SERVICE_NAME as CRSM_CLOSURE_SERVICE,
+            )
+            from core.learning.crsm_closure_scheduler import (
+                get_crsm_closure_scheduler,
+            )
+
+            scheduler = get_crsm_closure_scheduler(self)
+            await scheduler.start()
+            ServiceContainer.register_instance(CRSM_CLOSURE_SERVICE, scheduler)
+        except (ImportError, AttributeError, RuntimeError) as e:
+            _record_boot_cognitive_degradation(
+                e,
+                action="continued boot without autonomous CRSM loop closure",
+                severity="error",
+            )
+            logger.error("Failed to init CRSM closure scheduler: %s", e)
+
         try:
             from core.learning.selfplay_flywheel import (
                 SERVICE_NAME as SELFPLAY_SERVICE,
