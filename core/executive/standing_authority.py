@@ -137,6 +137,10 @@ LOCAL_OBSERVATION_TOOLS = frozenset(
 CONNECTED_ACCOUNT_READ_TOOLS = frozenset({"email_adapter", "reddit_adapter"})
 READ_ONLY_MAINTENANCE_TOOLS = frozenset({"auto_refactor"})
 BOUNDED_SANDBOX_TOOLS = frozenset({"subconscious_sandbox_probe"})
+BACKGROUND_REFLECTION_TOOLS = frozenset({"swarm_debate"})
+BACKGROUND_REFLECTION_ROLES = frozenset({"architect", "critic", "philosopher"})
+BACKGROUND_REFLECTION_MAX_ACTIONS = 6
+BACKGROUND_REFLECTION_WINDOW_SECONDS = 3600.0
 
 _UNSAFE_PUBLIC_RESEARCH_MARKERS = frozenset(
     {
@@ -165,6 +169,7 @@ _SUPPORTED_ARGUMENT_POLICIES = frozenset(
         "any",
         "aura_local_read",
         "bounded_sandbox_probe",
+        "bounded_background_reflection",
         "connected_account_read",
         "foreground_user_request",
         "local_introspection",
@@ -458,6 +463,23 @@ def _builtin_grants() -> tuple[StandingAuthorityGrant, ...]:
             argument_policy="bounded_sandbox_probe",
             built_in=True,
         ),
+        StandingAuthorityGrant(
+            grant_id="aura.autonomous-background-reflection",
+            issuer="owner_policy",
+            description=(
+                "Aura may run bounded, effect-free internal deliberation for reflection, "
+                "planning, and self-assessment without requesting per-turn approval."
+            ),
+            allowed_origins=("background_reflection",),
+            allowed_tools=tuple(sorted(BACKGROUND_REFLECTION_TOOLS)),
+            allowed_effect_scopes=("pure_compute",),
+            max_risk="low",
+            max_actions=BACKGROUND_REFLECTION_MAX_ACTIONS,
+            window_seconds=BACKGROUND_REFLECTION_WINDOW_SECONDS,
+            lease_ttl_seconds=180.0,
+            argument_policy="bounded_background_reflection",
+            built_in=True,
+        ),
     )
 
 
@@ -682,6 +704,27 @@ class StandingAuthorityManager:
             if tool_name not in BOUNDED_SANDBOX_TOOLS:
                 return False, "bounded_sandbox_probe_tool_mismatch"
             return validate_idle_sandbox_probe_arguments(arguments)
+        if policy == "bounded_background_reflection":
+            if tool_name not in BACKGROUND_REFLECTION_TOOLS:
+                return False, "background_reflection_tool_mismatch"
+            if set(arguments) - {"topic", "query", "roles"}:
+                return False, "background_reflection_arguments_unsupported"
+            topic = str(arguments.get("topic") or arguments.get("query") or "").strip()
+            if not topic:
+                return False, "background_reflection_topic_missing"
+            if len(topic) > 4_096:
+                return False, "background_reflection_topic_too_large"
+            roles = arguments.get("roles", ["architect", "critic"])
+            if not isinstance(roles, list) or not 1 <= len(roles) <= 3:
+                return False, "background_reflection_roles_invalid"
+            if any(
+                not isinstance(role, str)
+                or not role.strip()
+                or role.strip().lower() not in BACKGROUND_REFLECTION_ROLES
+                for role in roles
+            ):
+                return False, "background_reflection_roles_invalid"
+            return True, "bounded_background_reflection"
         if policy == "connected_account_read":
             mode = str(arguments.get("mode") or "").strip().lower()
             allowed_modes = {

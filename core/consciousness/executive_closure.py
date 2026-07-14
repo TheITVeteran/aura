@@ -11,6 +11,10 @@ import numpy as np
 from core.container import ServiceContainer
 from core.continuity import is_evaluation_contamination
 from core.goals.goal_text import is_actionable_goal_text, is_intrinsic_goal_text
+from core.goals.objective_lifecycle import (
+    is_actionable_foreground_objective,
+    is_transient_foreground_projection,
+)
 from core.predictive.predictive_self_model import PredictiveSelfModel
 from core.runtime.errors import record_degradation
 from core.runtime.proposal_governance import propose_governed_initiative_to_state
@@ -139,9 +143,15 @@ class ExecutiveClosureEngine:
 
         current_objective = str(getattr(state.cognition, "current_objective", "") or "").strip()
         current_origin = str(getattr(state.cognition, "current_origin", "") or "")
+        foreground_chat_active = bool(
+            current_objective
+            and _origin_is_user_anchored(current_origin)
+            and not is_actionable_foreground_objective(current_objective)
+        )
         if is_evaluation_contamination(current_objective):
             state.cognition.current_objective = None
             current_objective = ""
+            foreground_chat_active = False
         if current_objective and not _origin_is_user_anchored(current_origin):
             background_commitment = current_objective
             state.cognition.current_objective = None
@@ -220,7 +230,11 @@ class ExecutiveClosureEngine:
             }
         else:
             state.cognition.modifiers.pop("executive_hysteresis", None)
-        active_goal_count = self._sync_active_goals(state, selected_objective)
+        active_goal_count = self._sync_active_goals(
+            state,
+            selected_objective,
+            persist_selected=not foreground_chat_active,
+        )
 
         if is_actionable_goal_text(selected_objective) and not getattr(state.cognition, "current_objective", None):
             state, decision = await propose_governed_initiative_to_state(
@@ -255,7 +269,7 @@ class ExecutiveClosureEngine:
         elif is_evaluation_contamination(state.cognition.attention_focus):
             state.cognition.attention_focus = ""
 
-        if is_actionable_goal_text(selected_objective):
+        if is_actionable_goal_text(selected_objective) and not foreground_chat_active:
             state.cognition.modifiers["executive_objective"] = selected_objective
         else:
             state.cognition.modifiers.pop("executive_objective", None)
@@ -332,12 +346,15 @@ class ExecutiveClosureEngine:
             interrupt_reason=interrupt_reason,
         )
 
-        self._maybe_sync_self_model(self._last_snapshot, warmup=warmup_mode)
+        self._maybe_sync_self_model(
+            self._last_snapshot,
+            warmup=warmup_mode or foreground_chat_active,
+        )
         self._maybe_sync_goal_hierarchy(
             selected_objective,
             dominant_need,
             need_pressure,
-            warmup=warmup_mode,
+            warmup=warmup_mode or foreground_chat_active,
         )
 
         return state
@@ -599,17 +616,25 @@ class ExecutiveClosureEngine:
             record_degradation('executive_closure', exc)
             logger.debug("ExecutiveClosure: volition tick failed: %s", exc)
 
-    def _sync_active_goals(self, state: Any, selected_objective: str) -> int:
+    def _sync_active_goals(
+        self,
+        state: Any,
+        selected_objective: str,
+        *,
+        persist_selected: bool = True,
+    ) -> int:
         active = [
             goal
             for goal in list(getattr(state.cognition, "active_goals", []) or [])
             if not is_intrinsic_goal_text(goal)
+            and not is_transient_foreground_projection(goal)
             and not is_evaluation_contamination(
                 goal.get("description", "") if isinstance(goal, dict) else goal
             )
         ]
         if (
-            not is_evaluation_contamination(selected_objective)
+            persist_selected
+            and not is_evaluation_contamination(selected_objective)
             and is_actionable_goal_text(selected_objective)
         ):
             record = {
@@ -649,7 +674,7 @@ class ExecutiveClosureEngine:
                 return dict(self._cached_homeostasis_status)
         except TimeoutError:
             logger.debug("ExecutiveClosure: homeostasis pulse timed out; using cached status.")
-        except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as exc:
+        except (RuntimeError, asyncio.CancelledError, AttributeError) as exc:
             record_degradation('executive_closure', exc)
             logger.debug("ExecutiveClosure: homeostasis pulse failed: %s", exc)
         return dict(self._cached_homeostasis_status)
@@ -826,13 +851,20 @@ class ExecutiveClosureEngine:
         if is_intrinsic_goal_text(objective):
             return False
         if _origin_is_user_anchored(origin):
-            return True
+            return is_actionable_foreground_objective(objective)
         return False
 
     def _refresh_commitment(self, state: Any, now: float) -> None:
         """Create or refresh the current foreground task commitment."""
         objective = str(getattr(state.cognition, "current_objective", "") or "").strip()
         origin = str(getattr(state.cognition, "current_origin", "") or "")
+        if _origin_is_user_anchored(origin) and not is_actionable_foreground_objective(
+            objective
+        ):
+            if self._commitment and self._commitment.objective == objective:
+                self._commitment.completed = True
+                self._commitment = None
+            return
 
         if not self._is_user_task(objective, origin):
             return
@@ -850,6 +882,17 @@ class ExecutiveClosureEngine:
             max_hold_s=self._MAX_USER_TASK_HOLD_S,
         )
         self._last_objective_switch = now
+
+    def complete_foreground_turn(self, objective: str, origin: str) -> bool:
+        """Release matching in-memory hysteresis after the response completes."""
+        if not _origin_is_user_anchored(origin) or self._commitment is None:
+            return False
+        normalized = " ".join(str(objective or "").split())
+        if " ".join(self._commitment.objective.split()) != normalized:
+            return False
+        self._commitment.completed = True
+        self._commitment = None
+        return True
 
     def _active_commitment(self, now: float) -> ObjectiveCommitment | None:
         if self._commitment and self._commitment.active(now):

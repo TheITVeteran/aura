@@ -281,6 +281,77 @@ async def test_subconscious_sandbox_lease_rejects_payload_and_origin_substitutio
 
 
 @pytest.mark.asyncio
+async def test_autonomous_internal_reasoning_is_bounded_receipted_and_origin_bound():
+    manager = _manager()
+    arguments = {
+        "topic": "Assess current runtime stability and identify one useful follow-up.",
+        "roles": ["architect", "critic"],
+    }
+
+    decision = await manager.issue_child_lease(
+        "swarm_debate",
+        arguments,
+        origin="background_reflection",
+    )
+
+    assert decision.approved is True
+    assert decision.grant_id == "aura.autonomous-background-reflection"
+    valid, reason, record = manager.validate_context(
+        decision.context,
+        tool_name="swarm_debate",
+        arguments=arguments,
+        origin="background_reflection",
+        effect_scope="pure_compute",
+        risk_level="low",
+    )
+    assert (valid, reason) == (True, "standing_authority_lease_valid")
+    assert record is not None
+
+    closure = manager.finalize_child_lease(
+        decision.token,
+        success=True,
+        result={"ok": True, "output": "bounded consensus"},
+    )
+    assert closure["closed"] is True
+
+    for bad_arguments in (
+        {},
+        {"topic": "x", "roles": []},
+        {"topic": "x", "roles": ["architect"] * 4},
+        {"topic": "x", "roles": ["unbounded-role"]},
+        {"topic": "x" * 4097},
+        {"topic": "x", "write": True},
+    ):
+        denied = await _manager().issue_child_lease(
+            "swarm_debate",
+            bad_arguments,
+            origin="background_reflection",
+        )
+        assert denied.approved is False
+
+    for origin in ("unknown", "curiosity", "autonomous_task_engine"):
+        wrong_origin = await _manager().issue_child_lease(
+            "swarm_debate",
+            arguments,
+            origin=origin,
+        )
+        assert wrong_origin.approved is False
+
+    budgeted = _manager()
+    leases = [
+        await budgeted.issue_child_lease(
+            "swarm_debate",
+            {"topic": f"bounded reflection {index}"},
+            origin="background_reflection",
+        )
+        for index in range(7)
+    ]
+    assert all(lease.approved for lease in leases[:6])
+    assert leases[6].approved is False
+    assert leases[6].reason == "standing_authority_budget_exhausted"
+
+
+@pytest.mark.asyncio
 async def test_budget_is_atomic_and_survives_manager_restart():
     gateway = _StateGateway()
     receipts = _ReceiptStore()

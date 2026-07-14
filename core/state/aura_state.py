@@ -1,13 +1,16 @@
 from __future__ import annotations
+
+import asyncio
+import copy
+import hashlib
+import math
 import time
 import uuid
-import copy
-import asyncio
-import math
 from dataclasses import dataclass, field, fields
-from typing import TYPE_CHECKING, Any, Dict, Optional, Final
 from enum import Enum
-import hashlib
+from typing import TYPE_CHECKING, Any, Dict, Final, Optional
+
+from core.goals.objective_lifecycle import is_foreground_objective_origin
 from core.memory.retention_policy import working_history_retention_policy
 from core.motivation.constants import clone_motivation_budget_defaults
 
@@ -68,6 +71,8 @@ def _origin_is_user_anchored(origin: Any) -> bool:
     value = str(origin or "").strip().lower()
     if not value:
         return False
+    if is_foreground_objective_origin(value):
+        return True
     if value in _USER_INTENT_ORIGINS:
         return True
     return value.startswith("user:") or value.startswith("voice:") or value.startswith("api:") or value.startswith("test:")
@@ -462,7 +467,11 @@ class CognitiveContext:
 
     def sanitize_autonomy_state(self):
         current_text = _normalize_goal_text(self.current_objective)
-        if current_text and _is_speculative_autonomy_label(current_text) and not _origin_is_user_anchored(self.current_origin):
+        if (
+            current_text
+            and _is_speculative_autonomy_label(current_text)
+            and not _origin_is_user_anchored(self.current_origin)
+        ):
             self.current_objective = None
             self.current_origin = "system"
             if _normalize_goal_text(self.attention_focus) == current_text:
@@ -486,6 +495,36 @@ class CognitiveContext:
                 continue
             sanitized_goals.append(goal)
         self.active_goals = sanitized_goals
+
+    def sanitize_restored_autonomy_state(self):
+        """Repair stale foreground projections only at a restore boundary."""
+
+        from core.goals.objective_lifecycle import (
+            is_ephemeral_conversation_turn,
+            is_transient_foreground_projection,
+        )
+
+        self.sanitize_autonomy_state()
+        current_text = _normalize_goal_text(self.current_objective)
+        if (
+            current_text
+            and _origin_is_user_anchored(self.current_origin)
+            and is_ephemeral_conversation_turn(current_text)
+        ):
+            self.current_objective = None
+            self.current_origin = "system"
+            if _normalize_goal_text(self.attention_focus) == current_text:
+                self.attention_focus = None
+        self.pending_initiatives = [
+            item
+            for item in list(self.pending_initiatives or [])
+            if not is_transient_foreground_projection(item)
+        ]
+        self.active_goals = [
+            item
+            for item in list(self.active_goals or [])
+            if not is_transient_foreground_projection(item)
+        ]
 
     def trim_working_memory(self, limit: Optional[int] = None):
         self.sanitize_autonomy_state()

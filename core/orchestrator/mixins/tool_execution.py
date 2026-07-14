@@ -4,10 +4,12 @@ Extracts browser task and tool execution logic.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Any
 
+from core.collective.delegator import swarm_debate_failure_reason
 from core.container import ServiceContainer
 from core.executive.execution_policy import (
     classify_execution_risk,
@@ -22,6 +24,7 @@ from core.executive.standing_authority import (
     get_standing_authority_manager,
 )
 from core.runtime.errors import record_degradation
+from core.runtime.task_ownership import drain_owned_awaitable
 
 logger = logging.getLogger(__name__)
 _TOOL_EXECUTION_RECOVERABLE_ERRORS = (
@@ -191,7 +194,7 @@ class ToolExecutionMixin:
             or ServiceContainer.has("kernel_interface")
             or bool(getattr(ServiceContainer, "_registration_locked", False))
         )
-        router = self.router
+        router = getattr(self, "router", None)
         governance_owner = getattr(router, "owns_tool_execution_governance", None)
         _router_owns_governance = bool(
             callable(governance_owner) and governance_owner(tool_name)
@@ -733,7 +736,8 @@ class ToolExecutionMixin:
 
         # 0. Virtual & Internal Tools
         if tool_name == "swarm_debate":
-            if not self.swarm:
+            swarm = getattr(self, "swarm", None)
+            if not swarm:
                 result = {"ok": False, "error": "Swarm Delegator not available."}
                 await _finish_constitutional_tool_execution(
                     result,
@@ -747,16 +751,120 @@ class ToolExecutionMixin:
             topic = args.get("topic") or args.get("query") or self._current_objective
             roles = args.get("roles", ["architect", "critic"])
             self._emit_thought_stream(f"🐝 Engaging Swarm Debate: {topic[:100]}...")
-            result = await self.swarm.delegate_debate(topic, roles=roles, **kwargs)
+
+            async def _finalize_debate_result(
+                response: dict[str, Any],
+                *,
+                success: bool,
+                error: str = "",
+            ) -> dict[str, Any]:
+                # Close the synchronous standing lease before any cancellation
+                # can interrupt constitutional completion bookkeeping.
+                _record_coding_tool_event(response, success=success, error=error)
+                drained = await drain_owned_awaitable(
+                    _finish_constitutional_tool_execution(
+                        response,
+                        success=success,
+                        error=error,
+                    ),
+                    name="ToolExecution.swarm_debate.authority_completion",
+                    owner="tool_execution:swarm_debate",
+                    allow_during_shutdown=True,
+                )
+                drained.task.result()
+                if drained.cancellation is not None:
+                    raise drained.cancellation
+                return response
+
+            debate_result_ready = False
+            debate_terminalized = False
+            try:
+                result = await swarm.delegate_debate(topic, roles=roles, **kwargs)
+                debate_result_ready = True
+            except asyncio.CancelledError:
+                debate_error = "Swarm debate cancelled during execution."
+                response = {
+                    "ok": False,
+                    "status": "cancelled",
+                    "error": debate_error,
+                }
+                debate_terminalized = True
+                await _finalize_debate_result(
+                    response,
+                    success=False,
+                    error=debate_error,
+                )
+                raise
+            except _TOOL_EXECUTION_RECOVERABLE_ERRORS as exc:
+                _record_tool_degradation(
+                    exc,
+                    action="closed failed swarm debate authority lifecycle",
+                    severity="error",
+                )
+                debate_error = f"Swarm debate failed: {type(exc).__name__}: {exc}"[:240]
+                response = {
+                    "ok": False,
+                    "status": "failed",
+                    "error": debate_error,
+                }
+                debate_terminalized = True
+                return await _finalize_debate_result(
+                    response,
+                    success=False,
+                    error=debate_error,
+                )
+            finally:
+                if not debate_result_ready and not debate_terminalized:
+                    debate_error = "Swarm debate aborted before producing a result."
+                    response = {
+                        "ok": False,
+                        "status": "failed",
+                        "error": debate_error,
+                    }
+                    debate_terminalized = True
+                    await _finalize_debate_result(
+                        response,
+                        success=False,
+                        error=debate_error,
+                    )
+
+            debate_error = swarm_debate_failure_reason(result)
+            if debate_error:
+                response = {"ok": False, "error": debate_error}
+                debate_terminalized = True
+                return await _finalize_debate_result(
+                    response,
+                    success=False,
+                    error=debate_error,
+                )
             response = {"ok": True, "output": result}
-            await _finish_constitutional_tool_execution(response, success=True)
-            _record_coding_tool_event(response, success=True)
-            return response
+            debate_terminalized = True
+            return await _finalize_debate_result(response, success=True)
 
         try:
             # 1. Check if tool exists in registry
-            if tool_name not in self.router.skills:
-                # Fallback for notify_user which is sometimes a virtual alias
+            if router is None and tool_name == "notify_user":
+                result = {"ok": True, "message": args.get("message", "Done.")}
+                await _finish_constitutional_tool_execution(result, success=True)
+                _record_coding_tool_event(result, success=True)
+                return result
+
+            if router is None:
+                result = {"ok": False, "error": "Tool router unavailable."}
+                await _finish_constitutional_tool_execution(
+                    result,
+                    success=False,
+                    error="Tool router unavailable.",
+                )
+                _record_coding_tool_event(
+                    result,
+                    success=False,
+                    error="Tool router unavailable.",
+                )
+                return result
+
+            if tool_name not in router.skills:
+                # Fallback for notify_user which is sometimes a virtual alias.
                 if tool_name == "notify_user":
                     result = {"ok": True, "message": args.get("message", "Done.")}
                     await _finish_constitutional_tool_execution(result, success=True)
@@ -841,9 +949,9 @@ class ToolExecutionMixin:
                 from core.governance_context import governed_scope
 
                 async with governed_scope(_tool_handle.decision):
-                    result = await self.router.execute(tool_name, args, context)
+                    result = await router.execute(tool_name, args, context)
             else:
-                result = await self.router.execute(tool_name, args, context)
+                result = await router.execute(tool_name, args, context)
             if not isinstance(result, dict):
                 result = {"ok": True, "output": result}
 

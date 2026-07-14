@@ -14,8 +14,12 @@ import time
 from collections import deque
 from dataclasses import dataclass
 
+from core.autonomy.research_goal_filter import (
+    is_stale_or_prompt_scaffold_goal,
+    normalize_goal_text,
+)
 from core.container import ServiceContainer
-from core.autonomy.research_goal_filter import is_stale_or_prompt_scaffold_goal, normalize_goal_text
+from core.goals.objective_lifecycle import is_transient_foreground_projection
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.Agency")
@@ -544,6 +548,8 @@ def _is_generic_reentry_goal(initiative: dict) -> bool:
 
 
 def _is_quarantined_initiative(initiative: dict) -> bool:
+    if is_transient_foreground_projection(initiative):
+        return True
     if _is_generic_reentry_goal(initiative):
         return True
     goal = normalize_goal_text(_goal(initiative))

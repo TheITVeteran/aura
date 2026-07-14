@@ -10,6 +10,11 @@ from collections import deque
 from typing import Any
 
 from core.consciousness.executive_authority import get_executive_authority
+from core.goals.objective_lifecycle import (
+    finalize_foreground_turn_state,
+    is_foreground_objective_origin,
+    normalize_objective_origin,
+)
 from core.memory.retention_policy import working_history_retention_policy
 from core.runtime import background_policy
 from core.runtime.errors import record_degradation
@@ -39,23 +44,6 @@ _BACKGROUND_REFLECTIVE_MODES = frozenset(
         ThinkingMode.CREATIVE,
     }
 )
-_USER_FACING_ORIGINS = frozenset(
-    {
-        "user",
-        "voice",
-        "admin",
-        "api",
-        "desktop",
-        "desktop-ui",
-        "gui",
-        "ws",
-        "websocket",
-        "direct",
-        "external",
-        "native-shell",
-    }
-)
-
 _COGNITIVE_ENGINE_RECOVERABLE_ERRORS = (
     AttributeError,
     ConnectionError,
@@ -684,17 +672,11 @@ class CognitiveEngine:
 
     @staticmethod
     def _normalize_origin(origin: Any) -> str:
-        return str(origin or "").strip().lower().replace("-", "_")
+        return normalize_objective_origin(origin)
 
     @classmethod
     def _is_user_facing_origin(cls, origin: Any) -> bool:
-        normalized = cls._normalize_origin(origin)
-        if not normalized:
-            return False
-        if normalized in _USER_FACING_ORIGINS:
-            return True
-        tokens = {token for token in normalized.split("_") if token}
-        return bool(tokens & _USER_FACING_ORIGINS)
+        return is_foreground_objective_origin(origin)
 
     @classmethod
     def _resolve_origin(cls, origin: Any, context: dict[str, Any] | None = None) -> str:
@@ -1463,6 +1445,7 @@ class CognitiveEngine:
         """
         if not isinstance(context, dict):
             context = {}
+        foreground_turn_objective = str(objective or "")
         _bind_live_mind_generation_contract(context)
         if not str(context.get("user_surface_validation_prompt") or "").strip():
             context["user_surface_validation_prompt"] = str(
@@ -1551,7 +1534,11 @@ class CognitiveEngine:
                     state = temp_state
                     if self._is_user_facing_origin(origin):
                         state.transition_origin = origin
-                        state.cognition.current_origin = origin
+                        final_origin = getattr(state.cognition, "current_origin", "")
+                        if is_foreground_objective_origin(final_origin) or not str(
+                            final_origin or ""
+                        ).strip():
+                            state.cognition.current_origin = origin
                     success = True
             except TimeoutError:
                 logger.error("🛑 [COGNITION] Watchdog: Cognitive cycle TIMEOUT (%.1fs).", cycle_timeout)
@@ -1598,6 +1585,23 @@ class CognitiveEngine:
                         action="continued with current state after backup restore check failed",
                     )
                     logger.debug("Ignored Exception in cognitive_engine.py: %s", _e)
+
+        # Capture the routed objective before closing a foreground turn. Response
+        # extraction still needs it for action-imperative validation, but durable
+        # state must not retain a completed chat turn as autonomous work.
+        routed_obj = str(getattr(state.cognition, "current_objective", "") or "")
+        is_action_imperative = (
+            "[ACTION IMPERATIVE]" in objective or "[ACTION IMPERATIVE]" in routed_obj
+        )
+        if self._is_user_facing_origin(origin) and not is_background:
+            finalize_foreground_turn_state(
+                state,
+                objective=foreground_turn_objective,
+                origin=origin,
+            )
+            closure = get_container().get("executive_closure", default=None)
+            if closure is not None and hasattr(closure, "complete_foreground_turn"):
+                closure.complete_foreground_turn(foreground_turn_objective, origin)
 
         # ─── SUCCESS PATH (Unreachable before fix) ──────────────────────────
         # 5. Final State Commit
@@ -1668,17 +1672,6 @@ class CognitiveEngine:
                 break
 
         # 6. Extract Response
-        # 6. Extract Response
-        # [v49 Fix] Capture Action Imperative status before clearing state
-        routed_obj = str(getattr(state.cognition, "current_objective", "") or "")
-        is_action_imperative = (
-            "[ACTION IMPERATIVE]" in objective or "[ACTION IMPERATIVE]" in routed_obj
-        )
-
-        # Clear state to prevent redundant background re-triggering
-        state.cognition.current_objective = None
-        state.cognition.current_origin = None
-
         last_msg = state.cognition.working_memory[-1] if state.cognition.working_memory else None
         if last_msg and last_msg.get("role") == "assistant":
             self.autopoiesis.experience_friction(objective[:20], 0.05)

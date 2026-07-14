@@ -4,11 +4,11 @@ from types import SimpleNamespace
 
 import pytest
 
+from core.brain.llm.mlx_client import _notify_closed_loop_output as notify_mlx_closed_loop
 from core.consciousness.closed_loop import ClosedCausalLoop, notify_closed_loop_output
 from core.consciousness.executive_closure import ExecutiveClosureEngine
 from core.state.aura_state import AuraState
 from core.utils.output_gate import AutonomousOutputGate
-from core.brain.llm.mlx_client import _notify_closed_loop_output as notify_mlx_closed_loop
 
 
 class AsyncCallRecorder:
@@ -284,6 +284,78 @@ async def test_executive_closure_keeps_background_control_prompt_out_of_foregrou
     assert closure["selected_objective"] == ""
     assert closure["committed_objective"] == ""
     assert "executive_background_commitment" not in result.cognition.modifiers
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "Ok. Once more. You with me?",
+        "What did you learn today?",
+    ],
+)
+async def test_executive_closure_does_not_promote_chat_turn_to_goal_or_self_model(
+    service_container,
+    prompt,
+):
+    state = AuraState.default()
+    state.loop_cycle = 24
+    state.cognition.current_objective = prompt
+    state.cognition.current_origin = "desktop_ui"
+    state.response_modifiers["intent_type"] = "CHAT"
+    goal_hierarchy = SimpleNamespace(
+        get_next_goal=lambda: None,
+        add_goal=CallRecorder(),
+    )
+    self_model = SimpleNamespace(update_belief=AsyncCallRecorder())
+    service_container.register_instance("goal_hierarchy", goal_hierarchy)
+    service_container.register_instance("self_model", self_model)
+
+    engine = ExecutiveClosureEngine()
+    result = await engine.integrate(state)
+
+    assert result.cognition.current_objective == prompt
+    assert result.cognition.active_goals == []
+    assert "executive_objective" not in result.cognition.modifiers
+    assert engine._commitment is None
+    goal_hierarchy.add_goal.assert_not_called()
+    assert self_model.update_belief.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "Can you investigate runtime pressure?",
+        "Ensure production remains stable",
+    ],
+)
+async def test_executive_closure_preserves_task_commitment_before_routing(
+    service_container,
+    prompt,
+):
+    state = AuraState.default()
+    state.loop_cycle = 24
+    state.cognition.current_objective = prompt
+    state.cognition.current_origin = "api"
+    assert "intent_type" not in state.response_modifiers
+    goal_hierarchy = SimpleNamespace(
+        get_next_goal=lambda: None,
+        add_goal=CallRecorder(),
+    )
+    self_model = SimpleNamespace(update_belief=AsyncCallRecorder())
+    service_container.register_instance("goal_hierarchy", goal_hierarchy)
+    service_container.register_instance("self_model", self_model)
+
+    engine = ExecutiveClosureEngine()
+    result = await engine.integrate(state)
+    await asyncio.sleep(0)
+
+    assert engine._commitment is not None
+    assert engine._commitment.objective == prompt
+    assert any(goal.get("description") == prompt for goal in result.cognition.active_goals)
+    goal_hierarchy.add_goal.assert_called_once()
+    self_model.update_belief.assert_awaited_once()
 
 
 def test_notify_closed_loop_output_routes_only_to_running_loop(service_container):

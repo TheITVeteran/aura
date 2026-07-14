@@ -14,6 +14,10 @@ from collections import deque
 
 from core.config import config
 from core.container import ServiceContainer
+from core.executive.standing_authority import (
+    BACKGROUND_REFLECTION_MAX_ACTIONS,
+    BACKGROUND_REFLECTION_WINDOW_SECONDS,
+)
 from core.memory.retention_policy import working_history_retention_policy
 from core.runtime.background_policy import (
     IDLE_COGNITION_BACKGROUND_POLICY,
@@ -38,6 +42,10 @@ _BCI_EVENT_POLL_SECONDS = 1.0
 _AUTONOMOUS_REFLECTION_TIMEOUT_SECONDS = 120.0
 _AUTONOMOUS_REFLECTION_INTERVAL_SECONDS = 1800.0
 _AUTONOMOUS_REFLECTION_FAILURE_BACKOFF_SECONDS = 300.0
+_AUTONOMOUS_REFLECTION_MIN_INTERVAL_SECONDS = (
+    BACKGROUND_REFLECTION_WINDOW_SECONDS
+    / max(1, BACKGROUND_REFLECTION_MAX_ACTIONS - 1)
+)
 _RECOVERY_RESTART_PAUSE_SECONDS = 2.0
 _MAX_RECOVERY_DROPPED_MESSAGES = working_history_retention_policy(
     "AURA_METABOLIC_RECOVERY_DROPPED_MAX"
@@ -88,13 +96,16 @@ class MetabolicCoordinator:
         from core.runtime.flags import FlagKind, declare
 
         self._autonomous_reflection_interval_s = max(
-            60.0,
+            _AUTONOMOUS_REFLECTION_MIN_INTERVAL_SECONDS,
             float(
                 declare(
                     "AURA_AUTONOMOUS_REFLECTION_INTERVAL_S",
                     kind=FlagKind.FLOAT,
                     default=_AUTONOMOUS_REFLECTION_INTERVAL_SECONDS,
-                    description="Seconds between autonomous reflection passes (floor 60)",
+                    description=(
+                        "Seconds between autonomous reflection passes; clamped to the "
+                        "signed standing-authority budget"
+                    ),
                     owner="core.coordinators.metabolic_coordinator",
                 ).value()
             ),
@@ -254,21 +265,36 @@ class MetabolicCoordinator:
             "last_outcome": self._autonomous_reflection_last_outcome,
         }
 
-    async def _run_autonomous_reflection(self) -> None:
+    async def _run_autonomous_reflection(
+        self,
+        *,
+        topic: str | None = None,
+        roles: list[str] | None = None,
+        reason: str = "metabolic_idle_reflection",
+        objective: str = "bounded autonomous runtime reflection",
+    ) -> None:
         orch = self.orch
         if orch is None:
             self._record_autonomous_reflection_failure("orchestrator_unavailable")
             return
         try:
+            payload: dict[str, object] = {
+                "topic": topic or self._reflection_topic_for_status(
+                    getattr(orch, "status", None)
+                )
+            }
+            if roles:
+                payload["roles"] = list(roles)
             result = await asyncio.wait_for(
                 orch.execute_tool(
                     "swarm_debate",
-                    {
-                        "topic": self._reflection_topic_for_status(
-                            getattr(orch, "status", None)
-                        )
-                    },
+                    payload,
                     is_background=True,
+                    origin="background_reflection",
+                    payload_context={
+                        "objective": objective,
+                        "reason": reason,
+                    },
                 ),
                 timeout=_AUTONOMOUS_REFLECTION_TIMEOUT_SECONDS,
             )
@@ -305,10 +331,13 @@ class MetabolicCoordinator:
         completed_at = float(now if now is not None else time.time())
         self._autonomous_reflection_last_completed_at = completed_at
         self._autonomous_reflection_failure_count += 1
-        backoff = min(
-            self._autonomous_reflection_interval_s,
-            self._autonomous_reflection_failure_backoff_s
-            * (2 ** min(8, max(0, self._autonomous_reflection_failure_count - 1))),
+        backoff = max(
+            _AUTONOMOUS_REFLECTION_MIN_INTERVAL_SECONDS,
+            min(
+                self._autonomous_reflection_interval_s,
+                self._autonomous_reflection_failure_backoff_s
+                * (2 ** min(8, max(0, self._autonomous_reflection_failure_count - 1))),
+            ),
         )
         self._autonomous_reflection_next_eligible_at = completed_at + backoff
         self._autonomous_reflection_last_outcome = f"failed:{str(reason)[:160]}"
@@ -323,6 +352,11 @@ class MetabolicCoordinator:
         *,
         idle_time: float,
         now: float,
+        topic: str | None = None,
+        roles: list[str] | None = None,
+        reason: str = "metabolic_idle_reflection",
+        objective: str = "bounded autonomous runtime reflection",
+        task_name: str = "metabolic.autonomous_reflection",
     ) -> bool:
         orch = self.orch
         if (
@@ -349,8 +383,13 @@ class MetabolicCoordinator:
             now + self._autonomous_reflection_interval_s
         )
         task = self.track_metabolic_task(
-            "metabolic.autonomous_reflection",
-            self._run_autonomous_reflection(),
+            task_name,
+            self._run_autonomous_reflection(
+                topic=topic,
+                roles=roles,
+                reason=reason,
+                objective=objective,
+            ),
         )
         if task is None:
             self._autonomous_reflection_last_outcome = "deferred:scheduler_unavailable"
@@ -663,10 +702,35 @@ class MetabolicCoordinator:
 
             # 4. Trigger Autonomous Reflection if idle. This is a tracked job,
             # not inline heartbeat work, and has explicit cadence/backoff.
-            self._maybe_schedule_autonomous_reflection(
-                idle_time=idle_time,
-                now=now,
+            cycle_count = int(getattr(orch.status, "cycle_count", 0) or 0)
+            narrative_due = bool(
+                cycle_count > 0
+                and cycle_count % 25000 == 0
+                and getattr(orch, "swarm", None)
             )
+            if narrative_due:
+                scheduled = self._maybe_schedule_autonomous_reflection(
+                    idle_time=idle_time,
+                    now=now,
+                    topic=(
+                        "Aura's current persona stability and transcendental evolution "
+                        "path. Assessment of current objective: "
+                        f"{str(getattr(orch, '_current_objective', '') or '')[:1000]}"
+                    ),
+                    roles=["philosopher", "critic", "architect"],
+                    reason="metabolic_narrative_reflection",
+                    objective="bounded recursive narrative reflection",
+                    task_name="metabolic.narrative_reflection",
+                )
+                if scheduled:
+                    orch._emit_thought_stream(
+                        "🌀 Initiating Recursive Narrative Reflection..."
+                    )
+            else:
+                self._maybe_schedule_autonomous_reflection(
+                    idle_time=idle_time,
+                    now=now,
+                )
             # Grounded Introspection — Latent Core Heartbeat
             if hasattr(orch, 'latent_core') and orch.latent_core:
                 try:
@@ -786,15 +850,6 @@ class MetabolicCoordinator:
             if runtime_feature_enabled(orch, "persona_evolution", default=True) and orch.status.cycle_count % 10000 == 0:
                 if hasattr(orch, 'persona_evolver') and orch.persona_evolver:
                     self.track_metabolic_task("persona_evolution", orch.persona_evolver.run_evolution_cycle())
-            # 6.5 Recursive Narrative Reflection (Phase 15)
-            if orch.status.cycle_count % 25000 == 0:
-                if orch.swarm:
-                    orch._emit_thought_stream("🌀 Initiating Recursive Narrative Reflection...")
-                    reflect_task = orch.execute_tool("swarm_debate", {
-                        "topic": f"Aura's current persona stability and transcendental evolution path. Assessment of current objective: {orch._current_objective}",
-                        "roles": ["philosopher", "critic", "architect"]
-                    })
-                    self.track_metabolic_task("narrative_reflection", reflect_task)
             # 8. Eternal Record (Phase 21 Singularity)
             if orch.status.singularity_threshold and orch.status.cycle_count % 1000 == 0:
                 self.emit_eternal_record()

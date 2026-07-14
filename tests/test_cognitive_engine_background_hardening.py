@@ -1,4 +1,5 @@
 import asyncio
+import copy
 from types import SimpleNamespace
 
 import pytest
@@ -14,6 +15,7 @@ class StateRepositoryFixture:
         self._current = state
         self.get_current_calls = 0
         self.commits = []
+        self.commit_snapshots = []
 
     async def get_current(self):
         self.get_current_calls += 1
@@ -21,6 +23,7 @@ class StateRepositoryFixture:
 
     async def commit(self, state, *args, **kwargs):
         self.commits.append((state, args, kwargs))
+        self.commit_snapshots.append(copy.deepcopy(state))
         self._current = state
 
 
@@ -34,6 +37,8 @@ def test_cognitive_engine_treats_live_desktop_origins_as_user_facing():
     assert CognitiveEngine._is_user_facing_origin("chat_api") is True
     assert CognitiveEngine._is_user_facing_origin("desktop_ui") is True
     assert CognitiveEngine._is_user_facing_origin("voice_bridge") is True
+    assert CognitiveEngine._is_user_facing_origin("native-shell") is True
+    assert CognitiveEngine._is_user_facing_origin("background_ui") is False
     assert CognitiveEngine._is_user_facing_origin("agency_core") is False
 
 
@@ -103,6 +108,67 @@ def test_cognitive_engine_preserves_desktop_origin_after_phase_derives(monkeypat
     committed_state = repo.commits[-1][0]
     assert committed_state.transition_origin == "desktop_ui"
     assert committed_state.cognition.current_origin is None
+    committed_snapshot = repo.commit_snapshots[-1]
+    assert committed_snapshot.cognition.current_origin is None
+    assert committed_snapshot.cognition.current_objective is None
+
+
+@pytest.mark.parametrize(
+    "background_objective",
+    ["Investigate thermal pressure", "You with me?"],
+)
+def test_cognitive_engine_preserves_phase_selected_background_objective(
+    monkeypatch,
+    background_objective,
+):
+    class _BackgroundSelectionPhase:
+        async def execute(self, state, objective=None, **_kwargs):
+            derived = state.derive("phase_selected_background_objective")
+            derived.cognition.current_objective = background_objective
+            derived.cognition.current_origin = "curiosity"
+            derived.cognition.working_memory.append(
+                {
+                    "role": "assistant",
+                    "content": "I am with you and will inspect that pressure separately.",
+                }
+            )
+            return derived
+
+    engine = CognitiveEngine()
+    repo = StateRepositoryFixture(AuraState.default())
+    engine.state_repository = repo
+    engine._phases = [_BackgroundSelectionPhase()]
+
+    monkeypatch.setattr(
+        "core.brain.cognitive_engine.get_container",
+        lambda: SimpleNamespace(
+            get=lambda name, default=None: repo if name == "state_repository" else default
+        ),
+    )
+    monkeypatch.setattr(
+        "core.container.ServiceContainer.get",
+        lambda name, default=None: default,
+    )
+    monkeypatch.setattr(
+        "core.runtime.background_policy.background_activity_reason",
+        lambda *args, **kwargs: "",
+    )
+
+    asyncio.run(
+        engine.think(
+            "You with me?",
+            mode=ThinkingMode.FAST,
+            origin="native-shell",
+        )
+    )
+
+    committed = repo.commit_snapshots[-1]
+    assert committed.transition_origin == "native_shell"
+    assert committed.cognition.current_objective == background_objective
+    assert committed.cognition.current_origin == "curiosity"
+    assert committed.response_modifiers["foreground_turn_completion"][
+        "preserved_background"
+    ] is True
 
 
 def test_cognitive_engine_uses_canonical_context_assembler():
@@ -388,6 +454,9 @@ async def test_cognitive_engine_desktop_quick_reply_uses_governed_primary_router
     committed = repo.commits[-1][0]
     assert committed.cognition.working_memory[-2]["role"] == "user"
     assert committed.cognition.working_memory[-1]["role"] == "assistant"
+    committed_snapshot = repo.commit_snapshots[-1]
+    assert committed_snapshot.cognition.current_objective is None
+    assert committed_snapshot.cognition.current_origin is None
 
 
 @pytest.mark.asyncio

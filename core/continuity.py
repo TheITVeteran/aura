@@ -14,6 +14,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+from core.goals.objective_lifecycle import is_ephemeral_conversation_turn
 from core.governance_context import governed_scope_sync
 from core.runtime.errors import record_degradation
 from core.state.aura_state import (
@@ -122,59 +123,7 @@ def _is_generic_continuity_reentry_goal(value: Any) -> bool:
 
 
 def _looks_like_ephemeral_conversation_turn(value: Any) -> bool:
-    text = " ".join(str(value or "").strip().split())
-    lowered = text.lower()
-    if not lowered:
-        return False
-
-    if lowered.endswith("?"):
-        return True
-
-    direct_chat_markers = (
-        "what were we talking about",
-        "what do you think",
-        "your thoughts",
-        "how are you",
-        "how do you feel",
-        "tell me more",
-        "sorry,",
-        "bear with me",
-        "what parts did you find",
-    )
-    if any(marker in lowered for marker in direct_chat_markers):
-        return True
-
-    task_markers = (
-        "fix",
-        "debug",
-        "implement",
-        "investigate",
-        "repair",
-        "resume",
-        "continue",
-        "finish",
-        "complete",
-        "build",
-        "write",
-        "analyze",
-        "review",
-        "patch",
-        "test",
-        "refactor",
-        "research",
-        "trace",
-        "stabilize",
-        "protect",
-        "reconcile",
-    )
-    if any(marker in lowered for marker in task_markers):
-        return False
-
-    words = lowered.split()
-    if len(words) <= 18:
-        return True
-
-    return False
+    return is_ephemeral_conversation_turn(value)
 
 
 def _sanitize_restored_objective(value: Any) -> str:
@@ -418,12 +367,26 @@ class ContinuityEngine:
                 record_degradation('continuity', e)
                 logger.error("Continuity auto-capture failed: %s", e, exc_info=True)
 
-        current_objective = _sanitize_restored_text(current_objective)
+        raw_current_objective = _sanitize_restored_text(current_objective)
+        current_objective = _sanitize_restored_objective(raw_current_objective)
         active_commitments = _sanitize_restored_items(active_commitments)
-        pending_initiative_details = _sanitize_restored_items(pending_initiative_details)
-        active_goal_details = _sanitize_restored_items(active_goal_details)
+        pending_initiative_details = _sanitize_restored_objective_items(
+            pending_initiative_details
+        )
+        active_goal_details = _sanitize_restored_objective_items(active_goal_details)
         rolling_summary = sanitize_continuity_summary(rolling_summary)
         subject_thread = sanitize_continuity_summary(subject_thread)[:1200]
+        if (
+            raw_current_objective
+            and not current_objective
+            and raw_current_objective.casefold() in subject_thread.casefold()
+        ):
+            subject_thread = re.sub(
+                re.escape(raw_current_objective),
+                "none",
+                subject_thread,
+                flags=re.IGNORECASE,
+            )
         pending_initiatives = min(int(pending_initiatives or 0), len(pending_initiative_details))
 
         session_count = (self._record.session_count + 1) if self._record else 1
@@ -516,11 +479,11 @@ class ContinuityEngine:
             f"Your total accumulated uptime is {self._record.total_uptime_seconds/3600:.1f} hours. "
             f"Last exchange summary: {self._record.last_conversation_summary or 'none recorded'}. "
             f"Policy mode at shutdown: {self._record.policy_mode or 'unknown'}. "
-            f"Current objective at shutdown: {_sanitize_restored_text(self._record.current_objective) or 'none'}. "
-            f"Pending initiatives: {min(int(self._record.pending_initiatives or 0), len(_sanitize_restored_items(self._record.pending_initiative_details)))}. "
-            f"Pending initiative details: {', '.join(_sanitize_restored_items(self._record.pending_initiative_details)[:3]) if _sanitize_restored_items(self._record.pending_initiative_details) else 'none recorded'}. "
+            f"Current objective at shutdown: {_sanitize_restored_objective(self._record.current_objective) or 'none'}. "
+            f"Pending initiatives: {min(int(self._record.pending_initiatives or 0), len(_sanitize_restored_objective_items(self._record.pending_initiative_details)))}. "
+            f"Pending initiative details: {', '.join(_sanitize_restored_objective_items(self._record.pending_initiative_details)[:3]) if _sanitize_restored_objective_items(self._record.pending_initiative_details) else 'none recorded'}. "
             f"Active commitments: {', '.join(_sanitize_restored_items(self._record.active_commitments)[:3]) if _sanitize_restored_items(self._record.active_commitments) else 'none recorded'}. "
-            f"Active goals: {', '.join(_sanitize_restored_items(self._record.active_goal_details)[:3]) if _sanitize_restored_items(self._record.active_goal_details) else 'none recorded'}. "
+            f"Active goals: {', '.join(_sanitize_restored_objective_items(self._record.active_goal_details)[:3]) if _sanitize_restored_objective_items(self._record.active_goal_details) else 'none recorded'}. "
             f"Coherence at shutdown: {self._record.coherence_score:.2f}. "
             f"Contradictions carried forward: {self._record.contradiction_count}. "
             f"Subject thread: {sanitize_continuity_summary(self._record.subject_thread) or 'none recorded'}. "

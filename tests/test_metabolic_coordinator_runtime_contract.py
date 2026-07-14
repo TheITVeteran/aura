@@ -21,6 +21,22 @@ class _Tracker:
     track = create_task
 
 
+def test_autonomous_reflection_interval_is_clamped_to_authority_budget(monkeypatch):
+    import core.coordinators.metabolic_coordinator as metabolic_module
+    import core.runtime.flags as flags_module
+
+    def _declare(name, **_kwargs):
+        value = 60.0 if name == "AURA_AUTONOMOUS_REFLECTION_INTERVAL_S" else 300.0
+        return SimpleNamespace(value=lambda: value)
+
+    monkeypatch.setattr(flags_module, "declare", _declare)
+    coord = MetabolicCoordinator(orch=SimpleNamespace())
+
+    assert coord._autonomous_reflection_interval_s == (
+        metabolic_module._AUTONOMOUS_REFLECTION_MIN_INTERVAL_SECONDS
+    )
+
+
 def _orch_for_cycle():
     async def _trigger(_event, _payload):
         return None
@@ -230,8 +246,8 @@ async def test_autonomous_reflection_is_cadenced_and_requires_meaningful_result(
     tracker = _Tracker()
     calls = []
 
-    async def _execute_tool(name, payload, *, is_background):
-        calls.append((name, payload, is_background))
+    async def _execute_tool(name, payload, **kwargs):
+        calls.append((name, payload, kwargs))
         return {"ok": True, "output": "A grounded internal consensus."}
 
     orch = SimpleNamespace(
@@ -255,12 +271,41 @@ async def test_autonomous_reflection_is_cadenced_and_requires_meaningful_result(
     await asyncio.sleep(0)
 
     assert len(calls) == 1
+    assert calls[0][2] == {
+        "is_background": True,
+        "origin": "background_reflection",
+        "payload_context": {
+            "objective": "bounded autonomous runtime reflection",
+            "reason": "metabolic_idle_reflection",
+        },
+    }
     assert coord.autonomous_reflection_status()["last_outcome"] == "completed"
     assert not coord._maybe_schedule_autonomous_reflection(
         idle_time=600.0,
         now=now + 1.0,
     )
     assert len(calls) == 1
+
+    assert coord._maybe_schedule_autonomous_reflection(
+        idle_time=600.0,
+        now=now + 3601.0,
+        topic="Bounded narrative reflection",
+        roles=["philosopher", "critic", "architect"],
+        reason="metabolic_narrative_reflection",
+        objective="bounded recursive narrative reflection",
+        task_name="metabolic.narrative_reflection",
+    )
+    await tracker.tasks[-1][1]
+
+    assert tracker.tasks[-1][0] == "metabolic.narrative_reflection"
+    assert calls[-1][1] == {
+        "topic": "Bounded narrative reflection",
+        "roles": ["philosopher", "critic", "architect"],
+    }
+    assert calls[-1][2]["payload_context"] == {
+        "objective": "bounded recursive narrative reflection",
+        "reason": "metabolic_narrative_reflection",
+    }
 
 
 @pytest.mark.asyncio
@@ -269,8 +314,9 @@ async def test_autonomous_reflection_failure_uses_exponential_retry_backoff(monk
 
     tracker = _Tracker()
 
-    async def _execute_tool(_name, _payload, *, is_background):
-        assert is_background is True
+    async def _execute_tool(_name, _payload, **kwargs):
+        assert kwargs["is_background"] is True
+        assert kwargs["origin"] == "background_reflection"
         return {
             "ok": True,
             "output": "Swarm failed to produce a consensus (timeout or execution failure).",
@@ -299,4 +345,6 @@ async def test_autonomous_reflection_failure_uses_exponential_retry_backoff(monk
 
     assert status["failure_count"] == 1
     assert str(status["last_outcome"]).startswith("failed:")
-    assert coord._autonomous_reflection_next_eligible_at >= now + 299.0
+    assert coord._autonomous_reflection_next_eligible_at >= (
+        now + metabolic_module._AUTONOMOUS_REFLECTION_MIN_INTERVAL_SECONDS - 1.0
+    )

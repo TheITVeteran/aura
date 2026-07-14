@@ -51,6 +51,28 @@ def test_shutdown_commit_bus_quieting_is_limited_to_state_vault_shutdown() -> No
     assert actor_shutdown_commit("state_vault", "get_state", payload) is False
 
 
+def test_state_repository_sanitizes_only_explicit_restored_snapshot():
+    from core.state.aura_state import AuraState
+
+    prompt = "Ok. Once more. You with me?"
+    state = AuraState.default()
+    state.cognition.current_objective = prompt
+    state.cognition.current_origin = "api"
+    state.cognition.active_goals = [
+        {
+            "description": prompt,
+            "source": "executive_closure",
+            "metadata": {"foreground_turn": True},
+        }
+    ]
+    repo = StateRepository(is_vault_owner=True)
+    repo._current = state
+
+    assert repo._sanitize_restored_state() is True
+    assert state.cognition.current_objective is None
+    assert state.cognition.active_goals == []
+
+
 def test_state_repository_reuses_aiosqlite_connection_across_event_loops(tmp_path):
     """aiosqlite 0.20+ is loop-agnostic; access must not spawn worker churn."""
 

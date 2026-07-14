@@ -16,6 +16,7 @@ from typing import Any
 
 from core.container import ServiceContainer
 from core.goals.goal_text import is_actionable_goal_text, is_intrinsic_goal_text
+from core.goals.objective_lifecycle import is_transient_foreground_projection
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 from core.state.aura_state import _origin_is_user_anchored
@@ -226,8 +227,15 @@ class GoalEngine:
         self._snapshot_refresh_inflight = False
         self._snapshot_refresh_lock = threading.Lock()
         self._initialize()
+        quarantined = self.quarantine_transient_foreground_goals()
         self.subgoals_stack_path = self._db_path.parent / "subgoals_stack.json"
         self._subgoals_stack = self._load_subgoals_stack()
+        if quarantined:
+            logger.info(
+                "GoalEngine quarantined %d transient foreground projection(s): %s",
+                len(quarantined),
+                ", ".join(quarantined[:5]),
+            )
         logger.info("GoalEngine initialized with durable store at %s", self._db_path)
 
     @staticmethod
@@ -289,6 +297,56 @@ class GoalEngine:
                 connection.commit()
             finally:
                 connection.close()
+
+    def quarantine_transient_foreground_goals(self) -> list[str]:
+        """Auditably abandon dialogue turns that leaked into durable goals."""
+
+        if self._conn is None:
+            return []
+        now = self._now()
+        quarantined: list[str] = []
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM goals WHERE status IN ('queued', 'in_progress', 'blocked', 'paused')"
+            ).fetchall()
+            for row in rows:
+                record = self._row_to_record(row)
+                payload = record.to_dict()
+                if not is_transient_foreground_projection(payload):
+                    continue
+                metadata = dict(record.metadata or {})
+                metadata["quarantine"] = {
+                    "reason": "transient_foreground_projection",
+                    "prior_status": record.status,
+                    "quarantined_at": now,
+                }
+                summary = (
+                    "Quarantined after provenance repair: a completed foreground "
+                    "conversation turn was incorrectly promoted into autonomous work."
+                )
+                self._conn.execute(
+                    """
+                    UPDATE goals
+                    SET status = ?, summary = ?, metadata_json = ?,
+                        updated_at = ?, completed_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        GoalStatus.ABANDONED.value,
+                        summary,
+                        json.dumps(metadata, sort_keys=True),
+                        now,
+                        now,
+                        record.id,
+                    ),
+                )
+                quarantined.append(record.id)
+            if quarantined:
+                self._conn.commit()
+        if quarantined:
+            self._snapshot_cache = None
+            self._snapshot_cache_at = 0.0
+        return quarantined
 
     def _load_subgoals_stack(self) -> list[dict[str, Any]]:
         if not self.subgoals_stack_path.exists():

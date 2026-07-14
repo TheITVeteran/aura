@@ -250,30 +250,21 @@ class AuraKernel:
         )
 
     def _finalize_foreground_turn_state(self, *, objective: str, turn_origin: str) -> None:
-        if self.state is None:
-            return
-        if not self._is_user_facing_origin(turn_origin):
-            return
+        from core.goals.objective_lifecycle import finalize_foreground_turn_state
 
-        final_origin = self._normalize_origin(getattr(self.state.cognition, "current_origin", ""))
-        final_objective = str(getattr(self.state.cognition, "current_objective", "") or "")
-
-        # Preserve a newly seeded background objective that replaced the
-        # foreground turn during the same tick.
-        if (
-            final_objective
-            and final_objective != objective
-            and not self._is_user_facing_origin(final_origin)
-        ):
+        receipt = finalize_foreground_turn_state(
+            self.state,
+            objective=objective,
+            origin=turn_origin,
+        )
+        closure = ServiceContainer.get("executive_closure", default=None)
+        if closure is not None and hasattr(closure, "complete_foreground_turn"):
+            closure.complete_foreground_turn(objective, turn_origin)
+        if receipt.get("preserved_background"):
             logger.debug(
-                "Kernel: preserving post-turn background objective '%s' from origin=%s.",
-                final_objective[:80],
-                final_origin or "unknown",
+                "Kernel: preserved a post-turn background objective after closing %s.",
+                receipt.get("objective_digest") or "foreground turn",
             )
-            return
-
-        self.state.cognition.current_objective = None
-        self.state.cognition.current_origin = None
 
     def _phase_timeout_seconds(self, phase_name: str, *, priority: bool) -> float:
         """Give foreground response generation enough headroom without letting background stalls monopolize the lock.
@@ -1329,6 +1320,14 @@ class AuraKernel:
                 logger.error("Constitutional closure stamp failed: %s", _cc_err, exc_info=True)
             # ────────────────────────────────────────────────────────────────
 
+            # A foreground objective is a live turn, not a durable autonomous
+            # goal. Close it before persistence so proxy serialization cannot
+            # race the post-return cleanup.
+            self._finalize_foreground_turn_state(
+                objective=objective,
+                turn_origin=turn_origin,
+            )
+
             # Persistence
             # [STABILITY v53] Timeout guard — vault commit can hang on slow disk/network
             try:
@@ -1459,8 +1458,6 @@ class AuraKernel:
                     action="completed tick without structured thought trace entry",
                 )
                 logger.debug("Tracer failed: %s", e)
-
-            self._finalize_foreground_turn_state(objective=objective, turn_origin=turn_origin)
 
             # Record completion timestamp for telemetry staleness detection
             self._last_tick_completed_at = time.time()

@@ -83,10 +83,13 @@ def test_channels_are_real_organs_not_synthetic(report):
     )
 
 
-def test_perturbation_campaign_ran_and_beats_sham(report):
-    if report["mode"] == "live_api":
-        pytest.skip("the live instance is never perturbed by tooling")
+def _assert_campaign_contract(report: dict) -> None:
     campaign = report["campaign"]
+    if report["mode"] == "live_api":
+        assert campaign["trials_requested"] == 0
+        assert campaign["trials_ran"] == 0
+        assert "never perturbed" in campaign["note"]
+        return
     assert campaign["trials_ran"] >= 4, "a real campaign, not a single anecdote"
     # every executed trial carries a Will receipt — the probe is governed
     for trial in campaign["trials"]:
@@ -102,11 +105,36 @@ def test_perturbation_campaign_ran_and_beats_sham(report):
     )
 
 
-def test_workload_is_transparent(report):
+def test_perturbation_campaign_ran_and_beats_sham(report):
+    _assert_campaign_contract(report)
+
+
+def _assert_workload_contract(report: dict) -> None:
     if report["mode"] == "live_api":
-        pytest.skip("live mode has no injected workload")
+        assert "workload" not in report
+        assert "running naturally" in report["scope_claim"]
+        return
     workload = report["workload"]
     assert workload["ticks"] >= 1000
     assert workload["coupling"], "the injected couplings must be declared"
     outcomes = workload["decision_outcomes"]
     assert sum(outcomes.values()) >= 1000, "real decision traffic"
+
+
+def test_workload_is_transparent(report):
+    _assert_workload_contract(report)
+
+
+def test_live_api_mode_has_explicit_nonintervention_contract():
+    live_report = {
+        "mode": "live_api",
+        "scope_claim": "The live mind is sampled read-only while running naturally.",
+        "campaign": {
+            "trials_requested": 0,
+            "trials_ran": 0,
+            "note": "live instance is never perturbed by tooling",
+        },
+    }
+
+    _assert_campaign_contract(live_report)
+    _assert_workload_contract(live_report)

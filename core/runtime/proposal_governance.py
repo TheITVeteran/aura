@@ -1,14 +1,14 @@
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
 
 import inspect
 import logging
 from typing import Any, Dict, Optional, Tuple
 
-from core.constitution import get_constitutional_core
 from core.consciousness.executive_authority import get_executive_authority
+from core.constitution import get_constitutional_core
+from core.goals.objective_lifecycle import is_transient_foreground_projection
 from core.health.degraded_events import record_degraded_event
+from core.runtime.errors import record_degradation
 from core.runtime.service_access import resolve_state_repository
 
 logger = logging.getLogger("Aura.ProposalGovernance")
@@ -34,6 +34,18 @@ async def propose_governed_initiative_to_state(
         return state, {"action": "rejected", "reason": "state_missing", "goal": normalized_goal}
     if len(normalized_goal) < 4:
         return state, {"action": "rejected", "reason": "empty_goal", "goal": normalized_goal}
+    candidate = {
+        "goal": normalized_goal,
+        "source": source,
+        "type": kind,
+        "metadata": dict(metadata or {}),
+    }
+    if is_transient_foreground_projection(candidate):
+        return state, {
+            "action": "quarantined",
+            "reason": "transient_foreground_projection",
+            "goal": normalized_goal,
+        }
 
     constitution = get_constitutional_core(orchestrator)
     approved, reason, authority_decision = await constitution.approve_initiative(

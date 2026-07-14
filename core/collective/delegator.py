@@ -37,6 +37,24 @@ DELEGATOR_RECOVERABLE_ERRORS = (
     ConnectionError,
 )
 
+_DEBATE_FAILURE_PREFIXES = (
+    "swarm debate cancelled:",
+    "swarm capacity reached, debate cancelled",
+    "swarm failed to produce a consensus",
+)
+
+
+def swarm_debate_failure_reason(result: Any) -> str:
+    """Translate the delegator's compatibility string into outcome semantics."""
+
+    text = str(result or "").strip()
+    if not text:
+        return "Swarm debate returned no result."
+    lowered = text.casefold()
+    if any(lowered.startswith(prefix) for prefix in _DEBATE_FAILURE_PREFIXES):
+        return text
+    return ""
+
 
 class SwarmAgent:
     """A lightweight parallel executor with explicit lifecycle state."""

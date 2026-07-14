@@ -43,24 +43,30 @@ import asyncio
 import json
 import platform
 import random
-import subprocess
 import sys
 import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from core.runtime.subprocess_gateway import get_subprocess_gateway  # noqa: E402
+
 
 def _git_commit() -> str:
     try:
-        out = subprocess.run(
+        out = get_subprocess_gateway().run(
             ["git", "rev-parse", "--short", "HEAD"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            read_only=True,
+            source="proof_tooling:whole_system_phi_git_commit",
+            timeout=10,
             cwd=Path(__file__).resolve().parent.parent,
         )
-        return out.stdout.strip()
-    except (OSError, subprocess.SubprocessError):
-        return "unknown"
+        if out.returncode == 0 and out.stdout.strip():
+            return out.stdout.strip()
+    except (OSError, RuntimeError, TypeError, ValueError):
+        pass
+    return "unknown"
 
 
 def _live_api_up(port: int = 8000) -> bool:

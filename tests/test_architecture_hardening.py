@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import inspect
 import json
 import tempfile
@@ -1668,6 +1669,200 @@ async def test_orchestrator_execute_tool_derives_safe_autonomous_web_scope(
 
 
 @pytest.mark.asyncio
+async def test_orchestrator_executes_background_reflection_with_signed_bounded_lease(
+    orchestrator,
+    monkeypatch,
+):
+    will_contexts = []
+
+    class FakeDecision:
+        reason = "approved"
+
+        @staticmethod
+        def is_approved():
+            return True
+
+    class FakeWill:
+        def decide(self, **kwargs):
+            will_contexts.append(dict(kwargs.get("context") or {}))
+            return FakeDecision()
+
+    debate = _AsyncCallRecorder(return_value="A bounded internal consensus.")
+    orchestrator.swarm = SimpleNamespace(delegate_debate=debate)
+    monkeypatch.setattr("core.will.get_will", lambda: FakeWill())
+    monkeypatch.setattr(
+        "core.constitution.get_constitutional_core",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("pre-runtime")),
+    )
+
+    result = await orchestrator.execute_tool(
+        "swarm_debate",
+        {
+            "topic": "Assess current runtime stability.",
+            "roles": ["architect", "critic"],
+        },
+        origin="background_reflection",
+        is_background=True,
+        payload_context={"reason": "metabolic_idle_reflection"},
+    )
+
+    assert result == {"ok": True, "output": "A bounded internal consensus."}
+    assert debate.await_count == 1
+    assert will_contexts
+    assert will_contexts[0]["standing_authority_grant_id"] == (
+        "aura.autonomous-background-reflection"
+    )
+    assert will_contexts[0]["standing_authority_token"]
+    assert will_contexts[0]["effect_scope"] == "pure_compute"
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_receipts_failed_background_debate_as_failure(
+    orchestrator,
+    monkeypatch,
+):
+    from core.executive.standing_authority import get_standing_authority_manager
+
+    class FakeDecision:
+        reason = "approved"
+
+        @staticmethod
+        def is_approved():
+            return True
+
+    class FakeWill:
+        def decide(self, **_kwargs):
+            return FakeDecision()
+
+    manager = get_standing_authority_manager()
+    real_finalize = manager.finalize_child_lease
+    closures = []
+
+    def _capture_finalize(token, **kwargs):
+        closures.append(dict(kwargs))
+        return real_finalize(token, **kwargs)
+
+    monkeypatch.setattr(manager, "finalize_child_lease", _capture_finalize)
+    orchestrator.swarm = SimpleNamespace(
+        delegate_debate=_AsyncCallRecorder(
+            return_value="Swarm failed to produce a consensus (timeout or execution failure)."
+        )
+    )
+    monkeypatch.setattr("core.will.get_will", lambda: FakeWill())
+    monkeypatch.setattr(
+        "core.constitution.get_constitutional_core",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("pre-runtime")),
+    )
+
+    result = await orchestrator.execute_tool(
+        "swarm_debate",
+        {
+            "topic": "Assess current runtime stability.",
+            "roles": ["architect", "critic"],
+        },
+        origin="background_reflection",
+        is_background=True,
+        payload_context={"reason": "metabolic_idle_reflection"},
+    )
+
+    assert result["ok"] is False
+    assert result["error"].startswith("Swarm failed to produce a consensus")
+    assert closures
+    assert closures[0]["success"] is False
+    assert closures[0]["error"].startswith("Swarm failed to produce a consensus")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("failure", "expect_cancellation"),
+    [
+        (RuntimeError("debate worker failed"), False),
+        (asyncio.CancelledError(), True),
+    ],
+    ids=["runtime_failure", "caller_cancellation"],
+)
+async def test_orchestrator_closes_debate_authority_when_delegate_raises(
+    orchestrator,
+    monkeypatch,
+    failure,
+    expect_cancellation,
+):
+    from core.executive.standing_authority import get_standing_authority_manager
+
+    class FakeDecision:
+        reason = "approved"
+
+        @staticmethod
+        def is_approved():
+            return True
+
+    class FakeWill:
+        def decide(self, **_kwargs):
+            return FakeDecision()
+
+    if not ServiceContainer.has("executive_core"):
+        ServiceContainer.register_instance("executive_core", object(), required=False)
+    constitution = SimpleNamespace(
+        begin_tool_execution=_AsyncCallRecorder(
+            return_value=SimpleNamespace(
+                approved=True,
+                capability_token_id="debate-token",
+                constraints={},
+                decision=SimpleNamespace(reason="approved"),
+                executive_intent_id="debate-intent",
+            )
+        ),
+        finish_tool_execution=_AsyncCallRecorder(return_value=None),
+    )
+    manager = get_standing_authority_manager()
+    real_finalize = manager.finalize_child_lease
+    closures = []
+
+    def _capture_finalize(token, **kwargs):
+        closures.append(dict(kwargs))
+        return real_finalize(token, **kwargs)
+
+    monkeypatch.setattr(manager, "finalize_child_lease", _capture_finalize)
+    orchestrator.swarm = SimpleNamespace(
+        delegate_debate=_AsyncCallRecorder(side_effect=failure)
+    )
+    monkeypatch.setattr("core.will.get_will", lambda: FakeWill())
+    monkeypatch.setattr(
+        "core.constitution.get_constitutional_core",
+        lambda *_args, **_kwargs: constitution,
+    )
+    monkeypatch.setattr(
+        "core.executive.authority_gateway.get_authority_gateway",
+        lambda: SimpleNamespace(verify_tool_access=lambda _skill, _token: True),
+    )
+
+    invocation = orchestrator.execute_tool(
+        "swarm_debate",
+        {
+            "topic": "Assess current runtime stability.",
+            "roles": ["architect", "critic"],
+        },
+        origin="background_reflection",
+        is_background=True,
+        payload_context={"reason": "metabolic_idle_reflection"},
+    )
+    if expect_cancellation:
+        with pytest.raises(asyncio.CancelledError):
+            await invocation
+    else:
+        result = await invocation
+        assert result["ok"] is False
+        assert result["status"] == "failed"
+        assert "RuntimeError" in result["error"]
+
+    assert closures
+    assert closures[0]["success"] is False
+    assert constitution.finish_tool_execution.await_count == 1
+    finish_call = constitution.finish_tool_execution.await_args
+    assert finish_call.kwargs["success"] is False
+
+
+@pytest.mark.asyncio
 async def test_orchestrator_execute_tool_keeps_unsafe_autonomous_web_unscoped(
     orchestrator, monkeypatch
 ):
@@ -2041,7 +2236,12 @@ async def test_kernel_clears_completed_foreground_turn_state():
         end_tick=lambda *_args, **_kwargs: None,
     )
     kernel._process_storage_intents = _AsyncCallRecorder()
-    kernel._commit_vault = _AsyncCallRecorder()
+    committed_states = []
+
+    async def _capture_commit(_objective):
+        committed_states.append(copy.deepcopy(kernel.state))
+
+    kernel._commit_vault = _AsyncCallRecorder(side_effect=_capture_commit)
     kernel._pulse_mirror = _AsyncCallRecorder()
     kernel.state.derive_async = _AsyncCallRecorder(return_value=kernel.state)
 
@@ -2060,6 +2260,9 @@ async def test_kernel_clears_completed_foreground_turn_state():
     assert kernel.state.cognition.last_action_source == "api"
     assert kernel.state.cognition.current_origin is None
     assert kernel.state.cognition.current_objective is None
+    assert committed_states
+    assert committed_states[0].cognition.current_origin is None
+    assert committed_states[0].cognition.current_objective is None
     assert entry.phase_durations_ms["UnitaryResponsePhase"] >= 0.0
     phase_status = kernel.phase_runtime_status()
     assert phase_status["sample_count"] == 1

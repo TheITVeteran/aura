@@ -262,6 +262,19 @@ class StateRepository:
 
         return self._db
 
+    def _sanitize_restored_state(self) -> bool:
+        """Apply migration cleanup only to the owner's boot snapshot."""
+
+        restore_sanitizer = getattr(
+            getattr(self._current, "cognition", None),
+            "sanitize_restored_autonomy_state",
+            None,
+        )
+        if not callable(restore_sanitizer):
+            return False
+        restore_sanitizer()
+        return True
+
     async def initialize(self) -> None:
         from .aura_state import AuraState
 
@@ -289,6 +302,7 @@ class StateRepository:
             await db.commit()
             # Load latest from DB
             await self._load_latest_state()
+            self._sanitize_restored_state()
 
             # Ensure we have a default state if DB is empty
             if self._current is None:
