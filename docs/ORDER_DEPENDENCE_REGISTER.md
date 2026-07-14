@@ -31,6 +31,32 @@ governance out of unit tests whose subject is something else (FTS ranking).
 | `tests/test_gateway_enforcement.py` ×7 | same root as the personality family: the captured SimpleNamespace persona corrupted a downstream runtime path that ended in the global receipt store being closed mid-chunk (`emit()` → "receipt store is closed") | healed by the personality read-through fix — with it, chunk 3 runs 2115/2115 green and the store is never closed (probe plugin, zero transitions across two prior deterministic failures) |
 | `test_sota_hardeners::test_extract_and_validate_args_resilience` | once an earlier test leaves `capability_engine` registered fail-closed (a real container boot does), the coercion-failure and malformed-JSON degradations in `capability_engine.extract_and_validate_args` escalated WARNING→CRITICAL and **raised** under production governance — so `limit="not_an_int"` crashed instead of returning `_error` | the two sites now pass `enforce_failure_policy=False` (the July-2026 pattern; sibling site already had it). Also a live pathology: bad skill params would mint a CRITICAL incident + existential-threat spike |
 
+## Open — `test_unified_will.py` (3, surfaced 2026-07-14 chunk 6)
+
+`TestWillState::test_counters_track`,
+`TestAllDomains::test_aura_now_defer_allows_read_only_observation_tool`,
+`TestAllDomains::test_aura_now_defer_allows_explicit_user_memory_observation`.
+Pass alone; fail in chunk 6. **Not** the §9d Ulysses covenant: proven by
+forcing the global covenant + all seeds active — the failing decisions still
+`proceed` with zero covenant constraints, and `test_counters_track` fails on
+a **RESPONSE** decision, which `_consult_ulysses_covenant` skips by
+construction (non-consequential domain). The register had **zero**
+`test_unified_will` entries before the covenant work; these appeared only
+after chunk 6's file composition changed (parallel-agent tests added).
+
+Mechanism (partially localized): a benign `RESPONSE("good", source="user")`
+decision comes back CONSTRAINED (`proceeds=0, constrains=1`) in-chunk. The
+`will` fixture builds a *fresh* `UnifiedWill` with `_sample_aura_now_evidence`
+neutralized, reading the **real global ServiceContainer** for scars, affect,
+unity, welfare, and phenomenological modulation — so some earlier test leaves
+one of those globals in a state that constrains even a neutral response. A
+probe using the *global* `get_will()` did NOT reproduce it (different
+instance, real aura_now), so the repro needs a fixture-shaped Will (fresh +
+neutral aura_now). Next step for a focused session: a file-based teardown
+probe that builds a fixture-shaped Will and records the first test after which
+`RESPONSE("good")` constrains. Repro:
+`tools/run_test_chunks.py --chunks 6 --only-chunks 6`.
+
 ## Open pool (sampled 2026-07-14 certification run)
 
 Confirmed-fixed families stayed gone; the run surfaced a fresh sample:
