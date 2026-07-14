@@ -27,7 +27,10 @@ _GENERIC_EFFECT_SCOPES = {
     "curiosity_web_search": "read_only",
     "edit_file": "read_write_artifacts",
     "execute": "privileged_mutation",
-    "file_write": "read_write_artifacts",
+    # No generic "file_write" mapping: the canonical file skill is
+    # file_operation (scoped per-invocation above). A bare unregistered
+    # file_write stays "unknown" → classified critical by default —
+    # presuming a write scope for an unowned tool under-gated it.
     "get_time": "status",
     "grep_search": "read_only",
     "list_dir": "read_only",
@@ -187,6 +190,12 @@ def resolve_execution_effect_scope(
             return scoped
     elif name == "auto_refactor":
         return _auto_refactor_scope(arguments)
+    elif name == "web_search":
+        # Autonomous web research is READ-ONLY by contract: fetching and
+        # summarizing never writes artifacts or posts. A broader scope
+        # declared by a skill wrapper must not widen what autonomy may do
+        # with a search (test_fictional_ai_runtime_contract pins this).
+        return "read_only"
     elif name == "email_adapter":
         mode = str(arguments.get("mode") or "check").strip().lower()
         if mode in {"check", "read", "search"}:

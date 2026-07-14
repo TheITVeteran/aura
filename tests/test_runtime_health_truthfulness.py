@@ -245,7 +245,10 @@ def test_runtime_pressure_probe_rejects_high_existential_threat(monkeypatch):
         return default
 
     monkeypatch.setenv("AURA_HEALTH_EXISTENTIAL_THREAT_UNHEALTHY", "0.75")
-    monkeypatch.setattr(ServiceContainer, "get", classmethod(fake_get))
+    monkeypatch.setattr(
+        "core.runtime.health_contract.get_runtime_service",
+        lambda name, default=None: fake_get(ServiceContainer, name, default),
+    )
 
     status = health_contract._runtime_pressure_status()
 
@@ -280,7 +283,10 @@ def test_runtime_pressure_probe_ignores_steady_state_memory_threat(monkeypatch):
         return default
 
     monkeypatch.setenv("AURA_HEALTH_EXISTENTIAL_THREAT_UNHEALTHY", "0.75")
-    monkeypatch.setattr(ServiceContainer, "get", classmethod(fake_get))
+    monkeypatch.setattr(
+        "core.runtime.health_contract.get_runtime_service",
+        lambda name, default=None: fake_get(ServiceContainer, name, default),
+    )
 
     status = health_contract._runtime_pressure_status()
 
@@ -316,7 +322,10 @@ def test_runtime_pressure_probe_rejects_hard_event_loop_lag(monkeypatch):
         return default
 
     monkeypatch.setenv("AURA_HEALTH_EVENT_LOOP_LAG_UNHEALTHY_S", "5.0")
-    monkeypatch.setattr(ServiceContainer, "get", classmethod(fake_get))
+    monkeypatch.setattr(
+        "core.runtime.health_contract.get_runtime_service",
+        lambda name, default=None: fake_get(ServiceContainer, name, default),
+    )
 
     status = health_contract._runtime_pressure_status()
 
@@ -342,7 +351,10 @@ def test_runtime_pressure_probe_does_not_reuse_stale_event_loop_lag(monkeypatch)
             return LagMonitor()
         return default
 
-    monkeypatch.setattr(ServiceContainer, "get", classmethod(fake_get))
+    monkeypatch.setattr(
+        "core.runtime.health_contract.get_runtime_service",
+        lambda name, default=None: fake_get(ServiceContainer, name, default),
+    )
 
     status = health_contract._runtime_pressure_status()
 
@@ -367,7 +379,10 @@ def test_runtime_pressure_boot_grace_defers_only_explicit_warmup_lag(monkeypatch
             return LagMonitor()
         return default
 
-    monkeypatch.setattr(ServiceContainer, "get", classmethod(fake_get))
+    monkeypatch.setattr(
+        "core.runtime.health_contract.get_runtime_service",
+        lambda name, default=None: fake_get(ServiceContainer, name, default),
+    )
     monkeypatch.setattr(health_contract, "_process_uptime_seconds", lambda: 30.0)
     monkeypatch.setenv("AURA_PROOF_RUN", "1")
     monkeypatch.setenv("AURA_HEALTH_RUNTIME_PRESSURE_BOOT_GRACE_S", "180")

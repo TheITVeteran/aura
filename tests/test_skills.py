@@ -367,7 +367,7 @@ async def test_capability_engine_uses_skill_timeout_budget_for_cognitive_governo
     monkeypatch.setattr("core.capability_engine.resolve_state_repository", lambda default=None: None)
     monkeypatch.setattr("core.capability_engine.resolve_edi", lambda default=None: None)
 
-    result = await engine.execute("slow_skill", {}, {})
+    result = await engine.execute("slow_skill", {}, {"origin": "desktop"})
 
     assert result["ok"] is True
     assert captured == {"task_name": "slow_skill", "timeout_seconds": 57.0}
@@ -424,7 +424,7 @@ async def test_capability_engine_blocks_when_permission_model_check_fails(monkey
     monkeypatch.setattr("core.capability_engine.resolve_state_repository", lambda default=None: None)
     monkeypatch.setattr("core.capability_engine.resolve_edi", lambda default=None: None)
 
-    result = await engine.execute("typed_action", {}, {})
+    result = await engine.execute("typed_action", {}, {"origin": "desktop"})
 
     assert result["ok"] is False
     assert result["status"] == "blocked_by_permission_model_failure"

@@ -308,7 +308,7 @@ async def test_capability_engine_execute_pydantic_recovery():
     engine.instances["echo_skill"] = EchoSkill()
 
     # Case A: Execute with type mismatches that can be coerced
-    result = await engine.execute("echo_skill", {"required_field": 12345, "optional_field": "99"})
+    result = await engine.execute("echo_skill", {"required_field": 12345, "optional_field": "99"}, {"origin": "desktop"})
     assert result.get("ok") is True
     assert result.get("required") == "12345"  # coerced to str
     assert result.get("optional") == 99        # coerced to int
@@ -316,6 +316,6 @@ async def test_capability_engine_execute_pydantic_recovery():
     # Case B: Execute with missing required field (should trigger self-healing recovery loop)
     # The recovery loop will try minimal subset, and if it completely fails, fall back gracefully
     # with an _error marker without crashing the executor loop.
-    result_fail = await engine.execute("echo_skill", {"optional_field": "100"})
+    result_fail = await engine.execute("echo_skill", {"optional_field": "100"}, {"origin": "desktop"})
     assert result_fail.get("ok") is False
     assert "echo" in result_fail.get("error", "").lower() or "validation" in result_fail.get("error", "").lower()

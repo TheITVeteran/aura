@@ -77,7 +77,13 @@ def _is_goal_context_priority(objective: str) -> bool:
 
 
 def _normalize_agent_id(value: Any) -> str | None:
-    normalized = " ".join(str(value or "").strip().split())[:160]
+    """Canonical identity key: whitespace-collapsed, bounded, CASE-FOLDED.
+
+    'Bryan' and 'bryan' must resolve to ONE relational identity — cased
+    variants were forking profile/dialogue/relational-memory keys for the
+    same person.
+    """
+    normalized = " ".join(str(value or "").strip().split())[:160].lower()
     return normalized or None
 
 

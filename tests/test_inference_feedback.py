@@ -123,7 +123,7 @@ def test_coherence_calculation_valence_alignment(base_modulation, monkeypatch):
             return substrate
         return default
 
-    monkeypatch.setattr(ServiceContainer, "get", staticmethod(service_lookup))
+    monkeypatch.setattr("core.brain.inference_feedback.get_runtime_service", service_lookup)
     # 1. Output text with positive valence words (should align -> high coherence)
     metrics_pos = loop.process_output(
         output_text="completed success stable resolved",
@@ -161,7 +161,7 @@ def test_engine_feedback_injection(base_modulation, monkeypatch):
             return precision
         return default
 
-    monkeypatch.setattr(ServiceContainer, "get", staticmethod(service_lookup))
+    monkeypatch.setattr("core.brain.inference_feedback.get_runtime_service", service_lookup)
     loop.process_output(
         output_text="success resolved",
         token_ids=[1, 2],
@@ -184,7 +184,7 @@ def test_feedback_injection_surfaces_invariant_failures(base_modulation, monkeyp
             return free_energy
         return default
 
-    monkeypatch.setattr(ServiceContainer, "get", staticmethod(service_lookup))
+    monkeypatch.setattr("core.brain.inference_feedback.get_runtime_service", service_lookup)
     with pytest.raises(AssertionError, match="feedback invariant broken"):
         loop.process_output(
             output_text="success resolved",
