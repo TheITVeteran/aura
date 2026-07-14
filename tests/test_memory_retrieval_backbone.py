@@ -125,6 +125,24 @@ class TestGravitationWiring:
 
 
 class TestKnowledgeSearchIsRanked:
+    @pytest.fixture(autouse=True)
+    def _isolate_from_ambient_governance(self, monkeypatch):
+        """These are search/ranking unit tests; approve writes explicitly.
+
+        add_knowledge consults the live constitutional core, whose present-
+        state (AuraNow) policy is process-global — an earlier test that left
+        the shared runtime in a 'stabilization first' posture caused every
+        write here to be denied (aura_now_defer) and the searches to scan an
+        empty table (order-dependence register, 2 victims).  Governance
+        behavior has its own tests; here it is stubbed to approve.
+        """
+        from core.memory.knowledge_graph import PersistentKnowledgeGraph
+
+        def _approve(self, *args, return_decision=False, **kwargs):
+            return (True, None) if return_decision else True
+
+        monkeypatch.setattr(PersistentKnowledgeGraph, "_approve_memory_write", _approve)
+
     def test_fts5_ranks_by_relevance_not_substring(self, tmp_path):
         from core.memory.knowledge_graph import PersistentKnowledgeGraph
 

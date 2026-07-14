@@ -1117,19 +1117,27 @@ _pe_lock = threading.Lock()
 def get_personality_engine() -> PersonalityEngine:
     """Get global personality engine via thread-safe singleton (OPT-04)."""
     global _personality_engine
-    if _personality_engine is None:
-        # First try to get from container (crucial for tests)
-        try:
-            from core.container import ServiceContainer
-            _personality_engine = ServiceContainer.get("personality_engine", default=None)
-        except (ImportError, AttributeError, RuntimeError) as _exc:
-            _record_personality_degradation(
-                _exc,
-                action="fell back to direct personality singleton construction",
-                severity="warning",
-            )
-            logger.debug("Suppressed Exception: %s", _exc)
-            
+    # Container first (crucial for tests) — but READ-THROUGH, never cached:
+    # promoting a container-registered object into the module global captured
+    # test stubs permanently, so a SimpleNamespace persona outlived its test
+    # and poisoned every later caller in the process (order-dependence
+    # register, local_agent_client_recovery family).  While something is
+    # registered it wins; once the container is cleaned, callers fall back
+    # to the real module singleton below.
+    try:
+        from core.container import ServiceContainer
+        registered = ServiceContainer.get("personality_engine", default=None)
+    except (ImportError, AttributeError, RuntimeError) as _exc:
+        _record_personality_degradation(
+            _exc,
+            action="fell back to direct personality singleton construction",
+            severity="warning",
+        )
+        logger.debug("Suppressed Exception: %s", _exc)
+        registered = None
+    if registered is not None:
+        return registered
+
     if _personality_engine is None:
         with _pe_lock:
             if _personality_engine is None:
