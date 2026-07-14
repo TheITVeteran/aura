@@ -20,6 +20,7 @@ class InterAgentCommSkill(BaseSkill):
     """
     
     name = "inter_agent_comm"
+    retry_safe = False  # external send/act — never double-fire on retry
     description = "Send a message to an external agent (Gemini, etc) to request assistance."
 
     def __init__(self):

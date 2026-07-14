@@ -21,6 +21,7 @@ _STALE_COMMIT_SECONDS = 15 * 60
 
 class UplinkSkill(BaseSkill):
     name = "uplink_local"
+    retry_safe = False  # external send/act — never double-fire on retry
     description = (
         "Verify local persistence for real: state-repository health (DB connected, "
         "consumer alive, commits flowing) plus a governed write-read-delete "

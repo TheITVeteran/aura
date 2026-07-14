@@ -19,6 +19,7 @@ class NotifyUserSkill(BaseSkill):
     """Proactively alerts the user via a native OS desktop notification."""
 
     name = "notify_user"
+    retry_safe = False  # external send/act — never double-fire on retry
     description = (
         "Pushes a native OS desktop notification to the user. "
         "Use this when completing a long-running background task, or when "

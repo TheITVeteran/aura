@@ -160,6 +160,7 @@ class EmailAdapterSkill(BaseSkill):
     """
 
     name = "email_adapter"
+    retry_safe = False  # external send/act — never double-fire on retry
     description = (
         "Send and receive email. Modes: 'send' (compose+send), "
         "'check' (inbox summary), 'read' (specific email), "

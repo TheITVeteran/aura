@@ -1253,6 +1253,14 @@
       "canonical_owner": false,
       "category": "direct_atomic_file_write",
       "count": 1,
+      "path": "core/learning/crsm_closure_scheduler.py",
+      "scope": "<module>.CRSMClosureScheduler._record_attempt"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.atomic_write_text",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
       "path": "core/learning/domain_specialists.py",
       "scope": "<module>.DomainSpecialistTrainer._persist_receipt"
     },
@@ -8201,6 +8209,14 @@
       "scope": "<module>.ExperienceStore.__init__"
     },
     {
+      "callee": "self._state_path.parent.mkdir",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/crsm_closure_scheduler.py",
+      "scope": "<module>.CRSMClosureScheduler._record_attempt"
+    },
+    {
       "callee": "self.config.work_root.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -12637,6 +12653,14 @@
       "canonical_owner": false,
       "category": "subprocess_gateway",
       "count": 1,
+      "path": "core/learning/crsm_closure_scheduler.py",
+      "scope": "<module>.CRSMClosureScheduler._run_training"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
       "path": "core/learning/lora_trainer.py",
       "scope": "<module>.LoraTrainer.train_adapter"
     },
@@ -13397,6 +13421,14 @@
       "canonical_owner": false,
       "category": "will_decision",
       "count": 1,
+      "path": "core/learning/crsm_closure_scheduler.py",
+      "scope": "<module>.CRSMClosureScheduler._will_approval"
+    },
+    {
+      "callee": "core.will.get_will().decide",
+      "canonical_owner": false,
+      "category": "will_decision",
+      "count": 1,
       "path": "core/learning/genuine_learning_pipeline.py",
       "scope": "<module>.LearningScheduler.run_if_ready"
     },
@@ -13586,6 +13618,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "014a7dde2b34f67f6de6491240ea4a36fd96f4fc7f8451f56d73db771ac3dc10",
+  "inventory_sha256": "455d27735a7f22f35e2f59ee9d93b4e1e45ce536a958125f073cc2d7154db0e2",
   "schema_version": 1
 }

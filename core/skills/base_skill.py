@@ -108,6 +108,15 @@ class BaseSkill(ABC):
     is_core_personality: bool = False
     requires_approval: bool = False
 
+    # Retry safety. safe_execute retries transient failures up to 3x — which
+    # is correct for read-only/idempotent skills but DANGEROUS for ones with
+    # external side effects: a skill that sends a message, then times out
+    # reading the response, would re-send on retry (at-least-once double
+    # execution). A skill is retried only when retry_safe is True AND it does
+    # not require approval — so destructive/approval-gated actions can never
+    # silently double-fire. Side-effectful skills should set retry_safe=False.
+    retry_safe: bool = True
+
     # Execution stats (instance-level)
     _total_executions: int = 0
     _total_failures: int = 0
@@ -258,7 +267,12 @@ class BaseSkill(ABC):
                 time.monotonic() - start
             )
 
-        max_attempts = 3
+        # Only retry when it is safe to re-run this skill's side effects.
+        # requires_approval implies a destructive/consequential action that
+        # must never double-fire; retry_safe is the explicit opt-out for
+        # non-destructive-but-side-effectful skills (send/post/notify).
+        retryable = bool(self.retry_safe) and not bool(self.requires_approval)
+        max_attempts = 3 if retryable else 1
         base_delay = 1.0
         result: Any = None
         last_err: Exception = RuntimeError("skill execution did not start")

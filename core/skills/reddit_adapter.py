@@ -203,6 +203,7 @@ class RedditAdapterSkill(BaseSkill):
     """
 
     name = "reddit_adapter"
+    retry_safe = False  # external send/act — never double-fire on retry
     description = (
         "Interact with Reddit. Modes: 'browse', 'read_post', 'comment', 'post', "
         "'check_inbox', 'reply_inbox', 'read_rules', 'check_shadowban'."
