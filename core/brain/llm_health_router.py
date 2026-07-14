@@ -110,6 +110,12 @@ _GENERATION_GATE_LAST_OWNER = ""
 _GENERATION_GATE_WAIT_S = float(
     os.environ.get("AURA_GENERATION_GATE_WAIT_S", "75") or 75
 )
+# Background work never owns recovery authority over the serving lane. It may
+# wait briefly for naturally available capacity, then returns a retryable
+# deferral instead of accumulating 75-second waiters or killing a warm worker.
+_BACKGROUND_GENERATION_GATE_WAIT_S = float(
+    os.environ.get("AURA_BACKGROUND_GENERATION_GATE_WAIT_S", "5") or 5
+)
 # Foreground preemption ladder budgets: a user turn waits only this grace
 # before asking a BACKGROUND gate holder to yield cooperatively (the worker
 # stops between tokens and stays warm), then this long for the yield to land.
@@ -175,6 +181,22 @@ def _generation_gate_busy_result(owner: str) -> dict[str, Any]:
     return result
 
 
+def _background_generation_gate_deferred_result(owner: str) -> dict[str, Any]:
+    result = dict(_GATE_SATURATION_RESULT)
+    result.update(
+        {
+            "endpoint": "generation_gate_background_deferred",
+            "deferred": True,
+            "retryable": True,
+            "error": (
+                "background generation deferred while the local generation lane "
+                f"is owned by {str(owner or 'unknown')[:120]}"
+            ),
+        }
+    )
+    return result
+
+
 def _active_foreground_generation_owner() -> str:
     oldest_lease = _oldest_generation_gate_lease()
     if oldest_lease is None:
@@ -204,7 +226,7 @@ def generation_gate_snapshot() -> dict[str, Any]:
         }
         oldest = None
         if active:
-            oldest_id = min(active, key=lambda lease_id: active[lease_id]["age_s"])
+            oldest_id = max(active, key=lambda lease_id: active[lease_id]["age_s"])
             oldest = {"lease_id": oldest_id, **active[oldest_id]}
         return {
             "active_count": len(active),
@@ -1125,7 +1147,9 @@ class HealthAwareLLMRouter:
             # and never on foreground turns (a user turn never pays a swap).
             await self._maybe_route_expert_adapter(prompt, kwargs)
             acquired = await asyncio.to_thread(
-                _GENERATION_GATE.acquire, True, _GENERATION_GATE_WAIT_S
+                _GENERATION_GATE.acquire,
+                True,
+                min(_GENERATION_GATE_WAIT_S, _BACKGROUND_GENERATION_GATE_WAIT_S),
             )
         else:
             # Foreground preemption ladder. A user turn must not sit the full
@@ -1157,6 +1181,15 @@ class HealthAwareLLMRouter:
                         _GENERATION_GATE.acquire, True, remaining_wait
                     )
         if not acquired:
+            if request_is_background:
+                holder = _oldest_generation_gate_lease()
+                holder_owner = holder[2] if holder is not None else "unknown"
+                logger.info(
+                    "⏸️ Router: Background generation deferred behind active gate owner=%s.",
+                    holder_owner[:120],
+                )
+                return _background_generation_gate_deferred_result(holder_owner)
+
             foreground_owner = _active_foreground_generation_owner()
             foreground_age_s = _oldest_generation_gate_lease_age_s() if foreground_owner else 0.0
             if foreground_owner and foreground_age_s < max(30.0, _GENERATION_GATE_WAIT_S):
@@ -1182,11 +1215,15 @@ class HealthAwareLLMRouter:
                 if aborted:
                     acquired = await asyncio.to_thread(_GENERATION_GATE.acquire, True, 2.0)
         if not acquired:
+            request_scope = "background" if request_is_background else "foreground"
             record_degradation(
                 "llm_health_router",
                 RuntimeError("generation gate saturated"),
                 severity="degraded",
-                action="refused to stack another concurrent generation",
+                action=(
+                    f"refused to stack another {request_scope} concurrent generation; "
+                    f"origin={origin or 'unknown'} purpose={purpose or 'unknown'}"
+                ),
             )
             return dict(_GATE_SATURATION_RESULT)
         lease_id = _mark_generation_gate_acquired(_generation_gate_owner(origin, purpose))

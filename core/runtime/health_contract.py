@@ -777,6 +777,11 @@ def _recent_inference_degradation_blocks_runtime_pressure(record: Any) -> tuple[
     combined = f"{message} {action}".lower()
 
     if "generation gate saturated" in combined or "refused to stack" in combined:
+        if "background" in combined and not any(
+            marker in combined
+            for marker in ("foreground", "user-facing", "user_facing")
+        ):
+            return False, "background_generation_contention"
         return True, f"recent_{getattr(record, 'subsystem', 'inference')}_saturation: {(message or action)[:120]}"
 
     # Known background lane timeout. In live mode this may be escalated by the

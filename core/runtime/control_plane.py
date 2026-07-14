@@ -113,6 +113,9 @@ class PressureSnapshot:
     loop_lag_sample_age_s: float = 0.0
     loop_lag_sample_fresh: bool = True
     loop_monitor_alive: bool | None = None
+    loop_monitor_running: bool | None = None
+    loop_monitor_healthy: bool | None = None
+    loop_monitor_incident_active: bool = False
     shutdown_requested: bool = False
     red_zones: tuple[str, ...] = ()
     suspended_capabilities: tuple[str, ...] = ()
@@ -154,6 +157,27 @@ class PressureSnapshot:
                 bool(raw.get("loop_monitor_alive"))
                 if raw.get("loop_monitor_alive") is not None
                 else None
+            ),
+            loop_monitor_running=(
+                bool(raw.get("loop_monitor_running"))
+                if raw.get("loop_monitor_running") is not None
+                else (
+                    bool(raw.get("loop_monitor_alive"))
+                    if raw.get("loop_monitor_alive") is not None
+                    else None
+                )
+            ),
+            loop_monitor_healthy=(
+                bool(raw.get("loop_monitor_healthy"))
+                if raw.get("loop_monitor_healthy") is not None
+                else (
+                    bool(raw.get("loop_monitor_alive"))
+                    if raw.get("loop_monitor_alive") is not None
+                    else None
+                )
+            ),
+            loop_monitor_incident_active=bool(
+                raw.get("loop_monitor_incident_active", False)
             ),
             shutdown_requested=bool(raw.get("shutdown_requested", False)),
             red_zones=tuple(str(item) for item in raw.get("red_zones") or ()),
@@ -400,7 +424,7 @@ class ResourceAdmissionController:
             conditions = get_component_conditions("resource_admission")
             unavailable = "pressure_provider_unavailable" in snapshot.red_zones
             loop_signal_unavailable = (
-                snapshot.loop_monitor_alive is False
+                snapshot.loop_monitor_running is False
                 or not snapshot.loop_lag_sample_fresh
             )
             ready = (
@@ -534,7 +558,7 @@ class ResourceAdmissionController:
 
         if (
             (
-                pressure.loop_monitor_alive is False
+                pressure.loop_monitor_running is False
                 or not pressure.loop_lag_sample_fresh
             )
             and request.priority >= AdmissionPriority.MAINTENANCE

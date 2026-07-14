@@ -423,6 +423,37 @@ def test_runtime_pressure_probe_rejects_recent_inference_saturation(monkeypatch)
         get_degradation_tracker().reset()
 
 
+def test_runtime_pressure_ignores_explicit_background_gate_contention(monkeypatch):
+    from core.container import ServiceContainer
+    from core.runtime import health_contract
+    from core.runtime.errors import get_degradation_tracker, record_degradation
+
+    def fake_get(cls, name, default=None):
+        return default
+
+    get_degradation_tracker().reset()
+    monkeypatch.setattr(ServiceContainer, "get", classmethod(fake_get))
+    monkeypatch.setenv("AURA_HEALTH_RECENT_DEGRADATION_WINDOW_S", "180")
+
+    try:
+        record_degradation(
+            "llm_health_router",
+            RuntimeError("generation gate saturated"),
+            severity="degraded",
+            action=(
+                "refused to stack another background concurrent generation; "
+                "origin=system purpose=healing_shard"
+            ),
+        )
+
+        status = health_contract._runtime_pressure_status()
+
+        assert status.liveness_ok is True
+        assert status.error is None
+    finally:
+        get_degradation_tracker().reset()
+
+
 def test_runtime_pressure_boot_grace_does_not_hide_inference_saturation(monkeypatch):
     from core.container import ServiceContainer
     from core.runtime import health_contract

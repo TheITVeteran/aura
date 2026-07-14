@@ -16,7 +16,6 @@ import pytest
 from core.brain import llm_health_router as router_module
 from core.brain.llm_health_router import HealthAwareLLMRouter
 
-
 GATED_OK = {"ok": True, "text": "reply", "endpoint": "local", "tokens": 3}
 
 
@@ -116,7 +115,7 @@ def test_foreground_never_soft_cancels_foreground_holder(monkeypatch, gate_state
 
 
 def test_background_request_gets_no_preemption_ladder(monkeypatch, gate_state):
-    """Background requests keep the plain full-window wait: no soft-cancel."""
+    """Background requests defer without soft-cancel or destructive escalation."""
     router = _router(monkeypatch)
     _hold_gate_as(gate_state, "stream_narrative:background")
 
@@ -126,8 +125,11 @@ def test_background_request_gets_no_preemption_ladder(monkeypatch, gate_state):
         "_soft_cancel_local_generations",
         lambda *, reason: cancel_calls.append(reason) or True,
     )
+    force_aborts: list[str] = []
     monkeypatch.setattr(
-        router, "force_abort_active_generation", lambda reason="": 0
+        router,
+        "force_abort_active_generation",
+        lambda reason="": force_aborts.append(reason) or 0,
     )
 
     result = asyncio.run(
@@ -137,7 +139,9 @@ def test_background_request_gets_no_preemption_ladder(monkeypatch, gate_state):
     )
 
     assert cancel_calls == [], "background traffic must not preempt anything"
+    assert force_aborts == [], "background traffic must never kill a serving worker"
     assert result["ok"] is False
+    assert result["endpoint"] == "generation_gate_background_deferred"
 
 
 def test_failed_soft_cancel_falls_back_to_existing_escalation(monkeypatch, gate_state):
@@ -194,7 +198,6 @@ def test_abandoned_foreground_holder_soft_cancelled_before_kill(monkeypatch, gat
     cooperative rung — worker yields between tokens and STAYS WARM — never
     a straight force-abort (which kills the 20GB worker and paid a cold
     reload every ~5 minutes, 34/38 turns dead)."""
-    import time as _time
 
     router = _router(monkeypatch)
     lease = _hold_gate_as(gate_state, "user:response_generation_user")

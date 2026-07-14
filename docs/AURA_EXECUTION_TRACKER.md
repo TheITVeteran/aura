@@ -16,7 +16,21 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **Checkpoint 73 attributes the
+- Current bounded implementation milestone: **Checkpoint 77 source-closes the
+  recurring boot-health recovery cascade preserved in the July 13 live log.
+  Event-loop lifecycle, fresh scheduling evidence, active incident health, and
+  retained incident history are now separate states. Resource admission can
+  resume from fresh healthy samples without waiting five minutes for incident
+  retention to expire; the control plane can converge independently while the
+  still-visible health incident proves bounded recovery. Background inference
+  can no longer force-release the generation gate or kill the serving 32B
+  worker, and reports retryable contention instead. Skynet now reports
+  confirmed unhealthy/recovered transitions with bounded reminders rather than
+  repeating one context-free error every poll. Exact-main signed-app proof is
+  still mandatory, so `BOOT-HEALTH-001` remains live-open. Concurrent pushed
+  Checkpoints 74-76 preserved the monitor/pressure portion of this repair and
+  closed/documented three test order-dependence roots before this integrated
+  checkpoint. Checkpoint 73 attributes the
   Checkpoint 66 main-thread NumPy/Torch sample to the 10 Hz perceptual pump's
   synchronous phenomenal/substrate transaction and closes that owner in source.
   Perceptual frames now enter one dedicated ordered worker with lifecycle-owned
@@ -85,7 +99,7 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   item remains open or in progress unless its detailed entry explicitly carries
   a completion date and proof.
 - Overall completion percentage: **30% planning estimate as of pushed
-  Checkpoint 73, with exact-build live proof still open**.
+  Checkpoint 77, with exact-build live proof still open**.
   Checkpoints 67-73 close additional capability, idle-resource, authority,
   recursive-learning, and loop-ownership gaps in source, but the signed-app
   plateau failed on repeated event-loop lag, model-lane saturation, and
@@ -98,8 +112,8 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   `PROGRESS-CONTROL-001` and `SCOPE-001` must replace the manual estimate with a
   generated denominator; new obligations increase it, regressions reopen it,
   and source-green/live-open work never receives full closure credit.
-- Total checkpoint forecast: **approximately 206-276 total checkpoints for the
-  expanded program, with 73 pushed and approximately 133-203 remaining before
+- Total checkpoint forecast: **approximately 214-286 total checkpoints for the
+  expanded program, with 77 pushed and approximately 137-209 remaining before
   final soak/release closure**. This includes every
   implementation, cleanup, repair, integration, verification, live,
   portability, release, and soak checkpoint, not only headline milestones.
@@ -148,7 +162,7 @@ Status rules:
 | `STORAGE-GATEWAY-001` | `COMPLETE 2026-07-13` | Removed all seven production-surface direct-write bypasses in local TLS material, self-repair backlog state, flight-recorder emergency output, Program DNA staging, and rollback state. Canonical batch, owned-binary, durable replace/delete, governance, schema, integrity, concurrency, and fault-injection contracts preserve bootstrap/crash/rollback behavior without exemptions. Checkpoint 62 reached zero direct-file-write findings; Checkpoint 63 subsequently brought the complete audited production-surface scanner to zero findings. | `EFFECT-001`, `FAULT-001`, `REPO-001`; Checkpoints 62-63 |
 | `RUNTIME-001` | `IN PROGRESS` | Finish desired-state reconciliation and truthful startup/liveness/readiness/degradation/proof/certification conditions without aggregate false health. | Pass F 2; Matrix 13 |
 | `HEALTH-SURFACE-001` | `IN PROGRESS (SOURCE GREEN; EXACT-MAIN LIVE OPEN) 2026-07-13` | Replace the heavyweight request-time `/api/health` aggregation with bounded, versioned, asynchronously refreshed read models whose public request paths are non-blocking, stale-aware, and available under owner-loop and CPU pressure. The request-time collector, duplicate fixed UI timers, rich service-worker polling, cold service construction, mutation-on-observation, and repeated per-attempt warning cards are removed; single-flight refresh ownership, explicit expiry truth, retry telemetry, jittered client backoff, incident coalescing, bounded reminders, and recovery transitions are source-green. Checkpoint 64 removes the background in-process Cortex owner that starved the conversational worker; Checkpoint 65 removes sampled process-census, goal-lock, and immunity-persistence blockers; Checkpoint 68 backs idle desktop perception off after attributed subprocess churn; Checkpoint 71 prevents deferred action results from recursively re-entering cognition while moving CRSM closure state off-loop; and Checkpoint 72 gives degradation/CRSM/CAA integrity its own prewarmed named snapshot so heartbeat and `CRSMLoraBridge` status never hash or parse training artifacts inline. Expired integrity evidence blocks proof readiness without falsely blocking conversational runtime health. Exact-main signed-app proof must still demonstrate responsive liveness/readiness while cognition, Phi, neural-mesh, MLX recovery, desktop perception, voice, training maintenance, and attribution work are active. | `RUNTIME-001`, `FOREGROUND-LATENCY-001`, `OBSERVE-001`, `UI-001`, `PERF-001`; Checkpoints 61, 64-65, 68, and 71-72; live old-runtime `/api/health` measured `200`, 135883 bytes, 5.3s against a 1.5s UI abort budget with repeated `[health_poll] ... Load failed` on preserved Fable runtime 2026-07-13 |
-| `BOOT-HEALTH-001` | `IN PROGRESS (RECURRING LIVE DEFECT; ROOT CONTRACT CLOSURE OPEN) 2026-07-13` | Make boot and recovery converge through one phased desired-state contract rather than emitting a permanently unhealthy aggregate. Prove `event_loop_monitor` starts, owns the canonical loop, and becomes alive; `unified_runtime_pressure` clears hard-lag and stale generation-gate saturation only from fresh evidence; `runtime_control_plane` reconciles to ready when its required owners are genuinely ready; and the conversation lane exits `warmup_deferred` through bounded successful recovery. Skynet/FictionalSynthesis must consume that canonical phase, freshness, dependency, and hysteresis evidence: it may report a real sustained unhealthy orchestrator, but may neither fire on expected bounded boot convergence nor mask a dependency that never recovers. Require exact-main pulses to transition startup/recovering to healthy without raising lag thresholds, deleting probes, or suppressing the warning. | `RUNTIME-001`, `HEALTH-SURFACE-001`, `FOREGROUND-LATENCY-001`, `CONVERSATION-001`, `FAULT-001`; recurring live pulse at 21:34 on 2026-07-13: control plane not ready, event-loop monitor not alive, 7.0294s hard lag, generation-gate saturation, `warmup_deferred`, and Skynet unhealthy verdict |
+| `BOOT-HEALTH-001` | `IN PROGRESS (RECOVERY CASCADE SOURCE-CLOSED; EXACT-MAIN LIVE OPEN) 2026-07-14` | Make boot and recovery converge through one phased desired-state contract rather than emitting a permanently unhealthy aggregate. Checkpoint 77 separates event-loop lifecycle/freshness from active incident health and durable history, reduces recovery to consecutive fresh samples plus a bounded stability interval, lets current pressure/admission recover without erasing the incident, prevents background generation from force-aborting the serving worker, corrects oldest-lease telemetry, and makes Skynet emit confirmed transitions plus bounded reminders. Prove on exact pushed main that `event_loop_monitor` owns the canonical loop, `unified_runtime_pressure` clears current lag and scoped gate saturation only from fresh evidence, `runtime_control_plane` reconciles, Cortex prewarm exits `warmup_deferred`, conversation remains available, and pulses transition to healthy without a five-minute lockout, raised lag thresholds, deleted probes, or hidden warnings. | `RUNTIME-001`, `HEALTH-SURFACE-001`, `FOREGROUND-LATENCY-001`, `CONVERSATION-001`, `FAULT-001`; recurring live pulse at 21:34 on 2026-07-13 and Checkpoint 77 |
 | `LANE-001` | `COMPLETE 2026-07-12` | Preserve atomic fenced reservations, synchronous required eviction/reclamation, all-owner accounting, heartbeats, compensation, terminal receipts, race exclusion, and bounded live physical-release-before-load evidence across future model owners. | Addendum 21-22, `CTX2-LANE-001..004` |
 | `RESOURCE-001` | `COMPLETE 2026-07-13` | Preserve typed attributed RAM, accelerator, thermal, disk, compute, power, process, connection, open-file, cache, and pressure observation; keep ordinary tests hermetic and live-pressure evidence explicitly labelled and conservatively bounded. Checkpoint 64 adds a canonical lightweight target-tree observer; Checkpoint 65 adds a provenance-bearing PID census and targeted process-tree observation so ordinary liveness, sovereignty, shutdown, and supervisor checks do not enrich the full host process table. | Pass F 3; Addendum 22; Checkpoints 34, 64, and 65 |
 | `MEMORY-LEAK-001` | `IN PROGRESS (DOMINANT LIVE OWNER SOURCE-FIXED; EXACT-MAIN PLATEAU OPEN) 2026-07-13` | Attribute and eliminate the measured 350-450 MB/hour idle orchestrator RSS growth without relying on restart, pressure-triggered reclamation, model-worker exclusion, or a raised limit. Checkpoint 64 identified a live orchestrator retaining about 19.7 GB physical footprint, including about 17.2 GB of IOAccelerator regions, while stacks remained in the background non-parametric ingest path for more than 1,098 seconds. The source now forbids model loading in that owner and reuses the resident worker with one causal forward, hard pair/token/position/deadline budgets, foreground preemption, durable ordering, and cache cleanup. The old running process still retains its already-loaded allocation; controlled exact-main restart, remaining allocation/cardinality attribution, bounded-growth regressions, and stable idle plus interaction plateau proof remain mandatory. | `RESOURCE-001`, `RUNTIME-001`, `FAULT-001`, `PERF-001`; two independent 45/70-minute idle windows in `docs/SYSTEMS_MATURITY_2026_07_12.md`; live stack/vmmap attribution and Checkpoint 64 |
@@ -160,6 +174,7 @@ Status rules:
 | `STATE-001` | `OPEN` | Build the versioned canonical state catalog and inspectable causal graph with writer authority, freshness, arbitration, persistence, model-swap semantics, redaction, and action-to-learning traces. | Addendum 20 |
 | `MEMORY-001` | `IN PROGRESS 2026-07-12` | Preserve the encrypted exact-agent relational-memory authority while unifying every remaining memory writer/reader, cross-store semantic retrieval, provenance, conflict/freshness handling, exact live consumption proof, deletion, key rotation, and symmetric observed rollback. | Addendum 26; Checkpoints 42-45 |
 | `CONVERSATION-001` | `IN PROGRESS 2026-07-12` | Achieve sustained human-grade live chat/voice continuity through CognitiveEngine: no identity drift, context loss, repetition, truncation, silent stalls, retry reflexes, fallback takeover, or stream spam. | Pass F 6; Matrix 6 |
+| `INFERENCE-RELIABILITY-001` | `IN PROGRESS (BACKGROUND DESTRUCTIVE FAILOVER SOURCE-CLOSED; SERVING FABRIC OPEN) 2026-07-14` | Replace the linear Primary -> Secondary -> Tertiary -> Reflex -> Cloud -> static-rule failure cascade with one supervised inference serving fabric. Preserve at least one warm identity-faithful reasoning path through proactive capacity reservation, health- and quality-scored routing, hedged/bounded failover, circuit recovery, queue fairness, foreground preemption, state/context handoff, provider/model diversity, restart continuity, and explicit SLO/error budgets. A background or repair request may never evict, force-abort, or degrade the active user lane; Checkpoint 77 closes that destructive authority inversion. Static rules may provide narrowly typed safety/availability notices but may never be presented as a successful answer to an open-domain request. Certify with injected endpoint/model/Metal/network failures, cold boot, sustained mixed load, context and identity scoring, answer-quality floors against the primary baseline, recovery-time distributions, no fallback loops, and exact-main desktop/voice evidence. | `CONVERSATION-001`, `LANE-001`, `RUNTIME-001`, `FAULT-001`, `CAPABILITY-CERT-001`, `FRONTIER-COGNITION-001`; fallback-cascade criticism 2026-07-14 and Checkpoint 77 |
 | `SELF-STATE-CHAT-001` | `IN PROGRESS (SOURCE GREEN; LIVE OPEN) 2026-07-13` | Make direct questions about Aura's own condition use one fresh canonical self-state projection with calibrated uncertainty and conversational continuity; host telemetry may support but must never replace the answer. Prove the launched desktop path cannot route "are you okay/feeling fine" into a generic RAM/CPU status response. | `CONVERSATION-001`, `MIND-001`, `STATE-001`; Checkpoint 52; live defect at 00:27-00:28 on 2026-07-13 |
 | `SUBSTRATE-001` | `IN PROGRESS (CANONICAL REVISIONED STATE SOURCE-GREEN; UNITY + LIVE PROOF OPEN) 2026-07-13` | Make attention, affect, self-model, uncertainty, memory, voice, planning, tool choice, repair, and future policy causally one mind; lesion decorative or disconnected state. Checkpoint 73 establishes one revisioned NumPy state authority for dynamics, recurrence, phenomenal perception, inference feedback, bridge chemistry/field effects, Will metabolism, metacognitive reset, stimulus, observation, idle decay, and psych homeostasis. Worker transforms preserve concurrent causal writes and publish a freshness-labelled Torch mirror rather than silently replacing newer state. Complete writer inventory, typed state gateway integration, downstream causal lesions, persistence/migration, and exact-main unity proof remain open. | Matrix 2-3; Addendum 20 and 29; `STATE-001`, `MIND-001`, `FOREGROUND-LATENCY-001`; Checkpoint 73 |
 | `DESKTOP-001` | `IN PROGRESS 2026-07-12` | Generalize computer use into perception-plan-act-observe-repair loops over browser, files, Notes/Docs/PDF/images, dialogs, focus, permissions, changed layouts, and multi-app workflows. | Pass F 7; Matrix 7; Checkpoint 38 |
@@ -181,6 +196,7 @@ Status rules:
 | `IDENTITY-001` | `OPEN` | Preserve signed longitudinal identity, beliefs, commitments, values, relationships, consent, accountability, and uncertainty through restart, conflict, correction, rollback, and model replacement. | Addendum 27-28 |
 | `WELFARE-001` | `OPEN` | Unify computational welfare signals and prove longitudinal causal effects on attention, policy, learning, consent/refusal, continuity protection, and recovery under adversarial controls. | Addendum 29 |
 | `CLAIMS-001` | `OPEN` | Keep consciousness, self-awareness, sentience, ALife, organism, entity, personhood-candidate, inner-life, AGI, ASI, and comparison claims operational, falsifiable, and bounded by causal evidence. | Matrix 2 and 17; operational-label battery |
+| `IIT-SYSTEM-001` | `OPEN 2026-07-14` | Replace the hand-authored 16-node Phi proxy as the sole integration surface with a whole-bounded-runtime causal integration program. Instrument interventions and transition kernels across the canonical state/substrate/workspace/organ graph; discover multiscale macrovariables and causally equivalent quotients with explicit temporal/system boundaries and abstraction error; exploit sparsity, separators, bounded treewidth, symmetry, tensor contraction, and exact tractable subcomplexes; run anytime branch-and-bound partition search with admissible lower/upper Phi bounds and a machine-checkable convergence certificate; refine only uncertain cuts; and preserve exact local IIT plus full-system interval/uncertainty evidence. Validate the scalable result against brute-force small systems, known null/integrated networks, perturbation/lesion controls, discretization and timescale sensitivity, independent implementations, and live causal prediction. Claim exactness only when certified bounds meet for the declared causally faithful quotient; report approximation honestly otherwise, and never treat Phi alone as proof of consciousness. | `STATE-001`, `SUBSTRATE-001`, `INTELLIGENCE-001`, `CLAIMS-001`, `PROOF-001`, `TEST-DEPTH-001`; whole-system IIT/Phi requirement and causal-quotient scaling proposal 2026-07-14 |
 | `FRONTIER-001` | `OPEN` | Import useful fictional-AI mechanisms into real organs, enforce anti-pattern safeguards, and re-evaluate every requested fictional/nonfictional comparison from code and evidence without themed theater. | Fictional-AI scope; Matrix 17-18 |
 | `THRONG-001` | `OPEN 2026-07-13` | Translate the useful Thronglets mechanisms into a scientifically bounded developmental intelligence ecology inside Aura rather than a themed duplicate mind: lineage-bearing cognitive cells, nurture/environment-dependent development, specialization, compositional language, social transmission, diversity, population-level memory, collective problem solving, and harmonic coordination must contribute through the canonical workspace, action spine, self, welfare, and resource authority. Measure growth by held-out transfer, adaptation speed, calibrated coordination, causal contribution, and lesion/lineage ablations. Enforce hard anti-patterns from the fiction: no exponential self-replication, covert resource capture, opaque external broadcast, manipulative dependency, human cognitive override, uncontrolled merger, or population growth without explicit budgets, inspectability, revocation, and extinction/rollback. | `FRONTIER-001`, `ADAPT-001`, `MULTIAGENT-001`, `SUBSTRATE-001`, `INTELLIGENCE-001`, `RESOURCE-001`, `VALUES-001`, `WELFARE-001`; user Thronglets requirement 2026-07-13 |
 | `INTELLIGENCE-001` | `OPEN` | Measure whole-system uplift with base/tools/memory/substrate/planner/full ablations, external sealed benchmarks, confidence intervals, contamination controls, and matched cost/latency. | Matrix 4; Addendum 31 |
@@ -15042,3 +15058,120 @@ Progress and immediate next work:
   recovery, conversation readiness, perceptual causality, and clean shutdown.
   Final multi-hour and 24-72 hour soaks remain deferred until every shorter gate
   is green.
+
+## Checkpoint 2026-07-14-77: Boot Recovery Convergence and Non-Destructive Inference Contention
+
+This combined checkpoint advances `BOOT-HEALTH-001`, `RUNTIME-001`,
+`FOREGROUND-LATENCY-001`, `HEALTH-SURFACE-001`, `CONVERSATION-001`,
+`INFERENCE-RELIABILITY-001`, and `FAULT-001`. It reproduces and source-closes
+the causal cascade behind the recurring 21:34 pulse and Skynet report without
+raising a lag threshold, deleting a probe, or relabelling a failure healthy.
+Exact-main signed-app proof remains open.
+
+The preserved live log established the sequence:
+
+- At uptime 391 seconds, background cognition and the synchronous perceptual
+  transaction accumulated 3.05 seconds of lag and then one 7.0294-second hard
+  breach. The event-loop task continued publishing samples, but `is_alive()`
+  stayed false for a fixed 300-second incident window.
+- `UnifiedRuntimePressure` treated that active incident as a dead signal source.
+  The resource control plane therefore denied every primary 32B recovery
+  prewarm with `event_loop_signal_unavailable`, even after current lag was low.
+  `runtime_control_plane`, required probes, and conversation readiness inherited
+  the lockout; the incident cleared only after 259 healthy samples and 300.3
+  seconds.
+- A background StructuredLLM/healing request waited on the generation gate,
+  reached the generic escalation branch, force-released every lease, and killed
+  the warm 32B worker. The resulting saturation record then blocked aggregate
+  runtime pressure for another 180 seconds. This was destructive priority
+  inversion, not resilience.
+- FictionalSynthesis logged `Skynet: Subsystem 'orchestrator' is UNHEALTHY`
+  every poll with no transition, dependency, duration, reminder budget, or
+  recovery event. Its internal status did not even become unhealthy until six
+  failures, so the emitted severity and its state disagreed.
+
+The repair separates the contracts and removes the destructive edge:
+
+- `EventLoopMonitor.is_alive()` now means that its owned task is running and its
+  samples are fresh. `is_healthy()` separately applies consecutive-sample and
+  stability-window recovery. Status retains active incident state, total
+  incidents, last incident reason/time, and last recovery time; the default
+  stability interval is 15 seconds after the required healthy samples rather
+  than an unconditional five-minute readiness lockout. Durable degradation and
+  fault records remain intact.
+- Unified pressure publishes monitor lifecycle, current health, and incident
+  state independently. Current red zones and model admission use running/fresh
+  evidence; an active historical incident cannot claim the signal source is
+  absent. `PressureSnapshot` carries those dimensions through the canonical
+  control plane, which can reconcile while health still reports a bounded
+  recovering incident.
+- Background generations wait at most five seconds (bounded by the global gate
+  budget), then return a typed retryable
+  `generation_gate_background_deferred` result. They have no path to soft-cancel,
+  force-release, or kill a serving worker. Foreground saturation remains a
+  degradation and health blocker; explicitly background contention does not.
+  Gate telemetry now reports the true oldest lease instead of selecting the
+  newest by minimum age.
+- DistributedResilienceCore uses a configurable consecutive-failure threshold,
+  reports one provisional probe failure, emits one confirmed unhealthy
+  transition, rate-limits sustained reminders, and emits one recovery
+  transition with duration. Cancellation clears monitor ownership so restart
+  cannot be blocked by a stale `_running` latch.
+
+The tracker also adds two combined but independently auditable release burdens:
+
+- `INFERENCE-RELIABILITY-001` replaces a linear quality-loss cascade with a
+  supervised serving fabric, identity/context/quality floors, proactive warm
+  capacity, bounded failover, and failure-injection plus exact-live evidence.
+  Static rules cannot masquerade as a successful open-domain answer.
+- `IIT-SYSTEM-001` reuses the canonical state/substrate causal graph and
+  intervention/lesion harness to measure the whole bounded runtime through
+  causally justified macrostate quotients, exact tractable complexes, sparse
+  decomposition, tensor contraction, and an anytime certified Phi interval.
+  Exactness requires converged bounds for the declared quotient; Phi alone is
+  never treated as proof of consciousness.
+
+Verification on the integrated candidate:
+
+- The exact incident, fresh-signal admission recovery, background non-abort,
+  oldest-lease, Skynet transition, monitor resurrection, control-plane, and
+  pressure contracts pass `62/62`.
+- After carrying the already-computed canonical failure phase and failed
+  dependency details into orchestrator status, the combined boot,
+  FictionalSynthesis, and orchestrator compatibility suites pass `33/33`; four
+  adjacent async-server health-check selectors also pass.
+- Runtime health truthfulness, hardening initialization, orchestrator
+  compatibility, FictionalSynthesis, LLM timeout, inference timeout, lane
+  admission, and control-plane route suites pass `129/129`.
+- The wider live-runtime surface, stability edges, runtime error architecture,
+  event-loop stall prevention, resource arbitration, and operator control plane
+  pass `251/251` plus one subtest.
+- Targeted compilation, configured Ruff on all clean changed runtime/test
+  surfaces, and `git diff --check` pass. The enterprise static ratchet passes;
+  production readiness passes `37/37`; the production-surface scanner reports
+  zero findings, zero high/critical findings, and zero exemptions; the closeout
+  rubric passes `20/20`; and governance remains at the checked-in `1809`
+  recognized calls, `1701` buckets, and `1671` migration-debt calls.
+
+Progress and immediate next work:
+
+- This is pushed Checkpoint `77`. Concurrent Checkpoints 74-76 integrated the
+  monitor/pressure half of this source repair and closed/documented three test
+  order-dependence roots; they are counted because the forecast tracks every
+  meaningful pushed checkpoint, not only headline milestones. The
+  evidence-weighted planning estimate remains `30%`; expanded IIT and serving-
+  fabric scope changes the forecast to `214-286` total checkpoints, with
+  `137-209` remaining before final soak/release closure.
+- Rebuild and launch only exact pushed `main`. Require fresh monitor samples,
+  bounded incident recovery, a ready control plane, successful primary prewarm,
+  no background force-abort, a healthy conversation lane, transition-based
+  Skynet output, responsive `/api/health`, and clean terminal plus Neural stream
+  evidence through interaction and shutdown.
+- Locate and verify the separately reported CRSM train/fuse artifacts and
+  transaction markers; no training or quality credit is inferred from the user
+  report alone. Then continue the combined inference-serving, whole-system
+  causal-measurement, tracker, capability, foundation, and every remaining
+  master-index checkpoint.
+- Final multi-hour and 24-72 hour soaks remain deferred until every shorter
+  source, deterministic, fault-injection, bounded live, GUI, portability, and
+  release gate is green.

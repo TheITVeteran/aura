@@ -49,6 +49,34 @@ def _task_scheduled(result: Any) -> bool:
     return isinstance(result, asyncio.Task) or asyncio.isfuture(result)
 
 
+def _runtime_health_failure_reason(report: Any, *, limit: int = 4) -> str:
+    if not isinstance(report, dict):
+        return "runtime health report unavailable"
+
+    details: list[str] = []
+    failures = report.get("failures")
+    if isinstance(failures, dict):
+        for tier in ("critical", "important", "optional"):
+            entries = failures.get(tier)
+            if not isinstance(entries, list):
+                continue
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                key = str(entry.get("container_key") or entry.get("name") or "unknown")
+                error = str(entry.get("error") or "liveness failed").strip()
+                details.append(f"{tier}:{key}:{error[:160]}")
+                if len(details) >= max(1, int(limit)):
+                    return "; ".join(details)
+
+    blockers = report.get("probe_blockers")
+    if not details and isinstance(blockers, list):
+        details.extend(str(item)[:160] for item in blockers if str(item).strip())
+    if details:
+        return "; ".join(details[: max(1, int(limit))])
+    return f"runtime health status={str(report.get('status') or 'unknown')[:80]}"
+
+
 class StatusManagerMixin:
     """Mixin for status reporting and telemetry emission."""
 
@@ -62,6 +90,10 @@ class StatusManagerMixin:
     _integrity_monitor: Any
     acceleration_factor: float
     singularity_threshold: bool
+
+    @staticmethod
+    def _summarize_runtime_health_failure(report: Any) -> str:
+        return _runtime_health_failure_reason(report)
 
     def get_status(self) -> dict[str, Any]:
         """Provides a comprehensive status report using cached data where possible."""
@@ -207,6 +239,12 @@ class StatusManagerMixin:
                 "error": str(getattr(self, "_voice_listener_error", "")),
                 "startup_in_flight": bool(voice_task is not None and not voice_task.done()),
             }
+            status_report["health_phase"] = str(
+                getattr(self, "_last_runtime_health_phase", "unknown") or "unknown"
+            )
+            status_report["health_reason"] = str(
+                getattr(self, "_last_health_reason", "") or ""
+            )
 
             return status_report
 

@@ -3029,10 +3029,16 @@ class RobustOrchestrator(
             )
 
             contract = runtime_health_report()
+            self._last_runtime_health_phase = str(contract.get("status") or "unknown")
             contract_ready = (
                 contract.get("healthy") is True
                 and contract.get("operational") is True
                 and required_probe_groups_pass(required_probe_status(contract))
+            )
+            self._last_health_reason = (
+                ""
+                if contract_ready
+                else self._summarize_runtime_health_failure(contract)
             )
             checks.append(("runtime_contract", contract_ready))
         except _ORCHESTRATOR_RECOVERABLE_ERRORS as exc:
@@ -3041,11 +3047,20 @@ class RobustOrchestrator(
                 action="marked orchestrator unhealthy because runtime health contract failed",
                 severity="critical",
             )
+            self._last_runtime_health_phase = "unavailable"
+            self._last_health_reason = (
+                f"runtime health probe raised {type(exc).__name__}: {exc}"
+            )
             checks.append(("runtime_contract", False))
 
         # All checks must explicitly succeed. Malformed truthy values do not
         # count as healthy because this value gates live desktop readiness.
         healthy = all(result is True for _name, result in checks)
+        if not healthy and not str(getattr(self, "_last_health_reason", "") or ""):
+            failed_checks = [name for name, result in checks if result is not True]
+            self._last_health_reason = "failed checks: " + ",".join(failed_checks)
+        elif healthy:
+            self._last_health_reason = ""
         try:
             status.healthy = healthy
         except _ORCHESTRATOR_RECOVERABLE_ERRORS as exc:

@@ -836,6 +836,8 @@ class SubsystemStatus:
     failure_count: int
     last_error: str = ""
     last_checked_at: float = field(default_factory=time.time)
+    last_transition_at: float = field(default_factory=time.time)
+    last_reported_at: float = 0.0
 
 
 class DistributedResilienceCore:
@@ -846,26 +848,94 @@ class DistributedResilienceCore:
     def __init__(self):
         self._subsystems: dict[str, SubsystemStatus] = {}
         self._running = False
+        try:
+            self._failure_threshold = max(
+                1,
+                int(os.getenv("AURA_RESILIENCE_FAILURE_THRESHOLD", "2")),
+            )
+        except (TypeError, ValueError):
+            self._failure_threshold = 2
+        try:
+            self._reminder_interval_s = max(
+                60.0,
+                float(os.getenv("AURA_RESILIENCE_REMINDER_INTERVAL_S", "600")),
+            )
+        except (TypeError, ValueError):
+            self._reminder_interval_s = 600.0
 
     def register_subsystem(self, name: str):
         self._subsystems[name] = SubsystemStatus(name=name, healthy=True, failure_count=0)
 
-    def record_failure(self, name: str, error: str = ""):
+    def record_failure(self, name: str, error: str = "") -> bool:
         if name in self._subsystems:
             status = self._subsystems[name]
+            was_healthy = status.healthy
             status.failure_count += 1
             status.last_error = error
             status.last_checked_at = time.time()
-            if status.failure_count > 5:
+            if status.failure_count >= self._failure_threshold:
                 status.healthy = False
+            if was_healthy and not status.healthy:
+                status.last_transition_at = status.last_checked_at
+                return True
+        return False
 
-    def record_success(self, name: str):
+    def record_success(self, name: str) -> bool:
         if name in self._subsystems:
             status = self._subsystems[name]
+            recovered = not status.healthy
             status.failure_count = 0
             status.healthy = True
             status.last_error = ""
             status.last_checked_at = time.time()
+            if recovered:
+                status.last_transition_at = status.last_checked_at
+            return recovered
+        return False
+
+    def _report_failure(self, name: str, error: str) -> None:
+        became_unhealthy = self.record_failure(name, error)
+        status = self._subsystems[name]
+        now = time.time()
+        if became_unhealthy:
+            status.last_reported_at = now
+            logger.error(
+                "🛡️  Skynet: Subsystem '%s' became UNHEALTHY after %d consecutive probes: %s",
+                name,
+                status.failure_count,
+                error,
+            )
+            return
+        if status.healthy:
+            if status.failure_count == 1:
+                status.last_reported_at = now
+                logger.warning(
+                    "🛡️  Skynet: Subsystem '%s' health probe failed (1/%d): %s",
+                    name,
+                    self._failure_threshold,
+                    error,
+                )
+            return
+        if now - status.last_reported_at >= self._reminder_interval_s:
+            status.last_reported_at = now
+            logger.error(
+                "🛡️  Skynet: Subsystem '%s' remains UNHEALTHY for %.0fs: %s",
+                name,
+                max(0.0, now - status.last_transition_at),
+                error,
+            )
+
+    def _report_success(self, name: str) -> None:
+        status = self._subsystems[name]
+        unhealthy_since = status.last_transition_at
+        if self.record_success(name):
+            recovered_at = time.time()
+            status.last_reported_at = recovered_at
+            logger.info(
+                "🛡️  Skynet: Subsystem '%s' RECOVERED after %.0fs.",
+                name,
+                max(0.0, recovered_at - unhealthy_since),
+            )
 
     @staticmethod
     def _monitor_targets(service_container: Any) -> list[str]:
@@ -894,44 +964,51 @@ class DistributedResilienceCore:
 
         logger.info("🛡️  Skynet ResilienceCore monitoring %d subsystems.", len(core_targets))
         
-        while self._running:
-            await asyncio.sleep(60)
-            for name, _status in list(self._subsystems.items()):
-                try:
-                    service = ServiceContainer.get(name, default=None)
-                except (AttributeError, RuntimeError, TypeError, ValueError) as e:
-                    self.record_failure(name, f"Service lookup failed: {e}")
-                    _record_fictional_degradation(
-                        e,
-                        action=f"marked resilience target {name} degraded after service lookup failed",
-                    )
-                    logger.debug("Skynet service lookup error for %s: %s", name, e)
-                    continue
-                if service is None:
+        try:
+            while self._running:
+                await asyncio.sleep(60)
+                for name, _status in list(self._subsystems.items()):
                     try:
-                        from core.runtime.ablation_policy import service_intentionally_lesioned
-
-                        if service_intentionally_lesioned(name):
-                            logger.info(
-                                "Resilience monitor observed intentional ablation for subsystem '%s'; missing-service repair suppressed.",
-                                name,
-                            )
-                            continue
-                    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as e:
+                        service = ServiceContainer.get(name, default=None)
+                    except (AttributeError, RuntimeError, TypeError, ValueError) as e:
+                        self._report_failure(name, f"service lookup failed: {e}")
                         _record_fictional_degradation(
                             e,
-                            action=f"continued resilience monitoring without ablation marker for {name}",
+                            action=f"marked resilience target {name} degraded after service lookup failed",
                         )
-                    self.record_failure(name, "Service missing from container")
-                    logger.warning("🛡️  Skynet: Subsystem '%s' is MISSING.", name)
-                else:
-                    # Check for health method or just assume presence is success
+                        logger.debug("Skynet service lookup error for %s: %s", name, e)
+                        continue
+                    if service is None:
+                        try:
+                            from core.runtime.ablation_policy import service_intentionally_lesioned
+
+                            if service_intentionally_lesioned(name):
+                                logger.info(
+                                    "Resilience monitor observed intentional ablation for subsystem '%s'; missing-service repair suppressed.",
+                                    name,
+                                )
+                                continue
+                        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as e:
+                            _record_fictional_degradation(
+                                e,
+                                action=f"continued resilience monitoring without ablation marker for {name}",
+                            )
+                        self._report_failure(name, "service missing from container")
+                        continue
+
                     is_healthy = True
+                    failure_detail = "health check returned false"
                     if hasattr(service, "get_status"):
                         try:
                             stats = service.get_status()
                             if isinstance(stats, dict) and stats.get("healthy") is False:
                                 is_healthy = False
+                                failure_detail = str(
+                                    stats.get("health_reason")
+                                    or stats.get("reason")
+                                    or stats.get("last_error")
+                                    or failure_detail
+                                )[:240]
                         except (OSError, ConnectionError, TimeoutError, RuntimeError, TypeError, ValueError) as e:
                             _record_fictional_degradation(
                                 e,
@@ -939,14 +1016,17 @@ class DistributedResilienceCore:
                             )
                             logger.debug("Skynet health check error for %s: %s", name, e)
                             is_healthy = False
-                    
-                    if is_healthy:
-                        self.record_success(name)
-                    else:
-                        self.record_failure(name, "Health check returned False")
-                        logger.error("🛡️  Skynet: Subsystem '%s' is UNHEALTHY.", name)
+                            failure_detail = f"health probe raised {type(e).__name__}: {e}"
 
-    def stop(self): self._running = False
+                    if is_healthy:
+                        self._report_success(name)
+                    else:
+                        self._report_failure(name, failure_detail)
+        finally:
+            self._running = False
+
+    def stop(self):
+        self._running = False
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

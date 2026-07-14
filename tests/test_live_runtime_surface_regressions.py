@@ -1415,7 +1415,7 @@ def test_event_loop_monitor_treats_dict_lane_generation_as_active(monkeypatch):
     assert reason == "foreground_generation"
 
 
-def test_event_loop_monitor_recovers_only_after_healthy_samples_and_stability_window():
+def test_event_loop_monitor_health_recovers_only_after_samples_and_stability_window():
     from core.utils.concurrency import EventLoopMonitor
 
     class _RunningTask:
@@ -1428,15 +1428,18 @@ def test_event_loop_monitor_recovers_only_after_healthy_samples_and_stability_wi
     monitor._last_failure_at = time.time()
     monitor._healthy_lag_samples_after_failure = 0
 
-    assert monitor.is_alive() is False
+    assert monitor.is_alive() is True
+    assert monitor.is_healthy() is False
 
     monitor._healthy_lag_samples_after_failure = monitor.failure_recovery_samples
 
-    assert monitor.is_alive() is False
+    assert monitor.is_alive() is True
+    assert monitor.is_healthy() is False
 
     monitor._last_failure_at = time.time() - 61.0
 
     assert monitor.is_alive() is True
+    assert monitor.is_healthy() is True
 
 
 def test_event_loop_monitor_restarts_dead_task_without_claiming_immediate_health():
