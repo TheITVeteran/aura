@@ -51,6 +51,24 @@ maintenance reasoning. Never used for user-facing responses in production mode.
 
 ---
 
+## Reflex Model
+
+| Field | Value |
+|-------|-------|
+| **Role** | Fast reflex lane: sub-second acknowledgements, routing, guards |
+| **Architecture** | Transformer LLM (1.5B parameters, Qwen2.5-1.5B-Instruct) |
+| **Runtime** | MLX on Apple Silicon |
+| **Quantization** | 4-bit (MLX native) |
+| **Inference** | Local, on-device |
+
+### Intended Use
+The lowest-latency local tier. Handles reflexive turns and lightweight
+routing/guard decisions when the 32B Cortex is warming or contended, so the
+conversation lane can answer immediately instead of waiting on the heavy
+model. Never used for substantive full-mind replies.
+
+---
+
 ## Cloud Fallback Model
 
 | Field | Value |

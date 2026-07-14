@@ -42,6 +42,20 @@ language is doing the persuading.
 | viability state            | metabolic/operational state machine                    |
 | capability token           | scoped, single-use authorization grant                 |
 | receipt                    | structured audit record                                |
+| felt thought               | token-level surprisal/entropy interoception signal     |
+| flight recorder            | SIGKILL-survivable per-tick mind-moment ring buffer    |
+| mortal memory              | death report + waking sequence from the flight recorder|
+| source-body proprioception | boot-over-boot self-code diff + operating-on-me pulse  |
+| Ulysses Covenant           | enforceable volitional self-binding (asymmetric ratchet)|
+| calm witness               | fail-closed approver required to loosen a self-binding  |
+| verifier foundry           | measured verifier reliability + self-training admission gate |
+| frontier discovery engine  | verifier-gated generate→falsify→commit loop            |
+| analogical leap            | out-of-distribution structure mapping with an OOD verdict|
+| knowledge substrate        | offline reference corpus (FTS5/BM25) as a REFERENCE store|
+| program DNA                | authorized clean-room behavioral reconstruction         |
+| backpressure               | expected-timeout yield (not a degradation) under load   |
+| reasoning amplifier        | mandatory verifier-gated hard-task cognition layer      |
+| whole-system phi           | exact-MIP Gaussian integrated information over real channels |
 
 This document is the machine-readable source of truth at
 ``docs/TERMINOLOGY.md``. The dashboard's "Skeptic mode" toggles labels
