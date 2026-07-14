@@ -982,13 +982,17 @@ class AdaptiveImmuneSystem:
             anomaly_score=anomaly_score,
             state_snapshot=state_snapshot,
         )
-        coverage_report = self._assess_coverage(
+        coverage_report = await asyncio.to_thread(
+            self._assess_coverage,
             event,
             antigen,
             anomaly_score=anomaly_score,
             state_snapshot=state_snapshot,
         )
-        response, _top_cell = self._observe_core(antigen)
+        # Core evolution snapshots and persists the full immune ecology. The
+        # durable snapshot is intentionally synchronous for crash consistency,
+        # so the complete mutation transaction belongs on a worker thread.
+        response, _top_cell = await asyncio.to_thread(self._observe_core, antigen)
         response.coverage_report = coverage_report
         self._apply_coverage_constraints(response, antigen, coverage_report)
 
@@ -1028,16 +1032,17 @@ class AdaptiveImmuneSystem:
             response.selected_artifact.executed or response.selected_artifact.governance_denied
         ):
             acting_cell = self._find_cell(response.selected_artifact.source_cell_id)
-            response.proliferation_count = self._reinforce_after_execution(
+            response.proliferation_count = await asyncio.to_thread(
+                self._reinforce_after_execution,
                 antigen=antigen,
                 response=response,
                 acting_cell=acting_cell,
                 verification_report=verification_report,
             )
         else:
-            self._reinforce_without_execution(antigen, response)
+            await asyncio.to_thread(self._reinforce_without_execution, antigen, response)
 
-        self._record_response_summary(response)
+        await asyncio.to_thread(self._record_response_summary, response)
 
         return response
 

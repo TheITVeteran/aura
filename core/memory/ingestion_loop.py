@@ -76,7 +76,7 @@ class IngestionLoop:
         goals = []
         if goal_engine and hasattr(goal_engine, "get_goals"):
             try:
-                all_goals = goal_engine.get_goals()
+                all_goals = await asyncio.to_thread(goal_engine.get_goals)
                 goals = [g for g in all_goals if g.get("status") == "in_progress"]
             except (RuntimeError, AttributeError, TypeError, ValueError) as ex:
                 record_degradation("ingestion_loop", ex, severity="warning", action="continued without goal-driven ingestion query")

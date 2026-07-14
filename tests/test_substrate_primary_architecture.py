@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from types import SimpleNamespace
 
 import numpy as np
@@ -231,6 +232,28 @@ async def test_overt_action_loop_executes_verifies_and_receipts(tmp_path):
     assert result["expectation_verdict"]["passed"] is True
     tool_receipt = receipt_store.get(result["tool_receipt_id"])
     assert tool_receipt.verification_evidence["expectation_verdict"]["passed"] is True
+
+
+@pytest.mark.asyncio
+async def test_overt_action_goal_lookup_never_waits_on_owner_loop():
+    from core.runtime.overt_action_loop import OvertActionLoop
+
+    owner_thread = threading.get_ident()
+    observed: dict[str, int] = {}
+
+    class GoalEngine:
+        @staticmethod
+        def get_goal(goal_id):
+            observed["thread"] = threading.get_ident()
+            return {"id": goal_id, "objective": "bounded lookup"}
+
+    loop = OvertActionLoop()
+    loop._goal_engine = lambda: GoalEngine()
+
+    goal = await loop._goal_for_initiative({"goal_id": "goal-1"})
+
+    assert goal["id"] == "goal-1"
+    assert observed["thread"] != owner_thread
 
 
 @pytest.mark.asyncio

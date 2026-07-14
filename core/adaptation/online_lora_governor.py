@@ -117,7 +117,10 @@ class OnlineLoRAGovernor:
                     )
                 )
 
-            running = self.active_lora_processes()
+            # A command-line census enriches every host process and is allowed
+            # only on a worker thread. On large developer workstations it can
+            # otherwise stall the owner loop for multiple seconds.
+            running = await asyncio.to_thread(self.active_lora_processes)
             if running and not force:
                 observation_error = str(running[0].get("observation_error") or "")
                 return self._record(

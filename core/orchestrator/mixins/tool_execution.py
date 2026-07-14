@@ -191,6 +191,11 @@ class ToolExecutionMixin:
             or ServiceContainer.has("kernel_interface")
             or bool(getattr(ServiceContainer, "_registration_locked", False))
         )
+        router = self.router
+        governance_owner = getattr(router, "owns_tool_execution_governance", None)
+        _router_owns_governance = bool(
+            callable(governance_owner) and governance_owner(tool_name)
+        )
 
         def _record_coding_tool_event(result: Any, *, success: bool, error: str = "") -> None:
             nonlocal _standing_authority_closed
@@ -302,67 +307,77 @@ class ToolExecutionMixin:
             _origin,
             _payload_ctx if isinstance(_payload_ctx, dict) else None,
         )
-        _standing_authority = get_standing_authority_manager()
-        authority_decision = await _standing_authority.issue_child_lease(
-            tool_name=tool_name,
-            arguments=args,
-            origin=_origin,
-            context=governance_context,
-            user_authorized=user_authorized,
-            effect_scope=effect_scope,
-            risk_level=risk_level,
-        )
-        if not authority_decision.approved:
-            governance_context.update(
-                {
-                    "tool": tool_name,
-                    "skill": tool_name,
-                    "authority_origin": _origin,
-                    "effect_scope": effect_scope,
-                    "risk_level": risk_level,
-                    "standing_authority_denial_reason": authority_decision.reason,
-                    "standing_authority_receipt_id": authority_decision.receipt_id,
-                }
+        if _router_owns_governance:
+            # CapabilityEngine owns the one canonical lease after schema
+            # normalization. Issuing here as well creates two constitutional
+            # intents and makes harmless defaults look like argument forgery.
+            kwargs["payload_context"] = dict(governance_context)
+        else:
+            _standing_authority = get_standing_authority_manager()
+            authority_decision = await _standing_authority.issue_child_lease(
+                tool_name=tool_name,
+                arguments=args,
+                origin=_origin,
+                context=governance_context,
+                user_authorized=user_authorized,
+                effect_scope=effect_scope,
+                risk_level=risk_level,
             )
-            will_reason = ""
-            try:
-                from core.will import ActionDomain, get_will
+            if not authority_decision.approved:
+                governance_context.update(
+                    {
+                        "tool": tool_name,
+                        "skill": tool_name,
+                        "authority_origin": _origin,
+                        "effect_scope": effect_scope,
+                        "risk_level": risk_level,
+                        "standing_authority_denial_reason": authority_decision.reason,
+                        "standing_authority_denial_receipt_id": authority_decision.receipt_id,
+                    }
+                )
+                will_reason = ""
+                try:
+                    from core.will import ActionDomain, get_will
 
-                denial_decision = get_will().decide(
-                    content=f"tool:{tool_name} args:{str(args)[:100]}",
-                    source=_origin,
-                    domain=ActionDomain.TOOL_EXECUTION,
-                    priority=0.7,
-                    context=governance_context,
+                    denial_decision = get_will().decide(
+                        content=f"tool:{tool_name} args:{str(args)[:100]}",
+                        source=_origin,
+                        domain=ActionDomain.TOOL_EXECUTION,
+                        priority=0.7,
+                        context=governance_context,
+                    )
+                    if not denial_decision.is_approved():
+                        will_reason = str(denial_decision.reason or "")
+                except _TOOL_EXECUTION_RECOVERABLE_ERRORS as _will_err:
+                    _record_tool_degradation(
+                        _will_err,
+                        action="kept tool denied after Unified Will denial receipt degraded",
+                        severity="error",
+                    )
+                result = {
+                    "ok": False,
+                    "status": "standing_authority_denied",
+                    "error": f"Standing authority denied: {authority_decision.reason}",
+                    "authority_receipt_id": authority_decision.receipt_id,
+                }
+                if will_reason:
+                    result["will_reason"] = will_reason
+                _record_coding_tool_event(
+                    result,
+                    success=False,
+                    error=authority_decision.reason,
                 )
-                if not denial_decision.is_approved():
-                    will_reason = str(denial_decision.reason or "")
-            except _TOOL_EXECUTION_RECOVERABLE_ERRORS as _will_err:
-                _record_tool_degradation(
-                    _will_err,
-                    action="kept tool denied after Unified Will denial receipt degraded",
-                    severity="error",
-                )
-            result = {
-                "ok": False,
-                "status": "standing_authority_denied",
-                "error": f"Standing authority denied: {authority_decision.reason}",
-                "authority_receipt_id": authority_decision.receipt_id,
-            }
-            if will_reason:
-                result["will_reason"] = will_reason
-            _record_coding_tool_event(
-                result,
-                success=False,
-                error=authority_decision.reason,
-            )
-            return result
-        governance_context = dict(authority_decision.context)
-        _standing_authority_token = authority_decision.token
-        kwargs["payload_context"] = dict(governance_context)
+                return result
+            governance_context = dict(authority_decision.context)
+            _standing_authority_token = authority_decision.token
+            kwargs["payload_context"] = dict(governance_context)
 
         # ── EDI PROGRESSIVE AUTONOMY GATE ────────────────────────────────
-        edi = ServiceContainer.get("edi", default=None)
+        edi = (
+            None
+            if _router_owns_governance
+            else ServiceContainer.get("edi", default=None)
+        )
         if edi:
             allowed, reason = edi.can_do(
                 tool_name,
@@ -383,7 +398,11 @@ class ToolExecutionMixin:
         # Tron can block actions that work against the user's interest. These checks
         # are synchronous heuristics in the hot path.
         try:
-            _conscience = ServiceContainer.get("kokoro", default=None)
+            _conscience = (
+                None
+                if _router_owns_governance
+                else ServiceContainer.get("kokoro", default=None)
+            )
             _action_text = f"{tool_name} [{effect_scope}] {str(args)[:200]}"
             _ctx = {
                 "risk_level": risk_level,
@@ -411,7 +430,11 @@ class ToolExecutionMixin:
                     return result
                 if _verdict.verdict == "caution":
                     logger.info("⚖️  Conscience caution on '%s': %s", tool_name, _verdict.reasoning)
-            _minds = ServiceContainer.get("culture_mind", default=None)
+            _minds = (
+                None
+                if _router_owns_governance
+                else ServiceContainer.get("culture_mind", default=None)
+            )
             if _minds is not None and hasattr(_minds, "assess_fast"):
                 _sim = _minds.assess_fast(_action_text, context=_ctx)
                 if getattr(_sim, "recommendation", "") == "hold":
@@ -435,7 +458,11 @@ class ToolExecutionMixin:
                         }
                         _record_coding_tool_event(result, success=False, error=reason)
                         return result
-            _advocate = ServiceContainer.get("tron", default=None)
+            _advocate = (
+                None
+                if _router_owns_governance
+                else ServiceContainer.get("tron", default=None)
+            )
             if _advocate is not None:
                 payload_context_value = kwargs.get("payload_context")
                 payload_context: dict[str, Any] = (
@@ -499,129 +526,161 @@ class ToolExecutionMixin:
             )
             logger.debug("Derived conscience gate degraded: %s", _consc_err)
 
-        # ── UNIFIED WILL GATE ────────────────────────────────────────────
-        try:
-            from core.will import ActionDomain, get_will
+        # Registered CapabilityEngine skills cross Will once, at their actual
+        # normalized execution boundary. Virtual/pre-runtime tools still use
+        # this outer gate.
+        if not _router_owns_governance:
+            try:
+                from core.will import ActionDomain, get_will
 
-            _will_decision = get_will().decide(
-                content=f"tool:{tool_name} args:{str(args)[:100]}",
-                source=_origin,
-                domain=ActionDomain.TOOL_EXECUTION,
-                priority=0.7,
-                context=governance_context,
-            )
-            if not _will_decision.is_approved():
-                logger.warning(
-                    "Unified Will REFUSED tool '%s': %s", tool_name, _will_decision.reason
+                _will_decision = get_will().decide(
+                    content=f"tool:{tool_name} args:{str(args)[:100]}",
+                    source=_origin,
+                    domain=ActionDomain.TOOL_EXECUTION,
+                    priority=0.7,
+                    context=governance_context,
                 )
-                result = {"ok": False, "error": f"Will refused: {_will_decision.reason}"}
-                _record_coding_tool_event(result, success=False, error=str(_will_decision.reason))
-                return result
-        except _TOOL_EXECUTION_RECOVERABLE_ERRORS as _will_err:
-            _record_tool_degradation(
-                _will_err,
-                action=(
-                    "blocked tool execution because Unified Will gate was unavailable"
-                    if _constitutional_runtime_live
-                    else "continued pre-runtime tool execution without Unified Will gate"
-                ),
-                severity="error" if _constitutional_runtime_live else "warning",
-            )
-            logger.debug("Unified Will tool gate degraded: %s", _will_err)
-            if _constitutional_runtime_live:
-                result = {"ok": False, "error": "Unified Will tool gate unavailable"}
-                _record_coding_tool_event(result, success=False, error=str(_will_err))
-                return result
+                if not _will_decision.is_approved():
+                    logger.warning(
+                        "Unified Will REFUSED tool '%s': %s",
+                        tool_name,
+                        _will_decision.reason,
+                    )
+                    result = {
+                        "ok": False,
+                        "error": f"Will refused: {_will_decision.reason}",
+                    }
+                    _record_coding_tool_event(
+                        result,
+                        success=False,
+                        error=str(_will_decision.reason),
+                    )
+                    return result
+            except _TOOL_EXECUTION_RECOVERABLE_ERRORS as _will_err:
+                _record_tool_degradation(
+                    _will_err,
+                    action=(
+                        "blocked tool execution because Unified Will gate was unavailable"
+                        if _constitutional_runtime_live
+                        else "continued pre-runtime tool execution without Unified Will gate"
+                    ),
+                    severity="error" if _constitutional_runtime_live else "warning",
+                )
+                logger.debug("Unified Will tool gate degraded: %s", _will_err)
+                if _constitutional_runtime_live:
+                    result = {"ok": False, "error": "Unified Will tool gate unavailable"}
+                    _record_coding_tool_event(result, success=False, error=str(_will_err))
+                    return result
         # ─────────────────────────────────────────────────────────────────
 
         # ── EXECUTIVE APPROVAL GATE ──────────────────────────────────────
-        try:
-            from core.constitution import get_constitutional_core
+        if not _router_owns_governance:
+            try:
+                from core.constitution import get_constitutional_core
 
-            _constitutional_runtime_live = (
-                ServiceContainer.has("executive_core")
-                or ServiceContainer.has("aura_kernel")
-                or ServiceContainer.has("kernel_interface")
-                or bool(getattr(ServiceContainer, "_registration_locked", False))
-            )
-            _constitution = get_constitutional_core(self)
-            _tool_handle = await _constitution.begin_tool_execution(
-                tool_name,
-                args,
-                source=_origin,
-                objective=self._current_objective or "",
-                context=governance_context,
-            )
-            if not _tool_handle.approved:
-                reason = _tool_handle.decision.reason
-                logger.warning("🚫 ExecutiveCore blocked tool '%s': %s", tool_name, reason)
+                _constitutional_runtime_live = (
+                    ServiceContainer.has("executive_core")
+                    or ServiceContainer.has("aura_kernel")
+                    or ServiceContainer.has("kernel_interface")
+                    or bool(getattr(ServiceContainer, "_registration_locked", False))
+                )
+                _constitution = get_constitutional_core(self)
+                _tool_handle = await _constitution.begin_tool_execution(
+                    tool_name,
+                    args,
+                    source=_origin,
+                    objective=self._current_objective or "",
+                    context=governance_context,
+                )
+                if not _tool_handle.approved:
+                    reason = _tool_handle.decision.reason
+                    logger.warning(
+                        "🚫 ExecutiveCore blocked tool '%s': %s",
+                        tool_name,
+                        reason,
+                    )
+                    try:
+                        from core.observability.unified_action_log import get_action_log
+
+                        get_action_log().record(
+                            tool_name,
+                            _origin,
+                            "tool",
+                            "blocked",
+                            str(reason),
+                        )
+                    except _TOOL_EXECUTION_RECOVERABLE_ERRORS as _exc:
+                        _record_tool_degradation(
+                            _exc,
+                            action=(
+                                "returned blocked tool decision after action-log "
+                                "recording failed"
+                            ),
+                        )
+                        logger.debug("Tool action-log blocked event skipped: %s", _exc)
+                    result = {"ok": False, "error": f"Executive blocked: {reason}"}
+                    _record_coding_tool_event(result, success=False, error=str(reason))
+                    return result
                 try:
                     from core.observability.unified_action_log import get_action_log
 
-                    get_action_log().record(tool_name, _origin, "tool", "blocked", str(reason))
+                    get_action_log().record(tool_name, _origin, "tool", "approved")
                 except _TOOL_EXECUTION_RECOVERABLE_ERRORS as _exc:
                     _record_tool_degradation(
                         _exc,
-                        action="returned blocked tool decision after action-log recording failed",
+                        action=(
+                            "continued approved tool execution after action-log "
+                            "recording failed"
+                        ),
                     )
-                    logger.debug("Tool action-log blocked event skipped: %s", _exc)
-                result = {"ok": False, "error": f"Executive blocked: {reason}"}
-                _record_coding_tool_event(result, success=False, error=str(reason))
-                return result
-            try:
-                from core.observability.unified_action_log import get_action_log
-
-                get_action_log().record(tool_name, _origin, "tool", "approved")
-            except _TOOL_EXECUTION_RECOVERABLE_ERRORS as _exc:
+                    logger.debug("Tool action-log approval event skipped: %s", _exc)
+                if _tool_handle.constraints:
+                    kwargs.update(_tool_handle.constraints)
+            except _TOOL_EXECUTION_RECOVERABLE_ERRORS as _exec_err:
                 _record_tool_degradation(
-                    _exc,
-                    action="continued approved tool execution after action-log recording failed",
+                    _exec_err,
+                    action=(
+                        "blocked tool execution because constitutional gate was unavailable"
+                        if _constitutional_runtime_live
+                        else "continued pre-runtime tool execution without constitutional gate"
+                    ),
+                    severity="error" if _constitutional_runtime_live else "warning",
                 )
-                logger.debug("Tool action-log approval event skipped: %s", _exc)
-            if _tool_handle.constraints:
-                kwargs.update(_tool_handle.constraints)  # Apply any degraded-mode constraints
-        except _TOOL_EXECUTION_RECOVERABLE_ERRORS as _exec_err:
-            _record_tool_degradation(
-                _exec_err,
-                action=(
-                    "blocked tool execution because constitutional gate was unavailable"
-                    if _constitutional_runtime_live
-                    else "continued pre-runtime tool execution without constitutional gate"
-                ),
-                severity="error" if _constitutional_runtime_live else "warning",
-            )
-            if _constitutional_runtime_live:
-                try:
-                    from core.health.degraded_events import record_degraded_event
+                if _constitutional_runtime_live:
+                    try:
+                        from core.health.degraded_events import record_degraded_event
 
-                    record_degraded_event(
-                        "orchestrator",
-                        "tool_gate_unavailable",
-                        detail=tool_name,
-                        severity="warning",
-                        classification="foreground_blocking"
-                        if _origin in ("user", "voice", "admin", "api")
-                        else "background_degraded",
-                        context={"error": type(_exec_err).__name__},
-                        exc=_exec_err,
+                        record_degraded_event(
+                            "orchestrator",
+                            "tool_gate_unavailable",
+                            detail=tool_name,
+                            severity="warning",
+                            classification="foreground_blocking"
+                            if _origin in ("user", "voice", "admin", "api")
+                            else "background_degraded",
+                            context={"error": type(_exec_err).__name__},
+                            exc=_exec_err,
+                        )
+                    except _TOOL_EXECUTION_RECOVERABLE_ERRORS as _exc:
+                        _record_tool_degradation(
+                            _exc,
+                            action=(
+                                "kept tool execution blocked after degraded-event "
+                                "emission failed"
+                            ),
+                            severity="error",
+                        )
+                        logger.debug("Constitutional gate degraded-event emission failed: %s", _exc)
+                    logger.warning(
+                        "🚫 ConstitutionalCore unavailable for tool '%s': %s", tool_name, _exec_err
                     )
-                except _TOOL_EXECUTION_RECOVERABLE_ERRORS as _exc:
-                    _record_tool_degradation(
-                        _exc,
-                        action="kept tool execution blocked after degraded-event emission failed",
-                        severity="error",
-                    )
-                    logger.debug("Constitutional gate degraded-event emission failed: %s", _exc)
-                logger.warning(
-                    "🚫 ConstitutionalCore unavailable for tool '%s': %s", tool_name, _exec_err
-                )
-                result = {"ok": False, "error": "Constitutional tool gate unavailable"}
-                _record_coding_tool_event(result, success=False, error=str(_exec_err))
-                return result
-            logger.debug("ConstitutionalCore unavailable for tool gate: %s", _exec_err)
+                    result = {"ok": False, "error": "Constitutional tool gate unavailable"}
+                    _record_coding_tool_event(result, success=False, error=str(_exec_err))
+                    return result
+                logger.debug("ConstitutionalCore unavailable for tool gate: %s", _exec_err)
         # ─────────────────────────────────────────────────────────────────
 
-        if _constitutional_runtime_live and _tool_handle:
+        if not _router_owns_governance and _constitutional_runtime_live and _tool_handle:
             try:
                 from core.executive.authority_gateway import get_authority_gateway
 

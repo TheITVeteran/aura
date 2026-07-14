@@ -182,7 +182,7 @@ class OvertActionLoop:
             else:
                 will_receipt_id = str(getattr(synth_result, "will_receipt_id", "") or "")
 
-            goal = self._goal_for_initiative(initiative)
+            goal = await self._goal_for_initiative(initiative)
             selection = self._choose_skill_and_params(initiative, goal)
             if not selection.actionable:
                 return self._record_initiative_skip(
@@ -595,13 +595,13 @@ class OvertActionLoop:
             allow_partial=False,
         )
 
-    def _goal_for_initiative(self, initiative: dict[str, Any]) -> dict[str, Any]:
+    async def _goal_for_initiative(self, initiative: dict[str, Any]) -> dict[str, Any]:
         metadata = dict(initiative.get("metadata", {}) or {})
         goal_id = str(metadata.get("goal_id") or initiative.get("goal_id") or "")
         goal_engine = self._goal_engine()
         if goal_id and goal_engine is not None and hasattr(goal_engine, "get_goal"):
             try:
-                return dict(goal_engine.get_goal(goal_id) or {})
+                return dict(await asyncio.to_thread(goal_engine.get_goal, goal_id) or {})
             except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation("overt_action_loop", exc)
         return {}
@@ -1102,7 +1102,7 @@ class OvertActionLoop:
 
         async def _update() -> None:
             try:
-                current = goal_engine.get_goal(result.goal_id) or {}
+                current = await asyncio.to_thread(goal_engine.get_goal, result.goal_id) or {}
                 progress = min(0.95, max(float(current.get("progress", 0.0) or 0.0), 0.05) + 0.05)
                 evidence = list(current.get("evidence") or [])
                 evidence.append(result.tool_receipt_id or result.action_id)

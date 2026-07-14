@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import tempfile
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -20,6 +21,44 @@ from core.adaptation.adaptive_immunity import (
 
 def run(coro):
     return asyncio.run(coro)
+
+
+def test_async_observation_runs_evolution_and_persistence_off_owner_loop(
+    tmp_path,
+    monkeypatch,
+):
+    immune = AdaptiveImmuneSystem(state_dir=tmp_path, rng_seed=33)
+    owner_thread = threading.get_ident()
+    observed_threads: dict[str, int] = {}
+    original_observe = immune._observe_core
+    original_summary = immune._record_response_summary
+
+    def observed_core(antigen):
+        observed_threads["core"] = threading.get_ident()
+        return original_observe(antigen)
+
+    def observed_summary(response):
+        observed_threads["summary"] = threading.get_ident()
+        return original_summary(response)
+
+    monkeypatch.setattr(immune, "_observe_core", observed_core)
+    monkeypatch.setattr(immune, "_record_response_summary", observed_summary)
+
+    response = run(
+        immune.observe_event(
+            {
+                "type": "error_signature",
+                "text": "bounded persistence regression",
+                "subsystem": "adaptive_immunity",
+                "source": "test",
+                "danger": 0.3,
+            }
+        )
+    )
+
+    assert response.antigen.subsystem == "adaptive_immunity"
+    assert observed_threads["core"] != owner_thread
+    assert observed_threads["summary"] != owner_thread
 
 
 @dataclass

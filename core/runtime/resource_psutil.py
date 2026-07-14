@@ -216,10 +216,10 @@ def net_io_counters(*_args: Any, **_kwargs: Any) -> Any:
 
 
 def pids() -> list[int]:
-    table = get_resource_observer().process_table()
-    if not table.available:
-        raise _psutil.AccessDenied(pid=os.getpid(), msg=table.error)
-    return [process.pid for process in table.processes]
+    observation = get_resource_observer().process_ids()
+    if not observation.available:
+        raise _psutil.AccessDenied(pid=os.getpid(), msg=observation.error)
+    return list(observation.pids)
 
 
 def pid_exists(pid: int) -> bool:
@@ -395,13 +395,10 @@ class Process:
         return observed is not None and observed.status not in {"dead", "zombie"}
 
     def children(self, recursive: bool = False) -> list[Process]:
-        table = get_resource_observer().process_table()
+        table = get_resource_observer().process_tree(self.pid, recursive=recursive)
         if not table.available:
             raise _psutil.AccessDenied(pid=self.pid, msg=table.error)
-        if recursive:
-            observed = [item for item in table.processes if self.pid in item.ancestor_pids]
-        else:
-            observed = [item for item in table.processes if item.ppid == self.pid]
+        observed = [item for item in table.processes if item.pid != self.pid]
         return [Process(item.pid) for item in observed]
 
     def parent(self) -> Process | None:

@@ -186,10 +186,7 @@ class ToggleSensesSkill(BaseSkill):
 
         deadline = asyncio.get_running_loop().time() + timeout_s
         while asyncio.get_running_loop().time() < deadline:
-            table = get_resource_observer().process_table()
-            if not table.available:
-                return False
-            process = next((item for item in table.processes if item.pid == pid), None)
+            process = await asyncio.to_thread(get_resource_observer().process, pid)
             if process is None:
                 return True
             if process.status.lower() in {"dead", "zombie"}:

@@ -262,7 +262,7 @@ class StartupValidator:
             import os
             import signal
 
-            table = get_resource_observer().process_table()
+            table = await asyncio.to_thread(get_resource_observer().process_table)
             if not table.available:
                 raise RuntimeError(f"process_table_unavailable:{table.error}")
 

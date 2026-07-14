@@ -245,12 +245,11 @@ class SovereignSupervisor:
             return
 
         try:
-            table = get_resource_observer().process_table()
+            table = get_resource_observer().process_tree(pid)
             target_pids = (
                 [
                     process.pid
                     for process in table.processes
-                    if process.pid == pid or pid in process.ancestor_pids
                 ]
                 if table.available
                 else [pid]

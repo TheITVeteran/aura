@@ -60,6 +60,16 @@ _USER_FACING_MEMORY_ORIGINS = frozenset(
         "ws",
     }
 )
+
+_BOUND_STANDING_AUTHORITY_CONTEXT_KEYS = frozenset(
+    {
+        "authority_args_digest",
+        "scoped_authority",
+        "standing_authority_grant_id",
+        "standing_authority_receipt_id",
+        "standing_authority_token",
+    }
+)
 _CONVERSATION_MEMORY_TYPES = frozenset(
     {
         "conversation",
@@ -653,6 +663,12 @@ class AuthorityGateway:
         if lease.approved:
             runtime_context = dict(lease.context)
         else:
+            # A rejected revalidation must not leave a partial prior lease in
+            # context. Mixing the old token with this denial's receipt makes a
+            # cryptographically inconsistent envelope and obscures the real
+            # rejection (for example, canonical argument mismatch).
+            for key in _BOUND_STANDING_AUTHORITY_CONTEXT_KEYS:
+                runtime_context.pop(key, None)
             runtime_context.update(
                 {
                     "tool": tool_name,
@@ -663,7 +679,7 @@ class AuthorityGateway:
                     "effect_scope": effect_scope,
                     "risk_level": risk_level,
                     "standing_authority_denial_reason": lease.reason,
-                    "standing_authority_receipt_id": lease.receipt_id,
+                    "standing_authority_denial_receipt_id": lease.receipt_id,
                 }
             )
 

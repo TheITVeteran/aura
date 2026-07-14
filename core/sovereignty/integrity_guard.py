@@ -98,20 +98,17 @@ class IntegrityGuard:
         # 2. PID Watchdog: Check for debuggers or tracers
         try:
             observer = get_resource_observer()
-            table = observer.process_table()
             process = observer.process(os.getpid())
-            if process is None or not table.available:
-                raise RuntimeError(table.error or "process_identity_unavailable")
+            if process is None:
+                raise RuntimeError("process_identity_unavailable")
             self._last_observation_source = observer.provenance.source.value
             self._last_observation_scenario_id = observer.provenance.scenario_id
             suspicious = ["gdb", "lldb", "debugpy", "pydevd"]
             chain = [process]
-            by_pid = {item.pid: item for item in table.processes}
-            chain.extend(
-                by_pid[pid]
-                for pid in process.ancestor_pids
-                if pid in by_pid
-            )
+            for ancestor_pid in process.ancestor_pids:
+                ancestor = observer.process(ancestor_pid)
+                if ancestor is not None:
+                    chain.append(ancestor)
             for proc in chain:
                 name = proc.name.lower()
                 if any(s in name for s in suspicious):
@@ -148,7 +145,10 @@ class IntegrityGuard:
                 if audit:
                     audit.heartbeat("sovereign_scanner")
                 
-                score = self.verify_sovereignty()
+                # Filesystem and process identity probes are blocking host I/O.
+                # Keep them off the runtime owner loop even when the host is
+                # under debugger/process churn.
+                score = await asyncio.to_thread(self.verify_sovereignty)
                 if score < 0.9:
                     mycelium = get_runtime_service("mycelial_network", default=None)
                     if mycelium:

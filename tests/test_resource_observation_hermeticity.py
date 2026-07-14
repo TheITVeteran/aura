@@ -190,6 +190,38 @@ def test_host_observer_process_tree_uses_lightweight_targeted_probe(monkeypatch)
     assert all(process.name == "" for process in table.processes)
 
 
+def test_host_process_ids_never_enriches_process_table(monkeypatch):
+    from core.runtime import resource_observation
+
+    monkeypatch.setattr(resource_observation.psutil, "pids", lambda: [9, 3, 9, 5])
+    monkeypatch.setattr(
+        resource_observation.psutil,
+        "process_iter",
+        lambda: (_ for _ in ()).throw(AssertionError("full process table was scanned")),
+    )
+
+    observation = HostResourceObserver().process_ids()
+
+    assert observation.available is True
+    assert observation.pids == (3, 5, 9)
+
+
+def test_legacy_pid_census_does_not_call_process_table(monkeypatch, resource_observer):
+    resource_observer.configure_processes(
+        [
+            _process(resource_observer, pid=11),
+            _process(resource_observer, pid=17),
+        ]
+    )
+    monkeypatch.setattr(
+        resource_observer,
+        "process_table",
+        lambda: (_ for _ in ()).throw(AssertionError("full process table was scanned")),
+    )
+
+    assert resource_psutil.pids() == [11, 17]
+
+
 def test_legacy_resource_facade_never_reaches_sabotaged_host_apis(
     monkeypatch,
     resource_observer,

@@ -217,6 +217,24 @@ class ProcessTableObservation:
 
 
 @dataclass(frozen=True)
+class ProcessIdsObservation:
+    """Lightweight process identity census without metadata enrichment."""
+
+    provenance: ObservationProvenance
+    pids: tuple[int, ...]
+    available: bool = True
+    error: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "provenance": self.provenance.to_dict(),
+            "available": self.available,
+            "error": self.error,
+            "pids": list(self.pids),
+        }
+
+
+@dataclass(frozen=True)
 class NetworkConnectionObservation:
     provenance: ObservationProvenance
     pid: int
@@ -352,11 +370,20 @@ class ResourceObserver(Protocol):
 
     def power(self) -> PowerObservation: ...
 
+    def process_ids(self) -> ProcessIdsObservation: ...
+
     def process_table(self) -> ProcessTableObservation: ...
 
     def processes(self) -> tuple[ProcessObservation, ...]: ...
 
     def process(self, pid: int) -> ProcessObservation | None: ...
+
+    def process_tree(
+        self,
+        root_pid: int,
+        *,
+        recursive: bool = True,
+    ) -> ProcessTableObservation: ...
 
     def connection_table(
         self,
@@ -488,6 +515,28 @@ class HostResourceObserver:
             return self._process_from_handle(psutil.Process(int(pid)))
         except (psutil.Error, OSError, RuntimeError, TypeError, ValueError):
             return None
+
+    def process_ids(self) -> ProcessIdsObservation:
+        """Return only host PIDs for count/existence telemetry.
+
+        ``process_table`` intentionally enriches every process and can take
+        seconds on a busy workstation. Callers that only need a census must
+        never pay that cost or run it on an async owner loop.
+        """
+
+        try:
+            observed = tuple(sorted({int(pid) for pid in psutil.pids()}))
+            return ProcessIdsObservation(
+                provenance=self.provenance,
+                pids=observed,
+            )
+        except (psutil.Error, OSError, RuntimeError, TypeError, ValueError) as exc:
+            return ProcessIdsObservation(
+                provenance=self.provenance,
+                pids=(),
+                available=False,
+                error=f"{type(exc).__name__}:{exc}",
+            )
 
     def _lightweight_process_from_handle(
         self,
@@ -1274,6 +1323,14 @@ class SimulatedResourceObserver:
         with self._lock:
             return tuple(self._with_provenance(process) for process in self._processes)
 
+    def process_ids(self) -> ProcessIdsObservation:
+        with self._lock:
+            pids = tuple(sorted({int(process.pid) for process in self._processes}))
+        return ProcessIdsObservation(
+            provenance=self.provenance,
+            pids=pids,
+        )
+
     def process_table(self) -> ProcessTableObservation:
         return ProcessTableObservation(
             provenance=self.provenance,
@@ -1285,6 +1342,39 @@ class SimulatedResourceObserver:
             if process.pid == int(pid):
                 return process
         return None
+
+    def process_tree(
+        self,
+        root_pid: int,
+        *,
+        recursive: bool = True,
+    ) -> ProcessTableObservation:
+        root = int(root_pid)
+        processes = self.processes()
+        root_process = next((process for process in processes if process.pid == root), None)
+        if root_process is None:
+            return ProcessTableObservation(
+                provenance=self.provenance,
+                processes=(),
+                available=False,
+                error="root_process_unobservable",
+            )
+        if recursive:
+            descendants = [
+                process
+                for process in processes
+                if process.pid != root and root in process.ancestor_pids
+            ]
+        else:
+            descendants = [
+                process
+                for process in processes
+                if process.pid != root and process.ppid == root
+            ]
+        return ProcessTableObservation(
+            provenance=self.provenance,
+            processes=(root_process, *descendants),
+        )
 
     def connections(
         self,
@@ -1406,6 +1496,7 @@ __all__ = [
     "ObservationSource",
     "OpenFilesObservation",
     "PowerObservation",
+    "ProcessIdsObservation",
     "ProcessObservation",
     "ProcessTableObservation",
     "ResourceObservation",

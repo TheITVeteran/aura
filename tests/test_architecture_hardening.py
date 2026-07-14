@@ -1425,6 +1425,122 @@ async def test_orchestrator_execute_tool_derives_foreground_scoped_authority(
 
 
 @pytest.mark.asyncio
+async def test_registered_capability_uses_one_canonical_governance_owner(
+    orchestrator,
+    monkeypatch,
+):
+    class CanonicalRouter:
+        skills = {"web_search": object()}
+
+        def __init__(self):
+            self.calls = []
+
+        @staticmethod
+        def owns_tool_execution_governance(skill_name):
+            return skill_name == "web_search"
+
+        async def execute(self, skill_name, params, context):
+            self.calls.append((skill_name, dict(params), dict(context)))
+            return {"ok": True, "result": "canonically governed"}
+
+    router = CanonicalRouter()
+    orchestrator.router = router
+    monkeypatch.setattr(
+        "core.orchestrator.mixins.tool_execution.get_standing_authority_manager",
+        lambda: (_ for _ in ()).throw(
+            AssertionError("orchestrator issued a duplicate standing lease")
+        ),
+    )
+    class ConstitutionProbe:
+        @staticmethod
+        async def begin_tool_execution(*_args, **_kwargs):
+            raise AssertionError("orchestrator opened a duplicate constitutional intent")
+
+        @staticmethod
+        def approve_memory_write_sync(**_kwargs):
+            return True, "test-approved"
+
+    monkeypatch.setattr(
+        "core.constitution.get_constitutional_core",
+        lambda *_args, **_kwargs: ConstitutionProbe(),
+    )
+
+    result = await orchestrator.execute_tool(
+        "web_search",
+        {"query": "public systems research"},
+        origin="curiosity",
+        payload_context={"objective": "bounded public research"},
+    )
+
+    assert result["ok"] is True
+    assert len(router.calls) == 1
+    _, _, execution_context = router.calls[0]
+    assert execution_context["origin"] == "curiosity"
+    assert "standing_authority_token" not in execution_context
+    assert "capability_token_id" not in execution_context
+
+
+@pytest.mark.asyncio
+async def test_authority_gateway_clears_partial_lease_after_revalidation_denial():
+    from core.executive.authority_gateway import AuthorityGateway
+
+    captured_contexts = []
+
+    class DenyingStandingAuthority:
+        @staticmethod
+        async def issue_child_lease(*_args, **_kwargs):
+            return SimpleNamespace(
+                approved=False,
+                reason="standing_authority_arguments_mismatch",
+                receipt_id="denial-receipt",
+                token=None,
+            )
+
+    gateway = AuthorityGateway.__new__(AuthorityGateway)
+    gateway._standing_authority = DenyingStandingAuthority()
+    gateway._active_tokens = {}
+    gateway._current_posture = "defensive_sandboxed"
+    gateway._social_governance_gate = lambda *_args, **_kwargs: None
+
+    def will_gate(*_args, **kwargs):
+        captured_contexts.append(dict(kwargs.get("context") or {}))
+        return None, SimpleNamespace(receipt_id="will-denial-receipt")
+
+    gateway._will_gate = will_gate
+
+    decision = await gateway.authorize_tool_execution(
+        "web_search",
+        {"query": "canonical arguments"},
+        source="curiosity",
+        context={
+            "standing_authority_token": "prior-token",
+            "standing_authority_grant_id": "prior-grant",
+            "standing_authority_receipt_id": "prior-receipt",
+            "authority_args_digest": "prior-digest",
+            "scoped_authority": "standing:prior-grant:prior-ref",
+        },
+    )
+
+    assert decision.approved is False
+    assert decision.reason == (
+        "standing_authority_denied:standing_authority_arguments_mismatch"
+    )
+    assert captured_contexts
+    context = captured_contexts[0]
+    assert context["standing_authority_denial_receipt_id"] == "denial-receipt"
+    assert context["standing_authority_denial_reason"] == (
+        "standing_authority_arguments_mismatch"
+    )
+    assert not {
+        "standing_authority_token",
+        "standing_authority_grant_id",
+        "standing_authority_receipt_id",
+        "authority_args_digest",
+        "scoped_authority",
+    }.intersection(context)
+
+
+@pytest.mark.asyncio
 async def test_orchestrator_execute_tool_denies_conversation_only_surface(orchestrator):
     orchestrator.router = SimpleNamespace(
         skills={"web_search": object()},

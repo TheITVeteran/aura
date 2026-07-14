@@ -240,12 +240,9 @@ class SupervisionTree:
         pid = getattr(process, "pid", None)
         if not pid:
             return True
-        table = get_resource_observer().process_table()
-        if table.available:
-            observed = next((item for item in table.processes if item.pid == pid), None)
-            if observed is None or observed.status.lower() in {"dead", "zombie"}:
-                return False
-            return True
+        observed = get_resource_observer().process(pid)
+        if observed is not None:
+            return observed.status.lower() not in {"dead", "zombie"}
         try:
             os.kill(pid, 0)
             return True

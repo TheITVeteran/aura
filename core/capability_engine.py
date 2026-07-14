@@ -3394,6 +3394,20 @@ class CapabilityEngine(AuraBaseModule):
         "generate_image": "sovereign_imagination",
     }
 
+    def owns_tool_execution_governance(self, skill_name: Any) -> bool:
+        """Return whether this engine is the execution boundary for ``skill``.
+
+        The orchestrator may perform routing and learning around a capability
+        invocation, but registered skills run their EDI, conscience, Will, and
+        constitutional checks here after parameters have been normalized. This
+        prevents duplicate policy work and nested leases over different
+        raw/canonical argument shapes.
+        """
+
+        resolved = self.resolve_skill_name(skill_name)
+        with self._catalog_guard():
+            return resolved in self.skills
+
     @staticmethod
     def _normalize_execution_params(params: dict[str, Any]) -> dict[str, Any]:
         normalized = dict(params or {})
@@ -4566,11 +4580,13 @@ class CapabilityEngine(AuraBaseModule):
         try:
             wrapped_result = await _execute_wrapped()
             if not isinstance(wrapped_result, dict):
-                return {
+                result = {
                     "ok": False,
                     "error": "Capability error boundary returned a non-object result",
                 }
-            return wrapped_result
+                return result
+            result = wrapped_result
+            return result
         finally:
             try:
                 if (

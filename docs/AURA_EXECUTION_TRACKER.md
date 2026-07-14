@@ -16,13 +16,15 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **Checkpoint 64 removes the
-  in-orchestrator Cortex load and quadratic non-parametric ingestion path that
-  retained a full Metal allocation and starved foreground service. Maintenance
-  now reuses the resident worker under hard budgets and canonical model-lane
-  ownership; the external memory sentinel now uses a lightweight attributed
-  target-tree observer. Exact-main signed-app plateau and health proof remain
-  mandatory**, followed by the full signed-app proof of the source-green
+- Current bounded implementation milestone: **Checkpoint 65 removes four
+  directly sampled owner-loop blockers and one federated authorization defect.
+  Full-host process censuses, synchronous goal-engine lock acquisition, and
+  adaptive-immunity evolution/persistence no longer execute on the async owner
+  loop; registered capabilities now cross exactly one canonical governance
+  boundary, so normalized arguments cannot invalidate a child lease issued for
+  a different representation of the same action. Exact-main signed-app plateau,
+  health, and autonomous-action proof remain mandatory**, followed by the full
+  signed-app proof of the source-green
   canonical action spine, standing authority, owned-task, self-condition,
   desktop-access, event-loop pressure, and launch provenance
   (`AUTONOMY-AUTHORITY-001`, `ASYNC-TASK-001`, `SELF-STATE-CHAT-001`,
@@ -32,7 +34,7 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   restart, followed by joy/social
   self-state separation and the remaining typed canonical person-model
   consolidation (`MEMORY-001`, `MIND-001`, `STATE-001`,
-  `CTX3-SOCIAL-001..002`). Checkpoints 49 through 64 establish the current
+  `CTX3-SOCIAL-001..002`). Checkpoints 49 through 65 establish the current
   social, OS-automation, runtime-pressure, desktop-access, self-condition,
   owned-task, standing-authority, action-execution, and pressure-resilient
   health source boundaries, signed
@@ -47,9 +49,9 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   item remains open or in progress unless its detailed entry explicitly carries
   a completion date and proof.
 - Overall completion percentage: **30% planning estimate as of pushed
-  Checkpoint 64**. Checkpoint 64 closes a dominant model-maintenance ownership,
-  algorithmic-complexity, foreground-starvation, and sentinel-overhead defect,
-  but
+  Checkpoint 65**. Checkpoint 65 closes sampled owner-loop blocking and
+  duplicate-governance causes in source, but live signed-app proof remains open
+  and
   newly explicit system-wide frontier cognition/engineering and morphogenetic
   organ-engineering burdens increase the denominator. Recording that expansion
   lowers the rounded estimate instead of manufacturing progress by hiding
@@ -59,7 +61,7 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   generated denominator; new obligations increase it, regressions reopen it,
   and source-green/live-open work never receives full closure credit.
 - Total checkpoint forecast: **approximately 206-276 total checkpoints for the
-  expanded program, with 64 pushed and approximately 142-212 remaining before
+  expanded program, with 65 pushed and approximately 141-211 remaining before
   final soak/release closure**. This includes every
   implementation, cleanup, repair, integration, verification, live,
   portability, release, and soak checkpoint, not only headline milestones.
@@ -107,11 +109,11 @@ Status rules:
 | `EFFECT-001` | `IN PROGRESS` | Put file, network, browser, OS, memory, model, patch, self-repair, social, and environmental effects through canonical authority, transaction, compensation, and reconstructable receipt boundaries. | Pass F 5; Matrix 9 and 11 |
 | `STORAGE-GATEWAY-001` | `COMPLETE 2026-07-13` | Removed all seven production-surface direct-write bypasses in local TLS material, self-repair backlog state, flight-recorder emergency output, Program DNA staging, and rollback state. Canonical batch, owned-binary, durable replace/delete, governance, schema, integrity, concurrency, and fault-injection contracts preserve bootstrap/crash/rollback behavior without exemptions. Checkpoint 62 reached zero direct-file-write findings; Checkpoint 63 subsequently brought the complete audited production-surface scanner to zero findings. | `EFFECT-001`, `FAULT-001`, `REPO-001`; Checkpoints 62-63 |
 | `RUNTIME-001` | `IN PROGRESS` | Finish desired-state reconciliation and truthful startup/liveness/readiness/degradation/proof/certification conditions without aggregate false health. | Pass F 2; Matrix 13 |
-| `HEALTH-SURFACE-001` | `IN PROGRESS (SOURCE GREEN; EXACT-MAIN LIVE OPEN) 2026-07-13` | Replace the heavyweight request-time `/api/health` aggregation with one bounded, versioned, asynchronously refreshed health read model whose public request path is non-blocking, stale-aware, and available under owner-loop and CPU pressure. The request-time collector, duplicate fixed UI timers, rich service-worker polling, cold service construction, mutation-on-observation, and repeated per-attempt warning cards are removed; one daemon single-flight refresh owner, explicit expiry truth, retry telemetry, jittered client backoff, incident coalescing, bounded reminders, and one recovery transition are source-green. Checkpoint 64 also removes the background in-process Cortex owner that starved the conversational worker and contributed to repeated neural health-poll failure. Exact-main signed-app proof must still demonstrate responsive liveness/readiness while cognition, Phi, neural-mesh, MLX recovery, desktop perception, and attribution work are active. | `RUNTIME-001`, `FOREGROUND-LATENCY-001`, `OBSERVE-001`, `UI-001`, `PERF-001`; Checkpoints 61 and 64; live old-runtime `/api/health` measured `200`, 135883 bytes, 5.3s against a 1.5s UI abort budget with repeated `[health_poll] ... Load failed` on preserved Fable runtime 2026-07-13 |
+| `HEALTH-SURFACE-001` | `IN PROGRESS (SOURCE GREEN; EXACT-MAIN LIVE OPEN) 2026-07-13` | Replace the heavyweight request-time `/api/health` aggregation with one bounded, versioned, asynchronously refreshed health read model whose public request path is non-blocking, stale-aware, and available under owner-loop and CPU pressure. The request-time collector, duplicate fixed UI timers, rich service-worker polling, cold service construction, mutation-on-observation, and repeated per-attempt warning cards are removed; one daemon single-flight refresh owner, explicit expiry truth, retry telemetry, jittered client backoff, incident coalescing, bounded reminders, and one recovery transition are source-green. Checkpoint 64 removes the background in-process Cortex owner that starved the conversational worker; Checkpoint 65 removes sampled process-census, goal-lock, and immunity-persistence blockers that caused boot-health singleflight overruns. Exact-main signed-app proof must still demonstrate responsive liveness/readiness while cognition, Phi, neural-mesh, MLX recovery, desktop perception, and attribution work are active. | `RUNTIME-001`, `FOREGROUND-LATENCY-001`, `OBSERVE-001`, `UI-001`, `PERF-001`; Checkpoints 61, 64, and 65; live old-runtime `/api/health` measured `200`, 135883 bytes, 5.3s against a 1.5s UI abort budget with repeated `[health_poll] ... Load failed` on preserved Fable runtime 2026-07-13 |
 | `LANE-001` | `COMPLETE 2026-07-12` | Preserve atomic fenced reservations, synchronous required eviction/reclamation, all-owner accounting, heartbeats, compensation, terminal receipts, race exclusion, and bounded live physical-release-before-load evidence across future model owners. | Addendum 21-22, `CTX2-LANE-001..004` |
-| `RESOURCE-001` | `COMPLETE 2026-07-13` | Preserve typed attributed RAM, accelerator, thermal, disk, compute, power, process, connection, open-file, cache, and pressure observation; keep ordinary tests hermetic and live-pressure evidence explicitly labelled and conservatively bounded. Checkpoint 64 adds a canonical lightweight target-tree observer so safety sentinels avoid full-host scans without bypassing provenance. | Pass F 3; Addendum 22; Checkpoints 34 and 64 |
+| `RESOURCE-001` | `COMPLETE 2026-07-13` | Preserve typed attributed RAM, accelerator, thermal, disk, compute, power, process, connection, open-file, cache, and pressure observation; keep ordinary tests hermetic and live-pressure evidence explicitly labelled and conservatively bounded. Checkpoint 64 adds a canonical lightweight target-tree observer; Checkpoint 65 adds a provenance-bearing PID census and targeted process-tree observation so ordinary liveness, sovereignty, shutdown, and supervisor checks do not enrich the full host process table. | Pass F 3; Addendum 22; Checkpoints 34, 64, and 65 |
 | `MEMORY-LEAK-001` | `IN PROGRESS (DOMINANT LIVE OWNER SOURCE-FIXED; EXACT-MAIN PLATEAU OPEN) 2026-07-13` | Attribute and eliminate the measured 350-450 MB/hour idle orchestrator RSS growth without relying on restart, pressure-triggered reclamation, model-worker exclusion, or a raised limit. Checkpoint 64 identified a live orchestrator retaining about 19.7 GB physical footprint, including about 17.2 GB of IOAccelerator regions, while stacks remained in the background non-parametric ingest path for more than 1,098 seconds. The source now forbids model loading in that owner and reuses the resident worker with one causal forward, hard pair/token/position/deadline budgets, foreground preemption, durable ordering, and cache cleanup. The old running process still retains its already-loaded allocation; controlled exact-main restart, remaining allocation/cardinality attribution, bounded-growth regressions, and stable idle plus interaction plateau proof remain mandatory. | `RESOURCE-001`, `RUNTIME-001`, `FAULT-001`, `PERF-001`; two independent 45/70-minute idle windows in `docs/SYSTEMS_MATURITY_2026_07_12.md`; live stack/vmmap attribution and Checkpoint 64 |
-| `FOREGROUND-LATENCY-001` | `IN PROGRESS (SOURCE GREEN; LIVE OPEN) 2026-07-13` | Eliminate live event-loop stalls that deny normal foreground model admission. Attribute every blocking owner, move blocking probes/work off-loop, preserve truthful lag admission instead of raising thresholds, and prove chat/model load remains available under desktop-access, immunity, telemetry, action execution, and background activity. Ordinary memory observation and blocking actuator bodies are source-offloaded; background MLX admission pressure is a retryable information-level deferral while a foreground denial remains visible. Checkpoint 64 removes an approximately 18-minute quadratic in-orchestrator model job and makes its resident-worker replacement foreground-preemptible. | `PERF-001`, `RUNTIME-001`, `FAULT-001`; Checkpoints 51, 57, 60, and 64; live `event_loop_lag_3.638s` MLX admission denial at 00:32 on 2026-07-13 |
+| `FOREGROUND-LATENCY-001` | `IN PROGRESS (SOURCE GREEN; LIVE OPEN) 2026-07-13` | Eliminate live event-loop stalls that deny normal foreground model admission. Attribute every blocking owner, move blocking probes/work off-loop, preserve truthful lag admission instead of raising thresholds, and prove chat/model load remains available under desktop-access, immunity, telemetry, action execution, and background activity. Ordinary memory observation and blocking actuator bodies are source-offloaded; background MLX admission pressure is a retryable information-level deferral while a foreground denial remains visible. Checkpoint 64 removes an approximately 18-minute quadratic in-orchestrator model job; Checkpoint 65 moves sampled host-process enrichment, goal-store locking, and adaptive-immunity evolution plus durable serialization off the owner loop without raising lag thresholds. | `PERF-001`, `RUNTIME-001`, `FAULT-001`; Checkpoints 51, 57, 60, 64, and 65; live `event_loop_lag_3.638s` MLX admission denial at 00:32 and 4.304s owner-loop lag with boot-health singleflight overrun at 20:33 on 2026-07-13 |
 | `SHUTDOWN-001` | `COMPLETE 2026-07-11` | Preserve monotonic quiescence, reverse-order bounded teardown, terminal evidence, and no post-latch construction or resurrection across all future changes. | Addendum 32, `CTX2-SHUTDOWN-001..003` |
 | `FAULT-001` | `IN PROGRESS` | Drain the FMEA and degradation-policy backlog: root-fix broad catches, swallowed cancellation, false success/health, partial mutation, retry storms, leaks, and noisy fallback at their originating layer. | Pass F 4; Matrix 12 |
 | `ARCH-001` | `IN PROGRESS` | Establish canonical subsystem ownership and typed dependency boundaries; remove duplicate runtime owners, cross-wired service lookups, bypasses, monolith debt, and mixed runtime/proof/research meaning. | Pass F 5; Matrix 11; context architecture criticisms |
@@ -128,8 +130,8 @@ Status rules:
 | `SKILLS-001` | `COMPLETE 2026-07-10` | Preserve fail-closed cognitive gates and deterministic semantically equivalent discovery/import/instantiation/registry validation for every executable skill. | Addendum 23, `CTX2-GATE-*` and `CTX2-SKILL-*` |
 | `CAPABILITY-CERT-001` | `OPEN 2026-07-13` | Give every advertised Aura capability a certification dossier that proves the complete casual-user expectation rather than technical invocation: typed contract, prerequisites, happy path, boundary cases, malformed/adversarial input, partial failure, cancellation, restart/resume, observable effect, compensation, latency/resource budget, privacy/authority, GUI/API parity, and current signed-app evidence. Generate a release-blocking report with zero untested, mocked-only, stale-build, fallback-only, shallow-success, or unsupported capability claims. | `RELEASE-CONTRACT-001`, `EXPECT-001`, `EFFECT-001`, `TOOLS-001`, `VALIDATE-001`; user no-shallow-action and demo-readiness bar |
 | `AGENCY-001` | `OPEN` | Prove bounded self-generated goals, coherent priority, obstacle recovery, foreground yielding, stale-obligation cleanup, restart continuity, operator override, indefinite-life behavior, and real initiative that is not reduced to waiting for a human prompt. | Matrix 10; resident-colleague scope |
-| `AUTONOMY-AUTHORITY-001` | `IN PROGRESS (FOUNDATION SOURCE GREEN; LIVE + EXPANSION OPEN) 2026-07-13` | Replace repeated human-in-loop approval with durable, revocable, least-privilege standing authority, risk budgets, and self-issued child capabilities for safe reversible work. Aura must act autonomously within policy, learn from receipted outcomes, pause on uncertainty or boundary conflict, and request confirmation only when consequential scope was never granted or cannot be safely reversed. The first durable grant registry, argument/effect/risk-bound child leases, immediate revocation, owner control API, canonical Will/Constitution/Capability integration, and autonomous research/introspection/local-read/account-read/maintenance grants are source-green. CapabilityEngine now recognizes an internally verified standing child lease as the confirmation contract it represents instead of prompting a second time, while caller-supplied token/boolean context cannot manufacture confirmation. Authenticated-principal attestation, broader reversible operational grants, outcome-to-policy learning, and current-app live proof remain mandatory. | `AGENCY-001`, `EFFECT-001`, `VALUES-001`; user autonomy/free-will requirement reaffirmed 2026-07-13; Checkpoints 59-60 |
-| `ACTION-SPINE-001` | `IN PROGRESS (SOURCE GREEN; LIVE OPEN) 2026-07-13` | Establish one typed causal action spine from goal/selection through invocation-bound standing authority, non-blocking execution, observed-effect verification, expectation verdict, reconstructable receipt, substrate feedback, repair, and learning. Generated prose must never be executable authority. Authority issuance/verification/finalization must remain on the canonical owner loop; blocking bodies must not stall it; cancellation and every terminal outcome must close leases truthfully. Prove foreground, autonomous, immune, failure, cancellation, restart, and concurrent action paths in the signed app under lag and revocation pressure. | `EXPECT-001`, `EFFECT-001`, `ARCH-001`, `SUBSTRATE-001`, `FOREGROUND-LATENCY-001`, `AUTONOMY-AUTHORITY-001`; Checkpoint 60 |
+| `AUTONOMY-AUTHORITY-001` | `IN PROGRESS (FOUNDATION SOURCE GREEN; LIVE + EXPANSION OPEN) 2026-07-13` | Replace repeated human-in-loop approval with durable, revocable, least-privilege standing authority, risk budgets, and self-issued child capabilities for safe reversible work. Aura must act autonomously within policy, learn from receipted outcomes, pause on uncertainty or boundary conflict, and request confirmation only when consequential scope was never granted or cannot be safely reversed. The first durable grant registry, argument/effect/risk-bound child leases, immediate revocation, owner control API, canonical Will/Constitution/Capability integration, and autonomous research/introspection/local-read/account-read/maintenance grants are source-green. CapabilityEngine recognizes an internally verified standing child lease as the confirmation contract it represents; Checkpoint 65 makes it the single governance owner for registered skills so outer raw arguments cannot issue a lease that normalized inner arguments then reject. Virtual, missing, forged, and pre-runtime tools retain the outer fail-closed boundary, and any failed lease revalidation strips all partial authority context. Authenticated-principal attestation, broader reversible operational grants, outcome-to-policy learning, and current-app live proof remain mandatory. | `AGENCY-001`, `EFFECT-001`, `VALUES-001`; user autonomy/free-will requirement reaffirmed 2026-07-13; Checkpoints 59-60 and 65 |
+| `ACTION-SPINE-001` | `IN PROGRESS (SOURCE GREEN; LIVE OPEN) 2026-07-13` | Establish one typed causal action spine from goal/selection through invocation-bound standing authority, non-blocking execution, observed-effect verification, expectation verdict, reconstructable receipt, substrate feedback, repair, and learning. Generated prose must never be executable authority. Authority issuance/verification/finalization must remain on the canonical owner loop; blocking bodies must not stall it; cancellation and every terminal outcome must close leases truthfully. Checkpoint 65 removes duplicate outer/inner Will and Constitution execution for registered skills while preserving one canonical normalized action boundary and all surface, routing, learning, and telemetry contracts. Prove foreground, autonomous, immune, failure, cancellation, restart, and concurrent action paths in the signed app under lag and revocation pressure. | `EXPECT-001`, `EFFECT-001`, `ARCH-001`, `SUBSTRATE-001`, `FOREGROUND-LATENCY-001`, `AUTONOMY-AUTHORITY-001`; Checkpoints 60 and 65 |
 | `CODING-001` | `OPEN` | Reach human-level-plus unseen-repository coding and governed closed-loop self-repair from failing evidence through root cause, mutation, review, validation, rollback, commit, learning, and monitoring. | Pass F 8; Matrix 8 |
 | `IMMUNE-CODING-001` | `OPEN 2026-07-13` | Make Aura's repair, optimization, self-modification, adaptive-immunity, healing-swarm, and code-maintenance cells a frontier-quality software-engineering system rather than patch generators. Build one typed repair workspace and causal authority chain from live incident/reproducer through cross-module architecture and runtime diagnosis, hypothesis ranking, isolated multi-file implementation, migration/compatibility analysis, static/type/security/performance review, targeted plus adjacent/property/fuzz/mutation/race/fault tests, independent adversarial review, canary, compensation/rollback, signed receipt, outcome monitoring, and evidence-gated learning. Route each phase to the strongest policy-eligible coding/reasoning model through a versioned provider-neutral contract; preserve provenance and source context across handoffs; support Python, native/Swift, web UI, data/schema, async/concurrency, security, model/runtime, and operations faults. Autonomous reversible repairs use standing authority without per-action approval, while consequence budgets and exact rollback constrain unsafe self-mutation. Certify the quality claim only through sealed unseen-repository tasks, historical Aura fault replay, injected live failures, regression resistance, cost/latency budgets, long-horizon repair success, and matched comparison against the declared frontier baseline; reject shallow tests, benchmark leakage, reviewer collusion, fake success, and themed multi-agent federation. | `CODING-001`, `ADAPT-001`, `FAULT-001`, `ACTION-SPINE-001`, `AUTONOMY-AUTHORITY-001`, `PROOF-001`, `TEST-DEPTH-001`; frontier-quality immune coding request 2026-07-13 |
 | `FRONTIER-COGNITION-001` | `OPEN 2026-07-13` | Build one canonical frontier cognition and engineering substrate that every applicable Aura organ can invoke without creating a second mind: immune and repair cells, morphogenesis, organ design, self-modification, optimization, incident response, operations, capability construction, research, planning, and review. Provide versioned capability negotiation across the strongest policy-eligible local or remote models; repository/world semantic graphs; persistent long-context task state; grounded retrieval; multimodal perception; terminal/browser/desktop/tool use; hypothesis, planning, implementation, verification, critique, context compression, handoff, and resumable long-horizon execution; explicit uncertainty, cost, latency, privacy, authority, and fallback contracts; and identity/memory/substrate integration through the canonical workspace and action spine. A provider or model label is never proof. Claim parity with GPT 5.6, Fable 5, Mythos, Sol Ultra, or a successor only after contamination-resistant matched sealed evaluations of coding, reasoning, research, tool use, multimodal work, repair, regression resistance, and sustained completion at declared budgets; retain the strongest measured configuration and reject benchmark-only uplift or an ungoverned model bypass. | `CODING-001`, `IMMUNE-CODING-001`, `TOOLS-001`, `SUBSTRATE-001`, `INTELLIGENCE-001`, `PROOF-001`, `AUTONOMY-AUTHORITY-001`; system-wide Sol Ultra/frontier capability request clarified 2026-07-13 |
@@ -14460,3 +14462,90 @@ Progress and immediate next work:
 - Continue every remaining master-index obligation and semantic-review unit.
   Final multi-hour and 24-72 hour soaks remain deferred until every shorter
   source, fault, live, GUI, portability, and release gate is green.
+
+## Checkpoint 2026-07-13-65: Canonical Tool Authority and Owner-Loop Liveness
+
+This checkpoint advances `FOREGROUND-LATENCY-001`, `HEALTH-SURFACE-001`,
+`AUTONOMY-AUTHORITY-001`, `ACTION-SPINE-001`, `RESOURCE-001`, `FAULT-001`,
+`ARCH-001`, and `TEST-DEPTH-001`. It closes sampled source causes without
+claiming signed-app liveness or autonomous-effect proof before launch evidence.
+
+Live evidence isolated causes below aggregate lag alarms:
+
+- The launched Checkpoint 64 process reported 4.304-second idle event-loop lag
+  and a boot-health refresh generation exceeding its 2.5-second HTTP wait
+  budget. Earlier sweeps and watchdog captures measured 5.1-6.2-second stalls.
+- Process samples caught synchronous full-host `psutil.process_iter` enrichment
+  on the main async thread. Watchdog captures separately placed the owner loop
+  inside `OvertActionLoop._goal_for_initiative -> GoalEngine.get_goal` while a
+  thread lock was acquired, and inside `AdaptiveImmuneSystem._save_state` while
+  the growing durable state was serialized.
+- Autonomous research repeatedly reached the tool router with a valid standing
+  child lease, then failed as `standing_authority_receipt_context_mismatch`.
+  The outer tool mixin had authorized raw arguments; CapabilityEngine normalized
+  and schema-filled the same action, then opened a second Will/Constitution
+  boundary whose argument digest could not match the first lease.
+
+The repair establishes explicit ownership instead of weakening alarms or
+authorization:
+
+- Resource observation now exposes a provenance-bearing lightweight PID census
+  and targeted process-tree query. Sovereignty, startup validation, model
+  governance, supervisor liveness, sense shutdown, and resilience termination
+  either use targeted observations or move unavoidable host census work to a
+  worker thread. No lag or boot-health threshold was raised.
+- Goal reads in overt action and memory ingestion run off the async owner loop.
+  Adaptive-immunity observation, evolution, reinforcement, full state snapshot,
+  serialization, and persistence run as one ordered off-loop transaction, so
+  durable state cannot race the next immune event.
+- CapabilityEngine is the sole EDI, conscience, Will, Constitution, standing
+  lease, and capability-token owner for registered skills at the normalized
+  execution boundary. The outer tool mixin still owns governance for virtual,
+  missing, forged, and pre-runtime tools, while preserving conversation-surface
+  denial, routing, learning, and telemetry for all paths.
+- Child-lease revalidation failure removes the token, grant, successful receipt,
+  argument digest, and scoped authority together. A denial receipt is retained
+  separately, preventing a mixed context that appears partly authorized.
+
+Verification completed on the source candidate:
+
+- The non-overlapping full and adjacent suites pass `356/356`: resource
+  observation `14`, adaptive immunity `14`, substrate architecture `18`,
+  architecture hardening `74`, standing authority/capability policy/governance/
+  Unified Will `153`, startup/toggle/sovereignty `9`, runtime loop/hygiene `59`,
+  and embodied interoception/enforcement `15`.
+- Targeted compilation and `git diff --check` pass. The resource-observation
+  ownership audit passes across `2692` Python files with zero findings. The
+  production-surface scanner remains at zero findings and zero exemptions.
+- The enterprise static ratchet passes. Production readiness passes all
+  `37/37` checks; the cognitive candidate-gate audit passes `13/13`, the skill
+  catalog passes `75/75` with Rust/Python parity, and the closeout rubric passes
+  `20/20`.
+- The mechanical closeout run enumerates `4137` code files and `1,148,960` code
+  lines. Every configured inner gate passes, but the aggregate correctly fails
+  its clean-worktree condition while this checkpoint and preserved unrelated
+  edits are dirty. Semantic closeout also remains open at `435` fully reviewed
+  code files and `3671` wholly unreviewed files; neither result is relabelled as
+  full closeout.
+- Exact signed-app launch, neural-stream inspection, autonomous standing-
+  authority execution, health cadence, and no-recurrence observation remain the
+  next bounded gate rather than being inferred from source tests.
+
+Progress and immediate next work:
+
+- This is pushed Checkpoint `65`. The evidence-weighted planning estimate
+  remains `30%`: source-causal closure earns progress but does not round the
+  wholesale program upward while all applicable live and release evidence is
+  still open. The forecast remains `206-276` total checkpoints, with `141-211`
+  remaining before final soak/release closure.
+- Rebuild the signed app from this pushed checkpoint, stop only the prior Aura
+  runtime, and observe the terminal plus neural stream under bounded live use.
+  Require responsive health, successful autonomous standing-authority actions,
+  no owner-loop stall recurrence, and causal stack capture for any new warning.
+- The unrelated perception edits and generated architecture snapshots remain
+  unstaged. Their presence makes the installed workspace cryptographically
+  disclosed but not clean-tree exact-main release evidence; clean certification
+  stays open until their owner reconciles them.
+- Continue every remaining master-index and semantic-review unit after the
+  bounded live gate. Final multi-hour and 24-72 hour soaks remain deferred until
+  all shorter source, fault, live, GUI, portability, and release gates are green.
