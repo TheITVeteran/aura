@@ -8,7 +8,6 @@ publication to the canonical multimodal synchronizer.
 """
 from __future__ import annotations
 
-from core.runtime.service_access import optional_service
 import asyncio
 import hashlib
 import inspect
@@ -25,6 +24,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from core.container import ServiceContainer
+from core.runtime.service_access import optional_service
 from core.perception.multimodal_sync import (
     Calibration,
     MissingReason,

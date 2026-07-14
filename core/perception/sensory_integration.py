@@ -1,7 +1,6 @@
 """Sensory Integration System
 Gives Aura access to cameras, microphones, speakers, and A/V production tools
 """
-from core.runtime.service_access import optional_service
 import asyncio
 import base64
 import hashlib
@@ -30,6 +29,7 @@ from core.perception.multimodal_sync import (
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
 from core.runtime.permission_gates import camera_allowed
+from core.runtime.service_access import optional_service
 from core.runtime.runtime_settings import get_runtime_setting
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 

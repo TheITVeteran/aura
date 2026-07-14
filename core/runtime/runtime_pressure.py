@@ -49,6 +49,9 @@ class UnifiedRuntimePressure:
         loop_lag_s = 0.0
         observed_loop_lag_s = 0.0
         monitor_alive = None
+        monitor_running = None
+        monitor_healthy = None
+        monitor_incident_active = False
         loop_sample_at = 0.0
         loop_sample_age_s: float | None = None
         loop_sample_fresh = True
@@ -65,6 +68,13 @@ class UnifiedRuntimePressure:
                 )
                 if status:
                     monitor_alive = bool(status.get("alive", False))
+                    monitor_running = bool(
+                        status.get("running", status.get("alive", False))
+                    )
+                    monitor_healthy = bool(
+                        status.get("healthy", status.get("alive", False))
+                    )
+                    monitor_incident_active = bool(status.get("incident_active", False))
                 if "sample_fresh" in status:
                     loop_sample_metadata_available = True
                     loop_sample_fresh = bool(status.get("sample_fresh", False))
@@ -79,6 +89,9 @@ class UnifiedRuntimePressure:
         snapshot["loop_lag_s"] = round(loop_lag_s, 4)
         snapshot["last_observed_loop_lag_s"] = round(observed_loop_lag_s, 4)
         snapshot["loop_monitor_alive"] = monitor_alive
+        snapshot["loop_monitor_running"] = monitor_running
+        snapshot["loop_monitor_healthy"] = monitor_healthy
+        snapshot["loop_monitor_incident_active"] = monitor_incident_active
         snapshot["loop_lag_sample_at_unix"] = loop_sample_at
         snapshot["loop_lag_sample_age_s"] = (
             round(loop_sample_age_s, 4) if loop_sample_age_s is not None else None
@@ -155,7 +168,11 @@ class UnifiedRuntimePressure:
         red_zones = []
         if loop_lag_s >= _LOOP_LAG_RED_S:
             red_zones.append(f"loop_lag_{loop_lag_s:.1f}s")
-        if monitor_alive is False:
+        # Availability is a current lifecycle/freshness property. A retained
+        # hard-lag incident is reported separately and must not masquerade as a
+        # dead signal source after healthy samples resume; doing so denied all
+        # background model recovery for the full incident hold window.
+        if monitor_running is False:
             red_zones.append("loop_monitor_unavailable")
         elif loop_sample_metadata_available and not loop_sample_fresh:
             red_zones.append("loop_lag_observation_stale")

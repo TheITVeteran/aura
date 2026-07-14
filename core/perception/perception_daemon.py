@@ -5,7 +5,6 @@ and updates a rolling perceptual memory.
 """
 from __future__ import annotations
 
-from core.runtime.service_access import optional_service
 import asyncio
 import hashlib
 import logging
@@ -18,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from core.container import ServiceContainer
+from core.runtime.service_access import optional_service
 from core.event_bus import EventPriority, get_event_bus
 from core.governance_context import local_internal_governed_scope
 from core.perception.frontmost_app import frontmost_app_name_fast

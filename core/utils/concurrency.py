@@ -415,6 +415,10 @@ class EventLoopMonitor:
         self._last_failure_at: float = 0.0
         self._last_failure_reason: str = ""
         self._healthy_lag_samples_after_failure: int = 0
+        self._last_incident_at: float = 0.0
+        self._last_incident_reason: str = ""
+        self._last_recovered_at: float = 0.0
+        self._incident_count: int = 0
         try:
             self.hard_failure_threshold = float(
                 os.getenv("AURA_EVENT_LOOP_MONITOR_HARD_FAILURE_S", "5.0")
@@ -423,10 +427,10 @@ class EventLoopMonitor:
             self.hard_failure_threshold = 5.0
         try:
             self.failure_recovery_window_s = float(
-                os.getenv("AURA_EVENT_LOOP_MONITOR_FAILURE_RECOVERY_S", "300.0")
+                os.getenv("AURA_EVENT_LOOP_MONITOR_FAILURE_RECOVERY_S", "15.0")
             )
         except (TypeError, ValueError):
-            self.failure_recovery_window_s = 300.0
+            self.failure_recovery_window_s = 15.0
         try:
             self.failure_recovery_samples = max(
                 1,
@@ -582,7 +586,14 @@ class EventLoopMonitor:
         logger.info("🕒 EventLoopMonitor stopped.")
 
     def is_alive(self) -> bool:
-        """Return True when the monitor task is running and accepting ticks."""
+        """Return lifecycle and sampling liveness, independent of incident state.
+
+        A hard-lag incident must remain visible until recovery is proved, but it
+        does not mean the monitor task died. Conflating those states made model
+        admission wait for the entire incident-stability window even while the
+        monitor was publishing fresh healthy samples, creating a boot recovery
+        deadlock.
+        """
         if not self._task_running():
             self.ensure_running()
             return False
@@ -592,6 +603,12 @@ class EventLoopMonitor:
             if now - self._last_sample_monotonic > freshness_budget_s:
                 return False
         elif self._started_at > 0.0 and now - self._started_at > freshness_budget_s:
+            return False
+        return True
+
+    def is_healthy(self) -> bool:
+        """Return current health after consecutive-sample incident recovery."""
+        if not self.is_alive():
             return False
         if self._last_failure_at:
             stable_for = time.time() - self._last_failure_at
@@ -623,6 +640,7 @@ class EventLoopMonitor:
 
     def get_status(self) -> dict[str, Any]:
         alive = self.is_alive()
+        healthy = self.is_healthy() if alive else False
         sample_age_s = (
             max(0.0, time.perf_counter() - self._last_sample_monotonic)
             if self._last_sample_monotonic > 0.0
@@ -634,6 +652,7 @@ class EventLoopMonitor:
         )
         return {
             "alive": alive,
+            "healthy": healthy,
             "running": self._task_running(),
             "last_lag_s": self._last_lag,
             "last_sample_at_unix": self._last_sample_at,
@@ -646,6 +665,11 @@ class EventLoopMonitor:
             "consecutive_breaches": self._consecutive_breaches,
             "last_failure_at": self._last_failure_at,
             "last_failure_reason": self._last_failure_reason,
+            "incident_active": bool(self._last_failure_at),
+            "incident_count": self._incident_count,
+            "last_incident_at": self._last_incident_at,
+            "last_incident_reason": self._last_incident_reason,
+            "last_recovered_at": self._last_recovered_at,
             "healthy_recovery_samples": self._healthy_lag_samples_after_failure,
             "required_recovery_samples": self.failure_recovery_samples,
             "recovery_window_s": self.failure_recovery_window_s,
@@ -680,10 +704,14 @@ class EventLoopMonitor:
                 self._last_breach_at = sampled_at
                 self._consecutive_breaches += 1
                 if lag >= self.hard_failure_threshold:
+                    if not self._last_failure_at:
+                        self._incident_count += 1
                     self._last_failure_at = sampled_at
                     self._last_failure_reason = (
                         f"hard event-loop lag {lag:.4f}s exceeded {self.hard_failure_threshold:.2f}s"
                     )
+                    self._last_incident_at = sampled_at
+                    self._last_incident_reason = self._last_failure_reason
                     self._healthy_lag_samples_after_failure = 0
                     record_degradation(
                         "event_loop_monitor",
@@ -738,6 +766,7 @@ class EventLoopMonitor:
                             self._healthy_lag_samples_after_failure,
                             stable_for,
                         )
+                        self._last_recovered_at = time.time()
                         self._last_failure_at = 0.0
                         self._last_failure_reason = ""
 

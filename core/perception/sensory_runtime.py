@@ -20,7 +20,6 @@ demand is always available once permission is granted.
 """
 from __future__ import annotations
 
-from core.runtime.service_access import optional_service
 import hashlib
 import importlib.util
 import logging
@@ -32,6 +31,7 @@ from typing import Any
 import numpy as np
 
 from core.container import ServiceContainer
+from core.runtime.service_access import optional_service
 from core.media.safe_imports import cv2_main_process_blocked
 from core.perception.multimodal_sync import (
     Calibration,
