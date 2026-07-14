@@ -149,6 +149,11 @@ class WholeSystemPhiService:
                         v = _maybe(st.get(key))
                         if v is not None:
                             channels[f"affect.{key}"] = v
+                    # Damasio V2 exposes these on a 0-100 scale
+                    for key in ("curiosity", "frustration", "stability"):
+                        v = _maybe(st.get(key))
+                        if v is not None:
+                            channels[f"affect.{key}"] = v / 100.0
         except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
             record_degradation("whole_system_phi", exc, severity="debug",
                                action="affect channels skipped")

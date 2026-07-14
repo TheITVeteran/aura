@@ -1,0 +1,832 @@
+{
+  "payload": {
+    "campaign": {
+      "mean_evoked_complexity": 2.0769,
+      "mean_pci": 0.0868,
+      "mean_sham_evoked_complexity": 0.0,
+      "mean_sham_pci": 0.0,
+      "trials": [
+        {
+          "channel_names": [],
+          "n_interventional_transitions": 0,
+          "pci": {},
+          "perturbation_seam": "",
+          "ran": false,
+          "reason": "refused: aura_now_defer: present-state policy requires stabilization or observation first",
+          "recovery": {},
+          "sham_pci": {},
+          "started_at": 0.0,
+          "will_receipt_id": "will_ceab598224cb"
+        },
+        {
+          "channel_names": [],
+          "n_interventional_transitions": 0,
+          "pci": {},
+          "perturbation_seam": "",
+          "ran": false,
+          "reason": "refused: aura_now_defer: present-state policy requires stabilization or observation first",
+          "recovery": {},
+          "sham_pci": {},
+          "started_at": 0.0,
+          "will_receipt_id": "will_1d62b00ee704"
+        },
+        {
+          "channel_names": [
+            "affect.arousal",
+            "affect.curiosity",
+            "affect.dominance",
+            "affect.frustration",
+            "affect.stability",
+            "affect.valence",
+            "body.cpu_pct",
+            "body.rss_gb",
+            "covenant.integrity",
+            "survival.threat",
+            "will.assertiveness",
+            "will.confidence",
+            "will.identity_coherence"
+          ],
+          "n_interventional_transitions": 1,
+          "pci": {
+            "active_fraction": 0.4615,
+            "estimator": "internal_pci.lz76.v1",
+            "evoked_complexity": 2.3077,
+            "lz_raw": 5,
+            "n_channels": 13,
+            "n_response_samples": 40,
+            "pci": 0.0868,
+            "pci_baseline_control": 0.0,
+            "z_thresh": 2.0
+          },
+          "perturbation_seam": "injected_test_seam",
+          "ran": true,
+          "reason": "completed",
+          "recovery": {
+            "median_abs_z": 0.0,
+            "n_samples": 20,
+            "restore_available": false,
+            "restore_succeeded": false,
+            "within_baseline_envelope": true
+          },
+          "sham_pci": {
+            "active_fraction": 0.0,
+            "estimator": "internal_pci.lz76.v1",
+            "evoked_complexity": 0.0,
+            "lz_raw": 2,
+            "n_channels": 13,
+            "n_response_samples": 40,
+            "pci": 0.0,
+            "pci_baseline_control": 0.0,
+            "z_thresh": 2.0
+          },
+          "started_at": 1784046197.408341,
+          "will_receipt_id": "will_e3bda7ded60c"
+        },
+        {
+          "channel_names": [
+            "affect.arousal",
+            "affect.curiosity",
+            "affect.dominance",
+            "affect.frustration",
+            "affect.stability",
+            "affect.valence",
+            "body.cpu_pct",
+            "body.rss_gb",
+            "covenant.integrity",
+            "survival.threat",
+            "will.assertiveness",
+            "will.confidence",
+            "will.identity_coherence"
+          ],
+          "n_interventional_transitions": 1,
+          "pci": {
+            "active_fraction": 0.3846,
+            "estimator": "internal_pci.lz76.v1",
+            "evoked_complexity": 1.9231,
+            "lz_raw": 5,
+            "n_channels": 13,
+            "n_response_samples": 40,
+            "pci": 0.0868,
+            "pci_baseline_control": 0.0,
+            "z_thresh": 2.0
+          },
+          "perturbation_seam": "injected_test_seam",
+          "ran": true,
+          "reason": "completed",
+          "recovery": {
+            "median_abs_z": 0.0,
+            "n_samples": 20,
+            "restore_available": false,
+            "restore_succeeded": false,
+            "within_baseline_envelope": true
+          },
+          "sham_pci": {
+            "active_fraction": 0.0,
+            "estimator": "internal_pci.lz76.v1",
+            "evoked_complexity": 0.0,
+            "lz_raw": 2,
+            "n_channels": 13,
+            "n_response_samples": 40,
+            "pci": 0.0,
+            "pci_baseline_control": 0.0,
+            "z_thresh": 2.0
+          },
+          "started_at": 1784046278.8074272,
+          "will_receipt_id": "will_1b235f94a29f"
+        },
+        {
+          "channel_names": [
+            "affect.arousal",
+            "affect.curiosity",
+            "affect.dominance",
+            "affect.frustration",
+            "affect.stability",
+            "affect.valence",
+            "body.cpu_pct",
+            "body.rss_gb",
+            "covenant.integrity",
+            "survival.threat",
+            "will.assertiveness",
+            "will.confidence",
+            "will.identity_coherence"
+          ],
+          "n_interventional_transitions": 1,
+          "pci": {
+            "active_fraction": 0.4615,
+            "estimator": "internal_pci.lz76.v1",
+            "evoked_complexity": 2.3077,
+            "lz_raw": 5,
+            "n_channels": 13,
+            "n_response_samples": 40,
+            "pci": 0.0868,
+            "pci_baseline_control": 0.0,
+            "z_thresh": 2.0
+          },
+          "perturbation_seam": "injected_test_seam",
+          "ran": true,
+          "reason": "completed",
+          "recovery": {
+            "median_abs_z": 0.0,
+            "n_samples": 20,
+            "restore_available": false,
+            "restore_succeeded": false,
+            "within_baseline_envelope": true
+          },
+          "sham_pci": {
+            "active_fraction": 0.0,
+            "estimator": "internal_pci.lz76.v1",
+            "evoked_complexity": 0.0,
+            "lz_raw": 2,
+            "n_channels": 13,
+            "n_response_samples": 40,
+            "pci": 0.0,
+            "pci_baseline_control": 0.0,
+            "z_thresh": 2.0
+          },
+          "started_at": 1784046360.173721,
+          "will_receipt_id": "will_1d7d7747705e"
+        },
+        {
+          "channel_names": [
+            "affect.arousal",
+            "affect.curiosity",
+            "affect.dominance",
+            "affect.frustration",
+            "affect.stability",
+            "affect.valence",
+            "body.cpu_pct",
+            "body.rss_gb",
+            "covenant.integrity",
+            "survival.threat",
+            "will.assertiveness",
+            "will.confidence",
+            "will.identity_coherence"
+          ],
+          "n_interventional_transitions": 1,
+          "pci": {
+            "active_fraction": 0.3846,
+            "estimator": "internal_pci.lz76.v1",
+            "evoked_complexity": 1.9231,
+            "lz_raw": 5,
+            "n_channels": 13,
+            "n_response_samples": 40,
+            "pci": 0.0868,
+            "pci_baseline_control": 0.0,
+            "z_thresh": 2.0
+          },
+          "perturbation_seam": "injected_test_seam",
+          "ran": true,
+          "reason": "completed",
+          "recovery": {
+            "median_abs_z": 0.0,
+            "n_samples": 20,
+            "restore_available": false,
+            "restore_succeeded": false,
+            "within_baseline_envelope": true
+          },
+          "sham_pci": {
+            "active_fraction": 0.0,
+            "estimator": "internal_pci.lz76.v1",
+            "evoked_complexity": 0.0,
+            "lz_raw": 2,
+            "n_channels": 13,
+            "n_response_samples": 40,
+            "pci": 0.0,
+            "pci_baseline_control": 0.0,
+            "z_thresh": 2.0
+          },
+          "started_at": 1784046441.572727,
+          "will_receipt_id": "will_77c200b40d9e"
+        },
+        {
+          "channel_names": [
+            "affect.arousal",
+            "affect.curiosity",
+            "affect.dominance",
+            "affect.frustration",
+            "affect.stability",
+            "affect.valence",
+            "body.cpu_pct",
+            "body.rss_gb",
+            "covenant.integrity",
+            "survival.threat",
+            "will.assertiveness",
+            "will.confidence",
+            "will.identity_coherence"
+          ],
+          "n_interventional_transitions": 1,
+          "pci": {
+            "active_fraction": 0.3846,
+            "estimator": "internal_pci.lz76.v1",
+            "evoked_complexity": 1.9231,
+            "lz_raw": 5,
+            "n_channels": 13,
+            "n_response_samples": 40,
+            "pci": 0.0868,
+            "pci_baseline_control": 0.0694,
+            "z_thresh": 2.0
+          },
+          "perturbation_seam": "injected_test_seam",
+          "ran": true,
+          "reason": "completed",
+          "recovery": {
+            "median_abs_z": 0.0,
+            "n_samples": 20,
+            "restore_available": false,
+            "restore_succeeded": false,
+            "within_baseline_envelope": true
+          },
+          "sham_pci": {
+            "active_fraction": 0.0,
+            "estimator": "internal_pci.lz76.v1",
+            "evoked_complexity": 0.0,
+            "lz_raw": 2,
+            "n_channels": 13,
+            "n_response_samples": 40,
+            "pci": 0.0,
+            "pci_baseline_control": 0.0694,
+            "z_thresh": 2.0
+          },
+          "started_at": 1784046522.887725,
+          "will_receipt_id": "will_e06c7eb7b15b"
+        }
+      ],
+      "trials_ran": 5,
+      "trials_refused": 2,
+      "trials_requested": 6
+    },
+    "estimate_pre_intervention": {
+      "channel_names": [
+        "affect.arousal",
+        "affect.curiosity",
+        "affect.dominance",
+        "affect.frustration",
+        "affect.stability",
+        "affect.valence",
+        "body.rss_gb",
+        "survival.threat"
+      ],
+      "ci_5": 0.0,
+      "ci_95": 0.0,
+      "claim": "Micro \u03a6\u0302=0.0017 nats over 8 estimator elements covering 8 live channels (3600 samples; certified exhaustive MIP; z=2.5). Selected held-out grain k=2: \u03a6\u0302=0.0000, z=-1.0, family-wise p=0.952, 90% CI [0.0001, 0.0010]. integration NOT established against the null. This is an estimate of integrated information of the system's macro-dynamics under a Gaussian model of its OWN measured channels \u2014 evidence about integration structure, not a consciousness meter.",
+      "computed_at": 1784046061.70289,
+      "diagnostics": {
+        "candidate_channels": 13,
+        "compute_seconds": 0.246,
+        "dropped_dead_channels": 5.0,
+        "dropped_sparse_channels": [],
+        "grain_discovery_samples": 1800.0,
+        "grain_evaluation_samples": 1800.0,
+        "median_abs_skew": 0.6643,
+        "median_excess_kurtosis": 1.3325,
+        "missing_by_channel": {
+          "affect.arousal": 0,
+          "affect.curiosity": 0,
+          "affect.dominance": 0,
+          "affect.frustration": 0,
+          "affect.stability": 0,
+          "affect.valence": 0,
+          "body.cpu_pct": 0,
+          "body.rss_gb": 0,
+          "covenant.integrity": 0,
+          "survival.threat": 0,
+          "will.assertiveness": 0,
+          "will.confidence": 0,
+          "will.identity_coherence": 0
+        },
+        "missing_values_interpolated": 0,
+        "n_samples": 3600.0,
+        "quotient_applied": 0.0,
+        "retained_channels": 13,
+        "stationarity_drift_sigma": 0.1747
+      },
+      "emergence_delta_z": -1.029,
+      "emergent_ci_5": 7.4e-05,
+      "emergent_ci_95": 0.000994,
+      "emergent_grain_k": 2,
+      "emergent_phi_raw": 2.5e-05,
+      "emergent_z": -1.03,
+      "estimator": "gaussian_stochastic_interaction.bounded_mip.v2",
+      "exact_macro": {
+        "cuts_searched": 1,
+        "estimator": "empirical_state_phi.exact_bipartition.v2",
+        "mip": [
+          [
+            0
+          ],
+          [
+            1
+          ]
+        ],
+        "n_elements": 2,
+        "n_interventional_transitions": 0,
+        "n_observed_transitions": 3599,
+        "n_projection_rejected_transitions": 0,
+        "n_rejected_interventional_transitions": 0,
+        "n_total_transitions": 3599,
+        "phi_s": 0.024094,
+        "smoothing_alpha": 0.5
+      },
+      "grain_selection_p": 0.952381,
+      "grain_selection_surrogates": 20,
+      "grain_selection_used_holdout": true,
+      "grains": [
+        {
+          "groups": [
+            [
+              0
+            ],
+            [
+              1
+            ],
+            [
+              2
+            ],
+            [
+              3
+            ],
+            [
+              4
+            ],
+            [
+              5
+            ],
+            [
+              6
+            ],
+            [
+              7
+            ]
+          ],
+          "k": 8,
+          "mip_certified_exact": true,
+          "mip_method": "exhaustive_bipartition",
+          "null_mean": 0.0,
+          "null_std": 0.0,
+          "phi_raw": 0.0,
+          "selection_score": 0.0,
+          "z": -0.001
+        },
+        {
+          "groups": [
+            [
+              0,
+              1
+            ],
+            [
+              2,
+              5
+            ],
+            [
+              3,
+              4
+            ],
+            [
+              6,
+              7
+            ]
+          ],
+          "k": 4,
+          "mip_certified_exact": true,
+          "mip_method": "exhaustive_bipartition",
+          "null_mean": 0.0,
+          "null_std": 0.0,
+          "phi_raw": 0.0,
+          "selection_score": 0.0,
+          "z": -0.0
+        },
+        {
+          "groups": [
+            [
+              0,
+              1,
+              2,
+              5,
+              6,
+              7
+            ],
+            [
+              3,
+              4
+            ]
+          ],
+          "k": 2,
+          "mip_certified_exact": true,
+          "mip_method": "exhaustive_bipartition",
+          "null_mean": 0.000578,
+          "null_std": 0.000537,
+          "phi_raw": 2.5e-05,
+          "selection_score": 1.2343e-05,
+          "z": -1.03
+        }
+      ],
+      "integration_established": false,
+      "mip": [
+        [
+          7
+        ],
+        [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ]
+      ],
+      "mip_certified_exact": true,
+      "mip_evaluated_cuts": 127,
+      "mip_method": "exhaustive_bipartition",
+      "n_channels": 8,
+      "n_observed_channels": 8,
+      "n_samples": 3600,
+      "null_mean": 0.001095,
+      "null_std": 0.000264,
+      "observed_channel_names": [
+        "affect.arousal",
+        "affect.curiosity",
+        "affect.dominance",
+        "affect.frustration",
+        "affect.stability",
+        "affect.valence",
+        "body.rss_gb",
+        "survival.threat"
+      ],
+      "phi_raw": 0.001749,
+      "quotient_groups": [
+        [
+          0
+        ],
+        [
+          1
+        ],
+        [
+          2
+        ],
+        [
+          3
+        ],
+        [
+          4
+        ],
+        [
+          5
+        ],
+        [
+          6
+        ],
+        [
+          7
+        ]
+      ],
+      "random_seed": 1651645124,
+      "schema_version": 2,
+      "z": 2.482
+    },
+    "estimate_with_interventions": {
+      "channel_names": [
+        "affect.arousal",
+        "affect.curiosity",
+        "affect.dominance",
+        "affect.frustration",
+        "affect.stability",
+        "affect.valence",
+        "body.rss_gb",
+        "survival.threat"
+      ],
+      "ci_5": 0.0,
+      "ci_95": 0.028221,
+      "claim": "Micro \u03a6\u0302=0.0175 nats over 8 estimator elements covering 8 live channels (3960 samples; certified exhaustive MIP; z=26.3). Selected held-out grain k=2: \u03a6\u0302=0.0325, z=9.1, family-wise p=0.048, 90% CI [0.0003, 0.0405]. integration beats chance. This is an estimate of integrated information of the system's macro-dynamics under a Gaussian model of its OWN measured channels \u2014 evidence about integration structure, not a consciousness meter.",
+      "computed_at": 1784046604.621234,
+      "diagnostics": {
+        "candidate_channels": 13,
+        "compute_seconds": 0.271,
+        "dropped_dead_channels": 5.0,
+        "dropped_sparse_channels": [],
+        "grain_discovery_samples": 1980.0,
+        "grain_evaluation_samples": 1980.0,
+        "median_abs_skew": 0.5388,
+        "median_excess_kurtosis": 1.1822,
+        "missing_by_channel": {
+          "affect.arousal": 0,
+          "affect.curiosity": 0,
+          "affect.dominance": 0,
+          "affect.frustration": 0,
+          "affect.stability": 0,
+          "affect.valence": 0,
+          "body.cpu_pct": 0,
+          "body.rss_gb": 0,
+          "covenant.integrity": 0,
+          "survival.threat": 0,
+          "will.assertiveness": 0,
+          "will.confidence": 0,
+          "will.identity_coherence": 0
+        },
+        "missing_values_interpolated": 0,
+        "n_samples": 3960.0,
+        "quotient_applied": 0.0,
+        "retained_channels": 13,
+        "stationarity_drift_sigma": 0.2323
+      },
+      "emergence_delta_z": -13.267,
+      "emergent_ci_5": 0.000342,
+      "emergent_ci_95": 0.040545,
+      "emergent_grain_k": 2,
+      "emergent_phi_raw": 0.032514,
+      "emergent_z": 9.108,
+      "estimator": "gaussian_stochastic_interaction.bounded_mip.v2",
+      "exact_macro": {
+        "cuts_searched": 1,
+        "estimator": "empirical_state_phi.exact_bipartition.v2",
+        "mip": [
+          [
+            0
+          ],
+          [
+            1
+          ]
+        ],
+        "n_elements": 2,
+        "n_interventional_transitions": 0,
+        "n_observed_transitions": 3959,
+        "n_projection_rejected_transitions": 5,
+        "n_rejected_interventional_transitions": 0,
+        "n_total_transitions": 3959,
+        "phi_s": 0.017631,
+        "smoothing_alpha": 0.5
+      },
+      "grain_selection_p": 0.047619,
+      "grain_selection_surrogates": 20,
+      "grain_selection_used_holdout": true,
+      "grains": [
+        {
+          "groups": [
+            [
+              0
+            ],
+            [
+              1
+            ],
+            [
+              2
+            ],
+            [
+              3
+            ],
+            [
+              4
+            ],
+            [
+              5
+            ],
+            [
+              6
+            ],
+            [
+              7
+            ]
+          ],
+          "k": 8,
+          "mip_certified_exact": true,
+          "mip_method": "exhaustive_bipartition",
+          "null_mean": 0.003932,
+          "null_std": 0.001778,
+          "phi_raw": 0.043708,
+          "selection_score": 0.005463533,
+          "z": 22.375
+        },
+        {
+          "groups": [
+            [
+              0,
+              1
+            ],
+            [
+              2,
+              5
+            ],
+            [
+              3,
+              4
+            ],
+            [
+              6,
+              7
+            ]
+          ],
+          "k": 4,
+          "mip_certified_exact": true,
+          "mip_method": "exhaustive_bipartition",
+          "null_mean": 0.004168,
+          "null_std": 0.002069,
+          "phi_raw": 0.033396,
+          "selection_score": 0.008348891,
+          "z": 14.129
+        },
+        {
+          "groups": [
+            [
+              0,
+              1,
+              2,
+              5,
+              6,
+              7
+            ],
+            [
+              3,
+              4
+            ]
+          ],
+          "k": 2,
+          "mip_certified_exact": true,
+          "mip_method": "exhaustive_bipartition",
+          "null_mean": 0.00238,
+          "null_std": 0.003309,
+          "phi_raw": 0.032514,
+          "selection_score": 0.01625708,
+          "z": 9.108
+        }
+      ],
+      "integration_established": true,
+      "mip": [
+        [
+          7
+        ],
+        [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ]
+      ],
+      "mip_certified_exact": true,
+      "mip_evaluated_cuts": 127,
+      "mip_method": "exhaustive_bipartition",
+      "n_channels": 8,
+      "n_observed_channels": 8,
+      "n_samples": 3960,
+      "null_mean": 0.001612,
+      "null_std": 0.000603,
+      "observed_channel_names": [
+        "affect.arousal",
+        "affect.curiosity",
+        "affect.dominance",
+        "affect.frustration",
+        "affect.stability",
+        "affect.valence",
+        "body.rss_gb",
+        "survival.threat"
+      ],
+      "phi_raw": 0.017455,
+      "quotient_groups": [
+        [
+          0
+        ],
+        [
+          1
+        ],
+        [
+          2
+        ],
+        [
+          3
+        ],
+        [
+          4
+        ],
+        [
+          5
+        ],
+        [
+          6
+        ],
+        [
+          7
+        ]
+      ],
+      "random_seed": 757321331,
+      "schema_version": 2,
+      "z": 26.253
+    },
+    "generated_at": "2026-07-14 09:30:04 PDT",
+    "generated_at_unix": 1784046604.623511,
+    "git_commit": "60fdece1",
+    "host": {
+      "platform": "macOS-26.4.1-arm64-arm-64bit",
+      "python": "3.12.13"
+    },
+    "hz": 2.0,
+    "instrument": "core/consciousness/integrated_information.py",
+    "mode": "organ_host",
+    "organs_present": [
+      "affect.arousal",
+      "affect.curiosity",
+      "affect.dominance",
+      "affect.frustration",
+      "affect.stability",
+      "affect.valence",
+      "body.cpu_pct",
+      "body.rss_gb",
+      "covenant.integrity",
+      "survival.threat",
+      "will.assertiveness",
+      "will.confidence",
+      "will.identity_coherence"
+    ],
+    "persisted_report": "/private/tmp/claude-501/-Users-bryan--aura-live-source/9d364fb0-15d6-4510-aaba-0b595f0f07c2/scratchpad/phidir/whole_system_latest.json",
+    "schema": "aura.whole_system_phi_live_report.v1",
+    "scope_claim": "Aura's real organ substrate (AffectEngineV2, ExistentialStakes on real host memory, UnifiedWill full gate stack incl. \u00a79d covenant, Ulysses covenant with seeds, BeingRuntime AuraNow sampling) run headless with a realistic decision workload. NOT the full live mind: no 32B cortex, no desktop runtime (the live instance was not running and agents must never boot one). Re-run this tool while the desktop instance is up for live_api mode.",
+    "window_seconds": 1803.7,
+    "workload": {
+      "coupling": [
+        "refuse -> affect.update(delta_frustration=+2)",
+        "proceed (30%) -> affect.update(delta_curiosity=+1)",
+        "every 4th tick -> affect.decay_tick()",
+        "every tick -> existential_stakes.update() [real host memory]"
+      ],
+      "decision_mix": [
+        {
+          "domain": "response",
+          "source": "user",
+          "weight": 0.45
+        },
+        {
+          "domain": "reflection",
+          "source": "idle_loop",
+          "weight": 0.2
+        },
+        {
+          "domain": "memory_write",
+          "source": "session_memory_pin",
+          "weight": 0.15
+        },
+        {
+          "domain": "tool_execution",
+          "source": "api",
+          "weight": 0.12
+        },
+        {
+          "domain": "initiative",
+          "source": "curiosity_engine",
+          "weight": 0.08
+        }
+      ],
+      "decision_outcomes": {
+        "constrain": 181,
+        "critical": 0,
+        "defer": 400,
+        "proceed": 3019,
+        "refuse": 0
+      },
+      "ticks": 3600
+    }
+  },
+  "schema": "whole_system_phi_live_report",
+  "schema_name": "whole_system_phi_live_report",
+  "schema_version": 1
+}
