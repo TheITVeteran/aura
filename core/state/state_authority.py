@@ -226,13 +226,31 @@ def register_state_authority():
     )
 
 
+_FALLBACK_AUTHORITY: StateAuthority | None = None
+
+
+def _fallback_authority() -> StateAuthority:
+    """One process-wide instance when the registry can't serve one.
+
+    A fresh StateAuthority per call silently forked the truth ledger —
+    two callers could hold different authorities over the same state.
+    """
+    global _FALLBACK_AUTHORITY
+    if _FALLBACK_AUTHORITY is None:
+        _FALLBACK_AUTHORITY = StateAuthority()
+    return _FALLBACK_AUTHORITY
+
+
 def get_state_authority():
-    """Resolve or create state authority lazily."""
+    """Resolve or create state authority lazily (always the same instance)."""
     try:
         if not has_runtime_service("state_authority"):
             register_state_authority()
-        return get_runtime_service("state_authority", default=None) or StateAuthority()
+        resolved = get_runtime_service("state_authority", default=None)
+        if resolved is not None:
+            return resolved
+        return _fallback_authority()
     except _STATE_AUTHORITY_RECOVERABLE_ERRORS as e:
         record_degradation('state_authority', e)
-        logger.debug("Runtime service registry unavailable or failed: %s. Creating standalone StateAuthority.", e)
-        return StateAuthority()
+        logger.debug("Runtime service registry unavailable or failed: %s. Using process fallback StateAuthority.", e)
+        return _fallback_authority()

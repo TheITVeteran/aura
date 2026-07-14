@@ -72,6 +72,10 @@ ALLOW_LIST = {
     "core/agency/autonomous_task_engine.py",
     "core/agency/capability_token.py",
     "core/agency/skill_library.py",
+    # curiosity_daemon calls orchestrator.execute_tool — the CANONICAL
+    # governed chain (origin, standing authority, Will, capability,
+    # execution, closure), not a bypass of it (e593f5f2).
+    "core/agi/curiosity_daemon.py",
     "core/agi/curiosity_explorer.py",
     "core/autonomy/behavior_controller.py",
     "core/autonomy/proactive_presence.py",

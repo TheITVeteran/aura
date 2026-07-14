@@ -243,7 +243,17 @@ class BootResilienceMixin:
         # 104-thread pile-up, with this pool's workers running heavyweight
         # deferred tasks simultaneously. Bounded width makes overload queue
         # (bounded memory) instead of fan out (unbounded memory).
-        configured_workers = int(os.environ.get("AURA_COGNITION_POOL_WORKERS", "0") or 0)
+        from core.runtime.flags import FlagKind, declare
+
+        configured_workers = int(
+            declare(
+                "AURA_COGNITION_POOL_WORKERS",
+                kind=FlagKind.INT,
+                default=0,
+                description="Cognition thread-pool width override; 0 = derive from CPUs (bounded 4..16)",
+                owner="core.orchestrator.mixins.boot.boot_resilience",
+            ).value()
+        )
         observed_cpus = max(1, int(get_resource_observer().compute().cpu_count))
         _cog_workers = max(4, min(16, configured_workers or (observed_cpus + 4)))
         cog_executor = ThreadPoolExecutor(

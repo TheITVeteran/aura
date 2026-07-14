@@ -49,8 +49,10 @@ async def test_dream_cycle_continues_after_memory_consolidation_failure(monkeypa
     coordinator = _Coordinator()
     emitter = _Emitter()
 
+    # dream_cycle resolves through the registry seam, not the container.
     monkeypatch.setattr(
-        "core.container.ServiceContainer.get",
+        dream_cycle,
+        "get_runtime_service",
         lambda name, default=None: memory if name == "episodic_memory" else default,
     )
     monkeypatch.setattr(
@@ -84,8 +86,10 @@ async def test_dream_cycle_returns_degraded_result_when_wal_checkpoint_fails(mon
             raise RuntimeError("wal unavailable")
 
     coordinator = _BrokenCoordinator()
+    # dream_cycle resolves through the registry seam, not the container.
     monkeypatch.setattr(
-        "core.container.ServiceContainer.get",
+        dream_cycle,
+        "get_runtime_service",
         lambda name, default=None: memory if name == "episodic_memory" else default,
     )
     monkeypatch.setattr(

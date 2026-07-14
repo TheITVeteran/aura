@@ -33,7 +33,17 @@ _TLS_ERRORS = (ImportError, OSError, RuntimeError, TypeError, ValueError)
 
 
 def tls_enabled() -> bool:
-    return os.environ.get("AURA_ENABLE_TLS", "").strip().lower() in {"1", "true", "yes", "on"}
+    from core.runtime.flags import FlagKind, declare
+
+    return bool(
+        declare(
+            "AURA_ENABLE_TLS",
+            kind=FlagKind.BOOL,
+            default=False,
+            description="Serve the loopback interface over local TLS instead of plain HTTP",
+            owner="core.security.tls_local",
+        ).value()
+    )
 
 
 def tls_dir() -> Path:

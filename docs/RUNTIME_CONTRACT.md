@@ -29,6 +29,7 @@ Contract version: `runtime-health-v1`
 | Authority Gateway | `authority_gateway` | `is_ready` | Governance gateway for tools, external I/O, memory writes, state changes, and self-modification. |
 | Capability Engine | `capability_engine` | `is_ready` | Capability-token and skill governance layer. Without it, tool execution cannot be considered healthy. |
 | Output Gate | `output_gate` | `is_ready` | Delivers responses to the user. Without it, Aura thinks but cannot speak. |
+| Live Mind Runtime | `live_mind_runtime` | `is_ready` | Boot-owned causal organs and snapshot contract required for grounded live desktop speech. |
 | External Memory Sentinel | `external_memory_sentinel` | `is_armed` | Out-of-process memory guard. Without it, a live desktop runaway can outpace in-process watchdogs and crash the host. |
 
 ## IMPORTANT — Aura works but the experience is degraded
@@ -77,3 +78,4 @@ Boot readiness additionally requires at least one passing probe from each group:
 - **tool_governance**: `unified_will`, `authority_gateway`, `capability_engine`
 - **workspace**: `inhibition_manager`, `global_workspace`
 - **attention**: `attention_schema`
+- **live_mind**: `live_mind_runtime`

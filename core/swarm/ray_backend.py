@@ -37,13 +37,18 @@ class RayBackend:
                 # for the object store; on the 64GB host already carrying a
                 # wired 32B model that is a memory bomb, not a default.
                 if not ray.is_initialized():
-                    import os
+                    from core.runtime.flags import FlagKind, declare
 
-                    cpus = max(1, min(int(os.environ.get("AURA_RAY_CPUS", "2")), 8))
-                    store_mb = max(
-                        128,
-                        min(int(os.environ.get("AURA_RAY_OBJECT_STORE_MB", "256")), 2048),
-                    )
+                    cpus = max(1, min(int(declare(
+                        "AURA_RAY_CPUS", kind=FlagKind.INT, default=2,
+                        description="Ray worker CPUs (capped 8)",
+                        owner="core.swarm.ray_backend",
+                    ).value()), 8))
+                    store_mb = max(128, min(int(declare(
+                        "AURA_RAY_OBJECT_STORE_MB", kind=FlagKind.INT, default=256,
+                        description="Ray object store MB (capped 2048)",
+                        owner="core.swarm.ray_backend",
+                    ).value()), 2048))
                     ray.init(
                         ignore_reinit_error=True,
                         num_cpus=cpus,

@@ -238,8 +238,19 @@ def _resident_bridge_process_running(executable: Path | None = None) -> bool:
     expected = os.path.normcase(
         os.path.normpath(os.path.abspath(os.path.expanduser(str(executable))))
     )
+    from core.runtime.flags import FlagKind, declare
+
+    bridge_pid = str(
+        declare(
+            "AURA_NATIVE_BRIDGE_PID",
+            kind=FlagKind.STRING,
+            default="",
+            description="PID of the native desktop bridge process (set by the launcher)",
+            owner="core.security.native_desktop_bridge",
+        ).value()
+    )
     candidate_pids: list[int] = []
-    for raw_pid in (os.getenv("AURA_NATIVE_BRIDGE_PID", ""), os.getppid()):
+    for raw_pid in (bridge_pid, os.getppid()):
         try:
             pid = int(raw_pid)
         except (TypeError, ValueError):
@@ -247,9 +258,14 @@ def _resident_bridge_process_running(executable: Path | None = None) -> bool:
         if pid > 1 and pid not in candidate_pids:
             candidate_pids.append(pid)
     launcher_lock = Path(
-        os.getenv(
-            "AURA_NATIVE_BRIDGE_PID_FILE",
-            "~/.aura/locks/desktop-app-instance.lock",
+        str(
+            declare(
+                "AURA_NATIVE_BRIDGE_PID_FILE",
+                kind=FlagKind.STRING,
+                default="~/.aura/locks/desktop-app-instance.lock",
+                description="Launcher single-instance lock file path",
+                owner="core.security.native_desktop_bridge",
+            ).value()
         )
     ).expanduser()
     try:

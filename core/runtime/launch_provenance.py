@@ -173,7 +173,18 @@ def _hash_workspace_state(root: Path, status_output: str) -> dict[str, Any]:
 
 
 def _workspace_state(root: Path, *, commit_sha: str) -> dict[str, Any]:
-    cache_key = (str(root), commit_sha, os.getenv("AURA_LAUNCH_MANIFEST_PATH", ""))
+    from core.runtime.flags import FlagKind, declare
+
+    manifest_override = str(
+        declare(
+            "AURA_LAUNCH_MANIFEST_PATH",
+            kind=FlagKind.STRING,
+            default="",
+            description="Override path for the launch manifest (packaging/tests)",
+            owner="core.runtime.launch_provenance",
+        ).value()
+    )
+    cache_key = (str(root), commit_sha, manifest_override)
     now = time.monotonic()
     with _SOURCE_CACHE_LOCK:
         cached = _SOURCE_CACHE.get(cache_key)

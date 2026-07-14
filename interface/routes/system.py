@@ -930,12 +930,7 @@ def _attach_launch_provenance_contract(
 
             provenance = collect_runtime_launch_provenance(config.paths.project_root)
         except _SYSTEM_RECOVERABLE_ERRORS as exc:
-            launched_from_app = str(os.environ.get("AURA_LAUNCHED_FROM_APP", "")).strip().lower() in {
-                "1",
-                "true",
-                "yes",
-                "on",
-            }
+            launched_from_app = _launched_from_app_flag()
             provenance = {
                 "schema": "aura.launch_provenance.v1",
                 "required": launched_from_app,
@@ -974,16 +969,25 @@ def _attach_launch_provenance_contract(
     return result, 503
 
 
+def _launched_from_app_flag() -> bool:
+    from core.runtime.flags import FlagKind, declare
+
+    return bool(
+        declare(
+            "AURA_LAUNCHED_FROM_APP",
+            kind=FlagKind.BOOL,
+            default=False,
+            description="Set by the desktop app launcher; gates app-managed behaviors",
+            owner="interface.routes.system",
+        ).value()
+    )
+
+
 def _fallback_launch_provenance(manifest_snapshot: Any = None) -> dict[str, Any]:
     """Return non-blocking conservative evidence for event-loop fallback paths."""
 
     snapshot = dict(manifest_snapshot) if isinstance(manifest_snapshot, dict) else {}
-    launched_from_app = str(os.environ.get("AURA_LAUNCHED_FROM_APP", "")).strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
+    launched_from_app = _launched_from_app_flag()
     required = bool(snapshot.get("required", launched_from_app))
     if not required:
         return {

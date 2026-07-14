@@ -471,8 +471,26 @@ class StandingAuthorityManager:
         if self._state_gateway is None:
             from core.state.state_gateway import get_state_gateway
 
-            configured_root = str(os.environ.get("AURA_STATE_ROOT") or "").strip()
-            test_root = str(os.environ.get("AURA_TEST_RUNTIME_ROOT") or "").strip()
+            from core.runtime.flags import FlagKind, declare
+
+            configured_root = str(
+                declare(
+                    "AURA_STATE_ROOT",
+                    kind=FlagKind.STRING,
+                    default="",
+                    description="Override root for durable state stores",
+                    owner="core.executive.standing_authority",
+                ).value()
+            ).strip()
+            test_root = str(
+                declare(
+                    "AURA_TEST_RUNTIME_ROOT",
+                    kind=FlagKind.STRING,
+                    default="",
+                    description="Hermetic test runtime root (set by the suite)",
+                    owner="core.executive.standing_authority",
+                ).value()
+            ).strip()
             root = Path(configured_root) if configured_root else (
                 Path(test_root) / "state" if test_root else None
             )

@@ -2848,13 +2848,21 @@ def test_runtime_boot_noise_regressions_are_closed():
     assert "async def engage_sleep_cycle_async(self)" in dreamer_source
     assert "return await self.engage_sleep_cycle()" in dreamer_source
     assert "async def shutdown(" in container_source
-    assert "hook_timeout_s: float = 1.5" in container_source
-    assert "total_timeout_s: float = 12.0" in container_source
+    # The contract is BOUNDED hooks, not a frozen number: budgets were
+    # deliberately raised (1.5→5.0 per hook, 12→45 total) when the per-hook
+    # override floor landed — heavyweight stores get more grace, everything
+    # stays deadline-bounded.
+    assert "hook_timeout_s: float = 5.0" in container_source
+    assert "total_timeout_s: float = 45.0" in container_source
     assert "-> dict[str, Any]:" in container_source
     assert "failed_hooks" in container_source
     assert "bounded {hook_name} timeout" in container_source
     assert "ServiceContainer.shutdown(" in shutdown_source
-    assert 'exclude={"runtime_hygiene"}' in shutdown_source
+    # The runtime_hygiene exclusion was deliberately removed (bef3f939,
+    # deterministic recovery): teardown now covers every service, stays
+    # deadline-bounded, and must produce an auditable clean verdict.
+    assert "timeout=50.0" in shutdown_source
+    assert 'container_shutdown_report.get("clean")' in shutdown_source
 
 
 def test_proof_ablation_guard_blocks_only_proof_runs(monkeypatch: pytest.MonkeyPatch):

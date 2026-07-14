@@ -119,7 +119,7 @@ class ToolExecutionMixin:
     def _tool_effect_scope(tool_name: Any, args: dict[str, Any] | None = None) -> str:
         """Return the conservative effect scope used by the autonomy gate."""
 
-        return resolve_execution_effect_scope(tool_name, args)
+        return str(resolve_execution_effect_scope(tool_name, args))
 
     @staticmethod
     def _safe_autonomous_web_research_tool(

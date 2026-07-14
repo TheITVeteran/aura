@@ -600,7 +600,16 @@ class MorphogeneticRuntime:
 
     async def _run_immunity_worker(self) -> None:
         while not self._stopping.is_set():
-            signal_id, event = await self._immunity_queue.get()
+            try:
+                # Timed wait, not a forever-block: the worker wakes to
+                # re-check _stopping even when the queue is quiet (the
+                # bounded-await discipline — a bare .get() here is the
+                # mind_tick wedge class).
+                signal_id, event = await asyncio.wait_for(
+                    self._immunity_queue.get(), timeout=5.0
+                )
+            except (TimeoutError, asyncio.TimeoutError):
+                continue
             self._immunity_inflight_id = signal_id
             self._immunity_inflight_started_at = time.time()
             try:

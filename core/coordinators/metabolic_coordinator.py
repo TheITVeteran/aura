@@ -85,15 +85,31 @@ class MetabolicCoordinator:
         self._bg_llm_semaphore = asyncio.Semaphore(1) # Guard background LLM slots
         self._last_gc_time = 0
         self._is_processing = False  # Re-entry Guard
-        self._autonomous_reflection_interval_s = _coerce_float(
-            os.getenv("AURA_AUTONOMOUS_REFLECTION_INTERVAL_S"),
-            _AUTONOMOUS_REFLECTION_INTERVAL_SECONDS,
-            minimum=60.0,
+        from core.runtime.flags import FlagKind, declare
+
+        self._autonomous_reflection_interval_s = max(
+            60.0,
+            float(
+                declare(
+                    "AURA_AUTONOMOUS_REFLECTION_INTERVAL_S",
+                    kind=FlagKind.FLOAT,
+                    default=_AUTONOMOUS_REFLECTION_INTERVAL_SECONDS,
+                    description="Seconds between autonomous reflection passes (floor 60)",
+                    owner="core.coordinators.metabolic_coordinator",
+                ).value()
+            ),
         )
-        self._autonomous_reflection_failure_backoff_s = _coerce_float(
-            os.getenv("AURA_AUTONOMOUS_REFLECTION_FAILURE_BACKOFF_S"),
-            _AUTONOMOUS_REFLECTION_FAILURE_BACKOFF_SECONDS,
-            minimum=30.0,
+        self._autonomous_reflection_failure_backoff_s = max(
+            30.0,
+            float(
+                declare(
+                    "AURA_AUTONOMOUS_REFLECTION_FAILURE_BACKOFF_S",
+                    kind=FlagKind.FLOAT,
+                    default=_AUTONOMOUS_REFLECTION_FAILURE_BACKOFF_SECONDS,
+                    description="Backoff after a failed reflection pass (floor 30)",
+                    owner="core.coordinators.metabolic_coordinator",
+                ).value()
+            ),
         )
         self._autonomous_reflection_last_attempt_at = 0.0
         self._autonomous_reflection_last_completed_at = 0.0

@@ -49,7 +49,17 @@ def foreground_enabled() -> bool:
     (empty store = no processor; below-gate similarity = untouched logits).
     Kill switch: AURA_NONPARAMETRIC_FOREGROUND=0.
     """
-    return os.getenv("AURA_NONPARAMETRIC_FOREGROUND", "1").strip().lower() in {"1", "true", "on", "yes"}
+    from core.runtime.flags import FlagKind, declare
+
+    return bool(
+        declare(
+            "AURA_NONPARAMETRIC_FOREGROUND",
+            kind=FlagKind.BOOL,
+            default=True,
+            description="Foreground non-parametric recall blend (proven by tools/nonparametric_proof.py)",
+            owner="core.brain.nonparametric_worker",
+        ).value()
+    )
 
 
 def maybe_build_foreground(model: Any) -> tuple[HiddenStateTap, Callable[[Any, Any], Any]] | None:
