@@ -372,11 +372,12 @@ def test_background_policy_defers_until_first_visible_conversation_probe(monkeyp
         "readiness_blockers": ["visible_conversation_probe_missing"],
     }
     gate = SimpleNamespace(get_conversation_status=lambda: dict(lane))
-    monkeypatch.setattr(
-        ServiceContainer,
-        "get",
-        classmethod(lambda cls, name, default=None: gate if name == "inference_gate" else default),
+    # background_policy resolves the gate via ServiceContainer.peek, not .get.
+    _gate_lookup = classmethod(
+        lambda cls, name, default=None: gate if name == "inference_gate" else default
     )
+    monkeypatch.setattr(ServiceContainer, "get", _gate_lookup)
+    monkeypatch.setattr(ServiceContainer, "peek", _gate_lookup)
 
     assert (
         background_policy.background_activity_reason(None, allow_no_user_anchor=True)
@@ -1265,10 +1266,10 @@ def test_dream_coordinator_defers_dream_work_during_boot_grace(monkeypatch):
         monkeypatch.delenv("AURA_FOREGROUND_ONLY", raising=False)
         monkeypatch.setenv("AURA_BACKGROUND_BOOT_GRACE_S", "300")
         orch = SimpleNamespace(status=SimpleNamespace(start_time=time.time() - 42))
+        # dream_coordinator resolves the orchestrator via get_runtime_service.
         monkeypatch.setattr(
-            ServiceContainer,
-            "get",
-            staticmethod(lambda name, default=None: orch if name == "orchestrator" else default),
+            "core.maintenance.dream_coordinator.get_runtime_service",
+            lambda name, default=None: orch if name == "orchestrator" else default,
         )
         coordinator = DreamCoordinator()
 
@@ -1400,10 +1401,11 @@ def test_event_loop_monitor_treats_dict_lane_generation_as_active(monkeypatch):
             }
 
     monkeypatch.setenv("AURA_EVENT_LOOP_MONITOR_ACTIVE_THRESHOLD_S", "6.0")
+    # EventLoopMonitor resolves the gate via get_runtime_service (imported
+    # locally inside the method, so patch it at the source module).
     monkeypatch.setattr(
-        ServiceContainer,
-        "get",
-        staticmethod(lambda name, default=None: _Gate() if name == "inference_gate" else default),
+        "core.runtime.service_registry.get_runtime_service",
+        lambda name, default=None: _Gate() if name == "inference_gate" else default,
     )
     monitor = EventLoopMonitor(threshold=0.5)
 
@@ -2924,7 +2926,8 @@ def test_desktop_access_permission_route_has_ui_bounded_probe_budgets():
     assert 'AURA_DESKTOP_ACCESS_NATIVE_PROBE_TIMEOUT_S"' in src
     assert "6.0" in src
     assert "AURA_DESKTOP_ACCESS_DIRECT_PROBE_TIMEOUT_S" in src
-    assert "0.6" in src
+    # Direct-probe budget deliberately widened 0.6→2.0; still UI-bounded.
+    assert "2.0" in src
     assert "timeout=max(0.2, _DESKTOP_ACCESS_NATIVE_PROBE_TIMEOUT_S)" in src
     assert "timeout=max(0.2, _DESKTOP_ACCESS_DIRECT_PROBE_TIMEOUT_S)" in src
 

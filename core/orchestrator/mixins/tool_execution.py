@@ -34,7 +34,16 @@ _TOOL_EXECUTION_RECOVERABLE_ERRORS = (
     TypeError,
     ValueError,
 )
-_USER_FACING_TOOL_ORIGINS = USER_FACING_AUTHORITY_ORIGINS
+from core.utils.queues import USER_FACING_ORIGINS as _CANONICAL_USER_FACING_ORIGINS
+
+# Standing-authority origins use the underscore internal convention
+# (desktop_ui); the cross-module user-facing contract (7 other modules,
+# test_live_runtime_surface_regressions) uses the hyphenated display forms
+# (desktop-ui, native-shell, ws). Union both so a desktop turn is
+# recognized as foreground no matter which convention reaches this gate.
+_USER_FACING_TOOL_ORIGINS = frozenset(
+    USER_FACING_AUTHORITY_ORIGINS | _CANONICAL_USER_FACING_ORIGINS
+)
 _READ_ONLY_WEB_TOOLS = PUBLIC_RESEARCH_TOOLS
 _AUTONOMOUS_WEB_TOOL_ORIGINS = AUTONOMOUS_AUTHORITY_ORIGINS
 _UNSAFE_AUTONOMOUS_WEB_TOOL_MARKERS = {
