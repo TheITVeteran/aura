@@ -37,7 +37,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from core.governance_context import local_internal_governed_scope
 from core.runtime.errors import record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.flags import FlagKind, declare
 
 logger = logging.getLogger("Aura.FlightRecorder")
@@ -287,25 +289,60 @@ class FlightRecorder:
         if not self.enabled:
             logger.info("Flight recorder disabled by AURA_FLIGHT_RECORDER.")
             return None
-        self._flight_dir.mkdir(parents=True, exist_ok=True)
-        # The runtime lock is taken BEFORE the previous ring is even read:
-        # a second live runtime (the duplicate-runtime cascade) must not be
-        # able to rotate the ring the first one is still writing.
-        self._acquire_runtime_lock()
-        previous = inspect_ring_file(self._ring_path)
-        death_report: dict[str, Any] | None = None
-        if previous is not None and not previous.clean:
-            death_report = self._build_death_report(previous)
-        if previous is not None:
+        gateway = get_file_write_gateway()
+        with local_internal_governed_scope(
+            "flight_recorder.ring_lifecycle",
+            domain="file_write",
+        ):
+            gateway.ensure_directory(
+                self._flight_dir,
+                source="core.runtime.flight_recorder.start",
+            )
+            # The runtime lock is taken BEFORE the previous ring is even read:
+            # a second live runtime (the duplicate-runtime cascade) must not be
+            # able to rotate the ring the first one is still writing.
+            self._acquire_runtime_lock()
+            rotated_previous = False
             try:
-                os.replace(self._ring_path, self._prev_ring_path)
-            except OSError as exc:
-                record_degradation(
-                    "flight_recorder",
-                    exc,
-                    action="overwrote previous ring in place instead of rotating",
-                )
-        self._open_fresh_ring()
+                previous = inspect_ring_file(self._ring_path)
+                death_report: dict[str, Any] | None = None
+                if previous is not None and not previous.clean:
+                    death_report = self._build_death_report(previous)
+                if previous is not None:
+                    try:
+                        gateway.replace_file(
+                            self._ring_path,
+                            self._prev_ring_path,
+                            source="core.runtime.flight_recorder.rotate",
+                        )
+                        rotated_previous = True
+                    except OSError as exc:
+                        record_degradation(
+                            "flight_recorder",
+                            exc,
+                            action="preserved previous ring and refused destructive overwrite",
+                        )
+                        raise RuntimeError(
+                            "could not rotate previous flight ring without data loss"
+                        ) from exc
+                self._open_fresh_ring()
+            except (OSError, RuntimeError, TypeError, ValueError, struct.error):
+                if rotated_previous and self._prev_ring_path.exists():
+                    try:
+                        gateway.replace_file(
+                            self._prev_ring_path,
+                            self._ring_path,
+                            source="core.runtime.flight_recorder.restore_failed_start",
+                        )
+                    except (OSError, RuntimeError, TypeError, ValueError) as restore_exc:
+                        record_degradation(
+                            "flight_recorder",
+                            restore_exc,
+                            action="previous ring remained at flight_ring.prev after failed start",
+                            severity="warning",
+                        )
+                self.close()
+                raise
         self._last_death_report = death_report
         self._started = True
         logger.info(
@@ -350,7 +387,12 @@ class FlightRecorder:
         import fcntl
 
         lock_path = self._flight_dir / _LOCK_NAME
-        lock_file = open(lock_path, "a+b")  # noqa: SIM115 — held for process lifetime
+        lock_file = get_file_write_gateway().open_owned_binary(
+            lock_path,
+            mode="a+b",
+            permissions=0o600,
+            source="core.runtime.flight_recorder.runtime_lock",
+        )
         try:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError as exc:
@@ -363,12 +405,18 @@ class FlightRecorder:
     def _open_fresh_ring(self) -> None:
         total = _HEADER_SIZE + self._slot_count * _SLOT_SIZE
         self._boot_wall = time.time()
-        file = open(self._ring_path, "w+b")  # noqa: SIM115 — held for process lifetime
+        file = get_file_write_gateway().open_owned_binary(
+            self._ring_path,
+            mode="w+b",
+            permissions=0o600,
+            source="core.runtime.flight_recorder.open_ring",
+        )
         try:
             file.truncate(total)
             file.seek(0)
             file.write(self._pack_header(clean=False, closed_wall=0.0, reason=""))
             file.flush()
+            os.fsync(file.fileno())
             self._mm = mmap.mmap(file.fileno(), total, access=mmap.ACCESS_WRITE)
             self._file = file
         except (OSError, ValueError):
@@ -666,9 +714,6 @@ class FlightRecorder:
         return sentence
 
     async def _publish_death_artifact(self, report: dict[str, Any]) -> None:
-        from core.governance_context import local_internal_governed_scope
-        from core.runtime.file_write_gateway import get_file_write_gateway
-
         died_at = report.get("died_at") or report.get("generated_at") or time.time()
         artifact_path = self._flight_dir / f"death_{int(float(died_at))}.json"
         report["artifact_path"] = str(artifact_path)

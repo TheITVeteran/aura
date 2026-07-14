@@ -144,13 +144,66 @@ def test_local_certificate_generation_and_reuse(tmp_path, monkeypatch):
     assert "localhost" in san.get_values_for_type(x509.DNSName)
 
     # Second call reuses, byte-identical.
+    certificate_before = cert_path.read_bytes()
+    key_before = key_path.read_bytes()
     again = tls.ensure_local_certificate()
     assert again == first
-    assert cert_path.read_bytes() == x509_bytes_before(cert_path)
+    assert cert_path.read_bytes() == certificate_before
+    assert key_path.read_bytes() == key_before
 
 
-def x509_bytes_before(path):
-    return path.read_bytes()
+def test_local_certificate_regenerates_mismatched_key_pair(tmp_path, monkeypatch):
+    from cryptography import x509
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    import core.security.tls_local as tls
+
+    monkeypatch.setattr(tls, "tls_dir", lambda: tmp_path / "tls")
+    first = tls.ensure_local_certificate()
+    assert first is not None
+    cert_path, key_path = first
+    certificate_before = cert_path.read_bytes()
+    unrelated_key = ec.generate_private_key(ec.SECP256R1())
+    key_path.write_bytes(
+        unrelated_key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+
+    regenerated = tls.ensure_local_certificate()
+
+    assert regenerated == first
+    assert cert_path.read_bytes() != certificate_before
+    certificate = x509.load_pem_x509_certificate(cert_path.read_bytes())
+    private_key = serialization.load_pem_private_key(key_path.read_bytes(), password=None)
+    assert certificate.public_key().public_numbers() == private_key.public_key().public_numbers()
+    assert (key_path.stat().st_mode & 0o777) == 0o600
+
+
+def test_local_certificate_fails_closed_when_batch_commit_fails(tmp_path, monkeypatch):
+    import core.runtime.file_write_gateway as file_write_gateway
+    import core.security.tls_local as tls
+
+    class FailingGateway:
+        def ensure_directory(self, path, *, source):
+            path.mkdir(parents=True, exist_ok=True)
+
+        def write_bytes_batch(self, entries, *, source):
+            raise OSError("injected certificate persistence failure")
+
+    monkeypatch.setattr(tls, "tls_dir", lambda: tmp_path / "tls")
+    monkeypatch.setattr(
+        file_write_gateway,
+        "get_file_write_gateway",
+        lambda: FailingGateway(),
+    )
+
+    assert tls.ensure_local_certificate() is None
+    assert not (tmp_path / "tls" / "aura_local.crt").exists()
+    assert not (tmp_path / "tls" / "aura_local.key").exists()
 
 
 def test_tls_enabled_flag(monkeypatch):

@@ -111,7 +111,6 @@ CANONICAL_PRIMITIVE_OWNERS: dict[str, frozenset[str]] = {
         {
             "core/runtime/atomic_writer.py",
             "core/runtime/file_write_gateway.py",
-            "core/runtime/flight_recorder.py",
             "core/runtime/shutdown_artifact_store.py",
         }
     ),
@@ -136,7 +135,16 @@ CANONICAL_PRIMITIVE_OWNERS: dict[str, frozenset[str]] = {
         }
     ),
     "network_gateway": frozenset({"core/runtime/action_executor.py"}),
-    "file_write_gateway": frozenset({"core/runtime/action_executor.py"}),
+    "file_write_gateway": frozenset(
+        {
+            "core/agency/self_repair_backlog.py",
+            "core/runtime/action_executor.py",
+            "core/runtime/flight_recorder.py",
+            "core/security/tls_local.py",
+            "core/self_improvement/program_dna.py",
+            "infrastructure/rollback.py",
+        }
+    ),
     "desktop_action_gateway": frozenset({"core/runtime/action_executor.py"}),
     "memory_write_gateway": frozenset({"core/runtime/action_executor.py"}),
     "state_gateway": frozenset({"core/runtime/action_executor.py"}),
@@ -335,7 +343,10 @@ _GATEWAY_METHODS = {
             "ensure_directory",
             "ensure_directory_async",
             "move_path_async",
+            "open_owned_binary",
+            "replace_file",
             "write_bytes",
+            "write_bytes_batch",
             "write_bytes_async",
             "write_json",
             "write_json_async",

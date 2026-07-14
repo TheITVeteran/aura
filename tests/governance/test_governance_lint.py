@@ -195,6 +195,19 @@ def test_scanner_separates_desktop_observation_from_mutation() -> None:
     assert {key[0] for key in buckets} == {"raw_desktop"}
 
 
-def test_flight_recorder_is_a_canonical_crash_storage_primitive() -> None:
-    assert _canonical_owner("raw_file_mutation", "core/runtime/flight_recorder.py") is True
-    assert _canonical_owner("file_write_gateway", "core/runtime/flight_recorder.py") is False
+def test_flight_recorder_uses_the_canonical_file_gateway_escape_hatch() -> None:
+    assert _canonical_owner("raw_file_mutation", "core/runtime/flight_recorder.py") is False
+    assert _canonical_owner("file_write_gateway", "core/runtime/flight_recorder.py") is True
+
+
+def test_storage_migrations_are_canonical_file_gateway_owners() -> None:
+    migrated = {
+        "core/agency/self_repair_backlog.py",
+        "core/runtime/flight_recorder.py",
+        "core/security/tls_local.py",
+        "core/self_improvement/program_dna.py",
+        "infrastructure/rollback.py",
+    }
+
+    assert all(_canonical_owner("file_write_gateway", path) for path in migrated)
+    assert not any(_canonical_owner("raw_file_mutation", path) for path in migrated)

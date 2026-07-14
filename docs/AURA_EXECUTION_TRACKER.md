@@ -16,8 +16,9 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **Checkpoint 61 makes the live
-  health-surface root fix (`HEALTH-SURFACE-001`) source-green while the
+- Current bounded implementation milestone: **Checkpoint 62 closes the
+  production storage-gateway bypass set (`STORAGE-GATEWAY-001`) while the live
+  health-surface root fix (`HEALTH-SURFACE-001`) remains source-green and the
   preserved concurrent Fable runtime occupies the shared desktop; exact-main
   signed-app proof remains mandatory**, then run the full signed-app proof of the
   source-green canonical action spine, standing authority, owned-task, self-condition,
@@ -25,11 +26,13 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   (`AUTONOMY-AUTHORITY-001`, `ASYNC-TASK-001`, `SELF-STATE-CHAT-001`,
   `DESKTOP-ACCESS-001`, `FOREGROUND-LATENCY-001`,
   `LAUNCH-PROVENANCE-001`) when the preserved concurrent Fable runtime releases
-  the shared desktop. Continue `STORAGE-GATEWAY-001` and
-  `MEMORY-LEAK-001` while that live lane remains occupied, followed by joy/social
+  the shared desktop. Close the two remaining production-surface raw task
+  owners in `core/worlds/hosting.py` and
+  `core/actuators/actuator_registry.py`, and continue `MEMORY-LEAK-001` while
+  that live lane remains occupied, followed by joy/social
   self-state separation and the remaining typed canonical person-model
   consolidation (`MEMORY-001`, `MIND-001`, `STATE-001`,
-  `CTX3-SOCIAL-001..002`). Checkpoints 49 through 61 establish the current
+  `CTX3-SOCIAL-001..002`). Checkpoints 49 through 62 establish the current
   social, OS-automation, runtime-pressure, desktop-access, self-condition,
   owned-task, standing-authority, action-execution, and pressure-resilient
   health source boundaries, signed
@@ -44,7 +47,8 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   item remains open or in progress unless its detailed entry explicitly carries
   a completion date and proof.
 - Overall completion percentage: **29% planning estimate as of pushed
-  Checkpoint 61**. Checkpoint 61 closes the health-surface source defect, but
+  Checkpoint 62**. Checkpoint 62 closes the bounded storage-gateway bypass set,
+  but
   newly explicit system-wide frontier cognition/engineering and morphogenetic
   organ-engineering burdens increase the denominator. Recording that expansion
   lowers the rounded estimate instead of manufacturing progress by hiding
@@ -54,7 +58,7 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   generated denominator; new obligations increase it, regressions reopen it,
   and source-green/live-open work never receives full closure credit.
 - Total checkpoint forecast: **approximately 206-276 total checkpoints for the
-  expanded program, with 61 pushed and approximately 145-215 remaining before
+  expanded program, with 62 pushed and approximately 144-214 remaining before
   final soak/release closure**. This includes every
   implementation, cleanup, repair, integration, verification, live,
   portability, release, and soak checkpoint, not only headline milestones.
@@ -100,7 +104,7 @@ Status rules:
 | `RELEASE-CONTRACT-001` | `OPEN 2026-07-13` | Define the Aura 1.0 product contract as a versioned machine-readable manifest: every supported capability, platform/hardware/account/permission mode, SLO, data guarantee, security/privacy boundary, operator control, degradation behavior, claim limit, and explicit non-goal must have an owner and acceptance evidence. Release tooling must reject an undocumented feature, unsupported claim, open severity-1/2 defect, waived mandatory gate, or proof artifact from a different commit/build. | `SCOPE-001`, `CAPABILITY-CERT-001`, `VALIDATE-001`, `OPERATIONS-001`; Aura 1.0 closure question 2026-07-13 |
 | `EXPECT-001` | `IN PROGRESS` | Complete Fable's Aura Expectation Engine so natural-language intent becomes causal acceptance criteria, observed-effect verdicts, repair, persistence, and follow-through across every action path. | Pass F 1 and 14; Matrix 9 |
 | `EFFECT-001` | `IN PROGRESS` | Put file, network, browser, OS, memory, model, patch, self-repair, social, and environmental effects through canonical authority, transaction, compensation, and reconstructable receipt boundaries. | Pass F 5; Matrix 9 and 11 |
-| `STORAGE-GATEWAY-001` | `OPEN 2026-07-13` | Remove the seven remaining production-surface direct-write bypasses in local TLS material, self-repair backlog state, flight-recorder emergency output, Program DNA staging, and rollback state. Preserve bootstrap/crash/rollback availability through explicit gateway primitives and fault-injection tests rather than linter exemptions. | `EFFECT-001`, `FAULT-001`, `REPO-001`; Checkpoint 53 production-surface audit |
+| `STORAGE-GATEWAY-001` | `COMPLETE 2026-07-13` | Removed all seven production-surface direct-write bypasses in local TLS material, self-repair backlog state, flight-recorder emergency output, Program DNA staging, and rollback state. Canonical batch, owned-binary, durable replace/delete, governance, schema, integrity, concurrency, and fault-injection contracts preserve bootstrap/crash/rollback behavior without exemptions. The production scanner now reports zero direct-file-write findings; its only two remaining findings are separately tracked raw async task owners. | `EFFECT-001`, `FAULT-001`, `REPO-001`; Checkpoint 62 |
 | `RUNTIME-001` | `IN PROGRESS` | Finish desired-state reconciliation and truthful startup/liveness/readiness/degradation/proof/certification conditions without aggregate false health. | Pass F 2; Matrix 13 |
 | `HEALTH-SURFACE-001` | `IN PROGRESS (SOURCE GREEN; EXACT-MAIN LIVE OPEN) 2026-07-13` | Replace the heavyweight request-time `/api/health` aggregation with one bounded, versioned, asynchronously refreshed health read model whose public request path is non-blocking, stale-aware, and available under owner-loop and CPU pressure. The request-time collector, duplicate fixed UI timers, rich service-worker polling, cold service construction, mutation-on-observation, and repeated per-attempt warning cards are removed; one daemon single-flight refresh owner, explicit expiry truth, retry telemetry, jittered client backoff, incident coalescing, bounded reminders, and one recovery transition are source-green. Exact-main signed-app proof must still demonstrate responsive liveness/readiness while cognition, Phi, neural-mesh, MLX recovery, desktop perception, and attribution work are active. | `RUNTIME-001`, `FOREGROUND-LATENCY-001`, `OBSERVE-001`, `UI-001`, `PERF-001`; Checkpoint 61; live old-runtime `/api/health` measured `200`, 135883 bytes, 5.3s against a 1.5s UI abort budget with repeated `[health_poll] ... Load failed` on preserved Fable runtime 2026-07-13 |
 | `LANE-001` | `COMPLETE 2026-07-12` | Preserve atomic fenced reservations, synchronous required eviction/reclamation, all-owner accounting, heartbeats, compensation, terminal receipts, race exclusion, and bounded live physical-release-before-load evidence across future model owners. | Addendum 21-22, `CTX2-LANE-001..004` |
@@ -14176,3 +14180,96 @@ Progress and immediate next work:
 - Continue `STORAGE-GATEWAY-001` and `MEMORY-LEAK-001` while preserving that
   runtime, then execute the exact-main signed-app matrix and the complete master
   index. Final multi-hour and 24-72 hour soaks remain last.
+
+## Checkpoint 2026-07-13-62: Governed Crash-Consistent Storage Owners
+
+This checkpoint completes `STORAGE-GATEWAY-001` and advances `EFFECT-001`,
+`FAULT-001`, `ARCH-001`, `REPO-001`, `SECURITY-001`, `DATA-LIFECYCLE-001`,
+`LIFECYCLE-001`, and `TEST-DEPTH-001`. It removes every remaining direct file
+write reported by the production-surface scanner without exempting a bootstrap,
+crash, repair, reconstruction, or rollback owner.
+
+Deepened the canonical storage primitive instead of replacing seven calls with
+seven shallow wrappers:
+
+- Atomic byte/text writes now accept validated permission modes and apply them
+  to the unpublished temporary inode before content lands. The file gateway
+  adds typed same-directory byte batches, immutable transaction/hash receipts,
+  interprocess serialization, pre-state capture, ordinary-exception rollback,
+  and restoration even when failure occurs after replacement during durability
+  synchronization.
+- The batch lock and owned-binary lane reject symlink traversal, use close-on-
+  exec/no-follow descriptors where supported, and enforce private modes. A
+  narrow process-owned binary primitive supports only the live `mmap` ring and
+  lifetime lock modes that cannot use replace-on-write. Durable replace and
+  delete synchronize directory metadata through the same gateway.
+- Governance now identifies each migrated subsystem as a canonical gateway
+  owner, no longer treats the flight recorder as a raw-file owner, recognizes
+  the new narrow methods, and carries a refreshed effect inventory. The
+  inventory still reports `1666` pre-existing migration-debt calls across the
+  whole repository; those remain open under `EFFECT-001`/`REPO-001` and are not
+  misrepresented as complete by this bounded bypass closure.
+
+Closed caller-specific failure semantics:
+
+- Local TLS validates that certificate and private key match, requires a
+  self-signed ECDSA P-256 leaf with BasicConstraints and the required IP/DNS
+  SANs, regenerates corrupt/incomplete/mismatched material, commits key and
+  certificate as a governed pair with `0600`/`0644` modes, then re-reads and
+  fingerprints the persisted certificate before advertising readiness.
+- The self-repair backlog stores a versioned, legacy-readable seen ledger and
+  mutates in-memory acknowledgement only after durable write/readback. Dry
+  runs, missing engines, busy/disabled executors, rejected plans, and write
+  failures remain eligible. Concurrent ingestors reserve each defect once;
+  persistence runs off-loop; malformed schemas/collections and duplicate or
+  empty targets cannot manufacture repair work.
+- The flight recorder acquires its runtime lock and opens its fixed mmap ring
+  through the governed owned-file lane, durably rotates the previous ring,
+  fsyncs the fresh header, restores the previous crash record if fresh-ring
+  creation fails, and releases the lock on failed startup. Rotation failure
+  preserves evidence and refuses destructive in-place overwrite.
+- Program DNA scaffold inspection and artifact emission run off-loop. Every
+  generated directory/file uses the canonical gateway and atomic random temp
+  inode rather than predictable `.tmp` paths or event-loop filesystem work.
+- Rollback checkpoints use confined, sanitized, collision-resistant names and
+  a versioned state envelope bound to checkpoint identity and a canonical
+  SHA-256 digest. Capture/persistence failure remains explicitly non-restorable;
+  readback verification precedes checkpoint credit; tampering, symlinks, and
+  paths outside the owned directory fail before the state applier. Stateless
+  and legacy checkpoints retain explicit compatible semantics, and pruning
+  occurs outside the controller lock through governed durable deletion.
+
+Verification completed on the final source candidate:
+
+- Gateway, TLS, and rollback fault/integrity suites pass `34/34`; backlog and
+  flight-recorder concurrency/crash suites pass `31/31`; the final primitive
+  edge-case rerun passes `55/55`.
+- Program DNA reconstruction, cognition, and complex-app proof suites pass
+  `16/16`. Governance ownership tests pass `10/10`; production-surface linter
+  contract tests pass `22/22`.
+- Configured Ruff, targeted Python compilation, `git diff --check`, and the
+  governance inventory ratchet pass. The enterprise static gate passes; all
+  `37/37` production-readiness checks and all `20/20` closeout-rubric criteria
+  pass.
+- The production-surface scanner intentionally exits nonzero because two
+  separately tracked `raw_async_task` findings remain. A machine assertion
+  proves its finding set is exactly
+  `core/worlds/hosting.py:814` and
+  `core/actuators/actuator_registry.py:587`, with zero
+  `unapproved_direct_file_write` findings.
+
+Progress and immediate next work:
+
+- This is pushed Checkpoint `62`. The expanded planning estimate remains
+  `29%`: one bounded checkpoint does not justify rounding up against the full
+  frontier/foundation/release denominator. The forecast remains `206-276`
+  total checkpoints, with `144-214` remaining.
+- The visible desktop remains PID `55113` from
+  `.claude/worktrees/fable-improvement-pass` at `e593f5f`, not this exact-main
+  candidate. Its repeated health-poll failure remains old-runtime evidence;
+  `HEALTH-SURFACE-001` stays source-green/live-open until a rebuilt signed app
+  proves the exact pushed commit.
+- Close the two raw task owners next, then continue memory-growth attribution
+  and every remaining master-index unit. Exact-main signed-app proof follows
+  when the preserved desktop is released. Final multi-hour and 24-72 hour
+  soaks remain deferred until every shorter gate is green.

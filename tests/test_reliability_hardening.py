@@ -718,6 +718,11 @@ class TestRollback:
             success = controller.rollback("v1.0")
             assert success
             assert applied == [{"key": "val"}]  # state actually restored
+            envelope = json.loads(Path(cp.state_path).read_text(encoding="utf-8"))
+            assert envelope["schema"] == "aura.rollback.checkpoint_state.v1"
+            assert envelope["checkpoint_name"] == "v1.0"
+            assert envelope["state"] == {"key": "val"}
+            assert envelope["state_sha256"] == cp.state_sha256
 
     def test_rollback_with_state_but_no_applier_fails_closed(self):
         """A rollback that cannot restore its persisted state must not
@@ -734,6 +739,125 @@ class TestRollback:
             controller = RollbackController(checkpoint_dir=Path(tmp))
             controller.checkpoint("marker-only")
             assert controller.rollback("marker-only") is True
+
+    def test_failed_state_collection_never_becomes_successful_stateless_rollback(self):
+        from infrastructure.rollback import RollbackController
+
+        with tempfile.TemporaryDirectory() as tmp:
+            controller = RollbackController(checkpoint_dir=Path(tmp))
+
+            def fail_collection():
+                raise RuntimeError("collector unavailable")
+
+            cp = controller.checkpoint("broken", state_collector=fail_collection)
+
+            assert cp.state_required is True
+            assert cp.verified is False
+            assert cp.state_path == ""
+            assert "RuntimeError:collector unavailable" in cp.persistence_error
+            assert controller.rollback("broken") is False
+
+    def test_failed_state_persistence_keeps_checkpoint_non_restorable(
+        self,
+        monkeypatch,
+    ):
+        import infrastructure.rollback as rollback_module
+
+        with tempfile.TemporaryDirectory() as tmp:
+            controller = rollback_module.RollbackController(checkpoint_dir=Path(tmp))
+
+            class FailingGateway:
+                def write_text(self, path, text, *, source):
+                    raise OSError("disk unavailable")
+
+            monkeypatch.setattr(
+                rollback_module,
+                "get_file_write_gateway",
+                lambda: FailingGateway(),
+            )
+            cp = controller.checkpoint("broken", state_collector=lambda: {"v": 1})
+
+            assert cp.state_required is True
+            assert cp.verified is False
+            assert cp.state_path == ""
+            assert "OSError:disk unavailable" in cp.persistence_error
+            assert controller.rollback("broken") is False
+
+    def test_checkpoint_filename_is_unique_and_confined(self):
+        from infrastructure.rollback import RollbackController
+
+        with tempfile.TemporaryDirectory() as tmp:
+            checkpoint_dir = Path(tmp)
+            controller = RollbackController(checkpoint_dir=checkpoint_dir)
+            first = controller.checkpoint(
+                "../../outside / production",
+                state_collector=lambda: {"version": 1},
+            )
+            second = controller.checkpoint(
+                "../../outside / production",
+                state_collector=lambda: {"version": 2},
+            )
+
+            first_path = Path(first.state_path)
+            second_path = Path(second.state_path)
+            assert first_path.parent.resolve() == checkpoint_dir.resolve()
+            assert second_path.parent.resolve() == checkpoint_dir.resolve()
+            assert first_path != second_path
+            assert ".." not in first_path.name
+            assert first_path.exists() and second_path.exists()
+
+    def test_checkpoint_integrity_mismatch_fails_before_state_applier(self):
+        from infrastructure.rollback import RollbackController
+
+        with tempfile.TemporaryDirectory() as tmp:
+            controller = RollbackController(checkpoint_dir=Path(tmp))
+            applied: list[dict] = []
+            controller.register_state_applier(lambda state: applied.append(state) or True)
+            cp = controller.checkpoint("v1", state_collector=lambda: {"version": 1})
+            envelope = json.loads(Path(cp.state_path).read_text(encoding="utf-8"))
+            envelope["state"]["version"] = 2
+            Path(cp.state_path).write_text(json.dumps(envelope), encoding="utf-8")
+
+            assert controller.rollback("v1") is False
+            assert applied == []
+
+    def test_checkpoint_state_path_cannot_escape_owned_directory(self):
+        from infrastructure.rollback import RollbackController
+
+        with tempfile.TemporaryDirectory() as tmp:
+            checkpoint_dir = Path(tmp) / "checkpoints"
+            outside = Path(tmp) / "outside.json"
+            controller = RollbackController(checkpoint_dir=checkpoint_dir)
+            applied: list[dict] = []
+            controller.register_state_applier(lambda state: applied.append(state) or True)
+            cp = controller.checkpoint("v1", state_collector=lambda: {"version": 1})
+            outside.write_bytes(Path(cp.state_path).read_bytes())
+            cp.state_path = str(outside)
+
+            assert controller.rollback("v1") is False
+            assert applied == []
+            assert outside.exists()
+
+    def test_legacy_unversioned_checkpoint_state_remains_readable(self):
+        from infrastructure.rollback import Checkpoint, RollbackController
+
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path = Path(tmp) / "legacy.json"
+            state_path.write_text(json.dumps({"legacy": True}), encoding="utf-8")
+            controller = RollbackController(checkpoint_dir=Path(tmp))
+            controller._checkpoints.append(
+                Checkpoint(
+                    name="legacy",
+                    state_path=str(state_path),
+                    state_required=True,
+                    verified=True,
+                )
+            )
+            applied: list[dict] = []
+            controller.register_state_applier(lambda state: applied.append(state) or True)
+
+            assert controller.rollback("legacy") is True
+            assert applied == [{"legacy": True}]
 
     def test_verify_hooks(self):
         from infrastructure.rollback import RollbackController

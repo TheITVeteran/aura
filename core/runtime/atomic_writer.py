@@ -91,8 +91,14 @@ def interprocess_file_lock(path: PathLike) -> Iterator[None]:
 
     target = Path(path)
     ensure_private_directory(target.parent)
-    fd = os.open(str(target), os.O_RDWR | os.O_CREAT, 0o600)
+    flags = os.O_RDWR | os.O_CREAT
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    fd = os.open(str(target), flags, 0o600)
     try:
+        os.fchmod(fd, 0o600)
         fcntl.flock(fd, fcntl.LOCK_EX)
         yield
     finally:
@@ -102,7 +108,21 @@ def interprocess_file_lock(path: PathLike) -> Iterator[None]:
             os.close(fd)
 
 
-def atomic_write_bytes(path: PathLike, payload: bytes, *, durable: bool = True) -> None:
+def _validated_file_mode(mode: int) -> int:
+    if isinstance(mode, bool) or not isinstance(mode, int):
+        raise TypeError("file mode must be an integer")
+    if mode < 0 or mode & ~0o777:
+        raise ValueError("file mode must contain only rwx permission bits")
+    return mode
+
+
+def atomic_write_bytes(
+    path: PathLike,
+    payload: bytes,
+    *,
+    durable: bool = True,
+    mode: int = 0o600,
+) -> None:
     """Atomically replace `path` with `payload`.
 
     ``durable=False`` keeps the write atomic (readers never observe a torn
@@ -111,12 +131,14 @@ def atomic_write_bytes(path: PathLike, payload: bytes, *, durable: bool = True) 
     single fsync has blocked the live event loop for 20 minutes.
     """
     target = Path(path)
+    file_mode = _validated_file_mode(mode)
     parent = target.parent
     parent.mkdir(parents=True, exist_ok=True)
 
     fd, tmp_path_str = tempfile.mkstemp(prefix=DEFAULT_TEMP_PREFIX, dir=str(parent))
     tmp_path = Path(tmp_path_str)
     try:
+        os.fchmod(fd, file_mode)
         with os.fdopen(fd, "wb") as fh:
             fh.write(payload)
             fh.flush()
@@ -134,11 +156,24 @@ def atomic_write_bytes(path: PathLike, payload: bytes, *, durable: bool = True) 
         raise
 
 
-def atomic_write_text(path: PathLike, text: str, *, encoding: str = "utf-8", durable: bool = True) -> None:
-    atomic_write_bytes(path, text.encode(encoding), durable=durable)
+def atomic_write_text(
+    path: PathLike,
+    text: str,
+    *,
+    encoding: str = "utf-8",
+    durable: bool = True,
+    mode: int = 0o600,
+) -> None:
+    atomic_write_bytes(path, text.encode(encoding), durable=durable, mode=mode)
 
 
-async def async_atomic_write_bytes(path: PathLike, payload: bytes, *, durable: bool = True) -> None:
+async def async_atomic_write_bytes(
+    path: PathLike,
+    payload: bytes,
+    *,
+    durable: bool = True,
+    mode: int = 0o600,
+) -> None:
     """Event-loop-safe atomic write: the fsync happens on a worker thread.
 
     Under memory-pressure thrash a single on-loop fsync has frozen the live
@@ -147,13 +182,29 @@ async def async_atomic_write_bytes(path: PathLike, payload: bytes, *, durable: b
     """
     import asyncio
 
-    await asyncio.to_thread(atomic_write_bytes, path, payload, durable=durable)
+    await asyncio.to_thread(
+        atomic_write_bytes,
+        path,
+        payload,
+        durable=durable,
+        mode=mode,
+    )
 
 
 async def async_atomic_write_text(
-    path: PathLike, text: str, *, encoding: str = "utf-8", durable: bool = True
+    path: PathLike,
+    text: str,
+    *,
+    encoding: str = "utf-8",
+    durable: bool = True,
+    mode: int = 0o600,
 ) -> None:
-    await async_atomic_write_bytes(path, text.encode(encoding), durable=durable)
+    await async_atomic_write_bytes(
+        path,
+        text.encode(encoding),
+        durable=durable,
+        mode=mode,
+    )
 
 
 async def async_atomic_append_text(

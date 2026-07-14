@@ -15,6 +15,7 @@ Aura can use for implementation, testing, or further self-improvement.
 from __future__ import annotations
 
 import ast
+import asyncio
 import hashlib
 import importlib
 import json
@@ -26,6 +27,9 @@ import tomllib
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
+
+from core.governance_context import local_internal_governed_scope
+from core.runtime.file_write_gateway import get_file_write_gateway
 
 AUTHORIZED_SCOPES = frozenset(
     {
@@ -323,7 +327,9 @@ class ProgramDNAReconstructionEngine:
         warnings: list[str] = []
         for raw_path in source_paths:
             try:
-                evidence.extend(self._inspect_path(Path(raw_path).expanduser()))
+                evidence.extend(
+                    await asyncio.to_thread(self._inspect_raw_path, raw_path)
+                )
             except (OSError, UnicodeDecodeError, SyntaxError, ValueError, TypeError) as exc:
                 warnings.append(f"could_not_inspect:{raw_path}:{type(exc).__name__}")
                 self._record_degradation("program_dna_reconstruction", exc, severity="debug")
@@ -348,9 +354,14 @@ class ProgramDNAReconstructionEngine:
         evidence.extend(self._notes_to_evidence("security_observation", security_observations, confidence=0.76))
 
         if bool(payload.get("enable_binary_static_analysis", False)):
-            evidence.extend(self._binary_static_analysis_plan(source_paths))
+            evidence.extend(
+                await asyncio.to_thread(
+                    self._binary_static_analysis_plan,
+                    source_paths,
+                )
+            )
         if bool(payload.get("capture_live_host_snapshot", False)):
-            evidence.extend(self._collect_live_host_snapshot())
+            evidence.extend(await asyncio.to_thread(self._collect_live_host_snapshot))
         if perform_research:
             evidence.extend(
                 await self._collect_research_evidence(
@@ -408,16 +419,26 @@ class ProgramDNAReconstructionEngine:
         scaffold_path = None
         if bool(payload.get("emit_scaffold", False)):
             output_dir = payload.get("output_dir")
-            scaffold_path = self._emit_scaffold(
+            resolved_output_dir = (
+                await asyncio.to_thread(self._expanded_path, output_dir)
+                if output_dir
+                else None
+            )
+            scaffold_path = await asyncio.to_thread(
+                self._emit_scaffold,
                 target_name=target,
                 blueprint=blueprint,
                 genome=genome,
                 verification_plan=verification_plan,
                 features=features,
-                output_dir=Path(output_dir).expanduser() if output_dir else None,
+                output_dir=resolved_output_dir,
                 stack=str(payload.get("target_stack") or "python").strip().lower(),
             )
-            self._verify_scaffold(Path(scaffold_path), verification_plan)
+            await asyncio.to_thread(
+                self._verify_scaffold,
+                Path(scaffold_path),
+                verification_plan,
+            )
 
         return ProgramDNAResult(
             ok=True,
@@ -2409,8 +2430,19 @@ def reconstructed(case):
         root = (output_dir or (self.project_root / "artifacts" / "program_dna")) / slug
         src = root / "src"
         tests = root / "tests"
-        src.mkdir(parents=True, exist_ok=True)
-        tests.mkdir(parents=True, exist_ok=True)
+        gateway = get_file_write_gateway()
+        with local_internal_governed_scope(
+            "program_dna.emit_scaffold",
+            domain="file_write",
+        ):
+            gateway.ensure_directory(
+                src,
+                source="core.self_improvement.program_dna.emit_scaffold",
+            )
+            gateway.ensure_directory(
+                tests,
+                source="core.self_improvement.program_dna.emit_scaffold",
+            )
 
         self._write_text(
             root / "PROGRAM_DNA_BLUEPRINT.json",
@@ -2804,6 +2836,13 @@ def reconstructed(case):
         slug = re.sub(r"[^a-zA-Z0-9_.-]+", "-", value.strip()).strip("-").lower()
         return slug or "program"
 
+    @staticmethod
+    def _expanded_path(value: str | os.PathLike[str]) -> Path:
+        return Path(value).expanduser()
+
+    def _inspect_raw_path(self, value: str | os.PathLike[str]) -> list[ProgramDNAEvidence]:
+        return self._inspect_path(self._expanded_path(value))
+
     def _string_list(self, value: Any) -> list[str]:
         if value is None:
             return []
@@ -2814,10 +2853,16 @@ def reconstructed(case):
         return [str(value)]
 
     def _write_text(self, path: Path, text: str) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(f".{path.name}.tmp")
-        tmp.write_text(text, encoding="utf-8")
-        tmp.replace(path)
+        gateway = get_file_write_gateway()
+        with local_internal_governed_scope(
+            "program_dna.write_artifact",
+            domain="file_write",
+        ):
+            gateway.write_text(
+                path,
+                text,
+                source="core.self_improvement.program_dna.write_artifact",
+            )
 
     def _record_degradation(self, subsystem: str, exc: BaseException, *, severity: str = "warning") -> None:
         try:

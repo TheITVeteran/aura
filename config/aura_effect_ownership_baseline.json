@@ -1833,6 +1833,14 @@
       "scope": "<module>.FileWriteGateway.append_text_async"
     },
     {
+      "callee": "core.runtime.atomic_writer.durable_unlink",
+      "canonical_owner": true,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/runtime/file_write_gateway.py",
+      "scope": "<module>.FileWriteGateway.delete_file"
+    },
+    {
       "callee": "core.runtime.atomic_writer.ensure_private_directory",
       "canonical_owner": true,
       "category": "direct_atomic_file_write",
@@ -1849,6 +1857,22 @@
       "scope": "<module>.FileWriteGateway.ensure_directory_async"
     },
     {
+      "callee": "core.runtime.atomic_writer.ensure_private_directory",
+      "canonical_owner": true,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/runtime/file_write_gateway.py",
+      "scope": "<module>.FileWriteGateway.open_owned_binary"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.durable_replace",
+      "canonical_owner": true,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/runtime/file_write_gateway.py",
+      "scope": "<module>.FileWriteGateway.replace_file"
+    },
+    {
       "callee": "core.runtime.atomic_writer.atomic_write_bytes",
       "canonical_owner": true,
       "category": "direct_atomic_file_write",
@@ -1863,6 +1887,30 @@
       "count": 1,
       "path": "core/runtime/file_write_gateway.py",
       "scope": "<module>.FileWriteGateway.write_bytes_async"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.atomic_write_bytes",
+      "canonical_owner": true,
+      "category": "direct_atomic_file_write",
+      "count": 2,
+      "path": "core/runtime/file_write_gateway.py",
+      "scope": "<module>.FileWriteGateway.write_bytes_batch"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.durable_unlink",
+      "canonical_owner": true,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/runtime/file_write_gateway.py",
+      "scope": "<module>.FileWriteGateway.write_bytes_batch"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.ensure_private_directory",
+      "canonical_owner": true,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/runtime/file_write_gateway.py",
+      "scope": "<module>.FileWriteGateway.write_bytes_batch"
     },
     {
       "callee": "core.runtime.atomic_writer.atomic_write_json",
@@ -2671,6 +2719,22 @@
       "count": 1,
       "path": "core/agency/projects.py",
       "scope": "<module>.ProjectLedger._record_event"
+    },
+    {
+      "callee": "<file_write_gateway>.ensure_directory",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/agency/self_repair_backlog.py",
+      "scope": "<module>.SelfRepairBacklog._mark_seen"
+    },
+    {
+      "callee": "<file_write_gateway>.write_text",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/agency/self_repair_backlog.py",
+      "scope": "<module>.SelfRepairBacklog._mark_seen"
     },
     {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().append_text",
@@ -3585,8 +3649,24 @@
       "scope": "<module>._registry_write_text"
     },
     {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().open_owned_binary",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/runtime/flight_recorder.py",
+      "scope": "<module>.FlightRecorder._acquire_runtime_lock"
+    },
+    {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().open_owned_binary",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/runtime/flight_recorder.py",
+      "scope": "<module>.FlightRecorder._open_fresh_ring"
+    },
+    {
       "callee": "<file_write_gateway>.delete_path_async",
-      "canonical_owner": false,
+      "canonical_owner": true,
       "category": "file_write_gateway",
       "count": 1,
       "path": "core/runtime/flight_recorder.py",
@@ -3594,11 +3674,27 @@
     },
     {
       "callee": "<file_write_gateway>.write_text_async",
-      "canonical_owner": false,
+      "canonical_owner": true,
       "category": "file_write_gateway",
       "count": 1,
       "path": "core/runtime/flight_recorder.py",
       "scope": "<module>.FlightRecorder._publish_death_artifact"
+    },
+    {
+      "callee": "<file_write_gateway>.ensure_directory",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/runtime/flight_recorder.py",
+      "scope": "<module>.FlightRecorder.start_sync"
+    },
+    {
+      "callee": "<file_write_gateway>.replace_file",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 2,
+      "path": "core/runtime/flight_recorder.py",
+      "scope": "<module>.FlightRecorder.start_sync"
     },
     {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_json",
@@ -3761,6 +3857,22 @@
       "scope": "<module>.PluginAllowlist._save"
     },
     {
+      "callee": "<file_write_gateway>.ensure_directory",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/security/tls_local.py",
+      "scope": "<module>.ensure_local_certificate"
+    },
+    {
+      "callee": "<file_write_gateway>.write_bytes_batch",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/security/tls_local.py",
+      "scope": "<module>.ensure_local_certificate"
+    },
+    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().append_text",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -3815,6 +3927,22 @@
       "count": 2,
       "path": "core/self_improvement/blinded_workspace.py",
       "scope": "<module>.BlindedWorkspaceFactory.create"
+    },
+    {
+      "callee": "<file_write_gateway>.ensure_directory",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 2,
+      "path": "core/self_improvement/program_dna.py",
+      "scope": "<module>.ProgramDNAReconstructionEngine._emit_scaffold"
+    },
+    {
+      "callee": "<file_write_gateway>.write_text",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/self_improvement/program_dna.py",
+      "scope": "<module>.ProgramDNAReconstructionEngine._write_text"
     },
     {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
@@ -5671,22 +5799,6 @@
       "count": 1,
       "path": "core/agency/sandboxed_modifier.py",
       "scope": "<module>.SandboxedModifier._rollback_direct"
-    },
-    {
-      "callee": "self.seen_path.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/agency/self_repair_backlog.py",
-      "scope": "<module>.SelfRepairBacklog._mark_seen"
-    },
-    {
-      "callee": "self.seen_path.write_text",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/agency/self_repair_backlog.py",
-      "scope": "<module>.SelfRepairBacklog._mark_seen"
     },
     {
       "callee": "self.data_path.parent.mkdir",
@@ -9961,14 +10073,6 @@
       "scope": "<module>.FileWriteGateway.copy_path_async._copy"
     },
     {
-      "callee": "target.unlink",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/runtime/file_write_gateway.py",
-      "scope": "<module>.FileWriteGateway.delete_file"
-    },
-    {
       "callee": "shutil.rmtree",
       "canonical_owner": true,
       "category": "raw_file_mutation",
@@ -10009,44 +10113,20 @@
       "scope": "<module>.FileWriteGateway.move_path_async._move"
     },
     {
+      "callee": "os.open",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/runtime/file_write_gateway.py",
+      "scope": "<module>.FileWriteGateway.open_owned_binary"
+    },
+    {
       "callee": "<pathlib.Path>.parent.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
       "count": 1,
       "path": "core/runtime/flagship_doctor.py",
       "scope": "<module>.main"
-    },
-    {
-      "callee": "open",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/runtime/flight_recorder.py",
-      "scope": "<module>.FlightRecorder._acquire_runtime_lock"
-    },
-    {
-      "callee": "open",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/runtime/flight_recorder.py",
-      "scope": "<module>.FlightRecorder._open_fresh_ring"
-    },
-    {
-      "callee": "os.replace",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/runtime/flight_recorder.py",
-      "scope": "<module>.FlightRecorder.start_sync"
-    },
-    {
-      "callee": "self._flight_dir.mkdir",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/runtime/flight_recorder.py",
-      "scope": "<module>.FlightRecorder.start_sync"
     },
     {
       "callee": "self._db_path.parent.mkdir",
@@ -10689,46 +10769,6 @@
       "scope": "<module>.LocalCommandSandbox.execute_sandboxed_command"
     },
     {
-      "callee": "cert_path.write_bytes",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/security/tls_local.py",
-      "scope": "<module>.ensure_local_certificate"
-    },
-    {
-      "callee": "directory.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/security/tls_local.py",
-      "scope": "<module>.ensure_local_certificate"
-    },
-    {
-      "callee": "key_path.touch",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/security/tls_local.py",
-      "scope": "<module>.ensure_local_certificate"
-    },
-    {
-      "callee": "key_path.write_bytes",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/security/tls_local.py",
-      "scope": "<module>.ensure_local_certificate"
-    },
-    {
-      "callee": "os.chmod",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/security/tls_local.py",
-      "scope": "<module>.ensure_local_certificate"
-    },
-    {
       "callee": "TRUST_LOG_PATH.parent.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -10799,38 +10839,6 @@
       "count": 1,
       "path": "core/self_improvement/deterministic_comparator.py",
       "scope": "<module>.DeterministicComparator.compare"
-    },
-    {
-      "callee": "src.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/self_improvement/program_dna.py",
-      "scope": "<module>.ProgramDNAReconstructionEngine._emit_scaffold"
-    },
-    {
-      "callee": "tests.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/self_improvement/program_dna.py",
-      "scope": "<module>.ProgramDNAReconstructionEngine._emit_scaffold"
-    },
-    {
-      "callee": "path.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/self_improvement/program_dna.py",
-      "scope": "<module>.ProgramDNAReconstructionEngine._write_text"
-    },
-    {
-      "callee": "tmp.write_text",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/self_improvement/program_dna.py",
-      "scope": "<module>.ProgramDNAReconstructionEngine._write_text"
     },
     {
       "callee": "DATA_FILE.parent.mkdir",
@@ -13452,7 +13460,7 @@
       "callee": "core.will.get_will().decide",
       "canonical_owner": false,
       "category": "will_decision",
-      "count": 1,
+      "count": 2,
       "path": "core/orchestrator/mixins/tool_execution.py",
       "scope": "<module>.ToolExecutionMixin.execute_tool"
     },
@@ -13554,6 +13562,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "a0220689593fbd9a4c05883ec3a4d3302b8bf442caa055f34bd88901ee4f7313",
+  "inventory_sha256": "85e06b384abab4cd3f6382cc40c6ed5210ea09bc2ee9f41f7e44904547dcff0b",
   "schema_version": 1
 }

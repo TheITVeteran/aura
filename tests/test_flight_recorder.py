@@ -210,6 +210,38 @@ def test_second_runtime_is_refused_by_the_ring_lock(tmp_path):
     assert inspection.frames[-1].tick == 99
 
 
+def test_failed_fresh_ring_open_restores_previous_ring_and_releases_lock(
+    tmp_path,
+    monkeypatch,
+):
+    flight_dir = tmp_path / "flight"
+    first = FlightRecorder(flight_dir, slot_count=64)
+    first.start_sync()
+    _write_frames(first, 3)
+    first.close()
+    expected = (flight_dir / "flight_ring.bin").read_bytes()
+
+    failed = FlightRecorder(flight_dir, slot_count=64)
+
+    def _fail_open():
+        raise OSError("injected ring-open failure")
+
+    monkeypatch.setattr(failed, "_open_fresh_ring", _fail_open)
+    with pytest.raises(OSError, match="injected ring-open failure"):
+        failed.start_sync()
+
+    assert failed.started is False
+    assert failed._lock_file is None
+    assert (flight_dir / "flight_ring.bin").read_bytes() == expected
+    assert not (flight_dir / "flight_ring.prev").exists()
+
+    survivor = FlightRecorder(flight_dir, slot_count=64)
+    report = survivor.start_sync()
+    assert report is not None
+    assert report["frames_recovered"] == 3
+    survivor.close()
+
+
 # ── the SIGKILL proof ──────────────────────────────────────────────────
 
 
@@ -373,9 +405,8 @@ def _publish_report_for_narrator(root: Path, died_at: float) -> Path:
 
 
 def test_narrator_reads_the_black_box(tmp_path):
-    from core.observability.incident_narrator import IncidentNarrator
-
     from core.health.degraded_events import clear_degraded_events
+    from core.observability.incident_narrator import IncidentNarrator
 
     clear_degraded_events()
     died_at = time.time() - 120.0
