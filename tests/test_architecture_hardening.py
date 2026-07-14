@@ -1066,6 +1066,57 @@ async def test_legacy_phase_is_quarantined_from_foreground_ticks():
     assert phase.legacy_orchestrator is None
 
 
+@pytest.mark.asyncio
+async def test_legacy_phase_background_uses_only_bound_canonical_owner(monkeypatch):
+    calls = []
+
+    class Owner:
+        conversation_history = []
+
+        async def process_user_input_priority(self, objective, origin):
+            calls.append((objective, origin))
+            self.conversation_history.append({"role": "system", "content": objective})
+
+        async def stop(self):
+            raise AssertionError("borrowed process owner must not be stopped by LegacyPhase")
+
+    phase = LegacyPhase(SimpleNamespace())
+    owner = Owner()
+    phase.bind_orchestrator(owner)
+    state = AuraState()
+    state.cognition.current_origin = "system"
+    state.cognition.history = [{"role": "system", "content": "before"}]
+
+    result = await phase.execute(state, objective="background reflection", priority=False)
+    await phase.cleanup()
+
+    assert result is state
+    assert phase.legacy_orchestrator is owner
+    assert calls == [("background reflection", "kernel")]
+    assert state.cognition.history[-1]["content"] == "background reflection"
+    with pytest.raises(RuntimeError, match="different orchestrator"):
+        phase.bind_orchestrator(Owner())
+
+
+@pytest.mark.asyncio
+async def test_legacy_phase_unbound_background_abstains_without_runtime_creation(monkeypatch):
+    degradations = []
+    monkeypatch.setattr(
+        "core.kernel.bridge.record_degradation",
+        lambda subsystem, error, **kwargs: degradations.append((subsystem, error, kwargs)),
+    )
+    phase = LegacyPhase(SimpleNamespace())
+    state = AuraState()
+    state.cognition.current_origin = "system"
+
+    assert await phase.execute(state, objective="first") is state
+    assert await phase.execute(state, objective="second") is state
+
+    assert phase.legacy_orchestrator is None
+    assert len(degradations) == 1
+    assert "without constructing a second runtime" in degradations[0][2]["action"]
+
+
 def test_belief_graph_blocks_unapproved_belief_write(monkeypatch):
     ServiceContainer.clear()
     clear_degraded_events()
@@ -2009,3 +2060,7 @@ async def test_kernel_clears_completed_foreground_turn_state():
     assert kernel.state.cognition.last_action_source == "api"
     assert kernel.state.cognition.current_origin is None
     assert kernel.state.cognition.current_objective is None
+    assert entry.phase_durations_ms["UnitaryResponsePhase"] >= 0.0
+    phase_status = kernel.phase_runtime_status()
+    assert phase_status["sample_count"] == 1
+    assert phase_status["slowest_phase"] == "UnitaryResponsePhase"

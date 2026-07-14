@@ -605,8 +605,8 @@ def register_all_services(is_proxy: bool = False):
         return InitiativeArbiter()
 
     def _create_tool_orchestrator():
-        from core.agency.tool_orchestrator import ToolOrchestrator
-        return ToolOrchestrator()
+        from core.agency.tool_orchestrator import get_tool_orchestrator
+        return get_tool_orchestrator()
 
     container.register('tension_engine', _create_tension_engine, lifetime=ServiceLifetime.SINGLETON)
     container.register('initiative_arbiter', _create_initiative_arbiter, lifetime=ServiceLifetime.SINGLETON)
@@ -623,7 +623,7 @@ def _finalize_wiring(container):
         if mycelial:
             # Link major layers
             from core.cognition.meta_cognition import MetaEvolutionEngine
-            from .runtime.desktop_boot_safety import inprocess_mlx_metal_enabled
+            from core.runtime.desktop_boot_safety import inprocess_mlx_metal_enabled
             mycelial.link_layer("meta_cognition", MetaEvolutionEngine)
             
             # Establish base hyphae

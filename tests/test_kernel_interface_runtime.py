@@ -175,3 +175,26 @@ def test_kernel_interface_attach_without_state_repository_is_explicitly_unready(
         assert get_subsystem_registry().get("kernel_interface").status == "unavailable"
 
     asyncio.run(scenario())
+
+
+def test_kernel_interface_binds_legacy_phase_to_canonical_orchestrator_before_publish():
+    async def scenario():
+        _reset_process_state()
+        bound = []
+        bridge = SimpleNamespace(bind_orchestrator=lambda owner: bound.append(owner))
+        kernel = WorkingKernel()
+        kernel.legacy_bridge = bridge
+        ki = KernelInterface()
+        await ki.boot(kernel=kernel)
+        KernelInterface._instance = ki
+        kernel_module._ki = ki
+        orchestrator = SimpleNamespace()
+
+        attached = await KernelInterface.attach_to_orchestrator(orchestrator)
+
+        assert attached is ki
+        assert bound == [orchestrator]
+        assert ServiceContainer.get("aura_kernel") is kernel
+        assert ServiceContainer.get("kernel_interface") is ki
+
+    asyncio.run(scenario())

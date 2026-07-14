@@ -49,11 +49,24 @@ class LegacyPhase(Phase):
     """
 
     def __init__(self, kernel: AuraKernel):
-        """Initialize the legacy bridge; the orchestrator is lazily constructed on first execute."""
+        """Initialize a compatibility phase that can borrow the canonical owner."""
         self.kernel = kernel
-        self.legacy_orchestrator: Any = None  # To be RobustOrchestrator()
+        self.legacy_orchestrator: Any = None
         self._legacy_tasks: set[asyncio.Task] = set()
+        self._unbound_reported = False
         logger.info("Bridge: LegacyPhase bridge established.")
+
+    def bind_orchestrator(self, owner: Any) -> None:
+        """Bind exactly one borrowed orchestrator without taking lifecycle ownership."""
+        if owner is None:
+            raise ValueError("LegacyPhase requires a canonical orchestrator owner")
+        if self.legacy_orchestrator is owner:
+            return
+        if self.legacy_orchestrator is not None:
+            raise RuntimeError("LegacyPhase is already bound to a different orchestrator owner")
+        self.legacy_orchestrator = owner
+        self._unbound_reported = False
+        logger.info("Bridge: bound to canonical orchestrator owner.")
 
     @staticmethod
     def _normalize_origin(origin: Any) -> str:
@@ -104,70 +117,18 @@ class LegacyPhase(Phase):
             return state
 
         if self.legacy_orchestrator is None:
-            # Lazy init legacy only once to avoid boot bloat
-            # Instead of monkey-patching, we use the existing task_tracker
-            # and ensure the Orchestrator is aware of the Kernel's hierarchy.
-            from core.kernel.kernel_interface import get_kernel_interface
-            from core.orchestrator.main import RobustOrchestrator
-
-            self.legacy_orchestrator = RobustOrchestrator(kernel_interface=get_kernel_interface())
-            self.legacy_orchestrator.state = state
-
-            # Force the legacy orchestrator to use the Kernel's Service Registry
-            # This prevents it from hitting ServiceContainer.get("affect_engine")
-            # and getting a 'rogue' engine.
-            self.legacy_orchestrator._affect_engine_override = AffectBridge(self.kernel)
-            self.legacy_orchestrator._motivation_engine_override = MotivationBridge(self.kernel)
-
-            # Register bridges in ServiceContainer for other legacy components.
-            # Wrap in try-except because the container locks after boot — if another
-            # LegacyPhase instance or boot path already registered these, skip silently.
-            from core.container import ServiceContainer
-
-            try:
-                ServiceContainer.register_instance(
-                    "affect_engine", self.legacy_orchestrator._affect_engine_override
-                )
-            except (RuntimeError, AttributeError, TypeError, ValueError) as _reg_err:
+            if not self._unbound_reported:
+                self._unbound_reported = True
                 record_degradation(
                     "bridge",
-                    _reg_err,
+                    RuntimeError("LegacyPhase has no canonical orchestrator binding"),
                     severity="warning",
-                    action="continued with existing affect_engine bridge registration",
+                    action="skipped unbound compatibility phase without constructing a second runtime",
                 )
-                logger.debug("Bridge: affect_engine already registered, skipping: %s", _reg_err)
-            try:
-                ServiceContainer.register_instance(
-                    "motivation_engine", self.legacy_orchestrator._motivation_engine_override
+                logger.warning(
+                    "Bridge: compatibility phase is unbound; skipped without creating a runtime owner."
                 )
-            except (RuntimeError, AttributeError, TypeError, ValueError) as _reg_err:
-                record_degradation(
-                    "bridge",
-                    _reg_err,
-                    severity="warning",
-                    action="continued with existing motivation_engine bridge registration",
-                )
-                logger.debug("Bridge: motivation_engine already registered, skipping: %s", _reg_err)
-            logger.info("Bridge: Legacy engines registered in ServiceContainer.")
-            try:
-                from core.health.degraded_events import record_degraded_event
-
-                record_degraded_event(
-                    "kernel_bridge",
-                    "legacy_bridge_active",
-                    detail="legacy_orchestrator_initialized",
-                    severity="warning",
-                    classification="background_degraded",
-                    context={"phase": "legacy_bridge"},
-                )
-            except (ImportError, AttributeError, RuntimeError) as exc:
-                record_degradation(
-                    "bridge",
-                    exc,
-                    severity="warning",
-                    action="continued legacy bridge startup without degraded-event telemetry",
-                )
-                logger.debug("Bridge: legacy activation degraded-event logging failed: %s", exc)
+            return state
 
         logger.debug("Delegating objective '%s' to Legacy Bridge...", objective)
 
@@ -196,8 +157,8 @@ class LegacyPhase(Phase):
             await asyncio.gather(*self._legacy_tasks, return_exceptions=True)
             self._legacy_tasks.clear()
 
-        if self.legacy_orchestrator and hasattr(self.legacy_orchestrator, "stop"):
-            await self.legacy_orchestrator.stop()
+        # The orchestrator is borrowed from the process root. Its owner performs
+        # shutdown; this compatibility phase must never stop the global runtime.
 
 
 class AffectBridge:

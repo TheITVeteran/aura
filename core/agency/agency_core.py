@@ -35,7 +35,7 @@ from core.agency.agency_bus import AgencyBus
 from core.agency.canvas_manager import CanvasManager
 from core.agency.private_phenomenology import PrivatePhenomenology
 from core.agency.self_play import ContinuousSelfPlay
-from core.agency.tool_orchestrator import ToolOrchestrator
+from core.agency.tool_orchestrator import get_tool_orchestrator
 from core.autonomy.research_goal_filter import research_query_for_goal
 from core.consciousness.unified_audit import get_audit_suite
 from core.container import ServiceContainer
@@ -684,7 +684,7 @@ class AgencyCore:
         self.state = AgencyState()
         self.swarm = SovereignSwarm(orchestrator, agency_core=self)
         self.canvas_manager = CanvasManager()
-        self.tool_orchestrator = ToolOrchestrator()
+        self.tool_orchestrator = get_tool_orchestrator()
         self.abstraction_engine = AbstractionEngine()
         self.self_play_engine = ContinuousSelfPlay(idle_threshold_seconds=1800)
         self.last_interaction_timestamp = time.time()

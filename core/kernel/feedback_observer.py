@@ -87,6 +87,7 @@ class TickEntry:
     response_preview:    str                 = ""   # first 120 chars
     tick_duration_ms:    float               = 0.0
     priority_tick:       bool                = False
+    phase_durations_ms:  dict[str, float]    = field(default_factory=dict)
 
     # ── Derived deltas ───────────────────────────────────────────────────────
     @property
@@ -172,6 +173,7 @@ class TickEntry:
             "response_preview": self.response_preview[:120],
             "tick_duration_ms": round(self.tick_duration_ms, 1),
             "priority_tick":    self.priority_tick,
+            "phase_durations_ms": dict(self.phase_durations_ms),
         }
 
 

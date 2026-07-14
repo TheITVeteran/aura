@@ -390,16 +390,18 @@ class PhiConsciousnessPhase(Phase):
     async def _compute_phi(self, state: AuraState) -> float:
         """Compute phi using the best available method.
 
-        Priority:
-          1. PhiCore IIT 4.0 (real TPM + KL-divergence + exhaustive MIP search)
-          2. PhiCore surrogate (state-space covariance) if full compute not ready
+        Priority for the legacy 0..1 behavioral scalar:
+          1. PhiCore cognitive-affective integration telemetry
+          2. PhiCore covariance surrogate if the primary estimate is not ready
           3. Lightweight weighted-mean approximation (always available)
 
         Alongside the scalar (whose 0..1 scale downstream gates depend on),
         every cycle feeds the whole-system Φ service one channel reading and,
         when a window is due, computes the provenance-complete estimate
-        off-loop — exact-MIP Gaussian Φ over the full live channel set with
-        surrogate nulls and CIs (core/consciousness/integrated_information.py).
+        in a resource-admitted background owner — bounded Gaussian Φ over a
+        quotient covering the retained live channels, with explicit search
+        proof, surrogate nulls, and CIs
+        (core/consciousness/integrated_information.py).
         """
         try:
             from core.runtime.service_access import optional_service
@@ -407,10 +409,11 @@ class PhiConsciousnessPhase(Phase):
             ws = optional_service("whole_system_phi", default=None)
             if ws is not None:
                 ws.observe_runtime(state)
-                if ws.ready():
-                    estimate = await asyncio.to_thread(ws.maybe_estimate)
-                    if estimate is not None:
-                        await ws.persist_latest()
+                # Estimation and low-cadence causal probes have their own
+                # resource-admitted, tracked background owners.  A cognition
+                # phase records the sample but never joins maintenance latency
+                # or perturbation windows to the foreground causal path.
+                ws.schedule_maintenance()
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as e:
             record_degradation('phi_consciousness', e, severity="debug",
                                action="whole-system phi observation skipped")

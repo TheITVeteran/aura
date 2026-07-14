@@ -126,6 +126,9 @@ APPROVED_FILE_WRITE_SINKS = {
     "core/resilience/stall_watchdog.py",  # loop-wedge faulthandler dump before hard-exit
 }
 APPROVED_DYNAMIC_CODE_SINKS = {
+    # Ephemeral, one-request native-sandbox worker. The governed parent owns
+    # admission, deadline, framing, and lifecycle; this is its audited sink.
+    "core/agency/repl_daemon.py",
     "core/runtime/dynamic_execution_gateway.py",
 }
 

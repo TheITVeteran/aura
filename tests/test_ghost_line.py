@@ -9,6 +9,9 @@ tamper detection, and body pruning that never breaks verification.
 from __future__ import annotations
 
 import json
+import multiprocessing
+from concurrent.futures import ProcessPoolExecutor
+from pathlib import Path
 
 import pytest
 
@@ -19,6 +22,7 @@ from core.ghost.ghost_line import (
     SubstrateFingerprint,
     _self_delta,
 )
+from core.runtime.audit_chain import hash_receipt_body
 
 
 def _self(
@@ -46,6 +50,21 @@ def _self(
 
 def _shell(model="Aura-32B-crsm-closeout", adapters=()):
     return SubstrateFingerprint(model_artifact=model, adapters=tuple(adapters))
+
+
+def _append_ghost_frame_in_process(args):
+    root, index = args
+    gl = GhostLine(root=Path(root))
+    try:
+        frame = gl.advance(
+            _self(name="Aura" if index % 2 else "Aura Luna", integration=(index % 5) / 10),
+            _shell(),
+            trigger="tick",
+            now=1000.0 + index,
+        )
+        return frame.seq, frame.frame_id
+    finally:
+        gl.close()
 
 
 @pytest.fixture()
@@ -113,6 +132,42 @@ def test_silent_identity_change_is_discontinuity(line):
     frame = line.advance(_self(name="Not Aura"), _shell(), trigger="tick")
     assert frame.is_discontinuity
     assert any("identity" in n for n in frame.notes)
+
+
+@pytest.mark.parametrize(
+    ("before", "after"),
+    [
+        ("Aura Luna", "Aura"),
+        ("Aura", "Aura Luna"),
+        ("  AURA   LUNA  ", "aura"),
+    ],
+)
+def test_exact_aura_display_aliases_share_one_identity_leaf(line, before, after):
+    first = line.advance(_self(name=before), _shell(), trigger="genesis")
+    frame = line.advance(_self(name=after), _shell(), trigger="tick")
+
+    assert first.self_digest.identity_id == "aura"
+    assert frame.self_digest.identity_id == "aura"
+    assert frame.verdict == "continuous"
+    assert not frame.is_discontinuity
+
+
+def test_similar_but_unknown_aura_name_remains_a_discontinuity(line):
+    line.advance(_self(name="Aura Luna"), _shell(), trigger="genesis")
+    frame = line.advance(_self(name="Aura Prime"), _shell(), trigger="tick")
+
+    assert frame.self_digest.identity_id != "aura"
+    assert frame.is_discontinuity
+
+
+def test_historical_digest_without_identity_id_derives_canonical_leaf():
+    historical = _self(name="Aura Luna").to_dict()
+    historical.pop("identity_id")
+
+    restored = SelfDigest.from_dict(historical)
+
+    assert restored.identity_name == "Aura Luna"
+    assert restored.identity_id == "aura"
 
 
 def test_silent_values_change_is_discontinuity(line):
@@ -216,6 +271,43 @@ def test_broken_chain_link_is_detected(line):
     assert not ok
     assert problems
     fresh.close()
+
+
+def test_missing_retained_frame_body_fails_verification(line):
+    line.advance(_self(), _shell(), trigger="genesis")
+    line.advance(_self(integration=0.6), _shell(), trigger="tick")
+    line._frame_path(1).unlink()
+
+    ok, problems = line.verify()
+
+    assert not ok
+    assert any(
+        problem["seq"] == 1 and problem["reason"] == "receipt body missing on disk"
+        for problem in problems
+    )
+
+
+def test_cross_process_writers_keep_body_sequence_and_receipt_atomic(tmp_path):
+    context = multiprocessing.get_context("spawn")
+    work = [(str(tmp_path), index) for index in range(8)]
+    with ProcessPoolExecutor(max_workers=4, mp_context=context) as executor:
+        results = list(executor.map(_append_ghost_frame_in_process, work))
+
+    line = GhostLine(root=tmp_path)
+    try:
+        assert sorted(seq for seq, _frame_id in results) == list(range(8))
+        entries = line._chain.entries()
+        assert [entry.seq for entry in entries] == list(range(8))
+        for entry in entries:
+            body = line._read_frame_body(entry.seq)
+            assert body is not None
+            assert body["seq"] == entry.seq
+            assert body["frame_id"] == entry.receipt_id
+            assert hash_receipt_body(body) == entry.content_hash
+        ok, problems = line.verify()
+        assert ok, problems
+    finally:
+        line.close()
 
 
 # ── pruning keeps verification honest ────────────────────────────────────────

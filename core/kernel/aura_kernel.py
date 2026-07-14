@@ -4,8 +4,10 @@ import asyncio
 import inspect
 import json
 import logging
+import os
 import re
 import time
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -14,6 +16,7 @@ from pydantic import BaseModel
 
 from core.consciousness.executive_authority import get_executive_authority
 from core.container import ServiceContainer
+from core.introspection.thought_tracer import tracer
 from core.kernel.bridge import LegacyPhase
 from core.kernel.organs import OrganStub
 from core.kernel.upgrades_10x import (
@@ -47,7 +50,6 @@ from core.runtime.shutdown_coordinator import is_shutdown_requested
 from core.self_modification.boot_validator import GhostBootValidator
 from core.state.aura_state import AuraState
 from core.state.state_repository import StateRepository
-from core.introspection.thought_tracer import tracer
 from core.utils.concurrency import RobustLock
 from core.utils.task_tracker import get_task_tracker
 
@@ -217,6 +219,7 @@ class AuraKernel:
 
         self._user_priority_pending: _threading.Event = _threading.Event()
         self._last_tick_completed_at: float = 0.0  # telemetry: set after each tick()
+        self._phase_runtime_samples: deque[dict[str, Any]] = deque(maxlen=256)
 
     @staticmethod
     def _normalize_origin(origin: Any) -> str:
@@ -350,6 +353,82 @@ class AuraKernel:
             return intent_type not in {"SKILL", "TASK"}
 
         return True
+
+    async def _execute_phase_with_timing(
+        self,
+        phase: Any,
+        phase_name: str,
+        entry: TickEntry,
+        *,
+        objective: str,
+        priority: bool,
+    ) -> AuraState:
+        """Run one phase and retain attributable latency on every terminal path."""
+        started = time.perf_counter()
+        try:
+            return await wrap_phase(
+                phase_name,
+                phase.execute,
+                self.state,
+                objective=objective,
+                priority=priority,
+            )
+        finally:
+            duration_ms = (time.perf_counter() - started) * 1000.0
+            rounded_ms = round(duration_ms, 3)
+            phase_durations = getattr(entry, "phase_durations_ms", None)
+            if not isinstance(phase_durations, dict):
+                phase_durations = {}
+                entry.phase_durations_ms = phase_durations
+            phase_durations[phase_name] = rounded_ms
+            sample = {
+                "timestamp": time.time(),
+                "phase": phase_name,
+                "duration_ms": rounded_ms,
+                "priority": bool(priority),
+                "objective": objective[:120],
+            }
+            self._phase_runtime_samples.append(sample)
+
+            default_budget_ms = 5000.0 if priority else 1500.0
+            try:
+                budget_ms = float(
+                    os.getenv("AURA_KERNEL_SLOW_PHASE_MS", str(default_budget_ms))
+                )
+            except (TypeError, ValueError):
+                budget_ms = default_budget_ms
+            if duration_ms > max(1.0, budget_ms):
+                logger.warning(
+                    "Kernel phase latency exceeded budget: phase=%s duration_ms=%.1f "
+                    "budget_ms=%.1f priority=%s",
+                    phase_name,
+                    duration_ms,
+                    budget_ms,
+                    priority,
+                )
+
+    def phase_runtime_status(self, *, window_s: float = 300.0) -> dict[str, Any]:
+        """Return bounded, attributable phase latency evidence for proof surfaces."""
+        now = time.time()
+        samples = [
+            dict(sample)
+            for sample in self._phase_runtime_samples
+            if now - float(sample.get("timestamp", now)) <= max(1.0, window_s)
+        ]
+        if not samples:
+            return {
+                "sample_count": 0,
+                "slowest_phase": None,
+                "slowest_duration_ms": 0.0,
+                "latest": [],
+            }
+        slowest = max(samples, key=lambda sample: float(sample.get("duration_ms", 0.0)))
+        return {
+            "sample_count": len(samples),
+            "slowest_phase": str(slowest.get("phase", "")),
+            "slowest_duration_ms": float(slowest.get("duration_ms", 0.0)),
+            "latest": samples[-32:],
+        }
 
     def _record_dream_fragment(self, objective: str, phase: Any, phase_name: str) -> None:
         """Record a dream fragment (interrupted background cognition) to disk for offline dreaming consolidation."""
@@ -1103,10 +1182,10 @@ class AuraKernel:
                 # cancellation.
                 try:
                     phase_task = get_task_tracker().create_task(
-                        wrap_phase(
+                        self._execute_phase_with_timing(
+                            phase,
                             phase_name,
-                            phase.execute,
-                            self.state,
+                            entry,
                             objective=objective,
                             priority=priority,
                         ),

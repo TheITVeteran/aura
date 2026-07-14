@@ -43,13 +43,14 @@ import math
 import os
 import threading
 import time
+import unicodedata
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from core.runtime.atomic_writer import atomic_write_json, read_json_envelope
-from core.runtime.audit_chain import AuditChain, canonical_json, sha256_hex
+from core.runtime.audit_chain import AuditChain, canonical_json, hash_receipt_body, sha256_hex
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.Ghost.GhostLine")
@@ -92,6 +93,20 @@ def _values_hash(core_values: Any) -> str:
     return sha256_hex(canonical_json(ordered))[:23]  # "sha256:" + 16 hex
 
 
+def _normalized_identity_name(identity_name: Any) -> str:
+    normalized = unicodedata.normalize("NFKC", str(identity_name or ""))
+    return " ".join(normalized.split()).casefold()
+
+
+def _identity_id(identity_name: Any) -> str:
+    """Map only Aura's two exact display aliases to the canonical identity leaf."""
+    normalized = _normalized_identity_name(identity_name)
+    if normalized in {"aura", "aura luna"}:
+        return "aura"
+    digest = sha256_hex(normalized.encode("utf-8")).removeprefix("sha256:")[:24]
+    return f"name:{digest}"
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Value objects
 # ─────────────────────────────────────────────────────────────────────────────
@@ -103,11 +118,20 @@ class SelfDigest:
     identity_name: str
     core_values_hash: str
     essence: str
+    identity_id: str = ""
     continuity_score: float = 1.0
     integration: float = 0.0
     memory_continuity: float = 1.0
     boundary: float = 1.0
     ghost_strength: float = 0.0
+
+    def __post_init__(self) -> None:
+        derived = _identity_id(self.identity_name)
+        if self.identity_id and self.identity_id != derived:
+            raise ValueError(
+                f"identity_id {self.identity_id!r} does not match identity name {self.identity_name!r}"
+            )
+        object.__setattr__(self, "identity_id", derived)
 
     def vector(self) -> tuple[float, ...]:
         return (
@@ -121,6 +145,7 @@ class SelfDigest:
     def to_dict(self) -> dict[str, Any]:
         return {
             "identity_name": self.identity_name,
+            "identity_id": self.identity_id,
             "core_values_hash": self.core_values_hash,
             "essence": self.essence[:280],
             "continuity_score": round(_clamp(self.continuity_score), 4),
@@ -131,9 +156,10 @@ class SelfDigest:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "SelfDigest":
+    def from_dict(cls, d: dict[str, Any]) -> SelfDigest:
         return cls(
             identity_name=str(d.get("identity_name", "")),
+            identity_id=str(d.get("identity_id", "")),
             core_values_hash=str(d.get("core_values_hash", "")),
             essence=str(d.get("essence", "")),
             continuity_score=_clamp(d.get("continuity_score", 1.0)),
@@ -164,7 +190,7 @@ class SubstrateFingerprint:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "SubstrateFingerprint":
+    def from_dict(cls, d: dict[str, Any]) -> SubstrateFingerprint:
         return cls(
             model_artifact=str(d.get("model_artifact", "unknown")),
             adapters=tuple(d.get("adapters", []) or ()),
@@ -231,7 +257,7 @@ def _self_delta(prev: SelfDigest, cur: SelfDigest) -> float:
 class GhostLine:
     """Append-only, hash-linked continuity ledger for the self-pattern."""
 
-    def __init__(self, *, root: Optional[Path] = None):
+    def __init__(self, *, root: Path | None = None):
         env_root = os.environ.get("AURA_GHOST_DIR")
         self.root = Path(root) if root else (
             Path(env_root) if env_root else (Path.home() / ".aura" / "data" / "ghost")
@@ -240,7 +266,7 @@ class GhostLine:
         self.frames_dir = self.root / "frames"
         self.frames_dir.mkdir(parents=True, exist_ok=True)
         self._chain = AuditChain(self.chain_dir)
-        self._last: Optional[GhostFrame] = None
+        self._last: GhostFrame | None = None
         self._advances_since_prune = 0
         # Serialises the seq→envelope→append critical section so concurrent
         # advances (a periodic tick racing a substrate-change event) cannot
@@ -259,6 +285,13 @@ class GhostLine:
         if env is None:
             return
         try:
+            tail = self._chain.last_entry()
+            if tail is None or tail.seq != last_seq:
+                raise ValueError("ghost chain tail is unavailable or has the wrong sequence")
+            if str(env.get("frame_id", "")) != tail.receipt_id:
+                raise ValueError("ghost frame id does not match the chain tail receipt")
+            if hash_receipt_body(env) != tail.content_hash:
+                raise ValueError("ghost frame body does not match the chain tail content hash")
             self._last = self._frame_from_body(env)
         except (KeyError, TypeError, ValueError) as exc:
             record_degradation("ghost_line", exc, action="continued after unreadable last frame")
@@ -266,7 +299,7 @@ class GhostLine:
     def _frame_path(self, seq: int) -> Path:
         return self.frames_dir / f"{seq:08d}.json"
 
-    def _read_frame_body(self, seq: int) -> Optional[dict[str, Any]]:
+    def _read_frame_body(self, seq: int) -> dict[str, Any] | None:
         path = self._frame_path(seq)
         if not path.exists():
             return None
@@ -306,7 +339,7 @@ class GhostLine:
             return "genesis", 0.0, False, ["first frame — genesis of the ghost line"]
 
         delta = _self_delta(prev.self_digest, cur_self)
-        identity_changed = prev.self_digest.identity_name != cur_self.identity_name
+        identity_changed = prev.self_digest.identity_id != cur_self.identity_id
         values_changed = prev.self_digest.core_values_hash != cur_self.core_values_hash
         shell_changed = prev.substrate.shell_hash() != cur_shell.shell_hash()
         explicit_rebase = trigger == "rebase"
@@ -333,7 +366,7 @@ class GhostLine:
         return "continuous", delta, False, notes
 
     # ── advance ──────────────────────────────────────────────────────────
-    def should_advance_tick(self, cur_self: SelfDigest, *, now: Optional[float] = None) -> bool:
+    def should_advance_tick(self, cur_self: SelfDigest, *, now: float | None = None) -> bool:
         """Throttle: tick frames only when due (time elapsed or self changed)."""
         if self._last is None:
             return True
@@ -349,7 +382,7 @@ class GhostLine:
         *,
         trigger: str = "tick",
         cause: str = "",
-        now: Optional[float] = None,
+        now: float | None = None,
     ) -> GhostFrame:
         """Append one frame. Substrate/rebase/breach triggers always advance;
         callers should gate ``tick`` through :meth:`should_advance_tick`."""
@@ -357,35 +390,51 @@ class GhostLine:
             raise ValueError(f"unknown trigger: {trigger!r}")
         now = time.time() if now is None else now
         with self._advance_lock:
-            verdict, delta, shell_changed, notes = self._judge(cur_self, cur_shell, trigger=trigger)
+            frame_id = uuid.uuid4().hex[:12]
+            frame_holder: dict[str, GhostFrame] = {}
 
-            seq = self._chain.length()
-            frame = GhostFrame(
-                seq=seq,
-                frame_id=uuid.uuid4().hex[:12],
-                timestamp=now,
-                trigger=trigger,
-                self_digest=cur_self,
-                substrate=cur_shell,
-                verdict=verdict,
-                self_delta=delta,
-                shell_changed=shell_changed,
-                notes=notes,
-                cause=cause,
-            )
-            body = frame.body()
+            def make_body(seq: int) -> dict[str, Any]:
+                self._restore_anchor_for_append(seq)
+                verdict, delta, shell_changed, notes = self._judge(
+                    cur_self,
+                    cur_shell,
+                    trigger=trigger,
+                )
+                frame = GhostFrame(
+                    seq=seq,
+                    frame_id=frame_id,
+                    timestamp=now,
+                    trigger=trigger,
+                    self_digest=cur_self,
+                    substrate=cur_shell,
+                    verdict=verdict,
+                    self_delta=delta,
+                    shell_changed=shell_changed,
+                    notes=notes,
+                    cause=cause,
+                )
+                frame_holder["frame"] = frame
+                return frame.body()
 
-            # Persist body first (durable), then commit the hash link. If we crash
-            # between, the orphan body is simply overwritten at the same seq next run.
-            self._persist(seq, body, verdict)
-            entry = self._chain.append(
-                receipt_id=frame.frame_id,
-                kind=_FRAME_KIND,
-                body=body,
-                timestamp=now,
-            )
+            try:
+                entry, _body = self._chain.append_with_body(
+                    receipt_id=frame_id,
+                    kind=_FRAME_KIND,
+                    timestamp=now,
+                    body_factory=make_body,
+                    body_writer=self._persist,
+                )
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                record_degradation(
+                    "ghost_line",
+                    exc,
+                    action="failed closed ghost frame transaction before committing a mismatched receipt",
+                    severity="error",
+                )
+                raise
+            frame = frame_holder["frame"]
             committed = GhostFrame(
-                seq=frame.seq,
+                seq=entry.seq,
                 frame_id=frame.frame_id,
                 timestamp=frame.timestamp,
                 trigger=frame.trigger,
@@ -404,14 +453,19 @@ class GhostLine:
         if committed.is_discontinuity:
             record_degradation(
                 "ghost_line",
-                RuntimeError(f"ghost-line discontinuity: {'; '.join(notes) or verdict}"),
+                RuntimeError(
+                    f"ghost-line discontinuity: {'; '.join(committed.notes) or committed.verdict}"
+                ),
                 action="recorded identity discontinuity into the ghost line",
                 severity="warning",
                 enforce_failure_policy=False,
             )
             logger.warning(
                 "GHOST LINE DISCONTINUITY seq=%d trigger=%s Δ=%.3f: %s",
-                seq, trigger, delta, "; ".join(notes),
+                committed.seq,
+                trigger,
+                committed.self_delta,
+                "; ".join(committed.notes),
             )
         self._advances_since_prune += 1
         if self._advances_since_prune >= _PRUNE_EVERY:
@@ -424,18 +478,30 @@ class GhostLine:
         import asyncio
         return await asyncio.to_thread(lambda: self.advance(*args, **kwargs))
 
-    def _persist(self, seq: int, body: dict[str, Any], verdict: str) -> None:
+    def _restore_anchor_for_append(self, seq: int) -> None:
+        if seq == 0:
+            self._last = None
+            return
+        body = self._read_frame_body(seq - 1)
+        tail = self._chain.last_entry()
+        if body is None or tail is None or tail.seq != seq - 1:
+            raise RuntimeError("previous retained ghost frame is unavailable")
+        if str(body.get("frame_id", "")) != tail.receipt_id:
+            raise RuntimeError("previous ghost frame id does not match its receipt")
+        if hash_receipt_body(body) != tail.content_hash:
+            raise RuntimeError("previous ghost frame body failed receipt verification")
+        self._last = self._frame_from_body(body)
+
+    def _persist(self, seq: int, body: dict[str, Any]) -> None:
         from core.governance_context import local_internal_governed_scope
-        try:
-            with local_internal_governed_scope("ghost_line", domain="state_mutation"):
-                atomic_write_json(
-                    self._frame_path(seq),
-                    body,
-                    schema_version=1,
-                    schema_name="ghost_frame",
-                )
-        except (OSError, ValueError, RuntimeError) as exc:
-            record_degradation("ghost_line", exc, action="continued after frame body persist failed")
+
+        with local_internal_governed_scope("ghost_line", domain="state_mutation"):
+            atomic_write_json(
+                self._frame_path(seq),
+                body,
+                schema_version=1,
+                schema_name="ghost_frame",
+            )
 
     def _prune(self) -> None:
         try:
@@ -451,7 +517,7 @@ class GhostLine:
 
     # ── inspection / verification ────────────────────────────────────────
     @property
-    def last_frame(self) -> Optional[GhostFrame]:
+    def last_frame(self) -> GhostFrame | None:
         return self._last
 
     def length(self) -> int:
@@ -476,7 +542,7 @@ class GhostLine:
         flagged (their hashes still prove they existed); only *present* bodies
         are re-hashed, and any broken link, reordering, or edit is reported.
         """
-        def body_loader(receipt_id: str, kind: str) -> Optional[dict[str, Any]]:
+        def body_loader(receipt_id: str, kind: str) -> dict[str, Any] | None:
             # Locate the body whose frame_id matches; bodies are named by seq, so
             # scan the (bounded) present window. Missing (pruned) → skip check.
             for seq in range(max(0, self._chain.length() - _MAX_FRAME_BODIES), self._chain.length()):
@@ -485,9 +551,16 @@ class GhostLine:
                     return body
             return None
 
-        ok, problems = self._chain.verify(body_loader=body_loader)
-        # A missing body is expected after pruning — demote those to non-problems.
-        real = [p for p in problems if p.get("reason") != "receipt body missing on disk"]
+        length = self._chain.length()
+        retained_start = max(0, length - _MAX_FRAME_BODIES)
+        _ok, problems = self._chain.verify(body_loader=body_loader)
+        # Missing bodies are legitimate only before the guaranteed retained window.
+        real = [
+            problem
+            for problem in problems
+            if problem.get("reason") != "receipt body missing on disk"
+            or int(problem.get("seq", -1)) >= retained_start
+        ]
         return (len(real) == 0, real)
 
     def integrity(self) -> dict[str, Any]:
@@ -501,6 +574,7 @@ class GhostLine:
             "last_self_delta": round(last.self_delta, 4) if last else 0.0,
             "last_shell": last.substrate.to_dict() if last else {},
             "identity_name": last.self_digest.identity_name if last else "",
+            "identity_id": last.self_digest.identity_id if last else "",
         }
 
     def close(self) -> None:
@@ -514,7 +588,7 @@ class GhostLine:
 # Singleton
 # ─────────────────────────────────────────────────────────────────────────────
 
-_GHOST_LINE: Optional[GhostLine] = None
+_GHOST_LINE: GhostLine | None = None
 
 
 def get_ghost_line() -> GhostLine:

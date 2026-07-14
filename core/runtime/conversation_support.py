@@ -10,6 +10,10 @@ from core.runtime.coding_session_memory import (
     get_coding_session_memory,
 )
 from core.runtime.errors import record_degradation
+from core.runtime.principal_context import (
+    current_relational_principal,
+    relational_principal_scope_is_bound,
+)
 from core.runtime.task_ownership import create_tracked_task
 from core.runtime.turn_analysis import analyze_turn
 
@@ -145,6 +149,22 @@ def relational_memory_allows(user_id: str, kind: str, operation: str) -> bool:
             action="excluded relational profile data after consent lookup failed",
         )
         return False
+
+
+def relationship_topology_consent_allows(agent_id: str | None) -> bool:
+    """Require the complete session topology authority, not identity alone."""
+    exact_id = _normalize_agent_id(agent_id)
+    if exact_id is None:
+        return False
+    return relational_memory_allows(
+        exact_id,
+        "shared_ground",
+        "recall",
+    ) and relational_memory_allows(
+        exact_id,
+        "shared_ground",
+        "prompt",
+    )
 
 
 async def record_shared_ground_callbacks(
@@ -626,7 +646,11 @@ def _build_conversation_continuity_memory(
 
 
 async def record_conversation_experience(
-    user_input: str, aura_response: str, state: Any = None
+    user_input: str,
+    aura_response: str,
+    state: Any = None,
+    *,
+    principal_id: str | None = None,
 ) -> None:
     if not str(user_input or "").strip() or not str(aura_response or "").strip():
         return
@@ -660,12 +684,24 @@ async def record_conversation_experience(
         repo = service_access.resolve_state_repository(default=None)
         state_obj = getattr(repo, "_current", None) if repo is not None else None
 
-    exact_agent_id = resolve_exact_partner_id(state_obj)
-    # Fall through to the full resolver (relationship graph / known
-    # entities), not a bare 'local_user' — otherwise a known partner named
-    # in the graph is written to episodic memory and the entity graph as an
-    # anonymous 'local_user' edge, forking their identity.
-    user_id = exact_agent_id or resolve_primary_user_id(state_obj)
+    explicit_principal = principal_id is not None
+    scoped_principal = relational_principal_scope_is_bound()
+    exact_agent_id = _normalize_agent_id(
+        principal_id if explicit_principal else current_relational_principal()
+    )
+    if exact_agent_id is None and not explicit_principal and not scoped_principal:
+        exact_agent_id = resolve_exact_partner_id(state_obj)
+    # An explicitly identity-less request must never be re-attributed from
+    # mutable process state. Non-request callers retain the legacy state
+    # resolver until they pass a causal principal of their own.
+    user_id = (
+        exact_agent_id
+        or (
+            "unattributed_session"
+            if explicit_principal or scoped_principal
+            else resolve_primary_user_id(state_obj)
+        )
+    )
     importance = _conversation_importance(user_input)
     emotional_valence = _conversation_emotional_valence(user_input)
     analysis = analyze_turn(user_input)
@@ -791,20 +827,34 @@ async def record_conversation_experience(
             )
             logger.debug("Episodic conversation recording skipped: %s", exc)
 
-    try:
-        entity_graph = service_access.optional_service(
-            "entity_graph", "relationship_graph", default=None
-        )
-        if entity_graph and hasattr(entity_graph, "register_interaction"):
-            await entity_graph.register_interaction(
-                "aura_self", user_id, "conversation", "self", "person"
+    if relationship_topology_consent_allows(exact_agent_id):
+        try:
+            from core.social.relationship_graph import RelationshipConsentRequiredError
+
+            entity_graph = service_access.optional_service(
+                "entity_graph", "relationship_graph", default=None
             )
-    except (RuntimeError, AttributeError, TypeError) as exc:
-        _record_conversation_degradation(
-            exc,
-            action="skipped relationship graph update for this exchange",
+            if entity_graph and hasattr(entity_graph, "register_interaction"):
+                await entity_graph.register_interaction(
+                    "aura_self", exact_agent_id, "conversation", "self", "person"
+                )
+        except RelationshipConsentRequiredError:
+            # Consent can expire or be revoked between admission and mutation.
+            # That is a governed abstention, not a runtime health failure.
+            logger.debug(
+                "Relationship topology update abstained after consent changed for %s.",
+                exact_agent_id,
+            )
+        except (ImportError, RuntimeError, AttributeError, TypeError) as exc:
+            _record_conversation_degradation(
+                exc,
+                action="skipped relationship graph update for this exchange",
+            )
+            logger.debug("Relationship graph update skipped: %s", exc)
+    else:
+        logger.debug(
+            "Relationship topology update abstained: exact-agent recall/prompt consent absent."
         )
-        logger.debug("Relationship graph update skipped: %s", exc)
 
     try:
         user_model = service_access.optional_service(

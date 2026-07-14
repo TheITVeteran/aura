@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from core.runtime import conversation_support
+from core.social.relationship_graph import RelationshipConsentRequiredError
 from core.state.aura_state import AuraState
 
 
@@ -330,3 +331,145 @@ async def test_record_conversation_experience_rejects_misgrounded_self_condition
     )
 
     assert calls == []
+
+
+class _TopologyAuthority:
+    def __init__(self, operations=()):
+        self.operations = set(operations)
+        self.calls = []
+
+    def allows(self, agent_id, kind, operation):
+        self.calls.append((agent_id, kind, operation))
+        return operation in self.operations
+
+
+class _TopologyGraph:
+    def __init__(self, error=None):
+        self.error = error
+        self.calls = []
+
+    async def register_interaction(self, *args):
+        if self.error is not None:
+            raise self.error
+        self.calls.append(args)
+
+
+def _configure_topology_recording(monkeypatch, authority, graph, degradations):
+    def optional_service(*names, default=None):
+        if "relational_memory" in names:
+            return authority
+        if "entity_graph" in names or "relationship_graph" in names:
+            return graph
+        return default
+
+    class _CodingMemory:
+        def record_conversation_turn(self, *_args, **_kwargs):
+            return None
+
+    monkeypatch.setattr(conversation_support.service_access, "optional_service", optional_service)
+    monkeypatch.setattr(conversation_support, "get_coding_session_memory", _CodingMemory)
+    monkeypatch.setattr(
+        conversation_support,
+        "update_conversational_intelligence",
+        lambda *args, **kwargs: asyncio.sleep(0),
+    )
+    monkeypatch.setattr(
+        conversation_support,
+        "record_shared_ground_callbacks",
+        lambda *args, **kwargs: asyncio.sleep(0),
+    )
+    monkeypatch.setattr(
+        conversation_support,
+        "record_degradation",
+        lambda *args, **kwargs: degradations.append((args, kwargs)),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("operations", "expected_calls"),
+    [
+        ((), 0),
+        (("recall",), 0),
+        (("prompt",), 0),
+        (("recall", "prompt"), 1),
+        (("persist", "recall", "prompt"), 1),
+    ],
+)
+async def test_relationship_topology_requires_exact_recall_and_prompt_consent(
+    monkeypatch,
+    operations,
+    expected_calls,
+):
+    authority = _TopologyAuthority(operations)
+    graph = _TopologyGraph()
+    degradations = []
+    _configure_topology_recording(monkeypatch, authority, graph, degradations)
+
+    await conversation_support.record_conversation_experience(
+        "Please keep this architecture coherent.",
+        "I will preserve the verified causal path and report its evidence.",
+        AuraState.default(),
+        principal_id="bryan",
+    )
+
+    assert len(graph.calls) == expected_calls
+    if graph.calls:
+        assert graph.calls == [
+            ("aura_self", "bryan", "conversation", "self", "person")
+        ]
+    assert degradations == []
+
+
+@pytest.mark.asyncio
+async def test_relationship_topology_abstains_without_exact_principal(monkeypatch):
+    authority = _TopologyAuthority(("recall", "prompt"))
+    graph = _TopologyGraph()
+    degradations = []
+    _configure_topology_recording(monkeypatch, authority, graph, degradations)
+
+    await conversation_support.record_conversation_experience(
+        "Please keep this architecture coherent.",
+        "I will preserve the verified causal path and report its evidence.",
+        AuraState.default(),
+        principal_id="",
+    )
+
+    assert authority.calls == []
+    assert graph.calls == []
+    assert degradations == []
+
+
+@pytest.mark.asyncio
+async def test_relationship_consent_race_abstains_without_health_degradation(monkeypatch):
+    authority = _TopologyAuthority(("recall", "prompt"))
+    graph = _TopologyGraph(RelationshipConsentRequiredError("consent revoked"))
+    degradations = []
+    _configure_topology_recording(monkeypatch, authority, graph, degradations)
+
+    await conversation_support.record_conversation_experience(
+        "Please keep this architecture coherent.",
+        "I will preserve the verified causal path and report its evidence.",
+        AuraState.default(),
+        principal_id="bryan",
+    )
+
+    assert degradations == []
+
+
+@pytest.mark.asyncio
+async def test_relationship_filesystem_permission_error_remains_operational_failure(monkeypatch):
+    authority = _TopologyAuthority(("recall", "prompt"))
+    graph = _TopologyGraph(PermissionError("disk denied"))
+    degradations = []
+    _configure_topology_recording(monkeypatch, authority, graph, degradations)
+
+    with pytest.raises(PermissionError, match="disk denied"):
+        await conversation_support.record_conversation_experience(
+            "Please keep this architecture coherent.",
+            "I will preserve the verified causal path and report its evidence.",
+            AuraState.default(),
+            principal_id="bryan",
+        )
+
+    assert degradations == []

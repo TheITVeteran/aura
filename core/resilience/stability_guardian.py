@@ -267,6 +267,14 @@ class StabilityGuardian:
                     user_facing = priority or priority_tick or origin.strip().lower() in {
                         "user", "voice", "admin", "api", "gui", "ws", "websocket", "direct", "external",
                     }
+                phase_durations = dict(getattr(tick_entry, "phase_durations_ms", {}) or {})
+                slowest_phase = ""
+                slowest_phase_ms = 0.0
+                if phase_durations:
+                    slowest_phase, slowest_phase_ms = max(
+                        phase_durations.items(),
+                        key=lambda item: float(item[1] or 0.0),
+                    )
                 self._tick_samples.append(
                     {
                         "timestamp": now,
@@ -275,6 +283,9 @@ class StabilityGuardian:
                         "priority": priority,
                         "priority_tick": priority_tick,
                         "user_facing": user_facing,
+                        "phase_durations_ms": phase_durations,
+                        "slowest_phase": str(slowest_phase),
+                        "slowest_phase_ms": float(slowest_phase_ms),
                     }
                 )
                 self._tick_times.append((now, duration_ms, priority_tick))
@@ -768,6 +779,21 @@ class StabilityGuardian:
 
         if slow_background and len(slow_background) >= 3:
             bg_mean_ms = sum(float(sample.get("duration_ms", 0.0) or 0.0) for sample in slow_background) / len(slow_background)
+            attributed = [
+                sample
+                for sample in slow_background
+                if str(sample.get("slowest_phase", "") or "")
+            ]
+            attribution = ""
+            if attributed:
+                worst = max(
+                    attributed,
+                    key=lambda sample: float(sample.get("slowest_phase_ms", 0.0) or 0.0),
+                )
+                attribution = (
+                    f"; slowest attributed phase={worst['slowest_phase']} "
+                    f"({float(worst.get('slowest_phase_ms', 0.0) or 0.0):.0f}ms)"
+                )
             dumped = self._dump_thread_stacks(
                 f"TICK STALL DETECTED (background mean={bg_mean_ms:.0f}ms across {len(slow_background)} samples)"
             )
@@ -776,7 +802,7 @@ class StabilityGuardian:
                 False,
                 (
                     f"Background/kernel ticks are slow: mean={bg_mean_ms:.0f}ms "
-                    f"across {len(slow_background)} sustained sample(s)"
+                    f"across {len(slow_background)} sustained sample(s){attribution}"
                 ),
                 severity="warning",
                 action_taken=(

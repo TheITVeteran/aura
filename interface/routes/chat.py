@@ -42,6 +42,9 @@ from core.runtime.desktop_task_contract import (
     desktop_task_planning_schema,
 )
 from core.runtime.errors import describe_error, record_degradation
+from core.runtime.principal_context import (
+    relational_principal_scope,
+)
 from core.runtime.receipts import digest_output_content, digest_principal_binding
 from core.runtime.service_access import optional_service
 from core.runtime.shutdown_coordinator import (
@@ -360,12 +363,13 @@ def _paired_chat_response_boundary(handler: Callable[..., Any]) -> Callable[...,
         if isinstance(body, Request):
             request = body
             body = None
-        _observe_authenticated_chat_turn(request, body)
+        exact_principal = _observe_authenticated_chat_turn(request, body)
         conversation_only = bool(
             request_access_profile(request).get("conversation_only", True)
         )
         try:
-            response = await handler(*args, **kwargs)
+            with relational_principal_scope(exact_principal):
+                response = await handler(*args, **kwargs)
         except HTTPException as exc:
             if not conversation_only:
                 raise

@@ -36,6 +36,10 @@ _MAX_CONNECTIONS = 32
 _IDENTIFIER_RE = re.compile(r"[^a-z0-9_.:-]+")
 
 
+class RelationshipConsentRequiredError(PermissionError):
+    """A governed exact-agent consent abstention, not an OS permission fault."""
+
+
 def _normalize_agent_id(value: Any) -> str:
     normalized = " ".join(str(value or "").strip().split())[:160]
     if not normalized:
@@ -255,7 +259,13 @@ class RelationshipGraph:
         node = self._load_node(exact_id, purpose="recall")
         if node is None:
             if not self._authority.allows(exact_id, _SNAPSHOT_KIND, "recall"):
-                raise PermissionError("relationship topology requires exact-agent recall consent")
+                raise RelationshipConsentRequiredError(
+                    "relationship topology requires exact-agent recall consent"
+                )
+            if not self._authority.allows(exact_id, _SNAPSHOT_KIND, "prompt"):
+                raise RelationshipConsentRequiredError(
+                    "relationship topology requires exact-agent prompt consent"
+                )
             node = RelationshipNode(
                 node_id=exact_id,
                 name=_bounded_text(name, limit=120) or exact_id,
@@ -421,7 +431,9 @@ class RelationshipGraph:
             raise ValueError("boundary mutation requires flag, evidence, and authorization receipt")
         exact_id = _normalize_agent_id(node_id)
         if not self._authority.allows(exact_id, _BOUNDARY_KIND, "recall"):
-            raise PermissionError("boundary mutation requires exact-agent boundary consent")
+            raise RelationshipConsentRequiredError(
+                "boundary mutation requires exact-agent boundary consent"
+            )
         with self._lock:
             node = self._ensure_node(exact_id)
             before = copy.deepcopy(node)

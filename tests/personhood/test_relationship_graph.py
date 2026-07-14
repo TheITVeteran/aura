@@ -58,6 +58,23 @@ def test_graph_refuses_unscoped_node_creation_without_exact_agent_consent(tmp_pa
     assert authority.status()["record_count"] == 0
 
 
+def test_graph_refuses_topology_without_prompt_consent(tmp_path):
+    authority = _authority(tmp_path)
+    authority.grant_consent(
+        "bryan",
+        kinds=["shared_ground"],
+        operations=["recall"],
+        receipt_id="recall-only",
+    )
+    graph = RelationshipGraph(authority=authority)
+
+    with pytest.raises(PermissionError, match="exact-agent prompt consent"):
+        graph.get_or_create_node("bryan")
+
+    assert graph.nodes == {}
+    assert authority.status()["record_count"] == 0
+
+
 def test_topology_persists_encrypted_and_isolated_by_exact_agent(tmp_path):
     authority = _authority(tmp_path)
     _grant(authority, "bryan")

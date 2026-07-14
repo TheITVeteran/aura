@@ -278,6 +278,10 @@ class KernelInterface:
         def _bind() -> None:
             orchestrator.kernel_interface = ki
             if ki._kernel is not None:
+                legacy_bridge = getattr(ki._kernel, "legacy_bridge", None)
+                bind_owner = getattr(legacy_bridge, "bind_orchestrator", None)
+                if callable(bind_owner):
+                    bind_owner(orchestrator)
                 ServiceContainer.register_instance("aura_kernel", ki._kernel)
             ServiceContainer.register_instance("kernel_interface", ki)
             logger.info("KernelInterface attached to orchestrator.")

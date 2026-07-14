@@ -63,6 +63,7 @@ DEFAULT_PRODUCTION_DIRS = {
 DEFAULT_PRODUCTION_FILES = {"aura_main.py"}
 
 ALLOW_DYNAMIC_CODE = {
+    "core/agency/repl_daemon.py",
     "core/runtime/dynamic_execution_gateway.py",
     "core/sandbox/bash_daemon.py",
     "core/sandbox/runner.py",

@@ -401,14 +401,6 @@
       "scope": "<module>.TensionEngine._save"
     },
     {
-      "callee": "core.runtime.atomic_writer.async_atomic_write_text",
-      "canonical_owner": false,
-      "category": "direct_atomic_file_write",
-      "count": 1,
-      "path": "core/agency/tool_orchestrator.py",
-      "scope": "<module>.ToolOrchestrator.execute_python"
-    },
-    {
       "callee": "core.runtime.atomic_writer.atomic_write_text",
       "canonical_owner": false,
       "category": "direct_atomic_file_write",
@@ -2743,6 +2735,38 @@
       "count": 1,
       "path": "core/agency/self_repair_backlog.py",
       "scope": "<module>.SelfRepairBacklog._mark_seen"
+    },
+    {
+      "callee": "<file_write_gateway>.ensure_directory",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 3,
+      "path": "core/agency/tool_orchestrator.py",
+      "scope": "<module>.ToolOrchestrator.__init__"
+    },
+    {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().delete_path_async",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/agency/tool_orchestrator.py",
+      "scope": "<module>.ToolOrchestrator._remove_validation_file"
+    },
+    {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text_async",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 2,
+      "path": "core/agency/tool_orchestrator.py",
+      "scope": "<module>.ToolOrchestrator._stage_worker"
+    },
+    {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text_async",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/agency/tool_orchestrator.py",
+      "scope": "<module>.ToolOrchestrator.execute_python"
     },
     {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().append_text",
@@ -5879,22 +5903,6 @@
       "count": 1,
       "path": "core/agency/tension_engine.py",
       "scope": "<module>.TensionEngine._save"
-    },
-    {
-      "callee": "self.sandbox_dir.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/agency/tool_orchestrator.py",
-      "scope": "<module>.ToolOrchestrator.__init__"
-    },
-    {
-      "callee": "path.unlink",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/agency/tool_orchestrator.py",
-      "scope": "<module>.ToolOrchestrator._remove_validation_file"
     },
     {
       "callee": "PERSIST_PATH.parent.mkdir",
@@ -13634,6 +13642,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "614c8a45a215c1d951172dba1d72ccc025d1dd2c778269e106e07813eb5fc139",
+  "inventory_sha256": "7b64a5165c8c6dcc955abbd47b245472f63e19b77e35f0f325b673319d418a4f",
   "schema_version": 1
 }

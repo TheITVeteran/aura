@@ -135,3 +135,45 @@ async def test_phi_phase_uses_phi_core_phi_s_field(monkeypatch):
     phi = await phase._compute_phi(AuraState.default())
 
     assert phi == pytest.approx(0.3471, rel=0.0, abs=1e-4)
+
+
+@pytest.mark.asyncio
+async def test_phi_phase_schedules_whole_system_measurement_without_joining_it(monkeypatch):
+    kernel = SimpleNamespace(organs={})
+    phase = PhiConsciousnessPhase(kernel)
+
+    class _WholeSystemPhi:
+        def __init__(self):
+            self.observed = 0
+            self.scheduled = 0
+
+        def observe_runtime(self, state):
+            self.observed += 1
+
+        def schedule_maintenance(self):
+            self.scheduled += 1
+            return True
+
+    service = _WholeSystemPhi()
+    import core.runtime.service_access as service_access
+
+    monkeypatch.setattr(
+        service_access,
+        "optional_service",
+        lambda name, *aliases, default=None: service
+        if name == "whole_system_phi" else default,
+    )
+    monkeypatch.setattr(
+        phase,
+        "_get_phi_core",
+        lambda: SimpleNamespace(
+            compute_phi=lambda: SimpleNamespace(phi_s=0.25),
+            compute_surrogate_phi=lambda: 0.0,
+        ),
+    )
+
+    phi = await phase._compute_phi(AuraState.default())
+
+    assert phi == pytest.approx(0.25)
+    assert service.observed == 1
+    assert service.scheduled == 1

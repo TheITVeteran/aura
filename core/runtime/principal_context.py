@@ -5,9 +5,9 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 
-_RELATIONAL_PRINCIPAL: ContextVar[str] = ContextVar(
+_RELATIONAL_PRINCIPAL: ContextVar[str | None] = ContextVar(
     "aura_relational_principal",
-    default="",
+    default=None,
 )
 
 
@@ -16,7 +16,12 @@ def normalize_relational_principal(value: object) -> str:
 
 
 def current_relational_principal() -> str:
-    return _RELATIONAL_PRINCIPAL.get()
+    return _RELATIONAL_PRINCIPAL.get() or ""
+
+
+def relational_principal_scope_is_bound() -> bool:
+    """Return whether this causal task explicitly established a principal scope."""
+    return _RELATIONAL_PRINCIPAL.get() is not None
 
 
 @contextmanager
@@ -33,5 +38,6 @@ def relational_principal_scope(principal: object) -> Iterator[str]:
 __all__ = [
     "current_relational_principal",
     "normalize_relational_principal",
+    "relational_principal_scope_is_bound",
     "relational_principal_scope",
 ]

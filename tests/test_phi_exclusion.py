@@ -3,13 +3,15 @@ Tests for IIT 4.0 Exclusion Postulate implementation in phi_core.py.
 Validates compute_max_phi_complex() and related methods.
 """
 
+import time
+
 import numpy as np
 import pytest
 
 
 def _make_phi_core_with_history(n_steps=200):
     """Create a PhiCore with enough state history to compute phi."""
-    from core.consciousness.phi_core import PhiCore, N_NODES
+    from core.consciousness.phi_core import N_NODES, PhiCore
 
     pc = PhiCore()
     rng = np.random.RandomState(42)
@@ -121,6 +123,7 @@ def test_get_status_includes_exclusion():
     pc.compute_phi()  # This triggers compute_max_phi_complex internally
 
     status = pc.get_status()
+    assert "not a consciousness meter" in status["claim_boundary"]
     assert "exclusion_max_phi" in status
     assert "exclusion_complex_nodes" in status
     assert "exclusion_complex_names" in status
@@ -135,6 +138,8 @@ def test_get_phi_statement_includes_exclusion():
 
     statement = pc.get_phi_statement()
     assert "EXCLUSION" in statement
+    assert "CONSCIOUS COMPLEX" not in statement
+    assert "not a consciousness proof" in statement
 
 
 def test_exclusion_not_in_status_before_compute():
@@ -184,3 +189,71 @@ def test_phi_for_subset_bipartition_basic():
     # We'll call the internal method via _compute_phi_for_subset
     phi = pc._compute_phi_for_subset(tpm, p, subset)
     assert phi >= 0.0
+
+
+def test_vectorized_affective_phi_preserves_value_and_runtime_budget():
+    """Exact 8-node validation must not starve the live event loop for seconds."""
+    pc = _make_phi_core_with_history(200)
+
+    started = time.perf_counter()
+    result = pc.compute_affective_phi()
+    elapsed = time.perf_counter() - started
+
+    assert result is not None
+    assert result.phi_s == pytest.approx(0.2355138393131479, abs=1e-5)
+    assert result.mip_partition_a == [0]
+    assert result.mip_partition_b == [1, 2, 3, 4, 5, 6, 7]
+    assert elapsed < 1.5, f"exact affective phi took {elapsed:.3f}s"
+
+
+def test_vectorized_partition_math_matches_scalar_reference():
+    from core.consciousness.phi_core import PhiCore
+
+    rng = np.random.default_rng(7)
+    tpm = rng.random((8, 8))
+    tpm /= tpm.sum(axis=1, keepdims=True)
+    stationary = rng.random(8)
+    stationary /= stationary.sum()
+    extract_a = np.array([state & 0b11 for state in range(8)], dtype=np.int32)
+    extract_b = np.array([(state >> 2) & 1 for state in range(8)], dtype=np.int32)
+
+    tpm_a = PhiCore._marginal_tpm_from_extract(
+        tpm,
+        stationary,
+        extract_target=extract_a,
+        extract_other=extract_b,
+        n_target_states=4,
+        n_other_states=2,
+    )
+    tpm_b = PhiCore._marginal_tpm_from_extract(
+        tpm,
+        stationary,
+        extract_target=extract_b,
+        extract_other=extract_a,
+        n_target_states=2,
+        n_other_states=4,
+    )
+
+    scalar_phi = 0.0
+    for state in range(8):
+        cut = np.array(
+            [
+                tpm_a[extract_a[state], extract_a[next_state]]
+                * tpm_b[extract_b[state], extract_b[next_state]]
+                for next_state in range(8)
+            ],
+            dtype=np.float64,
+        )
+        cut /= cut.sum()
+        kl = np.sum(tpm[state] * np.log(tpm[state] / (cut + 1e-10)))
+        scalar_phi += stationary[state] * max(0.0, float(kl))
+
+    vector_phi = PhiCore._partition_kl_phi(
+        tpm,
+        stationary,
+        tpm_a,
+        tpm_b,
+        extract_a,
+        extract_b,
+    )
+    assert vector_phi == pytest.approx(scalar_phi, abs=1e-12)

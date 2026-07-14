@@ -1,12 +1,18 @@
 """Internal PCI: LZ76 contracts, probe governance, and service integration."""
 from __future__ import annotations
 
+import asyncio
+import time
+
 import numpy as np
 import pytest
 
+import core.consciousness.whole_system_phi_service as phi_service_mod
 import core.governance.will as will_mod
 from core.consciousness.perturbational_probe import (
     PerturbationalProbe,
+    ProbeCampaignReport,
+    ReversiblePerturbation,
     lz76_complexity,
     normalized_lz,
     pci_from_windows,
@@ -155,6 +161,40 @@ def test_probe_respects_will_refusal(monkeypatch):
     assert called["n"] == 0  # a refused probe never touches the organism
 
 
+def test_probe_campaign_requires_repeatable_effect_and_recovery(monkeypatch):
+    _approving_will(monkeypatch)
+    org = _SyntheticOrganism()
+
+    def perturb():
+        org.perturb()
+
+        def restore():
+            org.echo = 0.0
+            return True
+
+        return ReversiblePerturbation(True, restore, "synthetic.reversible")
+
+    probe = PerturbationalProbe(
+        sampler=org.sample,
+        perturb=perturb,
+        sleep=lambda seconds: None,
+    )
+    campaign = probe.run_campaign(
+        trials=3,
+        n_baseline=60,
+        n_response=60,
+        n_recovery=40,
+        interval_s=0.0,
+    )
+    assert campaign.trials_completed == 3
+    assert len(campaign.transitions) == 3
+    assert campaign.channel_names == tuple(f"c{index}" for index in range(8))
+    assert campaign.aggregate["evoked_complexity_delta_ci_5"] > 0.0
+    assert campaign.aggregate["recovered_trials"] == 3
+    assert campaign.aggregate["causal_response_established"]
+    assert all(report.recovery["restore_succeeded"] for report in campaign.reports)
+
+
 def test_probe_fails_closed_without_a_will():
     org = _SyntheticOrganism()
     probe = PerturbationalProbe(sampler=org.sample, perturb=org.perturb,
@@ -206,6 +246,130 @@ def test_service_ignores_junk_observations():
     service.observe({"a": float("nan"), "b": 1.0})     # <2 clean channels
     service.observe({})
     assert service.status()["window"] == 0
+
+
+def test_service_interpolates_sparse_samples_instead_of_injecting_zero():
+    service = WholeSystemPhiService()
+    for index in range(10):
+        row = {
+            "a": float(index),
+            "b": float((index + 1) * 10),
+            "c": float(index * 2),
+        }
+        if index == 5:
+            row.pop("b")
+        service.observe(row)
+    matrix, names, diagnostics = service._matrix()
+    b_index = names.index("b")
+    assert matrix[5, b_index] == pytest.approx(60.0)
+    assert diagnostics["missing_values_interpolated"] == 1
+    assert diagnostics["missing_by_channel"]["b"] == 1
+
+
+@pytest.mark.asyncio
+async def test_service_schedules_estimation_without_blocking_the_caller(monkeypatch):
+    monkeypatch.setenv("AURA_WSPHI_MIN_SAMPLES", "16")
+    monkeypatch.setenv("AURA_WSPHI_ESTIMATE_EVERY", "16")
+    service = WholeSystemPhiService()
+    for index in range(20):
+        service.observe({"a": index, "b": index + 1, "c": index + 2, "d": index + 3})
+
+    class _Decision:
+        admitted = True
+        lease_id = "phi-lease"
+        reason = "capacity_available"
+
+    class _Admission:
+        def __init__(self):
+            self.released = False
+
+        async def acquire(self, request):
+            return _Decision()
+
+        async def release(self, lease_id, *, reason):
+            self.released = lease_id == "phi-lease"
+
+    admission = _Admission()
+    monkeypatch.setattr(
+        phi_service_mod,
+        "optional_service",
+        lambda name, *aliases, default=None: admission
+        if name == "resource_admission" else default,
+    )
+
+    def deliberately_slow_estimate():
+        time.sleep(0.20)
+        return None
+
+    monkeypatch.setattr(service, "maybe_estimate", deliberately_slow_estimate)
+    started = time.perf_counter()
+    assert service.schedule_if_due()
+    elapsed = time.perf_counter() - started
+    task = service._estimate_task
+    assert elapsed < 0.05
+    assert task is not None
+    await asyncio.sleep(0.02)
+    assert not task.done()
+    await task
+    assert admission.released
+    assert not service.status()["estimate_task_active"]
+
+
+@pytest.mark.asyncio
+async def test_service_runs_live_probe_campaign_and_keeps_named_rows(monkeypatch):
+    monkeypatch.setenv("AURA_WSPHI_PROBE_ENABLED", "true")
+    monkeypatch.setenv("AURA_WSPHI_PROBE_INITIAL_DELAY_S", "0")
+    service = WholeSystemPhiService()
+    service._estimates_done = 1
+    service._created_at = time.time() - 10.0
+
+    class _Decision:
+        admitted = True
+        lease_id = "probe-lease"
+        reason = "capacity_available"
+
+    class _Admission:
+        def __init__(self):
+            self.released = False
+
+        async def acquire(self, request):
+            return _Decision()
+
+        async def release(self, lease_id, *, reason):
+            self.released = lease_id == "probe-lease"
+
+    admission = _Admission()
+    monkeypatch.setattr(
+        phi_service_mod,
+        "optional_service",
+        lambda name, *aliases, default=None: admission
+        if name == "resource_admission" else default,
+    )
+    names = ("a", "b", "c", "d")
+    campaign = ProbeCampaignReport(
+        trials_requested=3,
+        trials_completed=3,
+        reports=[],
+        aggregate={"causal_response_established": True},
+        channel_names=names,
+        transitions=[((0, 0, 0, 0), (1, 1, 1, 1))] * 3,
+    )
+    monkeypatch.setattr(
+        PerturbationalProbe,
+        "run_campaign",
+        lambda self, **kwargs: campaign,
+    )
+
+    assert service.schedule_probe_if_due()
+    task = service._probe_task
+    assert task is not None
+    await task
+
+    status = service.status()
+    assert admission.released
+    assert status["interventional_rows"] == 3
+    assert status["latest_probe"]["aggregate"]["causal_response_established"]
+    assert service._interventional[0].channel_names == names
 
 
 def test_service_carries_interventional_rows_into_estimates(monkeypatch):

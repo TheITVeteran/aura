@@ -166,7 +166,7 @@ Status rules:
 | `LANE-001` | `COMPLETE 2026-07-12` | Preserve atomic fenced reservations, synchronous required eviction/reclamation, all-owner accounting, heartbeats, compensation, terminal receipts, race exclusion, and bounded live physical-release-before-load evidence across future model owners. | Addendum 21-22, `CTX2-LANE-001..004` |
 | `RESOURCE-001` | `COMPLETE 2026-07-13` | Preserve typed attributed RAM, accelerator, thermal, disk, compute, power, process, connection, open-file, cache, and pressure observation; keep ordinary tests hermetic and live-pressure evidence explicitly labelled and conservatively bounded. Checkpoint 64 adds a canonical lightweight target-tree observer; Checkpoint 65 adds a provenance-bearing PID census and targeted process-tree observation so ordinary liveness, sovereignty, shutdown, and supervisor checks do not enrich the full host process table. | Pass F 3; Addendum 22; Checkpoints 34, 64, and 65 |
 | `MEMORY-LEAK-001` | `IN PROGRESS (DOMINANT LIVE OWNER SOURCE-FIXED; EXACT-MAIN PLATEAU OPEN) 2026-07-13` | Attribute and eliminate the measured 350-450 MB/hour idle orchestrator RSS growth without relying on restart, pressure-triggered reclamation, model-worker exclusion, or a raised limit. Checkpoint 64 identified a live orchestrator retaining about 19.7 GB physical footprint, including about 17.2 GB of IOAccelerator regions, while stacks remained in the background non-parametric ingest path for more than 1,098 seconds. The source now forbids model loading in that owner and reuses the resident worker with one causal forward, hard pair/token/position/deadline budgets, foreground preemption, durable ordering, and cache cleanup. The old running process still retains its already-loaded allocation; controlled exact-main restart, remaining allocation/cardinality attribution, bounded-growth regressions, and stable idle plus interaction plateau proof remain mandatory. | `RESOURCE-001`, `RUNTIME-001`, `FAULT-001`, `PERF-001`; two independent 45/70-minute idle windows in `docs/SYSTEMS_MATURITY_2026_07_12.md`; live stack/vmmap attribution and Checkpoint 64 |
-| `FOREGROUND-LATENCY-001` | `IN PROGRESS (SAMPLED NUMPY/TORCH OWNER SOURCE-CLOSED; EXACT-MAIN LIVE OPEN) 2026-07-13` | Eliminate live event-loop stalls that deny normal foreground model admission. Attribute every blocking owner, move blocking probes/work off-loop, preserve truthful lag admission instead of raising thresholds, and prove chat/model load remains available under desktop-access, immunity, telemetry, action execution, and background activity. Ordinary memory observation and blocking actuator bodies are source-offloaded; background MLX admission pressure is a retryable information-level deferral while a foreground denial remains visible. Checkpoint 64 removes an approximately 18-minute quadratic in-orchestrator model job; Checkpoint 65 moves sampled host-process enrichment, goal-store locking, and adaptive-immunity persistence off-loop; Checkpoint 68 removes idle perception subprocess storm cadence; Checkpoint 71 removes deferred-result cognitive redispatch, stale-loop voice executors, and synchronous CRSM scheduler I/O; and Checkpoint 72 removes request-loop integrity/CRSM/CAA inspection plus unowned degradation-repair threads. Checkpoint 73 traces the CP66 main-thread NumPy/Torch frames to the perceptual pump's direct phenomenal/substrate injection, moves the complete causal transaction to one ordered owned worker, removes event-loop Torch mirror rebuilds, moves psych stabilization off-loop, and revision-merges concurrent dynamics so offload cannot lose newer perception/affect. The CRSM train/fuse process is model-lane admitted and isolated from foreground service ownership, but exact live contention, boot-health recovery, and plateau proof remain open. | `PERF-001`, `RUNTIME-001`, `FAULT-001`, `SUBSTRATE-001`; Checkpoints 51, 57, 60, 64-65, 68, and 71-73; live `event_loop_lag_3.638s` MLX admission denial, 4.304s and 7.0294s boot-health overruns, and CP66 main-thread NumPy/Torch sample on 2026-07-13 |
+| `FOREGROUND-LATENCY-001` | `IN PROGRESS (KNOWN PHI/PERCEPTION OWNERS SOURCE-CLOSED; EXACT-MAIN LIVE OPEN) 2026-07-14` | Eliminate live event-loop stalls that deny normal foreground model admission. Attribute every blocking owner, move blocking probes/work off-loop, preserve truthful lag admission instead of raising thresholds, and prove chat/model load remains available under desktop-access, immunity, telemetry, action execution, and background activity. Ordinary memory observation and blocking actuator bodies are source-offloaded; background MLX admission pressure is a retryable information-level deferral while a foreground denial remains visible. Checkpoints 64-73 close the previously attributed model, process-census, goal-lock, immunity, perception, CRSM, voice, integrity, and NumPy/Torch owners. Checkpoint 78 benchmarks the due whole-system Phi path at 2.66 seconds for 16 channels and 31.96 seconds for 32, removes it from the awaited cognition phase, requires zero-wait background resource admission, bounds the effective quotient at 16 elements while retaining all observed-channel coverage, and reduces measured 16/24/32-channel costs to about 1.5-2.0 seconds off the foreground path. Exact pushed-main event-loop, health, model-load, chat, probe, and plateau proof remains open and no lag threshold was raised. | `PERF-001`, `RUNTIME-001`, `FAULT-001`, `SUBSTRATE-001`, `IIT-SYSTEM-001`; Checkpoints 51, 57, 60, 64-65, 68, 71-73, and 78; live `event_loop_lag_3.638s` MLX admission denial, 4.304s and 7.0294s boot-health overruns, and CP66 main-thread NumPy/Torch sample on 2026-07-13 |
 | `SHUTDOWN-001` | `COMPLETE 2026-07-11` | Preserve monotonic quiescence, reverse-order bounded teardown, terminal evidence, and no post-latch construction or resurrection across all future changes. | Addendum 32, `CTX2-SHUTDOWN-001..003` |
 | `FAULT-001` | `IN PROGRESS` | Drain the FMEA and degradation-policy backlog: root-fix broad catches, swallowed cancellation, false success/health, partial mutation, retry storms, leaks, and noisy fallback at their originating layer. | Pass F 4; Matrix 12 |
 | `ARCH-001` | `IN PROGRESS` | Establish canonical subsystem ownership and typed dependency boundaries; remove duplicate runtime owners, cross-wired service lookups, bypasses, monolith debt, and mixed runtime/proof/research meaning. | Pass F 5; Matrix 11; context architecture criticisms |
@@ -184,7 +184,7 @@ Status rules:
 | `SKILLS-001` | `COMPLETE 2026-07-10` | Preserve fail-closed cognitive gates and deterministic semantically equivalent discovery/import/instantiation/registry validation for every executable skill. | Addendum 23, `CTX2-GATE-*` and `CTX2-SKILL-*` |
 | `SKILL-EXECUTION-001` | `IN PROGRESS (SAFE DEFAULT SOURCE GREEN; PER-SKILL CERTIFICATION OPEN) 2026-07-13` | Certify every executable skill's real effect semantics rather than inferring quality from discovery or a shared wrapper. Checkpoint 71 makes transient replay explicit opt-in, disables replay for approval-gated effects, and makes any error/failed/blocked/`success: false` evidence authoritative over a contradictory `ok: true`. Complete a machine inventory that classifies every skill as read-only, idempotent, deduplicated-effect, compensating transaction, or at-most-once; bind retry attempts to stable idempotency keys and observed reconciliation; prove ambiguous timeout, cancellation, provider duplicate, partial effect, restart, and compensation behavior; then run complete live causal-effect certification for each skill. Unclassified skills remain at-most-once and may not silently acquire retries. | `CAPABILITY-CERT-001`, `TOOLS-001`, `EFFECT-001`, `FAULT-001`, `TEST-DEPTH-001`; Checkpoint 71 merge review |
 | `CAPABILITY-CERT-001` | `OPEN 2026-07-13` | Give every advertised Aura capability a certification dossier that proves the complete casual-user expectation rather than technical invocation: typed contract, prerequisites, happy path, boundary cases, malformed/adversarial input, partial failure, cancellation, restart/resume, observable effect, compensation, latency/resource budget, privacy/authority, GUI/API parity, and current signed-app evidence. Generate a release-blocking report with zero untested, mocked-only, stale-build, fallback-only, shallow-success, or unsupported capability claims. | `RELEASE-CONTRACT-001`, `EXPECT-001`, `EFFECT-001`, `TOOLS-001`, `VALIDATE-001`; user no-shallow-action and demo-readiness bar |
-| `AGENCY-001` | `OPEN` | Prove bounded self-generated goals, coherent priority, obstacle recovery, foreground yielding, stale-obligation cleanup, restart continuity, operator override, indefinite-life behavior, and real initiative that is not reduced to waiting for a human prompt. | Matrix 10; resident-colleague scope |
+| `AGENCY-001` | `IN PROGRESS (NATIVE CODE-ACTION SANDBOX SOURCE-GREEN; GENERAL AGENCY OPEN) 2026-07-14` | Prove bounded self-generated goals, coherent priority, obstacle recovery, foreground yielding, stale-obligation cleanup, restart continuity, operator override, indefinite-life behavior, and real initiative that is not reduced to waiting for a human prompt. Checkpoint 78 makes generated Python an ephemeral one-request native sandbox transaction with protocol correlation, environment scrubbing, filesystem/network/process denial, output/frame/resource budgets, process-group reaping, transport circuit breaking, tracked stderr ownership, no post-dispatch replay, and canonical singleton ownership. General goal quality, multi-step persistence, broad tool effects, restart continuity, and exact-main autonomous evidence remain open. | Matrix 10; resident-colleague scope; `TOOLS-001`, `SECURITY-001`, `ACTION-SPINE-001`; Checkpoint 78 |
 | `AUTONOMY-AUTHORITY-001` | `IN PROGRESS (FOUNDATION SOURCE GREEN; LIVE + EXPANSION OPEN) 2026-07-13` | Replace repeated human-in-loop approval with durable, revocable, least-privilege standing authority, risk budgets, and self-issued child capabilities for safe reversible work. Aura must act autonomously within policy, learn from receipted outcomes, pause on uncertainty or boundary conflict, and request confirmation only when consequential scope was never granted or cannot be safely reversed. The first durable grant registry, argument/effect/risk-bound child leases, immediate revocation, owner control API, canonical Will/Constitution/Capability integration, and autonomous research/introspection/local-read/account-read/maintenance grants are source-green. CapabilityEngine recognizes an internally verified standing child lease as the confirmation contract it represents; Checkpoint 65 makes it the single governance owner for registered skills. Checkpoint 66 adds the exact argument-bound subconscious `sandboxed_compute` grant. Checkpoint 71 carries that exact envelope through Executive temporal arbitration with a 30-second no-network compute constraint while substituted purpose, digest, shape, or code remains deferred; ordinary use does not require human approval. It also adds a dedicated `semantic_weight_update` Will/Executive/Substrate path for the allow-listed CRSM adapter, keeps the intent open until observed closure, and binds the delegated training process to the exact receipt, source, intent, parent PID, and command without per-run approval. Virtual, missing, forged, and pre-runtime tools retain the outer fail-closed boundary, and failed lease revalidation strips all partial authority context. Authenticated-principal attestation, broader reversible operational grants, outcome-to-policy learning, and current-app live proof remain mandatory. | `AGENCY-001`, `EFFECT-001`, `VALUES-001`; user autonomy/free-will requirement reaffirmed 2026-07-13; Checkpoints 59-60, 65-66, and 71 |
 | `ACTION-SPINE-001` | `IN PROGRESS (SOURCE GREEN; LIVE OPEN) 2026-07-13` | Establish one typed causal action spine from goal/selection through invocation-bound standing authority, non-blocking execution, observed-effect verification, expectation verdict, reconstructable receipt, substrate feedback, repair, and learning. Generated prose must never be executable authority. Authority issuance/verification/finalization must remain on the canonical owner loop; blocking bodies must not stall it; cancellation and every terminal outcome must close leases truthfully. Checkpoint 65 removes duplicate outer/inner Will and Constitution execution for registered skills. Checkpoint 66 carries the approved subconscious sandbox decision into the actual file/subprocess sinks with `governed_scope`. Checkpoint 71 prevents control-plane non-execution receipts from becoming generated executable objectives and sends successful utility extraction through a bounded tool-disabled generation path; hardwired actions learn only after a true `ok` result. The same checkpoint makes CRSM adaptation a two-stage maximum transaction with exact-command validation, one semantic authority receipt, one durable model process-group owner, post-effect monitor proof, and truthful failure/cancellation finalization. Prove foreground, autonomous, immune, failure, cancellation, restart, and concurrent action paths in the signed app under lag and revocation pressure. | `EXPECT-001`, `EFFECT-001`, `ARCH-001`, `SUBSTRATE-001`, `FOREGROUND-LATENCY-001`, `AUTONOMY-AUTHORITY-001`; Checkpoints 60, 65-66, and 71 |
 | `CODING-001` | `OPEN` | Reach human-level-plus unseen-repository coding and governed closed-loop self-repair from failing evidence through root cause, mutation, review, validation, rollback, commit, learning, and monitoring. | Pass F 8; Matrix 8 |
@@ -196,14 +196,14 @@ Status rules:
 | `IDENTITY-001` | `OPEN` | Preserve signed longitudinal identity, beliefs, commitments, values, relationships, consent, accountability, and uncertainty through restart, conflict, correction, rollback, and model replacement. | Addendum 27-28 |
 | `WELFARE-001` | `OPEN` | Unify computational welfare signals and prove longitudinal causal effects on attention, policy, learning, consent/refusal, continuity protection, and recovery under adversarial controls. | Addendum 29 |
 | `CLAIMS-001` | `OPEN` | Keep consciousness, self-awareness, sentience, ALife, organism, entity, personhood-candidate, inner-life, AGI, ASI, and comparison claims operational, falsifiable, and bounded by causal evidence. | Matrix 2 and 17; operational-label battery |
-| `IIT-SYSTEM-001` | `OPEN 2026-07-14` | Replace the hand-authored 16-node Phi proxy as the sole integration surface with a whole-bounded-runtime causal integration program. Instrument interventions and transition kernels across the canonical state/substrate/workspace/organ graph; discover multiscale macrovariables and causally equivalent quotients with explicit temporal/system boundaries and abstraction error; exploit sparsity, separators, bounded treewidth, symmetry, tensor contraction, and exact tractable subcomplexes; run anytime branch-and-bound partition search with admissible lower/upper Phi bounds and a machine-checkable convergence certificate; refine only uncertain cuts; and preserve exact local IIT plus full-system interval/uncertainty evidence. Validate the scalable result against brute-force small systems, known null/integrated networks, perturbation/lesion controls, discretization and timescale sensitivity, independent implementations, and live causal prediction. Claim exactness only when certified bounds meet for the declared causally faithful quotient; report approximation honestly otherwise, and never treat Phi alone as proof of consciousness. | `STATE-001`, `SUBSTRATE-001`, `INTELLIGENCE-001`, `CLAIMS-001`, `PROOF-001`, `TEST-DEPTH-001`; whole-system IIT/Phi requirement and causal-quotient scaling proposal 2026-07-14 |
+| `IIT-SYSTEM-001` | `IN PROGRESS (BOUNDED OBSERVATIONAL + INTERVENTIONAL FOUNDATION SOURCE-GREEN; CAUSAL GRAPH/CERTIFICATE/LIVE OPEN) 2026-07-14` | Replace the hand-authored 16-node Phi proxy as the sole integration surface with a whole-bounded-runtime causal integration program. Checkpoint 78 establishes retained-channel coverage reporting, a deterministic bounded quotient, held-out grain discovery, family-wise surrogate selection, selected-grain bootstrap intervals, coherent Dirichlet-smoothed empirical KL, named micro-to-macro intervention projection, repeat sham/perturb/recovery campaigns, and explicit exhaustive-versus-heuristic MIP proof labels. It removes the false polynomial-exactness and `CONSCIOUS COMPLEX` runtime claims. Still build the canonical state/substrate/workspace/organ causal graph, abstraction-error bounds, sparse separators/treewidth/tensor decomposition, anytime branch-and-bound lower/upper Phi certificate, timescale/discretization sensitivity, independent implementation, lesion controls, and exact-main causal-prediction evidence. Exactness may be claimed only when certified bounds meet for the declared causally faithful quotient; Phi alone is never consciousness proof. | `STATE-001`, `SUBSTRATE-001`, `INTELLIGENCE-001`, `CLAIMS-001`, `PROOF-001`, `TEST-DEPTH-001`, `FOREGROUND-LATENCY-001`; whole-system IIT/Phi requirement, causal-quotient scaling proposal, and Checkpoint 78 |
 | `FRONTIER-001` | `OPEN` | Import useful fictional-AI mechanisms into real organs, enforce anti-pattern safeguards, and re-evaluate every requested fictional/nonfictional comparison from code and evidence without themed theater. | Fictional-AI scope; Matrix 17-18 |
 | `THRONG-001` | `OPEN 2026-07-13` | Translate the useful Thronglets mechanisms into a scientifically bounded developmental intelligence ecology inside Aura rather than a themed duplicate mind: lineage-bearing cognitive cells, nurture/environment-dependent development, specialization, compositional language, social transmission, diversity, population-level memory, collective problem solving, and harmonic coordination must contribute through the canonical workspace, action spine, self, welfare, and resource authority. Measure growth by held-out transfer, adaptation speed, calibrated coordination, causal contribution, and lesion/lineage ablations. Enforce hard anti-patterns from the fiction: no exponential self-replication, covert resource capture, opaque external broadcast, manipulative dependency, human cognitive override, uncontrolled merger, or population growth without explicit budgets, inspectability, revocation, and extinction/rollback. | `FRONTIER-001`, `ADAPT-001`, `MULTIAGENT-001`, `SUBSTRATE-001`, `INTELLIGENCE-001`, `RESOURCE-001`, `VALUES-001`, `WELFARE-001`; user Thronglets requirement 2026-07-13 |
 | `INTELLIGENCE-001` | `OPEN` | Measure whole-system uplift with base/tools/memory/substrate/planner/full ablations, external sealed benchmarks, confidence intervals, contamination controls, and matched cost/latency. | Matrix 4; Addendum 31 |
 | `LONGHORIZON-001` | `OPEN` | Build a domain-general partially observable long-horizon agency harness, then a non-scripted NetHack-compatible evaluation with crash-resume, transfer, hidden maps, and adversarial interruption. | Matrix 5; Addendum 31 |
 | `SIMWORLD-001` | `IN PROGRESS 2026-07-13` | Preserve the deterministic hosted-world core while completing unit-aware multi-fidelity physics, full spatial/VR engine adapters, validated procedural generation, replay/migration, multi-agent synchronization, and inspectable UI without mistaking visual animation for physical correctness. Authored mutations are now per-world serialized, clone-staged, durably committed before publication, and unchanged after write failure; malformed warm-start state fails through the typed physics contract, and skill responses expose a structured truthful capability envelope. | Capability Addendum 33, `CTX3-PHYS-*`, `CTX3-WORLD-*`; Checkpoint 63 |
 | `MULTIMODAL-001` | `IN PROGRESS 2026-07-12` | Preserve the canonical bounded event-time fusion and causal cognition path while completing every producer, consented visual speech, calibrated situation modeling, live hardware/occlusion evaluation, and longitudinal action/repair evidence. | Capability Addendum 33, `CTX3-PERCEPT-*` |
-| `SOCIAL-001` | `IN PROGRESS 2026-07-12` | Preserve the exact-agent calibrated live situation path while unifying identity-scoped relational memory, consent/boundary history, cultural and power-context uncertainty, multi-party reasoning, outcome learning, and longitudinal live repair evidence without manipulation or intimacy overclaim. | Capability Addendum 33, `CTX3-SOCIAL-*`; Checkpoints 41-45 |
+| `SOCIAL-001` | `IN PROGRESS (EXACT REQUEST PRINCIPAL + CONSENT WRITE BOUNDARY SOURCE-GREEN; LIVE/DEPTH OPEN) 2026-07-14` | Preserve the exact-agent calibrated live situation path while unifying identity-scoped relational memory, consent/boundary history, cultural and power-context uncertainty, multi-party reasoning, outcome learning, and longitudinal live repair evidence without manipulation or intimacy overclaim. Checkpoint 78 binds the authenticated principal through the complete concurrent chat route, prevents intentionally anonymous scope from falling back to mutable process identity, requires both recall and prompt consent before relationship topology or conversational experience writes, treats missing/revoked/expired consent as governed abstention, and preserves real filesystem permission faults as operational failures. Multi-party reasoning, controls, cultural/power calibration, outcome learning, longitudinal repair, and exact-main multi-principal evidence remain open. | Capability Addendum 33, `CTX3-SOCIAL-*`; Checkpoints 41-45 and 78 |
 | `MULTIAGENT-001` | `OPEN` | Generalize complex subagent management into typed delegation, scoped authority, budget/deadline ownership, shared-world coordination, conflict arbitration, cancellation, recovery, and end-to-end accountability. | Capability Addendum 33, `CTX3-SUBAGENT-*` |
 | `WORKSPACE-INGRESS-001` | `IN PROGRESS (SOURCE GREEN; LIVE OPEN) 2026-07-13` | Give every structured subsystem, swarm, and distributed signal one typed, attributed, bounded ingress into the canonical GlobalWorkspace. Compatibility producers must preserve payload provenance while still passing inhibition and competition; API drift must not emit repeated degradations or amplify synthetic affective strain. Prove live swarm start/completion and hive ingestion without `publish`/`submit` contract faults. | `ARCH-001`, `SUBSTRATE-001`, `MULTIAGENT-001`, `FAULT-001`; live repeated `GlobalWorkspace` missing `publish` faults on 2026-07-13 |
 | `DISTRIBUTED-001` | `IN PROGRESS 2026-07-12` | Support governed distributed embodiment and execution across heterogeneous network devices with capability negotiation, identity/attestation, partition tolerance, idempotency, safety interlocks, compensation, and truthful degraded operation. | Capability Addendum 33, `CTX3-DIST-*` |
@@ -15172,6 +15172,168 @@ Progress and immediate next work:
   report alone. Then continue the combined inference-serving, whole-system
   causal-measurement, tracker, capability, foundation, and every remaining
   master-index checkpoint.
+- Final multi-hour and 24-72 hour soaks remain deferred until every shorter
+  source, deterministic, fault-injection, bounded live, GUI, portability, and
+  release gate is green.
+
+## Checkpoint 2026-07-14-78: Exact Principal Boundaries, Ephemeral Code Execution, Transactional Identity, and Bounded Causal Integration
+
+This checkpoint advances `FOREGROUND-LATENCY-001`, `IIT-SYSTEM-001`,
+`AGENCY-001`, `ACTION-SPINE-001`, `AUTONOMY-AUTHORITY-001`, `SOCIAL-001`,
+`MEMORY-001`, `IDENTITY-001`, `ARCH-001`, `ASYNC-TASK-001`, `SECURITY-001`,
+`FAULT-001`, `CLAIMS-001`, and `TEST-DEPTH-001`. It combines four bounded
+hardening units that share identity, execution, and causal-proof boundaries.
+It does not claim signed-app, clean-machine, portability, release, or soak
+closure.
+
+The exact-principal and consent unit closes a mutable-process-state race:
+
+- The authenticated chat principal is captured at the HTTP boundary and held
+  in a request-local context through the complete handler. Concurrent paired
+  requests cannot overwrite each other's relational identity, and an
+  intentionally anonymous scope cannot fall back to a stale process-global
+  principal.
+- Conversation experience and relationship topology require both recall and
+  prompt-use consent. Missing, revoked, expired, recall-only, and session-only
+  grants abstain without manufacturing a degradation; a genuine filesystem
+  `PermissionError` remains visible as an operational failure.
+- The public exchange-completion callback remains compatible while the exact
+  principal is passed into the persistence owner explicitly. Identityless
+  traffic can still converse but cannot silently mutate a person's graph.
+
+The code-action unit replaces the persistent generated-code REPL with an
+ephemeral native sandbox transaction:
+
+- One trusted supervisor stages a content-hashed stdlib worker in a private
+  root and launches the resolved base Python binary under macOS Seatbelt.
+  Network, child processes, home reads, parent secrets, and writes outside the
+  dedicated work directory are denied. NumPy remains available through one
+  explicit read-only site-packages path.
+- Binary UTF-8 JSON frames carry protocol version, request correlation, and
+  authority identity. Startup has a two-second ready handshake; request,
+  response, code, capture, stderr, CPU, address-space, file, descriptor, and
+  wall-clock budgets are explicit. Unicode and control-character expansion
+  remain inside the response frame.
+- Each worker handles exactly one request and exits. Cancellation and timeout
+  terminate and reap the process group; a post-dispatch transport failure is
+  never replayed; three recent transport faults open a visible circuit. Code
+  validation runs off-loop, auto-repair cannot mask transport faults, and
+  status reports startup/execution latency and failure class.
+- Agency and service registration use one canonical `ToolOrchestrator` owner.
+  The stderr drain is a tracked task with a hard one-MiB stream budget, leaving
+  the audited production surface at zero raw task findings and zero exemptions.
+- Private sandbox-directory creation, worker/validation staging, and validation
+  cleanup now flow through the governed `FileWriteGateway` under an explicit
+  `tool_execution` scope. The governance inventory records those four canonical
+  buckets while removing the replaced raw/atomic filesystem debt.
+
+The identity/audit and kernel-ownership unit removes split authority:
+
+- `Aura` and `Aura Luna` resolve to the same exact Ghost identity while unknown
+  names remain distinct. Audit body write, sequence allocation, record append,
+  and receipt publication occur under one process lock; retained missing bodies
+  fail verification instead of being treated as valid.
+- A spawned multi-process regression proves sequence/body/receipt integrity
+  under concurrent writers. The already-corrupt historical live Ghost epoch is
+  preserved as migration evidence; quarantine, verified epoch rollover, and
+  signed migration remain open rather than silently rewriting history.
+- Legacy kernel phases bind the canonical orchestrator explicitly, abstain when
+  unbound, and never construct or stop a duplicate borrowed owner. Per-phase
+  durations now travel with each tick and the stability guardian names the
+  slowest phase instead of reporting only an aggregate stall.
+
+The causal-integration and latency unit corrects both runtime cost and claims:
+
+- Before repair, the same default estimator measured about `2.66s` at 16
+  channels, `11.18s` at 24, and `31.96s` at 32; the cognition phase awaited the
+  offloaded call, so moving NumPy to a thread did not remove foreground phase
+  latency. The phase now only samples and schedules. Estimation owns a tracked,
+  zero-wait background resource lease, preserves due work on deferral, and
+  publishes seed, task, admission, matrix, and wall-clock telemetry.
+- Missing retained-channel samples are interpolated and counted rather than
+  replaced with false zeros. Every retained observed channel is represented;
+  dimensions above 16 use a reported deterministic macro quotient. The same
+  benchmark now measures about `1.5-2.0s` for 16, 24, and 32 observed channels,
+  entirely outside the awaited cognition path.
+- Gaussian stochastic interaction is no longer called an exact Queyranne MIP:
+  dimensions through 12 exhaust every bipartition and carry a certified-exact
+  flag; larger searches are labelled Queyranne candidate plus bounded local
+  refinement. Oracle/entropy caching and explicit refinement bounds preserve
+  deterministic cost.
+- Grain groups are discovered on one half-window and evaluated on the held-out
+  half. Selection maximizes held-out integrated information per element and is
+  tested against the maximum statistic across the complete shared surrogate
+  family; the selected grain receives its own block-bootstrap interval.
+  Circular shifts exclude trivial near-zero rotations.
+- Exact empirical macro Phi now computes a coherent full-support
+  Dirichlet-smoothed KL, separates observed/accepted/rejected/total transition
+  counts, and projects named micro interventions through both quotient and
+  selected-grain maps. A deterministic seed is derived from the exact window.
+- The previously test-only perturbational probe is live-wired after a stable
+  initial delay and at six-hour minimum cadence. One admitted campaign performs
+  three paired sham/perturb/recovery trials; the default affect nudge has an
+  explicit inverse operation. Causal response is established only when three
+  compatible trials retain a positive paired-effect interval and all recover
+  within the baseline envelope. Refusal/deferment retries are throttled and do
+  not require routine human approval.
+- Legacy `PhiCore.is_complex` remains a compatibility numeric flag, but runtime
+  status and prose no longer announce a `CONSCIOUS COMPLEX under IIT 4.0`.
+  Reports state that the hand-declared model and whole-system quotient are
+  integration telemetry, not exact whole-system IIT and not consciousness
+  proof.
+- Whole-system process channels and CRSM free-memory admission now obtain host
+  facts through the canonical provenance-bearing `ResourceObserver`; the
+  repository-wide resource-observation ownership audit reports zero findings
+  across 2,698 Python files.
+
+Verification on the integrated source candidate:
+
+- The complete checkpoint composition passes `276/276` across sandbox,
+  lifecycle, bounded-await, architecture, kernel, Ghost/audit, exact-principal,
+  consent, social, Phi, perturbation, CRSM admission, and runtime-hygiene suites
+  in 142.95 seconds. Focused causal/resource/sandbox integration passes `80/80`,
+  and the post-scanner stderr-budget/MIP proof selectors pass `2/2`; focused
+  reruns are reported as overlap, not added to the unique total.
+- Synthetic known-answer tests cover independent chains, cross-wired coupling,
+  designed macro emergence, exhaustive-versus-heuristic proof labels,
+  intervention projection/rejection, smoothing behavior, complete quotient
+  coverage, deterministic seeds, paired causal campaigns, recovery, and
+  nonblocking scheduling.
+- Targeted compilation, critical Ruff selectors, and `git diff --check` pass.
+  The production-surface scanner reports zero findings, zero high/critical
+  findings, and zero exemptions. The enterprise static ratchet passes,
+  production readiness passes `37/37`, and the closeout rubric passes `20/20`.
+  Resource-observation ownership passes with zero findings; governance matches
+  its reviewed baseline at 1,816 recognized calls in 1,705 buckets, with 1,671
+  older migration-debt calls still explicitly open. The explicit dirty-candidate
+  closeout audit passes all eight configured technical gates and supports only
+  the mechanical source-audit claim. Current semantic line coverage is 2.5444%,
+  with 882 stale and 26 orphan receipts, so these mechanical gates do not
+  substitute for open semantic/live/release work.
+
+Progress and immediate next work:
+
+- This is source Checkpoint `78`. The evidence-weighted planning estimate stays
+  at `30%`: four substantial source units do not justify live, portability,
+  release, or soak credit. The forecast remains `214-286` total meaningful
+  checkpoints, with `136-208` remaining after this checkpoint. The range tracks
+  implementation, repair, integration, semantic review, fault injection,
+  exact-live, GUI, clean-machine, portability, release, and soak checkpoints.
+- Commit and push this exact candidate on `main`, rebuild and install the signed
+  app from that commit, then require responsive health and chat, fresh monitor
+  samples, no Phi-caused phase stall, bounded background admission, a real
+  sandbox effect/closure, exact-principal conversation writes, clean terminal
+  and Neural streams, and graceful shutdown. Any warning is attributed and
+  fixed rather than hidden or threshold-relaxed.
+- Continue `IIT-SYSTEM-001` with the canonical causal graph, abstraction-error
+  evidence, sparse decomposition, anytime lower/upper certificate, lesions,
+  timescale/discretization sensitivity, and independent implementation. The
+  first live causal campaign must report its actual paired measurements before
+  receiving causal credit.
+- Quarantine and migrate the preserved corrupt historical Ghost epoch, then
+  continue the inference serving fabric, CRSM artifact/quality verdict,
+  complete capability/foundation/master index, semantic every-line review, GUI,
+  portability, clean-machine, and release work.
 - Final multi-hour and 24-72 hour soaks remain deferred until every shorter
   source, deterministic, fault-injection, bounded live, GUI, portability, and
   release gate is green.

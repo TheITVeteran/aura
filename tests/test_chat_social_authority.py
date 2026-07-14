@@ -307,3 +307,53 @@ async def test_relational_principal_scope_is_task_local_and_restored():
 
     assert sorted(results) == [("alice", ""), ("bryan", "")]
     assert current_relational_principal() == ""
+
+
+@pytest.mark.asyncio
+async def test_paired_chat_boundary_holds_exact_principal_for_full_concurrent_turn(
+    monkeypatch,
+):
+    entered = 0
+    both_entered = asyncio.Event()
+    observed: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(
+        chat_routes,
+        "_authenticated_chat_principal",
+        lambda request: str(request.headers.get("x-test-principal") or ""),
+    )
+
+    @chat_routes._paired_chat_response_boundary
+    async def handler(body, request):
+        nonlocal entered
+        entered += 1
+        if entered == 2:
+            both_entered.set()
+        await both_entered.wait()
+        before = current_relational_principal()
+        await asyncio.sleep(0)
+        observed.append((before, current_relational_principal()))
+        return JSONResponse({"response": f"hello {body.message}", "status": "ok"})
+
+    def scoped_request(principal: str) -> Request:
+        return Request(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/api/chat",
+                "headers": [(b"x-test-principal", principal.encode("ascii"))],
+                "client": ("127.0.0.1", 4242),
+            }
+        )
+
+    ServiceContainer.clear()
+    try:
+        await asyncio.gather(
+            handler(SimpleNamespace(message="one", session_id="s1"), scoped_request("bryan")),
+            handler(SimpleNamespace(message="two", session_id="s2"), scoped_request("alice")),
+        )
+    finally:
+        ServiceContainer.clear()
+
+    assert sorted(observed) == [("alice", "alice"), ("bryan", "bryan")]
+    assert current_relational_principal() == ""

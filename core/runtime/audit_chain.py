@@ -33,7 +33,7 @@ import json
 import logging
 import os
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -310,7 +310,65 @@ class AuditChain:
                 self._next_seq = seq + 1
                 return entry
 
-    def _durable_append(self, entry: ChainEntry) -> None:
+    def append_with_body(
+        self,
+        *,
+        receipt_id: str,
+        kind: str,
+        timestamp: float,
+        body_factory: Callable[[int], dict[str, Any]],
+        body_writer: Callable[[int, dict[str, Any]], None],
+    ) -> tuple[ChainEntry, dict[str, Any]]:
+        """Assign a sequence and persist its sidecar body under one process lock.
+
+        The body is written before its chain entry, so a crash can leave only an
+        orphan body at the assigned sequence. A later writer safely overwrites
+        that orphan; it can never produce a receipt pointing at another body.
+        """
+        if not receipt_id:
+            raise ValueError("receipt_id is required")
+        if not kind:
+            raise ValueError("kind is required")
+
+        with self._lock:
+            with self._process_append_lock():
+                self._refresh_head_if_disk_changed_locked()
+                seq = self._next_seq
+                body = body_factory(seq)
+                if not isinstance(body, dict):
+                    raise TypeError("body_factory must return a dictionary")
+                if "seq" in body and int(body["seq"]) != seq:
+                    raise ValueError(
+                        f"sidecar body sequence mismatch: assigned {seq}, body has {body['seq']}"
+                    )
+
+                content_hash = hash_receipt_body(body)
+                prev_hash = self._head_hash
+                entry_hash = ChainEntry.compute_entry_hash(
+                    seq=seq,
+                    receipt_id=receipt_id,
+                    kind=kind,
+                    content_hash=content_hash,
+                    timestamp=timestamp,
+                    prev_hash=prev_hash,
+                )
+                entry = ChainEntry(
+                    seq=seq,
+                    receipt_id=receipt_id,
+                    kind=kind,
+                    content_hash=content_hash,
+                    timestamp=timestamp,
+                    prev_hash=prev_hash,
+                    entry_hash=entry_hash,
+                )
+
+                body_writer(seq, body)
+                self._durable_append(entry, force_sync=True)
+                self._head_hash = entry_hash
+                self._next_seq = seq + 1
+                return entry, body
+
+    def _durable_append(self, entry: ChainEntry, *, force_sync: bool = False) -> None:
         line = json.dumps(entry.to_dict(), sort_keys=True, ensure_ascii=False) + "\n"
         # O_APPEND on POSIX guarantees the append is atomic for writes
         # under PIPE_BUF; one JSON line is well under that on every Unix.
@@ -318,7 +376,7 @@ class AuditChain:
         os.write(fd, line.encode("utf-8"))
         self._unsynced_entries += 1
         synced_now = False
-        if self._should_fsync_now():
+        if force_sync or self._should_fsync_now():
             self._fsync_fd(fd)
             self._unsynced_entries = 0
             synced_now = True
@@ -386,15 +444,24 @@ class AuditChain:
 
     def head_hash(self) -> str:
         with self._lock:
+            self._refresh_head_if_disk_changed_locked()
             return self._head_hash
 
     def length(self) -> int:
         with self._lock:
+            self._refresh_head_if_disk_changed_locked()
             return self._next_seq
 
     def entries(self) -> list[ChainEntry]:
         with self._lock:
             return [ChainEntry(**r) for r in self._iter_entries()]
+
+    def last_entry(self) -> ChainEntry | None:
+        """Return the current durable tail after observing external writers."""
+        with self._lock:
+            self._refresh_head_if_disk_changed_locked()
+            record = self._read_last_record()
+            return ChainEntry(**record) if record is not None else None
 
     def verify(
         self,

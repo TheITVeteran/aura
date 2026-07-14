@@ -20,6 +20,7 @@ from typing import Any
 
 from core.runtime.atomic_writer import async_atomic_write_text
 from core.runtime.errors import record_degradation
+from core.runtime.resource_observation import get_resource_observer
 
 logger = logging.getLogger("Aura.CRSMClosureScheduler")
 
@@ -288,10 +289,12 @@ class CRSMClosureScheduler:
 
     def _ram_admits(self) -> tuple[bool, str]:
         try:
-            import psutil
-
-            free_gb = psutil.virtual_memory().available / (1024**3)
-        except (ImportError, AttributeError, RuntimeError, OSError, ValueError) as exc:
+            memory = get_resource_observer().memory(include_process_tree=False)
+            if not memory.available:
+                detail = memory.error or "unavailable"
+                return False, f"ram_probe_unavailable:{detail}"
+            free_gb = memory.available_bytes / (1024**3)
+        except (AttributeError, RuntimeError, OSError, TypeError, ValueError) as exc:
             return False, f"ram_probe_unavailable:{type(exc).__name__}"
         required_gb = self._required_free_gb_cache
         if free_gb < required_gb:

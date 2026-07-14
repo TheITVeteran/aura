@@ -13,17 +13,21 @@ gap.  This module implements the strongest honest position available:
 
   RAIL A — WHOLE-SYSTEM CONTINUOUS Φ.  Gaussian/VAR integrated information
       ("stochastic interaction", Ay 2003; Barrett & Seth 2011; Oizumi &
-      Kitazono practical-Φ) over the full channel matrix — no hand-picked
-      16-node model, no binarization, no toy TPM.  The minimum-information
-      partition is found EXACTLY by Queyranne's algorithm for symmetric
-      submodular minimization in O(n³) oracle calls — a real MIP, not a
-      spectral heuristic.
+      Kitazono practical-Φ) over a bounded quotient that covers every retained
+      runtime channel — no hand-picked cognitive node list and no toy TPM.
+      The minimum-information
+      partition is found by exhaustive search at tractable dimensions and by
+      a labelled Queyranne candidate plus deterministic local refinement at
+      larger dimensions.  Stochastic interaction is symmetric but is not
+      generally submodular, so the polynomial search is never misreported as
+      an exact MIP.
 
   RAIL B — GRAIN DISCOVERY (causal emergence; Hoel/Albantakis/Tononi).
       The complex is DERIVED, not assumed: hierarchical coarse-grainings
       of the channel set are searched and each grain is scored against its
-      own surrogate null; the emergent grain is the one whose integration
-      is most surely non-chance.  Macro may legitimately beat micro.
+      own surrogate null; the emergent grain maximizes held-out integrated
+      information per element, with a family-wise surrogate test over the
+      complete grain search.  Macro may legitimately beat micro.
 
   RAIL C — EXACT DISCRETE Φ AT THE DERIVED GRAIN.  For k ≤ 12 macro
       elements, system integrated information is computed by EXHAUSTIVE
@@ -49,8 +53,9 @@ from __future__ import annotations
 import logging
 import math
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 import numpy as np
 
@@ -58,9 +63,10 @@ from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.IntegratedInformation")
 
-SCHEMA_VERSION = 1
-ESTIMATOR_NAME = "gaussian_stochastic_interaction.queyranne_mip.v1"
-DISCRETE_ESTIMATOR_NAME = "empirical_state_phi.exact_bipartition.v1"
+SCHEMA_VERSION = 2
+ESTIMATOR_NAME = "gaussian_stochastic_interaction.bounded_mip.v2"
+DISCRETE_ESTIMATOR_NAME = "empirical_state_phi.exact_bipartition.v2"
+EXACT_GAUSSIAN_MIP_MAX_ELEMENTS = 12
 
 _LOG2PIE = math.log(2.0 * math.pi * math.e)
 _EPS = 1e-10
@@ -135,6 +141,27 @@ class LaggedGaussian:
         return self._cond_entropy(idx + n, idx)
 
 
+@dataclass(frozen=True)
+class MIPSearchResult:
+    """A minimum-partition result with an explicit proof boundary."""
+
+    part: tuple[int, ...]
+    complement: tuple[int, ...]
+    phi: float
+    method: str
+    certified_exact: bool
+    evaluated_cuts: int
+
+
+@dataclass(frozen=True)
+class InterventionalTransition:
+    """One named before/after row produced by a real intervention."""
+
+    channel_names: tuple[str, ...]
+    before: tuple[int, ...]
+    after: tuple[int, ...]
+
+
 def stochastic_interaction(model: LaggedGaussian,
                            parts: list[tuple[int, ...]]) -> float:
     """SI(P) = Σ_k h(M_k,t | M_k,t-1) − h(X_t | X_{t-1})  (nats, ≥ 0 up to
@@ -201,29 +228,99 @@ def queyranne_min_bipartition(
     return best_set, float(best_val)
 
 
-def minimum_information_bipartition(
-    model: LaggedGaussian,
-) -> tuple[tuple[int, ...], tuple[int, ...], float]:
-    """The exact MIP (bipartition) under the Gaussian model.
+def search_minimum_information_bipartition(model: LaggedGaussian) -> MIPSearchResult:
+    """Find the best bounded bipartition and state whether it is certified.
 
-    f(S) = h(S_t|S_{t-1}) + h(S̄_t|S̄_{t-1}) − h(X_t|X_{t-1}) is symmetric by
-    construction and submodular for Gaussians — Queyranne applies exactly.
-    Returns (S, S̄, Φ_raw) with Φ_raw = f(MIP) clipped at 0.
+    Stochastic interaction is symmetric, but unlike mutual information it is
+    not generally submodular.  Queyranne is therefore a strong polynomial
+    candidate search, not an exactness proof.  At tractable dimensions this
+    function exhausts every unique bipartition; above that boundary it labels
+    the result heuristic and adds deterministic one-move local refinement.
     """
     n = model.n_channels
     universe = tuple(range(n))
     h_whole = model.h_whole()
+    part_entropy: dict[tuple[int, ...], float] = {}
+    cut_values: dict[tuple[int, ...], float] = {}
+
+    def canonical(subset: tuple[int, ...]) -> tuple[int, ...]:
+        s = tuple(sorted(set(subset)))
+        comp = tuple(i for i in universe if i not in set(s))
+        return min(s, comp, key=lambda item: (len(item), item))
+
+    def h_part(subset: tuple[int, ...]) -> float:
+        key = tuple(sorted(subset))
+        if key not in part_entropy:
+            part_entropy[key] = model.h_part(key)
+        return part_entropy[key]
 
     def f(subset: tuple[int, ...]) -> float:
         s = tuple(sorted(set(subset)))
         comp = tuple(i for i in universe if i not in set(s))
         if not s or not comp:
             return 0.0
-        return model.h_part(s) + model.h_part(comp) - h_whole
+        key = canonical(s)
+        if key not in cut_values:
+            key_comp = tuple(i for i in universe if i not in set(key))
+            cut_values[key] = h_part(key) + h_part(key_comp) - h_whole
+        return cut_values[key]
 
-    part, val = queyranne_min_bipartition(n, f)
+    if n <= EXACT_GAUSSIAN_MIP_MAX_ELEMENTS:
+        best_part: tuple[int, ...] | None = None
+        best_val = math.inf
+        for mask in range(1, 2 ** (n - 1)):
+            candidate = tuple(i for i in universe if (mask >> i) & 1)
+            value = f(candidate)
+            if value < best_val:
+                best_part, best_val = candidate, value
+        assert best_part is not None
+        part = canonical(best_part)
+        method = "exhaustive_bipartition"
+        certified_exact = True
+    else:
+        part, best_val = queyranne_min_bipartition(n, f)
+        part = canonical(part)
+        # Queyranne is empirically strong for stochastic interaction.  The
+        # local pass catches cheap one-node corrections without pretending to
+        # turn a non-submodular objective into a polynomial exact search.
+        refinement_converged = False
+        for _ in range(n * n):
+            current = set(part)
+            candidates = {
+                canonical(tuple(sorted(current ^ {node})))
+                for node in universe
+                if 0 < len(current ^ {node}) < n
+            }
+            improved = min(candidates, key=f, default=part)
+            improved_val = f(improved)
+            if improved_val >= best_val - 1e-12:
+                refinement_converged = True
+                break
+            part, best_val = improved, improved_val
+        method = (
+            "queyranne_candidate_plus_local_refinement"
+            if refinement_converged
+            else "queyranne_candidate_plus_capped_local_refinement"
+        )
+        certified_exact = False
+
     comp = tuple(i for i in universe if i not in set(part))
-    return part, comp, max(0.0, float(val))
+    return MIPSearchResult(
+        part=part,
+        complement=comp,
+        phi=max(0.0, float(best_val)),
+        method=method,
+        certified_exact=certified_exact,
+        evaluated_cuts=len(cut_values),
+    )
+
+
+def minimum_information_bipartition(
+    model: LaggedGaussian,
+) -> tuple[tuple[int, ...], tuple[int, ...], float]:
+    """Compatibility tuple for the bounded MIP search."""
+    result = search_minimum_information_bipartition(model)
+    return result.part, result.complement, result.phi
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -236,8 +333,12 @@ def _circular_shift_surrogate(X: np.ndarray, rng: np.random.Generator) -> np.nda
     'integration', not for 'activity'."""
     T = X.shape[0]
     out = np.empty_like(X)
+    min_shift = max(2, T // 10)
+    if 2 * min_shift >= T:
+        min_shift = 1
     for j in range(X.shape[1]):
-        out[:, j] = np.roll(X[:, j], int(rng.integers(1, T - 1)))
+        shift = int(rng.integers(min_shift, T - min_shift + 1))
+        out[:, j] = np.roll(X[:, j], shift)
     return out
 
 
@@ -341,6 +442,29 @@ def coarse_grain(X: np.ndarray, groups: list[list[int]]) -> np.ndarray:
     return np.stack(cols, axis=1)
 
 
+def bounded_channel_quotient(
+    X: np.ndarray,
+    channel_names: tuple[str, ...],
+    *,
+    max_elements: int,
+    discovery_X: np.ndarray | None = None,
+) -> tuple[np.ndarray, tuple[str, ...], list[list[int]]]:
+    """Preserve every observed channel through a bounded macro quotient."""
+    n = X.shape[1]
+    limit = max(2, int(max_elements))
+    if n <= limit:
+        return X, channel_names, [[index] for index in range(n)]
+    groups = _correlation_linkage_groups(
+        discovery_X if discovery_X is not None else X,
+        limit,
+    )
+    names = tuple(
+        f"macro_{index}[{len(group)}]"
+        for index, group in enumerate(groups)
+    )
+    return coarse_grain(X, groups), names, groups
+
+
 @dataclass(frozen=True)
 class GrainResult:
     k: int
@@ -350,6 +474,17 @@ class GrainResult:
     null_std: float
     z: float
     mip: tuple[tuple[int, ...], tuple[int, ...]]
+    mip_method: str = ""
+    mip_certified_exact: bool = False
+    selection_score: float = 0.0
+
+
+@dataclass(frozen=True)
+class GrainSearchSummary:
+    results: list[GrainResult]
+    selection_p: float
+    n_surrogates: int
+    used_holdout: bool
 
 
 def grain_search(
@@ -360,36 +495,112 @@ def grain_search(
     rng: np.random.Generator,
     shrinkage: float,
 ) -> list[GrainResult]:
-    """Score each coarse-graining against ITS OWN surrogate null; raw Φ is
-    not comparable across dimensionalities, z is."""
-    results: list[GrainResult] = []
-    n = X.shape[1]
-    for k in grains:
+    """Compatibility grain search without a separate discovery holdout."""
+    return _grain_search_summary(
+        discovery_X=X,
+        evaluation_X=X,
+        grains=grains,
+        n_surrogates=n_surrogates,
+        rng=rng,
+        shrinkage=shrinkage,
+        used_holdout=False,
+    ).results
+
+
+def _grain_search_summary(
+    *,
+    discovery_X: np.ndarray,
+    evaluation_X: np.ndarray,
+    grains: list[int],
+    n_surrogates: int,
+    rng: np.random.Generator,
+    shrinkage: float,
+    used_holdout: bool,
+) -> GrainSearchSummary:
+    """Discover groups once, evaluate them on held-out data, and use a
+    shared surrogate family to adjust the best-grain selection."""
+    n = evaluation_X.shape[1]
+    specs: list[tuple[int, list[list[int]], np.ndarray, MIPSearchResult]] = []
+    for k in sorted(set(grains), reverse=True):
         if k < 2 or k > n:
             continue
         groups = ([[i] for i in range(n)] if k == n
-                  else _correlation_linkage_groups(X, k))
-        Xk = X if k == n else coarse_grain(X, groups)
+                  else _correlation_linkage_groups(discovery_X, k))
+        Xk = evaluation_X if k == n else coarse_grain(evaluation_X, groups)
         try:
-            model = LaggedGaussian.fit(Xk, shrinkage=shrinkage)
-            part, comp, phi = minimum_information_bipartition(model)
+            observed = search_minimum_information_bipartition(
+                LaggedGaussian.fit(Xk, shrinkage=shrinkage)
+            )
         except (np.linalg.LinAlgError, ValueError) as exc:
-            record_degradation("integrated_information", exc, severity="debug",
-                               action=f"skipped degenerate grain k={k}")
+            record_degradation(
+                "integrated_information",
+                exc,
+                severity="debug",
+                action=f"skipped degenerate grain k={k}",
+            )
             continue
-        mu, sd, _ = surrogate_null(Xk, n_surrogates=n_surrogates, rng=rng,
-                                   shrinkage=shrinkage)
-        z = (phi - mu) / sd if sd > 0 else 0.0
+        specs.append((k, groups, Xk, observed))
+
+    nulls: dict[int, list[float]] = {k: [] for k, *_ in specs}
+    for _ in range(max(0, int(n_surrogates))):
+        surrogate = _circular_shift_surrogate(evaluation_X, rng)
+        for k, groups, _, _observed in specs:
+            Xk = surrogate if k == n else coarse_grain(surrogate, groups)
+            try:
+                value = search_minimum_information_bipartition(
+                    LaggedGaussian.fit(Xk, shrinkage=shrinkage)
+                ).phi
+                nulls[k].append(value)
+            except (np.linalg.LinAlgError, ValueError) as exc:
+                record_degradation(
+                    "integrated_information",
+                    exc,
+                    severity="debug",
+                    action=f"dropped degenerate grain surrogate k={k}",
+                )
+
+    results: list[GrainResult] = []
+    stats: dict[int, tuple[float, float]] = {}
+    for k, groups, _Xk, observed in specs:
+        values = nulls[k]
+        mu = float(np.mean(values)) if values else 0.0
+        sd = float(np.std(values) + 1e-12) if values else 0.0
+        z = (observed.phi - mu) / sd if sd > 0 else 0.0
+        stats[k] = (mu, sd)
         results.append(GrainResult(
             k=k,
             groups=tuple(tuple(g) for g in groups),
-            phi_raw=round(phi, 6),
+            phi_raw=round(observed.phi, 6),
             null_mean=round(mu, 6),
             null_std=round(sd, 6),
             z=round(float(z), 3),
-            mip=(part, comp),
+            mip=(observed.part, observed.complement),
+            mip_method=observed.method,
+            mip_certified_exact=observed.certified_exact,
+            selection_score=round(observed.phi / k, 9),
         ))
-    return results
+
+    selected_score = max((result.selection_score for result in results), default=0.0)
+    complete_draws = min((len(values) for values in nulls.values()), default=0)
+    max_null_score: list[float] = []
+    for index in range(complete_draws):
+        max_null_score.append(
+            max(
+                (values[index] / k for k, values in nulls.items()),
+                default=0.0,
+            )
+        )
+    selection_p = (
+        (1.0 + sum(value >= selected_score for value in max_null_score))
+        / (len(max_null_score) + 1.0)
+        if max_null_score else 1.0
+    )
+    return GrainSearchSummary(
+        results=results,
+        selection_p=round(float(selection_p), 6),
+        n_surrogates=len(max_null_score),
+        used_holdout=used_holdout,
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -417,20 +628,28 @@ def exact_state_phi(
     (α).  Exact in the search, empirical in the distribution: both facts
     are part of the estimator's name and claim.
     """
+    if alpha < 0:
+        raise ValueError("Dirichlet smoothing alpha must be non-negative")
     k = Xk.shape[1]
     if k > MAX_EXACT_ELEMENTS:
         raise ValueError(f"exact search capped at {MAX_EXACT_ELEMENTS} elements")
     med = np.median(Xk, axis=0)
     B = (Xk > med).astype(np.int8)
     trans: dict[tuple[tuple[int, ...], tuple[int, ...]], int] = {}
-    for t in range(B.shape[0] - 1):
+    observed_transitions = max(0, B.shape[0] - 1)
+    for t in range(observed_transitions):
         key = (tuple(int(v) for v in B[t]), tuple(int(v) for v in B[t + 1]))
         trans[key] = trans.get(key, 0) + 1
+    accepted_interventions = 0
+    rejected_interventions = 0
     for pair in (extra_transitions or []):
         s0 = tuple(int(v) for v in pair[0])
         s1 = tuple(int(v) for v in pair[1])
         if len(s0) == k and len(s1) == k:
             trans[(s0, s1)] = trans.get((s0, s1), 0) + 1
+            accepted_interventions += 1
+        else:
+            rejected_interventions += 1
 
     # group transitions by source state
     by_src: dict[tuple[int, ...], dict[tuple[int, ...], float]] = {}
@@ -481,12 +700,64 @@ def exact_state_phi(
             denomW = w + alpha * n_states(k)
             denomA = srcA_count[a0] + alpha * n_states(len(A))
             denomB = srcB_count[b0] + alpha * n_states(len(Bp))
-            kl = 0.0
-            for s1, c in dist.items():
-                p_full = (c + alpha) / denomW
-                pa = (partA[a0].get(tuple(s1[i] for i in A), 0.0) + alpha) / denomA
-                pb = (partB[b0].get(tuple(s1[i] for i in Bp), 0.0) + alpha) / denomB
-                kl += (c / w) * math.log(max(p_full, _EPS) / max(pa * pb, _EPS))
+            # Coherent Dirichlet-smoothed KL over the complete binary support.
+            # The entropy term handles unseen joint outcomes analytically; the
+            # two cross-entropy terms do the same for each part's support.
+            entropy = 0.0
+            for c in dist.values():
+                p = (c + alpha) / denomW
+                entropy -= p * math.log(max(p, _EPS))
+            unseen_joint = int(n_states(k)) - len(dist)
+            if alpha > 0 and unseen_joint > 0:
+                p_unseen = alpha / denomW
+                entropy -= unseen_joint * p_unseen * math.log(max(p_unseen, _EPS))
+
+            def _cross_entropy(
+                current_counts: dict[tuple[int, ...], float],
+                pooled_counts: dict[tuple[int, ...], float],
+                *,
+                p_multiplicity: int,
+                p_denom: float,
+                q_denom: float,
+                support_size: int,
+            ) -> float:
+                keys = set(current_counts) | set(pooled_counts)
+                value = 0.0
+                for state in keys:
+                    p_num = current_counts.get(state, 0.0) + alpha * p_multiplicity
+                    if p_num <= 0:
+                        continue
+                    q_num = pooled_counts.get(state, 0.0) + alpha
+                    value -= (p_num / p_denom) * math.log(
+                        max(q_num / q_denom, _EPS)
+                    )
+                missing = support_size - len(keys)
+                if alpha > 0 and missing > 0:
+                    p_num = alpha * p_multiplicity
+                    value -= missing * (p_num / p_denom) * math.log(
+                        max(alpha / q_denom, _EPS)
+                    )
+                return value
+
+            currentA = _marginal(dist, A)
+            currentB = _marginal(dist, Bp)
+            crossA = _cross_entropy(
+                currentA,
+                partA[a0],
+                p_multiplicity=2 ** len(Bp),
+                p_denom=denomW,
+                q_denom=denomA,
+                support_size=2 ** len(A),
+            )
+            crossB = _cross_entropy(
+                currentB,
+                partB[b0],
+                p_multiplicity=2 ** len(A),
+                p_denom=denomW,
+                q_denom=denomB,
+                support_size=2 ** len(Bp),
+            )
+            kl = -entropy + crossA + crossB
             kl_sum += (w / total_weight) * kl
         if kl_sum < best["phi"]:
             best = {"phi": kl_sum, "partition": (A, Bp)}
@@ -496,10 +767,75 @@ def exact_state_phi(
         "phi_s": round(max(0.0, float(best["phi"])), 6),
         "mip": best["partition"],
         "n_elements": k,
-        "n_observed_transitions": int(total_weight),
-        "n_interventional_transitions": len(extra_transitions or []),
+        "n_observed_transitions": observed_transitions,
+        "n_interventional_transitions": accepted_interventions,
+        "n_rejected_interventional_transitions": rejected_interventions,
+        "n_total_transitions": int(total_weight),
+        "smoothing_alpha": float(alpha),
         "cuts_searched": 2 ** (k - 1) - 1,
     }
+
+
+def project_interventional_transitions(
+    transitions: list[
+        InterventionalTransition
+        | tuple[tuple[int, ...], tuple[int, ...]]
+    ] | None,
+    *,
+    channel_names: tuple[str, ...],
+    groups: list[list[int]],
+) -> tuple[list[tuple[tuple[int, ...], tuple[int, ...]]], int]:
+    """Align named micro interventions and project them to a macro grain."""
+    projected: list[tuple[tuple[int, ...], tuple[int, ...]]] = []
+    rejected = 0
+    n_micro = len(channel_names)
+    n_macro = len(groups)
+
+    def valid_bits(values: tuple[int, ...]) -> bool:
+        return all(value in (0, 1) for value in values)
+
+    for transition in transitions or []:
+        direct_macro = False
+        if isinstance(transition, InterventionalTransition):
+            if (
+                len(transition.channel_names) != len(transition.before)
+                or len(transition.before) != len(transition.after)
+                or len(set(transition.channel_names)) != len(transition.channel_names)
+            ):
+                rejected += 1
+                continue
+            indexed = {
+                name: index for index, name in enumerate(transition.channel_names)
+            }
+            if any(name not in indexed for name in channel_names):
+                rejected += 1
+                continue
+            before = tuple(int(transition.before[indexed[name]]) for name in channel_names)
+            after = tuple(int(transition.after[indexed[name]]) for name in channel_names)
+        else:
+            before = tuple(int(value) for value in transition[0])
+            after = tuple(int(value) for value in transition[1])
+            if len(before) == n_macro and len(after) == n_macro and n_macro != n_micro:
+                direct_macro = True
+            elif len(before) != n_micro or len(after) != n_micro:
+                rejected += 1
+                continue
+
+        if not valid_bits(before) or not valid_bits(after):
+            rejected += 1
+            continue
+        if direct_macro:
+            projected.append((before, after))
+            continue
+
+        def collapse(values: tuple[int, ...]) -> tuple[int, ...]:
+            return tuple(
+                int(sum(values[index] for index in group) * 2 >= len(group))
+                for group in groups
+            )
+
+        projected.append((collapse(before), collapse(after)))
+    return projected, rejected
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -531,13 +867,33 @@ class PhiEstimate:
     # Rail C — exact discrete at the derived grain
     exact_macro: dict[str, Any] = field(default_factory=dict)
     # Rail D honesty
-    diagnostics: dict[str, float] = field(default_factory=dict)
+    diagnostics: dict[str, Any] = field(default_factory=dict)
     claim: str = ""
+    random_seed: int = 0
+    mip_method: str = ""
+    mip_certified_exact: bool = False
+    mip_evaluated_cuts: int = 0
+    emergent_phi_raw: float = 0.0
+    emergent_z: float = 0.0
+    emergent_ci_5: float = 0.0
+    emergent_ci_95: float = 0.0
+    grain_selection_p: float = 1.0
+    grain_selection_surrogates: int = 0
+    grain_selection_used_holdout: bool = False
+    n_observed_channels: int = 0
+    observed_channel_names: tuple[str, ...] = ()
+    quotient_groups: tuple[tuple[int, ...], ...] = ()
 
     def integration_established(self) -> bool:
-        """True when integration beats chance at the emergent grain (z ≥ 3)
-        and the bootstrap keeps Φ off the floor."""
-        return self.z >= 3.0 and self.ci_5 > 0.0
+        """Family-wise evidence at the selected grain, not a raw maximum."""
+        if not self.emergent_grain_k:
+            return self.z >= 3.0 and self.ci_5 > 0.0
+        return (
+            self.emergent_z >= 3.0
+            and self.emergent_ci_5 > 0.0
+            and self.grain_selection_p <= 0.10
+            and self.grain_selection_used_holdout
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -545,8 +901,13 @@ class PhiEstimate:
             "estimator": self.estimator,
             "computed_at": self.computed_at,
             "n_channels": self.n_channels,
+            "n_observed_channels": self.n_observed_channels or self.n_channels,
             "n_samples": self.n_samples,
             "channel_names": list(self.channel_names),
+            "observed_channel_names": list(
+                self.observed_channel_names or self.channel_names
+            ),
+            "quotient_groups": [list(group) for group in self.quotient_groups],
             "phi_raw": self.phi_raw,
             "mip": [list(self.mip[0]), list(self.mip[1])],
             "null_mean": self.null_mean,
@@ -554,16 +915,30 @@ class PhiEstimate:
             "z": self.z,
             "ci_5": self.ci_5,
             "ci_95": self.ci_95,
+            "random_seed": self.random_seed,
+            "mip_method": self.mip_method,
+            "mip_certified_exact": self.mip_certified_exact,
+            "mip_evaluated_cuts": self.mip_evaluated_cuts,
             "grains": [
                 {
                     "k": g.k, "phi_raw": g.phi_raw, "z": g.z,
                     "null_mean": g.null_mean, "null_std": g.null_std,
                     "groups": [list(x) for x in g.groups],
+                    "mip_method": g.mip_method,
+                    "mip_certified_exact": g.mip_certified_exact,
+                    "selection_score": g.selection_score,
                 }
                 for g in self.grains
             ],
             "emergent_grain_k": self.emergent_grain_k,
             "emergence_delta_z": self.emergence_delta_z,
+            "emergent_phi_raw": self.emergent_phi_raw,
+            "emergent_z": self.emergent_z,
+            "emergent_ci_5": self.emergent_ci_5,
+            "emergent_ci_95": self.emergent_ci_95,
+            "grain_selection_p": self.grain_selection_p,
+            "grain_selection_surrogates": self.grain_selection_surrogates,
+            "grain_selection_used_holdout": self.grain_selection_used_holdout,
             "exact_macro": dict(self.exact_macro),
             "diagnostics": dict(self.diagnostics),
             "integration_established": self.integration_established(),
@@ -574,11 +949,19 @@ class PhiEstimate:
 def _bounded_claim(est: "PhiEstimate") -> str:
     verdict = ("integration beats chance" if est.integration_established()
                else "integration NOT established against the null")
+    mip_proof = (
+        "certified exhaustive MIP"
+        if est.mip_certified_exact
+        else "bounded heuristic MIP candidate"
+    )
     return (
-        f"Φ̂={est.phi_raw:.4f} nats over {est.n_channels} live channels "
-        f"({est.n_samples} samples); exact MIP by Queyranne; z={est.z:.1f} "
-        f"vs circular-shift null; 90% CI [{est.ci_5:.4f}, {est.ci_95:.4f}]; "
-        f"emergent grain k={est.emergent_grain_k}. {verdict}. This is an "
+        f"Micro Φ̂={est.phi_raw:.4f} nats over {est.n_channels} estimator "
+        f"elements covering {est.n_observed_channels or est.n_channels} live channels "
+        f"({est.n_samples} samples; {mip_proof}; z={est.z:.1f}). Selected "
+        f"held-out grain k={est.emergent_grain_k}: Φ̂={est.emergent_phi_raw:.4f}, "
+        f"z={est.emergent_z:.1f}, family-wise p={est.grain_selection_p:.3f}, "
+        f"90% CI [{est.emergent_ci_5:.4f}, {est.emergent_ci_95:.4f}]. "
+        f"{verdict}. This is an "
         "estimate of integrated information of the system's macro-dynamics "
         "under a Gaussian model of its OWN measured channels — evidence "
         "about integration structure, not a consciousness meter."
@@ -594,24 +977,44 @@ def estimate_whole_system_phi(
     grains: list[int] | None = None,
     seed: int = 0,
     shrinkage: float = 0.05,
-    extra_transitions: list[tuple[tuple[int, ...], tuple[int, ...]]] | None = None,
+    max_effective_elements: int = 16,
+    extra_transitions: list[
+        InterventionalTransition
+        | tuple[tuple[int, ...], tuple[int, ...]]
+    ] | None = None,
 ) -> PhiEstimate:
     """The full four-rail estimate on a T×N channel matrix."""
     X = np.asarray(X, dtype=float)
+    if X.ndim != 2 or X.shape[0] < 16 or X.shape[1] < 2:
+        raise ValueError("channel matrix must be T×N with T ≥ 16, N ≥ 2")
     if channel_names is None:
         channel_names = tuple(f"ch{i}" for i in range(X.shape[1]))
+    if len(channel_names) != X.shape[1]:
+        raise ValueError("channel_names must match the channel matrix width")
     rng = np.random.default_rng(seed)
     t0 = time.time()
 
-    # drop dead channels (zero variance) — reported, not hidden
+    # Drop dead channels (zero variance) — reported, not hidden.
     live = X.std(axis=0) > 1e-9
     dropped = [channel_names[i] for i in range(len(channel_names)) if not live[i]]
     X = X[:, live]
-    channel_names = tuple(n for n, keep in zip(channel_names, live) if keep)
+    channel_names = tuple(
+        name for name, keep in zip(channel_names, live, strict=True) if keep
+    )
+    observed_X = X
+    observed_channel_names = channel_names
+    quotient_discovery = observed_X[: observed_X.shape[0] // 2]
+    X, channel_names, quotient_groups = bounded_channel_quotient(
+        observed_X,
+        observed_channel_names,
+        max_elements=max_effective_elements,
+        discovery_X=quotient_discovery,
+    )
     n = X.shape[1]
 
     model = LaggedGaussian.fit(X, shrinkage=shrinkage)
-    part, comp, phi = minimum_information_bipartition(model)
+    mip = search_minimum_information_bipartition(model)
+    part, comp, phi = mip.part, mip.complement, mip.phi
     mu, sd, _ = surrogate_null(X, n_surrogates=n_surrogates, rng=rng,
                                shrinkage=shrinkage)
     z = (phi - mu) / sd if sd > 0 else 0.0
@@ -620,26 +1023,71 @@ def estimate_whole_system_phi(
 
     if grains is None:
         grains = sorted({n, max(2, n // 2), max(2, n // 4), 8, 4})
-    grain_results = grain_search(X, grains=[g for g in grains if 2 <= g <= n],
-                                 n_surrogates=max(8, n_surrogates // 2),
-                                 rng=rng, shrinkage=shrinkage)
+    split = X.shape[0] // 2
+    discovery_X = X[:split]
+    evaluation_X = X[split:]
+    grain_summary = _grain_search_summary(
+        discovery_X=discovery_X,
+        evaluation_X=evaluation_X,
+        grains=[g for g in grains if 2 <= g <= n],
+        n_surrogates=max(10, n_surrogates),
+        rng=rng,
+        shrinkage=shrinkage,
+        used_holdout=True,
+    )
+    grain_results = grain_summary.results
 
-    emergent = max(grain_results, key=lambda g: g.z, default=None)
+    emergent = max(grain_results, key=lambda g: g.selection_score, default=None)
     micro = next((g for g in grain_results if g.k == n), None)
+    emergent_lo, emergent_hi = 0.0, 0.0
+    emergent_X = None
+    if emergent is not None:
+        emergent_groups = [list(group) for group in emergent.groups]
+        emergent_X = (
+            evaluation_X
+            if emergent.k == n
+            else coarse_grain(evaluation_X, emergent_groups)
+        )
+        emergent_lo, emergent_hi = block_bootstrap_ci(
+            emergent_X,
+            n_boot=n_boot,
+            block=max(8, emergent_X.shape[0] // 10),
+            rng=rng,
+            shrinkage=shrinkage,
+        )
 
     exact_macro: dict[str, Any] = {}
     if emergent is not None and emergent.k <= MAX_EXACT_ELEMENTS:
         groups = [list(g) for g in emergent.groups]
         Xk = coarse_grain(X, groups)
+        composed_groups = [
+            [
+                observed_index
+                for quotient_index in group
+                for observed_index in quotient_groups[quotient_index]
+            ]
+            for group in groups
+        ]
+        projected, projection_rejected = project_interventional_transitions(
+            extra_transitions,
+            channel_names=observed_channel_names,
+            groups=composed_groups,
+        )
         try:
-            exact_macro = exact_state_phi(Xk, extra_transitions=extra_transitions)
+            exact_macro = exact_state_phi(Xk, extra_transitions=projected)
+            exact_macro["n_projection_rejected_transitions"] = projection_rejected
         except (ValueError, ArithmeticError) as exc:
             record_degradation("integrated_information", exc, severity="warning",
                                action="exact macro phi skipped")
 
     diagnostics = data_diagnostics(X)
     diagnostics["dropped_dead_channels"] = float(len(dropped))
+    diagnostics["quotient_applied"] = float(
+        len(observed_channel_names) != len(channel_names)
+    )
     diagnostics["compute_seconds"] = round(time.time() - t0, 3)
+    diagnostics["grain_discovery_samples"] = float(discovery_X.shape[0])
+    diagnostics["grain_evaluation_samples"] = float(evaluation_X.shape[0])
 
     est = PhiEstimate(
         schema_version=SCHEMA_VERSION,
@@ -660,6 +1108,20 @@ def estimate_whole_system_phi(
         emergence_delta_z=round((emergent.z - micro.z), 3) if emergent and micro else 0.0,
         exact_macro=exact_macro,
         diagnostics=diagnostics,
+        random_seed=int(seed),
+        mip_method=mip.method,
+        mip_certified_exact=mip.certified_exact,
+        mip_evaluated_cuts=mip.evaluated_cuts,
+        emergent_phi_raw=emergent.phi_raw if emergent else 0.0,
+        emergent_z=emergent.z if emergent else 0.0,
+        emergent_ci_5=round(emergent_lo, 6),
+        emergent_ci_95=round(emergent_hi, 6),
+        grain_selection_p=grain_summary.selection_p,
+        grain_selection_surrogates=grain_summary.n_surrogates,
+        grain_selection_used_holdout=grain_summary.used_holdout,
+        n_observed_channels=len(observed_channel_names),
+        observed_channel_names=observed_channel_names,
+        quotient_groups=tuple(tuple(group) for group in quotient_groups),
     )
     est.claim = _bounded_claim(est)
     return est

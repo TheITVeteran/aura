@@ -141,6 +141,7 @@ CANONICAL_PRIMITIVE_OWNERS: dict[str, frozenset[str]] = {
     "network_gateway": frozenset({"core/runtime/action_executor.py"}),
     "file_write_gateway": frozenset(
         {
+            "core/agency/tool_orchestrator.py",
             "core/agency/self_repair_backlog.py",
             "core/runtime/action_executor.py",
             "core/runtime/flight_recorder.py",

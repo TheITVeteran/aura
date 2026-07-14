@@ -13,14 +13,18 @@ import numpy as np
 import pytest
 
 from core.consciousness.integrated_information import (
-    LaggedGaussian,
+    EXACT_GAUSSIAN_MIP_MAX_ELEMENTS,
     MAX_EXACT_ELEMENTS,
+    InterventionalTransition,
+    LaggedGaussian,
     PhiEstimate,
     coarse_grain,
     estimate_whole_system_phi,
     exact_state_phi,
     minimum_information_bipartition,
+    project_interventional_transitions,
     queyranne_min_bipartition,
+    search_minimum_information_bipartition,
     stochastic_interaction,
 )
 
@@ -86,6 +90,22 @@ def test_queyranne_matches_brute_force_on_random_systems(seed):
 def test_queyranne_requires_two_elements():
     with pytest.raises(ValueError):
         queyranne_min_bipartition(1, lambda s: 0.0)
+
+
+def test_mip_exactness_is_certified_only_after_exhaustive_search():
+    exact = search_minimum_information_bipartition(
+        LaggedGaussian.fit(var1(ring_A(6), 600, seed=91))
+    )
+    assert exact.certified_exact
+    assert exact.method == "exhaustive_bipartition"
+    assert exact.evaluated_cuts == 2 ** (6 - 1) - 1
+
+    n = EXACT_GAUSSIAN_MIP_MAX_ELEMENTS + 1
+    heuristic = search_minimum_information_bipartition(
+        LaggedGaussian.fit(var1(ring_A(n, 0.3), 400, seed=92))
+    )
+    assert not heuristic.certified_exact
+    assert heuristic.method == "queyranne_candidate_plus_local_refinement"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -206,6 +226,50 @@ def test_exact_phi_accepts_interventional_transitions():
     assert out["n_interventional_transitions"] == 5
 
 
+def test_exact_phi_counts_only_accepted_interventions():
+    rng = np.random.default_rng(42)
+    Xk = rng.standard_normal((200, 3))
+    out = exact_state_phi(
+        Xk,
+        extra_transitions=[
+            ((0, 0, 0), (1, 1, 1)),
+            ((0, 0), (1, 1)),
+        ],
+    )
+    assert out["n_observed_transitions"] == 199
+    assert out["n_interventional_transitions"] == 1
+    assert out["n_rejected_interventional_transitions"] == 1
+    assert out["n_total_transitions"] == 200
+
+
+def test_named_interventions_are_reordered_and_projected_to_the_selected_grain():
+    transition = InterventionalTransition(
+        channel_names=("d", "b", "a", "c"),
+        before=(1, 0, 1, 0),
+        after=(0, 1, 0, 1),
+    )
+    projected, rejected = project_interventional_transitions(
+        [transition],
+        channel_names=("a", "b", "c", "d"),
+        groups=[[0, 1], [2, 3]],
+    )
+    assert rejected == 0
+    assert projected == [((1, 1), (1, 1))]
+
+
+def test_dirichlet_smoothed_exact_phi_converges_toward_uniform_independence():
+    rng = np.random.default_rng(44)
+    states = np.zeros((300, 2), dtype=float)
+    states[0] = (0, 1)
+    for index in range(1, len(states)):
+        states[index] = states[index - 1][::-1]
+    states += 0.001 * rng.standard_normal(states.shape)
+    measured = exact_state_phi(states, alpha=0.5)["phi_s"]
+    dominated_by_prior = exact_state_phi(states, alpha=1e6)["phi_s"]
+    assert measured > 0.0
+    assert dominated_by_prior < measured
+
+
 def test_exact_phi_caps_at_twelve_elements():
     rng = np.random.default_rng(43)
     with pytest.raises(ValueError):
@@ -224,8 +288,29 @@ def test_report_carries_provenance_and_bounded_claim():
                 "claim", "grains", "integration_established"):
         assert key in d
     assert "not a consciousness meter" in est.claim
+    assert "exact MIP by Queyranne" not in est.claim
     assert d["estimator"].startswith("gaussian_stochastic_interaction")
     assert d["diagnostics"]["n_samples"] > 0
+    assert d["grain_selection_used_holdout"] is True
+    assert d["grain_selection_surrogates"] >= 10
+
+
+def test_large_observed_system_uses_a_complete_bounded_quotient():
+    X = var1(ring_A(24, 0.2), 500, seed=93)
+    names = tuple(f"sensor_{index}" for index in range(24))
+    est = estimate_whole_system_phi(
+        X,
+        channel_names=names,
+        n_surrogates=10,
+        n_boot=4,
+        seed=94,
+        max_effective_elements=16,
+    )
+    assert est.n_observed_channels == 24
+    assert est.n_channels == 16
+    assert est.observed_channel_names == names
+    assert sorted(index for group in est.quotient_groups for index in group) == list(range(24))
+    assert not est.mip_certified_exact
 
 
 def test_dead_channels_are_dropped_and_reported():

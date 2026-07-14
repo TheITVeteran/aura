@@ -134,6 +134,9 @@ class ProbeReport:
     sham_pci: dict[str, Any] = field(default_factory=dict)
     transitions: list[tuple[tuple[int, ...], tuple[int, ...]]] = field(default_factory=list)
     will_receipt_id: str = ""
+    channel_names: tuple[str, ...] = ()
+    recovery: dict[str, Any] = field(default_factory=dict)
+    perturbation_seam: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -144,10 +147,40 @@ class ProbeReport:
             "sham_pci": dict(self.sham_pci),
             "n_interventional_transitions": len(self.transitions),
             "will_receipt_id": self.will_receipt_id,
+            "channel_names": list(self.channel_names),
+            "recovery": dict(self.recovery),
+            "perturbation_seam": self.perturbation_seam,
         }
 
 
-def _default_perturb() -> bool:
+@dataclass(frozen=True)
+class ReversiblePerturbation:
+    delivered: bool
+    restore: Callable[[], bool]
+    seam: str
+
+
+@dataclass
+class ProbeCampaignReport:
+    trials_requested: int
+    trials_completed: int
+    reports: list[ProbeReport]
+    aggregate: dict[str, Any]
+    channel_names: tuple[str, ...]
+    transitions: list[tuple[tuple[int, ...], tuple[int, ...]]]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "trials_requested": self.trials_requested,
+            "trials_completed": self.trials_completed,
+            "aggregate": dict(self.aggregate),
+            "channel_names": list(self.channel_names),
+            "n_interventional_transitions": len(self.transitions),
+            "reports": [report.to_dict() for report in self.reports],
+        }
+
+
+def _default_perturb() -> ReversiblePerturbation | bool:
     """The default seam: a small, reversible affective nudge — the same
     apply_event surface the rest of the organism uses.  Returns True when a
     real perturbation was delivered."""
@@ -157,11 +190,16 @@ def _default_perturb() -> bool:
         affect = optional_service("affect_engine", "affect_facade", default=None)
         if affect is not None and hasattr(affect, "apply_event"):
             affect.apply_event(0.06, 0.10)  # gentle valence+arousal impulse
-            return True
-        nchem = optional_service("neurochemical_system", default=None)
-        if nchem is not None and hasattr(nchem, "apply_event"):
-            nchem.apply_event("novelty", intensity=0.15)
-            return True
+
+            def restore() -> bool:
+                affect.apply_event(-0.06, -0.10)
+                return True
+
+            return ReversiblePerturbation(
+                delivered=True,
+                restore=restore,
+                seam="affect.apply_event.reversible_delta",
+            )
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
         record_degradation("perturbational_probe", exc, severity="warning",
                            action="default perturbation seam unavailable")
@@ -181,7 +219,7 @@ class PerturbationalProbe:
         self,
         *,
         sampler: Callable[[], dict[str, float]],
-        perturb: Callable[[], bool] | None = None,
+        perturb: Callable[[], bool | ReversiblePerturbation] | None = None,
         clock: Callable[[], float] = time.time,
         sleep: Callable[[float], None] = time.sleep,
     ):
@@ -190,17 +228,30 @@ class PerturbationalProbe:
         self._clock = clock
         self._sleep = sleep
 
-    def _collect(self, n: int, interval_s: float) -> np.ndarray:
+    def _collect(
+        self,
+        n: int,
+        interval_s: float,
+        *,
+        channel_names: tuple[str, ...] | None = None,
+    ) -> tuple[np.ndarray, tuple[str, ...]]:
         rows: list[list[float]] = []
-        names: list[str] | None = None
+        names = channel_names
         for _ in range(n):
             reading = self._sampler() or {}
             if names is None:
-                names = sorted(reading)
-            rows.append([float(reading.get(k, 0.0)) for k in names])
+                names = tuple(sorted(reading))
+            if len(names) < 2:
+                raise ValueError("probe sampler exposed fewer than two channels")
+            missing = [name for name in names if name not in reading]
+            if missing:
+                raise ValueError(
+                    "probe channel set changed during a trial: " + ",".join(missing)
+                )
+            rows.append([float(reading[name]) for name in names])
             if interval_s > 0:
                 self._sleep(interval_s)
-        return np.asarray(rows, dtype=float)
+        return np.asarray(rows, dtype=float), names or ()
 
     def _authorize(self) -> tuple[bool, str, str]:
         """Ask the Unified Will; fail closed if it cannot be consulted."""
@@ -221,25 +272,100 @@ class PerturbationalProbe:
             return False, f"will_unavailable:{type(exc).__name__}", ""
 
     def run(self, *, n_baseline: int = 40, n_response: int = 40,
-            interval_s: float = 0.05, with_sham: bool = True) -> ProbeReport:
+            n_recovery: int = 20, interval_s: float = 0.05,
+            with_sham: bool = True) -> ProbeReport:
         approved, reason, receipt_id = self._authorize()
         if not approved:
             return ProbeReport(ran=False, reason=f"refused: {reason}",
                                will_receipt_id=receipt_id)
         started = self._clock()
 
-        baseline = self._collect(n_baseline, interval_s)
-        sham: dict[str, Any] = {}
-        if with_sham:
-            sham_resp = self._collect(n_response, interval_s)
-            sham = pci_from_windows(baseline, sham_resp)
+        effect: ReversiblePerturbation | None = None
+        restored = False
+        try:
+            baseline, names = self._collect(n_baseline, interval_s)
+            sham: dict[str, Any] = {}
+            if with_sham:
+                sham_resp, _ = self._collect(
+                    n_response,
+                    interval_s,
+                    channel_names=names,
+                )
+                sham = pci_from_windows(baseline, sham_resp)
 
-        delivered = self._perturb()
-        if not delivered:
-            return ProbeReport(ran=False, reason="perturbation seam unavailable",
-                               started_at=started, will_receipt_id=receipt_id)
-        response = self._collect(n_response, interval_s)
-        pci = pci_from_windows(baseline, response)
+            delivered = self._perturb()
+            if isinstance(delivered, ReversiblePerturbation):
+                effect = delivered
+                did_deliver = delivered.delivered
+            else:
+                did_deliver = bool(delivered)
+            if not did_deliver:
+                return ProbeReport(
+                    ran=False,
+                    reason="perturbation seam unavailable",
+                    started_at=started,
+                    will_receipt_id=receipt_id,
+                    channel_names=names,
+                )
+            response, _ = self._collect(
+                n_response,
+                interval_s,
+                channel_names=names,
+            )
+            pci = pci_from_windows(baseline, response)
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "perturbational_probe",
+                exc,
+                severity="warning",
+                action="probe trial aborted without accepting a partial measurement",
+            )
+            return ProbeReport(
+                ran=False,
+                reason=f"trial_failed:{type(exc).__name__}",
+                started_at=started,
+                will_receipt_id=receipt_id,
+            )
+        finally:
+            if effect is not None and effect.delivered:
+                try:
+                    restored = bool(effect.restore())
+                except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                    record_degradation(
+                        "perturbational_probe",
+                        exc,
+                        severity="warning",
+                        action="reversible probe restoration failed",
+                    )
+
+        recovery: dict[str, Any] = {
+            "restore_available": effect is not None,
+            "restore_succeeded": restored,
+        }
+        if n_recovery > 0:
+            try:
+                recovery_window, _ = self._collect(
+                    n_recovery,
+                    interval_s,
+                    channel_names=names,
+                )
+                baseline_sd = baseline.std(axis=0)
+                baseline_sd[baseline_sd < 1e-9] = 1e-9
+                recovery_z = np.abs(
+                    (np.median(recovery_window, axis=0) - baseline.mean(axis=0))
+                    / baseline_sd
+                )
+                median_abs_z = float(np.median(recovery_z))
+                recovery.update({
+                    "median_abs_z": round(median_abs_z, 4),
+                    "within_baseline_envelope": median_abs_z <= 1.5,
+                    "n_samples": int(n_recovery),
+                })
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                recovery.update({
+                    "within_baseline_envelope": False,
+                    "error": f"{type(exc).__name__}: {exc}",
+                })
 
         # interventional macro transitions for the exact estimator (Rail C):
         # the medians of baseline vs response windows, binarized on baseline.
@@ -254,8 +380,95 @@ class PerturbationalProbe:
             sham_pci=sham,
             transitions=[(pre, post)],
             will_receipt_id=receipt_id,
+            channel_names=names,
+            recovery=recovery,
+            perturbation_seam=effect.seam if effect is not None else "injected_test_seam",
         )
         logger.info("PerturbationalProbe: PCI=%.3f (sham %.3f) active=%.2f",
                     pci.get("pci", 0.0), sham.get("pci", 0.0),
                     pci.get("active_fraction", 0.0))
         return report
+
+    def run_campaign(
+        self,
+        *,
+        trials: int = 3,
+        n_baseline: int = 40,
+        n_response: int = 40,
+        n_recovery: int = 20,
+        interval_s: float = 0.05,
+    ) -> ProbeCampaignReport:
+        reports = [
+            self.run(
+                n_baseline=n_baseline,
+                n_response=n_response,
+                n_recovery=n_recovery,
+                interval_s=interval_s,
+                with_sham=True,
+            )
+            for _ in range(max(1, int(trials)))
+        ]
+        completed = [report for report in reports if report.ran]
+        channel_names = completed[0].channel_names if completed else ()
+        compatible = [
+            report for report in completed if report.channel_names == channel_names
+        ]
+        transitions = [
+            transition
+            for report in compatible
+            for transition in report.transitions
+        ]
+        evoked_delta = np.asarray([
+            report.pci.get("evoked_complexity", 0.0)
+            - report.sham_pci.get("evoked_complexity", 0.0)
+            for report in compatible
+        ], dtype=float)
+        pci_delta = np.asarray([
+            report.pci.get("pci", 0.0) - report.sham_pci.get("pci", 0.0)
+            for report in compatible
+        ], dtype=float)
+
+        def interval(values: np.ndarray) -> tuple[float, float]:
+            if not values.size:
+                return 0.0, 0.0
+            if values.size == 1:
+                return float(values[0]), float(values[0])
+            rng = np.random.default_rng(0xA17A)
+            draws = np.asarray([
+                rng.choice(values, size=values.size, replace=True).mean()
+                for _ in range(1000)
+            ])
+            return float(np.percentile(draws, 5)), float(np.percentile(draws, 95))
+
+        evoked_lo, evoked_hi = interval(evoked_delta)
+        pci_lo, pci_hi = interval(pci_delta)
+        recovered = sum(
+            bool(report.recovery.get("within_baseline_envelope"))
+            for report in compatible
+        )
+        aggregate = {
+            "evoked_complexity_delta_mean": round(
+                float(evoked_delta.mean()) if evoked_delta.size else 0.0, 4
+            ),
+            "evoked_complexity_delta_ci_5": round(evoked_lo, 4),
+            "evoked_complexity_delta_ci_95": round(evoked_hi, 4),
+            "pci_delta_mean": round(
+                float(pci_delta.mean()) if pci_delta.size else 0.0, 4
+            ),
+            "pci_delta_ci_5": round(pci_lo, 4),
+            "pci_delta_ci_95": round(pci_hi, 4),
+            "recovered_trials": recovered,
+            "causal_response_established": bool(
+                len(compatible) >= 3
+                and evoked_lo > 0.0
+                and recovered == len(compatible)
+            ),
+        }
+        return ProbeCampaignReport(
+            trials_requested=max(1, int(trials)),
+            trials_completed=len(compatible),
+            reports=reports,
+            aggregate=aggregate,
+            channel_names=channel_names,
+            transitions=transitions,
+        )

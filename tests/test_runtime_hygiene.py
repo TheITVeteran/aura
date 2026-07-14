@@ -777,6 +777,27 @@ def test_stability_guardian_treats_slow_user_facing_ticks_as_unhealthy():
     assert "withhold healthy status" in (result.action_taken or "")
 
 
+def test_stability_guardian_attributes_sustained_background_tick_latency():
+    guardian = StabilityGuardian(SimpleNamespace(start_time=time.time()))
+
+    for _ in range(3):
+        guardian.record_tick_health(
+            SimpleNamespace(
+                tick_duration_ms=8200.0,
+                origin="system",
+                priority=False,
+                is_user_facing=False,
+                phase_durations_ms={"PhiConsciousnessPhase": 6100.0, "LearningPhase": 90.0},
+            )
+        )
+
+    result = guardian._check_tick_rate()
+
+    assert result.healthy is False
+    assert "PhiConsciousnessPhase" in result.message
+    assert "6100ms" in result.message
+
+
 @pytest.mark.asyncio
 async def test_stability_guardian_overall_health_false_for_slow_foreground(monkeypatch):
     guardian = StabilityGuardian(SimpleNamespace(start_time=time.time()))

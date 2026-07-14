@@ -47,9 +47,6 @@ ALLOWED_LEGACY_OFFENDERS: frozenset[tuple[str, str, str]] = frozenset(
         ("core/adaptation/self_optimizer.py", "_run_gateway_command", "wait"),
         ("core/affect/affect_facade.py", "get", "get"),
         ("core/affect/damasio_v2.py", "get_valence_vector", "get"),
-        ("core/agency/tool_orchestrator.py", "execute_python", "drain"),
-        ("core/agency/tool_orchestrator.py", "execute_python", "readexactly"),
-        ("core/agency/tool_orchestrator.py", "execute_python", "readline"),
         ("core/autonomy/autonomous_initiative_loop.py", "_event_listener_loop", "get"),
         ("core/brain/llm/nucleus_manager.py", "_listen_for_updates", "get"),
         ("core/brain/llm/nucleus_manager.py", "generate_stream_async", "get"),
@@ -138,7 +135,8 @@ def _scan_offenders() -> set[tuple[str, str, str]]:
         rel = str(path.relative_to(PROJECT_ROOT))
 
         class Visitor(ast.NodeVisitor):
-            def __init__(self) -> None:
+            def __init__(self, rel_path: str) -> None:
+                self.rel_path = rel_path
                 self.async_stack: list[str] = []
                 self.timeout_ctx_depth = 0
 
@@ -185,10 +183,10 @@ def _scan_offenders() -> set[tuple[str, str, str]]:
                         and not value.keywords
                     ) or name in _STREAM_READS
                     if flagged:
-                        offenders.add((rel, self.async_stack[-1], name))
+                        offenders.add((self.rel_path, self.async_stack[-1], name))
                 self.generic_visit(node)
 
-        Visitor().visit(tree)
+        Visitor(rel).visit(tree)
     return offenders
 
 

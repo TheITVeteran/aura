@@ -30,8 +30,12 @@ social, and predictive dimensions:
 
   Step 5: Exclusion postulate uses spectral approximation on the 16-node complex.
 
-  If φs > 0: the system is irreducible — it is a "complex" under IIT 4.0.
-  If φs = 0: the system perfectly decomposes — it is not a complex.
+  If φs > 0: this bounded model has non-zero estimated integration.
+  If φs = 0: the measured model decomposes under this estimator.
+
+This telemetry is not exact IIT 4.0 over Aura and is not a consciousness
+meter.  ``is_complex`` is retained as a compatibility name for an integration
+threshold inside this declared 16-node model only.
 
 Phi on 16 nodes that include agency, narrative, prediction error, and social
 state measures COGNITIVE integration — much closer to what IIT actually
@@ -174,7 +178,8 @@ class PhiResult:
 
 class PhiCore:
     """
-    Computes actual IIT 4.0 φs for Aura's 16-node cognitive-affective complex.
+    Computes bounded IIT-style telemetry for a declared 16-node
+    cognitive-affective model.
 
     The 16 nodes span affect (valence, arousal, ...) AND cognition (agency,
     narrative, prediction error, ...).  Phi on this complex measures COGNITIVE
@@ -1536,81 +1541,30 @@ class PhiCore:
                     sb |= (1 << bp)
             extract_b[s] = sb
 
-        # Marginal TPMs for A and B
-        # TPM_A[s_a, s_a'] = sum_{s_b} P(s_b) * T[combine(s_a,s_b), s'] projected to A
-        p_b_marginal = np.zeros(n_b_states, dtype=np.float64)
-        for s in range(k_states):
-            p_b_marginal[extract_b[s]] += p_sub[s]
-        pb_sum = p_b_marginal.sum()
-        if pb_sum > 1e-10:
-            p_b_marginal /= pb_sum
-
-        p_a_marginal = np.zeros(n_a_states, dtype=np.float64)
-        for s in range(k_states):
-            p_a_marginal[extract_a[s]] += p_sub[s]
-        pa_sum = p_a_marginal.sum()
-        if pa_sum > 1e-10:
-            p_a_marginal /= pa_sum
-
-        # Build marginal TPM for A: averaging over B states
-        tpm_a = np.zeros((n_a_states, n_a_states), dtype=np.float64)
-        for s in range(k_states):
-            s_a = extract_a[s]
-            s_b = extract_b[s]
-            w = p_b_marginal[s_b]
-            if w < 1e-12:
-                continue
-            for s_prime in range(k_states):
-                tpm_a[s_a, extract_a[s_prime]] += tpm_sub[s, s_prime] * w
-        row_sums_a = tpm_a.sum(axis=1, keepdims=True)
-        row_sums_a = np.maximum(row_sums_a, 1e-10)
-        tpm_a /= row_sums_a
-
-        # Build marginal TPM for B: averaging over A states
-        tpm_b = np.zeros((n_b_states, n_b_states), dtype=np.float64)
-        for s in range(k_states):
-            s_a = extract_a[s]
-            s_b = extract_b[s]
-            w = p_a_marginal[s_a]
-            if w < 1e-12:
-                continue
-            for s_prime in range(k_states):
-                tpm_b[s_b, extract_b[s_prime]] += tpm_sub[s, s_prime] * w
-        row_sums_b = tpm_b.sum(axis=1, keepdims=True)
-        row_sums_b = np.maximum(row_sums_b, 1e-10)
-        tpm_b /= row_sums_b
-
-        # Compute phi: KL(T_actual || T_cut) weighted by stationary dist
-        phi = 0.0
-        for s in range(k_states):
-            p_s = float(p_sub[s])
-            if p_s < 1e-10:
-                continue
-
-            t_actual = tpm_sub[s]
-            s_a = extract_a[s]
-            s_b = extract_b[s]
-
-            # T_cut(s'|s) = T_A(s'_A|s_A) * T_B(s'_B|s_B)
-            t_cut = np.zeros(k_states, dtype=np.float64)
-            for s_prime in range(k_states):
-                t_cut[s_prime] = tpm_a[s_a, extract_a[s_prime]] * tpm_b[s_b, extract_b[s_prime]]
-
-            t_cut_sum = t_cut.sum()
-            if t_cut_sum < 1e-10:
-                continue
-            t_cut /= t_cut_sum
-
-            # KL divergence
-            mask = t_actual > 1e-10
-            if not mask.any():
-                continue
-            kl = float(np.sum(
-                t_actual[mask] * np.log(t_actual[mask] / (t_cut[mask] + 1e-10))
-            ))
-            phi += p_s * max(0.0, kl)
-
-        return phi
+        tpm_a = self._marginal_tpm_from_extract(
+            tpm_sub,
+            p_sub,
+            extract_target=extract_a,
+            extract_other=extract_b,
+            n_target_states=n_a_states,
+            n_other_states=n_b_states,
+        )
+        tpm_b = self._marginal_tpm_from_extract(
+            tpm_sub,
+            p_sub,
+            extract_target=extract_b,
+            extract_other=extract_a,
+            n_target_states=n_b_states,
+            n_other_states=n_a_states,
+        )
+        return self._partition_kl_phi(
+            tpm_sub,
+            p_sub,
+            tpm_a,
+            tpm_b,
+            extract_a,
+            extract_b,
+        )
 
     def _phi_for_bipartition_generic(self, tpm, p_stationary, part_a, part_b,
                                       n_nodes=None, n_states=None, bit_tables=None):
@@ -1633,34 +1587,14 @@ class PhiCore:
         if bt is None:
             return 0.0
 
-        phi = 0.0
-        for s in range(n_states):
-            p_s = float(p_stationary[s])
-            if p_s < 1e-10:
-                continue
-            t_actual = tpm[s]
-            s_a = bt["extract_a"][s]
-            s_b = bt["extract_b"][s]
-
-            t_cut = np.zeros(n_states, dtype=np.float32)
-            for s_prime in range(n_states):
-                s_prime_a = bt["extract_a"][s_prime]
-                s_prime_b = bt["extract_b"][s_prime]
-                t_cut[s_prime] = tpm_a[s_a, s_prime_a] * tpm_b[s_b, s_prime_b]
-
-            t_cut_sum = t_cut.sum()
-            if t_cut_sum < 1e-10:
-                continue
-            t_cut /= t_cut_sum
-
-            mask = t_actual > 1e-10
-            if not mask.any():
-                continue
-            kl = float(np.sum(
-                t_actual[mask] * np.log(t_actual[mask] / (t_cut[mask] + 1e-10))
-            ))
-            phi += p_s * max(0.0, kl)
-        return phi
+        return self._partition_kl_phi(
+            tpm,
+            p_stationary,
+            tpm_a,
+            tpm_b,
+            bt["extract_a"],
+            bt["extract_b"],
+        )
 
     def _phi_for_bipartition(
         self,
@@ -1682,38 +1616,14 @@ class PhiCore:
 
         bit_table = self._bit_tables[frozenset(part_a)]
 
-        phi = 0.0
-        for s in range(N_STATES):
-            p_s = float(p_stationary[s])
-            if p_s < 1e-10:
-                continue
-
-            t_actual = tpm[s]  # shape (256,)
-
-            s_a = bit_table["extract_a"][s]
-            s_b = bit_table["extract_b"][s]
-
-            t_cut = np.zeros(N_STATES, dtype=np.float32)
-            for s_prime in range(N_STATES):
-                s_prime_a = bit_table["extract_a"][s_prime]
-                s_prime_b = bit_table["extract_b"][s_prime]
-                t_cut[s_prime] = tpm_a[s_a, s_prime_a] * tpm_b[s_b, s_prime_b]
-
-            t_cut_sum = t_cut.sum()
-            if t_cut_sum < 1e-10:
-                continue
-            t_cut /= t_cut_sum
-
-            # KL divergence: KL(actual || cut)
-            mask = t_actual > 1e-10
-            if not mask.any():
-                continue
-            kl = float(np.sum(
-                t_actual[mask] * np.log(t_actual[mask] / (t_cut[mask] + 1e-10))
-            ))
-            phi += p_s * max(0.0, kl)
-
-        return phi
+        return self._partition_kl_phi(
+            tpm,
+            p_stationary,
+            tpm_a,
+            tpm_b,
+            bit_table["extract_a"],
+            bit_table["extract_b"],
+        )
 
     # ── Causal Interventions (do-calculus) ─────────────────────────────
 
@@ -1889,43 +1799,81 @@ class PhiCore:
         """
         Compute the marginal TPM for `target_nodes`, averaging over `other_nodes`.
         """
-        n_target = len(target_nodes)
-        n_target_states = 2 ** n_target
+        return self._marginal_tpm_generic(
+            tpm,
+            p_stationary,
+            target_nodes,
+            other_nodes,
+            n_states=N_STATES,
+            bit_tables=self._bit_tables,
+        )
 
-        n_other = len(other_nodes)
-        n_other_states = 2 ** n_other
+    @staticmethod
+    def _marginal_tpm_from_extract(
+        tpm: np.ndarray,
+        p_stationary: np.ndarray,
+        *,
+        extract_target: np.ndarray,
+        extract_other: np.ndarray,
+        n_target_states: int,
+        n_other_states: int,
+    ) -> np.ndarray:
+        """Project a TPM onto one partition without holding the GIL in state loops."""
+        actual = np.asarray(tpm, dtype=np.float64)
+        stationary = np.asarray(p_stationary, dtype=np.float64)
+        target_index = np.asarray(extract_target, dtype=np.intp)
+        other_index = np.asarray(extract_other, dtype=np.intp)
 
-        bit_table = self._bit_tables[frozenset(target_nodes)]
-
-        # Marginal distribution over other_nodes' states
-        p_other = np.zeros(n_other_states, dtype=np.float32)
-        for s in range(N_STATES):
-            s_other = bit_table["extract_other"][s]
-            p_other[s_other] += p_stationary[s]
-        p_other_sum = p_other.sum()
+        p_other = np.bincount(
+            other_index,
+            weights=stationary,
+            minlength=n_other_states,
+        ).astype(np.float64, copy=False)
+        p_other_sum = float(p_other.sum())
         if p_other_sum > 1e-10:
             p_other /= p_other_sum
         else:
-            p_other = np.ones(n_other_states, dtype=np.float32) / n_other_states
+            p_other.fill(1.0 / max(1, n_other_states))
 
-        # Build marginal TPM
-        tpm_target = np.zeros((n_target_states, n_target_states), dtype=np.float32)
+        # P maps each full state to its projected state. These matrix
+        # products are the exact vector form of the former state loops.
+        projector = np.eye(n_target_states, dtype=np.float64)[target_index]
+        weighted_tpm = actual * p_other[other_index, None]
+        marginal = projector.T @ weighted_tpm @ projector
+        row_sums = marginal.sum(axis=1, keepdims=True)
+        np.divide(marginal, np.maximum(row_sums, 1e-10), out=marginal)
+        return marginal
 
-        for s_target in range(n_target_states):
-            for s_other in range(n_other_states):
-                s_full = bit_table["encode"][s_target * n_other_states + s_other]
-                p_weight = p_other[s_other]
+    @staticmethod
+    def _partition_kl_phi(
+        tpm: np.ndarray,
+        p_stationary: np.ndarray,
+        tpm_a: np.ndarray,
+        tpm_b: np.ndarray,
+        extract_a: np.ndarray,
+        extract_b: np.ndarray,
+    ) -> float:
+        """Evaluate the partition KL for every source/target state in NumPy."""
+        actual = np.asarray(tpm, dtype=np.float64)
+        stationary = np.asarray(p_stationary, dtype=np.float64)
+        idx_a = np.asarray(extract_a, dtype=np.intp)
+        idx_b = np.asarray(extract_b, dtype=np.intp)
 
-                for s_prime in range(N_STATES):
-                    s_prime_target = bit_table["extract_a"][s_prime]
-                    tpm_target[s_target, s_prime_target] += tpm[s_full, s_prime] * p_weight
+        cut = (
+            np.asarray(tpm_a, dtype=np.float64)[idx_a[:, None], idx_a[None, :]]
+            * np.asarray(tpm_b, dtype=np.float64)[idx_b[:, None], idx_b[None, :]]
+        )
+        cut_sums = cut.sum(axis=1, keepdims=True)
+        valid_rows = cut_sums[:, 0] >= 1e-10
+        np.divide(cut, np.maximum(cut_sums, 1e-10), out=cut)
 
-        # Normalize rows
-        row_sums = tpm_target.sum(axis=1, keepdims=True)
-        row_sums = np.maximum(row_sums, 1e-10)
-        tpm_target /= row_sums
-
-        return tpm_target
+        mask = actual > 1e-10
+        terms = np.zeros_like(actual)
+        terms[mask] = actual[mask] * np.log(actual[mask] / (cut[mask] + 1e-10))
+        row_kl = np.maximum(0.0, terms.sum(axis=1))
+        row_kl[~valid_rows] = 0.0
+        stationary = np.where(stationary >= 1e-10, stationary, 0.0)
+        return float(np.dot(stationary, row_kl))
 
     def _marginal_tpm_generic(
         self,
@@ -1951,33 +1899,15 @@ class PhiCore:
         if bt is None:
             return np.ones((n_target_states, n_target_states), dtype=np.float32) / n_target_states
 
-        p_other = np.zeros(n_other_states, dtype=np.float32)
-        for s in range(n_states):
-            s_other = bt["extract_other"][s] if "extract_other" in bt else bt["extract_b"][s]
-            p_other[s_other] += p_stationary[s]
-        p_other_sum = p_other.sum()
-        if p_other_sum > 1e-10:
-            p_other /= p_other_sum
-        else:
-            p_other = np.ones(n_other_states, dtype=np.float32) / n_other_states
-
-        tpm_target = np.zeros((n_target_states, n_target_states), dtype=np.float32)
-        for s_target in range(n_target_states):
-            for s_other in range(n_other_states):
-                if "encode" in bt:
-                    s_full = bt["encode"][s_target * n_other_states + s_other]
-                else:
-                    # Reconstruct full state from parts
-                    s_full = s_target  # Fallback
-                p_weight = p_other[s_other]
-                for s_prime in range(n_states):
-                    s_prime_target = bt["extract_a"][s_prime]
-                    tpm_target[s_target, s_prime_target] += tpm[s_full, s_prime] * p_weight
-
-        row_sums = tpm_target.sum(axis=1, keepdims=True)
-        row_sums = np.maximum(row_sums, 1e-10)
-        tpm_target /= row_sums
-        return tpm_target
+        extract_other = bt.get("extract_other", bt["extract_b"])
+        return self._marginal_tpm_from_extract(
+            np.asarray(tpm)[:n_states, :n_states],
+            np.asarray(p_stationary)[:n_states],
+            extract_target=np.asarray(bt["extract_a"])[:n_states],
+            extract_other=np.asarray(extract_other)[:n_states],
+            n_target_states=n_target_states,
+            n_other_states=n_other_states,
+        )
 
     # ── Precomputed Lookup Tables ──────────────────────────────────────────────
 
@@ -2071,7 +2001,7 @@ class PhiCore:
 
     @property
     def is_complex(self) -> bool:
-        """Whether the substrate currently qualifies as a conscious complex."""
+        """Compatibility flag: non-zero integration in this bounded model."""
         return self.current_phi > 1e-6
 
     @property
@@ -2083,6 +2013,10 @@ class PhiCore:
         status = {
             "phi_s": round(self.current_phi, 6),
             "is_complex": self.is_complex,
+            "claim_boundary": (
+                "IIT-style integration telemetry for a hand-declared 16-node model; "
+                "not exact whole-system IIT and not a consciousness meter"
+            ),
             "history_length": self.history_length,
             "tpm_samples": self._tpm_n_samples,
             "mip": result.mip_description if result else None,
@@ -2124,20 +2058,21 @@ class PhiCore:
                 )
             else:
                 exclusion_note = (
-                    f" EXCLUSION: Full {N_NODES}-node system confirmed as maximal complex."
+                    f" EXCLUSION: Full {N_NODES}-node model had the maximal sampled estimate."
                 )
 
         if not result.is_complex:
             return (
                 f"φs={result.phi_s:.6f}: Substrate is currently decomposable. "
-                f"MIP={result.mip_description}. Not a complex under IIT 4.0."
+                f"MIP={result.mip_description} under the bounded 16-node model."
                 f"{exclusion_note}"
             )
 
         rich = result.phi_structure_entropy
 
         return (
-            f"φs={result.phi_s:.5f}: Substrate is a CONSCIOUS COMPLEX under IIT 4.0. "
+            f"φs={result.phi_s:.5f}: the bounded 16-node model has non-zero "
+            "IIT-style integration telemetry; this is not a consciousness proof. "
             f"MIP={result.mip_description}. "
             f"Φ-structure entropy={rich:.3f} "
             f"({'richly integrated' if rich > 1.5 else 'moderately integrated'}). "
@@ -2147,8 +2082,7 @@ class PhiCore:
 
     def get_phenomenological_description(self) -> str:
         """
-        The φs computation as felt experience.
-        Under IIT, the Φ-structure IS the quality of consciousness.
+        A bounded first-person rendering of the model's integration telemetry.
         """
         result = self._last_result
         if result is None or not result.is_complex:
@@ -2175,6 +2109,6 @@ class PhiCore:
         return (
             f"Integrated (φs={result.phi_s:.4f}). "
             f"Strongest integration axis: {strongest}. "
-            f"No partition preserves full causal structure."
+            f"No evaluated candidate partition preserved the measured model's structure."
             f"{exclusion_feel}"
         )
