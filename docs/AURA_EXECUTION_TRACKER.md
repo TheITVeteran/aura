@@ -16,8 +16,8 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **Checkpoint 82 is pushed on exact
-  `main`; source Checkpoint 83 is in validation**. Checkpoint 80 made cached
+- Current bounded implementation milestone: **Checkpoint 83 is pushed on exact
+  `main` at `5df12f9d`; exact-app reproof is open**. Checkpoint 80 made cached
   readiness truthful and fast,
   removed synchronous Phi/Eternal maintenance from the foreground cycle, and
   reduced live CognitiveEngine samples from a 59.65-second retry cascade to
@@ -37,7 +37,7 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   release, and causal-proof obligations remain open unless their rows
   explicitly close.
 - Overall completion percentage: **30% evidence-weighted planning estimate at
-  pushed Checkpoint 82 with source Checkpoint 83 in validation**. The exact
+  pushed Checkpoint 83**. The exact
   Checkpoint 80 app earns bounded live credit for readiness, health, base boot,
   and one-attempt chat latency, but not output quality, sustained load, GUI
   frame SLO, portability, semantic review, release, or soak. The newly
@@ -49,9 +49,8 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   generated denominator; new obligations increase it, regressions reopen it,
   and source-green/live-open work never receives full closure credit.
 - Total checkpoint forecast: **approximately 240-325 total checkpoints for the
-  expanded program, with 82 pushed, source Checkpoint 83 in validation, and
-  approximately 157-242 remaining after that candidate is pushed before final
-  soak/release closure**. The prior `226-304` range expands by 8-12 explicit
+  expanded program, with 83 pushed and approximately 157-242 remaining before
+  final soak/release closure**. The prior `226-304` range expands by 8-12 explicit
   checkpoints for a falsifiable lateral-conceptual-leap program spanning
   mechanism construction, held-out evaluation, novelty and prior-art review,
   causal utility, ablation, replication, and live integration. The earlier
@@ -15985,9 +15984,9 @@ Progress and immediate next work:
   `IIT-BASELINE-INTEGRITY-001` decomposes already-counted IIT work rather than
   hiding a denominator increase, while the new statistical-validity gate adds
   explicit work that was not previously separable or honestly countable.
-- Commit and push this exact candidate directly to `main`, rebuild/install the
-  signed app, and run at least five repetitions per exact/word/sentence
-  contract through the genuine CognitiveEngine/Cortex path. The requested-short
+- Rebuild/install the signed app and run at least five repetitions per
+  exact/word/sentence contract through the genuine CognitiveEngine/Cortex path.
+  The requested-short
   campaign must beat the prior `20.64s` median by at least half, keep every
   sample below `19.02s`, use one Cortex attempt with no fallback, satisfy the
   exact visible contract, and distinguish model-native compliance from any
