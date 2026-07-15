@@ -3140,13 +3140,31 @@ body.accent-amber { --primary: #f59e0b; --primary-bright: #fbbf24; --accent: #fc
 }
 
 /* ── Title lockup ─────────────────────────────────── */
+/* Self-hosted so the splash renders identically offline. A local sovereign
+ * runtime should not need fonts.gstatic.com to draw its own name. */
+@font-face {
+    font-family: 'Fredoka';
+    font-style: normal;
+    font-weight: 300 700;
+    font-stretch: 75% 125%;
+    font-display: block;
+    src: url('/static/vendor/fonts/fredoka-variable-latin.woff2') format('woff2-variations');
+}
+
+/* Wordmark above, sigil beneath — SEGA-style single centred lockup. */
 .splash-title-lockup {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) clamp(104px, 14vw, 178px) minmax(0, 1fr);
+    display: flex;
+    flex-direction: column;
     align-items: center;
-    gap: clamp(14px, 2.2vw, 34px);
+    gap: clamp(10px, 1.6vw, 22px);
     margin: 0 auto 34px;
     filter: drop-shadow(0 0 20px rgba(159, 75, 255, 0.28));
+}
+.splash-wordmark-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: center;
+    gap: clamp(12px, 1.8vw, 30px);
 }
 /* Scanline-cut wordmark. The glyphs are filled by a repeating gradient that is
  * clipped to the text, so the transparent bands read as stripes cut through the
@@ -3154,48 +3172,53 @@ body.accent-amber { --primary: #f59e0b; --primary-bright: #fbbf24; --accent: #fc
  * because drop-shadow blooms the *striped* result — text-shadow would paint a
  * solid glow behind transparent glyphs and fill the stripes back in.
  * Stripe pitch is in em so it tracks the clamped font size. */
+/* Real neon: a near-white core inside a saturated coloured halo. Tinting the
+ * stripes themselves the accent colour reads as coloured plastic; a hot core
+ * with the colour carried entirely by the bloom reads as a lit tube.
+ * font-stretch drives Fredoka's real width axis — narrower letterforms drawn
+ * at their designed stroke weights, not a scaleX squash of a wider face. */
 .splash-logo-word {
-    --wordmark-stripe: 0.055em;
-    --wordmark-ink: #c98bff;
-    --wordmark-glow-1: rgba(181, 92, 255, 0.9);
-    --wordmark-glow-2: rgba(181, 92, 255, 0.5);
-    --wordmark-glow-3: rgba(0, 229, 255, 0.24);
-    font-family: var(--font-head);
-    font-size: clamp(2.8rem, 8vw, 8.2rem);
-    font-weight: 900;
-    line-height: 0.86;
-    letter-spacing: 0.02em;
+    --wordmark-stripe: 0.052em;
+    --wordmark-ink: #fbf2ff;
+    --wordmark-glow-1: rgba(198, 116, 255, 0.95);
+    --wordmark-glow-2: rgba(160, 60, 255, 0.75);
+    --wordmark-glow-3: rgba(138, 43, 226, 0.45);
+    --wordmark-glow-4: rgba(0, 229, 255, 0.20);
+    font-family: 'Fredoka', var(--font-head);
+    /* Both words now share one line, so the lockup needs a larger cap than the
+     * old flanking layout to hold the same presence across the middle. */
+    font-size: clamp(3rem, 11vw, 11.5rem);
+    font-weight: 700;
+    font-stretch: 84%;
+    line-height: 0.92;
+    letter-spacing: 0.005em;
     text-transform: uppercase;
     font-variant-ligatures: none;
     color: transparent;
     background-image: repeating-linear-gradient(
         180deg,
         var(--wordmark-ink) 0 var(--wordmark-stripe),
-        rgba(255, 255, 255, 0.06) var(--wordmark-stripe) calc(var(--wordmark-stripe) * 1.92)
+        rgba(255, 255, 255, 0.05) var(--wordmark-stripe) calc(var(--wordmark-stripe) * 1.94)
     );
     -webkit-background-clip: text;
     background-clip: text;
     filter:
-        drop-shadow(0 0 3px var(--wordmark-glow-1))
-        drop-shadow(0 0 14px var(--wordmark-glow-2))
-        drop-shadow(0 0 46px var(--wordmark-glow-3));
+        drop-shadow(0 0 2px var(--wordmark-glow-1))
+        drop-shadow(0 0 10px var(--wordmark-glow-2))
+        drop-shadow(0 0 28px var(--wordmark-glow-3))
+        drop-shadow(0 0 68px var(--wordmark-glow-4));
     animation: neonTitleFlicker 5.5s ease-in-out infinite;
 }
-.splash-logo-left {
-    justify-self: end;
-}
 .splash-logo-right {
-    justify-self: start;
-    --wordmark-ink: #7ef1ff;
-    --wordmark-glow-1: rgba(87, 234, 255, 0.9);
-    --wordmark-glow-2: rgba(87, 234, 255, 0.46);
-    --wordmark-glow-3: rgba(181, 92, 255, 0.22);
+    --wordmark-glow-1: rgba(126, 241, 255, 0.95);
+    --wordmark-glow-2: rgba(0, 208, 255, 0.72);
+    --wordmark-glow-3: rgba(0, 160, 255, 0.42);
+    --wordmark-glow-4: rgba(181, 92, 255, 0.20);
 }
 .splash-sigil {
     position: relative;
-    width: clamp(104px, 14vw, 178px);
+    width: clamp(96px, 11vw, 158px);
     aspect-ratio: 1;
-    justify-self: center;
     filter:
         drop-shadow(0 0 10px rgba(0, 255, 225, 0.62))
         drop-shadow(0 0 26px rgba(159, 75, 255, 0.44));
