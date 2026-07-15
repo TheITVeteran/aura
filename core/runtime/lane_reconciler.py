@@ -120,6 +120,18 @@ DELIBERATE_DEATH_PREFIXES: tuple[str, ...] = (
     "reconcile_evict",
     "shutdown",
     "expert_adapter_",
+    # A generation force-abort (inference-gate timeout / first-token
+    # watchdog) is a POLICY recycle, not a spontaneous crash: the gate chose
+    # to kill a slow generation. Counting it toward crash-loop backoff backed
+    # off the FAST FALLBACK (reflex/brainstem) whenever it timed out queued
+    # behind a busy foreground 32B under single-slot GPU serialization —
+    # removing the fast answer path and cascading into deeper contention
+    # (2026-07-15 soak). The breaker exists for workers that die UNEXPECTEDLY
+    # (crash/OOM-kill/process_died_unexpectedly/init_timeout); a deliberate
+    # recycle just respawns clean. (hard_generation_deadline stays tripping —
+    # it is the escalated hard ceiling, distinct from a routine timeout.)
+    "inference_gate_generation_timeout",
+    "first_token",
 )
 
 

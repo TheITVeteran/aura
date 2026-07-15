@@ -412,3 +412,27 @@ class TestMlxSeam:
         for _ in range(5):
             mc._note_lane_worker_death(client, "hard_generation_deadline")
         assert mc._crash_loop_blocks_worker_spawn(client) is None
+
+
+class TestGenerationTimeoutNotCrashLoop:
+    """A generation force-abort is a policy recycle, not a crash — it must
+    NOT trip the crash-loop breaker and back off the fast fallback under
+    contention (2026-07-15 soak: reflex/brainstem timing out queued behind
+    a busy foreground 32B cascaded into deeper contention)."""
+
+    def test_generation_timeout_reasons_are_deliberate(self):
+        for reason in (
+            "inference_gate_generation_timeout:Reflex:14.7s",
+            "inference_gate_generation_timeout:Brainstem:53.8s",
+            "first_token_wall_clock_watchdog",
+        ):
+            assert death_is_deliberate(reason), reason
+
+    def test_hard_deadline_and_crashes_still_trip(self):
+        # The escalated hard ceiling and genuine crashes must still count.
+        for reason in (
+            "hard_generation_deadline",
+            "process_died_unexpectedly",
+            "init_timeout_hard",
+        ):
+            assert not death_is_deliberate(reason), reason
