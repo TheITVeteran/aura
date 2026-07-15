@@ -350,6 +350,7 @@ class InferenceGate:
         self._last_successful_generation_at: float = time.time()
         self._prewarm_task: asyncio.Task | None = None
         self._deferred_prewarm_task: asyncio.Task | None = None
+        self._eager_fallback_task: asyncio.Task | None = None
         self._maintenance_task: asyncio.Task | None = None
         self._foreground_ready_lock = _threading.Lock()
         self._last_background_memory_shed_at: float = 0.0
@@ -1230,7 +1231,12 @@ class InferenceGate:
 
     def cleanup(self) -> None:
         """Release managed local inference clients during ServiceContainer shutdown."""
-        for task_attr in ("_prewarm_task", "_deferred_prewarm_task", "_maintenance_task"):
+        for task_attr in (
+            "_prewarm_task",
+            "_deferred_prewarm_task",
+            "_eager_fallback_task",
+            "_maintenance_task",
+        ):
             task = getattr(self, task_attr, None)
             if task is not None and not task.done():
                 task.cancel()
@@ -1905,6 +1911,70 @@ class InferenceGate:
             return
         self._last_status_recovery_schedule_at = now
         self._schedule_background_cortex_prewarm(delay=delay)
+
+    def _schedule_eager_fallback_warmup(self, delay: float = 3.0) -> None:
+        """Make the brainstem fallback resident at boot so it never cold-loads
+        in the turn path.
+
+        The brainstem is normally demand-loaded, but under sustained load the
+        cortex drops and the demand cold-load is aborted at the squeezed per-turn
+        fallback budget (~18-24s) — so the fallback never becomes resident and
+        the turn returns no reply (live 2026-07-15 soak: 22% canonical_chat_no_
+        reply once the cortex dropped). A resident 7B answers every fallback turn
+        within budget, so the conversation path always produces text. Warmed
+        ahead of the deferred cortex prewarm (short delay) so the fast tier is up
+        first. Gated by AURA_EAGER_FALLBACK_WARMUP (default on).
+        """
+        if str(os.environ.get("AURA_EAGER_FALLBACK_WARMUP", "1")).strip().lower() in {
+            "0",
+            "false",
+            "no",
+            "off",
+        }:
+            return
+        if is_shutdown_requested():
+            return
+        existing = self._eager_fallback_task
+        if existing is not None and not existing.done():
+            return
+
+        async def _runner() -> None:
+            await asyncio.sleep(max(0.0, float(delay)))
+            if is_shutdown_requested():
+                return
+            try:
+                from core.brain.llm.mlx_client import get_mlx_client
+                from core.brain.llm.model_registry import get_brainstem_path
+
+                brainstem = get_mlx_client(model_path=str(get_brainstem_path()))
+                if brainstem is None or not hasattr(brainstem, "warmup"):
+                    return
+                if hasattr(brainstem, "is_alive") and brainstem.is_alive():
+                    return
+                logger.info(
+                    "🔥 Eager fallback warmup: making the brainstem resident so the "
+                    "conversation path always has a fast answer tier if the cortex drops."
+                )
+                await brainstem.warmup()
+            except _INFERENCE_RECOVERABLE_ERRORS as exc:
+                _record_inference_degradation(
+                    exc,
+                    action="continued after eager fallback warmup failed",
+                    severity="warning",
+                )
+
+        coro = _runner()
+        try:
+            task = get_task_tracker().create_task(
+                coro, name="InferenceGate.eager_fallback_warmup"
+            )
+        except RuntimeError:
+            coro.close()
+            logger.debug("Eager fallback warmup skipped: no running event loop.")
+            return
+        if isinstance(task, asyncio.Task):
+            self._eager_fallback_task = task
+            task.add_done_callback(self._log_task_exception)
 
     def _schedule_background_cortex_prewarm(self, delay: float = 12.0) -> None:
         if is_shutdown_requested():
@@ -3774,6 +3844,11 @@ class InferenceGate:
                 logger.info(
                     "🛡️ InferenceGate ONLINE (desktop resource guard: 32B warmup is RAM-admitted)."
                 )
+
+            # Bring the fallback tier resident up front (independent of the cortex
+            # warmup policy) so a cortex drop never leaves the turn with no fast
+            # answer tier to fall to.
+            self._schedule_eager_fallback_warmup()
 
             if self._maintenance_task is None or self._maintenance_task.done():
                 self._maintenance_task = get_task_tracker().create_task(
