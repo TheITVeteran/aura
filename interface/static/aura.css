@@ -2254,6 +2254,184 @@ body.neural-visual-paused #pane-neural .live-dot {
     overflow-wrap: anywhere;
 }
 
+/* ── Imagination workspace ───────────────────────────────── */
+.imagine-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+.imagine-toolbar-label { margin-bottom: 0; }
+.imagine-state {
+    font-family: var(--font-stream);
+    font-size: 0.58rem;
+    letter-spacing: 0.06em;
+    color: var(--text-dim);
+    white-space: nowrap;
+}
+.imagine-empty,
+.imagine-empty-inline {
+    color: var(--text-dim);
+    font-size: 0.72rem;
+    line-height: 1.55;
+    padding: 14px;
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.015);
+}
+.imagine-empty-inline {
+    padding: 8px 10px;
+    font-size: 0.66rem;
+}
+.imagine-objective {
+    font-family: var(--font-stream);
+    font-size: 0.7rem;
+    line-height: 1.5;
+    color: var(--text);
+    border-left: 3px solid var(--primary);
+    padding: 10px 12px;
+    margin-bottom: 14px;
+    background: rgba(138, 43, 226, 0.06);
+    border-radius: 0 6px 6px 0;
+    overflow-wrap: anywhere;
+}
+.imagine-flash { animation: imagineFlash 0.7s ease-out; }
+@keyframes imagineFlash {
+    0%   { background: rgba(138, 43, 226, 0.34); }
+    100% { background: rgba(138, 43, 226, 0.06); }
+}
+.imagine-canvas-wrap {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.02);
+    padding: 6px;
+    margin-bottom: 16px;
+}
+.imagine-canvas { display: block; width: 100%; height: auto; }
+.imagine-edge { stroke: rgba(138, 43, 226, 0.5); stroke-width: 1; }
+.imagine-edge-label {
+    fill: var(--text-dim);
+    font-size: 6px;
+    font-family: var(--font-stream);
+    letter-spacing: 0.04em;
+}
+.imagine-node { fill: #1a1030; stroke: var(--primary); stroke-width: 1.4; }
+.imagine-node-focus { fill: var(--primary); stroke: #d9b3ff; }
+.imagine-node-label {
+    fill: var(--text);
+    font-size: 7.5px;
+    font-family: var(--font-stream);
+}
+.imagine-canvas-null { fill: var(--text-dim); font-size: 8px; font-family: var(--font-stream); }
+.imagine-canvas-caption {
+    color: var(--text-dim);
+    font-size: 0.62rem;
+    line-height: 1.5;
+    padding: 6px 4px 2px;
+    overflow-wrap: anywhere;
+}
+.imagine-attractor { margin-bottom: 8px; }
+.imagine-attractor-head {
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--font-stream);
+    font-size: 0.6rem;
+    color: var(--text-dim);
+    margin-bottom: 3px;
+}
+.imagine-attractor-win .imagine-attractor-head { color: var(--primary-bright); }
+.imagine-attractor-track {
+    height: 6px;
+    background: #120e1f;
+    border-radius: 3px;
+    overflow: hidden;
+}
+.imagine-attractor-fill {
+    height: 100%;
+    background: linear-gradient(90deg, rgba(138, 43, 226, 0.5), var(--primary));
+    border-radius: 3px;
+    transition: width 0.45s ease;
+}
+.imagine-attractor-win .imagine-attractor-fill {
+    background: linear-gradient(90deg, var(--primary), #57eaff);
+}
+.imagine-attractor-meta {
+    color: var(--text-dim);
+    font-family: var(--font-stream);
+    font-size: 0.58rem;
+    margin: 6px 0 16px;
+}
+.imagine-pressures {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px 12px;
+    margin-bottom: 16px;
+}
+.imagine-pressure-head {
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--font-stream);
+    font-size: 0.55rem;
+    color: var(--text-dim);
+    margin-bottom: 3px;
+}
+.imagine-list { margin-bottom: 16px; }
+.imagine-item {
+    font-size: 0.68rem;
+    line-height: 1.5;
+    color: var(--text);
+    padding: 8px 10px;
+    margin-bottom: 6px;
+    border-left: 2px solid rgba(138, 43, 226, 0.4);
+    background: rgba(255, 255, 255, 0.02);
+    border-radius: 0 6px 6px 0;
+    overflow-wrap: anywhere;
+}
+/* The engine is advisory and side-effect free; the panel says so. */
+.imagine-boundary {
+    font-size: 0.62rem;
+    line-height: 1.5;
+    color: var(--text-dim);
+    padding: 10px 12px;
+    margin-bottom: 16px;
+    border: 1px solid rgba(0, 255, 163, 0.22);
+    border-radius: 8px;
+    background: rgba(0, 255, 163, 0.04);
+}
+.imagine-boundary-open {
+    border-color: rgba(240, 160, 106, 0.4);
+    background: rgba(240, 160, 106, 0.07);
+    color: var(--warn, #f0a06a);
+}
+.imagine-worlds { display: grid; gap: 6px; }
+.imagine-world {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 11px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.02);
+    text-decoration: none;
+    transition: border-color 0.16s ease, background 0.16s ease;
+}
+.imagine-world:hover {
+    border-color: var(--border-glow);
+    background: rgba(138, 43, 226, 0.1);
+}
+.imagine-world-id {
+    font-family: var(--font-stream);
+    font-size: 0.66rem;
+    color: var(--primary-bright);
+}
+.imagine-world-meta {
+    font-family: var(--font-stream);
+    font-size: 0.58rem;
+    color: var(--text-dim);
+}
+
 /* Controls that are not wired to anything must not look operative. */
 .setting-row-unwired label {
     color: var(--text-dim);
@@ -3229,17 +3407,27 @@ body.accent-amber { --primary: #f59e0b; --primary-bright: #fbbf24; --accent: #fc
  * with the colour carried entirely by the bloom reads as a lit tube.
  * font-stretch drives Fredoka's real width axis — narrower letterforms drawn
  * at their designed stroke weights, not a scaleX squash of a wider face. */
+/* Outer element: type metrics + the neon bloom only.
+ *
+ * The bloom must live here rather than on the inner ink, because the inner ink
+ * is masked into scanlines — a mask on the same element as the filter would cut
+ * the halo into stripes as well and destroy the glow around the letters. */
 .splash-logo-word {
     --wordmark-stripe: 0.052em;
-    --wordmark-ink: #fbf2ff;
-    --wordmark-glow-1: rgba(198, 116, 255, 0.95);
-    --wordmark-glow-2: rgba(160, 60, 255, 0.75);
-    --wordmark-glow-3: rgba(138, 43, 226, 0.45);
-    --wordmark-glow-4: rgba(0, 229, 255, 0.20);
+    --wordmark-glow-1: rgba(178, 96, 245, 0.9);
+    --wordmark-glow-2: rgba(146, 52, 236, 0.7);
+    --wordmark-glow-3: rgba(120, 36, 200, 0.42);
+    --wordmark-glow-4: rgba(0, 210, 255, 0.18);
+    /* Toned down a couple of stops from the near-white core, and shaded from a
+     * lit top edge to a deeper base so the letters read as lit volume rather
+     * than flat fill. */
+    --wordmark-ink-top: #e2c4ff;
+    --wordmark-ink-mid: #b478f0;
+    --wordmark-ink-bot: #6f3fbe;
     font-family: 'Fredoka', var(--font-head);
-    /* Both words now share one line, so the lockup needs a larger cap than the
-     * old flanking layout to hold the same presence across the middle.
-     * ~62% of viewport width at 1600px. */
+    /* Both words share one line, so the lockup needs a larger cap than the old
+     * flanking layout to hold presence across the middle. ~62% of viewport
+     * width at 1600px. */
     font-size: clamp(3.2rem, 13vw, 13.5rem);
     font-weight: 700;
     font-stretch: 84%;
@@ -3247,26 +3435,54 @@ body.accent-amber { --primary: #f59e0b; --primary-bright: #fbbf24; --accent: #fc
     letter-spacing: 0.005em;
     text-transform: uppercase;
     font-variant-ligatures: none;
-    color: transparent;
-    background-image: repeating-linear-gradient(
-        180deg,
-        var(--wordmark-ink) 0 var(--wordmark-stripe),
-        rgba(255, 255, 255, 0.05) var(--wordmark-stripe) calc(var(--wordmark-stripe) * 1.94)
-    );
-    -webkit-background-clip: text;
-    background-clip: text;
     filter:
+        drop-shadow(0 1px 0 rgba(28, 8, 54, 0.9))
         drop-shadow(0 0 2px var(--wordmark-glow-1))
         drop-shadow(0 0 10px var(--wordmark-glow-2))
-        drop-shadow(0 0 28px var(--wordmark-glow-3))
-        drop-shadow(0 0 68px var(--wordmark-glow-4));
+        drop-shadow(0 0 30px var(--wordmark-glow-3))
+        drop-shadow(0 0 72px var(--wordmark-glow-4));
     animation: neonTitleFlicker 5.5s ease-in-out infinite;
 }
+
+/* Inner ink: the fill (vertical tone gradient + fractal-noise grain, blended
+ * so the texture rides the shading) clipped to the glyphs, then masked into
+ * scanlines. Doing the cut with a mask rather than a transparent-gap gradient
+ * is what allows a second textured layer underneath at all — stacked
+ * backgrounds cannot punch a hole through to nothing. */
+.splash-logo-ink {
+    color: transparent;
+    background-image:
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"),
+        linear-gradient(
+            180deg,
+            var(--wordmark-ink-top) 0%,
+            var(--wordmark-ink-mid) 46%,
+            var(--wordmark-ink-bot) 100%
+        );
+    background-size: 120px 120px, 100% 100%;
+    background-blend-mode: soft-light, normal;
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-mask-image: repeating-linear-gradient(
+        180deg,
+        #000 0 var(--wordmark-stripe),
+        transparent var(--wordmark-stripe) calc(var(--wordmark-stripe) * 1.94)
+    );
+    mask-image: repeating-linear-gradient(
+        180deg,
+        #000 0 var(--wordmark-stripe),
+        transparent var(--wordmark-stripe) calc(var(--wordmark-stripe) * 1.94)
+    );
+}
+
 .splash-logo-right {
-    --wordmark-glow-1: rgba(126, 241, 255, 0.95);
-    --wordmark-glow-2: rgba(0, 208, 255, 0.72);
-    --wordmark-glow-3: rgba(0, 160, 255, 0.42);
-    --wordmark-glow-4: rgba(181, 92, 255, 0.20);
+    --wordmark-glow-1: rgba(104, 214, 240, 0.9);
+    --wordmark-glow-2: rgba(0, 182, 232, 0.68);
+    --wordmark-glow-3: rgba(0, 138, 208, 0.4);
+    --wordmark-glow-4: rgba(150, 78, 235, 0.18);
+    --wordmark-ink-top: #bfeeff;
+    --wordmark-ink-mid: #62c8e6;
+    --wordmark-ink-bot: #2b7fa8;
 }
 .splash-sigil {
     position: relative;

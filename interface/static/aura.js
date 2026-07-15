@@ -1741,6 +1741,8 @@ document.addEventListener('click', (e) => {
         if (tab === 'telemetry' && !state.beliefGraphInit) initBeliefGraph();
         if (tab === 'skills') { loadSkills(); loadLearningStatus(); }
         if (tab === 'memory') loadMemory(state.activeMem);
+        if (tab === 'imagine') imagination.activate();
+        else imagination.deactivate();
     } else {
         console.warn(`Pane not found for tab: ${tab}`);
     }
@@ -5961,6 +5963,253 @@ function regenerateResponse() {
 }
 
 $('regen-btn')?.addEventListener('click', regenerateResponse);
+
+// ── Imagination workspace ─────────────────────────────────
+// Renders the frame ImaginationEngine is actually holding, straight from
+// /api/imagination. Everything drawn here is a real field of that frame; when
+// she has not imagined anything the panel says so instead of inventing a
+// canvas. The engine is advisory and side-effect free, and the panel states
+// that boundary rather than implying these are actions she is taking.
+const imagination = (() => {
+    const POLL_MS = 4000;
+    let timer = null;
+    let inFlight = false;
+    let lastFrameId = null;
+
+    const PRESSURES = [
+        ['salience', 'SALIENCE'],
+        ['novelty_pressure', 'NOVELTY'],
+        ['curiosity_pressure', 'CURIOSITY'],
+        ['affective_pressure', 'AFFECT'],
+        ['memory_pressure', 'MEMORY'],
+        ['verification_pressure', 'VERIFY'],
+    ];
+
+    function activate() {
+        if (timer) return;
+        refresh();
+        timer = setInterval(refresh, POLL_MS);
+    }
+
+    function deactivate() {
+        clearInterval(timer);
+        timer = null;
+    }
+
+    async function refresh() {
+        if (inFlight) return;
+        inFlight = true;
+        try {
+            const resp = await fetch('/api/imagination', { headers: auraDesktopHeaders() });
+            if (!resp.ok) throw new Error(`imagination ${resp.status}`);
+            render(await resp.json());
+        } catch (err) {
+            renderUnavailable(err);
+        } finally {
+            inFlight = false;
+        }
+    }
+
+    function renderUnavailable(err) {
+        const dot = $('imagine-dot');
+        if (dot) dot.classList.remove('live');
+        setText('imagine-state', 'UNAVAILABLE');
+        const empty = $('imagine-empty');
+        const live = $('imagine-live');
+        if (empty) {
+            empty.hidden = false;
+            empty.textContent = 'Imagination workspace unavailable — the runtime is not reporting. '
+                + 'This panel shows nothing rather than showing a stale frame.';
+        }
+        if (live) live.hidden = true;
+        console.warn('[Imagine]', err);
+    }
+
+    function setText(id, value) {
+        const el = $(id);
+        if (el) el.textContent = value;
+    }
+
+    function render(payload) {
+        const frame = payload && payload.latest;
+        const status = String((payload && payload.status) || 'idle');
+        const dot = $('imagine-dot');
+        if (dot) dot.classList.toggle('live', status === 'active');
+        setText('imagine-state', `${status.toUpperCase()} · ${(payload && payload.frames) || 0} FRAMES`);
+
+        renderWorlds((payload && payload.worlds) || []);
+
+        const empty = $('imagine-empty');
+        const live = $('imagine-live');
+        if (!frame) {
+            if (empty) {
+                empty.hidden = false;
+                empty.textContent = 'Aura has not imagined anything yet. This panel fills in when the '
+                    + 'imagination engine builds a frame — it never draws a canvas she is not actually holding.';
+            }
+            if (live) live.hidden = true;
+            return;
+        }
+        if (empty) empty.hidden = true;
+        if (live) live.hidden = false;
+
+        const changed = frame.frame_id !== lastFrameId;
+        lastFrameId = frame.frame_id;
+
+        const objective = $('imagine-objective');
+        if (objective) {
+            objective.textContent = frame.objective || '(no objective)';
+            objective.classList.toggle('imagine-flash', changed);
+            if (changed) setTimeout(() => objective.classList.remove('imagine-flash'), 700);
+        }
+
+        renderCanvas(frame.mental_canvas || {}, frame.associative_links || []);
+        renderAttractors(frame.attractor_state || {});
+        renderPressures(frame);
+        renderList('imagine-thoughts', frame.novel_thoughts || []);
+        renderList('imagine-counterfactuals', frame.counterfactuals || []);
+
+        const boundary = $('imagine-boundary');
+        if (boundary) {
+            const gov = frame.governance || {};
+            const advisory = gov.advisory_only !== false;
+            const noEffects = gov.no_external_effects !== false;
+            boundary.textContent = frame.verification_boundary
+                || 'This is an internal hypothetical model, not external perception or proof.';
+            boundary.classList.toggle('imagine-boundary-open', !(advisory && noEffects));
+        }
+    }
+
+    // Objects and relations from the frame's mental canvas, laid out on a ring
+    // so every relation is drawn as a real edge between real nodes.
+    function renderCanvas(canvas, links) {
+        const svg = $('imagine-canvas');
+        if (!svg) return;
+        const objects = Array.isArray(canvas.objects) ? canvas.objects.slice(0, 6) : [];
+        const relations = [
+            ...(Array.isArray(canvas.relations) ? canvas.relations : []),
+            ...(Array.isArray(links) ? links : []),
+        ];
+        if (!objects.length) {
+            svg.innerHTML = '<text x="160" y="95" text-anchor="middle" class="imagine-canvas-null">no objects in this frame</text>';
+            setText('imagine-canvas-caption', '');
+            return;
+        }
+
+        const cx = 160, cy = 92, rx = 108, ry = 62;
+        const pos = new Map();
+        objects.forEach((obj, i) => {
+            const id = String(obj.id ?? obj);
+            if (objects.length === 1) { pos.set(id, { x: cx, y: cy, role: obj.role }); return; }
+            const t = (i / objects.length) * Math.PI * 2 - Math.PI / 2;
+            pos.set(id, { x: cx + rx * Math.cos(t), y: cy + ry * Math.sin(t), role: obj.role });
+        });
+
+        const parts = [];
+        const seen = new Set();
+        for (const rel of relations) {
+            if (!rel || typeof rel !== 'object') continue;
+            const a = pos.get(String(rel.source));
+            const b = pos.get(String(rel.target));
+            if (!a || !b) continue; // only draw edges whose endpoints are real nodes
+            const key = `${rel.source}->${rel.target}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+            parts.push(`<line x1="${a.x.toFixed(1)}" y1="${a.y.toFixed(1)}" x2="${b.x.toFixed(1)}" y2="${b.y.toFixed(1)}" class="imagine-edge"/>`);
+            parts.push(`<text x="${mx.toFixed(1)}" y="${(my - 3).toFixed(1)}" text-anchor="middle" class="imagine-edge-label">${escHtml(String(rel.relation || ''))}</text>`);
+        }
+        for (const [id, p] of pos) {
+            const focus = p.role === 'focus';
+            parts.push(`<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${focus ? 9 : 6}" class="imagine-node${focus ? ' imagine-node-focus' : ''}"/>`);
+            parts.push(`<text x="${p.x.toFixed(1)}" y="${(p.y - (focus ? 14 : 11)).toFixed(1)}" text-anchor="middle" class="imagine-node-label">${escHtml(id)}</text>`);
+        }
+        svg.innerHTML = parts.join('');
+        setText('imagine-canvas-caption', canvas.image_prompt || '');
+    }
+
+    function renderAttractors(attractor) {
+        const host = $('imagine-attractors');
+        if (!host) return;
+        const probs = attractor.probabilities;
+        if (!probs || typeof probs !== 'object' || !Object.keys(probs).length) {
+            host.innerHTML = '<div class="imagine-empty-inline">no attractor competition in this frame</div>';
+            setText('imagine-attractor-meta', '');
+            return;
+        }
+        const selected = String(attractor.selected || '');
+        const rows = Object.entries(probs)
+            .filter(([, v]) => Number.isFinite(Number(v)))
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 8);
+        const max = Math.max(...rows.map(r => r[1]), 0.0001);
+        host.innerHTML = rows.map(([name, p]) => {
+            const pct = (Number(p) * 100);
+            const width = (Number(p) / max) * 100;
+            const win = name === selected;
+            return `<div class="imagine-attractor${win ? ' imagine-attractor-win' : ''}">
+                <div class="imagine-attractor-head"><span>${escHtml(name)}</span><span>${pct.toFixed(1)}%</span></div>
+                <div class="imagine-attractor-track"><div class="imagine-attractor-fill" style="width:${width.toFixed(1)}%"></div></div>
+            </div>`;
+        }).join('');
+
+        const entropy = Number(attractor.entropy);
+        const margin = Number(attractor.stability_margin);
+        const depth = Number(attractor.recurrent_depth);
+        const bits = [];
+        if (selected) bits.push(`selected <strong>${escHtml(selected)}</strong>`);
+        if (Number.isFinite(entropy)) bits.push(`entropy ${entropy.toFixed(2)}`);
+        if (Number.isFinite(margin)) bits.push(`stability margin ${margin.toFixed(2)}`);
+        if (Number.isFinite(depth)) bits.push(`recurrent depth ${depth}`);
+        const meta = $('imagine-attractor-meta');
+        if (meta) meta.innerHTML = bits.join(' · ');
+    }
+
+    function renderPressures(frame) {
+        const host = $('imagine-pressures');
+        if (!host) return;
+        host.innerHTML = PRESSURES.map(([key, label]) => {
+            const raw = frame[key];
+            const known = raw != null && Number.isFinite(Number(raw));
+            const pct = known ? Math.max(0, Math.min(1, Number(raw))) * 100 : 0;
+            return `<div class="imagine-pressure">
+                <div class="imagine-pressure-head"><span>${label}</span><span class="${known ? '' : 'telemetry-unknown'}">${known ? pct.toFixed(0) + '%' : TELEMETRY_UNKNOWN}</span></div>
+                <div class="gauge-bar"><div class="gauge-fill curiosity${known ? '' : ' gauge-unknown'}" style="width:${pct.toFixed(1)}%"></div></div>
+            </div>`;
+        }).join('');
+    }
+
+    function renderList(id, items) {
+        const host = $(id);
+        if (!host) return;
+        const rows = (Array.isArray(items) ? items : []).filter(Boolean).slice(0, 4);
+        host.innerHTML = rows.length
+            ? rows.map(t => `<div class="imagine-item">${escHtml(String(t))}</div>`).join('')
+            : '<div class="imagine-empty-inline">none in this frame</div>';
+    }
+
+    function renderWorlds(worlds) {
+        const host = $('imagine-worlds');
+        if (!host) return;
+        const rows = Array.isArray(worlds) ? worlds : [];
+        if (!rows.length) {
+            host.innerHTML = '<div class="imagine-empty-inline">No worlds instantiated.</div>';
+            return;
+        }
+        host.innerHTML = rows.slice(0, 6).map(w => {
+            const id = escHtml(String(w.id ?? w.world_id ?? 'world'));
+            const bits = [];
+            if (w.bodies != null) bits.push(`${w.bodies} bodies`);
+            if (w.ticks != null) bits.push(`${w.ticks} ticks`);
+            return `<a class="imagine-world" href="/worlds" target="_blank" rel="noopener">
+                <span class="imagine-world-id">${id}</span>
+                <span class="imagine-world-meta">${escHtml(bits.join(' · '))}</span>
+            </a>`;
+        }).join('');
+    }
+
+    return { activate, deactivate, refresh };
+})();
 
 // ── Header vitals overflow ────────────────────────────────
 // The header carries 19 vitals but only ~4 fit beside the brand and actions.

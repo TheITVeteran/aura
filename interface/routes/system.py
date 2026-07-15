@@ -2760,6 +2760,35 @@ def _collect_imagination_status() -> dict[str, Any]:
     return payload
 
 
+@router.get("/imagination")
+async def api_imagination() -> JSONResponse:
+    """Aura's live imagination workspace, for the Imagine panel.
+
+    The same frame the engine is actually reasoning with — it already ships
+    inside /api/health, but that payload is large and slow to assemble, and the
+    panel wants to poll the workspace on its own cadence. Read-only: this is a
+    view onto ``ImaginationEngine.snapshot()``, it never constructs a frame.
+
+    ``status`` is "idle" until she has imagined something. The panel renders
+    that as an honest empty state rather than inventing a canvas.
+    """
+    payload = await asyncio.to_thread(_collect_imagination_status)
+    worlds: list[dict[str, Any]] = []
+    try:
+        from core.worlds import get_world_host
+
+        worlds = await asyncio.to_thread(get_world_host().list_worlds)
+    except _SYSTEM_RECOVERABLE_ERRORS as exc:
+        record_degradation(
+            "system",
+            exc,
+            action="imagination panel served without the worlds list",
+        )
+        logger.debug("World list unavailable for imagination panel: %s", exc)
+    payload["worlds"] = worlds if isinstance(worlds, list) else []
+    return JSONResponse(_json_safe(payload))
+
+
 def _collect_runtime_capabilities(conversation_lane: dict[str, Any] | None = None) -> dict[str, Any]:
     lane = conversation_lane if isinstance(conversation_lane, dict) else _collect_conversation_lane_status_resilient()
     payload: dict[str, Any] = {

@@ -195,9 +195,13 @@
 
         <div class="splash-content">
             <div class="splash-title-lockup" aria-label="Aura Luna">
+                <!-- Two elements per word on purpose: the inner .splash-logo-ink
+                     carries the fill (tone gradient + grain) and is masked into
+                     scanlines, while the outer .splash-logo-word carries the neon
+                     bloom. Masking on the outer would stripe the halo too. -->
                 <div class="splash-wordmark-row">
-                <span class="splash-logo-word splash-logo-left" aria-hidden="true">AURA</span>
-                <span class="splash-logo-word splash-logo-right" aria-hidden="true">LUNA</span>
+                <span class="splash-logo-word splash-logo-left" aria-hidden="true"><span class="splash-logo-ink">AURA</span></span>
+                <span class="splash-logo-word splash-logo-right" aria-hidden="true"><span class="splash-logo-ink">LUNA</span></span>
                 </div>
                 <!-- The sigil is real SVG geometry: each electron rides its own
                      ellipse via animateMotion/mpath, so it is exactly on the
@@ -436,6 +440,9 @@
                 </button>
                 <button class="tab-btn" data-tab="telemetry">
                     <span class="tab-icon">◆</span> TELEMETRY
+                </button>
+                <button class="tab-btn" data-tab="imagine">
+                    <span class="tab-icon">✳</span> IMAGINE
                 </button>
                 <button class="tab-btn" data-tab="memory">
                     <span class="tab-icon">◈</span> MEMORY
@@ -732,6 +739,56 @@
 
                     <div class="section-label">BELIEF GRAPH</div>
                     <div id="belief-graph"></div>
+                </div>
+
+                <!-- Imagine Tab — renders ImaginationEngine's live frame. Every
+                     element here is drawn from /api/imagination; when she has not
+                     imagined anything the panel says so rather than inventing a
+                     canvas. -->
+                <div id="pane-imagine" class="tab-pane">
+                    <div class="imagine-toolbar">
+                        <div class="section-label imagine-toolbar-label">IMAGINATION WORKSPACE
+                            <div class="live-dot" id="imagine-dot"></div>
+                        </div>
+                        <span id="imagine-state" class="imagine-state">—</span>
+                    </div>
+
+                    <div id="imagine-empty" class="imagine-empty">
+                        Aura has not imagined anything yet. This panel fills in when the
+                        imagination engine builds a frame — it never draws a canvas she
+                        is not actually holding.
+                    </div>
+
+                    <div id="imagine-live" hidden>
+                        <div class="imagine-objective" id="imagine-objective"></div>
+
+                        <div class="section-label">MENTAL CANVAS</div>
+                        <div class="imagine-canvas-wrap">
+                            <svg id="imagine-canvas" class="imagine-canvas" viewBox="0 0 320 190"
+                                role="img" aria-label="Objects and relations in Aura's current imagination frame"></svg>
+                            <div class="imagine-canvas-caption" id="imagine-canvas-caption"></div>
+                        </div>
+
+                        <div class="section-label">ATTRACTOR COMPETITION</div>
+                        <div id="imagine-attractors" class="imagine-attractors"></div>
+                        <div class="imagine-attractor-meta" id="imagine-attractor-meta"></div>
+
+                        <div class="section-label">PRESSURES</div>
+                        <div id="imagine-pressures" class="imagine-pressures"></div>
+
+                        <div class="section-label">NOVEL THOUGHTS</div>
+                        <div id="imagine-thoughts" class="imagine-list"></div>
+
+                        <div class="section-label">COUNTERFACTUAL PROBES</div>
+                        <div id="imagine-counterfactuals" class="imagine-list"></div>
+
+                        <div class="imagine-boundary" id="imagine-boundary"></div>
+                    </div>
+
+                    <div class="section-label">WORLDS</div>
+                    <div id="imagine-worlds" class="imagine-worlds">
+                        <div class="imagine-empty-inline">No worlds instantiated.</div>
+                    </div>
                 </div>
 
                 <!-- Memory Tab -->
