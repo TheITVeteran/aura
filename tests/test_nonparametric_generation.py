@@ -65,7 +65,8 @@ def test_logits_processor_boosts_recalled_token():
     tokens = mx.array([1, 2, 3])
     logits = mx.array(np.array([0.0, 0.0, 5.0, 0.0], dtype=np.float32))  # model favors token 2
     out = np.array(proc(tokens, logits)).reshape(-1)
-    assert _softmax(out)[0] > _softmax(np.array([0.0, 0.0, 5.0, 0.0]))[0]
+    # exact-key recall clears the gate → the recalled token (0) wins over the model's pick (2)
+    assert int(np.argmax(out)) == 0
 
 
 def test_logits_processor_fail_open_on_far_neighbor():

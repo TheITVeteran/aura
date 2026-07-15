@@ -1,22 +1,26 @@
-"""Generation with non-parametric memory — the real causal loop.
+"""Generation with non-parametric memory — the real, KV-cached causal loop.
 
-Two model-coupled pieces (imports mlx lazily so the rest of the package stays light):
+* ``MLXEncoder``               — text/ids → normalized hidden key + first continuation token.
+* ``generate_with_memory``     — KV-CACHED generation: prefill once, then O(1) per token. At each
+                                 step the model's hidden state is the query key; confident recall is
+                                 interpolated into the next-token distribution. This is the
+                                 production form (no O(n²) recompute).
+* ``make_nonparametric_logits_processor`` — the same gating as an mlx_lm logits-processor.
 
-* ``MLXEncoder``        — turns text into a datastore key (last-token hidden state) and the
-                          first continuation token. This is the real ingestion encoder.
-* ``generate_with_memory`` — a full causal generation loop that, at EACH step, extracts the
-                          model's hidden state, queries the datastore, interpolates the recall
-                          into the next-token distribution, and samples. This is the end-to-end
-                          causal path that proves the mechanism *generates*, not just predicts
-                          one token.
+Gating uses the datastore's **anisotropy-corrected similarity** (``Neighbor.similarity`` +
+``memory.min_similarity()``). This matters: raw last-token hidden states share a dominant common
+direction — measured, UNRELATED prompts score raw cosine 0.81–0.93 — so a naive raw-cosine gate
+cannot separate related from unrelated. Mean-centred similarity does (unrelated ≤0.36).
 
-Recomputes the forward each step (no KV cache) — O(n²), fine for short completions and the
-background/idle lane. A KV-cached version inside the MLX worker is the production foreground
-graduation (documented; default-off). Fail-open: any memory error falls back to the bare model.
+Anti-stutter: the entry that fired last step is excluded from the next step's neighbors, so a
+single stored entry can't lock generation into a repeat loop.
+
+Fail-open everywhere: any memory error defers to the bare model.
 """
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any
 
 import numpy as np
@@ -25,29 +29,16 @@ from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.NonParametricGeneration")
 
+_GEN_ERRORS = (RuntimeError, ValueError, TypeError, AttributeError, IndexError, KeyError)
+# Φ floor mirrors phi_consciousness: fragmented cognition must not trust recall.
+PHI_DORMANT = 0.05
+
 
 def normalize(vec: np.ndarray) -> np.ndarray:
-    """Unit-normalize a key so L2 distance encodes cosine: cos = 1 - d²/2.
-
-    This makes the confidence cutoff model-independent (cosine ∈ [-1,1]) instead of
-    depending on raw hidden-state magnitudes that vary by model.
-    """
+    """Unit-normalize a key. L2 distance on unit vectors encodes cosine: cos = 1 - d²/2."""
     v = np.asarray(vec, dtype=np.float32).reshape(-1)
     n = float(np.linalg.norm(v))
     return v / n if n > 1e-8 else v
-
-
-def normalize_rows(matrix: np.ndarray) -> np.ndarray:
-    """Unit-normalize a matrix of datastore keys without per-row Python loops."""
-
-    values = np.asarray(matrix, dtype=np.float32)
-    if values.ndim != 2:
-        raise ValueError("nonparametric key batch must be a two-dimensional matrix")
-    if values.shape[0] == 0:
-        return values
-    norms = np.linalg.norm(values, axis=1, keepdims=True)
-    safe_norms = np.where(norms > 1e-8, norms, 1.0)
-    return (values / safe_norms).astype(np.float32, copy=False)
 
 
 def cosine_from_l2(distance: float) -> float:
@@ -56,7 +47,7 @@ def cosine_from_l2(distance: float) -> float:
 
 
 class MLXEncoder:
-    """Real encoder over a loaded mlx_lm model: text -> (hidden key, first token)."""
+    """Real encoder over a loaded mlx_lm model: text -> (normalized hidden key, first token)."""
 
     def __init__(self, model: Any, tokenizer: Any) -> None:
         self.model = model
@@ -69,23 +60,6 @@ class MLXEncoder:
 
     def encode_hidden_ids(self, ids: list[int]) -> np.ndarray:
         return normalize(self._hidden_from_ids(list(ids)))
-
-    def encode_hidden_sequence_ids(self, ids: list[int]) -> np.ndarray:
-        """Encode every prefix position with one model forward.
-
-        The previous ingestion path reran the entire prefix for every answer
-        token, making one trusted pair quadratic in sequence length.  A causal
-        transformer already returns the hidden state for every prefix position
-        in one forward, so retain that exact result instead.
-        """
-
-        import mlx.core as mx
-
-        token_ids = list(ids)
-        if not token_ids:
-            return np.empty((0, self.dim), dtype=np.float32)
-        hidden = self.model.model(mx.array([token_ids]))
-        return normalize_rows(np.array(hidden[0], dtype=np.float32))
 
     def _hidden_from_ids(self, ids: list[int]) -> np.ndarray:
         import mlx.core as mx
@@ -101,25 +75,66 @@ class MLXEncoder:
         return int(ids[0]) if ids else 0
 
 
-def _bare_logits(model: Any, ids: list[int]):
-    import mlx.core as mx
-
-    arr = mx.array([ids])
-    h = model.model(arr)
-    logits = model(arr)
-    key = np.array(h[0, -1], dtype=np.float32)
-    lg = np.array(logits[0, -1], dtype=np.float32)
-    return key, lg
+def _lm_head(model: Any, hidden: Any) -> Any:
+    """Project hidden states to logits (handles tied-embedding models)."""
+    head = getattr(model, "lm_head", None)
+    if callable(head):
+        return head(hidden)
+    return model.model.embed_tokens.as_linear(hidden)
 
 
 def _topk_probs(logits: np.ndarray, k: int = 64) -> dict[int, float]:
     k = min(k, logits.shape[0])
     idx = np.argpartition(logits, -k)[-k:]
-    sub = logits[idx]
-    sub = sub - sub.max()
+    sub = logits[idx] - logits[idx].max()
     ex = np.exp(sub)
     ex /= ex.sum()
-    return {int(t): float(p) for t, p in zip(idx, ex, strict=True)}
+    return {int(t): float(p) for t, p in zip(idx, ex)}
+
+
+def _gated_lambda(similarity: float, min_sim: float, free_energy: float | None, base_lam: float) -> float:
+    """λ scaled by how far the neighbor clears the confident-recall gate. 0 below the gate."""
+    if similarity < min_sim:
+        return 0.0
+    fe = 0.5 if free_energy is None else float(free_energy)
+    span = max(1e-6, 1.0 - min_sim)
+    lam = base_lam * ((similarity - min_sim) / span) * (0.6 + 0.8 * fe)
+    return max(0.0, min(lam, 0.9))
+
+
+def _select_with_memory(
+    memory: Any,
+    key: np.ndarray,
+    logits: np.ndarray,
+    *,
+    k: int,
+    temperature: float,
+    phi: float | None,
+    free_energy: float | None,
+    base_lam: float,
+    exclude_index: int,
+) -> tuple[int, int]:
+    """Return (next_token_id, fired_entry_index). fired_index=-1 when memory didn't fire."""
+    bare = int(np.argmax(logits))
+    if phi is not None and float(phi) < PHI_DORMANT:
+        return bare, -1
+    neighbors = [nb for nb in memory.query(key, k=k) if int(getattr(nb, "index", -1)) != exclude_index]
+    if not neighbors:
+        return bare, -1
+    top = neighbors[0]
+    min_sim = memory.min_similarity() if hasattr(memory, "min_similarity") else 0.98
+    lam = _gated_lambda(float(getattr(top, "similarity", -1.0)), float(min_sim), free_energy, base_lam)
+    if lam <= 1e-6:
+        return bare, -1
+    knn = memory.knn_probs(neighbors, temperature=temperature)
+    if not knn:
+        return bare, -1
+    lm_probs = _topk_probs(logits)
+    blended = {
+        t: (1.0 - lam) * lm_probs.get(t, 0.0) + lam * knn.get(t, 0.0)
+        for t in set(lm_probs) | set(knn)
+    }
+    return int(max(blended, key=blended.get)), int(getattr(top, "index", -1))
 
 
 def generate_with_memory(
@@ -130,56 +145,55 @@ def generate_with_memory(
     *,
     max_tokens: int = 40,
     k: int = 4,
-    temperature: float = 0.1,
+    temperature: float = 2.0,
     phi: float | None = 0.5,
     free_energy: float | None = 0.7,
     use_memory: bool = True,
+    base_lam: float = 0.75,
 ) -> str:
-    """Greedy generation that interpolates non-parametric recall into each step.
+    """KV-cached greedy generation with confident non-parametric recall interpolated per token.
 
-    ``use_memory=False`` is the bare-model baseline (for A/B). Fail-open per token.
+    Prefill once, then O(1) per token (no full recompute) — this is the production form.
+    ``use_memory=False`` gives the bare-model baseline for A/B.
     """
+    import mlx.core as mx
+    from mlx_lm.models.cache import make_prompt_cache
+
     ids = list(tokenizer.encode(prompt))
-    start = len(ids)
     eos = getattr(tokenizer, "eos_token_id", None)
-    base_lam = 0.75            # at perfect recall (sim≈1) trust memory strongly
-    min_cos = 0.55             # legacy fallback when the memory carries no gate
-    last_fired_index = -1      # anti-stutter: an entry may not fire twice in a row
+    out: list[int] = []
+    last_index = -1
+    try:
+        cache = make_prompt_cache(model)
+        h = model.model(mx.array([ids]), cache=cache)
+    except _GEN_ERRORS as exc:
+        record_degradation("nonparametric_generation_prefill", exc)
+        return ""
     for _ in range(max(1, int(max_tokens))):
         try:
-            key, lg = _bare_logits(model, ids)
-        except (RuntimeError, ValueError, TypeError) as exc:
-            record_degradation("nonparametric_generation_forward", exc)
+            logits = np.array(_lm_head(model, h[:, -1:, :])[0, -1], dtype=np.float32)
+        except _GEN_ERRORS as exc:
+            record_degradation("nonparametric_generation_head", exc)
             break
-        next_id = int(np.argmax(lg))
+        next_id = int(np.argmax(logits))
         if use_memory:
             try:
-                qkey = normalize(key)
-                neighbors = memory.query(qkey, k=k)
-                if neighbors:
-                    # Anisotropy-corrected gate (see Neighbor.similarity).
-                    sim = float(getattr(neighbors[0], "similarity", -1.0))
-                    gate = float(getattr(memory, "min_similarity", lambda: min_cos)())
-                    nearest_index = int(getattr(neighbors[0], "index", -1))
-                    if sim >= gate and nearest_index != last_fired_index:
-                        # confidence-GATED λ: scales with similarity, zero below the gate.
-                        fe = 0.5 if free_energy is None else float(free_energy)
-                        lam = base_lam * max(0.0, (sim - gate) / max(1e-6, 1.0 - gate)) * (0.6 + 0.8 * fe)
-                        lm_probs = _topk_probs(lg)
-                        blended = memory.interpolate(
-                            lm_probs, qkey, k=k, temperature=temperature, phi=phi,
-                            free_energy=free_energy, lam_override=min(lam, 0.9),
-                        )
-                        memory_choice = int(max(blended, key=blended.get))
-                        if memory_choice != next_id:
-                            last_fired_index = nearest_index
-                        next_id = memory_choice
-            except (RuntimeError, ValueError, TypeError, AttributeError) as exc:
-                record_degradation("nonparametric_generation_interpolate", exc)
-        ids.append(next_id)
+                key = normalize(np.array(h[0, -1], dtype=np.float32))
+                next_id, last_index = _select_with_memory(
+                    memory, key, logits, k=k, temperature=temperature, phi=phi,
+                    free_energy=free_energy, base_lam=base_lam, exclude_index=last_index,
+                )
+            except _GEN_ERRORS as exc:
+                record_degradation("nonparametric_generation_select", exc)
+        out.append(next_id)
         if eos is not None and next_id == eos:
             break
-    return tokenizer.decode(ids[start:]).strip()
+        try:
+            h = model.model(mx.array([[next_id]]), cache=cache)  # incremental, O(1)
+        except _GEN_ERRORS as exc:
+            record_degradation("nonparametric_generation_step", exc)
+            break
+    return tokenizer.decode(out).strip()
 
 
 def make_nonparametric_logits_processor(
@@ -187,59 +201,39 @@ def make_nonparametric_logits_processor(
     memory: Any,
     *,
     k: int = 4,
-    temperature: float = 0.1,
+    temperature: float = 2.0,
     phi: float | None = 0.5,
     free_energy: float | None = 0.7,
-    min_cos: float = 0.55,
     base_lam: float = 0.75,
 ) -> Any:
-    """A live mlx_lm logits-processor: interpolate non-parametric recall per token.
+    """mlx_lm ``(tokens, logits) -> logits`` processor applying the same gated recall.
 
-    Signature ``(tokens, logits) -> logits`` matches mlx_lm. Recomputes the hidden state
-    from the running tokens to form the query key (so it works through the standard
-    stream_generate seam) — that's an extra forward per token, so this is the *validation/
-    opt-in* form; the KV-cached version inside the worker loop is the latency-optimized
-    follow-up. Fail-open: any error returns the original logits unchanged.
+    Note: a logits-processor has no access to the hidden state, so this form recomputes it
+    (a forward per token — O(n²) overall). Prefer ``generate_with_memory`` (KV-cached) for
+    production; this exists for drop-in use inside an existing stream_generate call.
+    Fail-open: any error returns the logits unchanged.
     """
     import mlx.core as mx
 
-    state = {"last_fired_index": -1}
+    state = {"last_index": -1}
 
     def _proc(tokens: Any, logits: Any) -> Any:
         try:
             seq = tokens.reshape(1, -1) if hasattr(tokens, "reshape") else mx.array([tokens])
             h = model.model(seq)
             key = normalize(np.array(h[0, -1], dtype=np.float32))
-            neighbors = memory.query(key, k=k)
-            if not neighbors:
-                return logits
-            # Anisotropy-corrected gate + anti-stutter (see Neighbor).
-            sim = float(getattr(neighbors[0], "similarity", -1.0))
-            gate = float(getattr(memory, "min_similarity", lambda: min_cos)())
-            nearest_index = int(getattr(neighbors[0], "index", -1))
-            if sim < gate or nearest_index == state["last_fired_index"]:
-                return logits
-            state["last_fired_index"] = nearest_index
-            fe = 0.5 if free_energy is None else float(free_energy)
-            lam = base_lam * ((sim - gate) / max(1e-6, 1.0 - gate)) * (0.6 + 0.8 * fe)
             lg = np.array(logits, dtype=np.float32).reshape(-1)
-            ktop = min(64, lg.shape[0])
-            idx = np.argpartition(lg, -ktop)[-ktop:]
-            sub = lg[idx] - lg[idx].max()
-            ex = np.exp(sub)
-            ex /= ex.sum()
-            lm_probs = {int(t): float(p) for t, p in zip(idx, ex, strict=True)}
-            blended = memory.interpolate(
-                lm_probs, key, k=k, temperature=temperature, phi=phi,
-                free_energy=free_energy, lam_override=min(lam, 0.9),
+            chosen, fired = _select_with_memory(
+                memory, key, lg, k=k, temperature=temperature, phi=phi,
+                free_energy=free_energy, base_lam=base_lam, exclude_index=state["last_index"],
             )
+            state["last_index"] = fired
+            if fired < 0:
+                return logits
             out = lg.copy()
-            import math as _m
-
-            for t, p in blended.items():
-                out[int(t)] = _m.log(max(p, 1e-12))
+            out[chosen] = float(np.max(lg)) + 1.0  # make the recalled token win the sampler
             return mx.array(out).reshape(logits.shape)
-        except (RuntimeError, ValueError, TypeError, AttributeError, IndexError) as exc:
+        except _GEN_ERRORS as exc:
             record_degradation("nonparametric_logits_processor", exc)
             return logits
 
