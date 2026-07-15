@@ -16,9 +16,9 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **Checkpoint 88 is pushed on exact
-  `main` at `5a56bea5`; Checkpoint 87 is pushed at `747bceea` and its exact
-  signed-app proof is open**. Checkpoint 80 made cached
+- Current bounded implementation milestone: **Checkpoint 89 is pushed on exact
+  `main` at `89b382d6`; Checkpoint 87's exact signed-app campaign is in progress
+  and must be repeated from the CP89-or-later build before closure**. Checkpoint 80 made cached
   readiness truthful and fast,
   removed synchronous Phi/Eternal maintenance from the foreground cycle, and
   reduced live CognitiveEngine samples from a 59.65-second retry cascade to
@@ -68,6 +68,16 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   available. The direct adversarial matrix passes 38/38 and the expanded
   authentication/security slice passes 95/95; broader threat modeling,
   dependency, privacy, artifact, and penetration obligations remain open.
+  Checkpoint 89 preserves the exact-app contradiction found during CP87 proof
+  instead of accepting a false application receipt: persisted microphone input
+  and auto-listen were both false while the resident server owner remained
+  enabled, listening, and emitting RMS samples. The canonical engine now boots
+  from verified settings, input/auto-listen/output changes reach that resident
+  owner with observed start/stop/interruption receipts, competing production
+  constructors are removed, browser capture cannot duplicate server capture,
+  and launch profiles no longer override the user's auto-listen value. The
+  expanded bounded settings/voice/boot campaign passes 532/532; exact rebuilt-
+  app reproof remains open and receives no closure credit yet.
   A separate non-current `fable-improvement-pass` endurance attempt is retained
   as failed evidence: it stopped at 36/200 turns, served 31 timeout responses,
   had p50 latency 213.245 seconds, repeatedly reported a 503 conversation lane
@@ -77,7 +87,7 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   release, and causal-proof obligations remain open unless their rows
   explicitly close.
 - Overall completion percentage: **30% evidence-weighted planning estimate at
-  pushed Checkpoint 88**. The exact
+  pushed Checkpoint 89**. The exact
   Checkpoint 80 app earns bounded live credit for readiness, health, base boot,
   and one-attempt chat latency, but not output quality, sustained load, GUI
   frame SLO, portability, semantic review, release, or soak. The newly
@@ -89,7 +99,7 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   generated denominator; new obligations increase it, regressions reopen it,
   and source-green/live-open work never receives full closure credit.
 - Total checkpoint forecast: **approximately 240-325 total checkpoints for the
-  expanded program, with 88 pushed and approximately 152-237 remaining before
+  expanded program, with 89 pushed and approximately 151-236 remaining before
   final soak/release closure**. The prior `226-304` range expands by 8-12 explicit
   checkpoints for a falsifiable lateral-conceptual-leap program spanning
   mechanism construction, held-out evaluation, novelty and prior-art review,
@@ -216,7 +226,7 @@ Status rules:
 | `EXTREME-001` | `OPEN` | Train and validate high-level navigation, diagnosis, repair, problem-solving, and assistance in hazardous/extreme simulated environments, then require governed digital-twin and hardware-transfer evidence before physical-world claims. | Capability Addendum 33, `CTX3-EXTREME-*` |
 | `COLLEAGUE-001` | `OPEN` | Validate the resident local synthetic-colleague contract through broad hidden day-in-the-life workflows, proactive precision, privacy, restart/update survival, honest degradation, and low correction burden. | Addendum 30 |
 | `UI-001` | `IN PROGRESS 2026-07-12` | Audit every desktop route, screen, control and state for live-data truth, interaction completeness, accessibility, long text, responsive layout, visual stability, specific recovery, and screenshot evidence. | Pass F 11; Matrix 14 |
-| `RUNTIME-SETTINGS-001` | `IN PROGRESS (CP87 PUSHED; EXACT-APP/THREE DEAD CONTROLS OPEN) 2026-07-15` | The source now has one typed version-2 schema; strict atomic compare-and-swap patch/reset/rollback; request idempotency and superseded replay truth; interprocess serialization; crash recovery; retained revision history; chained mutation and owner-application receipts; integrity verification; authenticated backend hydration; and per-owner applied/deferred/failed state. `Autonomous Actions` gates autonomous tools, environment actions, initiatives, executive objectives, and unsolicited output while canonical source authority preserves direct user work. Approval modes issue an exact action/arguments/source/risk/scope challenge that expires and can be consumed once without bypassing standing authority, Constitution, Will, Conscience, substrate, ExecutiveCore, tokens, or effect receipts. Proactive frequency modes now have real differentiated cadence, daily reset, critical quota bypass, one-at-a-time release, and retained retry; enrichment/reflection have real owner gates and malformed/partial-failure handling. The bounded settings/governance suite passes 139/139. SHA-256 journals are corruption/tamper evidence, not a keyed hostile-admin signature. `permissions.files_workspace`, `memory.review_window`, and `dev.diagnostics_enabled` remain known-dead and must be implemented before their controls can ship; privacy redaction remains partial. Exact signed-app effect/readback/conflict/restart/rollback/confirmation/accessibility proof remains mandatory before closure. | `UI-001`, `AUTONOMY-AUTHORITY-001`, `ENTERPRISE-CONTROL-001`, `VOICE-001`, `ADAPTATION-STATE-AUTHORITY-001`, `DATA-LIFECYCLE-001`, `COMPATIBILITY-001`; CP87 `747bceea` and `docs/SETTINGS_WIRING_AUDIT.md` |
+| `RUNTIME-SETTINGS-001` | `IN PROGRESS (CP89 VOICE OWNER SOURCE-GREEN; EXACT-APP/THREE DEAD CONTROLS OPEN) 2026-07-15` | The source now has one typed version-2 schema; strict atomic compare-and-swap patch/reset/rollback; request idempotency and superseded replay truth; interprocess serialization; crash recovery; retained revision history; chained mutation and owner-application receipts; integrity verification; authenticated backend hydration; and per-owner applied/deferred/failed state. `Autonomous Actions` gates autonomous tools, environment actions, initiatives, executive objectives, and unsolicited output while canonical source authority preserves direct user work. Approval modes issue an exact action/arguments/source/risk/scope challenge that expires and can be consumed once without bypassing standing authority, Constitution, Will, Conscience, substrate, ExecutiveCore, tokens, or effect receipts. Proactive frequency modes now have real differentiated cadence, daily reset, critical quota bypass, one-at-a-time release, and retained retry; enrichment/reflection have real owner gates and malformed/partial-failure handling. CP89 makes the one resident voice engine initialize from verified input/auto-listen/output settings, removes launch-profile override authority and competing production constructors, applies live start/stop/interruption at the canonical owner, and prevents duplicate browser/server capture. The expanded bounded settings/governance/voice/boot suite passes 532/532. SHA-256 journals are corruption/tamper evidence, not a keyed hostile-admin signature. `permissions.files_workspace`, `memory.review_window`, and `dev.diagnostics_enabled` remain known-dead and must be implemented before their controls can ship; privacy redaction remains partial. Exact CP89 signed-app effect/readback/conflict/restart/rollback/confirmation/accessibility proof remains mandatory before closure. | `UI-001`, `AUTONOMY-AUTHORITY-001`, `ENTERPRISE-CONTROL-001`, `VOICE-001`, `ADAPTATION-STATE-AUTHORITY-001`, `DATA-LIFECYCLE-001`, `COMPATIBILITY-001`; CP87 `747bceea`, CP89 `89b382d6`, and `docs/SETTINGS_WIRING_AUDIT.md` |
 | `SPLASH-001` | `OPEN 2026-07-13` | Replace the unpolished Aura splash with a production launch experience derived from the supplied retro references: disciplined CRT/scanline texture, geometric terminal-era typography, restrained cyan/magenta/green neon, crisp hierarchy, and an original Aura identity rather than imitation. Every phase/progress/status line must come from real boot state, preserve a usable failure/recovery path, support Retina and small screens, meet contrast and reduced-motion requirements, avoid GPU-heavy decorative churn, hand off without flash or layout shift, and pass deterministic visual-regression plus signed-app screenshot/video proof. | `UI-001`, `RUNTIME-001`, `LAUNCH-PROVENANCE-001`, `PERF-001`, `VALIDATE-001`; user splash and aesthetic references supplied 2026-07-13 |
 | `ACCESSIBILITY-I18N-001` | `OPEN 2026-07-13` | Certify the complete desktop, splash, voice, notification, and paired-device surface for keyboard navigation, focus order, screen-reader names/state, reduced motion/transparency, zoom and dynamic text, contrast/color independence, captions/transcripts, non-audio alternatives, locale/time/number formatting, Unicode and bidirectional text safety, and long translated strings. Run automated checks plus real VoiceOver/keyboard/screenshot workflows without breaking dense expert use. | `UI-001`, `SPLASH-001`, `CONVERSATION-001`, `CAPABILITY-CERT-001`; Aura 1.0 release-gap audit 2026-07-13 |
 | `PERF-001` | `IN PROGRESS (ATTRIBUTION INSTRUMENTATION SOURCE GREEN; SLO PROGRAM OPEN) 2026-07-14` | Establish and enforce end-to-end latency, throughput, memory, thermal, startup, model-switch, queue-growth, and UI responsiveness budgets without reducing intelligence or correctness. Checkpoint 80 adds per-service health-evaluation duration and detailed boot-phase marks, then removes four measured latency cascades at their owners. Machine-readable end-to-end SLOs, load/queue/thermal envelopes, regression budgets, GUI frame proof, exact-app distributions, and release enforcement remain open. | Runtime/resource/colleague SLOs; original context performance goals; `FOREGROUND-LATENCY-001`, `HEALTH-SURFACE-001`; Checkpoint 80 |
@@ -16381,3 +16391,67 @@ Progress and remaining burden:
 - Exact CP87 settings proof and every shorter runtime, GUI, portability,
   semantic, security, and release gate remain prerequisites. Final multi-hour
   and 24-72 hour soaks remain deferred.
+
+## Checkpoint 2026-07-15-89: Canonical Voice Settings Authority
+
+Checkpoint 89 is pushed on `main` at
+`89b382d62a74889191d2daceb7f7244e57e56f2f`. It advances
+`RUNTIME-SETTINGS-001`, `VOICE-001`, `ARCH-001`, `FAULT-001`, `UI-001`,
+`COMPATIBILITY-001`, and `TEST-DEPTH-001`. It is source and deterministic
+evidence plus retained pre-fix exact-app evidence; exact post-fix installed-app
+proof remains open.
+
+Live finding and correction:
+
+- The signed pre-CP89 app persisted revision 5 with
+  `voice.input_enabled=false` and `voice.auto_listen=false`, but the same
+  process reported `microphone_enabled=true`, `auto_listen=true`, and
+  `listening=true`; terminal RMS samples continued after the successful setting
+  receipt. The receipt was false and is retained as a failed owner-effect proof.
+- The voice engine now initializes input, auto-listen, and output gates from the
+  verified runtime settings plane. Desktop launchers and live-proof profiles no
+  longer force `AURA_AUTO_LISTEN=1` over durable user policy.
+- Input and auto-listen changes stop or start the resident sounddevice stream on
+  its owner loop, verify the resulting capture state, and return
+  applied/deferred/failed truth. Disabling output closes its gate and verifies
+  interruption dispatch to active playback.
+- Production provider, resilient-boot, orchestrator, privacy, TTS, and system
+  status paths converge on `get_voice_engine()`; an AST regression rejects any
+  competing production `SovereignVoiceEngine()` constructor.
+- Browser capture remains an explicit fallback and is shut down whenever the
+  server capture owner is available, preventing two microphone streams from
+  running beside each other. The microphone privacy route cannot bypass a
+  disabled runtime input gate and no longer silently rewrites the independent
+  speech-output policy.
+- Voice status now reports `listening` when hardware capture is active even if
+  the higher-level conversational voice state is otherwise idle. A resident
+  injected TTS engine no longer fails merely because its construction package
+  is unavailable.
+
+Verification:
+
+- The expanded bounded settings, authority, learning, proactive, confirmation,
+  voice, sensory boot, launcher, and boot-safety campaign passes `532/532` in
+  217.38 seconds after rebasing over the concurrent Memory Nexus commit.
+- The initial focused campaign passes `166/166`; the dependency-edge regression
+  passes `1/1` after the full campaign exposed it.
+- Python compilation, JavaScript parsing, shell syntax, Swift parsing, Ruff
+  `F/B`, and `git diff --check` pass. Remote `origin/main` resolves to the exact
+  checkpoint hash after push.
+
+Progress and remaining burden:
+
+- Evidence-weighted completion remains `30%`. Checkpoint 89 is total `89` of
+  the current `240-325` forecast, leaving approximately `151-236` checkpoints
+  before final soak/release closure. The defect fits the already-counted
+  settings/voice/live-proof burden and does not justify denominator shrinkage.
+- Rebuild and sign Aura.app from exact CP89-or-later clean provenance. Prove
+  disabled input stays physically stopped across boot and restart; prove
+  auto-listen start/stop and output interruption from the real settings UI;
+  verify application receipts, `/api/ui/bootstrap`, terminal, and Neural agree;
+  then restore the user's baseline settings and continue the remaining CP87
+  rollback/reset/approval/accessibility campaign.
+- The three known-dead controls, privacy redaction, broad voice/full-duplex
+  behavior, exact-app GUI coverage, clean-machine portability, release gates,
+  and every other open master row remain open. Final multi-hour and 24-72 hour
+  soaks remain deferred.
