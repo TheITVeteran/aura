@@ -209,11 +209,9 @@ fi
 echo "🚀 Starting Aura Desktop..."
 export MLX_METAL_SYNC=1
 : "${AURA_FORCE_CAMERA:=0}"             # Camera stays off by default on macOS boot
-: "${AURA_AUTO_LISTEN:=1}"              # Full desktop profile listens for "Hey Aura"
 : "${AURA_ENABLE_UVLOOP:=0}"            # macOS desktop path prefers stock asyncio
 : "${AURA_ATTACH_LAUNCHER:=0}"          # Set to 1 to keep the shell attached for live logs
 export AURA_FORCE_CAMERA
-export AURA_AUTO_LISTEN
 export AURA_ENABLE_UVLOOP
 export AURA_ATTACH_LAUNCHER
 export AURA_LOCAL_BACKEND=mlx        # Aura's in-process fine-tuned MLX mind.

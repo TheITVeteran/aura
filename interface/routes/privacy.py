@@ -131,9 +131,25 @@ async def api_privacy_microphone(payload: PrivacyPayload, _: None = Depends(_req
     enabled = payload.enabled
     voice = _voice_engine_fn() if _voice_engine_fn else None
     if voice:
+        if enabled:
+            from core.runtime.runtime_settings import get_runtime_setting
+
+            if not bool(get_runtime_setting("voice.input_enabled", True)):
+                return JSONResponse(
+                    {
+                        "ok": False,
+                        "enabled": False,
+                        "microphone_enabled": False,
+                        "speaking_enabled": bool(
+                            getattr(voice, "speaking_enabled", True)
+                        ),
+                        "listening": bool(getattr(voice, "_mic_listening", False)),
+                        "listening_started": False,
+                        "error": "microphone_disabled_by_runtime_setting",
+                    },
+                    status_code=409,
+                )
         voice.microphone_enabled = enabled
-        if hasattr(voice, "speaking_enabled"):
-            voice.speaking_enabled = enabled
         listening_started = False
         start_error: str | None = None
         if enabled and hasattr(voice, "start_listening"):
@@ -152,23 +168,19 @@ async def api_privacy_microphone(payload: PrivacyPayload, _: None = Depends(_req
                 listening_started = False
             if not listening_started:
                 voice.microphone_enabled = False
-                if hasattr(voice, "speaking_enabled"):
-                    voice.speaking_enabled = False
         elif enabled:
             start_error = "microphone_listener_unavailable"
             voice.microphone_enabled = False
-            if hasattr(voice, "speaking_enabled"):
-                voice.speaking_enabled = False
         elif not enabled and hasattr(voice, "stop_listening"):
             voice.stop_listening()
-        logger.info("\U0001f512 Privacy: Voice I/O %s", 'enabled' if enabled else 'disabled')
+        logger.info("\U0001f512 Privacy: Microphone %s", 'enabled' if enabled else 'disabled')
         listening = bool(getattr(voice, "_mic_listening", False))
         ok = bool((not enabled) or listening_started or listening)
         return {
             "ok": ok,
             "enabled": bool(getattr(voice, "microphone_enabled", enabled)),
             "microphone_enabled": getattr(voice, "microphone_enabled", enabled),
-            "speaking_enabled": getattr(voice, "speaking_enabled", enabled),
+            "speaking_enabled": getattr(voice, "speaking_enabled", True),
             "listening": listening,
             "listening_started": listening_started,
             "error": start_error or (None if ok else "microphone_start_failed"),
@@ -213,7 +225,10 @@ async def api_source_download(
     except _SOURCE_DOWNLOAD_ERRORS as exc:
         record_degradation('privacy', exc)
         logger.error("Source download failed: %s", exc)
-        raise HTTPException(status_code=500, detail="Source bundle generation failed")
+        raise HTTPException(
+            status_code=500,
+            detail="Source bundle generation failed",
+        ) from exc
 
 
 @router.get("/stream/voice")

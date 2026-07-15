@@ -400,7 +400,7 @@ class ResilientBoot:
         voice_mod = await async_safe_import("core.senses.voice_engine", optional=True)
         if not is_missing(voice_mod):
             try:
-                voice = voice_mod.SovereignVoiceEngine()
+                voice = voice_mod.get_voice_engine()
                 ServiceContainer.register_instance("voice_engine", voice)
                 logger.info("   🗣️ VoiceEngine: READY")
             except (RuntimeError, AttributeError, TypeError, ValueError) as e:

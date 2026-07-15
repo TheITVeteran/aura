@@ -484,7 +484,7 @@ def test_live_boot_proof_desktop_mode_does_not_impersonate_packaged_launcher(res
     assert env["AURA_GOVERNANCE_MODE"] == "production"
     assert env["AURA_CONTRACTS_ENFORCE"] == "1"
     assert env["AURA_EAGER_LOCAL_SENSORY_BOOT"] == "1"
-    assert env["AURA_AUTO_LISTEN"] == "1"
+    assert "AURA_AUTO_LISTEN" not in env
     assert env["AURA_EAGER_CORTEX_WARMUP"] == "0"
     assert env["AURA_DEFERRED_CORTEX_PREWARM"] == "1"
     assert env["AURA_ENABLE_LOCAL_DEEP_SOLVER"] == "0"

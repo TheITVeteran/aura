@@ -374,7 +374,7 @@ def test_invalid_subscriber_status_is_recorded_as_owner_failure(tmp_path):
 def test_frontend_owner_can_append_application_acknowledgement(tmp_path):
     store = _store(tmp_path)
     result = store.patch(
-        {"voice.auto_listen": True},
+        {"theme.reduced_motion": True},
         expected_revision=0,
         request_id="frontend-setting",
     )
@@ -382,30 +382,30 @@ def test_frontend_owner_can_append_application_acknowledgement(tmp_path):
     acknowledged = store.acknowledge_application(
         result.receipt["receipt_hash"],
         {
-            "voice.auto_listen": {
+            "theme.reduced_motion": {
                 "status": "applied",
-                "detail": "desktop microphone lane started",
+                "detail": "desktop animation policy applied",
             }
         },
         actor="desktop_test",
     )
 
-    assert acknowledged["application"]["voice.auto_listen"] == {
-        "owner": "desktop_voice_shell",
+    assert acknowledged["application"]["theme.reduced_motion"] == {
+        "owner": "desktop_shell",
         "status": "applied",
-        "detail": "desktop microphone lane started",
+        "detail": "desktop animation policy applied",
     }
     report = store.verify_integrity()
     assert report["application_entries"] == 2
     assert report["unacknowledged_application_receipts"] == 0
     reloaded = _store(tmp_path)
-    assert reloaded.describe()["application"]["voice.auto_listen"]["status"] == "applied"
+    assert reloaded.describe()["application"]["theme.reduced_motion"]["status"] == "applied"
 
 
 def test_application_acknowledgement_cannot_cover_unrelated_setting(tmp_path):
     store = _store(tmp_path)
     result = store.patch(
-        {"voice.auto_listen": True},
+        {"theme.reduced_motion": True},
         expected_revision=0,
         request_id="frontend-setting-scope",
     )

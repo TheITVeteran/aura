@@ -56,6 +56,18 @@ def _user_voice_output_enabled() -> bool:
     """
     return bool(get_runtime_setting("voice.output_enabled", True))
 
+
+def _user_voice_input_enabled() -> bool:
+    """Return the authoritative microphone-input gate."""
+
+    return bool(get_runtime_setting("voice.input_enabled", True))
+
+
+def _user_voice_auto_listen_enabled() -> bool:
+    """Return the authoritative automatic-capture preference."""
+
+    return bool(get_runtime_setting("voice.auto_listen", False))
+
 # ── Optional imports with graceful degradation ────────────
 _WhisperModel = None
 _whisper_import_attempted = False
@@ -295,12 +307,16 @@ class SovereignVoiceEngine:
         # ── General State ─────────────────────────────────
         self.state = VoiceState.IDLE
         self._is_feeding = False
-        auto_listen_env = os.environ.get("AURA_AUTO_LISTEN", "0").strip().lower()
-        self.auto_listen_enabled = auto_listen_env in {"1", "true", "yes", "on"}
-        self.microphone_enabled = self.auto_listen_enabled
-        # TTS output gate — independent of STT. Defaults to True so voice works at boot.
-        # Set to False via mute() to silence Aura's speech output from the UI toggle.
-        self.speaking_enabled = True
+        # Runtime settings are the authority. Launch-profile environment flags
+        # used to force capture on even when the desktop setting said off,
+        # producing a successful settings receipt while PortAudio kept the mic
+        # live. Input permission and auto-listen are deliberately independent:
+        # input may be permitted while automatic capture remains idle.
+        self.auto_listen_enabled = _user_voice_auto_listen_enabled()
+        self.microphone_enabled = _user_voice_input_enabled()
+        self.speaking_enabled = _user_voice_output_enabled()
+        self._settings_lock = threading.RLock()
+        self._current_afplay: Any | None = None
         # Issue 34: Lazy initialize event if loop isn't ready
         self._interrupt_event = None 
         self.is_speaking = False
@@ -327,8 +343,10 @@ class SovereignVoiceEngine:
         self._sse_queues: list[asyncio.Queue] = []
         try:
             self.loop = asyncio.get_running_loop()
+            self._owner_loop_thread_id: int | None = threading.get_ident()
         except RuntimeError:
             self.loop = None
+            self._owner_loop_thread_id = None
 
         # ── Piper / High Fidelity Configuration ──────────
         self.use_piper = True # Default to higher fidelity if available
@@ -350,10 +368,12 @@ class SovereignVoiceEngine:
             )
 
         logger.info("🎙️ SovereignVoiceEngine v5.0 (Server-Side + Mycelial) initialized")
-        if self.auto_listen_enabled:
-            logger.info("🎙️ Voice auto-listen ENABLED via AURA_AUTO_LISTEN.")
+        if self.should_auto_listen():
+            logger.info("🎙️ Voice auto-listen enabled by verified runtime settings.")
+        elif self.microphone_enabled:
+            logger.info("🎙️ Voice input permitted; automatic capture is disabled.")
         else:
-            logger.info("🎙️ Voice input standing by. STT will load on explicit mic enablement.")
+            logger.info("🎙️ Voice input disabled by verified runtime settings.")
         
         # Start presence pulse in background (BUG-035)
         if self.loop and self.loop.is_running():
@@ -692,6 +712,191 @@ class SovereignVoiceEngine:
     def should_auto_listen(self) -> bool:
         """Whether mic capture should auto-start during boot."""
         return bool(self.auto_listen_enabled and self.microphone_enabled)
+
+    def _bind_owner_loop(self) -> asyncio.AbstractEventLoop:
+        """Bind loop-affine voice work to the loop actually running it."""
+
+        loop = asyncio.get_running_loop()
+        self.loop = loop
+        self._owner_loop_thread_id = threading.get_ident()
+        return loop
+
+    def _request_speech_stop(self) -> bool:
+        """Interrupt active synthesis/playback from any settings worker thread."""
+
+        completed = threading.Event()
+
+        def _interrupt() -> None:
+            try:
+                flag = getattr(self, "interrupt_flag", None)
+                if flag is not None and hasattr(flag, "set"):
+                    flag.set()
+                player = getattr(self, "_current_afplay", None)
+                if player is not None:
+                    try:
+                        if player.poll() is None:
+                            player.terminate()
+                    except (
+                        AttributeError,
+                        OSError,
+                        RuntimeError,
+                        subprocess.SubprocessError,
+                    ):
+                        pass
+            finally:
+                completed.set()
+
+        loop = getattr(self, "loop", None)
+        owner_thread = getattr(self, "_owner_loop_thread_id", None)
+        if (
+            loop is not None
+            and loop.is_running()
+            and owner_thread is not None
+            and owner_thread != threading.get_ident()
+        ):
+            try:
+                loop.call_soon_threadsafe(_interrupt)
+                return completed.wait(timeout=1.0)
+            except RuntimeError:
+                pass
+        _interrupt()
+        return completed.is_set()
+
+    def _start_capture_from_settings(self) -> dict[str, str]:
+        """Start capture on the owner loop and report what actually happened."""
+
+        if not self.microphone_enabled:
+            return {
+                "owner": "voice_input",
+                "status": "deferred",
+                "detail": "auto-listen armed; microphone input gate is disabled",
+            }
+        if not self.auto_listen_enabled:
+            return {
+                "owner": "voice_input",
+                "status": "applied",
+                "detail": "microphone input permitted; automatic capture remains idle",
+            }
+        if bool(getattr(self, "_mic_listening", False)):
+            return {
+                "owner": "voice_input",
+                "status": "applied",
+                "detail": "server microphone capture is active",
+            }
+
+        loop = getattr(self, "loop", None)
+        if loop is None or not loop.is_running():
+            return {
+                "owner": "voice_input",
+                "status": "deferred",
+                "detail": "auto-listen persisted; voice owner loop is not running yet",
+            }
+        if getattr(self, "_owner_loop_thread_id", None) == threading.get_ident():
+            get_task_tracker().create_task(
+                self.start_listening(),
+                name="voice_engine.settings_start_listening",
+            )
+            return {
+                "owner": "voice_input",
+                "status": "deferred",
+                "detail": "server microphone startup scheduled on the voice owner loop",
+            }
+
+        try:
+            timeout_s = max(
+                0.5,
+                min(30.0, float(os.environ.get("AURA_VOICE_SETTINGS_APPLY_TIMEOUT_S", "12"))),
+            )
+        except (TypeError, ValueError):
+            timeout_s = 12.0
+        future = asyncio.run_coroutine_threadsafe(self.start_listening(), loop)
+        try:
+            started = bool(future.result(timeout=timeout_s))
+        except TimeoutError:
+            return {
+                "owner": "voice_input",
+                "status": "deferred",
+                "detail": "server microphone startup is still in progress",
+            }
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            return {
+                "owner": "voice_input",
+                "status": "failed",
+                "detail": f"{type(exc).__name__}:{str(exc)[:180]}",
+            }
+        if started and bool(getattr(self, "_mic_listening", False)):
+            return {
+                "owner": "voice_input",
+                "status": "applied",
+                "detail": "server microphone capture started and verified",
+            }
+        return {
+            "owner": "voice_input",
+            "status": "failed",
+            "detail": "server microphone capture did not become active",
+        }
+
+    def apply_runtime_setting(
+        self,
+        key: str,
+        _previous: Any,
+        value: Any,
+    ) -> dict[str, str]:
+        """Apply one persisted voice setting to the resident hardware owner."""
+
+        if key not in {
+            "voice.input_enabled",
+            "voice.output_enabled",
+            "voice.auto_listen",
+        }:
+            return {
+                "owner": "voice_runtime",
+                "status": "unchanged",
+                "detail": "setting is outside the resident voice bridge",
+            }
+
+        with self._settings_lock:
+            if key == "voice.input_enabled":
+                self.microphone_enabled = bool(value)
+            elif key == "voice.auto_listen":
+                self.auto_listen_enabled = bool(value)
+            else:
+                self.speaking_enabled = bool(value)
+
+        if key == "voice.output_enabled":
+            interrupted = self.speaking_enabled or self._request_speech_stop()
+            return {
+                "owner": "voice_output",
+                "status": "applied" if interrupted else "failed",
+                "detail": (
+                    "speech output enabled"
+                    if self.speaking_enabled
+                    else "speech output gate closed but owner-loop interruption was not verified"
+                    if not interrupted
+                    else "speech output disabled and active playback interrupted"
+                ),
+            }
+
+        if not self.microphone_enabled or not self.auto_listen_enabled:
+            self.stop_listening()
+            if bool(getattr(self, "_mic_listening", False)) or getattr(
+                self, "_mic_stream", None
+            ) is not None:
+                return {
+                    "owner": "voice_input",
+                    "status": "failed",
+                    "detail": "server microphone capture remained active after disable",
+                }
+            return {
+                "owner": "voice_input",
+                "status": "applied",
+                "detail": (
+                    "microphone input disabled and capture stopped"
+                    if not self.microphone_enabled
+                    else "automatic capture disabled and microphone stopped"
+                ),
+            }
+        return self._start_capture_from_settings()
 
     async def ensure_models_async(self):
         """Non-blocking model load — offloads to thread so event loop isn't frozen."""
@@ -1034,6 +1239,7 @@ class SovereignVoiceEngine:
 
     async def start_listening(self):
         """Start capturing audio from the microphone."""
+        self._bind_owner_loop()
         if not self.microphone_enabled:
             logger.warning("Microphone is disabled in config")
             return False
@@ -1233,6 +1439,7 @@ class SovereignVoiceEngine:
             "event": "mic_deactivated"
         })
         logger.info("🎙️ Mic capture stopped")
+        return not self._mic_listening and self._mic_stream is None
 
     def on_stop(self) -> None:
         self._closing_event.set()

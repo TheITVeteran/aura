@@ -5671,23 +5671,25 @@ async function reconcileAutoListenFromSettings({ reportFailure = true } = {}) {
     if (!runtimeSettingsState.hydrated) return { status: 'deferred', detail: 'settings not hydrated' };
     const inputEnabled = runtimeSettingsState.values['voice.input_enabled'] === true;
     const autoListen = runtimeSettingsState.values['voice.auto_listen'] === true;
-    if (!inputEnabled && state.voiceActive) {
-        const stopped = await toggleVoice(false);
-        return {
-            status: stopped ? 'applied' : 'failed',
-            detail: stopped ? 'desktop microphone lane stopped' : 'desktop microphone lane did not stop',
-        };
-    }
-    if (!autoListen) {
+    if (!inputEnabled || !autoListen) {
         if (!state.voiceActive) return { status: 'applied', detail: 'auto-listen remains stopped' };
         const stopped = await toggleVoice(false);
         return {
             status: stopped ? 'applied' : 'failed',
-            detail: stopped ? 'auto-listen stopped' : 'auto-listen did not stop',
+            detail: stopped ? 'browser microphone fallback stopped' : 'browser microphone fallback did not stop',
         };
     }
-    if (!inputEnabled) {
-        return { status: 'failed', detail: 'microphone input is disabled' };
+
+    // The resident server-side voice engine is the canonical desktop owner.
+    // Do not open a second getUserMedia stream when sounddevice owns capture.
+    if (state.voiceSummary && state.voiceSummary.server_capture === true) {
+        if (state.voiceActive) await toggleVoice(false);
+        return {
+            status: state.voiceSummary.listening ? 'applied' : 'deferred',
+            detail: state.voiceSummary.listening
+                ? 'canonical server microphone lane is active'
+                : 'canonical server microphone owner is applying auto-listen',
+        };
     }
     if (state.voiceActive) return { status: 'applied', detail: 'auto-listen already active' };
     const started = await toggleVoice(true, { quiet: !reportFailure });
@@ -5695,25 +5697,6 @@ async function reconcileAutoListenFromSettings({ reportFailure = true } = {}) {
         status: started ? 'applied' : 'failed',
         detail: started ? 'desktop microphone lane started' : 'desktop microphone permission or startup failed',
     };
-}
-
-async function acknowledgeFrontendSetting(receiptHash, key, acknowledgement) {
-    if (!receiptHash) return null;
-    const response = await fetch('/api/settings/application-ack', {
-        method: 'POST',
-        cache: 'no-store',
-        credentials: 'same-origin',
-        headers: auraDesktopHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({
-            settings_receipt_hash: receiptHash,
-            acknowledgements: { [key]: acknowledgement },
-        }),
-    });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-        throw new Error(payload.detail || payload.error || `settings_ack_http_${response.status}`);
-    }
-    return payload;
 }
 
 async function hydrateRuntimeSettings({ quiet = false, reconcileVoice = true } = {}) {
@@ -5838,38 +5821,21 @@ async function patchRuntimeSettings(changes) {
     setRuntimeSettingsAvailability(false, 'Saving runtime settings…', 'busy');
     try {
         const payload = await submit(true);
-        const receiptHash = payload.receipt && payload.receipt.receipt_hash;
-        if (Object.prototype.hasOwnProperty.call(desired, 'voice.auto_listen')) {
-            const acknowledgement = await reconcileAutoListenFromSettings();
-            await acknowledgeFrontendSetting(
-                receiptHash,
-                'voice.auto_listen',
-                acknowledgement
-            );
-            if (acknowledgement.status === 'failed') {
-                setRuntimeSettingsAvailability(
-                    true,
-                    `Runtime revision ${runtimeSettingsState.revision}; auto-listen was not applied.`,
-                    'warning'
-                );
-                return payload;
-            }
-        } else if (
-            Object.prototype.hasOwnProperty.call(desired, 'voice.input_enabled')
-            && desired['voice.input_enabled'] === false
-            && state.voiceActive
+        if (
+            Object.prototype.hasOwnProperty.call(desired, 'voice.auto_listen')
+            || Object.prototype.hasOwnProperty.call(desired, 'voice.input_enabled')
         ) {
-            await toggleVoice(false);
+            await reconcileAutoListenFromSettings();
         }
-        const failedOwner = Object.values(payload.application || {}).find(
-            entry => entry && entry.status === 'failed'
+        const unresolvedOwner = Object.values(payload.application || {}).find(
+            entry => entry && (entry.status === 'failed' || entry.status === 'deferred')
         );
         setRuntimeSettingsAvailability(
             true,
-            failedOwner
-                ? `Saved revision ${runtimeSettingsState.revision}; ${failedOwner.owner} did not apply it.`
+            unresolvedOwner
+                ? `Saved revision ${runtimeSettingsState.revision}; ${unresolvedOwner.owner} has not verified it yet.`
                 : `Runtime revision ${runtimeSettingsState.revision} applied.`,
-            failedOwner ? 'warning' : 'ready'
+            unresolvedOwner ? 'warning' : 'ready'
         );
         return payload;
     } catch (error) {

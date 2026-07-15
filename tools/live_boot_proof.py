@@ -182,6 +182,7 @@ def build_safe_boot_env(
     for key in tuple(env):
         if key.startswith("AURA_LAUNCH_"):
             env.pop(key, None)
+    env.pop("AURA_AUTO_LISTEN", None)
     if mode == "desktop":
         env["AURA_SAFE_BOOT_DESKTOP"] = "0"
         env["AURA_DESKTOP_RESOURCE_GUARD"] = "1"
@@ -189,7 +190,6 @@ def build_safe_boot_env(
         env["AURA_LAUNCHED_FROM_APP"] = "0"
         env["AURA_EXTERNAL_GUI_OWNER"] = "0"
         env["AURA_EAGER_LOCAL_SENSORY_BOOT"] = "1"
-        env["AURA_AUTO_LISTEN"] = "1"
         env.setdefault("AURA_EAGER_CORTEX_WARMUP", "0")
         env.setdefault("AURA_DEFERRED_CORTEX_PREWARM", "1")
         env.setdefault("AURA_AMBIENT_STREAM_INTERVAL_S", "5")

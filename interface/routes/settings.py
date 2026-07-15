@@ -88,6 +88,13 @@ _STORE: SettingsStore | None = None
 # These broad posture controls reconfigure a resident orchestrator immediately.
 # Other settings are read by their owner at the next action/tick boundary.
 _RUNTIME_MODE_KEYS = frozenset({"safety.safe_mode", "autonomy.level"})
+_VOICE_RUNTIME_KEYS = frozenset(
+    {
+        "voice.input_enabled",
+        "voice.output_enabled",
+        "voice.auto_listen",
+    }
+)
 
 
 def _runtime_should_restrict(store: SettingsStore) -> bool:
@@ -148,6 +155,60 @@ def _apply_runtime_mode_from_settings(
         }
 
 
+def _apply_voice_setting(
+    key: str,
+    previous: Any,
+    new: Any,
+) -> dict[str, str]:
+    """Bridge persisted voice policy to the one resident hardware owner."""
+
+    if key not in _VOICE_RUNTIME_KEYS:
+        return {
+            "owner": "voice_runtime",
+            "status": "unchanged",
+            "detail": "setting is outside the resident voice bridge",
+        }
+    try:
+        from core.senses.voice_engine import get_voice_engine
+
+        voice = get_voice_engine()
+        apply_setting = getattr(voice, "apply_runtime_setting", None)
+        if not callable(apply_setting):
+            return {
+                "owner": "voice_runtime",
+                "status": "failed",
+                "detail": "resident voice engine lacks the runtime-settings contract",
+            }
+        result = apply_setting(key, previous, new)
+        if not isinstance(result, dict):
+            return {
+                "owner": "voice_runtime",
+                "status": "failed",
+                "detail": "resident voice engine returned an invalid application receipt",
+            }
+        return result
+    except (
+        ImportError,
+        AttributeError,
+        OSError,
+        RuntimeError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        record_degradation(
+            "settings.voice_apply",
+            exc,
+            severity="warning",
+            action="kept the durable voice preference and reported owner failure",
+            enforce_failure_policy=False,
+        )
+        return {
+            "owner": "voice_runtime",
+            "status": "failed",
+            "detail": f"{type(exc).__name__}:{str(exc)[:180]}",
+        }
+
+
 def get_settings() -> SettingsStore:
     global _STORE
     if _STORE is None:
@@ -156,6 +217,11 @@ def get_settings() -> SettingsStore:
             _apply_runtime_mode_from_settings,
             owner="safe_mode",
             keys=_RUNTIME_MODE_KEYS,
+        )
+        _STORE.subscribe(
+            _apply_voice_setting,
+            owner="voice_runtime",
+            keys=_VOICE_RUNTIME_KEYS,
         )
     return _STORE
 

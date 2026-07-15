@@ -433,7 +433,6 @@ class VisionSystem:
 
         # Try real vision analysis via screen_vision -> cognitive engine
         try:
-            from core.container import ServiceContainer
             brain = optional_service("cognitive_engine")
             if brain is None:
                 brain = optional_service("brain")
@@ -632,10 +631,11 @@ class SpeechSystem:
 
         def _do_speak() -> dict[str, Any]:
             try:
-                import pyttsx3
                 # Issue 42: Lazy-init and reuse engine with lock
                 with self._lock:
                     if self._engine is None:
+                        import pyttsx3
+
                         self._engine = pyttsx3.init()
                     
                     engine = self._engine
@@ -738,7 +738,6 @@ class AVProductionSystem:
     async def create_image(self, description: str, style: str = "realistic") -> dict[str, Any]:
         """Generate image via local Stable Diffusion or brain inference."""
         try:
-            from core.container import ServiceContainer
             brain = optional_service("cognitive_engine")
             if brain and hasattr(brain, "generate_image"):
                 result = await brain.generate_image(description, style=style)

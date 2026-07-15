@@ -1908,12 +1908,14 @@ def _collect_voice_summary() -> dict[str, Any]:
                     summary["tts"] = voice_status.get("tts")
             if not microphone_enabled and not speaking_enabled:
                 summary["state"] = "muted"
+            elif listening:
+                summary["state"] = "listening"
             else:
                 voice_state = getattr(getattr(voice, "state", None), "name", "") or ""
                 if voice_state:
                     summary["state"] = str(voice_state).lower()
                 else:
-                    summary["state"] = "listening" if getattr(voice, "is_listening", False) else "ready"
+                    summary["state"] = "ready"
     except _SYSTEM_RECOVERABLE_ERRORS as exc:
         record_degradation('system', exc)
         logger.debug("Voice summary collection failed: %s", exc)

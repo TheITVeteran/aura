@@ -46,13 +46,13 @@ def test_runtime_settings_client_has_cas_conflict_and_idempotency_contracts():
     assert "settings_idempotent_replay_superseded" in JS
 
 
-def test_frontend_owned_auto_listen_has_causal_acknowledgement():
+def test_auto_listen_uses_canonical_server_owner_without_duplicate_browser_capture():
     assert "reconcileAutoListenFromSettings" in JS
     assert "await toggleVoice(true" in JS
     assert "await toggleVoice(false)" in JS
-    assert "'/api/settings/application-ack'" in JS
-    assert "settings_receipt_hash: receiptHash" in JS
-    assert "'voice.auto_listen'," in JS
+    assert "state.voiceSummary.server_capture === true" in JS
+    assert "canonical server microphone lane is active" in JS
+    assert "acknowledgeFrontendSetting" not in JS
 
 
 def test_microphone_button_obeys_runtime_input_gate():

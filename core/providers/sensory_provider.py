@@ -10,8 +10,9 @@ def register_sensory_services(container):
     # 27. Voice Engine
     def create_voice_engine():
         try:
-            from core.senses.voice_engine import SovereignVoiceEngine
-            return SovereignVoiceEngine()
+            from core.senses.voice_engine import get_voice_engine
+
+            return get_voice_engine()
         except ImportError:
             return None
     container.register('voice_engine', create_voice_engine, lifetime=SERVICE_LIFETIME_SINGLETON, required=False)

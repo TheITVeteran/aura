@@ -1,6 +1,6 @@
 # Runtime Settings Control-Plane Audit
 
-**Status (2026-07-15): CP87 pushed at `747bceea`; exact signed-app proof open.**
+**Status (2026-07-15): CP87 pushed at `747bceea`; exact signed-app proof in progress.**
 
 The desktop settings surface no longer treats `localStorage` as runtime or
 governance authority. Runtime settings are hydrated from an authenticated API,
@@ -32,8 +32,9 @@ not sufficient evidence that a setting works.
    importing the interface layer.
 5. `interface/static/aura.js` hydrates backend truth before enabling runtime
    controls, sends atomic CAS patches with request IDs, rejects stale or
-   superseded responses, reports owner application state, and acknowledges the
-   frontend-owned settings it actually applied.
+   superseded responses, reports owner application state, and uses browser
+   microphone capture only as a fallback when canonical server capture is not
+   available.
 
 ## Transaction and Recovery Contract
 
@@ -137,7 +138,7 @@ process-local; durable cross-restart action authorization is not claimed.
 | `notify.quiet_hours_start/end` | wired | local-time quiet window, including midnight wrap |
 | `theme.mode` | frontend-only | desktop presentation |
 | `theme.reduced_motion` | frontend-only | animation/motion presentation |
-| `voice.auto_listen` | frontend-only | browser-shell listening behavior |
+| `voice.auto_listen` | wired | live canonical server-capture owner; browser capture is a non-duplicating fallback |
 | `permissions.files_workspace` | known dead/open | central workspace file-gateway enforcement is not implemented |
 | `memory.review_window` | known dead/open | no canonical age-windowed narrative consolidation owner exists yet |
 | `dev.diagnostics_enabled` | known dead/open | a distinct optional boot diagnostic must be separated from load-bearing health owners |
@@ -148,15 +149,27 @@ silently.
 
 ## Source Evidence and Remaining Live Proof
 
-The pushed CP87 checkpoint has deterministic coverage for strict validation,
+The pushed CP87 checkpoint and the current voice-authority follow-up have
+deterministic coverage for strict validation,
 CAS conflicts, idempotent replay, concurrent writers, crash recovery, rollback,
 migration, state and journal tampering, stale dispatch suppression, owner
 acknowledgements, safe-mode bridging, direct-user preservation, forged-context
 rejection, exact one-use confirmation, environment-action coverage, desktop
 approval propagation, learning gates, malformed model/input handling,
 proactive cadence, daily reset, critical quota bypass, and failed-delivery
-retention. The bounded settings/governance suite passes `139/139`; the focused
-desktop confirmation and Conscience contracts add `1/1` and `5/5` passes.
+retention. The expanded bounded settings/governance/voice/boot slice passes
+`532/532`; the focused desktop confirmation and Conscience contracts remain
+covered by that integrated source campaign.
+
+Exact-app testing found and retained one important contradiction rather than
+crediting a shallow receipt: revision 5 reported `voice.input_enabled=false`
+and `voice.auto_listen=false`, while the same signed process reported
+`microphone_enabled=true`, `auto_listen=true`, `listening=true`, and continued
+emitting live RMS samples. The source follow-up removes launch-environment
+override authority, initializes the one canonical voice engine from verified
+settings, applies input/auto-listen/output changes at that resident owner, and
+requires the owner receipt to reflect actual start/stop/interruption state.
+Exact rebuilt-app reproof remains mandatory.
 
 The following are still required before `RUNTIME-SETTINGS-001` can close:
 
@@ -169,7 +182,7 @@ The following are still required before `RUNTIME-SETTINGS-001` can close:
 4. Prove `all`, `destructive`, and `none` with an exact action challenge,
    cancellation, expiry, changed-argument rejection, one-use consumption, and
    successful downstream governance/effect closure.
-5. Prove the three frontend-only controls in the real shell and keep the three
+5. Prove the two frontend-only theme controls in the real shell and keep the three
    known-dead controls absent or visibly unavailable until implemented.
 6. Run accessibility/keyboard/focus and responsive-layout proof for settings
    conflicts, owner failures, and the confirmation modal.

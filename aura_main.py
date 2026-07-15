@@ -3872,7 +3872,6 @@ def main():
         args.host = "127.0.0.1"
     elif args.desktop:
         os.environ.setdefault("AURA_EAGER_LOCAL_SENSORY_BOOT", "1")
-        os.environ.setdefault("AURA_AUTO_LISTEN", "1")
 
     root_signal_owner = None
     if args.server or args.desktop:

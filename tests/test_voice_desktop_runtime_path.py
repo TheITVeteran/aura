@@ -363,6 +363,11 @@ def test_explicit_voice_capture_authorizes_response_without_source_guessing() ->
 async def test_microphone_privacy_enable_starts_live_listener(monkeypatch) -> None:
     from interface.routes import privacy
 
+    monkeypatch.setattr(
+        "core.runtime.runtime_settings.get_runtime_setting",
+        lambda _key, default=None: default,
+    )
+
     class Voice:
         microphone_enabled = False
         speaking_enabled = False
@@ -389,7 +394,7 @@ async def test_microphone_privacy_enable_starts_live_listener(monkeypatch) -> No
     assert result["ok"] is True
     assert result["enabled"] is True
     assert result["microphone_enabled"] is True
-    assert result["speaking_enabled"] is True
+    assert result["speaking_enabled"] is False
     assert result["listening"] is True
     assert result["listening_started"] is True
 
@@ -397,6 +402,11 @@ async def test_microphone_privacy_enable_starts_live_listener(monkeypatch) -> No
 @pytest.mark.asyncio
 async def test_microphone_privacy_enable_fails_closed_when_listener_will_not_start(monkeypatch) -> None:
     from interface.routes import privacy
+
+    monkeypatch.setattr(
+        "core.runtime.runtime_settings.get_runtime_setting",
+        lambda _key, default=None: default,
+    )
 
     class Voice:
         microphone_enabled = False
@@ -432,6 +442,11 @@ async def test_microphone_privacy_enable_fails_closed_when_listener_will_not_sta
 async def test_microphone_privacy_enable_fails_closed_on_device_error(monkeypatch) -> None:
     from interface.routes import privacy
 
+    monkeypatch.setattr(
+        "core.runtime.runtime_settings.get_runtime_setting",
+        lambda _key, default=None: default,
+    )
+
     class Voice:
         microphone_enabled = False
         speaking_enabled = False
@@ -465,6 +480,48 @@ async def test_microphone_privacy_enable_fails_closed_on_device_error(monkeypatc
     assert result["speaking_enabled"] is False
     assert result["listening"] is False
     assert result["error"].startswith("OSError:")
+
+
+@pytest.mark.asyncio
+async def test_microphone_privacy_cannot_bypass_runtime_input_setting(monkeypatch) -> None:
+    import json
+
+    from interface.routes import privacy
+
+    class Voice:
+        microphone_enabled = False
+        speaking_enabled = True
+        _mic_listening = False
+
+        async def start_listening(self) -> bool:
+            raise AssertionError("disabled runtime input must not open hardware")
+
+    monkeypatch.setattr(
+        "core.runtime.runtime_settings.get_runtime_setting",
+        lambda key, default=None: False if key == "voice.input_enabled" else default,
+    )
+    voice = Voice()
+    original = privacy.get_voice_engine_fn()
+    privacy.set_voice_engine_fn(lambda: voice)
+    try:
+        response = await privacy.api_privacy_microphone(
+            privacy.PrivacyPayload(enabled=True),
+            None,
+        )
+    finally:
+        privacy.set_voice_engine_fn(original)
+
+    payload = json.loads(response.body)
+    assert response.status_code == 409
+    assert payload == {
+        "ok": False,
+        "enabled": False,
+        "microphone_enabled": False,
+        "speaking_enabled": True,
+        "listening": False,
+        "listening_started": False,
+        "error": "microphone_disabled_by_runtime_setting",
+    }
 
 
 def test_bootstrap_voice_summary_reports_real_listener_state() -> None:
@@ -510,6 +567,32 @@ def test_bootstrap_voice_summary_reports_real_listener_state() -> None:
     assert summary["stt_initialized"] is True
     assert summary["capture_backend"] == "sounddevice"
     assert summary["stt_backend"] == "faster_whisper"
+    assert summary["state"] == "listening"
+
+
+def test_bootstrap_voice_summary_prefers_real_capture_over_idle_state() -> None:
+    from interface.routes import privacy, system
+
+    class State:
+        name = "IDLE"
+
+    class Voice:
+        microphone_enabled = True
+        speaking_enabled = True
+        _mic_listening = True
+        state = State()
+
+        def get_status(self) -> dict[str, object]:
+            return {"auto_listen": True, "server_capture": True}
+
+    original = privacy.get_voice_engine_fn()
+    privacy.set_voice_engine_fn(lambda: Voice())
+    try:
+        summary = system._collect_voice_summary()
+    finally:
+        privacy.set_voice_engine_fn(original)
+
+    assert summary["listening"] is True
     assert summary["state"] == "listening"
 
 

@@ -109,7 +109,8 @@ def test_launcher_exposes_desktop_window_action_and_dock_presence():
     assert 'env["AURA_ENABLE_DESKTOP_BACKGROUND_LOCAL_LLM"] = "1"' in swift
     assert 'env["AURA_BACKGROUND_BOOT_GRACE_S"] = "60"' in swift
     assert 'env["AURA_EAGER_LOCAL_SENSORY_BOOT"] = "1"' in swift
-    assert 'env["AURA_AUTO_LISTEN"] = "1"' in swift
+    assert 'env.removeValue(forKey: "AURA_AUTO_LISTEN")' in swift
+    assert 'env["AURA_AUTO_LISTEN"] = "1"' not in swift
     assert "AURA_EAGER_CORTEX_WARMUP" in swift
     assert "AURA_DEFERRED_CORTEX_PREWARM" in swift
     assert "export AURA_BACKGROUND_BOOT_GRACE_S=60" in swift

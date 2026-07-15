@@ -97,22 +97,22 @@ async def test_settings_api_uses_atomic_cas_and_frontend_acknowledgements(
         {
             "expected_revision": 0,
             "request_id": "route-patch",
-            "changes": {"voice.auto_listen": True},
+            "changes": {"theme.reduced_motion": True},
         },
         _=None,
     )
     patched = json.loads(patched_response.body)
     assert patched_response.status_code == 200
     assert patched["revision"] == 1
-    assert patched["application"]["voice.auto_listen"]["status"] == "awaiting_frontend"
+    assert patched["application"]["theme.reduced_motion"]["status"] == "awaiting_frontend"
 
     acknowledged_response = await settings.acknowledge_settings_application(
         {
             "settings_receipt_hash": patched["receipt"]["receipt_hash"],
             "acknowledgements": {
-                "voice.auto_listen": {
+                "theme.reduced_motion": {
                     "status": "applied",
-                    "detail": "desktop microphone lane started",
+                    "detail": "desktop animation policy applied",
                 }
             },
         },
@@ -120,7 +120,7 @@ async def test_settings_api_uses_atomic_cas_and_frontend_acknowledgements(
     )
     acknowledged = json.loads(acknowledged_response.body)
     assert acknowledged_response.status_code == 200
-    assert acknowledged["application"]["voice.auto_listen"]["status"] == "applied"
+    assert acknowledged["application"]["theme.reduced_motion"]["status"] == "applied"
 
     stale_response = await settings.patch_settings(
         {

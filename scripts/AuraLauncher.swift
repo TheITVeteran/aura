@@ -1941,6 +1941,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         // stale recovery-only flag from launchd, Terminal, or a previous
         // diagnostic session.
         env.removeValue(forKey: "AURA_SAFE_BOOT_DESKTOP")
+        env.removeValue(forKey: "AURA_AUTO_LISTEN")
         // Same rule for diagnostic reply-repair switches. A normal user launch
         // should recover through one RAM-gated same-worker Cortex retry instead
         // of inheriting a stale "disable repair" flag and failing closed.
@@ -1953,7 +1954,6 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         env["AURA_ENABLE_DESKTOP_BACKGROUND_LOCAL_LLM"] = "1"
         env["AURA_BACKGROUND_BOOT_GRACE_S"] = "60"
         env["AURA_EAGER_LOCAL_SENSORY_BOOT"] = "1"
-        env["AURA_AUTO_LISTEN"] = "1"
         env["AURA_EAGER_CORTEX_WARMUP"] = "0"
         env["AURA_DEFERRED_CORTEX_PREWARM"] = "1"
         env["AURA_DESKTOP_METAL_CACHE_RATIO"] = "0.16"
@@ -2044,7 +2044,6 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         export AURA_ENABLE_DESKTOP_BACKGROUND_LOCAL_LLM=1
         export AURA_BACKGROUND_BOOT_GRACE_S=60
         export AURA_EAGER_LOCAL_SENSORY_BOOT=1
-        export AURA_AUTO_LISTEN=1
         export AURA_EXTERNAL_GUI_OWNER=1
         export AURA_EAGER_CORTEX_WARMUP=0
         export AURA_DEFERRED_CORTEX_PREWARM=1

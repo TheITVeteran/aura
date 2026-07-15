@@ -81,10 +81,10 @@ SCHEMA: tuple[SettingDef, ...] = (
         "Auto-listen",
         "voice",
         False,
-        "Start the desktop microphone lane automatically when the shell can do so.",
+        "Start the canonical desktop microphone lane automatically when input is permitted.",
         "bool",
-        owner="desktop_voice_shell",
-        apply_mode="frontend_runtime",
+        owner="voice_input",
+        apply_mode="live_bridge",
     ),
     SettingDef(
         "voice.output_rate",
