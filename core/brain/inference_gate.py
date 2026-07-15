@@ -721,6 +721,33 @@ class InferenceGate:
             return float(default)
 
     @staticmethod
+    def _cortex_worker_is_legitimately_loading(client: Any) -> bool:
+        """True when the cortex worker is running because it is LOADING the
+        model, not because it is wedged.
+
+        The cascade-cleanup path force-kills a "stuck" cortex worker to free
+        blocked IPC feeder threads. But a worker actively loading the ~20GB
+        32B is running and NOT stuck — killing it there was a full doom loop
+        (2026-07-15 soak: spawn → load → killed mid-warmup on the next turn →
+        warmup_deferred → repeat, 216s/turn, zero real cortex answers for an
+        hour). A worker is legitimately loading when warmup is in flight OR
+        the lane is warming/recovering, AND it entered that state within a
+        generous load deadline. Past the deadline a still-warming worker is
+        genuinely stuck and may be killed.
+        """
+        if client is None:
+            return False
+        warming = bool(getattr(client, "_warmup_in_flight", False)) or str(
+            getattr(client, "_lane_state", "")
+        ) in {"warming", "recovering"}
+        if not warming:
+            return False
+        transition_at = float(getattr(client, "_lane_transition_at", 0.0) or 0.0)
+        warming_age = time.time() - transition_at if transition_at else 1e9
+        load_deadline_s = InferenceGate._env_float("AURA_CORTEX_LOAD_DEADLINE_S", 200.0)
+        return warming_age < load_deadline_s
+
+    @staticmethod
     def _cortex_warmup_admission_snapshot(context: str = "background") -> dict[str, Any]:
         """Return whether a cold Cortex load is safe under current RAM pressure.
 
@@ -7469,25 +7496,44 @@ class InferenceGate:
                     try:
                         proc = self._mlx_client._process
                         is_running = _worker_process_is_running(proc)
-                        if proc and is_running:
-                            logger.warning(
-                                "🧹 [CASCADE CLEANUP] Force-killing stuck cortex worker pid=%s",
+                        # A worker actively LOADING the 20GB model is running but
+                        # NOT stuck — killing it here is the doom loop that
+                        # starved the cortex for a full hour (2026-07-15 soak:
+                        # spawn → load → killed mid-warmup by this block on the
+                        # next turn → warmup_deferred → repeat, 216s/turn, 0
+                        # real cortex answers). Only genuinely wedged workers get
+                        # killed: warmup NOT in flight (idle-but-running = a
+                        # hung generation, the original nwait bug) OR warmup
+                        # in flight but past a generous load deadline.
+                        legitimately_loading = self._cortex_worker_is_legitimately_loading(
+                            self._mlx_client
+                        )
+                        if legitimately_loading:
+                            logger.info(
+                                "⏳ [CASCADE CLEANUP] Cortex worker pid=%s is warming; "
+                                "NOT killing a loading model.",
                                 getattr(proc, "pid", "unknown"),
                             )
-                            proc.kill()
-                            if hasattr(proc, "join"):
-                                proc.join(timeout=2.0)
-                            elif hasattr(proc, "wait"):
-                                proc.wait(timeout=2.0)
-                        if hasattr(self._mlx_client, "_drain_queue"):
-                            self._mlx_client._drain_queue()
-                        # Replace queues to sever any stuck feeder threads.
-                        replace_queues = getattr(self._mlx_client, "_replace_ipc_queues", None)
-                        if callable(replace_queues):
-                            replace_queues()
-                        self._mlx_client._process = None
-                        self._mlx_client._init_done = False
-                        logger.info("🧹 [CASCADE CLEANUP] Stuck worker killed, queues replaced.")
+                        if not legitimately_loading:
+                            if proc and is_running:
+                                logger.warning(
+                                    "🧹 [CASCADE CLEANUP] Force-killing stuck cortex worker pid=%s",
+                                    getattr(proc, "pid", "unknown"),
+                                )
+                                proc.kill()
+                                if hasattr(proc, "join"):
+                                    proc.join(timeout=2.0)
+                                elif hasattr(proc, "wait"):
+                                    proc.wait(timeout=2.0)
+                            if hasattr(self._mlx_client, "_drain_queue"):
+                                self._mlx_client._drain_queue()
+                            # Replace queues to sever any stuck feeder threads.
+                            replace_queues = getattr(self._mlx_client, "_replace_ipc_queues", None)
+                            if callable(replace_queues):
+                                replace_queues()
+                            self._mlx_client._process = None
+                            self._mlx_client._init_done = False
+                            logger.info("🧹 [CASCADE CLEANUP] Stuck worker killed, queues replaced.")
                     except _INFERENCE_RECOVERABLE_ERRORS as cleanup_exc:
                         record_degradation(
                             "inference_gate",
