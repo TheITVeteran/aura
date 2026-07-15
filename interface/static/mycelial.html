@@ -403,6 +403,12 @@
             for (const node of nodes) {
                 node.degree = degree.get(node.id) || 0;
                 node.__radius = nodeRadius(node, latestGraphMetrics);
+                // Connectedness tier drives the cloud: 0 bare, 1 haze, 2 cloud.
+                // Ranked against this graph's own max degree, so the tiers mean
+                // the same thing whether she has 40 nodes or 4,000.
+                const degreeNorm = Math.log1p(node.degree) / Math.log1p(Math.max(1, maxDegree));
+                node.__degreeNorm = degreeNorm;
+                node.__sizeTier = degreeNorm >= 0.66 || node.is_critical ? 2 : degreeNorm >= 0.34 ? 1 : 0;
                 node.__showLabel = node.degree >= labelThreshold || node.is_critical || node.type === 'consciousness';
             }
 
@@ -595,16 +601,25 @@
                     const sphere = new THREE.Mesh(geometry, material);
                     group.add(sphere);
 
-                    const halo = new THREE.Sprite(new THREE.SpriteMaterial({
-                        map: makeHaloTexture(color),
-                        transparent: true,
-                        opacity: node.is_critical ? 0.18 : 0.11,
-                        depthWrite: false,
-                        blending: THREE.AdditiveBlending,
-                    }));
-                    const haloScale = radius * (node.is_critical ? 3.0 : 2.35);
-                    halo.scale.set(haloScale, haloScale, 1);
-                    group.add(halo);
+                    // Translucent cloud, only from the medium tier up. Every node
+                    // carrying an identical faint halo said nothing about which
+                    // ones matter; giving the well-connected a visible volume is
+                    // the whole point. Additive + depthWrite:false so clouds
+                    // layer without occluding the strings behind them — a solid
+                    // hub would hide exactly the connections that made it big.
+                    const tier = node.__sizeTier || 0;
+                    if (tier > 0) {
+                        const cloud = new THREE.Sprite(new THREE.SpriteMaterial({
+                            map: makeHaloTexture(color),
+                            transparent: true,
+                            opacity: tier === 2 ? 0.26 : 0.14,
+                            depthWrite: false,
+                            blending: THREE.AdditiveBlending,
+                        }));
+                        const cloudScale = radius * (tier === 2 ? 3.4 : 2.5);
+                        cloud.scale.set(cloudScale, cloudScale, 1);
+                        group.add(cloud);
+                    }
 
                     if (node.__showLabel) {
                         group.add(makeTextSprite(node.label || node.id, color, radius));
@@ -652,11 +667,36 @@
             camera.far = 9000;
             camera.updateProjectionMatrix();
 
+            // Repulsion scales with the node's own radius. With a constant
+            // charge, a hub grew its sphere but not its personal space, so it
+            // sat on top of its own neighbourhood and swallowed it.
             const charge = graph.d3Force('charge');
-            if (charge) charge.strength(-118).distanceMax(720);
+            if (charge) {
+                charge
+                    .strength(node => {
+                        const r = Number(node.__radius || nodeRadius(node));
+                        return -(96 + r * r * 2.4);
+                    })
+                    .distanceMax(760);
+            }
+
+            // String length is relative to what each end connects to: a link
+            // into a big node is longer by that node's radius, so the strings
+            // stay visible outside the sphere instead of being buried under it.
+            // This is what lets the hubs be large without erasing the structure
+            // that earned them their size.
             const linkForce = graph.d3Force('link');
             if (linkForce) {
-                linkForce.distance(link => Number(link.distance || 78)).strength(0.32);
+                linkForce
+                    .distance(link => {
+                        const endRadius = end => Number(
+                            (end && typeof end === 'object' && end.__radius) || 2.2
+                        );
+                        const a = endRadius(link.source);
+                        const b = endRadius(link.target);
+                        return Number(link.distance || 58) + (a + b) * 2.3;
+                    })
+                    .strength(0.32);
             }
 
             const ambientLight = new THREE.AmbientLight(0x9f8aff, 1.35);
