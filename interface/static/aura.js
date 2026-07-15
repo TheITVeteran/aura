@@ -2781,6 +2781,28 @@ function updateSkillUI(skill, state) {
     }
 }
 
+// A thought card's header already renders the timestamp and source, but the
+// emitted message repeats them verbatim ("17:19:30 [Aura.InferenceGate] Routing
+// to Cortex…"), so every card stated both twice. Strip only a leading echo of
+// *this card's own* timestamp/source: a body that legitimately opens with a
+// different tag ("[health_poll] health=ok…") must survive untouched.
+function stripEchoedThoughtHeader(message, ts, name) {
+    let text = String(message == null ? '' : message);
+    const esc = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (name) {
+        // "[Source] " optionally preceded by any clock stamp. The bracketed
+        // source must be this card's own, so a body that opens with a different
+        // tag ("[health_poll] health=ok…") is left alone. The leading time is
+        // matched by shape rather than by equality with the card's formatted
+        // timestamp, so skew or formatting drift cannot resurrect the echo.
+        text = text.replace(
+            new RegExp('^\\s*(?:\\d{1,2}:\\d{2}:\\d{2}(?:[.,]\\d+)?\\s*)?\\[' + esc(name) + '\\]\\s*'),
+            '');
+    }
+    if (ts) text = text.replace(new RegExp('^\\s*' + esc(ts) + '\\s*'), '');
+    return text;
+}
+
 function sanitizeThoughtMessage(message) {
     const text = String(message == null ? '' : message);
     const compact = text.replace(/\s+/g, ' ').trim();
@@ -2816,8 +2838,10 @@ function addThoughtCard(data) {
 
     const ts = formatEventTimestamp(data.timestamp);
     const name = data.name || 'SYS';
-    const msg = sanitizeThoughtMessage(data.message || data.content || JSON.stringify(data));
-    const fullMsg = sanitizeThoughtMessage(data.fullMessage || data.full_message || msg);
+    const rawMsg = data.message || data.content || JSON.stringify(data);
+    const msg = stripEchoedThoughtHeader(sanitizeThoughtMessage(rawMsg), ts, name);
+    const fullMsg = stripEchoedThoughtHeader(
+        sanitizeThoughtMessage(data.fullMessage || data.full_message || rawMsg), ts, name);
     const repeatCount = Math.max(1, Number(data.repeatCount || 1));
     const preview = thoughtPreviewText(msg);
     const hasHiddenFullPayload = fullMsg !== msg;
