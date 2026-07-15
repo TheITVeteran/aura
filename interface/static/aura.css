@@ -2439,6 +2439,36 @@ body.neural-visual-paused #pane-neural .live-dot {
     color: var(--text-dim);
 }
 
+.settings-views {
+    display: grid;
+    gap: 6px;
+    margin-bottom: 18px;
+}
+.settings-view {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 9px 11px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.02);
+    text-decoration: none;
+    transition: border-color 0.16s ease, background 0.16s ease;
+}
+.settings-view:hover {
+    border-color: var(--border-glow);
+    background: rgba(138, 43, 226, 0.1);
+}
+.settings-view-name {
+    color: var(--text);
+    font-size: 0.72rem;
+    font-weight: 600;
+}
+.settings-view-desc {
+    color: var(--text-dim);
+    font-size: 0.62rem;
+}
+
 /* Controls that are not wired to anything must not look operative. */
 .setting-row-unwired label {
     color: var(--text-dim);
