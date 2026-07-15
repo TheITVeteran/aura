@@ -181,11 +181,13 @@ class ImageGenSkill(BaseSkill):
         except (AttributeError, RuntimeError):
             logger.debug("Diffusion cache clear before pipeline mode switch failed")
 
-        torch_dtype = (
-            torch.float16
-            if self._device in {"cuda", "mps"}
-            else torch.float32
-        )
+        # SDXL in float16 on MPS decodes to NaN and silently writes a pure black
+        # PNG — the skill reports success and hands back an all-zero image.
+        # Measured on this host (torch 2.11 / diffusers 0.37 / M-series):
+        #   sdxl-turbo mps fp16 -> std 0.00  (BLACK)
+        #   sdxl-turbo mps fp32 -> std 53.5  (real image, 4.6s @ 4 steps)
+        # float16 stays on CUDA, where it is well behaved.
+        torch_dtype = torch.float16 if self._device == "cuda" else torch.float32
 
         model_id = self._model_id
         pipeline_cls = (
@@ -502,6 +504,25 @@ class ImageGenSkill(BaseSkill):
         self, image: Any, prompt: str, mode: str = "txt2img"
     ) -> dict[str, Any]:
         """Save generated image and build response."""
+        # A degenerate decode (all-black / uniform) must not be reported as a
+        # successful generation: that is how an fp16 NaN silently became a
+        # "created image" with a real path and URL. Cheap to check, and the only
+        # thing standing between a numerical fault and a confident lie.
+        degenerate = await asyncio.to_thread(self._is_degenerate, image)
+        if degenerate:
+            _record_imagegen_degradation(
+                RuntimeError("diffusion decoded to a uniform image"),
+                action="refused to return an all-black generation as success",
+                extra={"mode": mode},
+            )
+            return {
+                "ok": False,
+                "error": (
+                    "Image generation produced a blank image (numerical fault in the "
+                    "diffusion decode). Nothing was saved."
+                ),
+            }
+
         timestamp = int(time.time())
         filename = f"gen_{mode}_{timestamp}_{uuid.uuid4().hex[:10]}.png"
         filepath = self._output_dir / filename
@@ -532,6 +553,22 @@ class ImageGenSkill(BaseSkill):
             "summary": f"Generated {mode} image from prompt: {prompt[:80]}",
             "message": f"Image created ({mode}): {relative_url}",
         }
+
+    @staticmethod
+    def _is_degenerate(image: Any) -> bool:
+        """True when the decode carries no signal (uniform / all-black).
+
+        Uses the image's own extrema rather than pulling numpy in: a real
+        generation always spans a range, a NaN-collapsed one does not.
+        """
+        try:
+            bands = image.convert("RGB").getextrema()
+        except (AttributeError, ValueError, OSError):
+            return False
+        try:
+            return all(lo == hi for lo, hi in bands)
+        except (TypeError, ValueError):
+            return False
 
     async def _unload_pipelines(self, *, reason: str) -> None:
         self._pipeline = None
