@@ -699,6 +699,11 @@ def _is_transient_local_runtime_failure(error: str) -> bool:
             "mlx_runtime_probe_failed:",
             "local_runtime_unavailable:",
             "prewarm_failed:",
+            # A lane skipped because it is still warming/recovering is a
+            # transient trip: retry the cortex as soon as it reports ready.
+            "lane_not_ready:",
+            "foreground_warmup_timeout",
+            "warmup_deferred",
         )
     )
 
@@ -763,20 +768,25 @@ def _local_client_failure_reason(client: Any) -> str:
             return error or "lane_failed"
 
         conversation_ready = bool(lane.get("conversation_ready", False))
-        if (
-            not conversation_ready
-            and state in {"recovering", "spawning", "handshaking", "warming"}
-            and error.startswith(
-                (
-                    "mlx_runtime_unavailable:",
-                    "mlx_runtime_probe_failed:",
-                    "local_runtime_unavailable:",
-                    "prewarm_failed:",
-                    "foreground_warmup_failed",
-                )
-            )
-        ):
-            return error
+        # A lane in a transitional (not-ready) state must NOT receive a
+        # foreground generation — submitting one blocks the caller on the
+        # per-turn wall deadline (105s) while warmup contends for the single
+        # worker. Route to the fallback ladder instead: turns stay fast AND
+        # the cortex gets an uncontended window to finish warming. Lived
+        # 2026-07-15: one turn exceeded 105s → force-abort recycled the
+        # worker → every later turn hit the warming cortex, blocked 105s,
+        # re-recycled it → the cortex could never re-warm under continuous
+        # load (a busy Aura permanently lost its 32B). The previous
+        # error-prefix allowlist missed 'foreground_warmup_timeout' /
+        # 'warmup_deferred', so the recycled cortex was never skipped.
+        if not conversation_ready and state in {
+            "recovering",
+            "spawning",
+            "handshaking",
+            "warming",
+            "cold",
+        }:
+            return error or f"lane_not_ready:{state}"
         return ""
 
     try:
