@@ -15835,8 +15835,8 @@ async def api_chat(
 
     request_client = getattr(request, "client", None)
     _request_origin = str(getattr(request_client, "host", "unknown") or "unknown")
-    _trusted_local_origin = _request_origin in {"127.0.0.1", "::1", "localhost"}
     _request_access_profile = request_access_profile(request)
+    _trusted_local_origin = _request_access_profile.get("surface") == "owner"
     conversation_only_surface = bool(
         _request_access_profile.get("conversation_only", True)
     )

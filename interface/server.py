@@ -531,7 +531,7 @@ async def add_cache_headers(request: Request, call_next):
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_local_ui_origins(),
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "HEAD", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=[
         "Content-Type",
         "X-Api-Token",
@@ -1002,7 +1002,7 @@ async def websocket_endpoint(ws: WebSocket):
     # five-second auth window.
     await ws.accept()
 
-    expected = os.environ.get("AURA_API_TOKEN", "")
+    expected = str(config.api_token or "")
     host = ws.client.host if ws.client else "unknown"
     is_local = host in ("127.0.0.1", "::1", "localhost")
     local_browser_origin_allowed = request_has_allowed_local_browser_origin(ws)
@@ -1010,7 +1010,7 @@ async def websocket_endpoint(ws: WebSocket):
     # No configured token means no way to authenticate a remote peer:
     # only same-host UI connections may proceed. WS handshakes bypass the
     # HTTP middleware, so this must fail closed here.
-    authenticated = is_local and (not bool(expected) or local_browser_origin_allowed)
+    authenticated = is_local and local_browser_origin_allowed
     auth_timeout = 5.0
 
     # Paired LAN devices authenticate via their session cookie on the

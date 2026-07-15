@@ -245,6 +245,7 @@ def test_owner_request_uses_configured_identity_not_conversation_state(monkeypat
     )
     owner_request = _remote_request("/api/chat", method="POST")
     owner_request.client.host = "127.0.0.1"
+    owner_request.headers["Host"] = "127.0.0.1:8000"
 
     assert auth.relational_principal_id_for_request(owner_request) == "bryan primary"
 

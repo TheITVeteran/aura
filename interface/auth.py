@@ -15,6 +15,7 @@ import threading
 import time
 from http.cookies import CookieError, SimpleCookie
 from typing import TYPE_CHECKING, Any, cast
+from urllib.parse import SplitResult, urlsplit
 
 from fastapi import Header, HTTPException, Request
 
@@ -30,6 +31,9 @@ logger = logging.getLogger("Aura.Server.Auth")
 # ── Constants ─────────────────────────────────────────────────
 
 TRUSTED_IPS = {"127.0.0.1", "::1"}
+TRUSTED_LOCAL_UI_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+_BROWSER_ORIGIN_SCHEMES = frozenset({"http", "https"})
+_DEFAULT_PORTS = {"http": 80, "https": 443}
 HEALTH_PATHS = {"/", "/api/health", "/api/health/live", "/api/health/ready"}
 LOCAL_UI_ORIGINS = {
     "http://localhost:3000",
@@ -102,7 +106,7 @@ def _request_host(request: Request) -> str:
 
 
 def _is_trusted_local_host(host: str) -> bool:
-    return host in ("127.0.0.1", "::1", "localhost")
+    return str(host or "").strip().lower() in TRUSTED_LOCAL_UI_HOSTS
 
 
 def _extract_request_token(request: Request) -> str | None:
@@ -135,46 +139,177 @@ def _request_method(request: Request) -> str:
     return str(getattr(request, "method", "GET") or "GET").upper()
 
 
+def _request_scheme(request: Request) -> str:
+    scheme = str(getattr(getattr(request, "url", None), "scheme", "") or "").lower()
+    if scheme == "ws":
+        return "http"
+    if scheme == "wss":
+        return "https"
+    return scheme if scheme in _BROWSER_ORIGIN_SCHEMES else "http"
+
+
+def _header_values(request: Request, name: str) -> tuple[str, ...]:
+    """Return every value for a security-sensitive header.
+
+    ``Headers.get()`` hides duplicate Host headers.  Different proxies can
+    select different duplicates, so ambiguous authorities must fail closed.
+    """
+
+    headers = getattr(request, "headers", None)
+    getlist = getattr(headers, "getlist", None)
+    if callable(getlist):
+        try:
+            values = tuple(str(value) for value in getlist(name))
+        except (AttributeError, TypeError, ValueError):
+            values = ()
+        if values:
+            return values
+
+    scope = getattr(request, "scope", None)
+    raw_headers = scope.get("headers") if isinstance(scope, dict) else None
+    if isinstance(raw_headers, (list, tuple)):
+        expected = name.lower().encode("ascii")
+        values: list[str] = []
+        for item in raw_headers:
+            if not isinstance(item, (list, tuple)) or len(item) != 2:
+                continue
+            raw_name, raw_value = item
+            if isinstance(raw_name, str):
+                raw_name = raw_name.encode("latin-1", errors="ignore")
+            if raw_name.lower() != expected:
+                continue
+            if isinstance(raw_value, bytes):
+                values.append(raw_value.decode("latin-1", errors="strict"))
+            else:
+                values.append(str(raw_value))
+        if values:
+            return tuple(values)
+
+    value = _header_value(request, name)
+    return (value,) if value else ()
+
+
+def _parse_authority(value: str, *, default_port: int) -> tuple[str, int] | None:
+    """Parse one RFC-style authority without DNS resolution or normalization tricks."""
+
+    raw = str(value or "").strip()
+    if not raw or any(char in raw for char in "\r\n\t /?#@\\,"):
+        return None
+    try:
+        parsed = urlsplit(f"//{raw}")
+        port = parsed.port
+    except (TypeError, ValueError, UnicodeError):
+        return None
+    if (
+        parsed.scheme
+        or parsed.path
+        or parsed.query
+        or parsed.fragment
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
+        return None
+    host = str(parsed.hostname or "").strip().lower()
+    if not host or "%" in host:
+        return None
+    return host, int(port if port is not None else default_port)
+
+
+def _parse_browser_origin(value: str) -> tuple[str, str, int] | None:
+    raw = str(value or "").strip()
+    if not raw or any(char in raw for char in "\r\n\t"):
+        return None
+    try:
+        parsed: SplitResult = urlsplit(raw)
+        port = parsed.port
+    except (TypeError, ValueError, UnicodeError):
+        return None
+    scheme = str(parsed.scheme or "").lower()
+    host = str(parsed.hostname or "").strip().lower()
+    if (
+        scheme not in _BROWSER_ORIGIN_SCHEMES
+        or not host
+        or "%" in host
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        return None
+    return scheme, host, int(port if port is not None else _DEFAULT_PORTS[scheme])
+
+
+def _request_authority(
+    request: Request,
+    *,
+    require_trusted_loopback: bool,
+) -> tuple[str, int] | None:
+    host_values = _header_values(request, "Host")
+    if len(host_values) != 1:
+        return None
+    scheme = _request_scheme(request)
+    authority = _parse_authority(host_values[0], default_port=_DEFAULT_PORTS[scheme])
+    if authority is None:
+        return None
+    if require_trusted_loopback and authority[0] not in TRUSTED_LOCAL_UI_HOSTS:
+        return None
+    return authority
+
+
+def _request_targets_trusted_loopback_authority(request: Request) -> bool:
+    """Whether Host names an exact built-in loopback UI authority.
+
+    This intentionally does not resolve hostnames.  DNS aliases, dotted
+    lookalikes, integer IPv4 forms, and trailing-dot variants are not trusted.
+    """
+
+    return _request_authority(request, require_trusted_loopback=True) is not None
+
+
 def _is_allowed_local_ui_origin(value: str) -> bool:
     value = str(value or "").strip().rstrip("/")
     return bool(value and value in LOCAL_UI_ORIGINS)
 
 
+def _origin_matches_request_authority(
+    request: Request,
+    origin: str,
+    *,
+    require_trusted_loopback: bool,
+) -> bool:
+    parsed_origin = _parse_browser_origin(origin)
+    if parsed_origin is None:
+        return False
+    scheme, origin_host, origin_port = parsed_origin
+    if scheme != _request_scheme(request):
+        return False
+    authority = _request_authority(
+        request,
+        require_trusted_loopback=require_trusted_loopback,
+    )
+    if authority is None:
+        return False
+    if require_trusted_loopback and origin_host not in TRUSTED_LOCAL_UI_HOSTS:
+        return False
+    return (origin_host, origin_port) == authority
+
+
 def _origin_matches_request_host(request: Request, origin: str) -> bool:
-    """True when the Origin header names this server itself.
+    """True only for an exact, literal loopback Origin/Host authority pair."""
 
-    A page served from ``http://192.168.1.20:8000`` posting back to the
-    same host:port is same-origin, not cross-site. Browsers enforce that
-    an attacker page cannot forge its own Origin, so trusting an exact
-    host:port match is sound and is what lets paired LAN devices use the
-    UI without weakening the localhost CSRF posture.
-    """
-    origin = str(origin or "").strip().rstrip("/")
-    if not origin:
-        return False
-    from urllib.parse import urlsplit
-
-    try:
-        parsed = urlsplit(origin)
-    except ValueError:
-        return False
-    if parsed.scheme not in {"http", "https"}:
-        return False
-    host_header = _header_value(request, "Host").strip().lower()
-    if not host_header:
-        return False
-    origin_netloc = (parsed.netloc or "").strip().lower()
-    if not origin_netloc:
-        return False
-    default_port = "443" if parsed.scheme == "https" else "80"
-    if ":" not in host_header:
-        host_header = f"{host_header}:{default_port}"
-    if ":" not in origin_netloc:
-        origin_netloc = f"{origin_netloc}:{default_port}"
-    return origin_netloc == host_header
+    return _origin_matches_request_authority(
+        request,
+        origin,
+        require_trusted_loopback=True,
+    )
 
 
-def _is_cross_site_browser_request(request: Request) -> bool:
+def _is_cross_site_browser_request(
+    request: Request,
+    *,
+    allow_authenticated_request_authority: bool = False,
+) -> bool:
     """Return True when browser metadata says this is not Aura's own UI.
 
     Cross-origin CSRF against localhost carries either an Origin header or
@@ -182,24 +317,46 @@ def _is_cross_site_browser_request(request: Request) -> bool:
     hostile unless the request also supplies the real API token.
     """
     origin = _header_value(request, "Origin").strip()
-    if origin and not (
-        _is_allowed_local_ui_origin(origin) or _origin_matches_request_host(request, origin)
-    ):
+    allowed_origin = bool(
+        origin
+        and (
+            _is_allowed_local_ui_origin(origin)
+            or _origin_matches_request_host(request, origin)
+            or (
+                allow_authenticated_request_authority
+                and _origin_matches_request_authority(
+                    request,
+                    origin,
+                    require_trusted_loopback=False,
+                )
+            )
+        )
+    )
+    if origin and not allowed_origin:
         return True
     fetch_site = _header_value(request, "Sec-Fetch-Site").strip().lower()
-    if fetch_site in {"cross-site", "same-site"} and not (
-        _is_allowed_local_ui_origin(origin) or _origin_matches_request_host(request, origin)
-    ):
+    if fetch_site in {"cross-site", "same-site"} and not allowed_origin:
         return True
     return False
 
 
 def _has_same_origin_browser_context(request: Request) -> bool:
     origin = _header_value(request, "Origin").strip()
-    if _is_allowed_local_ui_origin(origin):
+    if _is_allowed_local_ui_origin(origin) or _origin_matches_request_host(request, origin):
         return True
     referer = _header_value(request, "Referer").strip()
-    return any(referer.startswith(f"{allowed}/") or referer == allowed for allowed in LOCAL_UI_ORIGINS)
+    if any(referer.startswith(f"{allowed}/") or referer == allowed for allowed in LOCAL_UI_ORIGINS):
+        return True
+    parsed_referer = _parse_browser_origin(referer)
+    if parsed_referer is None:
+        try:
+            parsed = urlsplit(referer)
+            referer_origin = f"{parsed.scheme}://{parsed.netloc}"
+        except (TypeError, ValueError, UnicodeError):
+            return False
+    else:
+        referer_origin = referer
+    return _origin_matches_request_host(request, referer_origin)
 
 
 def _has_desktop_ui_marker(request: Request) -> bool:
@@ -210,6 +367,8 @@ def _has_desktop_ui_marker(request: Request) -> bool:
 
 def _allow_local_without_token(request: Request, *, protected_route: bool) -> bool:
     if not _is_trusted_local_host(_request_host(request)):
+        return False
+    if not _request_targets_trusted_loopback_authority(request):
         return False
     if _is_cross_site_browser_request(request):
         return False
@@ -222,11 +381,16 @@ def request_has_allowed_local_browser_origin(request: Request) -> bool:
     """True when a browser-originated local request came from Aura's UI."""
     if not _is_trusted_local_host(_request_host(request)):
         return False
+    if not _request_targets_trusted_loopback_authority(request):
+        return False
     if _is_cross_site_browser_request(request):
         return False
     origin = _header_value(request, "Origin").strip()
     if origin:
-        return _is_allowed_local_ui_origin(origin)
+        return _is_allowed_local_ui_origin(origin) or _origin_matches_request_host(
+            request,
+            origin,
+        )
     return True
 
 
@@ -404,7 +568,12 @@ def request_access_profile(request: Request | None) -> dict[str, Any]:
                 "diagnostics": False,
             },
         }
-    owner_authenticated = _is_trusted_local_host(host) or bool(
+    trusted_local_owner = bool(
+        _is_trusted_local_host(host)
+        and _request_targets_trusted_loopback_authority(request)
+        and not _is_cross_site_browser_request(request)
+    )
+    owner_authenticated = trusted_local_owner or bool(
         supplied
         and expected
         and not supplied.startswith("adt1.")
@@ -472,14 +641,19 @@ def _log_device_scope_denial(device_id: str, path: str, method: str) -> None:
         )
 
 
-def _device_authorizes_request(request: Request, path: str) -> bool:
+def _device_authorizes_request(
+    request: Request,
+    path: str,
+    *,
+    resolved_device: PairedDevice | None = None,
+) -> bool:
     """True when a valid paired device may access this path.
 
     Raises 403 when the device is valid but the path is outside the
     conversation surface, so a stolen device token cannot even probe
     the control plane quietly.
     """
-    device = device_for_request(request)
+    device = resolved_device if resolved_device is not None else device_for_request(request)
     if device is None:
         return False
     method = _request_method(request)
@@ -494,43 +668,63 @@ def validate_runtime_security_request(request: Request) -> None:
     path = str(getattr(request.url, "path", "") or "")
     host = _request_host(request)
     internal_only = bool(getattr(config.security, "internal_only_mode", False))
+    expected = str(config.api_token or "")
+    supplied = _extract_request_token(request)
+    master_authenticated = bool(
+        expected and supplied and hmac.compare_digest(supplied, expected)
+    )
+    paired_device = None if master_authenticated else device_for_request(request)
+    public_path = path in HEALTH_PATHS or path in PAIRING_PUBLIC_PATHS
+
+    # A loopback TCP peer does not prove that a browser loaded Aura's own UI.
+    # DNS rebinding leaves the peer on 127.0.0.1 while Host remains an
+    # attacker-controlled domain.  Reject that authority before public-path,
+    # internal-only, CSRF, or desktop-marker exceptions are considered.
+    if (
+        _is_trusted_local_host(host)
+        and not _request_targets_trusted_loopback_authority(request)
+        and not master_authenticated
+        and paired_device is None
+    ):
+        raise HTTPException(status_code=403, detail="Untrusted local Host authority denied")
 
     # Browser-originated cross-site requests to localhost are CSRF attempts.
     # A valid bearer/API token can still authorize automation clients, but
     # loopback alone is not authentication.
-    expected_for_origin = config.api_token
-    supplied_for_origin = _extract_request_token(request)
     if (
-        _is_cross_site_browser_request(request)
-        and not (
-            expected_for_origin
-            and supplied_for_origin
-            and hmac.compare_digest(supplied_for_origin, expected_for_origin)
+        _is_cross_site_browser_request(
+            request,
+            allow_authenticated_request_authority=bool(paired_device or public_path),
         )
+        and not master_authenticated
     ):
         raise HTTPException(status_code=403, detail="Cross-origin local API request denied")
 
     if internal_only:
         if not _is_trusted_local_host(host):
             raise HTTPException(status_code=403, detail="External access denied")
+        if not master_authenticated and not _allow_local_without_token(
+            request,
+            protected_route=False,
+        ):
+            raise HTTPException(status_code=403, detail="Untrusted local request denied")
         return
 
     # Health endpoints can stay unauthenticated for monitors, but the rest of
     # the API must fail closed if the token disappears at runtime.
-    if path in HEALTH_PATHS or path in PAIRING_PUBLIC_PATHS:
+    if public_path:
         return
 
-    expected = config.api_token
     if not expected:
         logger.error("AURA_API_TOKEN not set and service is not internal-only. Blocking request to %s.", path)
         raise HTTPException(status_code=503, detail="Authentication not configured")
 
-    supplied = _extract_request_token(request)
-    if supplied and hmac.compare_digest(supplied, expected):
+    if master_authenticated:
         return
 
-    if _device_authorizes_request(request, path):
-        return
+    if paired_device is not None:
+        if _device_authorizes_request(request, path, resolved_device=paired_device):
+            return
 
     protected_local_post = (
         _request_method(request) not in {"GET", "HEAD", "OPTIONS"}
@@ -550,6 +744,16 @@ def _require_internal(request: Request) -> None:
     host = _request_host(request)
     if not _is_trusted_local_host(host):
         raise HTTPException(status_code=403, detail="External access denied")
+    expected = str(config.api_token or "")
+    supplied = _extract_request_token(request)
+    master_authenticated = bool(
+        expected and supplied and hmac.compare_digest(supplied, expected)
+    )
+    if not master_authenticated and not _allow_local_without_token(
+        request,
+        protected_route=False,
+    ):
+        raise HTTPException(status_code=403, detail="Untrusted local request denied")
 
 
 # ── Token verification ───────────────────────────────────────
@@ -563,7 +767,7 @@ def _verify_token(request: Request, x_api_token: str | None = Header(default=Non
 
     if not expected:
         # Only allow missing token if we are strictly bound to localhost
-        if internal_only:
+        if internal_only and _allow_local_without_token(request, protected_route=False):
             if not _VERIFY_TOKEN_WARNED_MISSING:
                 logger.warning("AURA_API_TOKEN not set but running in internal_only_mode.")
                 _VERIFY_TOKEN_WARNED_MISSING = True

@@ -76,7 +76,10 @@ def test_verify_token_allows_trusted_local_internal_only_without_header(monkeypa
     monkeypatch.setattr(auth.config.security, "internal_only_mode", True, raising=False)
     monkeypatch.setattr(auth.config, "api_token", "secret", raising=False)
 
-    auth._verify_token(_Request(host="127.0.0.1"), x_api_token=None)
+    auth._verify_token(
+        _Request(host="127.0.0.1", headers={"Host": "127.0.0.1:8000"}),
+        x_api_token=None,
+    )
 
 
 def test_verify_token_allows_trusted_local_desktop_ui_without_header(monkeypatch):
@@ -89,6 +92,7 @@ def test_verify_token_allows_trusted_local_desktop_ui_without_header(monkeypatch
         _Request(
             host="127.0.0.1",
             headers={
+                "Host": "127.0.0.1:8000",
                 "Origin": "http://127.0.0.1:8000",
                 "X-Aura-Surface": "desktop-ui",
             },
