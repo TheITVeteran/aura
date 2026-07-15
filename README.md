@@ -348,7 +348,7 @@ parameters (temperature, token budget, repetition penalty) via the affective
 circumplex, and they feed the steering engine that injects activation vectors
 into the residual stream.
 
-### Identity (`core/identity.py`, `core/heartstone_directive.py`)
+### Identity (`core/identity.py`, `core/identity/heartstone.py`)
 An immutable constitutional core plus a mutable persona that drifts with sleep
 and dream consolidation. There's active defense against prompt injection — the
 dream cycle simulates identity perturbation and tries to repair drift back
