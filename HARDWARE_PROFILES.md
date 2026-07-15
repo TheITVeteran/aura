@@ -40,7 +40,7 @@ This document defines the supported hardware and model execution profiles for th
 
 ## 3. Local Apple Silicon Profile
 * **Target Hardware**: Mac Studio / MacBook Pro (M2/M3/M4 Max), 64GB - 128GB Unified Memory.
-* **Required Models**: Aura MLX 7B/32B lane artifacts, Qwen-2.5-Coder-7B-Instruct (local).
+* **Required Models**: the three in-process MLX tiers — Cortex (32B, foreground), Brainstem (7B, background), and Reflex (1.5B, fast lane) — plus Qwen-2.5-Coder-7B-Instruct (local) for code work.
 * **Memory/Compute**: High-throughput CPU/GPU memory bandwidth.
 * **Allowed Claims**:
   - `governed runtime`, `persistent memory`, `causal internal state`, `affect steering`, `System 2 planning/search`, `self-repair`
@@ -71,8 +71,8 @@ This document defines the supported hardware and model execution profiles for th
 ---
 
 ## 5. Cloud / External Model Profile
-* **Target Hardware**: High-bandwidth compute server connected to commercial APIs (OpenAI, Anthropic, Gemini).
-* **Required Models**: GPT-4o, Claude 3.5 Sonnet, Gemini 1.5 Pro.
+* **Target Hardware**: Any host with network access to the Google Gemini API — the only cloud adapter Aura ships (`core/brain/llm/gemini_adapter.py`). Cloud is an opt-in fallback for the reasoning lanes, never the default substrate; the local MLX tiers remain primary.
+* **Required Models**: Gemini 3.5 Flash (chat / deep lanes) and Gemini 3.5 Pro (thinking lane) by default, with per-model daily/minute rate-limit tiers overridable via `AURA_GEMINI_*` environment variables.
 * **Memory/Compute**: Network-bound, infinite API compute resources.
 * **Allowed Claims**:
   - All local properties, plus:

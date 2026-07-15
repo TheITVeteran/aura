@@ -50,9 +50,10 @@ receive an AuthorityGateway receipt. No silent side paths.
 
 | Model Role | Type | Location | Purpose |
 |-----------|------|----------|---------|
-| Primary (Cortex) | 32B parameter LLM | Local (MLX) | Main reasoning and conversation |
-| Tertiary (Brainstem) | 7B parameter LLM | Local (MLX) | Background/maintenance tasks |
-| Cloud Fallback | API-based LLM | Remote (opt-in) | Fallback when local unavailable |
+| Cortex (foreground) | 32B parameter LLM | Local (MLX) | Main reasoning and conversation |
+| Reflex (fast lane) | 1.5B parameter LLM | Local (MLX) | Low-latency replies and routing |
+| Brainstem (background) | 7B parameter LLM | Local (MLX) | Background / maintenance tasks |
+| Cloud Fallback | Gemini 3.5 (API) | Remote (opt-in) | Fallback for the reasoning lanes when local is unavailable |
 
 See `MODEL_CARD.md` for detailed model information.
 
