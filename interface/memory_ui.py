@@ -136,7 +136,12 @@ async def get_vault_stats():
         "radius_cm": radius,
         "evaporation_count": evaporating,
         "recent_events": recent,
-        "entropy_fidelity": 0.998 # Fictional metric for UI
+        # No "entropy_fidelity" here. It was a hardcoded 0.998 carrying the
+        # comment "Fictional metric for UI", and the memory panel rendered it
+        # as though the vault had measured it. Everything else in this payload
+        # is derived from real vault state; an invented number sitting beside
+        # them borrows their credibility. If entropy fidelity is worth showing,
+        # it has to be computed.
     }
 
 # 2a. Root route — served when btn-mem-map loads /memory

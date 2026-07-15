@@ -13,7 +13,6 @@ const DEFAULT_STATS = {
     bit_density: 0,
     radius_cm: 10,
     evaporation_count: 0,
-    entropy_fidelity: 0,
     recent_events: [],
 };
 
@@ -144,14 +143,12 @@ function App() {
                                 <span className="text-gray-400">Radius</span>
                                 <span className="text-purple-400">{stats.radius_cm}cm</span>
                             </div>
-                            <div className="flex justify-between">
-                                <span className="text-gray-400">Entropy σ</span>
-                                <span className="text-blue-400">{stats.entropy_fidelity}</span>
-                            </div>
-                            <div className="flex justify-between">
-                                <span className="text-gray-400">Spin ω</span>
-                                <span className="text-pink-400">0.82c</span>
-                            </div>
+                            {/* "Entropy σ" and "Spin ω" used to sit here. The first
+                                rendered an API field hardcoded to 0.998 and commented
+                                "Fictional metric for UI"; the second was the literal
+                                string "0.82c" in this markup. Neither was ever measured.
+                                Sitting beside mass, density and radius — which are real —
+                                they borrowed the credibility of actual vault state. */}
                         </div>
                     </div>
                 </div>
