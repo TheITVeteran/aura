@@ -3186,8 +3186,9 @@ body.accent-amber { --primary: #f59e0b; --primary-bright: #fbbf24; --accent: #fc
     --wordmark-glow-4: rgba(0, 229, 255, 0.20);
     font-family: 'Fredoka', var(--font-head);
     /* Both words now share one line, so the lockup needs a larger cap than the
-     * old flanking layout to hold the same presence across the middle. */
-    font-size: clamp(3rem, 11vw, 11.5rem);
+     * old flanking layout to hold the same presence across the middle.
+     * ~62% of viewport width at 1600px. */
+    font-size: clamp(3.2rem, 13vw, 13.5rem);
     font-weight: 700;
     font-stretch: 84%;
     line-height: 0.92;

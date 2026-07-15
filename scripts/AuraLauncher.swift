@@ -2152,6 +2152,36 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         }.resume()
     }
 
+    /// Turn raw boot blockers into a line a person can read.
+    ///
+    /// Blockers arrive as internal service ids ("critical:memory_write_gateway").
+    /// Joining all of them verbatim made the launcher's most prominent copy a
+    /// four-line wall of identifiers. Name the first few in readable form and
+    /// count the remainder; the exact list stays in the logs.
+    static func blockerSummary(_ blockers: [String], naming limit: Int = 3) -> String {
+        // Title-casing every token would render these as "Llm Router", "Api
+        // Adapter", "Gwt Winner".
+        let acronyms: Set<String> = ["llm", "api", "ui", "gwt", "tts", "stt", "cpu", "ram", "io", "mlx", "vad"]
+        let readable = blockers.map { raw -> String in
+            let bare = raw.split(separator: ":").last.map(String.init) ?? raw
+            return bare
+                .replacingOccurrences(of: "_", with: " ")
+                .split(separator: " ")
+                .map { token -> String in
+                    let lower = token.lowercased()
+                    if acronyms.contains(lower) { return lower.uppercased() }
+                    return token.prefix(1).uppercased() + token.dropFirst()
+                }
+                .joined(separator: " ")
+        }
+        guard !readable.isEmpty else { return "" }
+        if readable.count <= limit {
+            return "waiting on " + readable.joined(separator: ", ")
+        }
+        let named = readable.prefix(limit).joined(separator: ", ")
+        return "waiting on \(named) +\(readable.count - limit) more"
+    }
+
     private static func parseSnapshot(data: Data?, response: URLResponse?) -> BootSnapshot? {
         guard let http = response as? HTTPURLResponse else {
             return nil
@@ -2318,7 +2348,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
                 ? "Aura’s desktop window should appear momentarily."
                 : "Aura’s core is online. The desktop window can open now while Cortex finishes recovering."
         } else if !snapshot.blockers.isEmpty {
-            footer = "Boot phase: \(snapshot.phaseDisplay) • waiting on \(snapshot.blockers.joined(separator: ", "))"
+            footer = "Boot phase: \(snapshot.phaseDisplay) • \(Self.blockerSummary(snapshot.blockers))"
         } else {
             footer = "Boot phase: \(snapshot.phaseDisplay)"
         }
