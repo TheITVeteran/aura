@@ -677,10 +677,20 @@ class ReasoningAmplifierV2:
                     answer = cand
                     verdict = esc_verdict
                     verifier_ok = True
+                    # verifier_checked MUST be re-read from the escalated verdict.
+                    # Leaving it stale carried the *previous* candidate's "yes, I
+                    # evaluated something" onto a brand-new answer this verdict may
+                    # never have checked — so a vacuous escalated pass inherited
+                    # checked=True and PROOF mode presented it as verified.
+                    verifier_checked = bool(getattr(esc_verdict, "checked", False))
                     verifier_issues = list(getattr(esc_verdict, "issues", []) or [])
                     verifiers_run = (getattr(esc_verdict, "engine", "") or "").split("+")
                     fallbacks.append("tier_escalated")
-                    logger.info("🧠 [AmplifyV2] tier escalation produced a verifier-clean answer.")
+                    logger.info(
+                        "🧠 [AmplifyV2] tier escalation produced a verifier-clean "
+                        "answer (checked=%s).",
+                        verifier_checked,
+                    )
                     break
 
         winning_generation_metadata = generation_metadata_of(answer)

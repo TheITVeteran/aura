@@ -21,8 +21,10 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable
+from enum import StrEnum
+from typing import Any
 
 from core.runtime.errors import record_degradation
 
@@ -45,8 +47,25 @@ def _normalize(s: str) -> str:
     return re.sub(r"\s+", " ", str(s or "").strip().lower()).strip(" .!?\"'")
 
 
-async def verify_reasoning(text: str) -> tuple[bool, list[str]]:
-    """True if the reasoning has no provable non-sequitur or arithmetic error."""
+class VerifierOutcome(StrEnum):
+    """What the verifier established. UNKNOWN is not a pass.
+
+    The distinction this enum exists to force: "I checked and found nothing
+    wrong" and "I could not check" are different facts, and a bool cannot hold
+    both. Collapsing them is how a crashed verifier came to certify every
+    candidate as clean.
+    """
+
+    PASS = "pass"        # checked; no provable error found
+    FAIL = "fail"        # checked; a provable error was found
+    UNKNOWN = "unknown"  # could not check — establishes nothing
+
+
+async def verify_reasoning_checked(text: str) -> tuple[VerifierOutcome, list[str]]:
+    """Audit reasoning for provable non-sequiturs and arithmetic errors.
+
+    Returns UNKNOWN — never PASS — when the verifier itself cannot run.
+    """
     try:
         from core.reasoning.symbolic_bridge import SymbolicBridge
 
@@ -56,10 +75,61 @@ async def verify_reasoning(text: str) -> tuple[bool, list[str]]:
             issues.append(f"non-sequitur: {ns.get('conclusion')}")
         for ae in audit.get("arithmetic_errors", []) or []:
             issues.append(f"arithmetic: {ae.get('claim')}")
-        return (not issues), issues
+        return (VerifierOutcome.PASS if not issues else VerifierOutcome.FAIL), issues
     except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
-        record_degradation("reasoning_amplifier", exc)
-        return True, []
+        # A verifier that crashed has verified nothing. This used to
+        # `return True, []` — reporting the crash as a clean bill of health,
+        # which marked every candidate verifier-clean and set verified=True on
+        # the result. Absence of a check is not a passed check.
+        record_degradation(
+            "reasoning_amplifier",
+            exc,
+            action="verifier unavailable; reasoning reported as UNCHECKED, not verified",
+            enforce_failure_policy=False,
+        )
+        return VerifierOutcome.UNKNOWN, [f"verifier_unavailable: {type(exc).__name__}"]
+
+
+async def verify_reasoning(text: str) -> tuple[bool, list[str]]:
+    """Back-compatible boolean form.
+
+    UNKNOWN maps to False: if we could not check, we must not claim the text is
+    clean. Callers that need to tell "unchecked" from "checked and failed"
+    should use :func:`verify_reasoning_checked`.
+    """
+    outcome, issues = await verify_reasoning_checked(text)
+    return outcome is VerifierOutcome.PASS, issues
+
+
+async def _run_verifier(
+    verifier: Callable[[str], Awaitable[Any]], candidate: str
+) -> tuple[VerifierOutcome, list[str]]:
+    """Normalize any verifier — custom or default — into a tri-state outcome.
+
+    Custom verifiers supplied by callers return ``(bool, list[str])``. A crash
+    inside one is UNKNOWN here too, rather than propagating (which would take
+    down the whole amplification) or being swallowed as a pass.
+    """
+    try:
+        result = await verifier(candidate)
+    except (RuntimeError, AttributeError, TypeError, ValueError, KeyError, IndexError) as exc:
+        record_degradation(
+            "reasoning_amplifier",
+            exc,
+            action="candidate verifier crashed; candidate treated as UNCHECKED",
+            enforce_failure_policy=False,
+        )
+        return VerifierOutcome.UNKNOWN, [f"verifier_crashed: {type(exc).__name__}"]
+
+    if isinstance(result, tuple) and len(result) == 2:
+        ok, issues = result
+        issue_list = [str(i) for i in (issues or [])]
+        if isinstance(ok, VerifierOutcome):
+            return ok, issue_list
+        return (VerifierOutcome.PASS if ok else VerifierOutcome.FAIL), issue_list
+
+    # An unrecognized return shape establishes nothing.
+    return VerifierOutcome.UNKNOWN, [f"verifier_bad_return: {type(result).__name__}"]
 
 
 @dataclass
@@ -71,6 +141,11 @@ class AmplifiedResult:
     agreement: float
     verified: bool = False
     issues: list[str] = field(default_factory=list)
+    # Did the verifier actually run on anything? False means every candidate
+    # came back UNKNOWN, so `verified` and `valid_n` carry no information and
+    # the confidence below is unlifted. Without this a caller cannot tell
+    # "nothing was wrong" from "nothing was checked".
+    verifier_checked: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -80,6 +155,7 @@ class AmplifiedResult:
             "valid_n": self.valid_n,
             "agreement": round(self.agreement, 3),
             "verified": self.verified,
+            "verifier_checked": self.verifier_checked,
         }
 
 
@@ -91,18 +167,23 @@ async def amplify(
 ) -> AmplifiedResult:
     """Verifier-filtered self-consistency over candidate reasoning paths."""
     extract = extract_answer or default_extract_answer
-    verifier = verify or verify_reasoning
+    verifier = verify or verify_reasoning_checked
     cands = [c for c in candidates if c and str(c).strip()]
     if not cands:
         return AmplifiedResult(answer="", confidence=0.0, n=0, valid_n=0, agreement=0.0)
 
-    flags: list[bool] = []
+    outcomes: list[VerifierOutcome] = []
     all_issues: list[str] = []
     for c in cands:
-        ok, issues = await verifier(c)
-        flags.append(ok)
+        outcome, issues = await _run_verifier(verifier, c)
+        outcomes.append(outcome)
         all_issues.extend(issues)
-    valid = [c for c, ok in zip(cands, flags, strict=True) if ok]
+
+    # Only a PASS makes a candidate verifier-clean. An UNKNOWN candidate is not
+    # filtered out (we have no grounds to reject it) but it is not certified
+    # either — it simply carries no verification evidence.
+    valid = [c for c, o in zip(cands, outcomes, strict=True) if o is VerifierOutcome.PASS]
+    verifier_checked = any(o is not VerifierOutcome.UNKNOWN for o in outcomes)
     pool = valid if valid else cands
 
     # Self-consistency: cluster the pool by extracted answer; the biggest cluster wins.
@@ -114,10 +195,17 @@ async def amplify(
     verified_winner = bool(valid) and winners[0] in valid
     confidence = min(0.98, agreement * (1.0 if verified_winner else 0.85))
 
-    logger.info(
-        "🧠 [Amplify] %d paths, %d verifier-clean → answer agreement %.0f%% (conf %.2f)",
-        len(cands), len(valid), agreement * 100, confidence,
-    )
+    if not verifier_checked:
+        logger.warning(
+            "🧠 [Amplify] verifier unavailable for all %d paths — answer is "
+            "UNVERIFIED (agreement %.0f%%)",
+            len(cands), agreement * 100,
+        )
+    else:
+        logger.info(
+            "🧠 [Amplify] %d paths, %d verifier-clean → answer agreement %.0f%% (conf %.2f)",
+            len(cands), len(valid), agreement * 100, confidence,
+        )
     return AmplifiedResult(
         answer=winners[0],
         confidence=round(confidence, 4),
@@ -125,6 +213,7 @@ async def amplify(
         valid_n=len(valid),
         agreement=round(agreement, 4),
         verified=verified_winner,
+        verifier_checked=verifier_checked,
         issues=all_issues[:10],
     )
 
@@ -264,7 +353,10 @@ class DeliberationEngine:
             final = await generate(final_prompt, 0.3)
 
         # Verify the recombined answer; its confidence reflects the sub-step agreement.
-        ok, issues = await (kw.get("verify") or verify_reasoning)(final or "")
+        outcome, issues = await _run_verifier(
+            kw.get("verify") or verify_reasoning_checked, final or ""
+        )
+        ok = outcome is VerifierOutcome.PASS
         sub_conf = sum(1 for _q, a in solved if a) / max(1, len(solved))
         return AmplifiedResult(
             answer=final or (solved[-1][1] if solved else ""),
@@ -274,6 +366,7 @@ class DeliberationEngine:
             agreement=round(sub_conf, 4),
             verified=ok,
             issues=issues,
+            verifier_checked=outcome is not VerifierOutcome.UNKNOWN,
         )
 
 
