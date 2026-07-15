@@ -2254,6 +2254,24 @@ body.neural-visual-paused #pane-neural .live-dot {
     overflow-wrap: anywhere;
 }
 
+/* Controls that are not wired to anything must not look operative. */
+.setting-row-unwired label {
+    color: var(--text-dim);
+    opacity: 0.6;
+}
+
+.setting-row-unwired .setting-toggle,
+.setting-row-unwired .setting-input,
+.setting-row-unwired .setting-range {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.settings-help-unwired {
+    color: var(--warn, #f0a06a);
+    opacity: 0.85;
+}
+
 /* "No reading" must never look like a reading. */
 .telemetry-unknown {
     color: var(--text-dim);

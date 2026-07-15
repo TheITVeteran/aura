@@ -817,38 +817,58 @@
                         Pausing the neural stream only freezes the visible feed. Aura keeps thinking in the background, and buffered thought cards catch up when you resume.
                     </div>
 
+                    <!-- The controls below persist to localStorage and are read back
+                         into these inputs, but nothing consumes them: the shell never
+                         POSTs settings, and the settings router exposes no setter. They
+                         are disabled rather than left looking operative — a switch
+                         labelled "Autonomous Actions" that does not gate autonomy is
+                         worse than no switch. Re-enable each one as its lane is wired. -->
                     <div class="section-label">VOICE</div>
-                    <div class="settings-row">
+                    <div class="settings-row setting-row-unwired">
                         <label>Voice Enabled</label>
-                        <input type="checkbox" id="setting-voice" checked class="setting-toggle">
+                        <input type="checkbox" id="setting-voice" checked class="setting-toggle" disabled>
                     </div>
-                    <div class="settings-row">
+                    <div class="settings-row setting-row-unwired">
                         <label>Auto-Listen</label>
-                        <input type="checkbox" id="setting-autolisten" class="setting-toggle">
+                        <input type="checkbox" id="setting-autolisten" class="setting-toggle" disabled>
                     </div>
-                    <div class="settings-row">
+                    <div class="settings-row setting-row-unwired">
                         <label>TTS Speed</label>
-                        <input type="range" id="setting-tts-speed" min="0.5" max="2.0" step="0.1" value="1.0" class="setting-range">
+                        <input type="range" id="setting-tts-speed" min="0.5" max="2.0" step="0.1" value="1.0" class="setting-range" disabled>
+                    </div>
+                    <div class="settings-help settings-help-unwired">
+                        Not connected yet. Voice is controlled live from the header
+                        <strong>MUTE</strong> button, which does reach the runtime.
                     </div>
 
                     <div class="section-label">MEMORY</div>
-                    <div class="settings-row">
+                    <div class="settings-row setting-row-unwired">
                         <label>Auto-Enrichment</label>
-                        <input type="checkbox" id="setting-enrichment" checked class="setting-toggle">
+                        <input type="checkbox" id="setting-enrichment" checked class="setting-toggle" disabled>
                     </div>
-                    <div class="settings-row">
+                    <div class="settings-row setting-row-unwired">
                         <label>Reflection Learning</label>
-                        <input type="checkbox" id="setting-reflection" checked class="setting-toggle">
+                        <input type="checkbox" id="setting-reflection" checked class="setting-toggle" disabled>
+                    </div>
+                    <div class="settings-help settings-help-unwired">
+                        Not connected yet. Enrichment and reflection run per Aura's own
+                        policy; these toggles do not gate them.
                     </div>
 
                     <div class="section-label">AUTONOMY</div>
-                    <div class="settings-row">
-                        <label>Autonomous Actions</label>
-                        <input type="checkbox" id="setting-autonomy" checked class="setting-toggle">
+                    <div class="settings-help settings-help-unwired">
+                        Not connected yet — these do <strong>not</strong> gate autonomy or
+                        require approval. Aura's real boundaries live in her governance
+                        layer, not here. Use the header <strong>⏻</strong> control to stop
+                        the runtime.
                     </div>
-                    <div class="settings-row">
+                    <div class="settings-row setting-row-unwired">
+                        <label>Autonomous Actions</label>
+                        <input type="checkbox" id="setting-autonomy" checked class="setting-toggle" disabled>
+                    </div>
+                    <div class="settings-row setting-row-unwired">
                         <label>Require Approval</label>
-                        <select id="setting-approval" class="setting-input">
+                        <select id="setting-approval" class="setting-input" disabled>
                             <option value="destructive">Destructive Only</option>
                             <option value="all">All Actions</option>
                             <option value="none">Never</option>
@@ -904,8 +924,12 @@
                         <button class="setting-btn" id="btn-export-data">↓ Export</button>
                     </div>
                     <div class="settings-row">
-                        <label>Clear History</label>
-                        <button class="setting-btn danger" id="btn-clear-history">⚠ Clear</button>
+                        <label>Clear Transcript</label>
+                        <button class="setting-btn" id="btn-clear-history">⌫ Clear</button>
+                    </div>
+                    <div class="settings-help">
+                        Clears the messages shown in this window. Aura's stored conversation
+                        history and memories are not affected — this is a view-level clear only.
                     </div>
                 </div>
             </div>

@@ -5639,11 +5639,17 @@ if (exportBtn) exportBtn.addEventListener('click', async () => {
 });
 
 // Clear history
+// This control only rewrites the on-screen transcript. It used to ask "Clear all
+// conversation history?" while calling no backend at all: every turn stayed in
+// the sessions/turns tables and in Aura's session context, so the button claimed
+// a deletion it never performed. Wording now matches the actual effect. Clearing
+// the view is still one-way for the reader — the shell never repopulates
+// #messages from the server — so the confirm stays.
 const clearBtn = document.getElementById('btn-clear-history');
 if (clearBtn) clearBtn.addEventListener('click', () => {
-    if (confirm('Clear all conversation history? Memories are preserved.')) {
+    if (confirm('Clear the transcript shown in this window?\n\nAura\'s stored conversation history and memories are not affected.')) {
         const msgEl = document.getElementById('messages');
-        if (msgEl) msgEl.innerHTML = '<div class="sys-box">History cleared. Aura remembers you.</div>';
+        if (msgEl) msgEl.innerHTML = '<div class="sys-box">Transcript cleared from this view. Aura\'s history is unchanged.</div>';
     }
 });
 
