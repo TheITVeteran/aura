@@ -644,6 +644,21 @@ class TestRobustness:
             assert spec.amber < spec.red
             assert spec.setpoint < spec.red
 
+    def test_hermetic_dir_resolution(self, tmp_path, monkeypatch):
+        # Explicit env override wins; the suite's hermetic runtime root keeps
+        # ledger writes out of the live ~/.aura/data; data_dir beats both.
+        monkeypatch.setenv("AURA_TEST_RUNTIME_ROOT", str(tmp_path / "hermetic"))
+        monkeypatch.delenv("AURA_ALLOSTASIS_DIR", raising=False)
+        engine = AllostasisEngine(specs=(simple_spec(),))
+        assert engine._dir == tmp_path / "hermetic" / "allostasis"
+
+        monkeypatch.setenv("AURA_ALLOSTASIS_DIR", str(tmp_path / "explicit"))
+        engine = AllostasisEngine(specs=(simple_spec(),))
+        assert engine._dir == tmp_path / "explicit"
+
+        engine = AllostasisEngine(specs=(simple_spec(),), data_dir=tmp_path / "direct")
+        assert engine._dir == tmp_path / "direct"
+
     def test_narrative_mentions_trajectory_when_forecasting(self, tmp_path):
         clock = FakeClock()
         engine = make_engine(tmp_path, clock)

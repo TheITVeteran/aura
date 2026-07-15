@@ -556,9 +556,18 @@ class AllostasisEngine:
         self._lock = threading.RLock()
         self._specs: dict[str, VitalSpec] = {s.key: s for s in (specs or default_vital_specs())}
         env_root = os.getenv("AURA_ALLOSTASIS_DIR", "")
-        self._dir = Path(data_dir) if data_dir else (
-            Path(env_root) if env_root else (Path.home() / ".aura" / "data" / "allostasis")
-        )
+        # Hermeticity: explicit override wins; under the test suite the
+        # hermetic runtime root keeps ledger writes out of the live
+        # ~/.aura/data (same convention as standing_authority's state root).
+        test_root = os.getenv("AURA_TEST_RUNTIME_ROOT", "").strip()
+        if data_dir:
+            self._dir = Path(data_dir)
+        elif env_root:
+            self._dir = Path(env_root)
+        elif test_root:
+            self._dir = Path(test_root) / "allostasis"
+        else:
+            self._dir = Path.home() / ".aura" / "data" / "allostasis"
         self._events_path = self._dir / "forecasts.jsonl"
         self._state_path = self._dir / "state.json"
         self._dir_ready = False
