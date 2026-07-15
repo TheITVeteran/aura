@@ -586,6 +586,21 @@ class ReasoningAmplifierV2:
         except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation("amplifier_v2_recall", exc)
 
+        # 2a. procedural memory: condition on PROVEN approaches from similar
+        # solved problems (frontier-general P2 — inference-time compounding).
+        try:
+            from core.brain.procedural_memory import get_procedural_memory
+
+            playbook_text = get_procedural_memory().as_playbook_text(
+                problem.objective, task_type=problem.task_type,
+                problem_key=problem.objective[:80],
+            )
+            if playbook_text:
+                guard_text = f"{playbook_text}\n{guard_text}" if guard_text else playbook_text
+                fallbacks.append("playbooks_injected")
+        except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            record_degradation("amplifier_v2_playbooks", exc)
+
         # 2b. ReAct grounding — gather REAL evidence (read repo source spans / recall
         # memory) so generation is conditioned on fact and the verifier has something
         # concrete to check. Merged with any caller-supplied evidence.
@@ -771,6 +786,23 @@ class ReasoningAmplifierV2:
                     )
                 except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
                     record_degradation("amplifier_v2_self_improve", exc)
+                # Distill the WIN into a reusable playbook (P2): strategy shape,
+                # not answer content — and credit any playbooks this problem
+                # was conditioned on (demonstrated transfer earns distillation).
+                try:
+                    from core.brain.procedural_memory import get_procedural_memory
+
+                    get_procedural_memory().record_win(
+                        objective=problem.objective,
+                        task_type=problem.task_type,
+                        answer=calibrated_answer,
+                        strategy=f"{mode.value}/{strategy}",
+                        verifiers=[v for v in verifiers_run if v],
+                        confidence=confidence,
+                        problem_key=problem.objective[:80],
+                    )
+                except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                    record_degradation("amplifier_v2_playbook_capture", exc)
             elif not verifier_ok and not request.context.get("skip_precompute_enqueue"):
                 # Verifier-dirty under the foreground budget — queue an idle deep retry
                 # (off the critical path; the win lands in the cache for next time).

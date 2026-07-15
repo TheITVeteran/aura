@@ -1,0 +1,117 @@
+{
+  "payload": {
+    "claim": "Operational frontier-general definition: Aura's verifier-graded score on a fresh-generated battery divided by a frontier reference, per class. This run (mode=amplifier_stub): overall gap 0.0 (0 = parity). The CLAIM is won only on a monotone closing trend across runs at matched budget \u2014 a single point is a baseline, not a victory. Stub-mode numbers measure the harness (verify\u2192foundry\u2192playbook loop), NOT the 32B mind.",
+    "generated_at": "2026-07-14 13:17:46 PDT",
+    "git_commit": "e6517129",
+    "host": {
+      "platform": "macOS-26.4.1-arm64-arm-64bit",
+      "python": "3.12.13"
+    },
+    "latest_run": {
+      "battery_version": "2026-07-14.v1",
+      "classes": [
+        {
+          "aura_correct": 5,
+          "aura_score": 1.0,
+          "gap": 0.0,
+          "n": 5,
+          "reference_score": 0.98,
+          "task_class": "math"
+        },
+        {
+          "aura_correct": 5,
+          "aura_score": 1.0,
+          "gap": 0.0,
+          "n": 5,
+          "reference_score": 0.92,
+          "task_class": "reasoning"
+        },
+        {
+          "aura_correct": 5,
+          "aura_score": 1.0,
+          "gap": 0.0,
+          "n": 5,
+          "reference_score": 0.9,
+          "task_class": "coding"
+        },
+        {
+          "aura_correct": 5,
+          "aura_score": 1.0,
+          "gap": 0.0,
+          "n": 5,
+          "reference_score": 0.95,
+          "task_class": "factual"
+        }
+      ],
+      "duration_s": 11.0,
+      "generated_at_unix": 1784060266.264256,
+      "overall_aura_score": 1.0,
+      "overall_gap": 0.0,
+      "per_class": 5,
+      "reference_basis": "published_anchor",
+      "schema_version": 1,
+      "seed": 1,
+      "solver_mode": "amplifier_stub"
+    },
+    "ledger": {
+      "runs": [
+        {
+          "at": 1784060001.085349,
+          "battery_version": "2026-07-14.v1",
+          "overall_aura_score": 1.0,
+          "overall_gap": 0.0,
+          "per_class_gap": {
+            "coding": 0.0,
+            "factual": 0.0,
+            "math": 0.0,
+            "reasoning": 0.0
+          },
+          "reference_basis": "published_anchor",
+          "seed": 0
+        },
+        {
+          "at": 1784060254.947523,
+          "battery_version": "2026-07-14.v1",
+          "overall_aura_score": 1.0,
+          "overall_gap": 0.0,
+          "per_class_gap": {
+            "coding": 0.0,
+            "factual": 0.0,
+            "math": 0.0,
+            "reasoning": 0.0
+          },
+          "reference_basis": "published_anchor",
+          "seed": 0
+        },
+        {
+          "at": 1784060266.264256,
+          "battery_version": "2026-07-14.v1",
+          "overall_aura_score": 1.0,
+          "overall_gap": 0.0,
+          "per_class_gap": {
+            "coding": 0.0,
+            "factual": 0.0,
+            "math": 0.0,
+            "reasoning": 0.0
+          },
+          "reference_basis": "published_anchor",
+          "seed": 1
+        }
+      ],
+      "schema_version": 1,
+      "trend": {
+        "delta": 0.0,
+        "direction": "flat",
+        "first_gap": 0.0,
+        "latest_gap": 0.0,
+        "points": 3
+      }
+    },
+    "real_mind_measurement": "The amplifier_mlx real-capability run was attempted headless and REFUSED by Aura's own memory guardians (projected 38.1GB > 35.8GB safe limit) \u2014 the same survival protection the whole-system \u03a6 campaign measured. That refusal is correct and was not overridden. The honest real-mind number comes from running this tool while her desktop instance is up (the model is already resident \u2014 no second load), or from an operator explicitly accepting the memory risk via AURA_MLX_WORKER_RSS_LIMIT_GB + AURA_ALLOW_UNSAFE_MEMORY_LIMITS with genuine free memory.",
+    "schema": "aura.frontier_gap_report.v1",
+    "solver_mode": "amplifier_stub"
+  },
+  "schema": "frontier_gap_report",
+  "schema_name": "frontier_gap_report",
+  "schema_version": 1
+}

@@ -16,6 +16,11 @@ from core.runtime.errors import record_degradation
 from .base import VerificationResult, Verifier, combine_results
 from .citation_engine import CitationEngine
 from .code_engine import CodeTruthEngine
+from .experience_engines import (
+    OutcomeLedgerVerifier,
+    PredictionResolutionVerifier,
+    RubricEnsembleVerifier,
+)
 from .logic_engine import LogicTruthEngine
 from .math_engine import MathTruthEngine
 from .planning_engine import PlanningEngine
@@ -31,6 +36,9 @@ _TASK_ALIASES = {
     "architecture": "architecture", "self_claim": "self_claim",
     "factual": "factual", "fact": "factual", "qa": "factual",
     "planning": "planning", "plan": "planning", "action": "action", "tool": "tool",
+    "prediction": "prediction", "forecast": "prediction", "predict": "prediction",
+    "writing": "writing", "quality": "quality", "open_ended": "open_ended",
+    "explanation": "explanation", "essay": "writing", "prose": "writing",
 }
 
 
@@ -43,6 +51,11 @@ class VerifierRegistry:
             RepoEvidenceEngine(),
             CitationEngine(),
             PlanningEngine(),
+            # experience-grounded boundary movers (frontier-general P1b):
+            # born unadmitted; their domains earn admission through the foundry
+            PredictionResolutionVerifier(),
+            OutcomeLedgerVerifier(),
+            RubricEnsembleVerifier(),
         ]
 
     @staticmethod
