@@ -873,64 +873,54 @@
                         Pausing the neural stream only freezes the visible feed. Aura keeps thinking in the background, and buffered thought cards catch up when you resume.
                     </div>
 
-                    <!-- The controls below persist to localStorage and are read back
-                         into these inputs, but nothing consumes them: the shell never
-                         POSTs settings, and the settings router exposes no setter. They
-                         are disabled rather than left looking operative — a switch
-                         labelled "Autonomous Actions" that does not gate autonomy is
-                         worse than no switch. Re-enable each one as its lane is wired. -->
-                    <div class="section-label">VOICE</div>
-                    <div class="settings-row setting-row-unwired">
-                        <label>Voice Enabled</label>
-                        <input type="checkbox" id="setting-voice" checked class="setting-toggle" disabled>
+                    <div id="settings-runtime-status" class="settings-runtime-status" data-tone="pending">
+                        Synchronizing runtime settings…
                     </div>
-                    <div class="settings-row setting-row-unwired">
-                        <label>Auto-Listen</label>
+
+                    <div class="section-label">VOICE</div>
+                    <div class="settings-row">
+                        <label for="setting-voice-input">Microphone Input</label>
+                        <input type="checkbox" id="setting-voice-input" checked class="setting-toggle" disabled>
+                    </div>
+                    <div class="settings-row">
+                        <label for="setting-voice-output">Spoken Replies</label>
+                        <input type="checkbox" id="setting-voice-output" checked class="setting-toggle" disabled>
+                    </div>
+                    <div class="settings-row">
+                        <label for="setting-autolisten">Auto-Listen</label>
                         <input type="checkbox" id="setting-autolisten" class="setting-toggle" disabled>
                     </div>
-                    <div class="settings-row setting-row-unwired">
-                        <label>TTS Speed</label>
-                        <input type="range" id="setting-tts-speed" min="0.5" max="2.0" step="0.1" value="1.0" class="setting-range" disabled>
-                    </div>
-                    <div class="settings-help settings-help-unwired">
-                        Not connected yet. Voice is controlled live from the header
-                        <strong>MUTE</strong> button, which does reach the runtime.
+                    <div class="settings-row">
+                        <label for="setting-tts-speed">Speech Rate</label>
+                        <div class="setting-range-control">
+                            <input type="range" id="setting-tts-speed" min="0.5" max="2.0" step="0.1" value="1.0" class="setting-range" disabled>
+                            <output id="setting-tts-speed-value" for="setting-tts-speed" class="setting-value">1.0×</output>
+                        </div>
                     </div>
 
                     <div class="section-label">MEMORY</div>
-                    <div class="settings-row setting-row-unwired">
-                        <label>Auto-Enrichment</label>
+                    <div class="settings-row">
+                        <label for="setting-enrichment">Auto-Enrichment</label>
                         <input type="checkbox" id="setting-enrichment" checked class="setting-toggle" disabled>
                     </div>
-                    <div class="settings-row setting-row-unwired">
-                        <label>Reflection Learning</label>
+                    <div class="settings-row">
+                        <label for="setting-reflection">Conversation Reflection</label>
                         <input type="checkbox" id="setting-reflection" checked class="setting-toggle" disabled>
-                    </div>
-                    <div class="settings-help settings-help-unwired">
-                        Not connected yet. Enrichment and reflection run per Aura's own
-                        policy; these toggles do not gate them.
                     </div>
 
                     <div class="section-label">AUTONOMY</div>
-                    <div class="settings-help settings-help-unwired">
-                        Not connected yet — these do <strong>not</strong> gate autonomy or
-                        require approval. Aura's real boundaries live in her governance
-                        layer, not here. Use the header <strong>⏻</strong> control to stop
-                        the runtime.
-                    </div>
-                    <div class="settings-row setting-row-unwired">
-                        <label>Autonomous Actions</label>
+                    <div class="settings-row">
+                        <label for="setting-autonomy">Autonomous Actions</label>
                         <input type="checkbox" id="setting-autonomy" checked class="setting-toggle" disabled>
                     </div>
-                    <div class="settings-row setting-row-unwired">
-                        <label>Require Approval</label>
+                    <div class="settings-row">
+                        <label for="setting-approval">Require Approval</label>
                         <select id="setting-approval" class="setting-input" disabled>
                             <option value="destructive">Destructive Only</option>
                             <option value="all">All Actions</option>
                             <option value="none">Never</option>
                         </select>
                     </div>
-
                     <div class="section-label">CHEAT CODES</div>
                     <div class="settings-row">
                         <label>Activate Code</label>
@@ -1076,6 +1066,19 @@
             </div>
             <div class="modal-footer">
                 <button class="modal-btn primary" id="term-close-btn">CLOSE</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="approval-modal" class="modal-overlay" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="approval-modal-title" aria-describedby="approval-modal-message">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h2 class="modal-title" id="approval-modal-title">APPROVAL REQUIRED</h2>
+                <p class="modal-subtitle" id="approval-modal-message"></p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="modal-btn secondary" id="approval-modal-cancel">Cancel</button>
+                <button type="button" class="modal-btn primary" id="approval-modal-confirm">Confirm &amp; Retry</button>
             </div>
         </div>
     </div>

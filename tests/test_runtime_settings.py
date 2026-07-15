@@ -43,6 +43,56 @@ def test_corrupt_file_falls_back_to_default(tmp_path):
     assert rs.get_runtime_setting("voice.output_enabled", True) is True
 
 
+def test_corrupt_file_activates_conservative_governance_overrides(tmp_path):
+    (tmp_path / "runtime.json").write_text("{ not valid json", encoding="utf-8")
+    rs.clear_runtime_settings_cache()
+
+    assert rs.get_runtime_setting("autonomy.actions_enabled", True) is False
+    assert rs.get_runtime_setting("autonomy.level", "full") == "paused"
+    assert rs.get_runtime_setting("governance.approval_mode", "none") == "all"
+    assert rs.get_runtime_setting("safety.safe_mode", False) is True
+    assert rs.get_runtime_setting("privacy.mode", "standard") == "isolated"
+
+
+def test_deleted_settings_after_valid_read_fail_closed(tmp_path):
+    _write_settings(
+        tmp_path,
+        {
+            "autonomy.actions_enabled": True,
+            "governance.approval_mode": "none",
+        },
+    )
+    assert rs.get_runtime_setting("autonomy.actions_enabled", False) is True
+    (tmp_path / "runtime.json").unlink()
+
+    assert rs.get_runtime_setting("autonomy.actions_enabled", True) is False
+    assert rs.get_runtime_setting("governance.approval_mode", "none") == "all"
+
+
+def test_versioned_state_is_verified_against_its_audit_chain(tmp_path):
+    from core.runtime.settings_control_plane import RuntimeSettingsStore
+
+    path = tmp_path / "runtime.json"
+    store = RuntimeSettingsStore(path)
+    store.patch(
+        {"notify.enabled": False},
+        expected_revision=0,
+        request_id="runtime-reader-versioned-state",
+    )
+    rs.clear_runtime_settings_cache()
+
+    assert rs.get_runtime_setting("notify.enabled", True) is False
+
+    envelope = json.loads(path.read_text(encoding="utf-8"))
+    envelope["values"]["autonomy.actions_enabled"] = True
+    envelope["values"]["governance.approval_mode"] = "none"
+    path.write_text(json.dumps(envelope), encoding="utf-8")
+    rs.clear_runtime_settings_cache()
+
+    assert rs.get_runtime_setting("autonomy.actions_enabled", True) is False
+    assert rs.get_runtime_setting("governance.approval_mode", "none") == "all"
+
+
 def test_live_update_reflected(tmp_path):
     _write_settings(tmp_path, {"voice.output_enabled": True})
     assert rs.get_runtime_setting("voice.output_enabled", True) is True

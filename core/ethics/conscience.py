@@ -40,10 +40,6 @@ The conscience is not personality. It is the irreversible safety floor
 that lets the rest of the system be expressive without becoming dangerous.
 """
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
-
-from core.runtime.atomic_writer import atomic_write_text
 
 import hashlib
 import json
@@ -55,6 +51,9 @@ from enum import Enum
 from pathlib import Path
 from threading import RLock
 from typing import Any, Dict, List, Optional
+
+from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.Conscience")
 
@@ -193,7 +192,27 @@ class Conscience:
         automatically by ordinary chat input — it is set only when the
         UI's explicit "Approve" prompt is satisfied.
         """
-        self._last_user_auth_at = time.time()
+        with self._lock:
+            self._last_user_auth_at = time.time()
+
+    @staticmethod
+    def fresh_user_authorization_window_s() -> float:
+        windows = [
+            float(rule.fresh_user_auth_window_s)
+            for rule in _RULES
+            if rule.requires_fresh_user_auth
+        ]
+        return min(windows) if windows else 60.0
+
+    def has_fresh_user_authorization(self, *, window_s: float | None = None) -> bool:
+        """Return whether an explicit UI confirmation remains fresh."""
+
+        window = float(window_s or self.fresh_user_authorization_window_s())
+        if window <= 0.0:
+            return False
+        with self._lock:
+            authorized_at = self._last_user_auth_at
+        return authorized_at > 0.0 and (time.time() - authorized_at) <= window
 
     def evaluate(
         self,
@@ -238,7 +257,9 @@ class Conscience:
         # Domain-specific destructive rule
         for rule in _RULES:
             if rule.requires_fresh_user_auth and (not rule.domains or domain in rule.domains):
-                age = time.time() - self._last_user_auth_at
+                with self._lock:
+                    last_user_auth_at = self._last_user_auth_at
+                age = time.time() - last_user_auth_at
                 if age > rule.fresh_user_auth_window_s:
                     return ConscienceDecision(
                         verdict=Verdict.REQUIRE_FRESH_USER_AUTH,

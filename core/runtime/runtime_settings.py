@@ -1,15 +1,16 @@
-"""Layering-clean read access to user runtime settings for core subsystems.
+"""Layering-clean read access to the versioned runtime settings control plane.
 
-The settings UI (``interface/routes/settings.py``) persists user toggles to
-``~/.aura/data/settings/runtime.json`` (atomic write-tmp + rename). That file is
-the contract boundary between the UI and the live runtime: core subsystems read
-their gates from here WITHOUT importing the interface layer (which would invert
-the dependency direction), so a toggle the user flips takes effect on the next
-read. A small mtime cache keeps hot paths cheap and any read error falls back to
-the caller's default, so a missing/corrupt file can never break a subsystem.
+The authenticated settings API commits a strict, revisioned envelope at
+``~/.aura/data/settings/runtime.json``. Core subsystems read that contract here
+without importing the interface layer. Nanosecond mtime and size caching keeps
+hot paths cheap while still reflecting a committed change on the next read.
 
-This is the seam that makes previously-dead settings load-bearing (see
-``docs/SETTINGS_WIRING_AUDIT.md``). Wiring a dead setting becomes a one-line gate::
+A never-created file represents first boot and uses each caller's documented
+default. Corruption, incompatible state, permission loss, or deletion after a
+valid read instead activates conservative governance overrides, so losing the
+settings plane cannot silently re-enable autonomy or external access.
+
+See ``docs/SETTINGS_WIRING_AUDIT.md`` for the complete owner/evidence matrix::
 
     from core.runtime.runtime_settings import get_runtime_setting
 
@@ -21,24 +22,77 @@ This is the seam that makes previously-dead settings load-bearing (see
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 from pathlib import Path
 from typing import Any
 
+from core.runtime.settings_schema import (
+    SETTINGS_SCHEMA_NAME,
+    SETTINGS_SCHEMA_VERSION,
+    migrated_settings_snapshot,
+)
+
 _DEFAULT_SETTINGS_PATH = Path.home() / ".aura" / "data" / "settings" / "runtime.json"
+logger = logging.getLogger("Aura.RuntimeSettings")
 
 # Reads must never raise into a subsystem gate — fall back to the default instead.
-_RECOVERABLE = (OSError, ValueError, TypeError, json.JSONDecodeError)
+_RECOVERABLE = (OSError, RuntimeError, ValueError, TypeError, json.JSONDecodeError)
 
 _lock = threading.Lock()
 _cache: dict[str, Any] = {}
-_cache_key: tuple[str, float] | None = None
+_cache_key: tuple[str, int, int] | None = None
+_cache_error_key: tuple[str, str] | None = None
+
+_FAIL_CLOSED_OVERRIDES: dict[str, Any] = {
+    "autonomy.actions_enabled": False,
+    "autonomy.level": "paused",
+    "autonomy.self_modification": "blocked",
+    "governance.approval_mode": "all",
+    "model.cloud_fallback_enabled": False,
+    "permissions.camera": False,
+    "permissions.files_workspace": False,
+    "permissions.screen": False,
+    "privacy.mode": "isolated",
+    "safety.safe_mode": True,
+}
+
+_DESTRUCTIVE_EFFECT_SCOPES = frozenset(
+    {
+        "desktop_file_io",
+        "external_io",
+        "foreground_browser_dialogue",
+        "foreground_desktop_control",
+        "model_weight_mutation",
+        "privileged_mutation",
+        "read_write_artifacts",
+        "state_mutation",
+        "subprocess",
+        "unknown",
+        "workspace_file_io",
+    }
+)
 
 
 def _settings_path() -> Path:
     override = os.environ.get("AURA_SETTINGS_PATH")
     return Path(override) if override else _DEFAULT_SETTINGS_PATH
+
+
+def _failed_settings_snapshot(path: Path, error: BaseException) -> dict[str, Any]:
+    global _cache_error_key
+    error_key = (str(path), f"{type(error).__name__}:{error}")
+    with _lock:
+        base = dict(_cache) if _cache_key and _cache_key[0] == str(path) else {}
+        base.update(_FAIL_CLOSED_OVERRIDES)
+        if _cache_error_key != error_key:
+            logger.error(
+                "Runtime settings unavailable; conservative overrides active: %s",
+                error_key[1],
+            )
+            _cache_error_key = error_key
+        return base
 
 
 def _load_settings() -> dict[str, Any]:
@@ -47,20 +101,70 @@ def _load_settings() -> dict[str, Any]:
     Re-reads only when the file changes, so a user toggling a setting is
     reflected on the next call without a restart.
     """
-    global _cache, _cache_key
+    global _cache, _cache_error_key, _cache_key
     path = _settings_path()
     try:
-        mtime = path.stat().st_mtime
-    except _RECOVERABLE:
+        stat_result = path.stat()
+    except FileNotFoundError as exc:
+        if _cache_key and _cache_key[0] == str(path):
+            return _failed_settings_snapshot(path, exc)
         return {}
-    key = (str(path), mtime)
+    except _RECOVERABLE as exc:
+        return _failed_settings_snapshot(path, exc)
+    key = (
+        str(path),
+        int(
+            getattr(
+                stat_result,
+                "st_mtime_ns",
+                int(stat_result.st_mtime * 1_000_000_000),
+            )
+        ),
+        int(stat_result.st_size),
+    )
     with _lock:
         if key != _cache_key:
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
-                _cache = data if isinstance(data, dict) else {}
-            except _RECOVERABLE:
-                _cache = {}
+                if not isinstance(data, dict):
+                    raise TypeError("settings state must be a JSON object")
+                if "schema" in data or "schema_version" in data:
+                    if data.get("schema") != SETTINGS_SCHEMA_NAME:
+                        raise ValueError("settings schema is incompatible")
+                    version = data.get("schema_version")
+                    if (
+                        isinstance(version, bool)
+                        or not isinstance(version, int)
+                        or version > SETTINGS_SCHEMA_VERSION
+                    ):
+                        raise ValueError("settings schema version is incompatible")
+                    if version == SETTINGS_SCHEMA_VERSION:
+                        from core.runtime.settings_control_plane import (
+                            RuntimeSettingsStore,
+                        )
+
+                        verified = RuntimeSettingsStore(path).snapshot(refresh=True)
+                        _cache = dict(verified.values)
+                    else:
+                        _cache, _unknown = migrated_settings_snapshot(
+                            data.get("payload")
+                        )
+                else:
+                    # Legacy flat-map compatibility. The control plane migrates
+                    # it into the versioned envelope on the first mutation.
+                    _cache, _unknown = migrated_settings_snapshot(data)
+                _cache_error_key = None
+            except (*_RECOVERABLE, KeyError) as exc:
+                base = dict(_cache) if _cache_key and _cache_key[0] == str(path) else {}
+                base.update(_FAIL_CLOSED_OVERRIDES)
+                _cache = base
+                error_key = (str(path), f"{type(exc).__name__}:{exc}")
+                if _cache_error_key != error_key:
+                    logger.error(
+                        "Runtime settings invalid; conservative overrides active: %s",
+                        error_key[1],
+                    )
+                    _cache_error_key = error_key
             _cache_key = key
         return _cache
 
@@ -76,9 +180,68 @@ def get_runtime_setting(key: str, default: Any = None) -> Any:
     return default if value is None else value
 
 
+def runtime_setting_source_is_user_directed(
+    source: Any,
+    context: dict[str, Any] | None = None,
+) -> bool:
+    """Use the canonical authenticated-origin classifier, not caller booleans."""
+
+    from core.executive.standing_authority import context_has_user_authority
+
+    return context_has_user_authority(source, context)
+
+
+def autonomous_actions_admitted(
+    source: Any,
+    context: dict[str, Any] | None = None,
+) -> tuple[bool, str]:
+    """Gate self-initiated actions without suppressing direct user work."""
+
+    if bool(get_runtime_setting("autonomy.actions_enabled", True)):
+        return True, "autonomous_actions_enabled"
+    if runtime_setting_source_is_user_directed(source, context):
+        return True, "direct_user_work_preserved"
+    return False, "runtime_setting_autonomous_actions_disabled"
+
+
+def runtime_approval_mode() -> str:
+    mode = str(
+        get_runtime_setting("governance.approval_mode", "destructive")
+        or "destructive"
+    ).strip().lower()
+    return mode if mode in {"all", "destructive", "none"} else "destructive"
+
+
+def additional_confirmation_required(
+    *,
+    risk_level: Any,
+    effect_scope: Any,
+) -> tuple[bool, str]:
+    """Return only the user-selected confirmation overlay.
+
+    This never weakens Constitution, Will, standing authority, capability
+    tokens, or Conscience. ``none`` removes only this additional prompt layer.
+    """
+
+    mode = runtime_approval_mode()
+    if mode == "none":
+        return False, "approval_mode_none"
+    if mode == "all":
+        return True, "approval_mode_all"
+    risk = str(risk_level or "").strip().lower()
+    scope = str(effect_scope or "").strip().lower()
+    required = scope in _DESTRUCTIVE_EFFECT_SCOPES or risk == "critical"
+    return required, (
+        "approval_mode_destructive"
+        if required
+        else "approval_mode_destructive_non_destructive_action"
+    )
+
+
 def clear_runtime_settings_cache() -> None:
     """Drop the in-memory cache (forces a re-read next call). For tests."""
-    global _cache, _cache_key
+    global _cache, _cache_error_key, _cache_key
     with _lock:
         _cache = {}
         _cache_key = None
+        _cache_error_key = None

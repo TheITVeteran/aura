@@ -1,6 +1,4 @@
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
 
 import asyncio
 import hashlib
@@ -11,6 +9,7 @@ from typing import Any, Callable, Dict, Optional, Tuple
 
 from core.container import ServiceContainer
 from core.runtime import service_access
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.ExecutiveAuthority")
 
@@ -78,6 +77,14 @@ class ExecutiveAuthority:
 
     def _autonomy_pause_reason(self) -> str:
         try:
+            from core.runtime.runtime_settings import autonomous_actions_admitted
+
+            admitted, setting_reason = autonomous_actions_admitted(
+                "executive_authority"
+            )
+            if not admitted:
+                return setting_reason
+
             router = ServiceContainer.get("llm_router", default=None)
             if router and getattr(router, "high_pressure_mode", False):
                 return "memory_pressure"
@@ -410,7 +417,6 @@ class ExecutiveAuthority:
         # evaluate alternatives.  If it picks a different candidate from the
         # pending queue, swap to that one.  Entirely optional — if the engine
         # is unavailable the original selection goes through unchanged.
-        cf_candidates = None
         try:
             cf_engine = ServiceContainer.get("counterfactual_engine", default=None)
             if cf_engine is not None:
@@ -422,7 +428,6 @@ class ExecutiveAuthority:
                 }
                 cf_best = await cf_engine.evaluate_autonomous_action(action_dict, affect_ctx)
                 if cf_best is not None:
-                    cf_candidates = True  # flag for outcome recording
                     # Did the engine recommend a different action type?
                     proposed_type = action_dict["type"].lower()
                     recommended_type = (cf_best.action_type or "").lower()
@@ -834,6 +839,22 @@ class ExecutiveAuthority:
         content = _normalize_text(content)
         if len(content) < 4:
             return self._record("suppressed", "empty_content", source=source, content=content, target="discarded")
+
+        try:
+            from core.runtime.runtime_settings import autonomous_actions_admitted
+
+            admitted, setting_reason = autonomous_actions_admitted(source)
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation("executive_authority.runtime_settings", exc)
+            admitted, setting_reason = False, "runtime_settings_unavailable"
+        if not admitted:
+            return self._record(
+                "suppressed",
+                setting_reason,
+                source=source,
+                content=content,
+                target="discarded",
+            )
 
         urgency = _clamp01(urgency)
         fingerprint = hashlib.sha1(content.lower().encode("utf-8")).hexdigest()

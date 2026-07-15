@@ -146,4 +146,6 @@ def test_settings_bridge_ignores_other_keys(monkeypatch):
 
 def test_settings_store_registers_runtime_mode_subscriber(monkeypatch):
     settings, store = _fresh_store(monkeypatch)
-    assert settings._apply_runtime_mode_from_settings in store._subscribers
+    assert settings._apply_runtime_mode_from_settings in {
+        subscriber.callback for subscriber in store._subscribers
+    }

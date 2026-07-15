@@ -13,10 +13,14 @@ Output: Seeds for the InquiryEngine and SoulMarkers for the NarrativeThread.
 
 import logging
 import time
-from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
 
-from core.runtime.service_access import resolve_inquiry_engine, resolve_narrative_thread
+from core.runtime.runtime_settings import get_runtime_setting
+from core.runtime.service_access import (
+    resolve_inquiry_engine,
+    resolve_narrative_thread,
+)
 
 logger = logging.getLogger("Aura.ConversationReflector")
 
@@ -42,6 +46,8 @@ class ConversationReflector:
 
     async def reflect_on_history(self, history: List[Dict[str, str]]):
         """Analyze conversation history for gaps and themes."""
+        if not bool(get_runtime_setting("learning.reflection_enabled", True)):
+            return
         if not history or time.time() - self._last_reflection < 60:
             return
 
@@ -55,7 +61,13 @@ class ConversationReflector:
         # If history contains unanswered questions or deep themes, seed the InquiryEngine.
         if self._inquiry_engine:
             # Simple heuristic: find '?' in user messages not addressed in recent Aura messages
-            user_questions = [h['content'] for h in history[-5:] if h.get('role') == 'user' and '?' in h.get('content', '')]
+            user_questions = [
+                content
+                for item in history[-5:]
+                if isinstance(item, dict) and item.get("role") == "user"
+                if (content := str(item.get("content") or "").strip())
+                if "?" in content
+            ]
             if user_questions:
                 for q in user_questions:
                     self._inquiry_engine.open_question(

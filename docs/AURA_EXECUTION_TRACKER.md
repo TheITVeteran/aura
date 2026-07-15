@@ -16,9 +16,9 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **Checkpoint 85 is pushed on exact
-  `main` at `2d2c1cbb`; Checkpoint 86 is source-green and exact-app reproof is
-  open**. Checkpoint 80 made cached
+- Current bounded implementation milestone: **Checkpoint 86 is pushed on exact
+  `main` at `5b2307ba`; Checkpoint 87 is source-green and exact signed-app proof
+  is open**. Checkpoint 80 made cached
   readiness truthful and fast,
   removed synchronous Phi/Eternal maintenance from the foreground cycle, and
   reduced live CognitiveEngine samples from a 59.65-second retry cascade to
@@ -48,11 +48,23 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   non-parametric recall when it would compete with a structural output contract;
   and makes every successful early response path run the same final requested-
   output proof as the normal CognitiveEngine path.
+  Checkpoint 87 replaces the desktop's local-only settings authority with a
+  strict versioned CAS control plane, chained mutation and owner-application
+  receipts, rollback/recovery, live owner status, authenticated backend
+  hydration, and one-time action-bound confirmation. It makes the autonomous
+  action, proactive cadence, enrichment, and reflection controls causally
+  effective at their runtime owners; extends autonomy and approval policy to
+  embodied environment actions and unsolicited executive output; and hardens
+  malformed enrichment input, partial persistence, daily proactive reset,
+  critical quota bypass, burst prevention, and failed-delivery retry. The
+  bounded settings/governance suite passes 97/97. Installed-app readback,
+  restart, exact owner-effect, confirmation, accessibility, and GUI proof
+  remain open and receive no live credit.
   Broader pressure, plateau, GUI, portability, semantic,
   release, and causal-proof obligations remain open unless their rows
   explicitly close.
 - Overall completion percentage: **30% evidence-weighted planning estimate at
-  pushed Checkpoint 85**. The exact
+  pushed Checkpoint 86**. The exact
   Checkpoint 80 app earns bounded live credit for readiness, health, base boot,
   and one-attempt chat latency, but not output quality, sustained load, GUI
   frame SLO, portability, semantic review, release, or soak. The newly
@@ -64,7 +76,7 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   generated denominator; new obligations increase it, regressions reopen it,
   and source-green/live-open work never receives full closure credit.
 - Total checkpoint forecast: **approximately 240-325 total checkpoints for the
-  expanded program, with 85 pushed and approximately 155-240 remaining before
+  expanded program, with 86 pushed and approximately 154-239 remaining before
   final soak/release closure**. The prior `226-304` range expands by 8-12 explicit
   checkpoints for a falsifiable lateral-conceptual-leap program spanning
   mechanism construction, held-out evaluation, novelty and prior-art review,
@@ -191,7 +203,7 @@ Status rules:
 | `EXTREME-001` | `OPEN` | Train and validate high-level navigation, diagnosis, repair, problem-solving, and assistance in hazardous/extreme simulated environments, then require governed digital-twin and hardware-transfer evidence before physical-world claims. | Capability Addendum 33, `CTX3-EXTREME-*` |
 | `COLLEAGUE-001` | `OPEN` | Validate the resident local synthetic-colleague contract through broad hidden day-in-the-life workflows, proactive precision, privacy, restart/update survival, honest degradation, and low correction burden. | Addendum 30 |
 | `UI-001` | `IN PROGRESS 2026-07-12` | Audit every desktop route, screen, control and state for live-data truth, interaction completeness, accessibility, long text, responsive layout, visual stability, specific recovery, and screenshot evidence. | Pass F 11; Matrix 14 |
-| `RUNTIME-SETTINGS-001` | `IN PROGRESS (CONTROL PLANE/EXACT-APP PROOF OPEN) 2026-07-14` | Replace local-only and safety-shaped settings with one typed, versioned, authenticated runtime control plane. Atomically validate and commit compare-and-swap patches; persist schema/version/revision and tamper-evident audit receipts; notify live owners only after durable commit; report per-owner applied/deferred/failed state; support read-after-write, reset, migration, rollback, restart, and concurrent-client conflict behavior. The desktop shell must hydrate backend truth rather than treat localStorage as governance authority. `Autonomous Actions` must gate autonomous scheduling/admission while preserving direct user work and Constitution/Will; approval mode must add user-confirmation policy for all, destructive-only, or no-additional-confirmation actions without bypassing standing authority or governance; voice input/output, auto-listen, TTS rate, enrichment, and reflection must bind to their real runtime owners. Re-enable a control only after deterministic tests and exact signed-app effect/readback/restart proof show that changing it alters the intended live behavior and nothing broader. | `UI-001`, `AUTONOMY-AUTHORITY-001`, `ENTERPRISE-CONTROL-001`, `VOICE-001`, `ADAPTATION-STATE-AUTHORITY-001`, `DATA-LIFECYCLE-001`, `COMPATIBILITY-001`; inert-settings report 2026-07-14 |
+| `RUNTIME-SETTINGS-001` | `IN PROGRESS (CP87 SOURCE GREEN; EXACT-APP/THREE DEAD CONTROLS OPEN) 2026-07-14` | The source now has one typed version-2 schema; strict atomic compare-and-swap patch/reset/rollback; request idempotency and superseded replay truth; interprocess serialization; crash recovery; retained revision history; chained mutation and owner-application receipts; integrity verification; authenticated backend hydration; and per-owner applied/deferred/failed state. `Autonomous Actions` gates autonomous tools, environment actions, initiatives, executive objectives, and unsolicited output while canonical source authority preserves direct user work. Approval modes issue an exact action/arguments/source/risk/scope challenge that expires and can be consumed once without bypassing standing authority, Constitution, Will, Conscience, substrate, ExecutiveCore, tokens, or effect receipts. Proactive frequency modes now have real differentiated cadence, daily reset, critical quota bypass, one-at-a-time release, and retained retry; enrichment/reflection have real owner gates and malformed/partial-failure handling. The bounded settings/governance suite passes 97/97. SHA-256 journals are corruption/tamper evidence, not a keyed hostile-admin signature. `permissions.files_workspace`, `memory.review_window`, and `dev.diagnostics_enabled` remain known-dead and must be implemented before their controls can ship; privacy redaction remains partial. Exact signed-app effect/readback/conflict/restart/rollback/confirmation/accessibility proof remains mandatory before closure. | `UI-001`, `AUTONOMY-AUTHORITY-001`, `ENTERPRISE-CONTROL-001`, `VOICE-001`, `ADAPTATION-STATE-AUTHORITY-001`, `DATA-LIFECYCLE-001`, `COMPATIBILITY-001`; CP87 and `docs/SETTINGS_WIRING_AUDIT.md` |
 | `SPLASH-001` | `OPEN 2026-07-13` | Replace the unpolished Aura splash with a production launch experience derived from the supplied retro references: disciplined CRT/scanline texture, geometric terminal-era typography, restrained cyan/magenta/green neon, crisp hierarchy, and an original Aura identity rather than imitation. Every phase/progress/status line must come from real boot state, preserve a usable failure/recovery path, support Retina and small screens, meet contrast and reduced-motion requirements, avoid GPU-heavy decorative churn, hand off without flash or layout shift, and pass deterministic visual-regression plus signed-app screenshot/video proof. | `UI-001`, `RUNTIME-001`, `LAUNCH-PROVENANCE-001`, `PERF-001`, `VALIDATE-001`; user splash and aesthetic references supplied 2026-07-13 |
 | `ACCESSIBILITY-I18N-001` | `OPEN 2026-07-13` | Certify the complete desktop, splash, voice, notification, and paired-device surface for keyboard navigation, focus order, screen-reader names/state, reduced motion/transparency, zoom and dynamic text, contrast/color independence, captions/transcripts, non-audio alternatives, locale/time/number formatting, Unicode and bidirectional text safety, and long translated strings. Run automated checks plus real VoiceOver/keyboard/screenshot workflows without breaking dense expert use. | `UI-001`, `SPLASH-001`, `CONVERSATION-001`, `CAPABILITY-CERT-001`; Aura 1.0 release-gap audit 2026-07-13 |
 | `PERF-001` | `IN PROGRESS (ATTRIBUTION INSTRUMENTATION SOURCE GREEN; SLO PROGRAM OPEN) 2026-07-14` | Establish and enforce end-to-end latency, throughput, memory, thermal, startup, model-switch, queue-growth, and UI responsiveness budgets without reducing intelligence or correctness. Checkpoint 80 adds per-service health-evaluation duration and detailed boot-phase marks, then removes four measured latency cascades at their owners. Machine-readable end-to-end SLOs, load/queue/thermal envelopes, regression budgets, GUI frame proof, exact-app distributions, and release enforcement remain open. | Runtime/resource/colleague SLOs; original context performance goals; `FOREGROUND-LATENCY-001`, `HEALTH-SURFACE-001`; Checkpoint 80 |

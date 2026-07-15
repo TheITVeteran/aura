@@ -4576,6 +4576,54 @@ async def test_chat_desktop_objective_rejects_success_without_effect_receipts(mo
     assert "not claiming" in result["response"]
 
 
+@pytest.mark.asyncio
+async def test_chat_desktop_objective_preserves_confirmation_required(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    class _ConfirmationRequiredCapabilityEngine:
+        async def execute(self, skill_name, params, context=None):
+            assert skill_name == "desktop_task"
+            return {
+                "ok": False,
+                "status": "approval_required",
+                "error": "Fresh user confirmation required",
+                "approval": {
+                    "required": True,
+                    "mode": "all",
+                    "confirmation_endpoint": "/api/settings/auth/fresh",
+                    "challenge_id": "action-confirm-test",
+                    "one_time": True,
+                    "action_bound": True,
+                    "confirmation_does_not_bypass_governance": True,
+                },
+            }
+
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: (
+                _ConfirmationRequiredCapabilityEngine()
+                if name == "capability_engine"
+                else default
+            )
+        ),
+    )
+
+    result = await chat_routes._execute_desktop_objective_from_chat(
+        "Open Notes and write a paragraph about dinosaurs.",
+        cognitive_reply="Dinosaurs were diverse animals with a long fossil record.",
+    )
+
+    assert result is not None
+    assert result["ok"] is False
+    assert result["status"] == "approval_required"
+    assert result["approval"]["mode"] == "all"
+    assert result["approval"]["challenge_id"] == "action-confirm-test"
+    assert "Confirm it to retry the same request" in result["response"]
+    assert "did not complete" not in result["response"]
+
+
 def test_desktop_task_verifier_allows_noncritical_warning_receipts():
     from interface.routes import chat as chat_routes
 

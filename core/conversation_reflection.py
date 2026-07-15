@@ -14,15 +14,23 @@ Design principles:
 - Graceful failure: if reflection fails, nothing breaks
 """
 
-from core.runtime.errors import record_degradation
-from core.utils.task_tracker import get_task_tracker
+from __future__ import annotations
+
 import asyncio
 import logging
 import time
 from collections import deque
 from typing import Any, Dict, List, Optional
 
+from core.runtime.errors import record_degradation
+from core.runtime.runtime_settings import get_runtime_setting
+from core.utils.task_tracker import get_task_tracker
+
 logger = logging.getLogger("Aura.Reflection")
+
+
+def _reflection_learning_enabled() -> bool:
+    return bool(get_runtime_setting("learning.reflection_enabled", True))
 
 
 class ConversationReflector:
@@ -50,7 +58,7 @@ class ConversationReflector:
         Called after a conversation exchange completes, or during idle.
         Rate-limited to prevent spamming the LLM.
         """
-        if not self._enabled:
+        if not self._enabled or not _reflection_learning_enabled():
             return None
 
         # Rate limit
@@ -71,7 +79,7 @@ class ConversationReflector:
                 reflection = await self._generate_reflection(
                     conversation_history, brain, mood, time_str
                 )
-                if reflection:
+                if reflection and _reflection_learning_enabled():
                     self._last_reflection_time = now
                     self.reflections.append({
                         "text": reflection,
@@ -118,6 +126,8 @@ class ConversationReflector:
         reflection: str,
         conversation_history: List[Dict[str, str]],
     ) -> None:
+        if not _reflection_learning_enabled():
+            return
         try:
             from core.adaptation.online_lora_governor import get_online_lora_governor
 
@@ -236,6 +246,8 @@ class ConversationReflector:
           1. The reflection itself as an episodic memory (high importance)
           2. Extracted user preferences (if any) as tagged semantic memories
         """
+        if not _reflection_learning_enabled():
+            return
         try:
             # 0. Record a SocialMemory milestone if the exchange was substantial
             try:
@@ -303,7 +315,7 @@ class ConversationReflector:
                                 from core.thought_stream import get_emitter
                                 get_emitter().emit(
                                     "Learning 📚",
-                                    f"Learned user preferences from reflection",
+                                    "Learned user preferences from reflection",
                                     level="info",
                                     category="Memory"
                                 )
@@ -334,7 +346,8 @@ class ConversationReflector:
 
                 sg_raw = await brain.generate(sg_prompt, temperature=0.3, max_tokens=120)
                 if sg_raw:
-                    import json as _json, re as _re
+                    import json as _json
+                    import re as _re
                     sg_items = None
                     # Try to extract a JSON array directly
                     _arr_match = _re.search(r'\[.*?\]', sg_raw, _re.DOTALL)

@@ -1,12 +1,14 @@
-from core.runtime.errors import record_degradation
 import logging
 import time
 from typing import Any, Optional
-from . import BasePhase
-from ..state.aura_state import AuraState
+
 from core.runtime.background_policy import background_activity_allowed
-from core.runtime.service_registry import get_runtime_service
+from core.runtime.errors import record_degradation
 from core.runtime.proposal_governance import propose_governed_initiative_to_state
+from core.runtime.service_registry import get_runtime_service
+
+from ..state.aura_state import AuraState
+from . import BasePhase
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +26,14 @@ class InitiativeGenerationPhase(BasePhase):
     @staticmethod
     def _autonomy_pause_reason() -> str:
         try:
+            from core.runtime.runtime_settings import autonomous_actions_admitted
+
+            admitted, setting_reason = autonomous_actions_admitted(
+                "initiative_generation"
+            )
+            if not admitted:
+                return setting_reason
+
             router = get_runtime_service("llm_router", default=None)
             if router and getattr(router, "high_pressure_mode", False):
                 return "memory_pressure"

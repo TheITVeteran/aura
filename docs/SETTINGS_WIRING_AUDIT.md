@@ -1,71 +1,178 @@
-# Settings Panel Wiring Audit
+# Runtime Settings Control-Plane Audit
 
-**Finding (2026-06-15):** the settings panel (`interface/routes/settings.py`,
-"binds 1:1 with the API") persists every toggle to `~/.aura/data/settings/
-runtime.json`, but almost none are **read** by the runtime — they are controls
-that look functional and do nothing. This is the same fake-control class as the
-fabricated proofs fixed this cycle, and it's the concrete backlog behind
-task #19 ("verify every button/gauge works") and #22 (daily reliability).
+**Status (2026-07-14): CP87 source candidate green; exact signed-app proof open.**
 
-Method: scanned `core/` + `interface/` + `aura_main.py` for each setting key.
-A setting is **wired** only if a subsystem actually consumes it (directly or via
-the settings→runtime bridge). Frontend-only settings are legitimately client-side.
+The desktop settings surface no longer treats `localStorage` as runtime or
+governance authority. Runtime settings are hydrated from an authenticated API,
+validated against one core schema, committed as one compare-and-swap
+transaction, read by their actual owners, and acknowledged back to the control
+plane. Browser-local storage remains only for non-authoritative presentation
+preferences and compatibility migration.
 
-## Status
+This document records what the implementation proves, what each setting owns,
+and what remains open. A rendered control, persisted value, or passing mock is
+not sufficient evidence that a setting works.
 
-| Setting | Status | What wiring it needs (if dead) |
+## Canonical Architecture
+
+1. `core/runtime/settings_schema.py` owns schema version 2, defaults, types,
+   ranges, enums, owner names, apply modes, strict patch validation, and legacy
+   migration. Boolean and numeric values are not silently coerced or clamped.
+2. `core/runtime/settings_control_plane.py` owns the durable state envelope,
+   revision, atomic patch/reset/rollback, retained history, mutation receipt
+   chain, owner-application receipt chain, integrity verification, and
+   subscriber dispatch.
+3. `interface/routes/settings.py` exposes the authenticated internal API. File
+   I/O and `fsync` work run off the event loop. The API requires an expected
+   revision for every mutation and returns structured conflict or validation
+   outcomes.
+4. `core/runtime/runtime_settings.py` is the layering-clean read boundary for
+   core owners. It accepts versioned state and legacy flat maps, validates data,
+   and refreshes on file identity, nanosecond mtime, or size changes without
+   importing the interface layer.
+5. `interface/static/aura.js` hydrates backend truth before enabling runtime
+   controls, sends atomic CAS patches with request IDs, rejects stale or
+   superseded responses, reports owner application state, and acknowledges the
+   frontend-owned settings it actually applied.
+
+## Transaction and Recovery Contract
+
+The source implementation provides:
+
+- atomic multi-key patches with strict schema validation before any write;
+- compare-and-swap revisions and HTTP 409 conflict responses;
+- request idempotency, including detection of request-ID reuse with different
+  content and explicit reporting when a replay has been superseded;
+- thread and interprocess serialization;
+- crash-safe durable replacement and deterministic recovery when an audit
+  receipt lands before the state envelope;
+- a retained 16-revision rollback window;
+- legacy flat-map migration, including boolean proactive messaging values;
+- hash-linked mutation receipts and a separate hash-linked owner-application
+  journal;
+- state/audit/application integrity checks, unknown-key reporting, and
+  unapplied or unacknowledged revision reporting;
+- serialized subscriber dispatch that re-reads durable truth and marks stale
+  same-key work as superseded instead of applying an older value.
+- full mutation-chain verification before version-2 values reach core owners;
+  corruption, incompatible state, permission loss, or post-read deletion
+  activates conservative autonomy, approval, privacy, permission, cloud, and
+  self-modification overrides until valid state returns. A never-created file
+  remains the distinct first-boot case and uses documented defaults.
+
+The SHA-256 chains detect corruption, truncation, inconsistent recovery, and
+ordinary tampering where the attacker does not rewrite every linked artifact.
+They are **not a keyed signature or hostile-local-admin security boundary**. A
+principal with permission to rewrite the state and both journals can recompute
+the chains. Managed signing, key custody, and independent export verification
+remain under `ENTERPRISE-CONTROL-001` and `SECURITY-001`.
+
+## API Contract
+
+| Method | Route | Contract |
 | :-- | :-- | :-- |
-| `safety.safe_mode` | ✅ **wired** (this cycle) | restricts runtime via `core.runtime.safe_mode.set_safe_mode` |
-| `autonomy.level` (`paused`) | ✅ **wired** (this cycle) | `paused` → restricted runtime via the same bridge |
-| `theme.mode` | 🎨 frontend-only | client renders theme; no backend wiring needed |
-| `theme.reduced_motion` | 🎨 frontend-only | client honors it; no backend wiring needed |
-| `model.local_path` | ✅ **wired** (2026-06-21) | `model_registry.get_runtime_model_path` prefers it for the primary cortex lane via `_user_model_path_override` (only when set AND the file exists, else falls through). Tests: `tests/test_runtime_settings.py` |
-| `model.deep_path` | ✅ **wired** (2026-06-21) | same override, mapped to the deep solver lane (`DEEP_MODEL`) |
-| `model.cloud_fallback_enabled` | ✅ **wired** (2026-06-21) | authoritative in `autonomous_brain_integration`: `allow_cloud_fallback = requested AND model.cloud_fallback_enabled` (default off), so no caller can route off-box unless the user permits it. Tests: `tests/test_runtime_settings.py` |
-| `voice.input_enabled` | ✅ **wired** (2026-06-21) | gated in `LocalVoiceCortex.listen_loop` via `_user_voice_input_enabled` (`get_runtime_setting`): off ⇒ the loop never opens the mic capture stream (polls so re-enabling resumes, no restart). Tests: `tests/test_runtime_settings.py` |
-| `voice.output_enabled` | ✅ **wired** (2026-06-21) | gated in `SovereignVoiceEngine.synthesize_speech` + `speak_stream` via `core.runtime.runtime_settings.get_runtime_setting` (`_user_voice_output_enabled`); off ⇒ TTS short-circuits before synth/lock. Tests: `tests/test_runtime_settings.py` |
-| `voice.output_rate` | ✅ **wired** (2026-06-21) | `SpeechSystem.speak` multiplies the base words-per-minute rate by this (0.5-2.0, default 1.0, clamped) before `engine.setProperty('rate', ...)`. Tests: `tests/test_runtime_settings.py` |
-| `permissions.camera` | ✅ **wired** (2026-06-21) | `core.runtime.permission_gates.camera_allowed` gates all camera capture entry points: `VisionSystem.capture` (returns `camera_permission_denied`), `SensoryMotorCortex` opencv stream + per-frame loop, `ProactivePerceptionV2._camera_loop`. Offline-tested; live-verify on hardware. |
-| `permissions.screen` | ✅ **wired** (2026-06-21) | `permission_gates.screen_allowed` gates `ComputerUseSkill._default_screenshot` (raises before screencapture AND the pyautogui fallback) and `ScreenSensor.read` (returns unavailable). Offline-tested; live-verify on hardware. |
-| `permissions.files_workspace` | ⚠️ deferred | `permission_gates.workspace_files_allowed` exists, but gating the central file gateway has high blast radius — wire deliberately with the gateway owner + live verification, not blind. |
-| `autonomy.proactive_messaging` | ✅ **wired** (2026-06-21) | `ProactiveCommunicationManager._process_messages` skips all initiation when off (pending deque waits, resumes if re-enabled). Tests: `tests/test_runtime_settings.py` |
-| `autonomy.self_modification` (`blocked/staged/open`) | ✅ **wired** (2026-06-21) | `GrowthLadder.propose_modification` refuses outright when `blocked` (default `staged`/`open` proceed to the existing canary-gated path). Tests: `tests/test_runtime_settings.py` |
-| `memory.retention_days` | ✅ **wired** (2026-06-21) | `SovereignPruner._score_memory` uses it as the recency-decay horizon (default 365, replacing a hardcoded 90): longer retention keeps old memories competitive in the prune ranking. Ranking weight only — nothing hard-deleted purely by age. Tests: `tests/test_runtime_settings.py` |
-| `memory.review_window` | ⚠️ deferred | no existing age-windowed consolidation consumer to bind to (`knowledge_curator` uses ad-hoc thresholds). Needs a real narrative-arc consolidation window built first, not a wire. |
-| `privacy.mode` | ✅ **partial** (2026-06-21) | `WorldBridge.call` (the single gate for consequential world actions) now blocks ALL external actions when `isolated` and external posting when `private`. Telemetry-tightening + perception-redaction effects remain separate/diffuse. Tests: `tests/test_runtime_settings.py` |
-| `dev.developer_mode` | ✅ **wired** (2026-06-21) | gates the `/api/trace/{receipt_id}` route in `dashboard.py` (403 `developer_mode_disabled` when off, default off). Tests: `tests/test_runtime_settings.py` |
-| `dev.diagnostics_enabled` | ⚠️ deferred | no distinct boot self-diagnostic exists to gate — the only startup consumer is the always-on FlagshipDoctor *health* daemon, which is load-bearing reliability infrastructure and must not be gated as a mere diagnostic. Needs a separate boot self-test built first. |
-| `notify.enabled` | ✅ **wired** (2026-06-21) | `DesktopNotifier.send` short-circuits before the `osascript` toast when off (default on). Tests: `tests/test_runtime_settings.py` |
-| `notify.quiet_hours_start` / `_end` | ✅ **wired** (2026-06-21) | `DesktopNotifier.send` suppresses toasts inside the window (`_within_quiet_hours`, wraps past midnight; default 22:00-08:00) |
+| `GET` | `/api/settings` | schema, revision, values, integrity, and owner-application state |
+| `PATCH` | `/api/settings` | atomic `{expected_revision, request_id, changes}` transaction |
+| `POST` | `/api/settings/reset` | reset one schema section through CAS |
+| `POST` | `/api/settings/rollback` | restore one retained revision as a new mutation |
+| `GET` | `/api/settings/integrity` | verify state, mutation chain, and application chain |
+| `POST` | `/api/settings/application-ack` | append owner application evidence for changed keys |
+| `POST` | `/api/settings/auth/fresh` | authorize one exact, expiring action challenge |
+| `POST` | `/api/settings/auth/revoke` | cancel one unconsumed challenge after abandonment or transport failure |
 
-## How to wire honestly (the patterns proven this cycle)
+All routes require the existing internal authentication dependency. Settings
+state is not writable through unauthenticated browser storage.
 
-**Bridge pattern** (safe-mode/autonomy — for settings that reconfigure a
-running subsystem):
+## Action and Approval Semantics
 
-1. A **settings→runtime bridge** subscriber (`get_settings().subscribe(...)`)
-   applies the change to the live subsystem immediately (no reboot).
-2. **Boot** reads the persisted value and applies it (so it survives restart).
-3. The subsystem reads the value (via the bridge-applied state or directly).
-4. An **offline unit test** proves the toggle changes behavior.
+`autonomy.actions_enabled` gates self-initiated tool execution, environment
+actions, initiative scheduling, executive objective release, and unsolicited
+executive expression. It preserves authenticated direct-user work. Caller
+booleans such as `explicit_user_request` or `user_authorized` cannot forge that
+exception; source authority is classified by the standing-authority layer.
 
-**Read-at-gate pattern** (voice.output_enabled, 2026-06-21 — for simple
-per-action gates): the subsystem reads the persisted setting at the point of use
-via `core.runtime.runtime_settings.get_runtime_setting(key, default)`. This is
-**layering-clean** — core reads the JSON the UI writes (the file is the contract
-boundary) and never imports the interface layer; an mtime cache keeps it cheap and
-any read error falls back to the default. Reflects user changes on the next call,
-no reboot. Best for boolean/value gates (voice, notifications, permissions). A
-"no dead settings" guard that fails CI when a non-frontend setting has neither a
-bridge nor a `get_runtime_setting`/consumer reference would lock this in
-(analogous to `tools/proof_fabrication_guard.py`).
+`governance.approval_mode` is an **additional confirmation overlay**, not a
+replacement for Constitution, Unified Will, Conscience, standing authority,
+substrate authority, ExecutiveCore, capability tokens, or effect receipts.
 
-## Why these weren't all wired in this pass
+- `none`: no additional settings-layer prompt;
+- `destructive`: prompt for critical risk or destructive effect scopes;
+- `all`: prompt for every governed tool or environment action.
 
-Each dead setting gates a **live subsystem** (voice capture, camera, perception,
-memory reaper, notifications). Wiring without confirming on real hardware that the
-toggle actually changes behavior would risk shipping a control that *looks* wired
-but misbehaves — a different flavor of the fake-control problem. The two
-**safety kill switches** (safe_mode, autonomy paused) were wired now because they
-reuse a proven mechanism and are fully offline-testable. The rest are a scoped
-daily-usability pass (#22) best done with the app running for live verification.
+A prompt issues a random challenge bound to the canonical tool/action name,
+arguments digest, authenticated source, risk, and effect scope. The pending
+challenge expires after 300 seconds. Authorization expires after 60 seconds and
+is atomically consumable once by the exact same action. Changed arguments,
+source, risk, scope, expiry, a second consumer, or a process restart cannot
+reuse it. The desktop retries the same request only after confirmation and does
+not duplicate the visible user turn. Confirmation requests are bounded, the
+dialog contains keyboard focus, and abandonment or transport failure revokes
+the unconsumed challenge. Outstanding challenges are intentionally
+process-local; durable cross-restart action authorization is not claimed.
+
+## Current Setting Classification
+
+| Setting | Classification | Enforced owner/effect |
+| :-- | :-- | :-- |
+| `safety.safe_mode` | wired | live safe-mode bridge and boot posture |
+| `autonomy.level` | wired | `paused` drives the same restricted runtime posture |
+| `autonomy.actions_enabled` | wired | canonical action, environment, initiative, and autonomous-expression gates |
+| `governance.approval_mode` | wired | exact one-time confirmation overlay |
+| `autonomy.proactive_messaging` | wired | `never/minimal/balanced/frequent` have distinct daily, interval, and idle policies; counters reset daily; critical alerts bypass ordinary quotas |
+| `autonomy.self_modification` | wired | growth-ladder admission posture |
+| `learning.auto_enrichment_enabled` | wired | model extraction and persistence admission |
+| `learning.reflection_enabled` | wired | automatic conversation reflection, lesson, and online-learning persistence; it does not disable Aura's internal thought |
+| `model.local_path` | wired | primary local model-path override when valid |
+| `model.deep_path` | wired | deep-solver model-path override when valid |
+| `model.cloud_fallback_enabled` | wired | authoritative off-box model-routing permission |
+| `voice.input_enabled` | wired | microphone capture loop gate |
+| `voice.output_enabled` | wired | synthesis and streaming output gate |
+| `voice.output_rate` | wired | bounded speech-rate multiplier |
+| `permissions.camera` | wired | camera capture entry points; macOS TCC remains independent |
+| `permissions.screen` | wired | screenshot/screen-sensor entry points; macOS TCC remains independent |
+| `memory.retention_days` | wired | sovereign-pruner recency horizon |
+| `privacy.mode` | partial | world-action isolation/posting policy is enforced; complete telemetry and perception redaction is still open |
+| `dev.developer_mode` | wired | diagnostic trace-route admission |
+| `notify.enabled` | wired | desktop notification emission |
+| `notify.quiet_hours_start/end` | wired | local-time quiet window, including midnight wrap |
+| `theme.mode` | frontend-only | desktop presentation |
+| `theme.reduced_motion` | frontend-only | animation/motion presentation |
+| `voice.auto_listen` | frontend-only | browser-shell listening behavior |
+| `permissions.files_workspace` | known dead/open | central workspace file-gateway enforcement is not implemented |
+| `memory.review_window` | known dead/open | no canonical age-windowed narrative consolidation owner exists yet |
+| `dev.diagnostics_enabled` | known dead/open | a distinct optional boot diagnostic must be separated from load-bearing health owners |
+
+`tests/test_settings_no_dead_controls.py` requires every schema key to remain in
+exactly one classification bucket and prevents the known-dead set from growing
+silently.
+
+## Source Evidence and Remaining Live Proof
+
+The CP87 source candidate has deterministic coverage for strict validation,
+CAS conflicts, idempotent replay, concurrent writers, crash recovery, rollback,
+migration, state and journal tampering, stale dispatch suppression, owner
+acknowledgements, safe-mode bridging, direct-user preservation, forged-context
+rejection, exact one-use confirmation, environment-action coverage, desktop
+approval propagation, learning gates, malformed model/input handling,
+proactive cadence, daily reset, critical quota bypass, and failed-delivery
+retention. The bounded settings/governance suite passes `97/97`.
+
+The following are still required before `RUNTIME-SETTINGS-001` can close:
+
+1. Build and install the signed app from the exact pushed CP87 commit.
+2. Prove GET/PATCH/readback, stale-revision conflict, restart persistence,
+   reset, rollback, and integrity from the installed desktop shell.
+3. Toggle each enabled runtime control and observe its real owner effect, owner
+   acknowledgement, and recovery path in the desktop, terminal, and Neural
+   stream.
+4. Prove `all`, `destructive`, and `none` with an exact action challenge,
+   cancellation, expiry, changed-argument rejection, one-use consumption, and
+   successful downstream governance/effect closure.
+5. Prove the three frontend-only controls in the real shell and keep the three
+   known-dead controls absent or visibly unavailable until implemented.
+6. Run accessibility/keyboard/focus and responsive-layout proof for settings
+   conflicts, owner failures, and the confirmation modal.
+
+Source-green is not installed-app green. This audit must be updated with exact
+build provenance and retained live artifacts before the task status changes to
+complete.

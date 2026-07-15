@@ -149,6 +149,13 @@ function applyAccessProfile(profile) {
     window.__auraControlSurfaceAllowed = !state.conversationOnly;
     document.body.dataset.auraSurface = surface;
     window.dispatchEvent(new CustomEvent('aura:access-profile', { detail: normalized }));
+    if (state.conversationOnly) {
+        setRuntimeSettingsAvailability(false, 'Runtime settings require the paired desktop control surface.');
+    } else {
+        hydrateRuntimeSettings().catch(err => {
+            console.warn('[Settings] Runtime hydration failed:', err);
+        });
+    }
 }
 
 function nowSeconds() {
@@ -1202,9 +1209,13 @@ function applyVoiceSummary(voice) {
 
     const micBtn = $('mic-btn');
     if (micBtn) {
-        if (summary.available === false) {
+        const inputEnabled = (
+            !runtimeSettingsState.hydrated
+            || runtimeSettingsState.values['voice.input_enabled'] === true
+        );
+        if (summary.available === false || !inputEnabled) {
             micBtn.classList.add('disabled');
-            micBtn.title = 'Voice unavailable';
+            micBtn.title = inputEnabled ? 'Voice unavailable' : 'Microphone input disabled';
         } else {
             micBtn.classList.remove('disabled');
             micBtn.title = 'Toggle voice input';
@@ -3152,6 +3163,38 @@ async function runChatRequest(msg, { messageAlreadyRendered = false } = {}) {
         const data = await res.json();
         if (data && data.conversation_lane) {
             applyConversationLane(data.conversation_lane, res.ok ? 'ok' : 'degraded');
+        }
+
+        const desktopResult = data && data.data && data.data.desktop_result;
+        const approval = (
+            (data && data.approval)
+            || (desktopResult && desktopResult.approval)
+            || null
+        );
+        const approvalStatus = String(
+            (data && data.status)
+            || (desktopResult && desktopResult.status)
+            || ''
+        );
+        if (approvalStatus === 'approval_required' || approvalStatus === 'require_fresh_user_auth') {
+            markLiveSurfaceResponsive('chat_confirmation_required');
+            const challengeId = String((approval && approval.challenge_id) || '');
+            const opened = challengeId
+                ? openApprovalModal(
+                    data.response || 'This action needs a fresh confirmation.',
+                    challengeId,
+                    () => runChatRequest(msg, { messageAlreadyRendered: true })
+                )
+                : false;
+            if (!opened) {
+                appendMsg(
+                    'system',
+                    data.response || 'This action needs a fresh confirmation in Settings.',
+                    false,
+                    { system: true, diagnostic: true }
+                );
+            }
+            return;
         }
 
         if (!res.ok) {
@@ -5262,13 +5305,23 @@ if (rebootBtn) rebootBtn.addEventListener('click', async (e) => {
 // ── Voice toggle ─────────────────────────────────────────
 let audioContext = null;
 
-async function toggleVoice() {
-    if (state.voiceSummary && state.voiceSummary.available === false) {
-        appendMsg('aura', '⚠ Voice channel is currently unavailable.');
-        return;
+async function toggleVoice(desiredState = null, { quiet = false } = {}) {
+    const targetState = typeof desiredState === 'boolean' ? desiredState : !state.voiceActive;
+    if (targetState === state.voiceActive) return true;
+    if (targetState && state.voiceSummary && state.voiceSummary.available === false) {
+        if (!quiet) appendMsg('aura', '⚠ Voice channel is currently unavailable.');
+        return false;
+    }
+    if (
+        targetState
+        && runtimeSettingsState.hydrated
+        && runtimeSettingsState.values['voice.input_enabled'] !== true
+    ) {
+        if (!quiet) appendMsg('aura', '⚠ Microphone input is disabled in Runtime Settings.');
+        return false;
     }
     const orb = $('voice-orb');
-    state.voiceActive = !state.voiceActive;
+    state.voiceActive = targetState;
     $('voice-orb-wrap').classList.toggle('active', state.voiceActive);
     $('mic-btn').textContent = state.voiceActive ? '⏹️' : '🔮';
 
@@ -5338,7 +5391,7 @@ async function toggleVoice() {
 
         } catch (err) {
             console.error('Voice capture failed:', err);
-            appendMsg('aura', '⚠ I couldn\'t access your microphone.');
+            if (!quiet) appendMsg('aura', '⚠ I couldn\'t access your microphone.');
             state.voiceActive = false;
             $('voice-orb-wrap').classList.remove('active');
             orb.className = 'voice-orb';
@@ -5348,6 +5401,7 @@ async function toggleVoice() {
                 voiceOrb.style.transform = '';
                 voiceOrb.style.boxShadow = '';
             }
+            return false;
         }
     } else {
         orb.className = 'voice-orb';
@@ -5369,6 +5423,7 @@ async function toggleVoice() {
         state.voiceSignalTimer = null;
         state.voiceSignalAggregation = null;
     }
+    return state.voiceActive === targetState;
 }
 
 const micBtn = $('mic-btn');
@@ -5459,9 +5514,7 @@ state.bootstrapTimer = setInterval(() => hydrateBootstrap({ quiet: true }), 3000
 // ── Settings & Preferences ────────────────────────────────
 const SETTINGS_KEY = 'aura_settings';
 const defaultSettings = {
-    theme: 'dark', accent: 'violet', voice: true, autolisten: false,
-    ttsSpeed: 1.0, enrichment: true, reflection: true, autonomy: true,
-    approval: 'destructive', onboarded: false, cheatStatus: 'IDLE',
+    theme: 'dark', accent: 'violet', onboarded: false, cheatStatus: 'IDLE',
     neuralPaused: false, chatTextSize: 'standard', neuralTextSize: 'standard'
 };
 
@@ -5506,13 +5559,6 @@ function applySettings(s) {
     if (el('setting-neural-paused')) el('setting-neural-paused').checked = !!s.neuralPaused;
     if (el('setting-chat-text-size')) el('setting-chat-text-size').value = s.chatTextSize || 'standard';
     if (el('setting-neural-text-size')) el('setting-neural-text-size').value = s.neuralTextSize || 'standard';
-    if (el('setting-voice')) el('setting-voice').checked = s.voice;
-    if (el('setting-autolisten')) el('setting-autolisten').checked = s.autolisten;
-    if (el('setting-tts-speed')) el('setting-tts-speed').value = s.ttsSpeed;
-    if (el('setting-enrichment')) el('setting-enrichment').checked = s.enrichment;
-    if (el('setting-reflection')) el('setting-reflection').checked = s.reflection;
-    if (el('setting-autonomy')) el('setting-autonomy').checked = s.autonomy;
-    if (el('setting-approval')) el('setting-approval').value = s.approval;
     if (el('setting-cheat-status')) el('setting-cheat-status').textContent = s.cheatStatus || 'IDLE';
     if (el('setting-version')) el('setting-version').textContent = state.version;
 
@@ -5536,9 +5582,7 @@ applySettings(settings);
 
 // Bind settings controls
 ['setting-theme', 'setting-accent', 'setting-neural-paused', 'setting-chat-text-size',
- 'setting-neural-text-size', 'setting-voice', 'setting-autolisten',
- 'setting-tts-speed', 'setting-enrichment', 'setting-reflection',
- 'setting-autonomy', 'setting-approval'].forEach(id => {
+ 'setting-neural-text-size'].forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
     el.addEventListener('change', () => {
@@ -5549,6 +5593,481 @@ applySettings(settings);
         applySettings(settings);
     });
 });
+
+const RUNTIME_SETTING_CONTROLS = Object.freeze({
+    'voice.input_enabled': { id: 'setting-voice-input', kind: 'boolean' },
+    'voice.output_enabled': { id: 'setting-voice-output', kind: 'boolean' },
+    'voice.auto_listen': { id: 'setting-autolisten', kind: 'boolean' },
+    'voice.output_rate': { id: 'setting-tts-speed', kind: 'number' },
+    'learning.auto_enrichment_enabled': { id: 'setting-enrichment', kind: 'boolean' },
+    'learning.reflection_enabled': { id: 'setting-reflection', kind: 'boolean' },
+    'autonomy.actions_enabled': { id: 'setting-autonomy', kind: 'boolean' },
+    'governance.approval_mode': { id: 'setting-approval', kind: 'string' },
+});
+
+const runtimeSettingsState = {
+    revision: null,
+    values: {},
+    hydrated: false,
+    hydrationPromise: null,
+};
+
+function setRuntimeSettingsStatus(message, tone = 'pending') {
+    const status = $('settings-runtime-status');
+    if (!status) return;
+    status.textContent = String(message || '');
+    status.dataset.tone = tone;
+}
+
+function setRuntimeSettingsAvailability(enabled, message = '', tone = 'pending') {
+    const allowControls = !!enabled && !state.conversationOnly;
+    Object.values(RUNTIME_SETTING_CONTROLS).forEach(definition => {
+        const control = $(definition.id);
+        if (control) control.disabled = !allowControls;
+    });
+    if (message) setRuntimeSettingsStatus(message, tone);
+}
+
+function runtimeControlValue(definition, control) {
+    if (definition.kind === 'boolean') return !!control.checked;
+    if (definition.kind === 'number') return Number.parseFloat(control.value);
+    return String(control.value);
+}
+
+function applyRuntimeSettingsControls(values) {
+    Object.entries(RUNTIME_SETTING_CONTROLS).forEach(([key, definition]) => {
+        const control = $(definition.id);
+        if (!control || !Object.prototype.hasOwnProperty.call(values, key)) return;
+        if (definition.kind === 'boolean') control.checked = values[key] === true;
+        else control.value = String(values[key]);
+    });
+    const rate = Number(values['voice.output_rate']);
+    const rateValue = $('setting-tts-speed-value');
+    if (rateValue && Number.isFinite(rate)) rateValue.textContent = `${rate.toFixed(1)}×`;
+    if (state.voiceSummary) applyVoiceSummary(state.voiceSummary);
+}
+
+function runtimeSettingsRequestId() {
+    if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+        return window.crypto.randomUUID();
+    }
+    return `desktop-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function acceptRuntimeSettingsPayload(payload) {
+    if (!payload || !Number.isInteger(payload.revision) || payload.revision < 0) {
+        throw new Error('settings_invalid_revision');
+    }
+    if (!payload.values || typeof payload.values !== 'object' || Array.isArray(payload.values)) {
+        throw new Error('settings_invalid_values');
+    }
+    runtimeSettingsState.revision = payload.revision;
+    runtimeSettingsState.values = { ...payload.values };
+    runtimeSettingsState.hydrated = true;
+    applyRuntimeSettingsControls(runtimeSettingsState.values);
+}
+
+async function reconcileAutoListenFromSettings({ reportFailure = true } = {}) {
+    if (!runtimeSettingsState.hydrated) return { status: 'deferred', detail: 'settings not hydrated' };
+    const inputEnabled = runtimeSettingsState.values['voice.input_enabled'] === true;
+    const autoListen = runtimeSettingsState.values['voice.auto_listen'] === true;
+    if (!inputEnabled && state.voiceActive) {
+        const stopped = await toggleVoice(false);
+        return {
+            status: stopped ? 'applied' : 'failed',
+            detail: stopped ? 'desktop microphone lane stopped' : 'desktop microphone lane did not stop',
+        };
+    }
+    if (!autoListen) {
+        if (!state.voiceActive) return { status: 'applied', detail: 'auto-listen remains stopped' };
+        const stopped = await toggleVoice(false);
+        return {
+            status: stopped ? 'applied' : 'failed',
+            detail: stopped ? 'auto-listen stopped' : 'auto-listen did not stop',
+        };
+    }
+    if (!inputEnabled) {
+        return { status: 'failed', detail: 'microphone input is disabled' };
+    }
+    if (state.voiceActive) return { status: 'applied', detail: 'auto-listen already active' };
+    const started = await toggleVoice(true, { quiet: !reportFailure });
+    return {
+        status: started ? 'applied' : 'failed',
+        detail: started ? 'desktop microphone lane started' : 'desktop microphone permission or startup failed',
+    };
+}
+
+async function acknowledgeFrontendSetting(receiptHash, key, acknowledgement) {
+    if (!receiptHash) return null;
+    const response = await fetch('/api/settings/application-ack', {
+        method: 'POST',
+        cache: 'no-store',
+        credentials: 'same-origin',
+        headers: auraDesktopHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+            settings_receipt_hash: receiptHash,
+            acknowledgements: { [key]: acknowledgement },
+        }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new Error(payload.detail || payload.error || `settings_ack_http_${response.status}`);
+    }
+    return payload;
+}
+
+async function hydrateRuntimeSettings({ quiet = false, reconcileVoice = true } = {}) {
+    if (state.accessResolved && state.conversationOnly) {
+        setRuntimeSettingsAvailability(
+            false,
+            'Runtime settings require the paired desktop control surface.',
+            'warning'
+        );
+        return false;
+    }
+    if (runtimeSettingsState.hydrationPromise) return runtimeSettingsState.hydrationPromise;
+    const hydration = (async () => {
+        if (!quiet) setRuntimeSettingsAvailability(false, 'Synchronizing runtime settings…', 'busy');
+        const response = await fetch('/api/settings', {
+            cache: 'no-store',
+            credentials: 'same-origin',
+            headers: auraDesktopHeaders(),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(payload.detail || payload.error || `settings_http_${response.status}`);
+        }
+        if (payload.integrity && payload.integrity.ok === false) {
+            throw new Error(payload.integrity.error || 'settings_integrity_failed');
+        }
+        acceptRuntimeSettingsPayload(payload);
+        if (reconcileVoice) {
+            const autoResult = await reconcileAutoListenFromSettings({ reportFailure: false });
+            if (runtimeSettingsState.values['voice.auto_listen'] && autoResult.status === 'failed') {
+                setRuntimeSettingsAvailability(
+                    true,
+                    `Runtime revision ${payload.revision}; auto-listen needs microphone access.`,
+                    'warning'
+                );
+                return true;
+            }
+        }
+        setRuntimeSettingsAvailability(
+            true,
+            `Runtime revision ${payload.revision} verified.`,
+            'ready'
+        );
+        return true;
+    })();
+    runtimeSettingsState.hydrationPromise = hydration;
+    try {
+        return await hydration;
+    } catch (error) {
+        runtimeSettingsState.hydrated = false;
+        setRuntimeSettingsAvailability(
+            false,
+            `Runtime settings unavailable: ${String(error.message || error)}`,
+            'error'
+        );
+        if (!quiet) console.warn('[Settings] Runtime hydration failed:', error);
+        throw error;
+    } finally {
+        if (runtimeSettingsState.hydrationPromise === hydration) {
+            runtimeSettingsState.hydrationPromise = null;
+        }
+    }
+}
+
+async function patchRuntimeSettings(changes) {
+    if (!runtimeSettingsState.hydrated) await hydrateRuntimeSettings({ reconcileVoice: false });
+    const desired = { ...changes };
+    const baseValues = Object.fromEntries(
+        Object.keys(desired).map(key => [key, runtimeSettingsState.values[key]])
+    );
+    const requestId = runtimeSettingsRequestId();
+
+    const submit = async (allowRetry = true) => {
+        const expectedRevision = runtimeSettingsState.revision;
+        let response;
+        try {
+            response = await fetch('/api/settings', {
+                method: 'PATCH',
+                cache: 'no-store',
+                credentials: 'same-origin',
+                headers: auraDesktopHeaders({ 'Content-Type': 'application/json' }),
+                body: JSON.stringify({
+                    expected_revision: expectedRevision,
+                    request_id: requestId,
+                    changes: desired,
+                }),
+            });
+        } catch (networkError) {
+            if (!allowRetry) throw networkError;
+            await hydrateRuntimeSettings({ quiet: true, reconcileVoice: false });
+            return submit(false);
+        }
+
+        const payload = await response.json().catch(() => ({}));
+        if (response.status === 409 && payload.error === 'settings_revision_conflict' && allowRetry) {
+            await hydrateRuntimeSettings({ quiet: true, reconcileVoice: false });
+            const alreadyApplied = Object.entries(desired).every(
+                ([key, value]) => runtimeSettingsState.values[key] === value
+            );
+            if (alreadyApplied) return { values: runtimeSettingsState.values, replayed: true };
+            const untouched = Object.keys(desired).every(
+                key => runtimeSettingsState.values[key] === baseValues[key]
+            );
+            if (untouched) return submit(false);
+            throw new Error('settings_conflict_requires_review');
+        }
+        if (!response.ok) {
+            throw new Error(payload.detail || payload.error || `settings_patch_http_${response.status}`);
+        }
+        acceptRuntimeSettingsPayload(payload);
+        if (payload.superseded === true) {
+            const desiredStillActive = Object.entries(desired).every(
+                ([key, value]) => runtimeSettingsState.values[key] === value
+            );
+            if (!desiredStillActive) {
+                throw new Error('settings_idempotent_replay_superseded');
+            }
+        }
+        return payload;
+    };
+
+    setRuntimeSettingsAvailability(false, 'Saving runtime settings…', 'busy');
+    try {
+        const payload = await submit(true);
+        const receiptHash = payload.receipt && payload.receipt.receipt_hash;
+        if (Object.prototype.hasOwnProperty.call(desired, 'voice.auto_listen')) {
+            const acknowledgement = await reconcileAutoListenFromSettings();
+            await acknowledgeFrontendSetting(
+                receiptHash,
+                'voice.auto_listen',
+                acknowledgement
+            );
+            if (acknowledgement.status === 'failed') {
+                setRuntimeSettingsAvailability(
+                    true,
+                    `Runtime revision ${runtimeSettingsState.revision}; auto-listen was not applied.`,
+                    'warning'
+                );
+                return payload;
+            }
+        } else if (
+            Object.prototype.hasOwnProperty.call(desired, 'voice.input_enabled')
+            && desired['voice.input_enabled'] === false
+            && state.voiceActive
+        ) {
+            await toggleVoice(false);
+        }
+        const failedOwner = Object.values(payload.application || {}).find(
+            entry => entry && entry.status === 'failed'
+        );
+        setRuntimeSettingsAvailability(
+            true,
+            failedOwner
+                ? `Saved revision ${runtimeSettingsState.revision}; ${failedOwner.owner} did not apply it.`
+                : `Runtime revision ${runtimeSettingsState.revision} applied.`,
+            failedOwner ? 'warning' : 'ready'
+        );
+        return payload;
+    } catch (error) {
+        applyRuntimeSettingsControls(runtimeSettingsState.values);
+        setRuntimeSettingsAvailability(
+            runtimeSettingsState.hydrated,
+            `Runtime setting failed: ${String(error.message || error)}`,
+            'error'
+        );
+        throw error;
+    }
+}
+
+Object.entries(RUNTIME_SETTING_CONTROLS).forEach(([key, definition]) => {
+    const control = $(definition.id);
+    if (!control) return;
+    if (key === 'voice.output_rate') {
+        control.addEventListener('input', () => {
+            const value = Number.parseFloat(control.value);
+            const output = $('setting-tts-speed-value');
+            if (output && Number.isFinite(value)) output.textContent = `${value.toFixed(1)}×`;
+        });
+    }
+    control.addEventListener('change', async () => {
+        const value = runtimeControlValue(definition, control);
+        try {
+            await patchRuntimeSettings({ [key]: value });
+        } catch (error) {
+            console.warn(`[Settings] Failed to update ${key}:`, error);
+        }
+    });
+});
+
+async function confirmNextRuntimeAction(challengeId) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    try {
+        const response = await fetch('/api/settings/auth/fresh', {
+            method: 'POST',
+            cache: 'no-store',
+            credentials: 'same-origin',
+            headers: auraDesktopHeaders({ 'Content-Type': 'application/json' }),
+            signal: controller.signal,
+            body: JSON.stringify({ challenge_id: String(challengeId || '') }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || payload.ok !== true) {
+            throw new Error(payload.detail || `confirmation_http_${response.status}`);
+        }
+        return true;
+    } catch (error) {
+        await cancelRuntimeActionConfirmation(challengeId);
+        const body = $('approval-modal-message');
+        if (body) body.textContent = `Confirmation failed: ${String(error.message || error)}`;
+        return false;
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+async function cancelRuntimeActionConfirmation(challengeId) {
+    const normalized = String(challengeId || '');
+    if (!normalized) return false;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    try {
+        const response = await fetch('/api/settings/auth/revoke', {
+            method: 'POST',
+            cache: 'no-store',
+            credentials: 'same-origin',
+            headers: auraDesktopHeaders({ 'Content-Type': 'application/json' }),
+            signal: controller.signal,
+            body: JSON.stringify({ challenge_id: normalized }),
+        });
+        return response.ok;
+    } catch (_error) {
+        return false;
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+let pendingApprovalRetry = null;
+let pendingApprovalChallengeId = null;
+let approvalModalReturnFocus = null;
+let approvalConfirmationInFlight = false;
+
+function closeApprovalModal({ restoreFocus = true, cancelChallenge = true } = {}) {
+    if (approvalConfirmationInFlight) return false;
+    const modal = $('approval-modal');
+    if (modal) modal.style.display = 'none';
+    const abandonedChallengeId = pendingApprovalChallengeId;
+    pendingApprovalRetry = null;
+    pendingApprovalChallengeId = null;
+    const confirmButton = $('approval-modal-confirm');
+    const cancelButton = $('approval-modal-cancel');
+    if (confirmButton) {
+        confirmButton.disabled = false;
+        confirmButton.removeAttribute('aria-busy');
+    }
+    if (cancelButton) cancelButton.disabled = false;
+    if (restoreFocus && approvalModalReturnFocus && approvalModalReturnFocus.isConnected) {
+        approvalModalReturnFocus.focus();
+    }
+    approvalModalReturnFocus = null;
+    if (cancelChallenge && abandonedChallengeId) {
+        void cancelRuntimeActionConfirmation(abandonedChallengeId);
+    }
+    return true;
+}
+
+function openApprovalModal(message, challengeId, retry) {
+    const modal = $('approval-modal');
+    const body = $('approval-modal-message');
+    if (!modal || !body) return false;
+    const normalizedChallengeId = String(challengeId || '');
+    if (!normalizedChallengeId) return false;
+    body.textContent = String(message || 'This action needs a fresh confirmation.');
+    pendingApprovalRetry = typeof retry === 'function' ? retry : null;
+    pendingApprovalChallengeId = normalizedChallengeId;
+    approvalModalReturnFocus = document.activeElement;
+    approvalConfirmationInFlight = false;
+    modal.style.display = 'flex';
+    const confirmButton = $('approval-modal-confirm');
+    const cancelButton = $('approval-modal-cancel');
+    if (confirmButton) {
+        confirmButton.disabled = false;
+        confirmButton.removeAttribute('aria-busy');
+        confirmButton.focus();
+    }
+    if (cancelButton) cancelButton.disabled = false;
+    return true;
+}
+
+const approvalCancelButton = $('approval-modal-cancel');
+if (approvalCancelButton) approvalCancelButton.addEventListener('click', closeApprovalModal);
+const approvalConfirmButton = $('approval-modal-confirm');
+if (approvalConfirmButton) {
+    approvalConfirmButton.addEventListener('click', async () => {
+        if (approvalConfirmationInFlight) return;
+        approvalConfirmationInFlight = true;
+        approvalConfirmButton.disabled = true;
+        approvalConfirmButton.setAttribute('aria-busy', 'true');
+        if (approvalCancelButton) approvalCancelButton.disabled = true;
+        const retry = pendingApprovalRetry;
+        const challengeId = pendingApprovalChallengeId;
+        const confirmed = await confirmNextRuntimeAction(challengeId);
+        approvalConfirmationInFlight = false;
+        approvalConfirmButton.disabled = false;
+        approvalConfirmButton.removeAttribute('aria-busy');
+        if (approvalCancelButton) approvalCancelButton.disabled = false;
+        if (!confirmed) {
+            pendingApprovalRetry = null;
+            pendingApprovalChallengeId = null;
+            approvalConfirmButton.disabled = true;
+            if (approvalCancelButton) approvalCancelButton.focus();
+            return;
+        }
+        closeApprovalModal({ restoreFocus: false, cancelChallenge: false });
+        if (retry) void retry();
+    });
+}
+const approvalModal = $('approval-modal');
+if (approvalModal) {
+    approvalModal.addEventListener('click', event => {
+        if (event.target === approvalModal) closeApprovalModal();
+    });
+}
+document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && approvalModal && approvalModal.style.display !== 'none') {
+        closeApprovalModal();
+        return;
+    }
+    if (event.key !== 'Tab' || !approvalModal || approvalModal.style.display === 'none') {
+        return;
+    }
+    const focusable = Array.from(
+        approvalModal.querySelectorAll('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')
+    );
+    if (!focusable.length) {
+        event.preventDefault();
+        return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (!approvalModal.contains(document.activeElement)) {
+        event.preventDefault();
+        first.focus();
+    } else if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+    }
+});
+
+setRuntimeSettingsAvailability(false, 'Waiting for desktop control authorization…', 'pending');
 
 async function activateCheatCode() {
     const input = document.getElementById('setting-cheat-code');

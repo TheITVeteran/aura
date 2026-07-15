@@ -6,6 +6,10 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
+from core.executive.action_confirmation import (
+    ActionConfirmationRegistry,
+    action_confirmation_fingerprint,
+)
 from interface.routes import interaction_signals, performance, privacy, settings, system
 
 
@@ -71,7 +75,149 @@ def test_settings_store_subscriber_failure_does_not_block_valid_write(monkeypatc
 
     assert store.set("theme.reduced_motion", True) is True
     assert calls and calls[0][0] == "theme.reduced_motion"
-    assert json.loads(settings_path.read_text(encoding="utf-8"))["theme.reduced_motion"] is True
+    state = json.loads(settings_path.read_text(encoding="utf-8"))
+    assert state["schema"] == "aura.runtime_settings"
+    assert state["revision"] == 1
+    assert state["values"]["theme.reduced_motion"] is True
+
+
+@pytest.mark.asyncio
+async def test_settings_api_uses_atomic_cas_and_frontend_acknowledgements(
+    monkeypatch,
+    tmp_path,
+):
+    store = settings.SettingsStore(tmp_path / "runtime.json")
+    monkeypatch.setattr(settings, "_STORE", store)
+
+    initial = json.loads((await settings.get_all(_=None)).body)
+    assert initial["revision"] == 0
+    assert initial["control_plane"]["cas_required"] is True
+
+    patched_response = await settings.patch_settings(
+        {
+            "expected_revision": 0,
+            "request_id": "route-patch",
+            "changes": {"voice.auto_listen": True},
+        },
+        _=None,
+    )
+    patched = json.loads(patched_response.body)
+    assert patched_response.status_code == 200
+    assert patched["revision"] == 1
+    assert patched["application"]["voice.auto_listen"]["status"] == "awaiting_frontend"
+
+    acknowledged_response = await settings.acknowledge_settings_application(
+        {
+            "settings_receipt_hash": patched["receipt"]["receipt_hash"],
+            "acknowledgements": {
+                "voice.auto_listen": {
+                    "status": "applied",
+                    "detail": "desktop microphone lane started",
+                }
+            },
+        },
+        _=None,
+    )
+    acknowledged = json.loads(acknowledged_response.body)
+    assert acknowledged_response.status_code == 200
+    assert acknowledged["application"]["voice.auto_listen"]["status"] == "applied"
+
+    stale_response = await settings.patch_settings(
+        {
+            "expected_revision": 0,
+            "request_id": "route-stale",
+            "changes": {"notify.enabled": False},
+        },
+        _=None,
+    )
+    stale = json.loads(stale_response.body)
+    assert stale_response.status_code == 409
+    assert stale == {
+        "error": "settings_revision_conflict",
+        "expected_revision": 0,
+        "current_revision": 1,
+        "retryable": True,
+    }
+
+    integrity = json.loads((await settings.settings_integrity(_=None)).body)
+    assert integrity["ok"] is True
+    assert integrity["application_entries"] == 2
+
+
+@pytest.mark.asyncio
+async def test_settings_confirmation_endpoint_authorizes_only_supplied_challenge(
+    monkeypatch,
+):
+    registry = ActionConfirmationRegistry()
+    fingerprint = action_confirmation_fingerprint(
+        tool_name="desktop_task",
+        arguments={"objective": "open Notes"},
+        source="desktop_ui",
+        risk_level="high",
+        effect_scope="foreground_desktop_control",
+    )
+    challenge = registry.issue(
+        action_fingerprint=fingerprint,
+        tool_name="desktop_task",
+    )
+    conscience = SimpleNamespace(
+        acknowledge_user_authorization=lambda: None,
+        fresh_user_authorization_window_s=lambda: 60.0,
+    )
+    monkeypatch.setattr(
+        "core.executive.action_confirmation.get_action_confirmation_registry",
+        lambda: registry,
+    )
+    monkeypatch.setattr(
+        "core.ethics.conscience.get_conscience",
+        lambda: conscience,
+    )
+
+    response = await settings.acknowledge_fresh_auth(
+        {"challenge_id": challenge["challenge_id"]},
+        _=None,
+    )
+    payload = json.loads(response.body)
+
+    assert response.status_code == 200
+    assert payload["ok"] is True
+    assert payload["one_time"] is True
+    assert payload["action_bound"] is True
+    assert registry.consume_authorized(fingerprint)[0] is True
+    assert registry.consume_authorized(fingerprint)[0] is False
+
+
+@pytest.mark.asyncio
+async def test_settings_confirmation_revoke_cancels_unconsumed_authorization(
+    monkeypatch,
+):
+    registry = ActionConfirmationRegistry()
+    fingerprint = action_confirmation_fingerprint(
+        tool_name="desktop_task",
+        arguments={"objective": "open Notes"},
+        source="desktop_ui",
+        risk_level="high",
+        effect_scope="foreground_desktop_control",
+    )
+    challenge = registry.issue(
+        action_fingerprint=fingerprint,
+        tool_name="desktop_task",
+    )
+    registry.authorize(challenge["challenge_id"])
+    monkeypatch.setattr(
+        "core.executive.action_confirmation.get_action_confirmation_registry",
+        lambda: registry,
+    )
+
+    response = await settings.revoke_action_confirmation(
+        {"challenge_id": challenge["challenge_id"]},
+        _=None,
+    )
+    payload = json.loads(response.body)
+
+    assert response.status_code == 200
+    assert payload == {"ok": True, "cancelled": True}
+    assert registry.consume_authorized(fingerprint)[0] is False
 
 
 @pytest.mark.asyncio

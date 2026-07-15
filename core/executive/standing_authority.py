@@ -186,7 +186,11 @@ def _truthy(value: Any) -> bool:
 
 
 def normalize_authority_origin(value: Any) -> str:
-    normalized = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    normalized = re.sub(
+        r"[^a-z0-9]+",
+        "_",
+        str(value or "").strip().lower(),
+    ).strip("_")
     while "__" in normalized:
         normalized = normalized.replace("__", "_")
     return normalized

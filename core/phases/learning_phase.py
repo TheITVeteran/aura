@@ -9,6 +9,7 @@ from core.phases.dialogue_policy import validate_dialogue_response
 from core.phases.response_contract import ResponseContract
 from core.runtime.background_policy import background_activity_allowed
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.runtime.runtime_settings import get_runtime_setting
 from core.state.aura_state import AuraState
 
 if TYPE_CHECKING:
@@ -345,7 +346,10 @@ class LearningPhase(Phase):
             else {}
         )
 
-        if recent_messages:
+        auto_enrichment_enabled = bool(
+            get_runtime_setting("learning.auto_enrichment_enabled", True)
+        )
+        if recent_messages and auto_enrichment_enabled:
             try:
                 from core.cognition.knowledge_enrichment import get_enricher
                 from core.utils.task_tracker import get_task_tracker
@@ -371,6 +375,11 @@ class LearningPhase(Phase):
                     state=state,
                 )
                 logger.debug("LearningPhase: knowledge enrichment scheduling failed: %s", e)
+        elif recent_messages:
+            _ensure_response_modifiers(state)["knowledge_enrichment"] = {
+                "status": "disabled_by_runtime_setting",
+                "setting": "learning.auto_enrichment_enabled",
+            }
 
         should_distill = bool(
             confusion

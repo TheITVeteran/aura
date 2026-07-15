@@ -634,6 +634,130 @@ class AuthorityGateway:
 
         return None
 
+    @staticmethod
+    def _runtime_autonomous_action_gate(
+        *,
+        source: str,
+        context: dict[str, Any] | None,
+        domain: str,
+    ) -> AuthorityDecision | None:
+        """Apply the user action switch without weakening deeper governance."""
+
+        try:
+            from core.runtime.runtime_settings import autonomous_actions_admitted
+
+            admitted, reason = autonomous_actions_admitted(source, context)
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "authority_gateway.runtime_settings",
+                exc,
+                severity="warning",
+                action="failed closed autonomous action admission because settings were unavailable",
+                enforce_failure_policy=False,
+            )
+            admitted, reason = False, "runtime_settings_unavailable"
+        if admitted:
+            return None
+        return AuthorityDecision(
+            approved=False,
+            outcome="rejected",
+            reason=reason,
+            constraints={
+                "blocked": True,
+                "runtime_setting": "autonomy.actions_enabled",
+                "direct_user_work_preserved": True,
+            },
+            domain=domain,
+            source=source,
+        )
+
+    @staticmethod
+    def _runtime_confirmation_gate(
+        *,
+        tool_name: str,
+        args: dict[str, Any],
+        source: str,
+        risk_level: str,
+        effect_scope: str,
+        domain: str = "tool_execution",
+    ) -> AuthorityDecision | None:
+        """Apply the optional operator-confirmation overlay before Will.
+
+        A fresh confirmation never grants authority by itself. A successful
+        result still traverses standing authority, Unified Will, substrate,
+        ExecutiveCore, and capability-token issuance below.
+        """
+
+        try:
+            from core.executive.action_confirmation import (
+                action_confirmation_fingerprint,
+                get_action_confirmation_registry,
+            )
+            from core.runtime.runtime_settings import (
+                additional_confirmation_required,
+                runtime_approval_mode,
+            )
+
+            required, reason = additional_confirmation_required(
+                risk_level=risk_level,
+                effect_scope=effect_scope,
+            )
+            mode = runtime_approval_mode()
+            if not required:
+                return None
+            fingerprint = action_confirmation_fingerprint(
+                tool_name=tool_name,
+                arguments=args,
+                source=source,
+                risk_level=risk_level,
+                effect_scope=effect_scope,
+            )
+            confirmations = get_action_confirmation_registry()
+            confirmed, confirmation_id = confirmations.consume_authorized(
+                fingerprint
+            )
+            if confirmed:
+                return None
+            challenge = confirmations.issue(
+                action_fingerprint=fingerprint,
+                tool_name=tool_name,
+            )
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "authority_gateway.runtime_confirmation",
+                exc,
+                severity="warning",
+                action="required explicit confirmation because confirmation policy was unavailable",
+                enforce_failure_policy=False,
+            )
+            reason = "runtime_confirmation_policy_unavailable"
+            mode = "destructive"
+            confirmation_id = "action_confirmation_policy_unavailable"
+            challenge = {}
+        return AuthorityDecision(
+            approved=False,
+            outcome="approval_required",
+            reason=f"runtime_setting_user_confirmation_required:{reason}",
+            constraints={
+                "blocked": True,
+                "requires_user_confirmation": True,
+                "approval_mode": mode,
+                "risk_level": risk_level,
+                "effect_scope": effect_scope,
+                "confirmation_endpoint": "/api/settings/auth/fresh",
+                "confirmation_challenge_id": challenge.get("challenge_id"),
+                "confirmation_pending_expires_in_seconds": challenge.get(
+                    "pending_expires_in_seconds"
+                ),
+                "confirmation_attempt": confirmation_id,
+                "confirmation_one_time": True,
+                "confirmation_action_bound": True,
+                "confirmation_does_not_bypass_governance": True,
+            },
+            domain=domain,
+            source=source,
+        )
+
     async def authorize_tool_execution(
         self,
         tool_name: str,
@@ -656,6 +780,22 @@ class AuthorityGateway:
             args,
             effect_scope=effect_scope,
         )
+        autonomy_block = self._runtime_autonomous_action_gate(
+            source=source,
+            context=runtime_context,
+            domain="tool_execution",
+        )
+        if autonomy_block is not None:
+            return autonomy_block
+        confirmation_block = self._runtime_confirmation_gate(
+            tool_name=tool_name,
+            args=args,
+            source=source,
+            risk_level=risk_level,
+            effect_scope=effect_scope,
+        )
+        if confirmation_block is not None:
+            return confirmation_block
         lease = await self._standing_authority.issue_child_lease(
             tool_name,
             args,
@@ -801,15 +941,54 @@ class AuthorityGateway:
         Environment actions are "tools with a body": even when they compile to a
         key press or observe step, the Will must see and receipt the intent.
         """
+        runtime_payload = dict(payload or {})
+        autonomy_block = self._runtime_autonomous_action_gate(
+            source=source,
+            context=runtime_payload,
+            domain="environment_action",
+        )
+        if autonomy_block is not None:
+            return autonomy_block
+
+        declared_risk = str(runtime_payload.get("risk") or "").strip().lower()
+        risk_level = {
+            "safe": "low",
+            "caution": "medium",
+            "risky": "high",
+            "irreversible": "critical",
+            "forbidden": "critical",
+        }.get(declared_risk, "critical")
+        effect_scope = str(
+            runtime_payload.get("effect_scope")
+            or runtime_payload.get("scope")
+            or {
+                "safe": "status",
+                "caution": "external_io",
+                "risky": "state_mutation",
+                "irreversible": "privileged_mutation",
+                "forbidden": "privileged_mutation",
+            }.get(declared_risk, "unknown")
+        ).strip().lower()
+        confirmation_block = self._runtime_confirmation_gate(
+            tool_name=f"environment:{intent_name}",
+            args=runtime_payload,
+            source=source,
+            risk_level=risk_level,
+            effect_scope=effect_scope,
+            domain="environment_action",
+        )
+        if confirmation_block is not None:
+            return confirmation_block
+
         will_block, will_decision = self._will_gate(
             f"environment:{intent_name}", source, "environment_action", priority, is_critical,
-            context={**dict(payload or {}), **self.active_user_presence_context()},
+            context={**runtime_payload, **self.active_user_presence_context()},
         )
         if will_block is not None:
             return will_block
 
         blocked, substrate_constraints, receipt_id = self._substrate_preflight(
-            content=f"environment:{intent_name} payload:{str(payload)[:120]}",
+            content=f"environment:{intent_name} payload:{str(runtime_payload)[:120]}",
             source=source or "environment",
             category=ActionCategory.TOOL_EXECUTION,
             priority=priority,
@@ -825,7 +1004,7 @@ class AuthorityGateway:
             source=_coerce_intent_source(source or "environment"),
             goal=f"environment_action:{intent_name}",
             action_type=ActionType.TOOL_CALL,
-            payload={"intent_name": intent_name, "payload": dict(payload or {})},
+            payload={"intent_name": intent_name, "payload": runtime_payload},
             priority=priority,
             requires_tool=True,
         )
@@ -1239,6 +1418,13 @@ class AuthorityGateway:
         source: str = "unknown",
         priority: float = 0.5,
     ) -> AuthorityDecision:
+        settings_block = self._runtime_autonomous_action_gate(
+            source=source,
+            context=None,
+            domain="initiative",
+        )
+        if settings_block is not None:
+            return settings_block
         will_block, will_decision = self._will_gate(str(summary)[:200], source, "initiative", priority)
         if will_block is not None:
             return will_block
@@ -1283,6 +1469,13 @@ class AuthorityGateway:
         source: str = "unknown",
         priority: float = 0.5,
     ) -> AuthorityDecision:
+        settings_block = self._runtime_autonomous_action_gate(
+            source=source,
+            context=None,
+            domain="initiative",
+        )
+        if settings_block is not None:
+            return settings_block
         will_block, will_decision = self._will_gate(str(summary)[:200], source, "initiative", priority)
         if will_block is not None:
             return will_block

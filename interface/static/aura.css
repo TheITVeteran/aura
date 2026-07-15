@@ -2938,6 +2938,25 @@ body.neural-visual-paused #pane-neural .live-dot {
     font-size: 0.75rem;
     color: var(--text);
 }
+.settings-runtime-status {
+    min-height: 30px;
+    margin: 4px 0 14px;
+    padding: 7px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    color: var(--text-dim);
+    font-size: 0.68rem;
+    line-height: 1.4;
+}
+.settings-runtime-status[data-tone="ready"] {
+    color: var(--success);
+}
+.settings-runtime-status[data-tone="busy"],
+.settings-runtime-status[data-tone="warning"] {
+    color: var(--warn);
+}
+.settings-runtime-status[data-tone="error"] {
+    color: var(--error);
+}
 .desktop-access-banner {
     margin: 6px 0 12px;
     padding: 12px 14px;
@@ -3098,6 +3117,12 @@ body.neural-visual-paused #pane-neural .live-dot {
 .setting-input:focus {
     border-color: var(--primary);
 }
+.setting-input:disabled,
+.setting-toggle:disabled,
+.setting-range:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+}
 .setting-toggle {
     -webkit-appearance: none;
     appearance: none;
@@ -3135,6 +3160,16 @@ body.neural-visual-paused #pane-neural .live-dot {
     background: rgba(255,255,255,0.1);
     border-radius: 2px;
     outline: none;
+}
+.setting-range-control {
+    display: grid;
+    grid-template-columns: 100px 38px;
+    align-items: center;
+    gap: 8px;
+    min-width: 146px;
+}
+.setting-range-control .setting-value {
+    text-align: right;
 }
 .setting-range::-webkit-slider-thumb {
     -webkit-appearance: none;

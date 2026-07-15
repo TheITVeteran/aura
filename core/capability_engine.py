@@ -3475,6 +3475,57 @@ class CapabilityEngine(AuraBaseModule):
 
         return ctx
 
+    @staticmethod
+    def _constitutional_denial_payload(tool_handle: Any) -> dict[str, Any]:
+        """Preserve actionable governance denials across the capability boundary."""
+        decision = getattr(tool_handle, "decision", None)
+        reason = str(getattr(decision, "reason", "blocked"))
+        constraints = dict(getattr(tool_handle, "constraints", {}) or {})
+        if constraints.get("requires_user_confirmation"):
+            return {
+                "ok": False,
+                "error": "Fresh user confirmation required",
+                "reason": reason,
+                "status": "approval_required",
+                "approval": {
+                    "required": True,
+                    "mode": str(constraints.get("approval_mode") or "destructive"),
+                    "risk_level": str(constraints.get("risk_level") or "unknown"),
+                    "effect_scope": str(constraints.get("effect_scope") or "unknown"),
+                    "confirmation_endpoint": str(
+                        constraints.get("confirmation_endpoint")
+                        or "/api/settings/auth/fresh"
+                    ),
+                    "challenge_id": str(
+                        constraints.get("confirmation_challenge_id") or ""
+                    ),
+                    "pending_expires_in_seconds": constraints.get(
+                        "confirmation_pending_expires_in_seconds"
+                    ),
+                    "one_time": bool(
+                        constraints.get("confirmation_one_time", True)
+                    ),
+                    "action_bound": bool(
+                        constraints.get("confirmation_action_bound", True)
+                    ),
+                    "confirmation_does_not_bypass_governance": bool(
+                        constraints.get("confirmation_does_not_bypass_governance", True)
+                    ),
+                },
+            }
+
+        failure_markers = ("gate_failed", "required", "unavailable")
+        status = (
+            "blocked_by_executive_gate_failure"
+            if any(marker in reason for marker in failure_markers)
+            else "blocked_by_executive"
+        )
+        return {
+            "ok": False,
+            "error": f"Executive veto: {reason}",
+            "status": status,
+        }
+
     async def execute(
         self, skill_name: str, params: dict[str, Any], context: dict[str, Any] | None = None
     ) -> dict[str, Any]:
@@ -3844,13 +3895,7 @@ class CapabilityEngine(AuraBaseModule):
                         skill_name,
                         reason,
                     )
-                    failure_markers = ("gate_failed", "required", "unavailable")
-                    status = (
-                        "blocked_by_executive_gate_failure"
-                        if any(marker in reason for marker in failure_markers)
-                        else "blocked_by_executive"
-                    )
-                    return {"ok": False, "error": f"Executive veto: {reason}", "status": status}
+                    return self._constitutional_denial_payload(tool_handle)
 
                 constraints = dict(getattr(tool_handle, "constraints", {}) or {})
                 if constraints:

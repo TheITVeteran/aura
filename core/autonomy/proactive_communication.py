@@ -7,6 +7,7 @@ import time
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
 from typing import Any
 
@@ -15,21 +16,27 @@ from core.runtime.runtime_settings import get_runtime_setting
 from core.utils.task_tracker import get_task_tracker
 
 
-def _proactive_messaging_enabled() -> bool:
-    """Honor the user's autonomy.proactive_messaging toggle (default on).
+def _proactive_messaging_mode() -> str:
+    mode = str(
+        get_runtime_setting("autonomy.proactive_messaging", "minimal")
+        or "minimal"
+    ).strip().lower()
+    return mode if mode in {"never", "minimal", "balanced", "frequent"} else "minimal"
 
-    When off, Aura does not initiate proactive messages (pending items simply
-    wait). Reads the persisted setting live; defaults on if unset/unreadable.
-    See docs/SETTINGS_WIRING_AUDIT.md.
-    """
-    return bool(get_runtime_setting("autonomy.proactive_messaging", True))
+
+def _proactive_messaging_enabled() -> bool:
+    """Return whether the user's proactive-messaging policy permits initiation."""
+
+    return _proactive_messaging_mode() != "never"
 
 logger = logging.getLogger("Aura.Proactive")
 
 _PROACTIVE_COMMUNICATION_ERRORS = (
     AttributeError,
     ImportError,
+    OSError,
     RuntimeError,
+    TimeoutError,
     TypeError,
     ValueError,
 )
@@ -94,6 +101,21 @@ class InterruptionUrgency(Enum):
     LOW = 2           # Casual observations, learnings
     TRIVIAL = 1       # Random thoughts, very low priority
 
+
+@dataclass(frozen=True)
+class ProactiveCadencePolicy:
+    daily_limit: int
+    minimum_interval_s: float
+    idle_multiplier: float
+
+
+_PROACTIVE_CADENCE_POLICIES = {
+    "never": ProactiveCadencePolicy(0, float("inf"), float("inf")),
+    "minimal": ProactiveCadencePolicy(4, 2 * 60 * 60.0, 2.0),
+    "balanced": ProactiveCadencePolicy(12, 30 * 60.0, 1.0),
+    "frequent": ProactiveCadencePolicy(24, 10 * 60.0, 0.5),
+}
+
 @dataclass
 class ProactiveMessage:
     """A message Aura wants to send"""
@@ -103,11 +125,15 @@ class ProactiveMessage:
     urgency: InterruptionUrgency
     context: dict[str, Any] = field(default_factory=dict)
     timestamp: float = field(default_factory=time.time)
+    delivery_attempts: int = 0
+    next_attempt_at: float = 0.0
     
     def should_send_now(self, 
                         last_interaction_time: float,
                         user_active: bool,
-                        current_time: float) -> bool:
+                        current_time: float,
+                        *,
+                        idle_multiplier: float = 1.0) -> bool:
         """Decide if this message should be sent now.
         """
         idle_time = current_time - last_interaction_time
@@ -128,7 +154,7 @@ class ProactiveMessage:
             InterruptionUrgency.TRIVIAL: 180   # 3 minutes
         }
         
-        required_idle = thresholds.get(self.urgency, 600)
+        required_idle = thresholds.get(self.urgency, 600) * max(0.1, idle_multiplier)
         return idle_time >= required_idle
 
 class ProactiveCommunicationManager:
@@ -142,8 +168,11 @@ class ProactiveCommunicationManager:
         self.pending_messages: deque[ProactiveMessage] = deque(maxlen=50)
         self.current_emotion = EmotionalState.NEUTRAL
         self.messages_sent_today = 0
+        self.ordinary_messages_sent_today = 0
         self.last_message_time = 0.0
-        self.daily_message_limit = 20
+        self.last_ordinary_message_time = 0.0
+        self._counter_day = self._local_day(self.last_interaction_time)
+        self.daily_message_limit = self._cadence_policy().daily_limit
         
         # Track unanswered messages for intelligent backoff
         self.unanswered_count = 0
@@ -193,19 +222,54 @@ class ProactiveCommunicationManager:
                 self._background_task = None
 
     def get_status(self) -> dict[str, Any]:
+        now = time.time()
+        self._reset_daily_counters(now)
+        mode = _proactive_messaging_mode()
+        policy = _PROACTIVE_CADENCE_POLICIES[mode]
+        self.daily_message_limit = policy.daily_limit
         return {
             "running": bool(self._background_task and not self._background_task.done()),
-            "enabled": _proactive_messaging_enabled(),
+            "enabled": mode != "never",
+            "mode": mode,
             "pending_messages": len(self.pending_messages),
             "messages_sent_today": self.messages_sent_today,
+            "ordinary_messages_sent_today": self.ordinary_messages_sent_today,
             "daily_message_limit": self.daily_message_limit,
+            "minimum_interval_s": policy.minimum_interval_s,
+            "idle_multiplier": policy.idle_multiplier,
             "unanswered_count": self.unanswered_count,
             "last_message_time": self.last_message_time,
-            "idle_s": max(0.0, time.time() - self.last_interaction_time),
+            "idle_s": max(0.0, now - self.last_interaction_time),
             "boredom": self.get_boredom_level(),
             "consecutive_errors": self._consecutive_processing_errors,
             "next_attempt_at": self._next_processing_attempt_at,
         }
+
+    @staticmethod
+    def _local_day(timestamp: float) -> str:
+        return datetime.fromtimestamp(timestamp).date().isoformat()
+
+    def _cadence_policy(self) -> ProactiveCadencePolicy:
+        return _PROACTIVE_CADENCE_POLICIES[_proactive_messaging_mode()]
+
+    def _reset_daily_counters(self, now: float) -> None:
+        current_day = self._local_day(now)
+        if current_day == self._counter_day:
+            return
+        self._counter_day = current_day
+        self.messages_sent_today = 0
+        self.ordinary_messages_sent_today = 0
+
+    def _user_is_actively_interacting(self, now: float) -> bool:
+        active = self.user_currently_active and now - self.last_interaction_time < 15.0
+        if not active:
+            self.user_currently_active = False
+        return active
+
+    def _requeue_after_failed_delivery(self, msg: ProactiveMessage, now: float) -> None:
+        msg.delivery_attempts += 1
+        msg.next_attempt_at = now + min(3600.0, 15.0 * (2 ** min(msg.delivery_attempts - 1, 8)))
+        self.pending_messages.append(msg)
 
     async def _process_messages(self) -> None:
         while not self._stop_event.is_set():
@@ -217,50 +281,9 @@ class ProactiveCommunicationManager:
                 healer = ServiceContainer.get("self_healing", default=None)
                 if healer is not None:
                     healer.heartbeat("proactive_comm")
-                if not _proactive_messaging_enabled():
-                    # User disabled proactive messaging: never initiate. Pending
-                    # messages wait (deque is bounded) and resume if re-enabled.
-                    continue
                 if self._next_processing_attempt_at > now:
                     continue
-                
-                # Simple rate limiting check
-                if self.messages_sent_today >= self.daily_message_limit:
-                    continue
-                if now - self.last_message_time < 30: # Min 30s between messages
-                    continue
-                if _proactivity_suppressed_now(now):
-                    continue
-                
-                # Stop proactive messaging if user isn't responding
-                if self.unanswered_count >= self.max_unanswered:
-                    # Only let CRITICAL messages through when user is silent
-                    ready: list[ProactiveMessage] = []
-                    remaining: deque[ProactiveMessage] = deque(maxlen=50)
-                    while self.pending_messages:
-                        msg = self.pending_messages.popleft()
-                        if msg.urgency == InterruptionUrgency.CRITICAL and msg.should_send_now(self.last_interaction_time, self.user_currently_active, now):
-                            ready.append(msg)
-                        else:
-                            remaining.append(msg)
-                    self.pending_messages = remaining
-                    for msg in ready:
-                        await self._send_msg(msg)
-                    continue
-
-                # Collect messages that can be sent
-                ready = []
-                remaining = deque(maxlen=50)
-                while self.pending_messages:
-                    msg = self.pending_messages.popleft()
-                    if msg.should_send_now(self.last_interaction_time, self.user_currently_active, now):
-                        ready.append(msg)
-                    else:
-                        remaining.append(msg)
-                self.pending_messages = remaining
-
-                for msg in ready:
-                    await self._send_msg(msg)
+                await self._process_pending(now)
                 self._consecutive_processing_errors = 0
                 self._next_processing_attempt_at = 0.0
             except _PROACTIVE_COMMUNICATION_ERRORS as e:
@@ -280,10 +303,73 @@ class ProactiveCommunicationManager:
                 )
                 logger.error("Proactive comm error: %s", e)
 
-    async def _send_msg(self, msg: ProactiveMessage) -> None:
+    async def _process_pending(self, now: float) -> None:
+        if not _proactive_messaging_enabled() or not self.pending_messages:
+            return
+        if self._next_processing_attempt_at > now or _proactivity_suppressed_now(now):
+            return
+
+        try:
+            from core.runtime.runtime_settings import autonomous_actions_admitted
+
+            autonomous_admitted, _reason = autonomous_actions_admitted("proactive_comm")
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            _record_proactive_degradation(
+                exc,
+                action="failed closed proactive delivery because runtime action settings were unavailable",
+                extra={"stage": "runtime_action_gate"},
+            )
+            return
+        if not autonomous_admitted:
+            return
+
+        self._reset_daily_counters(now)
+        policy = self._cadence_policy()
+        self.daily_message_limit = policy.daily_limit
+        user_active = self._user_is_actively_interacting(now)
+        eligible = [
+            msg
+            for msg in self.pending_messages
+            if msg.next_attempt_at <= now
+            and msg.should_send_now(
+                self.last_interaction_time,
+                user_active,
+                now,
+                idle_multiplier=policy.idle_multiplier,
+            )
+            and (
+                self.unanswered_count < self.max_unanswered
+                or msg.urgency == InterruptionUrgency.CRITICAL
+            )
+        ]
+        if not eligible:
+            return
+
+        critical = [msg for msg in eligible if msg.urgency == InterruptionUrgency.CRITICAL]
+        if critical:
+            candidate = min(critical, key=lambda msg: msg.timestamp)
+        else:
+            if self.ordinary_messages_sent_today >= policy.daily_limit:
+                return
+            if now - self.last_ordinary_message_time < policy.minimum_interval_s:
+                return
+            candidate = min(
+                eligible,
+                key=lambda msg: (-msg.urgency.value, msg.timestamp),
+            )
+
+        self.pending_messages = deque(
+            (msg for msg in self.pending_messages if msg is not candidate),
+            maxlen=50,
+        )
+        delivered = await self._send_msg(candidate)
+        if not delivered:
+            self._requeue_after_failed_delivery(candidate, now)
+
+    async def _send_msg(self, msg: ProactiveMessage) -> bool:
         if _proactivity_suppressed_now():
             logger.debug("Proactive communication suppressed by demo quiet window.")
-            return
+            return False
         # Sanitize content for Aura's professional voice
         clean_content = self._clean_content(msg.content)
         
@@ -362,11 +448,16 @@ class ProactiveCommunicationManager:
                     extra={"stage": "degraded_event_recording", "urgency": msg.urgency.name},
                 )
                 logger.debug("Proactive comm degraded-event logging failed: %s", exc)
-            return
+            return False
 
+        delivered_at = time.time()
         self.messages_sent_today += 1
-        self.last_message_time = time.time()
+        if msg.urgency != InterruptionUrgency.CRITICAL:
+            self.ordinary_messages_sent_today += 1
+            self.last_ordinary_message_time = delivered_at
+        self.last_message_time = delivered_at
         self.unanswered_count += 1  # Track unanswered
+        return True
 
     def _clean_content(self, content: str) -> str:
         """Strip technical noise for a cleaner user experience."""

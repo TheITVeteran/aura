@@ -17,21 +17,6 @@ from interface.routes.settings import _RUNTIME_MODE_KEYS, SCHEMA
 
 # Settings the runtime actually enforces today (verified by other tests).
 WIRED = {
-    "safety.safe_mode",       # core.runtime.safe_mode.set_safe_mode via settings bridge
-    "autonomy.level",         # "paused" -> restricted runtime via the same bridge
-}
-
-# Legitimately client-side only — the desktop/web shell renders these; there is
-# nothing for the Python runtime to enforce.
-FRONTEND_ONLY = {
-    "theme.mode",
-    "theme.reduced_motion",
-}
-
-# Tracked debt: persisted but NOT yet enforced by the runtime. Each needs a
-# bridge+consumer+test (see docs/SETTINGS_WIRING_AUDIT.md). Shrink this set as
-# settings get wired; do NOT grow it without a deliberate decision.
-KNOWN_DEAD = {
     "model.local_path",
     "model.deep_path",
     "model.cloud_fallback_enabled",
@@ -40,17 +25,37 @@ KNOWN_DEAD = {
     "voice.output_rate",
     "permissions.camera",
     "permissions.screen",
-    "permissions.files_workspace",
+    "autonomy.actions_enabled",
+    "autonomy.level",
     "autonomy.proactive_messaging",
     "autonomy.self_modification",
+    "governance.approval_mode",
+    "learning.auto_enrichment_enabled",
+    "learning.reflection_enabled",
     "memory.retention_days",
-    "memory.review_window",
     "privacy.mode",
+    "safety.safe_mode",
     "dev.developer_mode",
-    "dev.diagnostics_enabled",
     "notify.enabled",
     "notify.quiet_hours_start",
     "notify.quiet_hours_end",
+}
+
+# Legitimately client-side only — the desktop/web shell renders these; there is
+# nothing for the Python runtime to enforce.
+FRONTEND_ONLY = {
+    "theme.mode",
+    "theme.reduced_motion",
+    "voice.auto_listen",
+}
+
+# Tracked debt: persisted but NOT yet enforced by the runtime. Each needs a
+# bridge+consumer+test (see docs/SETTINGS_WIRING_AUDIT.md). Shrink this set as
+# settings get wired; do NOT grow it without a deliberate decision.
+KNOWN_DEAD = {
+    "permissions.files_workspace",
+    "memory.review_window",
+    "dev.diagnostics_enabled",
 }
 
 

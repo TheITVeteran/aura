@@ -14464,6 +14464,24 @@ async def _execute_desktop_objective_from_chat(
             result["status"] = "desktop_task_effect_evidence_missing"
             result["error"] = verification_reason
 
+    governed_status = str(result.get("status") or "").strip()
+    if governed_status in {"approval_required", "require_fresh_user_auth"}:
+        approval = (
+            result.get("approval")
+            if isinstance(result.get("approval"), dict)
+            else {}
+        )
+        return {
+            "ok": False,
+            "status": "approval_required",
+            "response": (
+                "This desktop action needs a fresh confirmation. Confirm it to retry "
+                "the same request; all standing authority and governance checks still apply."
+            ),
+            "approval": approval,
+            "result": result,
+        }
+
     status = "desktop_objective_completed" if result.get("ok") else "desktop_objective_failed"
     completed = int(result.get("steps_completed") or 0)
     requested = int(result.get("steps_requested") or 0)
