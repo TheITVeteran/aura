@@ -306,6 +306,15 @@ def main() -> int:
     ap.add_argument("--session", default=f"endurance-{time.strftime('%Y%m%d-%H%M')}")
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument(
+        "--think-seconds",
+        type=float,
+        default=0.0,
+        help="Idle gap between turns (models a real conversation's think-time). "
+        "The default 0 is a zero-gap stress test; a small value (3-8s) models "
+        "daily-driver pacing and lets the runtime's background cognition and "
+        "model-lane recovery breathe between turns.",
+    )
+    ap.add_argument(
         "--out",
         default=None,
         help="Artifact path. Default: a unique per-run file under the gitignored "
@@ -475,6 +484,12 @@ def main() -> int:
                 record["snapshot"] = _snapshot(args.base)
             sink.write(json.dumps(record) + "\n")
             sink.flush()
+
+            # Optional inter-turn think-time (daily-driver pacing). A real
+            # conversation is not zero-gap; the gap lets the runtime's
+            # background cognition and any model-lane recovery breathe.
+            if args.think_seconds > 0 and n < len(script):
+                time.sleep(args.think_seconds)
 
             if n % 10 == 0:
                 snap = record.get("snapshot") or {}
