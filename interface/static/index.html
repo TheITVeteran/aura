@@ -196,12 +196,71 @@
         <div class="splash-content">
             <div class="splash-title-lockup" aria-label="Aura Luna">
                 <span class="splash-logo-word splash-logo-left" aria-hidden="true">AURA</span>
+                <!-- The sigil is real SVG geometry: each electron rides its own
+                     ellipse via animateMotion/mpath, so it is exactly on the
+                     curve and stays circular. The previous CSS build stretched
+                     circles with scaleX, which deformed the dots into ovals and
+                     left them off the path they were meant to trace. -->
                 <div class="splash-sigil" aria-hidden="true">
-                    <div class="splash-sigil-core"></div>
-                    <div class="splash-sigil-orbit orbit-a"></div>
-                    <div class="splash-sigil-orbit orbit-b"></div>
-                    <div class="splash-sigil-orbit orbit-c"></div>
-                    <div class="splash-sigil-pulse"></div>
+                    <svg class="splash-sigil-svg" viewBox="0 0 200 200" role="presentation" focusable="false">
+                        <defs>
+                            <radialGradient id="sigil-core-fill" cx="38%" cy="34%" r="72%">
+                                <stop offset="0%" stop-color="#ffffff"/>
+                                <stop offset="20%" stop-color="#a8fff4"/>
+                                <stop offset="58%" stop-color="#9a4bff"/>
+                                <stop offset="100%" stop-color="#170727"/>
+                            </radialGradient>
+                            <radialGradient id="sigil-halo-fill" cx="50%" cy="50%" r="50%">
+                                <stop offset="0%" stop-color="#57eaff" stop-opacity="0.42"/>
+                                <stop offset="55%" stop-color="#9a4bff" stop-opacity="0.16"/>
+                                <stop offset="100%" stop-color="#9a4bff" stop-opacity="0"/>
+                            </radialGradient>
+                            <filter id="sigil-bloom" x="-60%" y="-60%" width="220%" height="220%">
+                                <feGaussianBlur stdDeviation="2.4" result="blur"/>
+                                <feMerge>
+                                    <feMergeNode in="blur"/>
+                                    <feMergeNode in="SourceGraphic"/>
+                                </feMerge>
+                            </filter>
+                            <!-- Ellipses drawn as paths so <mpath> can reference them. -->
+                            <path id="sigil-orbit-a" d="M 100,100 m -82,0 a 82,31 0 1,0 164,0 a 82,31 0 1,0 -164,0"/>
+                            <path id="sigil-orbit-b" d="M 100,100 m -82,0 a 82,31 0 1,0 164,0 a 82,31 0 1,0 -164,0"/>
+                            <path id="sigil-orbit-c" d="M 100,100 m -82,0 a 82,31 0 1,0 164,0 a 82,31 0 1,0 -164,0"/>
+                        </defs>
+
+                        <circle cx="100" cy="100" r="96" fill="url(#sigil-halo-fill)"/>
+
+                        <g class="sigil-orbits" filter="url(#sigil-bloom)" fill="none">
+                            <g transform="rotate(0 100 100)">
+                                <use href="#sigil-orbit-a" stroke="#00ffe1" stroke-opacity="0.72" stroke-width="1.6"/>
+                                <circle class="sigil-electron" r="4.2" fill="#eaffff">
+                                    <animateMotion dur="8s" repeatCount="indefinite" rotate="auto">
+                                        <mpath href="#sigil-orbit-a"/>
+                                    </animateMotion>
+                                </circle>
+                            </g>
+                            <g transform="rotate(62 100 100)">
+                                <use href="#sigil-orbit-b" stroke="#b55cff" stroke-opacity="0.64" stroke-width="1.6"/>
+                                <circle class="sigil-electron" r="3.6" fill="#f4e8ff">
+                                    <animateMotion dur="9.5s" begin="-3.1s" repeatCount="indefinite" rotate="auto">
+                                        <mpath href="#sigil-orbit-b"/>
+                                    </animateMotion>
+                                </circle>
+                            </g>
+                            <g transform="rotate(-58 100 100)">
+                                <use href="#sigil-orbit-c" stroke="#57eaff" stroke-opacity="0.5" stroke-width="1.4"/>
+                                <circle class="sigil-electron" r="3.2" fill="#e6fbff">
+                                    <animateMotion dur="11s" begin="-6.4s" repeatCount="indefinite" rotate="auto">
+                                        <mpath href="#sigil-orbit-c"/>
+                                    </animateMotion>
+                                </circle>
+                            </g>
+                        </g>
+
+                        <circle class="sigil-pulse" cx="100" cy="100" r="26"
+                            fill="none" stroke="#00e5ff" stroke-opacity="0.55" stroke-width="1"/>
+                        <circle class="sigil-core" cx="100" cy="100" r="22" fill="url(#sigil-core-fill)"/>
+                    </svg>
                 </div>
                 <span class="splash-logo-word splash-logo-right" aria-hidden="true">LUNA</span>
             </div>

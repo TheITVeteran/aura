@@ -3118,21 +3118,37 @@ body.accent-amber { --primary: #f59e0b; --primary-bright: #fbbf24; --accent: #fc
     margin: 0 auto 34px;
     filter: drop-shadow(0 0 20px rgba(159, 75, 255, 0.28));
 }
+/* Scanline-cut wordmark. The glyphs are filled by a repeating gradient that is
+ * clipped to the text, so the transparent bands read as stripes cut through the
+ * type (the IBM/MANIAC device). Bloom uses drop-shadow rather than text-shadow
+ * because drop-shadow blooms the *striped* result — text-shadow would paint a
+ * solid glow behind transparent glyphs and fill the stripes back in.
+ * Stripe pitch is in em so it tracks the clamped font size. */
 .splash-logo-word {
+    --wordmark-stripe: 0.055em;
+    --wordmark-ink: #c98bff;
+    --wordmark-glow-1: rgba(181, 92, 255, 0.9);
+    --wordmark-glow-2: rgba(181, 92, 255, 0.5);
+    --wordmark-glow-3: rgba(0, 229, 255, 0.24);
     font-family: var(--font-head);
     font-size: clamp(2.8rem, 8vw, 8.2rem);
     font-weight: 900;
     line-height: 0.86;
     letter-spacing: 0.02em;
-    color: #b55cff;
     text-transform: uppercase;
     font-variant-ligatures: none;
-    text-shadow:
-        0 0 2px #fff,
-        0 0 10px rgba(181, 92, 255, 0.82),
-        0 0 28px rgba(181, 92, 255, 0.46),
-        0 0 72px rgba(0, 229, 255, 0.22);
-    -webkit-text-stroke: 1px rgba(237, 220, 255, 0.22);
+    color: transparent;
+    background-image: repeating-linear-gradient(
+        180deg,
+        var(--wordmark-ink) 0 var(--wordmark-stripe),
+        rgba(255, 255, 255, 0.06) var(--wordmark-stripe) calc(var(--wordmark-stripe) * 1.92)
+    );
+    -webkit-background-clip: text;
+    background-clip: text;
+    filter:
+        drop-shadow(0 0 3px var(--wordmark-glow-1))
+        drop-shadow(0 0 14px var(--wordmark-glow-2))
+        drop-shadow(0 0 46px var(--wordmark-glow-3));
     animation: neonTitleFlicker 5.5s ease-in-out infinite;
 }
 .splash-logo-left {
@@ -3140,12 +3156,10 @@ body.accent-amber { --primary: #f59e0b; --primary-bright: #fbbf24; --accent: #fc
 }
 .splash-logo-right {
     justify-self: start;
-    color: #57eaff;
-    text-shadow:
-        0 0 2px #fff,
-        0 0 10px rgba(87, 234, 255, 0.78),
-        0 0 28px rgba(87, 234, 255, 0.42),
-        0 0 72px rgba(181, 92, 255, 0.20);
+    --wordmark-ink: #7ef1ff;
+    --wordmark-glow-1: rgba(87, 234, 255, 0.9);
+    --wordmark-glow-2: rgba(87, 234, 255, 0.46);
+    --wordmark-glow-3: rgba(181, 92, 255, 0.22);
 }
 .splash-sigil {
     position: relative;
@@ -3156,65 +3170,40 @@ body.accent-amber { --primary: #f59e0b; --primary-bright: #fbbf24; --accent: #fc
         drop-shadow(0 0 10px rgba(0, 255, 225, 0.62))
         drop-shadow(0 0 26px rgba(159, 75, 255, 0.44));
 }
-.splash-sigil-core,
-.splash-sigil-pulse {
-    position: absolute;
-    inset: 34%;
-    border-radius: 50%;
+.splash-sigil-svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
 }
-.splash-sigil-core {
-    background: radial-gradient(circle at 40% 35%, #fff 0%, #8dfff2 18%, #9a4bff 56%, #11051e 100%);
-    box-shadow:
-        0 0 12px rgba(255, 255, 255, 0.75),
-        0 0 34px rgba(0, 229, 255, 0.72),
-        0 0 60px rgba(154, 71, 255, 0.55);
+.sigil-core {
+    filter: drop-shadow(0 0 7px rgba(255, 255, 255, 0.7)) drop-shadow(0 0 18px rgba(0, 229, 255, 0.6));
 }
-.splash-sigil-pulse {
-    border: 1px solid rgba(0, 229, 255, 0.55);
+.sigil-pulse {
+    transform-box: fill-box;
+    transform-origin: center;
     animation: sigilPulse 2.7s ease-in-out infinite;
 }
-.splash-sigil-orbit {
-    position: absolute;
-    inset: 12%;
-    border: 2px solid rgba(0, 255, 225, 0.72);
-    border-radius: 50%;
-    box-shadow:
-        0 0 7px rgba(0, 255, 225, 0.56),
-        inset 0 0 7px rgba(0, 255, 225, 0.22);
+/* The whole orbit cage counter-rotates slowly; each electron's own motion is
+ * driven by animateMotion along its real path, so nothing drifts off-curve. */
+.sigil-orbits {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: sigilCage 34s linear infinite;
 }
-.splash-sigil-orbit::before,
-.splash-sigil-orbit::after {
-    content: "";
-    position: absolute;
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: #eaffff;
-    box-shadow: 0 0 10px #57eaff, 0 0 18px rgba(181, 92, 255, 0.5);
+@keyframes sigilCage {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
 }
-.splash-sigil-orbit::before {
-    top: -4px;
-    left: 50%;
-}
-.splash-sigil-orbit::after {
-    bottom: -4px;
-    right: 22%;
-}
-.splash-sigil-orbit.orbit-a {
-    transform: rotate(0deg) scaleX(1.08);
-    animation: sigilOrbitA 8s linear infinite;
-}
-.splash-sigil-orbit.orbit-b {
-    inset: 18%;
-    transform: rotate(60deg) scaleX(1.42);
-    border-color: rgba(181, 92, 255, 0.64);
-    animation: sigilOrbitB 9.5s linear infinite;
-}
-.splash-sigil-orbit.orbit-c {
-    inset: 24%;
-    transform: rotate(-58deg) scaleX(1.55);
-    border-color: rgba(87, 234, 255, 0.48);
-    animation: sigilOrbitC 11s linear infinite;
+@media (prefers-reduced-motion: reduce) {
+    .sigil-orbits,
+    .sigil-pulse,
+    .splash-logo-word {
+        animation: none;
+    }
+    .splash-sigil-svg animateMotion {
+        display: none;
+    }
 }
 
 /* ── Text logo ────────────────────────────────────── */
@@ -3337,28 +3326,18 @@ body.accent-amber { --primary: #f59e0b; --primary-bright: #fbbf24; --accent: #fc
     from { opacity: 0; transform: translateY(30px) scale(0.97); }
     to   { opacity: 1; transform: translateY(0)   scale(1); }
 }
+/* Opacity only: this element carries its neon bloom in `filter`, and animating
+ * `filter` here would replace that whole chain and flatten the glow. */
 @keyframes neonTitleFlicker {
-    0%, 100% { opacity: 0.97; filter: brightness(1); }
-    8% { opacity: 0.90; filter: brightness(0.92); }
-    9% { opacity: 1; filter: brightness(1.16); }
+    0%, 100% { opacity: 0.97; }
+    8%  { opacity: 0.90; }
+    9%  { opacity: 1; }
     53% { opacity: 0.94; }
     54% { opacity: 1; }
 }
 @keyframes sigilPulse {
     0%, 100% { transform: scale(0.76); opacity: 0.35; }
     50% { transform: scale(2.22); opacity: 0.06; }
-}
-@keyframes sigilOrbitA {
-    from { transform: rotate(0deg) scaleX(1.08); }
-    to { transform: rotate(360deg) scaleX(1.08); }
-}
-@keyframes sigilOrbitB {
-    from { transform: rotate(60deg) scaleX(1.42); }
-    to { transform: rotate(420deg) scaleX(1.42); }
-}
-@keyframes sigilOrbitC {
-    from { transform: rotate(-58deg) scaleX(1.55); }
-    to { transform: rotate(302deg) scaleX(1.55); }
 }
 @keyframes orbPulse {
     0%, 100% {
