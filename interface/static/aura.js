@@ -4185,27 +4185,28 @@ async function pollHealth() {
 
         if (d.soma) {
             const s = d.soma;
-            updateGauge('s-thermal', (s.thermal_load || 0) * 100, 's-thermal-val');
-            updateGauge('s-anxiety', (s.resource_anxiety || 0) * 100, 's-anxiety-val');
-            updateGauge('s-vitality', (s.vitality || 0) * 100, 's-vitality-val');
+            updateGauge('s-thermal', pct01(s.thermal_load), 's-thermal-val');
+            updateGauge('s-anxiety', pct01(s.resource_anxiety), 's-anxiety-val');
+            updateGauge('s-vitality', pct01(s.vitality), 's-vitality-val');
         }
 
         if (d.homeostasis) {
+            // No `?? 0` tail: if none of the three report, the gauge must say
+            // "unknown" rather than assert full-confidence zero.
             const homeostasisConfidenceGauge = d.homeostasis.operational_confidence
                 ?? d.homeostasis.vitality
-                ?? d.homeostasis.will_to_live
-                ?? 0;
-            updateGauge('g-integrity', (d.homeostasis.integrity || 0) * 100, 'g-integrity-val');
-            updateGauge('g-persistence', (d.homeostasis.persistence || 0) * 100, 'g-persistence-val');
-            updateGauge('g-confidence', homeostasisConfidenceGauge * 100, 'g-confidence-val');
+                ?? d.homeostasis.will_to_live;
+            updateGauge('g-integrity', pct01(d.homeostasis.integrity), 'g-integrity-val');
+            updateGauge('g-persistence', pct01(d.homeostasis.persistence), 'g-persistence-val');
+            updateGauge('g-confidence', pct01(homeostasisConfidenceGauge), 'g-confidence-val');
         }
 
         if (d.moral) {
-            updateGauge('s-moral', (d.moral.integrity || 0) * 100, 's-moral-val');
+            updateGauge('s-moral', pct01(d.moral.integrity), 's-moral-val');
         }
 
         if (d.social) {
-            updateGauge('s-social', (d.social.depth || 0) * 100, 's-social-val');
+            updateGauge('s-social', pct01(d.social.depth), 's-social-val');
         }
 
         if (d.swarm) {
@@ -4216,19 +4217,19 @@ async function pollHealth() {
         // ── Phase III: Qualitative State Engine ──
         if (d.qualia) {
             const q = d.qualia;
-            const priEl = $('q-pri');
-            const normEl = $('q-norm');
             const dimEl = $('q-dim');
             const attEl = $('q-attractor');
-            if (priEl) priEl.textContent = (q.pri || 0).toFixed(3);
-            if (normEl) normEl.textContent = (q.q_norm || 0).toFixed(3);
-            if (dimEl) dimEl.textContent = (q.dominant_dim || '--').toUpperCase();
+            setTelemetryValue('q-pri', q.pri, { digits: 3 });
+            setTelemetryValue('q-norm', q.q_norm, { digits: 3 });
+            if (dimEl) dimEl.textContent = (q.dominant_dim || TELEMETRY_UNKNOWN).toUpperCase();
             if (attEl) {
                 attEl.textContent = q.in_attractor ? 'LOCKED' : 'FLUID';
                 attEl.style.color = q.in_attractor ? 'var(--success)' : 'var(--accent)';
             }
             if ($('q-identity')) {
-                $('q-identity').textContent = (q.identity_coherence || 100).toFixed(1) + '%';
+                // Previously `|| 100`: an absent field asserted perfect identity
+                // coherence, the most flattering possible lie.
+                setTelemetryValue('q-identity', q.identity_coherence, { digits: 1, suffix: '%' });
                 $('q-identity').style.color = (q.identity_coherence > 90) ? 'var(--success)' : 'var(--accent)';
             }
         }
@@ -4349,10 +4350,12 @@ async function pollHealth() {
                 pnOnline.textContent  = p.online ? 'ONLINE' : 'OFFLINE';
                 pnOnline.style.color  = p.online  ? 'var(--success)' : 'var(--error)';
             }
-            if ($('pn-temp'))     $('pn-temp').textContent     = (p.temperature   || 0.7).toFixed(3);
-            if ($('pn-arousal'))  $('pn-arousal').textContent  = (p.arousal        || 0).toFixed(3);
-            if ($('pn-stability'))$('pn-stability').textContent= (p.stability      || 0).toFixed(3);
-            if ($('pn-attractors'))$('pn-attractors').textContent = p.attractor_count || 0;
+            // `|| 0.7` invented a plausible default temperature for a field that
+            // was never reported; unknown now reads as unknown.
+            setTelemetryValue('pn-temp', p.temperature, { digits: 3 });
+            setTelemetryValue('pn-arousal', p.arousal, { digits: 3 });
+            setTelemetryValue('pn-stability', p.stability, { digits: 3 });
+            setTelemetryValue('pn-attractors', p.attractor_count);
         }
 
         // ── MHAF Field ──
@@ -4363,10 +4366,10 @@ async function pollHealth() {
                 mhOnline.textContent  = mh.online ? 'ONLINE' : 'OFFLINE';
                 mhOnline.style.color  = mh.online  ? 'var(--success)' : 'var(--error)';
             }
-            if ($('mhaf-phi'))     $('mhaf-phi').textContent     = (mh.phi    || 0).toFixed(4);
-            if ($('mhaf-nodes'))   $('mhaf-nodes').textContent   = mh.nodes   || 0;
-            if ($('mhaf-edges'))   $('mhaf-edges').textContent   = mh.edges   || 0;
-            if ($('mhaf-lexicon')) $('mhaf-lexicon').textContent = mh.lexicon_size || 0;
+            setTelemetryValue('mhaf-phi', mh.phi, { digits: 4 });
+            setTelemetryValue('mhaf-nodes', mh.nodes);
+            setTelemetryValue('mhaf-edges', mh.edges);
+            setTelemetryValue('mhaf-lexicon', mh.lexicon_size);
         }
 
         // ── Security ──
@@ -4574,11 +4577,44 @@ async function togglePrivacy(type, currentEnabled, btn) {
     }
 }
 
+// ── Telemetry honesty ─────────────────────────────────────
+// A gauge fed `field || 0` renders a missing subsystem as a confident 0%,
+// which is indistinguishable from a real measured zero. These helpers keep
+// "unknown" distinct from "zero" so the panel cannot claim a reading it does
+// not have. The markup already ships `--` placeholders for exactly this state.
+const TELEMETRY_UNKNOWN = '--';
+
+function telemetryKnown(value) {
+    return value != null && Number.isFinite(Number(value));
+}
+
+/** Scale a 0..1 field to a percentage, preserving unknown instead of collapsing to 0. */
+function pct01(value) {
+    return telemetryKnown(value) ? Number(value) * 100 : null;
+}
+
+/** Write a numeric telemetry value, or the unknown state when it is absent. */
+function setTelemetryValue(id, value, { digits = 0, suffix = '' } = {}) {
+    const el = $(id);
+    if (!el) return;
+    const known = telemetryKnown(value);
+    el.textContent = known ? Number(value).toFixed(digits) + suffix : TELEMETRY_UNKNOWN;
+    el.classList.toggle('telemetry-unknown', !known);
+}
+
 function updateGauge(id, val, textId) {
     const bar = $(id);
     const text = $(textId);
-    if (bar) bar.style.width = Math.min(100, Math.max(0, val)) + '%';
-    if (text) text.textContent = val.toFixed(0) + '%';
+    const known = telemetryKnown(val);
+    const pct = known ? Math.min(100, Math.max(0, Number(val))) : 0;
+    if (bar) {
+        bar.style.width = pct + '%';
+        bar.classList.toggle('gauge-unknown', !known);
+    }
+    if (text) {
+        text.textContent = known ? pct.toFixed(0) + '%' : TELEMETRY_UNKNOWN;
+        text.classList.toggle('telemetry-unknown', !known);
+    }
 }
 
 function fmtUptime(sec) {

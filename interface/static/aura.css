@@ -2208,8 +2208,13 @@ body.neural-visual-paused #pane-neural .live-dot {
     background: var(--panel-solid);
     border: 1px solid var(--border);
     border-radius: 6px;
-    padding: 14px;
+    padding: 14px 10px;
     text-align: center;
+    /* Grid items default to min-width:auto, so a long value like
+     * FOREGROUND_CHAT_ACTIVE forced the box wider than its column and pushed
+     * the neighbouring card off the panel. */
+    min-width: 0;
+    overflow: hidden;
 }
 
 .con-val {
@@ -2218,6 +2223,12 @@ body.neural-visual-paused #pane-neural .live-dot {
     color: var(--accent);
     display: block;
     margin-bottom: 4px;
+    /* Long enum values must wrap inside the card instead of overflowing it. */
+    min-width: 0;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    hyphens: auto;
+    line-height: 1.2;
 }
 
 .con-lbl {
@@ -2225,6 +2236,25 @@ body.neural-visual-paused #pane-neural .live-dot {
     text-transform: uppercase;
     color: var(--text-dim);
     letter-spacing: 1px;
+    display: block;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+/* "No reading" must never look like a reading. */
+.telemetry-unknown {
+    color: var(--text-dim);
+    opacity: 0.55;
+    font-weight: 500;
+}
+
+.gauge-unknown {
+    background: repeating-linear-gradient(
+        90deg,
+        rgba(255, 255, 255, 0.16) 0 4px,
+        transparent 4px 8px
+    );
+    box-shadow: none;
 }
 
 .narrative-box {
