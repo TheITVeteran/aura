@@ -1647,7 +1647,11 @@ function applyBootstrapPayload(payload, { hydrateConversationHistory = false } =
     state.runtimeHealthBlockers = runtimeHealthBlockers(payload);
     if (payload.identity && payload.identity.version) {
         state.version = payload.identity.version;
-        if ($('ui-ver')) $('ui-ver').textContent = payload.identity.version;
+        state.identityName = payload.identity.name || state.identityName;
+        // The header already renders the name in .brand-title, so the chip beside
+        // it shows only the build ("v2026.4.20-Zenith"), never "Aura Luna Aura Luna v…".
+        const buildLabel = compactBuildLabel(payload.identity.build || payload.identity.version);
+        if ($('ui-ver')) $('ui-ver').textContent = buildLabel;
         if ($('setting-version')) $('setting-version').textContent = payload.identity.version;
     }
 
@@ -4087,7 +4091,7 @@ async function pollHealth() {
 
         if (d.version) {
             const verEl = $('ui-ver');
-            if (verEl) verEl.textContent = d.version;
+            if (verEl) verEl.textContent = compactBuildLabel(d.build || d.version);
         }
 
         const cpuEl = $('hud-cpu');
@@ -4098,6 +4102,10 @@ async function pollHealth() {
         const pcoreEl = $('hud-pcore');
         const pcoreVal = d.cortex ? d.cortex.p_core_usage : 0;
         if (pcoreEl) pcoreEl.textContent = Math.round(pcoreVal || 0) + '%';
+
+        // Vital labels change width as they fill in, which the container-level
+        // ResizeObserver cannot see. Re-measure after each health poll.
+        hudOverflow.schedule();
 
         if (d.cortex) {
             const c = d.cortex;
@@ -4579,6 +4587,20 @@ function fmtUptime(sec) {
     const h = Math.floor(sec / 3600);
     const m = Math.floor((sec % 3600) / 60);
     return h + 'h' + m + 'm';
+}
+
+// The runtime reports version as "Aura Luna v2026.4.20-Zenith" — the name is
+// already in the wordmark next to the chip, so drop a leading identity name and
+// keep the build. Falls back to the raw string when it carries no name prefix.
+function compactBuildLabel(raw) {
+    let label = String(raw == null ? '' : raw).trim();
+    if (!label) return '';
+    const name = String(state.identityName || 'Aura Luna').trim();
+    if (name) {
+        const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        label = label.replace(new RegExp('^' + escaped + '[\\s\\u00b7:-]*', 'i'), '').trim();
+    }
+    return label || String(raw).trim();
 }
 
 // ── Skills ───────────────────────────────────────────────
@@ -5873,6 +5895,127 @@ function regenerateResponse() {
 }
 
 $('regen-btn')?.addEventListener('click', regenerateResponse);
+
+// ── Header vitals overflow ────────────────────────────────
+// The header carries 19 vitals but only ~4 fit beside the brand and actions.
+// They used to render into a clipped, scrollbar-less strip, so CPU/RAM/UPTIME
+// and the autonomy flags were invisible with no affordance. Stats that do not
+// fit are moved into a popover and counted on a "+N" chip, so every vital stays
+// reachable at every width. Nodes are moved, never rebuilt, so the
+// getElementById updates that drive them keep working wherever they live.
+const hudOverflow = (() => {
+    const STRIP_GAP = 12;      // matches .hud-stats-inner gap
+    const CHIP_RESERVE = 62;   // width kept free for the "+N" chip
+    let order = null;
+    let scheduled = false;
+
+    const els = () => ({
+        stats: $('hud-stats'),
+        inner: $('hud-stats-inner'),
+        btn: $('hud-overflow-btn'),
+        panel: $('hud-overflow-panel'),
+        count: $('hud-overflow-count'),
+    });
+
+    function setOpen(open) {
+        const { btn, panel } = els();
+        if (!btn || !panel) return;
+        panel.hidden = !open;
+        btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+
+    function isOpen() {
+        const { panel } = els();
+        return !!panel && !panel.hidden;
+    }
+
+    function sync() {
+        const { stats, inner, btn, panel, count } = els();
+        if (!stats || !inner || !btn || !panel || !count) return;
+        if (!order) order = Array.from(inner.children);
+        if (!order.length) return;
+
+        const reopen = isOpen();
+        // Measure with every stat back in the strip, in canonical order.
+        for (const el of order) inner.appendChild(el);
+
+        const budget = stats.clientWidth;
+        if (budget <= 0) return; // header not laid out yet
+        const widths = order.map(el => el.getBoundingClientRect().width);
+        const total = widths.reduce((a, w) => a + w, 0) + STRIP_GAP * (order.length - 1);
+
+        const overflow = [];
+        if (total > budget) {
+            const limit = budget - CHIP_RESERVE;
+            let used = 0;
+            order.forEach((el, i) => {
+                if (overflow.length) { overflow.push(el); return; }
+                const next = used + widths[i] + (used ? STRIP_GAP : 0);
+                if (next > limit) overflow.push(el);
+                else used = next;
+            });
+        }
+        for (const el of overflow) panel.appendChild(el);
+
+        btn.hidden = overflow.length === 0;
+        count.textContent = '+' + overflow.length;
+        if (btn.hidden) setOpen(false);
+        else if (reopen) setOpen(true);
+    }
+
+    function schedule() {
+        if (scheduled) return;
+        scheduled = true;
+        const run = () => {
+            if (!scheduled) return; // whichever trigger lands first wins
+            scheduled = false;
+            sync();
+        };
+        // requestAnimationFrame never fires while the shell is in a hidden or
+        // background window, which would latch `scheduled` and lock the strip
+        // out permanently. The timer guarantees the flag is always cleared.
+        requestAnimationFrame(run);
+        setTimeout(run, 250);
+    }
+
+    function init() {
+        const { stats, btn, panel } = els();
+        if (!stats || !btn || !panel) return;
+
+        btn.addEventListener('click', (event) => {
+            event.stopPropagation();
+            setOpen(panel.hidden);
+        });
+        document.addEventListener('click', (event) => {
+            if (!isOpen()) return;
+            if (panel.contains(event.target) || btn.contains(event.target)) return;
+            setOpen(false);
+        });
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape' && isOpen()) setOpen(false);
+        });
+        // Observe the container, not the content: this reacts to viewport and
+        // brand/action width changes without re-entering on our own moves.
+        if (typeof ResizeObserver !== 'undefined') {
+            new ResizeObserver(schedule).observe(stats);
+        }
+        window.addEventListener('resize', schedule);
+        // Widths measured while hidden can be stale; re-measure on return.
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) schedule();
+        });
+        schedule();
+    }
+
+    return { init, schedule };
+})();
+
+hudOverflow.init();
+// Values change width as they populate ("0s" -> "1h20m"); re-measure when the
+// document's fonts settle so the first paint is not measured against fallbacks.
+if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(() => hudOverflow.schedule()).catch(() => {});
+}
 
 function markLegacyShellReady() {
     window.__auraLegacyShellReady = true;

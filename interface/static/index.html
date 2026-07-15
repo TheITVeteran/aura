@@ -282,14 +282,14 @@
         <div class="brand">
             <div class="brand-icon"></div>
             <span class="brand-title">Aura Luna</span>
-            <span class="brand-ver" id="ui-ver">Aura Luna</span>
+            <span class="brand-ver" id="ui-ver"></span>
             <div class="brand-status" aria-live="polite">
                 <span class="brand-status-dot" id="brand-status-dot"></span>
                 <span class="brand-status-text" id="hud-status">booting</span>
             </div>
         </div>
-        <div class="hud-stats">
-            <div class="hud-stats-inner">
+        <div class="hud-stats" id="hud-stats">
+            <div class="hud-stats-inner" id="hud-stats-inner">
                 <div class="hud-stat agency">AGENCY <strong id="hud-agency">--</strong></div>
                 <div class="hud-stat curiosity">CURIOSITY <strong id="hud-curiosity">--</strong></div>
                 <div class="hud-stat fixes">FIXES <strong id="hud-fixes">0</strong></div>
@@ -310,6 +310,13 @@
                 <div class="hud-stat cycles">CYCLES <strong id="hud-cycles">0</strong></div>
                 <div class="hud-stat">UPTIME <strong id="hud-uptime">0s</strong></div>
             </div>
+            <button class="hud-overflow-btn" id="hud-overflow-btn" type="button" hidden
+                aria-expanded="false" aria-controls="hud-overflow-panel"
+                title="Show the vitals that don't fit">
+                <span id="hud-overflow-count">+0</span>
+            </button>
+            <div class="hud-overflow-panel" id="hud-overflow-panel" role="group"
+                aria-label="Additional vitals" hidden></div>
         </div>
         <div class="hdr-actions">
             <button class="hdr-btn privacy-btn" id="btn-mute" title="Toggle Voice">● MUTE</button>
