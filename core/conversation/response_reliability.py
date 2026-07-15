@@ -303,6 +303,59 @@ _SUBSTANTIVE_OVERLAP_STOPWORDS = {
     "without",
     "would",
 }
+_COUNT_CONTRACT_TOPIC_STOPWORDS = _SUBSTANTIVE_OVERLAP_STOPWORDS | {
+    "answer",
+    "brief",
+    "briefly",
+    "concise",
+    "concisely",
+    "count",
+    "describe",
+    "diagnostic",
+    "diagnostics",
+    "directly",
+    "else",
+    "exact",
+    "exactly",
+    "explain",
+    "following",
+    "include",
+    "including",
+    "matter",
+    "matters",
+    "nothing",
+    "only",
+    "please",
+    "probe",
+    "provide",
+    "reply",
+    "respond",
+    "response",
+    "sample",
+    "sentence",
+    "sentences",
+    "short",
+    "state",
+    "summarize",
+    "supplied",
+    "using",
+    "words",
+    "write",
+}
+_COUNT_CONTRACT_META_REPLY_RE = re.compile(
+    r"\b(?:exactly|requested|required|specified)\s+"
+    r"(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+"
+    r"(?:words?|sentences?)\b"
+    r"|\b(?:word|sentence)\s+count\b"
+    r"|\b(?:words?|sentences?)\s+(?:detected|provided|requested|required|used)\b",
+    re.IGNORECASE,
+)
+_PUNCTUATION_JOIN_ARTIFACT_RE = re.compile(
+    r"\b(?P<left>[A-Za-z]{3,})(?P<mark>[.!?])(?P<right>[A-Za-z]{4,})\b"
+)
+_COMMON_DOMAIN_SUFFIXES = frozenset(
+    {"app", "com", "dev", "edu", "gov", "io", "net", "org"}
+)
 _RAW_MODEL_IDENTITY_LEAK_RE = re.compile(
     r"\b(?:"
     r"(?:i(?:'m| am| was)?\s+)?(?:aura\s+)?(?:was\s+)?"
@@ -1403,6 +1456,16 @@ _EXACT_REPLY_CONDITIONAL_TAIL_RE = re.compile(
     r"(?:if|when|unless|otherwise|else|or(?:\s+(?:reply|respond|say|use))?)\b",
     re.IGNORECASE,
 )
+_EXACT_REPLY_ADDITIONAL_ACTION_TAIL_RE = re.compile(
+    r"(?:"
+    r"[.!?;]\s*(?:(?:then|next|also)\s*,?\s*)?"
+    r"|\s+(?:and\s+)?then\s+"
+    r"|\s+(?:and\s+)?(?:also|next)\s+"
+    r")"
+    r"(?:please\s+)?(?:explain|describe|justify|elaborate|summarize|tell|show|"
+    r"compare|list|discuss|answer|reply|respond|write|provide|include)\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -1750,15 +1813,17 @@ def requested_exact_reply_target(user_message: Any) -> str:
                 cursor += 1
             if close_index <= 1:
                 continue
-            conditional_tail = _EXACT_REPLY_UNQUOTED_SUFFIX_RE.sub(
+            trailing_meta = _EXACT_REPLY_UNQUOTED_SUFFIX_RE.sub(
                 "",
                 remainder[close_index + 1 :],
             ).strip()
-            if _EXACT_REPLY_CONDITIONAL_TAIL_RE.search(conditional_tail):
+            if trailing_meta.strip(".!?;:, "):
                 continue
             target = "".join(target_chars).strip()
         else:
             target = remainder.strip()
+            if _EXACT_REPLY_ADDITIONAL_ACTION_TAIL_RE.search(target):
+                continue
             target = _EXACT_REPLY_UNQUOTED_SUFFIX_RE.sub("", target).rstrip()
             if _EXACT_REPLY_CONDITIONAL_TAIL_RE.search(target):
                 continue
@@ -2423,6 +2488,111 @@ def _default_followup_question(user_message: Any) -> str:
     return "What outcome would make this most useful for you right now?"
 
 
+def _topic_token_forms(token: Any) -> set[str]:
+    word = str(token or "").strip("'\"").lower()
+    if word.endswith("'s"):
+        word = word[:-2]
+    if not word:
+        return set()
+    forms = {word}
+    if len(word) > 5 and word.endswith("ies"):
+        forms.add(f"{word[:-3]}y")
+    if len(word) > 5 and word.endswith("ing"):
+        forms.update({word[:-3], f"{word[:-3]}e"})
+    if len(word) > 4 and word.endswith("ed"):
+        forms.update({word[:-2], f"{word[:-1]}e"})
+    if len(word) > 4 and word.endswith("es"):
+        forms.add(word[:-2])
+    if len(word) > 4 and word.endswith("s") and not word.endswith("ss"):
+        forms.add(word[:-1])
+    return {form for form in forms if len(form) >= 3}
+
+
+def _count_contract_topic_anchors(user_message: Any) -> set[str]:
+    anchors: set[str] = set()
+    for token in _WORD_RE.findall(str(user_message or "")):
+        word = token.lower().removesuffix("'s")
+        if len(word) < 4:
+            continue
+        if word in _COUNT_CONTRACT_TOPIC_STOPWORDS or word in _NUMBER_WORDS:
+            continue
+        anchors.update(_topic_token_forms(word))
+    return anchors
+
+
+def _reply_topic_forms(reply_text: Any) -> set[str]:
+    forms: set[str] = set()
+    for token in _WORD_RE.findall(str(reply_text or "")):
+        forms.update(_topic_token_forms(token))
+    return forms
+
+
+def _has_punctuation_join_artifact(reply_text: Any) -> bool:
+    raw = str(reply_text or "")
+    for match in _PUNCTUATION_JOIN_ARTIFACT_RE.finditer(raw):
+        if match.group("mark") == "." and match.group("right").lower() in _COMMON_DOMAIN_SUFFIXES:
+            continue
+        return True
+    return False
+
+
+def _count_contract_quality_reasons(user_message: Any, reply_text: Any) -> list[str]:
+    word_range = _requested_word_count_range(user_message)
+    sentence_count = _requested_sentence_count(user_message)
+    if word_range is None and sentence_count is None:
+        return []
+
+    raw = str(reply_text or "").strip()
+    reasons: list[str] = []
+    if _has_punctuation_join_artifact(raw):
+        reasons.append("punctuation_join_artifact")
+    if _COUNT_CONTRACT_META_REPLY_RE.search(raw):
+        reasons.append("output_contract_meta_reply")
+
+    # One-to-three-word factual values often cannot repeat the question's noun
+    # without violating the user-authored count. Longer bounded prose can and
+    # should retain a concrete topic anchor so old-context drift is detectable.
+    maximum_words = word_range[1] if word_range is not None else None
+    if maximum_words is not None and maximum_words <= 3:
+        return reasons
+    if _word_count(raw) < 4:
+        return reasons
+    reply_forms = _reply_topic_forms(raw)
+    requested_references = _requested_reference_values(user_message)
+    if requested_references and all(
+        _reply_contains_reference_value(raw, value)
+        for _label, value in requested_references
+    ):
+        reference_label_forms = {
+            form
+            for label, _value in requested_references
+            for token in _WORD_RE.findall(label)
+            for form in _topic_token_forms(token)
+        }
+        if reference_label_forms & reply_forms:
+            return reasons
+    anchors = _count_contract_topic_anchors(user_message)
+    if anchors and not (anchors & reply_forms):
+        reasons.append("missing_current_topic_anchor")
+    return reasons
+
+
+def _safe_complete_word_count_candidate(
+    user_message: Any,
+    reply_text: Any,
+    *,
+    minimum_words: int,
+    maximum_words: int,
+) -> str:
+    for sentence in _split_sentences(reply_text):
+        count = _word_count(sentence)
+        if count < minimum_words or count > maximum_words:
+            continue
+        if not _count_contract_quality_reasons(user_message, sentence):
+            return sentence.strip()
+    return ""
+
+
 def _word_count_repair_fillers(user_message: Any) -> list[str]:
     user_norm = _normalize(user_message)
     if any(marker in user_norm for marker in ("diagnostic", "probe", "health", "status")):
@@ -2440,10 +2610,19 @@ def _fit_reply_to_requested_word_count(user_message: Any, reply_text: Any) -> st
     if minimum_words <= 0 or maximum_words <= 0:
         return str(reply_text or "").strip()
 
-    words = _WORD_RE.findall(str(reply_text or ""))
+    original = str(reply_text or "").strip()
+    words = _WORD_RE.findall(original)
     if len(words) > maximum_words:
-        words = words[:maximum_words]
+        complete_candidate = _safe_complete_word_count_candidate(
+            user_message,
+            original,
+            minimum_words=minimum_words,
+            maximum_words=maximum_words,
+        )
+        return complete_candidate or original
     elif len(words) < minimum_words:
+        if _count_contract_topic_anchors(user_message):
+            return original
         fillers = _word_count_repair_fillers(user_message)
         filler_index = 0
         seen = {word.lower() for word in words}
@@ -4585,7 +4764,7 @@ def assess_user_facing_reply(
     ):
         words = _word_count(raw)
         explicit_brevity = _explicit_brevity_requested(user_message)
-        if _LOW_SIGNAL_REASSURANCE_RE.match(raw) or words < 2:
+        if not explicit_brevity and (_LOW_SIGNAL_REASSURANCE_RE.match(raw) or words < 2):
             reasons.append("too_short_for_user_turn")
         elif words < 6 and not _is_tiny_direct_turn(user_message) and not explicit_brevity:
             if not (words >= 3 and any(w in raw.lower() for w in ("thinking", "working", "processing", "online"))):
@@ -4601,6 +4780,7 @@ def assess_user_facing_reply(
 
     reasons.extend(_instruction_coverage_reasons(user_message, raw))
     reasons.extend(_semantic_coverage_reasons(user_message, raw))
+    reasons.extend(_count_contract_quality_reasons(user_message, raw))
     if _has_question_back_non_answer(user_message, raw):
         reasons.append("question_back_non_answer")
     if _missing_current_request_recap(user_message, raw):
@@ -4656,6 +4836,8 @@ def assess_user_facing_reply(
         "unsupported_affection_claim",
         "unsupported_self_telemetry_claim",
         "format_meta_artifact",
+        "output_contract_meta_reply",
+        "punctuation_join_artifact",
         "search_meta_artifact",
         "low_signal_acknowledgement_placeholder",
         "question_back_non_answer",
@@ -4689,6 +4871,7 @@ def assess_user_facing_reply(
         "missing_requested_choice_clarification",
         "missing_requested_word_count",
         "missing_requested_sentence_count",
+        "missing_current_topic_anchor",
         "missing_requested_exact_reply",
         "missing_requested_reference_value",
         "missing_requested_followup_question",

@@ -932,6 +932,29 @@ def test_exact_reply_contract_does_not_collapse_conditional_or_disjunctive_branc
     assert repair_instruction_shape(prompt, "no") == "no"
 
 
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        'Reply exactly: "yes". Then explain why.',
+        'Reply exactly: "yes" and then explain why.',
+        "Reply exactly yes and then explain why.",
+        "Reply exactly yes. Next, describe the result.",
+    ],
+)
+def test_exact_reply_contract_does_not_discard_followup_actions(prompt):
+    from core.conversation.response_reliability import (
+        repair_instruction_shape,
+        requested_exact_reply_target,
+        requested_output_contract,
+    )
+
+    assert requested_exact_reply_target(prompt) == ""
+    assert requested_output_contract(prompt).kind == "none"
+    assert repair_instruction_shape(prompt, "yes, because the check passed") == (
+        "yes, because the check passed"
+    )
+
+
 def test_sentence_count_repair_pads_short_reply_without_inventing_domain_facts():
     from core.conversation.response_reliability import (
         assess_user_facing_reply,
@@ -1108,6 +1131,78 @@ def test_repair_instruction_shape_fits_explicit_word_count():
 
     assert repaired == "Yes I'm here and listening."
     assert assessment.ok
+
+
+@pytest.mark.parametrize(
+    ("reply", "expected_reason"),
+    [
+        ("Is web search explicitly mentioned.", "missing_current_topic_anchor"),
+        ("Verification requires tamper evidence.utschein", "punctuation_join_artifact"),
+        ("Verification detected exactly five words.", "output_contract_meta_reply"),
+        ("Garbage detection in data streams.", "missing_current_topic_anchor"),
+        ("Bit corruption visibly affects legitimacy.", "missing_current_topic_anchor"),
+    ],
+)
+def test_count_constrained_reply_rejects_observed_live_semantic_failures(
+    reply,
+    expected_reason,
+):
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "In exactly five words, state why checksums matter.",
+        reply,
+    )
+
+    assert assessment.retryable
+    assert expected_reason in assessment.reasons
+
+
+def test_count_constrained_reply_accepts_relevant_complete_answer():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "In exactly five words, state why checksums matter.",
+        "Checksums expose silent data corruption.",
+    )
+
+    assert assessment.ok
+    assert assessment.reasons == ()
+
+
+def test_tiny_count_constrained_factual_answer_does_not_require_prompt_noun():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "Name France's capital in exactly one word.",
+        "Paris",
+    )
+
+    assert assessment.ok
+    assert assessment.reasons == ()
+
+
+def test_word_count_repair_refuses_irrelevant_prefix_truncation():
+    from core.conversation.response_reliability import repair_instruction_shape
+
+    prompt = "In exactly five words, state why checksums matter."
+    draft = "Is web search explicitly mentioned. Checksums expose silent data corruption reliably."
+
+    assert repair_instruction_shape(prompt, draft) == draft
+
+
+def test_word_count_repair_selects_complete_relevant_sentence():
+    from core.conversation.response_reliability import (
+        assess_user_facing_reply,
+        repair_instruction_shape,
+    )
+
+    prompt = "In exactly five words, state why checksums matter."
+    draft = "Checksums expose silent data corruption. Extra unrelated tail follows."
+    repaired = repair_instruction_shape(prompt, draft)
+
+    assert repaired == "Checksums expose silent data corruption."
+    assert assess_user_facing_reply(prompt, repaired).ok
 
 
 def test_short_non_brevity_user_turn_still_rejects_thin_reply():

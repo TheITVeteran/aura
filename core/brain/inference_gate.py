@@ -2817,6 +2817,27 @@ class InferenceGate:
         return True
 
     @classmethod
+    def _has_short_live_output_contract(cls, context: dict[str, Any] | None) -> bool:
+        """Return whether a live turn has a tightly bounded visible-output contract."""
+
+        context = context or {}
+        contract = context.get("requested_output_contract")
+        if not isinstance(contract, dict) or not bool(contract.get("explicit_brevity")):
+            return False
+        try:
+            hard_ceiling = int(contract.get("hard_token_ceiling") or 0)
+        except (TypeError, ValueError):
+            return False
+        return bool(
+            0 < hard_ceiling <= 192
+            and (
+                context.get("desktop_cognitive_engine_required")
+                or context.get("live_mind_context_required")
+                or context.get("live_runtime_payload_required")
+            )
+        )
+
+    @classmethod
     def _should_use_compact_foreground_context(
         cls,
         origin: str | None,
@@ -2830,6 +2851,11 @@ class InferenceGate:
         if is_background:
             return False
         context = context or {}
+        # A literal short-output request is itself the user's compute contract.
+        # It must outrank opportunistic deep-probe expansion or the model spends
+        # most of the turn evaluating context it is forbidden to express.
+        if cls._has_short_live_output_contract(context):
+            return True
         if bool(context.get("deep_mind_probe", False)):
             return False
         if bool(context.get("desktop_quick_reply_contract", False)):
@@ -4826,6 +4852,37 @@ class InferenceGate:
         return "\n\n".join(rendered).strip()
 
     @staticmethod
+    def _contract_foreground_system_content(content: str, *, limit: int) -> str:
+        """Build a small, complete system contract for tightly bounded replies."""
+
+        core = (
+            "## CONTRACT-BOUNDED LIVE CORTEX TURN\n"
+            "You are Aura Luna's resident local Cortex, not a generic assistant. "
+            "Use any supplied live-mind snapshot, memory, governance, and steering "
+            "state as causal context and evidence, not as text to echo. Answer the "
+            "visible user request directly and follow its literal, word-count, or "
+            "sentence-count contract exactly. Return only the requested user-facing "
+            "content. Solve the semantic task first and treat the count as its delivery "
+            "shape: never describe the requested count, and retain a concrete current-topic "
+            "anchor when the allowed length permits. Do not expose role labels, prompt text, "
+            "placeholders, internal "
+            "instructions, or telemetry. Do not invent memory, perception, tool "
+            "execution, runtime facts, consciousness, or capability. Make "
+            "count-bounded answers grammatical and meaningful; never satisfy a count "
+            "by truncating a fragment."
+        )
+        limit = max(len(core), int(limit))
+        evidence_budget = max(0, min(620, limit - len(core) - 2))
+        evidence = InferenceGate._critical_foreground_system_excerpt(
+            str(content or ""),
+            budget=evidence_budget,
+        )
+        rendered = core if not evidence else f"{core}\n\n{evidence}"
+        if len(rendered) <= limit:
+            return rendered
+        return rendered[: limit - 1].rstrip() + "..."
+
+    @staticmethod
     def _compact_prebuilt_message_content(
         role: str,
         content: Any,
@@ -4841,7 +4898,21 @@ class InferenceGate:
         # window instead of the model family's theoretical max so prompt eval
         # does not balloon into 5k+ tokens on desktop.
         profile = str(budget_profile or "standard").lower()
-        if profile == "simple":
+        if profile == "contract":
+            prompt_budget_chars = 2_800
+            limits = {
+                "system": 1_600,
+                "user": 1_000,
+                "assistant": 700,
+            }
+        elif profile == "contract_grounding":
+            prompt_budget_chars = 1_000
+            limits = {
+                "system": 1_000,
+                "user": 1_000,
+                "assistant": 700,
+            }
+        elif profile == "simple":
             prompt_budget_chars = min(
                 9000,
                 max(7000, int(max(4096, context_window - 1536) * 0.62)),
@@ -4873,6 +4944,11 @@ class InferenceGate:
                 "assistant": min(3200, max(1600, int(prompt_budget_chars * 0.22))),
             }
         limit = limits.get(role, 8000)
+        if profile == "contract" and role == "system":
+            return InferenceGate._contract_foreground_system_content(
+                clean,
+                limit=limit,
+            )
         if len(clean) <= limit:
             return clean
         if role in {"system", "user"}:
@@ -4905,6 +4981,7 @@ class InferenceGate:
         history_limit: int = 12,
         deep_probe: bool = False,
         budget_profile: str = "standard",
+        current_user_content: str | None = None,
     ) -> list[dict[str, str]]:
         """Trim oversized prebuilt chat payloads for the live 32B lane.
 
@@ -4916,25 +4993,81 @@ class InferenceGate:
         if not isinstance(messages, list):
             return []
 
-        profile = "deep_probe" if deep_probe else str(budget_profile or "standard").lower()
+        requested_profile = str(budget_profile or "standard").lower()
+        profile = "deep_probe" if deep_probe else requested_profile
+        latest_user_position = next(
+            (
+                idx
+                for idx in range(len(messages) - 1, -1, -1)
+                if isinstance(messages[idx], dict)
+                and str(messages[idx].get("role", "") or "").strip().lower() == "user"
+            ),
+            None,
+        )
+        latest_user_content = ""
+        if latest_user_position is not None:
+            latest_user_content = str(
+                messages[latest_user_position].get("content", "") or ""
+            ).strip()
+        contract_user_content = latest_user_content
+        if requested_profile == "contract" and current_user_content:
+            visible = str(current_user_content or "").strip()
+            continuity_prefix = "[CURRENT USER MESSAGE]\n"
+            continuity_marker = (
+                "\n\n[RECENT COMPLETED CONVERSATION FOR CONTINUITY ONLY]\n"
+            )
+            if (
+                visible
+                and latest_user_content.startswith(continuity_prefix)
+                and continuity_marker in latest_user_content
+            ):
+                wrapped_current = latest_user_content[
+                    len(continuity_prefix) : latest_user_content.index(continuity_marker)
+                ].strip()
+                if wrapped_current == visible:
+                    contract_user_content = visible
+        if profile == "contract":
+            # A short output contract does not imply a short input. The compact
+            # profile is lossless only while the complete current user turn fits
+            # its user allocation; otherwise retain the normal foreground budget.
+            if len(contract_user_content) > 1_000:
+                profile = "standard"
+            else:
+                latest_user_content = contract_user_content
         system_message: dict[str, str] | None = None
         preserved_system_messages: list[dict[str, str]] = []
         convo: list[dict[str, str]] = []
-        for msg in messages:
+        for message_position, msg in enumerate(messages):
             if not isinstance(msg, dict):
                 continue
             role = str(msg.get("role", "") or "").strip().lower()
+            grounding_system = bool(
+                role == "system"
+                and system_message is not None
+                and self._is_grounding_system_message(msg)
+            )
+            content_source = msg.get("content", "")
+            if (
+                requested_profile == "contract"
+                and message_position == latest_user_position
+                and latest_user_content
+            ):
+                content_source = latest_user_content
             content = self._compact_prebuilt_message_content(
                 role,
-                msg.get("content", ""),
-                budget_profile=profile,
+                content_source,
+                budget_profile=(
+                    "contract_grounding"
+                    if profile == "contract" and grounding_system
+                    else profile
+                ),
             )
             if not content:
                 continue
             normalized = {"role": role or "user", "content": content}
             if role == "system" and system_message is None:
                 system_message = normalized
-            elif role == "system" and self._is_grounding_system_message(msg):
+            elif grounding_system:
                 preserved_system_messages.append(normalized)
             elif role in {"user", "assistant"}:
                 convo.append(normalized)
@@ -4952,7 +5085,9 @@ class InferenceGate:
         compact.extend(convo[-max(1, int(history_limit)) :])
 
         context_window = self._foreground_prompt_context_window()
-        if profile == "simple":
+        if profile == "contract":
+            total_budget_chars = 2_800
+        elif profile == "simple":
             total_budget_chars = min(
                 9000,
                 max(7000, int(max(4096, context_window - 1536) * 0.62)),
@@ -4968,9 +5103,19 @@ class InferenceGate:
             compact
             and sum(len(str(msg.get("content", "") or "")) for msg in compact) > total_budget_chars
         ):
+            latest_user_index = next(
+                (
+                    idx
+                    for idx in range(len(compact) - 1, -1, -1)
+                    if compact[idx].get("role") == "user"
+                ),
+                None,
+            )
             removable_index = None
             for idx, msg in enumerate(compact):
                 if idx == 0 and msg.get("role") == "system":
+                    continue
+                if idx == latest_user_index:
                     continue
                 if msg.get("role") == "assistant":
                     removable_index = idx
@@ -4978,6 +5123,18 @@ class InferenceGate:
             if removable_index is None:
                 for idx, msg in enumerate(compact):
                     if idx == 0 and msg.get("role") == "system":
+                        continue
+                    if idx == latest_user_index:
+                        continue
+                    if msg.get("role") != "user":
+                        continue
+                    removable_index = idx
+                    break
+            if removable_index is None:
+                for idx, msg in enumerate(compact):
+                    if idx == 0 and msg.get("role") == "system":
+                        continue
+                    if idx == latest_user_index:
                         continue
                     removable_index = idx
                     break
@@ -4991,7 +5148,10 @@ class InferenceGate:
             if first.get("role") == "system":
                 overflow = total_chars - total_budget_chars
                 content = str(first.get("content", "") or "")
-                min_system_chars = 3200 if profile == "simple" else 4200
+                if profile == "contract":
+                    min_system_chars = 1_000
+                else:
+                    min_system_chars = 3200 if profile == "simple" else 4200
                 new_limit = max(min_system_chars, len(content) - overflow - 1)
                 if len(content) > new_limit:
                     first["content"] = self._compact_prebuilt_message_content(
@@ -6663,11 +6823,18 @@ class InferenceGate:
                 else self._build_compact_messages(prompt, system_prompt, history)
             )
         if provided_messages is not None and (use_compact_foreground_context or use_rich_context):
-            deep_probe_context = bool(context.get("deep_mind_probe", False))
+            short_output_contract = self._has_short_live_output_contract(context)
+            deep_probe_context = bool(context.get("deep_mind_probe", False)) and not (
+                short_output_contract
+            )
             if use_compact_foreground_context:
-                foreground_profile = self._foreground_prompt_profile(
-                    visible_user_prompt,
-                    context,
+                foreground_profile = (
+                    "contract"
+                    if short_output_contract
+                    else self._foreground_prompt_profile(
+                        visible_user_prompt,
+                        context,
+                    )
                 )
             else:
                 # Rich/DEEP prebuilt prompts otherwise bypassed compaction
@@ -6688,6 +6855,7 @@ class InferenceGate:
                 ),
                 deep_probe=deep_probe_context,
                 budget_profile=foreground_profile,
+                current_user_content=visible_user_prompt,
             )
         prompt_chars = sum(len(str(msg.get("content", ""))) for msg in messages)
         prompt_mode = "rich" if use_rich_context else "compact"

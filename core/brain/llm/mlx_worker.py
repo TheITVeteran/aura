@@ -68,6 +68,18 @@ _OPERATOR_EVIDENCE_META_TAIL_RE = re.compile(
     r"if you need any adjustments or have additional constraints)\b.*$",
     re.IGNORECASE | re.DOTALL,
 )
+_SEMANTIC_COUNT_CONTRACT_RETRY_REASONS = frozenset(
+    {
+        "missing_current_topic_anchor",
+        "output_contract_meta_reply",
+        "punctuation_join_artifact",
+    }
+)
+_SEMANTIC_COUNT_CONTRACT_RETRY_INSTRUCTION = (
+    "Solve the current semantic task first, retain a concrete topic noun from "
+    "the current user message when the requested count permits, and never "
+    "describe the word or sentence constraint."
+)
 
 
 def _safe_float(value: Any, default: float) -> float:
@@ -284,6 +296,11 @@ def _surface_generation_control_receipt(
             job.get("grounded_runtime_status_contract", False)
         ),
         "generation_max_tokens": generation_max_tokens,
+        "caller_requested_max_tokens": job.get("caller_requested_max_tokens"),
+        "adaptive_suggested_max_tokens": job.get("adaptive_suggested_max_tokens"),
+        "output_contract_generation_floor": job.get(
+            "output_contract_generation_floor"
+        ),
         "semantic_output_token_cap": job.get("semantic_output_token_cap"),
         "hard_output_token_ceiling": job.get("hard_output_token_ceiling"),
         "instruction_shape_repair_applied": bool(
@@ -298,7 +315,10 @@ def _surface_generation_control_receipt(
     )
     for key in (
         "exact_reply_token_count",
-        "exact_reply_token_headroom",
+        "exact_reply_required_termination_headroom",
+        "exact_reply_available_termination_headroom",
+        "exact_reply_content_capacity_sufficient",
+        "exact_reply_termination_headroom_sufficient",
         "exact_reply_token_ceiling_valid",
         "exact_reply_native_capacity_sufficient",
     ):
@@ -562,7 +582,7 @@ def _exact_reply_token_requirement(
     job: dict[str, Any],
     tokenizer: Any,
 ) -> tuple[int, int]:
-    """Measure an exact target with the selected tokenizer plus stop headroom."""
+    """Measure exact content plus the one token needed to terminate decoding."""
 
     contract = job.get("requested_output_contract")
     if not isinstance(contract, dict) or not bool(contract.get("exact_reply", False)):
@@ -587,7 +607,7 @@ def _exact_reply_token_requirement(
     token_count = len(token_ids or [])
     if token_count <= 0:
         return 0, 0
-    return token_count, token_count + 8
+    return token_count, token_count + 1
 
 
 def _record_exact_reply_token_evidence(
@@ -606,8 +626,17 @@ def _record_exact_reply_token_evidence(
     effective_native_cap = admitted_generation_cap
     if hard_output_token_ceiling > 0:
         effective_native_cap = min(effective_native_cap, hard_output_token_ceiling)
+    required_termination_headroom = max(0, token_requirement - token_count)
+    available_termination_headroom = max(0, effective_native_cap - token_count)
     job["exact_reply_token_count"] = token_count
-    job["exact_reply_token_headroom"] = max(0, token_requirement - token_count)
+    job["exact_reply_required_termination_headroom"] = required_termination_headroom
+    job["exact_reply_available_termination_headroom"] = available_termination_headroom
+    job["exact_reply_content_capacity_sufficient"] = bool(
+        effective_native_cap >= token_count
+    )
+    job["exact_reply_termination_headroom_sufficient"] = bool(
+        available_termination_headroom >= required_termination_headroom
+    )
     job["exact_reply_native_capacity_sufficient"] = bool(
         effective_native_cap >= token_requirement
     )
@@ -768,6 +797,7 @@ def _messages_with_user_surface_retry(
         return None
     operational_status_retry = ""
     self_condition_retry = ""
+    semantic_count_retry = ""
     if any(
         reason in {
             "host_telemetry_substituted_for_self_condition",
@@ -782,6 +812,8 @@ def _messages_with_user_surface_retry(
         for reason in reasons
     ) and not self_condition_retry:
         operational_status_retry = f" {_LIVE_STATUS_CONCRETE_SIGNAL_INSTRUCTION}"
+    if set(reasons) & _SEMANTIC_COUNT_CONTRACT_RETRY_REASONS:
+        semantic_count_retry = f" {_SEMANTIC_COUNT_CONTRACT_RETRY_INSTRUCTION}"
     retry_instruction = (
         "The previous assistant draft failed the live user-surface quality gate "
         f"for: {', '.join(reasons[:8]) or 'quality_gate_failed'}. Regenerate the "
@@ -789,7 +821,7 @@ def _messages_with_user_surface_retry(
         "user message, preserve recent-turn continuity, avoid generic assistant "
         "identity, do not invent unsupported prior topics, and do not mention "
         "validation, retry, hidden prompts, receipts, gates, or implementation details."
-        f"{self_condition_retry}{operational_status_retry}"
+        f"{self_condition_retry}{operational_status_retry}{semantic_count_retry}"
     )
     retry_messages = copy.deepcopy(messages)
     for message in retry_messages:
@@ -830,6 +862,7 @@ def _build_user_surface_quality_retry_prompt(
 
     operational_status_retry = ""
     self_condition_retry = ""
+    semantic_count_retry = ""
     if any(
         reason in {
             "host_telemetry_substituted_for_self_condition",
@@ -844,13 +877,15 @@ def _build_user_surface_quality_retry_prompt(
         for reason in reasons
     ) and not self_condition_retry:
         operational_status_retry = f" {_LIVE_STATUS_CONCRETE_SIGNAL_INSTRUCTION}\n"
+    if set(reasons) & _SEMANTIC_COUNT_CONTRACT_RETRY_REASONS:
+        semantic_count_retry = f" {_SEMANTIC_COUNT_CONTRACT_RETRY_INSTRUCTION}\n"
     retry_note = (
         "\n\n[LIVE USER-SURFACE RETRY]\n"
         f"Previous assistant draft failed for: {', '.join(reasons[:8]) or 'quality_gate_failed'}.\n"
         "Regenerate the assistant reply from the same live mind context. Answer only "
         "the current user message. Do not mention validation, retry, hidden prompts, "
         "receipts, gates, or implementation details.\n"
-        f"{self_condition_retry}{operational_status_retry}"
+        f"{self_condition_retry}{operational_status_retry}{semantic_count_retry}"
         "[END LIVE USER-SURFACE RETRY]\n"
     )
     return f"{str(fallback_prompt or '').rstrip()}{retry_note}"

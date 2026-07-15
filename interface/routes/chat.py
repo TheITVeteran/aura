@@ -4286,6 +4286,17 @@ def _enforce_final_requested_output_contract(
 ) -> str:
     """Revalidate the typed output contract after every late chat mutation."""
 
+    trace.update(
+        {
+            "final_requested_output_contract_evaluated": False,
+            "final_requested_output_contract_required": None,
+            "final_requested_output_contract_kind": "",
+            "final_requested_output_contract_satisfied": False,
+            "final_requested_output_contract_reasons": [
+                "evaluation_not_completed"
+            ],
+        }
+    )
     try:
         from core.conversation.response_reliability import (
             assess_user_facing_reply,
@@ -4295,15 +4306,46 @@ def _enforce_final_requested_output_contract(
 
         contract = requested_output_contract(user_message)
         if not contract.constrained:
+            trace.update(
+                {
+                    "final_requested_output_contract_evaluated": True,
+                    "final_requested_output_contract_required": False,
+                    "final_requested_output_contract_kind": str(
+                        getattr(contract, "kind", "none") or "none"
+                    ),
+                    "final_requested_output_contract_satisfied": True,
+                    "final_requested_output_contract_reasons": [],
+                }
+            )
             return str(reply_text or "")
         assessment = assess_user_facing_reply(user_message, reply_text)
         if assessment.ok:
+            trace.update(
+                {
+                    "final_requested_output_contract_evaluated": True,
+                    "final_requested_output_contract_required": True,
+                    "final_requested_output_contract_kind": str(contract.kind or ""),
+                    "final_requested_output_contract_satisfied": True,
+                    "final_requested_output_contract_reasons": [],
+                }
+            )
             return str(reply_text or "")
         repaired = repair_instruction_shape(user_message, reply_text)
         final_assessment = assess_user_facing_reply(user_message, repaired)
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
         record_degradation("chat.final_output_contract", exc)
         logger.error("Final requested-output contract enforcement failed: %s", exc)
+        trace.update(
+            {
+                "final_requested_output_contract_evaluated": False,
+                "final_requested_output_contract_required": None,
+                "final_requested_output_contract_kind": "unknown",
+                "final_requested_output_contract_satisfied": False,
+                "final_requested_output_contract_reasons": [
+                    f"evaluation_error:{type(exc).__name__}"
+                ],
+            }
+        )
         return str(reply_text or "")
 
     _append_turn_text_mutation(
@@ -4320,6 +4362,17 @@ def _enforce_final_requested_output_contract(
             "Final requested-output contract remains unsatisfied after repair (%s).",
             ",".join(final_assessment.reasons) or "unknown",
         )
+    trace.update(
+        {
+            "final_requested_output_contract_evaluated": True,
+            "final_requested_output_contract_required": True,
+            "final_requested_output_contract_kind": str(contract.kind or ""),
+            "final_requested_output_contract_satisfied": bool(final_assessment.ok),
+            "final_requested_output_contract_reasons": list(
+                final_assessment.reasons or ()
+            ),
+        }
+    )
     return str(repaired or "")
 
 
@@ -4399,6 +4452,9 @@ def _build_live_turn_contract_payload(
                 "surface_quality_gate_reasons",
                 "surface_quality_gate_error",
                 "generation_max_tokens",
+                "caller_requested_max_tokens",
+                "adaptive_suggested_max_tokens",
+                "output_contract_generation_floor",
                 "generated_tokens",
                 "semantic_output_token_cap",
                 "hard_output_token_ceiling",
@@ -4407,7 +4463,10 @@ def _build_live_turn_contract_payload(
                 "text_mutations",
                 "text_mutation_count",
                 "exact_reply_token_count",
-                "exact_reply_token_headroom",
+                "exact_reply_required_termination_headroom",
+                "exact_reply_available_termination_headroom",
+                "exact_reply_content_capacity_sufficient",
+                "exact_reply_termination_headroom_sufficient",
                 "exact_reply_token_ceiling_valid",
                 "exact_reply_native_capacity_sufficient",
                 "requested_output_contract",
@@ -4463,6 +4522,23 @@ def _build_live_turn_contract_payload(
         or trace.get("deterministic_repair_applied", False)
         or (legacy_post_generation_repair_applied and not text_mutations)
     )
+    final_output_contract_evaluated = bool(
+        trace.get("final_requested_output_contract_evaluated", True)
+    )
+    final_output_contract_required = bool(
+        trace.get("final_requested_output_contract_required", False)
+    )
+    final_output_contract_satisfied = bool(
+        trace.get("final_requested_output_contract_satisfied", True)
+    )
+    final_output_contract_proven = bool(
+        final_output_contract_evaluated
+        and (
+            not final_output_contract_required
+            or final_output_contract_satisfied
+        )
+    )
+    model_native_output = bool(not post_generation_repair_applied)
     live_mind_controls_structurally_bound = bool(
         (not live_mind_context_required)
         or (
@@ -4502,6 +4578,7 @@ def _build_live_turn_contract_payload(
         and architecture_context_bound
         and live_mind_snapshot_bound
         and live_mind_controls_structurally_bound
+        and final_output_contract_proven
     )
     subsystems = _collect_live_chat_required_subsystems(
         lane,
@@ -4539,6 +4616,10 @@ def _build_live_turn_contract_payload(
         missing_proofs.append("live_mind_snapshot_not_ready")
     if not live_mind_controls_structurally_bound:
         missing_proofs.append("live_mind_controls_unbound")
+    if not final_output_contract_evaluated:
+        missing_proofs.append("final_output_contract_not_evaluated")
+    elif final_output_contract_required and not final_output_contract_satisfied:
+        missing_proofs.append("final_output_contract_unsatisfied")
     if not required_subsystems_ok:
         missing_proofs.extend(
             f"subsystem:{name}"
@@ -4576,6 +4657,16 @@ def _build_live_turn_contract_payload(
         "worker_instruction_shape_repair_applied": worker_instruction_shape_repair_applied,
         "post_generation_repair_applied": post_generation_repair_applied,
         "deterministic_repair_applied": deterministic_repair_applied,
+        "model_native_output": model_native_output,
+        "final_text_authorship": (
+            "model_native"
+            if model_native_output
+            else (
+                "cognitive_generation_with_recorded_transformations"
+                if engine_think_invoked
+                else "non_cognitive_replacement"
+            )
+        ),
         "text_mutations": text_mutations,
         "text_mutation_count": len(text_mutations),
         "generation_max_tokens": live_mind_surface_control_receipt.get(
@@ -4591,6 +4682,16 @@ def _build_live_turn_contract_payload(
         "requested_output_contract": live_mind_surface_control_receipt.get(
             "requested_output_contract"
         ),
+        "final_requested_output_contract_evaluated": final_output_contract_evaluated,
+        "final_requested_output_contract_required": final_output_contract_required,
+        "final_requested_output_contract_kind": str(
+            trace.get("final_requested_output_contract_kind") or ""
+        ),
+        "final_requested_output_contract_satisfied": final_output_contract_satisfied,
+        "final_requested_output_contract_reasons": list(
+            trace.get("final_requested_output_contract_reasons") or []
+        ),
+        "final_requested_output_contract_proven": final_output_contract_proven,
         "live_mind_controls_structurally_bound": live_mind_controls_structurally_bound,
         "live_mind_required_subsystems_ok": live_mind_required_subsystems_ok,
         "preflight_live_mind_required_subsystems_ok": preflight_live_mind_required_subsystems_ok,
@@ -7583,6 +7684,26 @@ def _is_stale_repeated_response(text: str) -> bool:
         logger.debug("Fuzzy stale detection triggered (overlap count=%d).", fuzzy_count)
         return True
     return False
+
+
+def _is_actionably_stale_response(user_message: str, text: str) -> bool:
+    """Return whether repetition is stale for this request's output contract.
+
+    An explicit exact-reply contract can legitimately produce identical bytes on
+    consecutive turns. Exempt only a response that exactly satisfies the parsed
+    target; ordinary repetition and conditional/disjunctive prompts retain the
+    normal stale-response protection.
+    """
+    if not _is_stale_repeated_response(text):
+        return False
+    try:
+        from core.conversation.response_reliability import requested_exact_reply_target
+
+        exact_target = requested_exact_reply_target(user_message)
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat.output_contract", exc)
+        return True
+    return not (exact_target and str(text or "").strip() == exact_target)
 
 
 _EQUIVALENT_REPAIR_PROMPT_GROUPS = (
@@ -11443,7 +11564,7 @@ async def _stabilize_user_facing_reply(
         text,
         recent_user_messages=recent_user_messages,
     )
-    stale_repeat = _is_stale_repeated_response(text)
+    stale_repeat = _is_actionably_stale_response(user_message, text)
     same_diff = _is_same_answer_different_prompt(user_message, text)
     truncated_tail = _looks_truncated_tail(text)
     semantic_glitch, semantic_glitch_reason = _looks_semantically_glitched(user_message, text)
@@ -11619,7 +11740,7 @@ async def _stabilize_user_facing_reply(
                 cleaned,
                 recent_user_messages=recent_user_messages,
             )
-            cleaned_stale_repeat = _is_stale_repeated_response(cleaned)
+            cleaned_stale_repeat = _is_actionably_stale_response(user_message, cleaned)
             cleaned_same_diff = _is_same_answer_different_prompt(user_message, cleaned)
             cleaned_truncated_tail = _looks_truncated_tail(cleaned)
             cleaned_semantic_glitch, _cleaned_semantic_reason = _looks_semantically_glitched(user_message, cleaned)
@@ -11854,7 +11975,10 @@ async def _stabilize_user_facing_reply(
                         corrected_text,
                         recent_user_messages=recent_user_messages,
                     )
-                    corrected_stale_repeat = _is_stale_repeated_response(corrected_text)
+                    corrected_stale_repeat = _is_actionably_stale_response(
+                        user_message,
+                        corrected_text,
+                    )
                     corrected_same_diff = _is_same_answer_different_prompt(user_message, corrected_text)
                     corrected_truncated_tail = _looks_truncated_tail(corrected_text)
                     corrected_semantic_glitch, _corrected_semantic_reason = _looks_semantically_glitched(user_message, corrected_text)
@@ -11982,7 +12106,7 @@ async def _stabilize_user_facing_reply(
                 same_diff,
                 len(text),
             )
-        elif not _is_stale_repeated_response(text):
+        elif not _is_actionably_stale_response(user_message, text):
             _record_recent_response(text, user_message)
             return text
         else:
@@ -12001,7 +12125,7 @@ async def _stabilize_user_facing_reply(
     # Voice reflex is the final fallback — record it too so we can detect
     # if even the reflex is looping.
     reflex = _call_stateful_voice_reflex(frame, user_message)
-    if _is_stale_repeated_response(reflex):
+    if _is_actionably_stale_response(user_message, reflex):
         # Even the reflex is repeating — use a simple honest fallback
         import random
         reflex = random.choice([
@@ -12194,7 +12318,7 @@ async def _repair_final_degraded_reply(
     completed_tail = _complete_repairable_truncated_reply(user_message, reply_text)
     if completed_tail:
         completed_tail = _apply_aura_voice_shaping_compat(completed_tail, user_message)
-        completed_stale = _is_stale_repeated_response(completed_tail)
+        completed_stale = _is_actionably_stale_response(user_message, completed_tail)
         completed_same_diff = _is_same_answer_different_prompt(user_message, completed_tail)
         completed_off_topic, completed_off_topic_reason = _evaluate_reply_topicality(
             user_message,
@@ -12231,7 +12355,7 @@ async def _repair_final_degraded_reply(
     if repair_instruction_shape is not None and assessment is not None:
         shaped = repair_instruction_shape(user_message, reply_text)
         if shaped and shaped != str(reply_text or "").strip():
-            shaped_stale = _is_stale_repeated_response(shaped)
+            shaped_stale = _is_actionably_stale_response(user_message, shaped)
             shaped_same_diff = _is_same_answer_different_prompt(user_message, shaped)
             shaped_off_topic, shaped_off_topic_reason = _evaluate_reply_topicality(
                 user_message,
@@ -12268,7 +12392,7 @@ async def _repair_final_degraded_reply(
         delta_repaired = _repair_missing_followup_delta(user_message, reply_text)
         if delta_repaired and delta_repaired != str(reply_text or "").strip():
             delta_repaired = _apply_aura_voice_shaping_compat(delta_repaired, user_message)
-            delta_stale = _is_stale_repeated_response(delta_repaired)
+            delta_stale = _is_actionably_stale_response(user_message, delta_repaired)
             delta_same_diff = _is_same_answer_different_prompt(user_message, delta_repaired)
             delta_off_topic, delta_off_topic_reason = _evaluate_reply_topicality(
                 user_message,
@@ -12311,7 +12435,7 @@ async def _repair_final_degraded_reply(
         )
     else:
         repaired = await _stabilize_user_facing_reply(user_message, reply_text)
-    repaired_stale = _is_stale_repeated_response(repaired)
+    repaired_stale = _is_actionably_stale_response(user_message, repaired)
     repaired_same_diff = _is_same_answer_different_prompt(user_message, repaired)
     repaired_off_topic, repaired_off_topic_reason = _evaluate_reply_topicality(
         user_message,
@@ -12350,7 +12474,7 @@ async def _repair_final_degraded_reply(
 
     floor = reliability_floor_for_user(user_message) if reliability_floor_for_user else ""
     if floor:
-        floor_stale = _is_stale_repeated_response(floor)
+        floor_stale = _is_actionably_stale_response(user_message, floor)
         floor_same_diff = _is_same_answer_different_prompt(user_message, floor)
         floor_off_topic, floor_off_topic_reason = _evaluate_reply_topicality(
             user_message,
@@ -12389,7 +12513,7 @@ async def _repair_final_degraded_reply(
 
     frame = _build_aura_expression_frame(user_message)
     reflex = _build_stateful_voice_reflex(frame, user_message)
-    reflex_stale = _is_stale_repeated_response(reflex)
+    reflex_stale = _is_actionably_stale_response(user_message, reflex)
     reflex_same_diff = _is_same_answer_different_prompt(user_message, reflex)
     reflex_off_topic, reflex_off_topic_reason = _evaluate_reply_topicality(
         user_message,
@@ -16591,7 +16715,10 @@ async def api_chat(
             try:
                 if not (is_governed_action_status or is_memory_state_status):
                     recent_user_messages = await _gather_recent_user_messages_for_relevance(_semantic_user_message)
-                    is_stale = _is_stale_repeated_response(final_text)
+                    is_stale = _is_actionably_stale_response(
+                        _semantic_user_message,
+                        final_text,
+                    )
                     is_same_diff = _is_same_answer_different_prompt(_semantic_user_message, final_text)
                     is_off_topic, off_topic_reason = _evaluate_reply_topicality(
                         _semantic_user_message,
@@ -16847,7 +16974,10 @@ async def api_chat(
                 protected_foreground_lane=True,
             )
             recent_user_messages = await _gather_recent_user_messages_for_relevance(_semantic_user_message)
-            is_stale = _is_stale_repeated_response(stabilized)
+            is_stale = _is_actionably_stale_response(
+                _semantic_user_message,
+                stabilized,
+            )
             is_same_diff = _is_same_answer_different_prompt(_semantic_user_message, stabilized)
             is_off_topic, off_topic_reason = _evaluate_reply_topicality(
                 _semantic_user_message,
@@ -18374,7 +18504,7 @@ async def api_chat(
 
         global _consecutive_degraded_count
         response_confidence = "high"
-        is_stale = _is_stale_repeated_response(reply_text)
+        is_stale = _is_actionably_stale_response(_semantic_user_message, reply_text)
         is_same_diff = _is_same_answer_different_prompt(_semantic_user_message, reply_text)
         recent_user_messages = await _gather_recent_user_messages_for_relevance(_semantic_user_message)
         is_off_topic, off_topic_reason = _evaluate_reply_topicality(
@@ -18898,6 +19028,59 @@ async def api_chat(
             status=_final_status,
             reply_source=reply_source,
         )
+        if not bool(
+            final_live_turn_contract.get("final_requested_output_contract_proven")
+        ):
+            logger.error(
+                "Final requested-output contract is unproven; failing closed "
+                "(kind=%s reasons=%s).",
+                final_live_turn_contract.get("final_requested_output_contract_kind")
+                or "unknown",
+                ",".join(
+                    final_live_turn_contract.get(
+                        "final_requested_output_contract_reasons"
+                    )
+                    or []
+                )
+                or "unknown",
+            )
+            fail_closed_reply = (
+                "The requested output contract could not be verified for this turn, "
+                "so no unverified answer was delivered."
+            )
+            _append_turn_text_mutation(
+                _live_turn_trace,
+                stage="chat.final_requested_output_contract_fail_closed",
+                method="deterministic_contract_failure_replacement",
+                reasons=["final_requested_output_contract_unproven"],
+                before=_final_reply,
+                after=fail_closed_reply,
+                deterministic=True,
+            )
+            _live_turn_trace.update(
+                {
+                    "cognitive_engine_reply_accepted": False,
+                    "cognitive_engine_reply_failed": True,
+                    "response_path": "requested_output_contract_not_proven",
+                }
+            )
+            failed_contract = _live_turn_contract(
+                lane_status=lane_status,
+                response_confidence="failed_closed",
+                status="requested_output_contract_not_proven",
+                reply_source="requested_output_contract_not_proven",
+            )
+            return JSONResponse(
+                {
+                    "response": fail_closed_reply,
+                    "status": "requested_output_contract_not_proven",
+                    "reason": "requested_output_contract_not_proven",
+                    "conversation_lane": lane_status,
+                    "response_confidence": "failed_closed",
+                    "live_turn_contract": failed_contract,
+                },
+                status_code=503,
+            )
         if (
             desktop_requires_cognitive_engine
             and not bool(final_live_turn_contract.get("full_mind_path"))

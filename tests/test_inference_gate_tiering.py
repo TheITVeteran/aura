@@ -929,6 +929,57 @@ async def test_explicit_output_contract_overrides_foreground_floor_and_is_receip
 
 
 @pytest.mark.asyncio
+async def test_prebuilt_short_output_contract_uses_contract_prompt_profile(monkeypatch):
+    gate = InferenceGate()
+    cortex = _RecordingClient("yes")
+    gate._mlx_client = cortex
+    prompt = 'Reply exactly: "yes"'
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "## INTRINSIC IDENTITY ANCHOR (IMMUTABLE)\n"
+                + ("identity and runtime state " * 800)
+                + "\n[LIVE MIND CONTEXT]\n"
+                + '{"must_answer_from_full_mind_path": true}\n'
+                + "[END LIVE MIND CONTEXT]\n"
+            ),
+        },
+        {"role": "user", "content": prompt},
+    ]
+    monkeypatch.setenv("AURA_CORTEX_CTX", "8192")
+
+    with replace("core.brain.llm.mlx_client.get_mlx_client", return_value=_FakeClient("fallback")):
+        with replace("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
+            with replace("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
+                result = await gate.generate(
+                    prompt,
+                    context={
+                        "origin": "desktop_quick_user",
+                        "prefer_tier": "primary",
+                        "foreground_request": True,
+                        "protected_foreground_lane": True,
+                        "desktop_quick_reply_contract": True,
+                        "desktop_cognitive_engine_required": True,
+                        "live_mind_context_required": True,
+                        "live_runtime_payload_required": True,
+                        "allow_mesh_cognition": False,
+                        "visible_user_message": prompt,
+                        "messages": messages,
+                    },
+                )
+
+    assert result == "yes"
+    rendered_messages = cortex.kwargs[0]["messages"]
+    assert sum(len(message["content"]) for message in rendered_messages) <= 2_800
+    assert rendered_messages[0]["content"].startswith(
+        "## CONTRACT-BOUNDED LIVE CORTEX TURN"
+    )
+    assert "[LIVE MIND CONTEXT]" in rendered_messages[0]["content"]
+    assert rendered_messages[-1] == {"role": "user", "content": prompt}
+
+
+@pytest.mark.asyncio
 async def test_parent_output_repair_is_distinguished_from_model_native_compliance(monkeypatch):
     gate = InferenceGate()
     cortex = _ReceiptRecordingClient(
@@ -1188,6 +1239,194 @@ def test_required_desktop_system_compaction_preserves_live_mind_sections(monkeyp
     assert "[LIVE MIND CONTEXT]" in compact
     assert "must_answer_from_full_mind_path" in compact
     assert "## USER-FACING CONVERSATION RELIABILITY CONTRACT" in compact
+
+
+def test_short_output_contract_profile_keeps_live_evidence_in_small_complete_prompt(
+    monkeypatch,
+):
+    monkeypatch.setenv("AURA_CORTEX_CTX", "8192")
+    gate = InferenceGate.__new__(InferenceGate)
+    current_user = 'Reply exactly: "yes"'
+    system_prompt = (
+        "## INTRINSIC IDENTITY ANCHOR (IMMUTABLE)\n"
+        + ("identity context " * 400)
+        + "\n[LIVE MIND CONTEXT]\n"
+        + '{"must_answer_from_full_mind_path": true, "required_subsystems_ok": true}\n'
+        + "[END LIVE MIND CONTEXT]\n"
+        + ("older state " * 500)
+        + "\n## USER-FACING CONVERSATION RELIABILITY CONTRACT\n"
+        + "Answer the current user turn directly.\n"
+    )
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": "old user turn"},
+        {"role": "assistant", "content": "old assistant turn"},
+        {"role": "user", "content": current_user},
+    ]
+
+    compact = gate._compact_prebuilt_messages(
+        messages,
+        history_limit=6,
+        budget_profile="contract",
+    )
+    total_chars = sum(len(msg["content"]) for msg in compact)
+
+    assert total_chars <= 2_800
+    assert compact[0]["content"].startswith("## CONTRACT-BOUNDED LIVE CORTEX TURN")
+    assert "Aura Luna's resident local Cortex" in compact[0]["content"]
+    assert "grammatical and meaningful" in compact[0]["content"]
+    assert "concrete current-topic anchor" in compact[0]["content"]
+    assert "[LIVE MIND CONTEXT]" in compact[0]["content"]
+    assert "must_answer_from_full_mind_path" in compact[0]["content"]
+    assert compact[-1] == {"role": "user", "content": current_user}
+
+
+def test_short_live_output_contract_outranks_opportunistic_deep_probe():
+    context = {
+        "deep_mind_probe": True,
+        "desktop_cognitive_engine_required": True,
+        "live_runtime_payload_required": True,
+        "requested_output_contract": {
+            "kind": "word_count",
+            "explicit_brevity": True,
+            "hard_token_ceiling": 32,
+        },
+    }
+
+    assert InferenceGate._has_short_live_output_contract(context) is True
+    assert InferenceGate._should_use_compact_foreground_context(
+        "desktop_quick_user",
+        "primary",
+        deep_handoff=False,
+        is_background=False,
+        prompt="In exactly five words, explain why checksums matter.",
+        context=context,
+    ) is True
+
+
+def test_contract_profile_unwraps_only_known_recent_continuity_payload(monkeypatch):
+    monkeypatch.setenv("AURA_CORTEX_CTX", "8192")
+    gate = InferenceGate.__new__(InferenceGate)
+    current_user = "In exactly five words, explain why checksums matter."
+    wrapped_user = (
+        "[CURRENT USER MESSAGE]\n"
+        f"{current_user}\n\n"
+        "[RECENT COMPLETED CONVERSATION FOR CONTINUITY ONLY]\n"
+        + ("old web-search discussion " * 350)
+        + "\n[END RECENT COMPLETED CONVERSATION]"
+    )
+    messages = [
+        {"role": "system", "content": "live mind context " * 800},
+        {"role": "user", "content": wrapped_user},
+    ]
+
+    compact = gate._compact_prebuilt_messages(
+        messages,
+        history_limit=6,
+        budget_profile="contract",
+        current_user_content=current_user,
+    )
+
+    assert sum(len(msg["content"]) for msg in compact) <= 2_800
+    assert compact[-1] == {"role": "user", "content": current_user}
+    assert all("old web-search discussion" not in msg["content"] for msg in compact)
+
+
+def test_contract_profile_preserves_wrapper_when_long_user_requires_standard_profile(
+    monkeypatch,
+):
+    monkeypatch.setenv("AURA_CORTEX_CTX", "8192")
+    gate = InferenceGate.__new__(InferenceGate)
+    current_user = (
+        "Summarize this evidence in one sentence. "
+        + ("material fact " * 95)
+    )
+    wrapped_user = (
+        "[CURRENT USER MESSAGE]\n"
+        f"{current_user}\n\n"
+        "[RECENT COMPLETED CONVERSATION FOR CONTINUITY ONLY]\n"
+        "Prior decision: preserve the verified deployment boundary.\n"
+        "[END RECENT COMPLETED CONVERSATION]"
+    )
+
+    compact = gate._compact_prebuilt_messages(
+        [
+            {"role": "system", "content": "bounded system context"},
+            {"role": "user", "content": wrapped_user},
+        ],
+        history_limit=6,
+        budget_profile="contract",
+        current_user_content=current_user,
+    )
+
+    assert len(current_user) > 1_000
+    assert compact[-1] == {"role": "user", "content": wrapped_user}
+    assert "Prior decision: preserve the verified deployment boundary." in compact[-1][
+        "content"
+    ]
+
+
+def test_contract_prompt_budget_preserves_latest_user_and_bounded_grounding(monkeypatch):
+    monkeypatch.setenv("AURA_CORTEX_CTX", "8192")
+    gate = InferenceGate.__new__(InferenceGate)
+    current_user = (
+        "Using the supplied evidence, answer in five words and include nothing else."
+    )
+    messages = [
+        {"role": "system", "content": "base system " * 1_000},
+        {
+            "role": "system",
+            "content": (
+                "[ACTIVE GROUNDING EVIDENCE]\n"
+                "Verified result: the deployment completed successfully.\n"
+                + ("bounded evidence " * 120)
+            ),
+        },
+        {"role": "user", "content": "old user " + ("U" * 900)},
+        {"role": "assistant", "content": "old assistant " + ("A" * 900)},
+        {"role": "user", "content": current_user},
+    ]
+
+    compact = gate._compact_prebuilt_messages(
+        messages,
+        history_limit=6,
+        budget_profile="contract",
+        current_user_content=current_user,
+    )
+
+    assert sum(len(msg["content"]) for msg in compact) <= 2_800
+    assert compact[-1] == {"role": "user", "content": current_user}
+    assert any(
+        "Verified result: the deployment completed successfully." in msg["content"]
+        for msg in compact
+    )
+
+
+def test_short_output_contract_does_not_truncate_long_current_user_evidence(monkeypatch):
+    monkeypatch.setenv("AURA_CORTEX_CTX", "8192")
+    gate = InferenceGate.__new__(InferenceGate)
+    critical_fact = "CRITICAL-MIDDLE-FACT: release train 47 passed every checksum."
+    current_user = (
+        "Summarize this in one short sentence.\n"
+        + ("opening evidence " * 70)
+        + critical_fact
+        + (" closing evidence" * 70)
+    )
+    messages = [
+        {"role": "system", "content": "system context " * 250},
+        {"role": "user", "content": current_user},
+    ]
+
+    compact = gate._compact_prebuilt_messages(
+        messages,
+        history_limit=6,
+        budget_profile="contract",
+    )
+
+    assert compact[-1] == {"role": "user", "content": current_user}
+    assert critical_fact in compact[-1]["content"]
+    assert "middle omitted for foreground context budget" not in compact[-1]["content"]
+    assert sum(len(msg["content"]) for msg in compact) > 2_800
 
 
 def test_required_desktop_total_budget_preserves_middle_live_mind_context(monkeypatch):

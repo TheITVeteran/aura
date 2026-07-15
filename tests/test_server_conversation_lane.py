@@ -2129,6 +2129,34 @@ def test_final_requested_output_contract_repairs_post_affordance_mutation():
         "chat.final_requested_output_contract",
     ]
     assert trace["deterministic_repair_applied"] is True
+    assert trace["final_requested_output_contract_evaluated"] is True
+    assert trace["final_requested_output_contract_required"] is True
+    assert trace["final_requested_output_contract_satisfied"] is True
+
+
+def test_exact_reply_contract_exempts_only_matching_repetition_from_stale_gate():
+    from interface.routes import chat as chat_routes
+
+    for _ in range(chat_routes._STALE_REPEAT_THRESHOLD):
+        chat_routes._record_recent_response("yes", 'Reply exactly: "yes"')
+
+    assert chat_routes._is_stale_repeated_response("yes") is True
+    assert (
+        chat_routes._is_actionably_stale_response('Reply exactly: "yes"', "yes")
+        is False
+    )
+    assert (
+        chat_routes._is_actionably_stale_response('Reply exactly: "Yes"', "yes")
+        is True
+    )
+    assert (
+        chat_routes._is_actionably_stale_response(
+            'Reply exactly: "yes" if ready; otherwise "no".',
+            "yes",
+        )
+        is True
+    )
+    assert chat_routes._is_actionably_stale_response("Are you there?", "yes") is True
 
 
 def test_final_requested_output_contract_never_returns_short_sentence_count_miss():
@@ -2149,6 +2177,80 @@ def test_final_requested_output_contract_never_returns_short_sentence_count_miss
     assert trace["text_mutations"][-1]["stage"] == (
         "chat.final_requested_output_contract"
     )
+    assert trace["final_requested_output_contract_satisfied"] is True
+
+
+def test_final_requested_output_contract_records_unrepairable_failure(monkeypatch):
+    from core.conversation import response_reliability
+    from interface.routes import chat as chat_routes
+
+    monkeypatch.setattr(
+        response_reliability,
+        "repair_instruction_shape",
+        lambda _prompt, _reply: "Still two sentences. This remains extra.",
+    )
+    trace = {"live_mind_surface_control_receipt": {}}
+
+    final_reply = chat_routes._enforce_final_requested_output_contract(
+        trace,
+        user_message="Answer in one sentence.",
+        reply_text="This is one sentence. This is another.",
+    )
+
+    assert final_reply == "Still two sentences. This remains extra."
+    assert trace["final_requested_output_contract_evaluated"] is True
+    assert trace["final_requested_output_contract_required"] is True
+    assert trace["final_requested_output_contract_satisfied"] is False
+    assert "missing_requested_sentence_count" in trace[
+        "final_requested_output_contract_reasons"
+    ]
+
+
+def test_full_mind_path_requires_final_output_contract_proof(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    _force_full_mind_runtime(monkeypatch, chat_routes)
+    trace = _bound_live_mind_controls_trace()
+    trace.update(
+        {
+            "engine_think_invoked": True,
+            "cognitive_engine_reply_accepted": True,
+            "bounded_contract_used": False,
+            "legacy_fallback_used": False,
+            "architecture_context_bound": True,
+            "live_mind_context_present": True,
+            "live_mind_snapshot_present": True,
+            "live_mind_snapshot_ready": True,
+            "live_mind_required_subsystems_ok": True,
+            "response_path": "cognitive_engine",
+            "final_requested_output_contract_evaluated": True,
+            "final_requested_output_contract_required": True,
+            "final_requested_output_contract_kind": "sentence_count",
+            "final_requested_output_contract_satisfied": False,
+            "final_requested_output_contract_reasons": [
+                "missing_requested_sentence_count"
+            ],
+        }
+    )
+
+    payload = chat_routes._build_live_turn_contract_payload(
+        desktop_required=True,
+        request_surface="desktop-ui",
+        lane_status={
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "foreground_endpoint": "Cortex",
+        },
+        response_confidence="high",
+        status="cognitive_engine",
+        reply_source="cognitive_engine",
+        turn_trace=trace,
+    )
+
+    assert payload["final_requested_output_contract_proven"] is False
+    assert payload["full_mind_path"] is False
+    assert "final_output_contract_unsatisfied" in payload["full_mind_missing_proofs"]
 
 
 def test_text_mutation_receipt_never_serializes_literal_violation_content():
@@ -2220,6 +2322,10 @@ def test_live_turn_contract_derives_repair_flags_from_mutation_ledger(monkeypatc
 
     assert payload["post_generation_repair_applied"] is True
     assert payload["deterministic_repair_applied"] is True
+    assert payload["model_native_output"] is False
+    assert payload["final_text_authorship"] == (
+        "cognitive_generation_with_recorded_transformations"
+    )
     assert payload["text_mutation_count"] == 1
     assert payload["text_mutations"][0]["stage"] == (
         "response_generation.post_voice_shape"

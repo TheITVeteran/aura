@@ -86,6 +86,30 @@ def test_mlx_output_contract_ceiling_cannot_be_expanded_by_bridge():
     assert _bounded_generation_max_tokens(384, 128, "invalid", 4096) == 128
 
 
+def test_adaptive_budget_cannot_make_exact_output_contract_impossible():
+    from core.brain.llm.mlx_client import _bounded_generation_max_tokens
+
+    contract = {
+        "exact_reply": True,
+        "exact_reply_utf8_bytes": 3,
+        "semantic_token_cap": 8,
+        "hard_token_ceiling": 19,
+    }
+
+    assert _bounded_generation_max_tokens(19, 3, 19, 4096, contract) == 4
+    assert _bounded_generation_max_tokens(2, 1, 19, 4096, contract) == 2
+    assert _bounded_generation_max_tokens(19, 3, 3, 4096, contract) == 3
+
+
+def test_adaptive_budget_preserves_word_and_sentence_contract_floor():
+    from core.brain.llm.mlx_client import _bounded_generation_max_tokens
+
+    contract = {"kind": "sentence_count", "semantic_token_cap": 32}
+
+    assert _bounded_generation_max_tokens(48, 3, 48, 4096, contract) == 32
+    assert _bounded_generation_max_tokens(20, 3, 48, 4096, contract) == 20
+
+
 def test_mlx_main_generation_builds_contract_cap_after_bridge_lookup():
     import inspect
 
@@ -170,6 +194,27 @@ def test_worker_retry_budget_never_expands_past_output_contract():
     )
     assert receipt["generation_max_tokens"] == 48
     assert receipt["hard_output_token_ceiling"] == 48
+
+
+def test_worker_count_contract_retry_demands_semantic_task_ownership():
+    from core.brain.llm.mlx_worker import _messages_with_user_surface_retry
+
+    retry_messages = _messages_with_user_surface_retry(
+        [
+            {"role": "system", "content": "Answer accurately."},
+            {
+                "role": "user",
+                "content": "In exactly five words, state why checksums matter.",
+            },
+        ],
+        ["missing_current_topic_anchor"],
+    )
+
+    assert retry_messages is not None
+    system = retry_messages[0]["content"]
+    assert "Solve the current semantic task first" in system
+    assert "retain a concrete topic noun" in system
+    assert "never describe the word or sentence constraint" in system
 
 
 def test_worker_never_expands_admitted_cap_for_mode_specific_contracts():
@@ -278,7 +323,7 @@ def test_exact_reply_ceiling_covers_selected_tokenizer_requirement():
     token_count, requirement = _exact_reply_token_requirement(job, _ByteTokenizer())
 
     assert token_count == len(target.encode("utf-8"))
-    assert requirement == token_count + 8
+    assert requirement == token_count + 1
     assert contract.hard_token_ceiling >= requirement
 
 
@@ -312,8 +357,44 @@ def test_exact_reply_token_evidence_preserves_immutable_admitted_caps():
     assert job["hard_output_token_ceiling"] == 1
     assert job["requested_output_contract"]["hard_token_ceiling"] == 1
     assert job["exact_reply_token_count"] == 1
+    assert job["exact_reply_required_termination_headroom"] == 1
+    assert job["exact_reply_available_termination_headroom"] == 0
+    assert job["exact_reply_content_capacity_sufficient"] is True
+    assert job["exact_reply_termination_headroom_sufficient"] is False
     assert job["exact_reply_native_capacity_sufficient"] is False
     assert job["exact_reply_token_ceiling_valid"] is False
+
+
+def test_exact_reply_token_evidence_reports_native_capacity_with_one_stop_slot():
+    from core.brain.llm.mlx_worker import _record_exact_reply_token_evidence
+
+    class _OneTokenTokenizer:
+        @staticmethod
+        def encode(text, add_special_tokens=False):
+            del text, add_special_tokens
+            return [7]
+
+    job = {
+        "max_tokens": 3,
+        "hard_output_token_ceiling": 16,
+        "user_surface_validation_prompt": 'Reply exactly: "yes"',
+        "requested_output_contract": {"exact_reply": True},
+    }
+
+    _record_exact_reply_token_evidence(
+        job,
+        _OneTokenTokenizer(),
+        generation_max_tokens=job["max_tokens"],
+        hard_output_token_ceiling=job["hard_output_token_ceiling"],
+    )
+
+    assert job["exact_reply_token_count"] == 1
+    assert job["exact_reply_required_termination_headroom"] == 1
+    assert job["exact_reply_available_termination_headroom"] == 2
+    assert job["exact_reply_content_capacity_sufficient"] is True
+    assert job["exact_reply_termination_headroom_sufficient"] is True
+    assert job["exact_reply_native_capacity_sufficient"] is True
+    assert job["exact_reply_token_ceiling_valid"] is True
 
 
 def test_worker_receipt_preserves_ordered_text_mutation_provenance():

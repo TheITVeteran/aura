@@ -92,6 +92,66 @@ def test_live_mind_surface_receipt_normalizes_stale_worker_bound_flag():
     assert normalized["clean_user_surface_contract"] is True
 
 
+@pytest.mark.parametrize(
+    "failed_receipt,expected_status",
+    [
+        (
+            {
+                "enabled": False,
+                "applied": False,
+                "clean_user_surface_contract": True,
+                "surface_quality_gate_passed": True,
+            },
+            "worker_controls_not_applied",
+        ),
+        (
+            {
+                "enabled": True,
+                "applied": True,
+                "clean_user_surface_contract": False,
+                "surface_quality_gate_passed": True,
+            },
+            "worker_clean_surface_unproven",
+        ),
+        (
+            {
+                "enabled": True,
+                "applied": True,
+                "clean_user_surface_contract": True,
+                "surface_quality_gate_passed": False,
+                "application_status": "runtime_control_not_applied",
+            },
+            "runtime_control_not_applied",
+        ),
+    ],
+)
+def test_live_mind_surface_receipt_never_promotes_explicit_worker_failure(
+    failed_receipt,
+    expected_status,
+):
+    from core.brain.live_mind_contract import (
+        normalize_live_mind_surface_control_receipt,
+    )
+
+    controls = {
+        "temperature": 0.58,
+        "top_p": 0.85,
+        "clean_user_surface_recurrent_loops": 1,
+        "clean_user_surface_steering_alpha": 0.3,
+    }
+
+    normalized = normalize_live_mind_surface_control_receipt(
+        failed_receipt,
+        controls_bound=True,
+        generation_controls=controls,
+        source="test",
+    )
+
+    assert normalized["applied"] is failed_receipt["applied"]
+    assert normalized["live_mind_controls_bound"] is False
+    assert normalized["application_status"] == expected_status
+
+
 @pytest.mark.asyncio
 async def test_desktop_quick_reply_passes_live_mind_controls_to_router(monkeypatch):
     from core.brain import cognitive_engine as cognitive_engine_module
@@ -170,7 +230,7 @@ async def test_desktop_quick_reply_passes_live_mind_controls_to_router(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_desktop_quick_reply_binds_existing_live_mind_controls(monkeypatch):
+async def test_desktop_quick_reply_preserves_worker_control_application_failure(monkeypatch):
     from core.brain import cognitive_engine as cognitive_engine_module
     from core.brain.cognitive_engine import CognitiveEngine
     from core.brain.types import ThinkingMode
@@ -233,10 +293,11 @@ async def test_desktop_quick_reply_binds_existing_live_mind_controls(monkeypatch
     assert captured["top_p"] == 0.85
     assert captured["live_mind_controls_bound"] is True
     assert thought.metadata["live_mind_controls_bound"] is True
-    assert thought.metadata["live_mind_controls_worker_applied"] is True
+    assert thought.metadata["live_mind_controls_worker_applied"] is False
     receipt = thought.metadata["live_mind_surface_control_receipt"]
-    assert receipt["applied"] is True
-    assert receipt["live_mind_controls_bound"] is True
+    assert receipt["applied"] is False
+    assert receipt["live_mind_controls_bound"] is False
+    assert receipt["application_status"] == "worker_controls_not_applied"
     assert receipt["source"] == "cognitive_engine_direct_quick_reply_controls"
 
 

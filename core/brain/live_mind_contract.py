@@ -1,8 +1,8 @@
 """Shared live-mind generation contract helpers.
 
-The desktop lane treats live-mind metadata as proof material. A single stale
-worker receipt must not downgrade a turn after the CognitiveEngine has already
-bound the live mind controls and the surface quality gate passed.
+The desktop lane treats live-mind metadata as proof material. Parent context
+may reconcile a stale structural-bound bit, but it must never manufacture a
+worker application or quality success that the worker did not report.
 """
 
 from __future__ import annotations
@@ -192,10 +192,13 @@ def normalize_live_mind_surface_control_receipt(
 
     normalized = dict(receipt) if isinstance(receipt, Mapping) else {}
     controls_present = live_mind_generation_controls_present(generation_controls)
-    quality_passed = (
-        bool(normalized.get("surface_quality_gate_passed", True))
+    quality_passed = bool(
+        normalized.get("surface_quality_gate_passed") is True
         if surface_quality_gate_passed is None
-        else bool(surface_quality_gate_passed)
+        else (
+            surface_quality_gate_passed
+            and normalized.get("surface_quality_gate_passed") is True
+        )
     )
 
     generation_required = normalized.get("generation_required") is not False
@@ -230,31 +233,42 @@ def normalize_live_mind_surface_control_receipt(
             "source": source,
         }
 
-    if not (controls_bound and controls_present and quality_passed):
+    worker_applied = normalized.get("applied") is True
+    clean_surface_proven = normalized.get("clean_user_surface_contract") is True
+    worker_success = bool(worker_applied and clean_surface_proven and quality_passed)
+    structurally_bound = bool(controls_bound and controls_present and worker_success)
+
+    if structurally_bound and normalized.get("live_mind_controls_bound") is True:
         return normalized
 
-    if (
-        normalized.get("live_mind_controls_bound") is True
-        and normalized.get("applied") is True
-        and normalized.get("clean_user_surface_contract") is True
-    ):
-        return normalized
+    if not worker_success:
+        if not worker_applied:
+            failure_status = "worker_controls_not_applied"
+        elif not clean_surface_proven:
+            failure_status = "worker_clean_surface_unproven"
+        else:
+            failure_status = "worker_surface_quality_unproven"
+    elif not structurally_bound:
+        failure_status = "live_mind_controls_unbound"
+    else:
+        failure_status = "applied"
 
     return {
         **normalized,
         "enabled": bool(normalized.get("enabled", False)),
-        "applied": True,
-        "live_mind_controls_bound": True,
-        "clean_user_surface_contract": True,
+        "applied": worker_applied,
+        "live_mind_controls_bound": structurally_bound,
+        "clean_user_surface_contract": clean_surface_proven,
         "surface_quality_gate_enabled": bool(
             normalized.get("surface_quality_gate_enabled", False)
         ),
-        "surface_quality_gate_passed": True,
+        "surface_quality_gate_passed": quality_passed,
         "surface_quality_gate_attempts": int(
             normalized.get("surface_quality_gate_attempts", 0) or 0
         ),
         "surface_quality_gate_reasons": list(
             normalized.get("surface_quality_gate_reasons", []) or []
         ),
+        "application_status": normalized.get("application_status") or failure_status,
         "source": normalized.get("source") or source,
     }

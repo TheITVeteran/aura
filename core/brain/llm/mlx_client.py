@@ -1108,13 +1108,51 @@ def _bounded_generation_max_tokens(
     bridged: Any,
     hard_output_ceiling: Any,
     fallback: int,
+    requested_output_contract: Any = None,
 ) -> int:
-    """Apply latent-state shrinkage and the visible-output hard ceiling."""
+    """Apply adaptive shrinkage without making a typed contract impossible."""
 
     bounded = _bounded_max_tokens(requested, bridged, fallback)
-    if hard_output_ceiling is None or hard_output_ceiling == "":
+    if hard_output_ceiling is not None and hard_output_ceiling != "":
+        bounded = _bounded_max_tokens(bounded, hard_output_ceiling, fallback)
+
+    contract_floor = _requested_output_contract_generation_floor(
+        requested_output_contract
+    )
+    if contract_floor <= 0:
         return bounded
-    return _bounded_max_tokens(bounded, hard_output_ceiling, fallback)
+
+    try:
+        caller_cap = max(1, int(requested))
+    except (TypeError, ValueError, OverflowError):
+        caller_cap = max(1, int(fallback))
+    admitted_cap = caller_cap
+    if hard_output_ceiling is not None and hard_output_ceiling != "":
+        try:
+            admitted_cap = min(admitted_cap, max(1, int(hard_output_ceiling)))
+        except (TypeError, ValueError, OverflowError):
+            pass
+    return max(bounded, min(contract_floor, admitted_cap))
+
+
+def _requested_output_contract_generation_floor(contract: Any) -> int:
+    """Return a conservative native-generation floor for a typed user contract."""
+
+    if not isinstance(contract, dict) or not contract:
+        return 0
+    if bool(contract.get("exact_reply", False)):
+        try:
+            utf8_bytes = max(1, int(contract.get("exact_reply_utf8_bytes") or 0))
+        except (TypeError, ValueError, OverflowError):
+            utf8_bytes = 0
+        if utf8_bytes > 0:
+            # Any supported tokenizer needs no more content tokens than UTF-8
+            # bytes, plus one slot for EOS/stop termination.
+            return utf8_bytes + 1
+    try:
+        return max(0, int(contract.get("semantic_token_cap") or 0))
+    except (TypeError, ValueError, OverflowError):
+        return 0
 
 
 def _apply_memory_pressure_generation_controls(
@@ -1170,6 +1208,9 @@ def _sanitize_surface_control_receipt(value: Any) -> dict[str, Any]:
         "surface_quality_gate_reasons",
         "surface_quality_gate_error",
         "generation_max_tokens",
+        "caller_requested_max_tokens",
+        "adaptive_suggested_max_tokens",
+        "output_contract_generation_floor",
         "generated_tokens",
         "semantic_output_token_cap",
         "hard_output_token_ceiling",
@@ -1177,7 +1218,10 @@ def _sanitize_surface_control_receipt(value: Any) -> dict[str, Any]:
         "deterministic_repair_applied",
         "text_mutation_count",
         "exact_reply_token_count",
-        "exact_reply_token_headroom",
+        "exact_reply_required_termination_headroom",
+        "exact_reply_available_termination_headroom",
+        "exact_reply_content_capacity_sufficient",
+        "exact_reply_termination_headroom_sufficient",
         "exact_reply_token_ceiling_valid",
         "exact_reply_native_capacity_sufficient",
         "applied",
@@ -5617,11 +5661,16 @@ class MLXLocalClient:
         if not isinstance(requested_output_contract, dict):
             requested_output_contract = {}
         hard_output_token_ceiling = kwargs.get("hard_output_token_ceiling")
+        adaptive_suggested_max_tokens = _bridge_get("max_tokens", self.max_tokens)
+        contract_generation_floor = _requested_output_contract_generation_floor(
+            requested_output_contract
+        )
         generation_max_tokens = _bounded_generation_max_tokens(
             kwargs.get("max_tokens", self.max_tokens),
-            _bridge_get("max_tokens", self.max_tokens),
+            adaptive_suggested_max_tokens,
             hard_output_token_ceiling,
             self.max_tokens,
+            requested_output_contract,
         )
 
         req_id = uuid.uuid4().hex
@@ -5650,6 +5699,9 @@ class MLXLocalClient:
             # max_tokens is a cap: both the latent bridge and the typed visible
             # output contract may shrink it, but neither can expand the caller.
             "max_tokens": generation_max_tokens,
+            "caller_requested_max_tokens": kwargs.get("max_tokens", self.max_tokens),
+            "adaptive_suggested_max_tokens": adaptive_suggested_max_tokens,
+            "output_contract_generation_floor": contract_generation_floor,
             "requested_output_contract": dict(requested_output_contract),
             "semantic_output_token_cap": kwargs.get("semantic_output_token_cap"),
             "hard_output_token_ceiling": hard_output_token_ceiling,
