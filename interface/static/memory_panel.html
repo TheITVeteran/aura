@@ -264,6 +264,65 @@
             padding: 24px;
             line-height: 1.5;
         }
+        /* ── Gravity well ────────────────────────────────── */
+        .nexus-well {
+            position: relative;
+            margin: 8px 0 24px;
+            padding: 8px 8px 14px;
+            border: 1px solid rgba(168, 85, 247, 0.16);
+            border-radius: 16px;
+            background:
+                radial-gradient(120% 120% at 50% 50%, rgba(168, 85, 247, 0.07), transparent 62%),
+                rgba(8, 5, 16, 0.6);
+            overflow: hidden;
+        }
+        .nexus-svg { display: block; width: 100%; height: auto; }
+        .nexus-ring {
+            fill: none;
+            stroke: rgba(168, 85, 247, 0.13);
+            stroke-width: 1;
+        }
+        .nexus-mote {
+            fill: #e9d5ff;
+            /* The glow is on the mote itself so a heavy memory reads as bright
+             * without needing a radius that would crowd its neighbours out. */
+            filter: drop-shadow(0 0 4px rgba(200, 150, 255, 0.9));
+        }
+        .nexus-halo {
+            fill: rgba(168, 85, 247, 0.1);
+            stroke: none;
+        }
+        .nexus-null {
+            fill: var(--text-dim);
+            font-size: 11px;
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+        }
+        .nexus-stats {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 10px 26px;
+            padding: 6px 4px 2px;
+        }
+        .nexus-stat { text-align: center; min-width: 62px; }
+        .nexus-stat-val {
+            display: block;
+            font-size: 1rem;
+            font-weight: 700;
+            color: var(--primary);
+        }
+        .nexus-stat-key {
+            display: block;
+            font-size: 0.52rem;
+            letter-spacing: 0.1em;
+            color: var(--text-dim);
+        }
+        .nexus-note {
+            text-align: center;
+            font-size: 0.62rem;
+            color: var(--text-dim);
+            padding-top: 6px;
+        }
     </style>
 </head>
 <body>
@@ -275,6 +334,19 @@
                 <a href="/" class="back-btn">← Back to Cortex</a>
             </div>
         </header>
+
+        <!-- The vault already computes a gravity well — every memory carries a
+             gravity (access count) and an age, and the vault reports its own mass
+             and radius — but /memory/api/memory was never fetched here, so all of
+             it was thrown away and the page rendered a sentence in the void.
+             Orbit radius is age, dot size is gravity: the memories she reaches for
+             most sit closest to the singularity. -->
+        <section class="nexus-well" id="nexus-well" aria-label="Aura's memory gravity well">
+            <svg id="nexus-svg" class="nexus-svg" viewBox="0 0 640 300" role="img"
+                 aria-label="Memories orbiting the vault singularity, radius by age and size by how often each is recalled"></svg>
+            <div class="nexus-stats" id="nexus-stats"></div>
+            <div class="nexus-note" id="nexus-note"></div>
+        </section>
 
         <div class="tabs">
             <div class="tab active" onclick="switchTab('semantic')">Semantic Memory (RAG Facts)</div>
@@ -334,6 +406,125 @@
     <script>
         let currentEditId = null;
         const AURA_API_BASE = 'http://127.0.0.1:8000';
+
+        // ── Gravity well ──────────────────────────────────────
+        // Everything drawn here is vault state. When the vault reports nothing,
+        // the well says so rather than drawing an invented sky.
+        const NEXUS_POLL_MS = 15000;
+
+        function nexusEl(id) { return document.getElementById(id); }
+
+        async function loadNexusWell() {
+            const svg = nexusEl('nexus-svg');
+            const stats = nexusEl('nexus-stats');
+            const note = nexusEl('nexus-note');
+            if (!svg) return;
+            try {
+                const res = await fetch(apiUrl('/memory/api/memory'));
+                if (!res.ok) throw new Error(`vault ${res.status}`);
+                const data = await res.json();
+                renderNexusWell(data);
+            } catch (err) {
+                svg.innerHTML = '';
+                if (stats) stats.innerHTML = '';
+                if (note) note.textContent = `Vault unreachable — showing nothing rather than a stale well. (${err})`;
+            }
+        }
+
+        function renderNexusWell(data) {
+            const svg = nexusEl('nexus-svg');
+            const statsEl = nexusEl('nexus-stats');
+            const note = nexusEl('nexus-note');
+            const cx = 320, cy = 150;
+            const events = Array.isArray(data.recent_events) ? data.recent_events : [];
+
+            const parts = [
+                `<defs>
+                    <radialGradient id="nexus-core" cx="50%" cy="50%" r="50%">
+                        <stop offset="0%" stop-color="#ffffff" stop-opacity="0.95"/>
+                        <stop offset="35%" stop-color="#c9a3ff" stop-opacity="0.75"/>
+                        <stop offset="70%" stop-color="#7b3fd4" stop-opacity="0.35"/>
+                        <stop offset="100%" stop-color="#7b3fd4" stop-opacity="0"/>
+                    </radialGradient>
+                    <radialGradient id="nexus-disc" cx="50%" cy="50%" r="50%">
+                        <stop offset="60%" stop-color="#a855f7" stop-opacity="0"/>
+                        <stop offset="88%" stop-color="#a855f7" stop-opacity="0.22"/>
+                        <stop offset="100%" stop-color="#57eaff" stop-opacity="0"/>
+                    </radialGradient>
+                </defs>`,
+                `<ellipse cx="${cx}" cy="${cy}" rx="300" ry="128" fill="url(#nexus-disc)"/>`,
+            ];
+
+            // Orbit rings give the eye a scale for age.
+            for (const r of [70, 116, 162, 208]) {
+                parts.push(`<ellipse cx="${cx}" cy="${cy}" rx="${r}" ry="${(r * 0.42).toFixed(1)}" class="nexus-ring"/>`);
+            }
+
+            if (!events.length) {
+                parts.push(`<circle cx="${cx}" cy="${cy}" r="26" fill="url(#nexus-core)"/>`);
+                parts.push(`<text x="${cx}" y="${cy + 96}" text-anchor="middle" class="nexus-null">the vault is holding nothing yet</text>`);
+            } else {
+                const maxAge = Math.max(1, ...events.map(e => Number(e.age_seconds) || 0));
+                const maxGravity = Math.max(1, ...events.map(e => Number(e.gravity) || 0));
+                events.forEach((e, i) => {
+                    const age = Math.max(0, Number(e.age_seconds) || 0);
+                    const gravity = Math.max(0, Number(e.gravity) || 0);
+                    // Age -> orbit radius: the freshest sit nearest the core.
+                    const t = Math.sqrt(age / maxAge);
+                    const orbit = 62 + t * 152;
+                    // Gravity -> mass. Square-rooted and capped so a single
+                    // heavily-recalled memory cannot dominate the field.
+                    const mass = 2.6 + Math.sqrt(gravity / maxGravity) * 5.4;
+                    const angle = (i / events.length) * Math.PI * 2 + 0.6;
+                    const x = cx + orbit * Math.cos(angle);
+                    const y = cy + orbit * 0.42 * Math.sin(angle);
+                    const bright = 0.35 + (gravity / maxGravity) * 0.6;
+                    if (mass > 4.4) {
+                        parts.push(`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${(mass * 2.6).toFixed(1)}" class="nexus-halo"/>`);
+                    }
+                    parts.push(
+                        `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${mass.toFixed(1)}" class="nexus-mote" opacity="${bright.toFixed(2)}">` +
+                        `<title>${escapeAttr(e.text || '')}\n\nrecalled ${gravity} time(s) · ${formatAge(age)} old</title></circle>`
+                    );
+                });
+                parts.push(`<circle cx="${cx}" cy="${cy}" r="30" fill="url(#nexus-core)"/>`);
+            }
+            svg.innerHTML = parts.join('');
+
+            const fields = [
+                ['MEMORIES', data.total_nodes],
+                ['MASS', data.total_mass_kb != null ? `${data.total_mass_kb} KB` : null],
+                ['RADIUS', data.radius_cm != null ? `${data.radius_cm} cm` : null],
+                ['SHARDS', data.shards_active],
+                ['EVAPORATING', data.evaporation_count],
+            ].filter(([, v]) => v !== null && v !== undefined);
+            if (statsEl) {
+                statsEl.innerHTML = fields.map(([k, v]) =>
+                    `<div class="nexus-stat"><span class="nexus-stat-val">${escapeAttr(String(v))}</span><span class="nexus-stat-key">${k}</span></div>`
+                ).join('');
+            }
+            if (note) {
+                const degraded = data.degraded
+                    ? ` · degraded: ${(data.degradation_reasons || []).join(', ')}`
+                    : '';
+                note.textContent = events.length
+                    ? `Distance from the core is age; size is how often she has reached for it.${degraded}`
+                    : `Nothing in the vault yet.${degraded}`;
+            }
+        }
+
+        function formatAge(seconds) {
+            if (seconds < 90) return `${Math.round(seconds)}s`;
+            if (seconds < 5400) return `${Math.round(seconds / 60)}m`;
+            if (seconds < 172800) return `${Math.round(seconds / 3600)}h`;
+            return `${Math.round(seconds / 86400)}d`;
+        }
+
+        function escapeAttr(s) {
+            const d = document.createElement('div');
+            d.textContent = String(s == null ? '' : s);
+            return d.innerHTML;
+        }
 
         function apiUrl(path) {
             const normalized = String(path || '').startsWith('/') ? String(path || '') : `/${path || ''}`;
@@ -618,6 +809,8 @@
 
         // Initial load
         loadSemantic();
+        loadNexusWell();
+        setInterval(loadNexusWell, NEXUS_POLL_MS);
     </script>
 </body>
 </html>
