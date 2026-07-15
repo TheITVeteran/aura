@@ -367,17 +367,24 @@ async def test_same_lane_model_load_can_nest_under_inference_reservation():
 
 
 @pytest.mark.asyncio
-async def test_model_load_is_blocked_by_another_inference_lane():
+async def test_model_load_coexists_with_user_facing_inference_lane():
+    # Daily-driver reliability: while the cortex warms on its own lane, a
+    # user-facing inference on the fallback ladder must keep serving the current
+    # turn. Serving now outranks warming for later; memory is guarded by
+    # lane_admission and GPU compute by the single-slot local semaphore. Proven in
+    # both arrival orders and for both interactive and foreground inference.
     controller = ResourceAdmissionController(pressure_provider=_normal_pressure)
+
+    # Ordering A: the fallback is already serving when the cortex begins to warm.
     brainstem = await controller.acquire(
         AdmissionRequest(
             owner="ambient_inference",
             work_class=WorkClass.INFERENCE,
             lane="brainstem",
+            priority=AdmissionPriority.INTERACTIVE,
             timeout_s=0,
         )
     )
-
     cortex_load = await controller.acquire(
         AdmissionRequest(
             owner="mlx.model_load",
@@ -386,10 +393,62 @@ async def test_model_load_is_blocked_by_another_inference_lane():
             timeout_s=0,
         )
     )
-
-    assert cortex_load.outcome == AdmissionOutcome.DEFERRED
-    assert cortex_load.blocking_lease_ids == (brainstem.lease_id,)
+    assert brainstem.admitted and cortex_load.admitted
     await controller.release(brainstem.lease_id)
+    await controller.release(cortex_load.lease_id)
+
+    # Ordering B (the live soak symptom): the cortex is already warming at
+    # foreground priority when the turn falls to the fallback — the foreground
+    # inference must still be admitted, not denied behind the load.
+    warming = await controller.acquire(
+        AdmissionRequest(
+            owner="mlx.model_load",
+            work_class=WorkClass.MODEL_LOAD,
+            lane="cortex",
+            priority=AdmissionPriority.FOREGROUND,
+            timeout_s=0,
+        )
+    )
+    fallback = await controller.acquire(
+        AdmissionRequest(
+            owner="resource_arbitrator.inference:brainstem",
+            work_class=WorkClass.INFERENCE,
+            lane="brainstem",
+            priority=AdmissionPriority.FOREGROUND,
+            timeout_s=0,
+        )
+    )
+    assert warming.admitted and fallback.admitted
+    await controller.release(warming.lease_id)
+    await controller.release(fallback.lease_id)
+
+
+@pytest.mark.asyncio
+async def test_model_load_still_blocks_background_inference_lane():
+    # Memory protection is preserved: a background/maintenance inference on another
+    # lane still yields to a model load, in both arrival orders.
+    controller = ResourceAdmissionController(pressure_provider=_normal_pressure)
+
+    background = await controller.acquire(
+        AdmissionRequest(
+            owner="ambient_background",
+            work_class=WorkClass.INFERENCE,
+            lane="brainstem",
+            priority=AdmissionPriority.BACKGROUND,
+            timeout_s=0,
+        )
+    )
+    cortex_load = await controller.acquire(
+        AdmissionRequest(
+            owner="mlx.model_load",
+            work_class=WorkClass.MODEL_LOAD,
+            lane="cortex",
+            timeout_s=0,
+        )
+    )
+    assert cortex_load.outcome == AdmissionOutcome.DEFERRED
+    assert cortex_load.blocking_lease_ids == (background.lease_id,)
+    await controller.release(background.lease_id)
 
 
 @pytest.mark.asyncio

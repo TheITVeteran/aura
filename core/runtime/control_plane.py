@@ -505,9 +505,18 @@ class ResourceAdmissionController:
         if left.work_class == WorkClass.MODEL_LOAD and right.work_class == WorkClass.MODEL_LOAD:
             return True
         if left.work_class == WorkClass.MODEL_LOAD and right.work_class == WorkClass.INFERENCE:
-            return left.lane != right.lane
+            if left.lane == right.lane:
+                return False
+            # Cross-lane: a user-facing inference (serving the current turn on the
+            # fallback ladder) must not be blocked by a model load that only warms a
+            # model for future turns — serving now outranks warming for later. Memory
+            # is still enforced by lane_admission and GPU compute by the single-slot
+            # local semaphore, so background inference keeps yielding to the load.
+            return right.priority > AdmissionPriority.INTERACTIVE
         if right.work_class == WorkClass.MODEL_LOAD and left.work_class == WorkClass.INFERENCE:
-            return left.lane != right.lane
+            if left.lane == right.lane:
+                return False
+            return left.priority > AdmissionPriority.INTERACTIVE
         if left.work_class in {WorkClass.DESKTOP, WorkClass.SERVICE_START}:
             return left.work_class == right.work_class and left.lane == right.lane
         if left.work_class == WorkClass.MAINTENANCE:
