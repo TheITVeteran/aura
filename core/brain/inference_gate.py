@@ -2736,6 +2736,35 @@ class InferenceGate:
         now = time.monotonic()
         if not force and (now - self._last_background_memory_shed_at) < 20.0:
             return
+
+        # Never shed the small fallback models when memory is abundant. They
+        # are the guaranteed fast-answer path while the 32B cortex warms; with
+        # the router now routing AROUND a not-ready cortex, shedding them left
+        # nothing resident to answer and cascaded into a no-reply death spiral
+        # (2026-07-15 soak: 7B >56s, 1.5B >14.7s, all thrashing to reload
+        # despite 42GB free). Only shed when free memory genuinely cannot hold
+        # the cortex alongside them. `force=True` callers still respect this —
+        # a warmup deferred for admission/routing reasons is NOT a memory
+        # problem, and killing the fallback makes it strictly worse.
+        try:
+            from core.utils.memory_monitor import get_memory_pressure_snapshot
+
+            available_gb = float(get_memory_pressure_snapshot().available_gb)
+            cortex_reserve_gb = self._env_float("AURA_MLX_32B_LOAD_MIN_AVAILABLE_GB", 24.0)
+            fallback_reserve_gb = self._env_float("AURA_FALLBACK_RESIDENT_RESERVE_GB", 8.0)
+            if available_gb >= cortex_reserve_gb + fallback_reserve_gb:
+                logger.info(
+                    "🛡️ InferenceGate: keeping fallback workers resident "
+                    "(%.1fGB free ≥ %.1fGB cortex + %.1fGB fallback); shed skipped.",
+                    available_gb,
+                    cortex_reserve_gb,
+                    fallback_reserve_gb,
+                )
+                self._last_background_memory_shed_at = now
+                return
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            logger.debug("Shed memory-abundance check unavailable: %s", exc)
+
         self._last_background_memory_shed_at = now
 
         client_registry = {}
