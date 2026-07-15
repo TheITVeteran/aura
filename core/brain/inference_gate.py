@@ -2082,6 +2082,16 @@ class InferenceGate:
         lane = self.get_conversation_status()
         if self._lane_can_attempt_visible_conversation_turn(lane):
             return lane
+        # Recovery cap: a lane that was EVER ready and is now warming/
+        # recovering must NOT hold the turn for the full cold-boot budget.
+        # The chat caller passes 180s; without this cap every turn blocked
+        # ~206s on a recovering cortex ("Protected foreground lane failed
+        # (lane_warming): Cortex timed out after 206s" — the 2026-07-15 soak
+        # wall). _foreground_warmup_timeout returns 15s for a recovery and
+        # the cold budget for a genuine cold boot; take the tighter of the
+        # two so a recovering turn falls to the fast fallback while Cortex
+        # re-warms in the background (its warmup task is shielded).
+        timeout = min(timeout, self._foreground_warmup_timeout(lane, timeout))
         lane_state = str(lane.get("state", "") or "").lower()
         lane_reason = str(lane.get("last_failure_reason", "") or "")
         if lane_state == "failed" and lane_reason.startswith(
