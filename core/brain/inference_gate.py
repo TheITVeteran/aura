@@ -2217,6 +2217,14 @@ class InferenceGate:
             else:
                 await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
         except TimeoutError:
+            # A foreground warmup that keeps timing out is the cortex failing to
+            # load in time — the same GPU-thrash signal as a stuck-load kill, but
+            # with no force-kill to observe (the worker just stays "warming").
+            # Feed it into the warmup backoff so repeated stalls defer cortex
+            # warmup and free the single GPU slot for the resident fallback that
+            # is actually serving the turn. Without this the cortex load and the
+            # fallback cold-load fight over one GPU slot and neither wins.
+            self._note_cortex_stuck_kill()
             if hasattr(self._mlx_client, "note_lane_recovering"):
                 self._mlx_client.note_lane_recovering("foreground_warmup_timeout")
             raise
