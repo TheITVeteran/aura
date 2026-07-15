@@ -279,6 +279,47 @@ async def init_hardening_layer(orchestrator: Any):
         )
         logger.error("UnifiedRuntimePressure failed to start: %s", exc)
 
+    # Allostasis engine: predictive interoception over the pressure snapshots
+    # the provider above produces. Loop-free by design — the metabolic
+    # coordinator supplies the 60 s pulse, so there is no task here to die.
+    # Registration is what makes the anticipatory signal reachable from the
+    # body-state hot path (container lookup only, never construction there).
+    try:
+        from core.autonomic.allostasis import get_allostasis_engine
+
+        allostasis = get_allostasis_engine()
+        register_runtime_service(
+            "allostasis_engine",
+            allostasis,
+            failure_policy="degrade_with_receipt",
+            owner="core/autonomic/allostasis.py",
+            registered_by="initialize_allostasis_engine",
+        )
+        hardening_status["allostasis_engine"] = {
+            "state": "online" if allostasis.enabled else "disabled",
+            "registered": True,
+            "container_key": "allostasis_engine",
+        }
+        managed_components["allostasis_engine"] = allostasis
+        logger.info(
+            "AllostasisEngine active (predictive interoception, pulse via metabolic coordinator)."
+        )
+    except asyncio.CancelledError:
+        raise
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        hardening_status["allostasis_engine"] = {
+            "state": "failed",
+            "registered": False,
+            "error": str(exc),
+        }
+        _record_hardening_degradation(
+            exc,
+            component="allostasis_engine",
+            action="allostasis boot failed; body runs reactive-only (no anticipation)",
+            severity="degraded",
+        )
+        logger.error("AllostasisEngine failed to start: %s", exc)
+
     # Adopt hardening components into the canonical desired-state reconciler.
     # They are already running at this point; future probes/restarts flow
     # through one owner instead of independent ad hoc watchdog policy.
@@ -298,6 +339,14 @@ async def init_hardening_layer(orchestrator: Any):
                 stop = _noop_service_callback
                 probe = component.runtime_pressure_snapshot
                 critical = True
+                restart_on_unhealthy = False
+            elif component_name == "allostasis_engine":
+                # Pull-based like unified_runtime_pressure: no loop to
+                # restart; the probe is readiness, not task liveness.
+                start = _noop_service_callback
+                stop = _noop_service_callback
+                probe = component.is_ready
+                critical = False
                 restart_on_unhealthy = False
             elif component_name == "event_loop_monitor":
                 start = component.start

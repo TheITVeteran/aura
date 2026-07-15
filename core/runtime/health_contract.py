@@ -409,6 +409,13 @@ RUNTIME_CONTRACT: list[ServiceRequirement] = [
         ServiceTier.OPTIONAL,
         "Prometheus metrics endpoint.",
     ),
+    ServiceRequirement(
+        "Allostasis Engine",
+        "allostasis_engine",
+        ServiceTier.OPTIONAL,
+        "Predictive interoception: forecasts vital-sign trajectories and regulates before crises, with a calibration ledger.",
+        liveness_check="is_ready",
+    ),
 ]
 
 UNIFIED_MEMORY_PRESSURE_REQUIREMENT = ServiceRequirement(

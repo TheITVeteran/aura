@@ -678,6 +678,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 from core.health.system_health import router as system_health_router
 from core.session.checkpointing import CheckpointService
 from interface import memory_ui
+from interface.routes import allostasis as allostasis_routes
 from interface.routes import chat as chat_routes
 from interface.routes import dashboard as dashboard_routes
 from interface.routes import devices as devices_routes
@@ -708,6 +709,7 @@ app.include_router(interaction_signal_routes.router, prefix="/api", tags=["inter
 app.include_router(privacy_routes.router, prefix="/api", tags=["privacy"])
 app.include_router(rpc_routes.router, prefix="/rpc", tags=["rpc"])
 app.include_router(inner_state_routes.router, tags=["proof-surface"])
+app.include_router(allostasis_routes.router, prefix="/api", tags=["allostasis"])
 app.include_router(dashboard_routes.router, prefix="/api", tags=["dashboard"])
 app.include_router(dashboard_routes.trace_router, prefix="/api", tags=["trace"])
 app.include_router(settings_routes.router, prefix="/api", tags=["settings"])

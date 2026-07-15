@@ -40,6 +40,12 @@ class BodyState:
     tool_failure_pressure: float = 0.0
     time_since_last_turn_s: float = 0.0
     telemetry_sources: tuple[str, ...] = ()
+    # Allostasis: felt pressure from where the body is HEADING (forecast crisis
+    # proximity + chronic allostatic load), not where it is now. This is the
+    # seam that makes predictive interoception causal: it flows through
+    # pressure_vector() and total_pressure into affect, welfare, and the Will
+    # while every current reading is still green.
+    anticipatory_pressure: float = 0.0
 
     @classmethod
     def from_aura_state(cls, state: Any | None = None, *, idle_elapsed_s: float = 0.0) -> BodyState:
@@ -75,6 +81,22 @@ class BodyState:
         failed_tools = sum(1 for value in circuits.values() if isinstance(value, dict) and value.get("state") == "open")
         tool_failure = _bounded(failed_tools / 5.0)
 
+        # Anticipatory pressure from the allostasis engine (container lookup
+        # only — never constructs the organ from this hot path; zero when the
+        # engine is not booted or has nothing credible to report).
+        anticipatory = 0.0
+        try:
+            from core.container import ServiceContainer
+
+            allostasis = ServiceContainer.get("allostasis_engine", default=None)
+            if allostasis is not None:
+                felt = allostasis.felt_contribution()
+                anticipatory = _bounded(felt.get("anticipatory_pressure", 0.0))
+                if anticipatory > 0.0:
+                    sources.append("allostasis_forecast")
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            anticipatory = 0.0
+
         return cls(
             cpu_pressure=cpu,
             memory_pressure=memory,
@@ -85,6 +107,7 @@ class BodyState:
             tool_failure_pressure=tool_failure,
             time_since_last_turn_s=max(0.0, float(idle_elapsed_s or 0.0)),
             telemetry_sources=tuple(sorted(set(sources))),
+            anticipatory_pressure=anticipatory,
         )
 
     def pressure_vector(self) -> dict[str, float]:
@@ -111,6 +134,7 @@ class BodyState:
             self.context_pressure,
             self.sensor_pressure,
             self.tool_failure_pressure,
+            self.anticipatory_pressure,
         ]
         average_pressure = sum(pressures) / len(pressures)
         peak_pressure = max(pressures) if pressures else 0.0

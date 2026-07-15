@@ -81,6 +81,7 @@ class ServiceNames:
     BODY_SCHEMA = "body_schema"
     CAPABILITY_DISCOVERY = "capability_discovery"
     SOURCE_BODY = "source_body"
+    ALLOSTASIS = "allostasis_engine"        # core/autonomic/allostasis.py — predictive interoception
 
     # Self / Continuity (the Ghost substrate — core/ghost/)
     GHOST = "ghost"

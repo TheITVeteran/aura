@@ -374,6 +374,12 @@ class MetabolicCoordinator:
         if policy_reason:
             self._autonomous_reflection_last_outcome = f"deferred:{policy_reason}"
             return False
+        if self._allostasis_defers():
+            # A reflection debate is heavy LLM work and deferrable by
+            # definition; the body has asked for headroom it can see it
+            # will need. Expected backpressure — outcome note, not degradation.
+            self._autonomous_reflection_last_outcome = "deferred:allostasis"
+            return False
 
         self._autonomous_reflection_last_attempt_at = now
         self._autonomous_reflection_last_outcome = "running"
@@ -409,7 +415,21 @@ class MetabolicCoordinator:
         CPU bursts during local model generation are expected foreground work.
         Treating a single CPU sample as lockdown pressure creates false sleeps
         in the live/proof path without fixing the underlying load.
+
+        Anticipatory constraint: the allostasis engine can flag pressure that
+        is not here yet but credibly will be (a forecast red-line crossing) —
+        deferring background load is exactly the relief it is asking for.
         """
+        try:
+            from core.container import ServiceContainer
+            allostasis = ServiceContainer.get("allostasis_engine", default=None)
+            if allostasis is not None:
+                defer, reason = allostasis.should_defer_heavy_work()
+                if defer:
+                    logger.info("Metabolism: deferring on allostasis signal — %s", reason)
+                    return True
+        except _METABOLIC_BOUNDARY_ERRORS as exc:
+            logger.debug("Allostasis constraint check unavailable: %s", exc)
         try:
             from core.runtime import resource_psutil as psutil
             mem = psutil.virtual_memory().percent
@@ -417,6 +437,39 @@ class MetabolicCoordinator:
             return mem > 90 or disk > 95
         except (ImportError, OSError, AttributeError, RuntimeError, TypeError, ValueError):
             return False
+
+    def _allostasis_defers(self) -> bool:
+        """True when the allostasis engine asks for deferrable load to wait.
+
+        Gates only work that is deferrable by definition (RL training,
+        self-update, autonomous reflection) — never the relief work (GC,
+        model scavenge, memory hygiene), which must keep running under
+        pressure because it is what frees the resources being fought over.
+        """
+        try:
+            from core.container import ServiceContainer
+            allostasis = ServiceContainer.get("allostasis_engine", default=None)
+            if allostasis is None:
+                return False
+            defer, _reason = allostasis.should_defer_heavy_work()
+            return bool(defer)
+        except _METABOLIC_BOUNDARY_ERRORS:
+            return False
+
+    async def _allostasis_pulse(self) -> None:
+        """One allostatic sample per metabolic cycle (the 60 s pulse).
+
+        Runs before the throttle early-returns so the vitals keep being
+        sampled precisely when the system is under pressure — the moment
+        trend forecasting matters most. Fail-soft: a broken pulse degrades
+        prediction, never the cycle.
+        """
+        try:
+            from core.autonomic.allostasis import get_allostasis_engine
+            await get_allostasis_engine().sample_and_regulate()
+        except _METABOLIC_BOUNDARY_ERRORS as exc:
+            _record_metabolic_degradation(exc, action="allostasis pulse skipped this cycle")
+            logger.debug("Allostasis pulse unavailable: %s", exc)
 
     @property
     def orch(self):
@@ -455,6 +508,10 @@ class MetabolicCoordinator:
         # still fires under memory pressure — the exact condition where unloading
         # an idle model frees the most-needed RAM. Cheap when lanes are busy.
         await self._scavenge_idle_model_vram()
+        # Allostatic pulse likewise runs before every early-return: vitals must
+        # keep being sampled while the system is under the pressure being
+        # forecast, or the forecasts go stale exactly when they matter.
+        await self._allostasis_pulse()
         try:
             orch = self.orch
             if not orch:
@@ -653,11 +710,15 @@ class MetabolicCoordinator:
                     mem_percent = psutil.virtual_memory().percent
                     # Use status.volition_level (likely intended) instead of undefined variable
                     volition = getattr(orch.status, 'volition_level', 0)
-                    # Level 2+ required for background RL
-                    if volition >= 2 and not orch.status.is_processing and mem_percent < 80:
+                    # Level 2+ required for background RL; allostasis can defer it.
+                    if (volition >= 2 and not orch.status.is_processing
+                            and mem_percent < 80 and not self._allostasis_defers()):
                         self.track_metabolic_task("rl_training", self.run_rl_training())
                     else:
-                        logger.info("Skipping RL training: Volition low (%d) or system busy.", volition)
+                        logger.info(
+                            "Skipping RL training: Volition low (%d), system busy, or allostasis deferral.",
+                            volition,
+                        )
                 except _METABOLIC_BOUNDARY_ERRORS as e:
                     _record_metabolic_degradation(e, action="RL training resource check skipped")
                     logger.debug("Dependency missing for memory check, skipping RL training: %s", e)
@@ -666,11 +727,15 @@ class MetabolicCoordinator:
                     from core.runtime import resource_psutil as psutil
                     mem_percent = psutil.virtual_memory().percent
                     volition = getattr(orch.status, 'volition_level', 0)
-                    # Level 3 required for background Self-Update
-                    if volition >= 3 and not orch.status.is_processing and mem_percent < 80:
+                    # Level 3 required for background Self-Update; allostasis can defer it.
+                    if (volition >= 3 and not orch.status.is_processing
+                            and mem_percent < 80 and not self._allostasis_defers()):
                         self.track_metabolic_task("self_update", self.run_self_update())
                     else:
-                        logger.info("Skipping Evo update: Volition low (%d) or system busy.", volition)
+                        logger.info(
+                            "Skipping Evo update: Volition low (%d), system busy, or allostasis deferral.",
+                            volition,
+                        )
                 except _METABOLIC_BOUNDARY_ERRORS as e:
                     _record_metabolic_degradation(e, action="self-update resource check skipped")
                     logger.debug("Dependency missing for memory check, skipping Evo update: %s", e)

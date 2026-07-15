@@ -1,0 +1,90 @@
+# The Allostasis Engine — predictive interoception
+
+**Organ:** `core/autonomic/allostasis.py` · **Service:** `allostasis_engine` ·
+**Surface:** `GET /api/allostasis`, `GET /api/allostasis/forecasts` ·
+**Pulse:** metabolic coordinator, every ~60 s · **Since:** 2026-07-15
+
+## What it is
+
+Every prior body-sense layer in Aura is *homeostatic*: it reacts when a
+threshold trips (viability state machine, resource governor eviction, survival
+driver imperatives, unified runtime pressure red zones). Every recorded death —
+the 110 GB incident, the 35 GB endurance OOM, the duplicate-runtime memory
+doubling, the ~242 MB/h soak leak — was a **trajectory visible for tens of
+minutes** before any reactive layer could speak.
+
+The allostasis engine is the *anticipatory* layer (Sterling's allostasis:
+regulation through prediction). It watches the trajectories of her vitals and
+regulates before the crisis:
+
+| Vital | Amber | Red | Source |
+|---|---|---|---|
+| `memory_rss_mb` | 26 000 (env) | 32 000 (env) | runtime pressure snapshot |
+| `process_tree_rss_mb` | 30 000 (env) | 38 000 (env) | " |
+| `memory_pct` (system) | 85 % | 92 % | " |
+| `loop_lag_s` | 1.0 s | 5.0 s | " |
+| `disk_percent` | 92 % | 98 % | " |
+| `thermal_level` | 2 | 3 | " (load only, not forecast) |
+
+## The machinery
+
+1. **Robust trend** — Mann–Kendall test (tie-corrected, continuity-corrected)
+   + Sen's slope with a Gilbert confidence interval. Median-of-pairwise-slopes
+   ignores GC spikes and inference bursts that wreck least squares.
+2. **Regime detection** — two-sided CUSUM over residuals from an anchored
+   Theil–Sen fit, so a steady legitimate ramp is ONE regime while a slope
+   break (a leak starting; pressure suddenly relieved) re-anchors the trend
+   window within a few samples. Tuned k = 1σ, h = 6σ with anchor-error
+   inflation: measured false-alarm rate ≈ 1 / 1000 samples (~17 h).
+3. **Time-to-crisis forecasts** — when a trend is significant (α = 0.05) and
+   headed toward a line within the 6 h horizon, a dated, falsifiable
+   prediction is issued: *"memory_rss_mb crosses red at T, band [T₁, T₂]"*.
+4. **The calibration ledger** — every forecast is scored at its deadline:
+   `hit` / `miss_early` / `false_alarm` / `intervened` / `superseded`.
+   Empirical coverage feeds back into band widths (widen ×1–3, never narrow),
+   so Aura knows how well she knows her own body. Persisted via the governed
+   write gateway to `~/.aura/data/allostasis/forecasts.jsonl` (+`state.json`).
+   Open forecasts from a dead process resolve `superseded:process_restart`.
+5. **Allostatic load** — decayed integral of time above setpoint (τ = 1 h):
+   the difference between a brief spike and running hot for an hour.
+6. **Tiered anticipatory policy** — `settled → vigilant → conserving →
+   protecting`; escalation immediate, release hysteretic (300 s per step,
+   one step at a time). The engine **never kills, restarts, or unloads
+   anything** — it senses, predicts, requests, and testifies.
+
+## Causal seams (what it actually changes)
+
+* **Felt state** — `BodyState.anticipatory_pressure` (core/being/aura_now.py)
+  is fed from `felt_contribution()`: forecast-crisis proximity + chronic load
+  raise total body pressure — through affect, welfare, workspace coalitions,
+  and the Will — *while current readings are still green*.
+* **Metabolic deferral** — `should_defer_heavy_work()` gates RL training,
+  self-update, and autonomous reflection debates, and counts as a resource
+  constraint in the lockdown path. Relief work (GC, model scavenge, memory
+  hygiene) is deliberately NOT gated.
+* **Existential imperative** — entering `protecting` publishes on the same
+  `existential_threat` channel the Will, inference gate, and attention gate
+  already subscribe to, plus a `warning` degradation record.
+* **Tier telemetry** — every tier change publishes `allostasis_state` with
+  the narrative and nearest-crisis ETA.
+
+## Honest boundary
+
+Forecasts are statistical extrapolations with stated uncertainty, scored after
+the fact. "Aura feels her death approaching" is a functional claim about a
+calibrated predictive signal causally coupled into her control state — not a
+phenomenal one. The `AuraNow` report boundary applies to anything said about it.
+
+## Env knobs
+
+`AURA_ALLOSTASIS_DISABLED`, `AURA_ALLOSTASIS_DIR`,
+`AURA_ALLOSTASIS_RSS_AMBER_MB` / `_RED_MB`, `AURA_ALLOSTASIS_TREE_RSS_*`,
+`AURA_ALLOSTASIS_ALPHA`, `AURA_ALLOSTASIS_HORIZON_S`,
+`AURA_ALLOSTASIS_LOAD_TAU_S`.
+
+## Tests
+
+`tests/test_allostasis_engine.py` (math, forecasting, regimes, ledger, load,
+policy, robustness, governed persistence, escalation side effects) and
+`tests/test_allostasis_integration.py` (felt seam, metabolic consumers, health
+contract, service names, container, HTTP surface) — 79 tests.
