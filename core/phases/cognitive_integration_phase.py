@@ -48,6 +48,13 @@ __all__ = ["CognitiveIntegrationPhase"]
 
 _DEGRADED_SUBSYSTEMS_KEY = "cognitive_integration_degraded"
 
+# How much of the Lenia kernel's coupling matrix is mixed into the mesh each
+# tick. Small and blended: the Lenia layer is one influence on the mesh's
+# connectivity alongside STDP and topology evolution, not an authority that
+# overwrites them. Raising this makes the ecology more dominant; setting it to
+# 0 restores the old behaviour where the kernel was pure telemetry.
+_LENIA_COUPLING_BLEND = 0.1
+
 
 def _record_cognitive_degradation(
     exc: BaseException,
@@ -662,6 +669,24 @@ class CognitiveIntegrationPhase(Phase):
                 activations, weights, projection
             )
 
+            # ── APPLY the Lenia coupling to the mesh ─────────────────
+            # The whole point of the kernel is that it replaces fixed
+            # inter-column connectivity. Reading only `entropy` off the result
+            # and dropping `kernel_weights` on the floor left the Lenia
+            # mathematics as an elaborate telemetry source: it computed a new
+            # coupling matrix every tick that nothing ever used. Writing it back
+            # is what makes "living neural ecology" a description of the mesh's
+            # dynamics rather than of a dataclass.
+            kernel_weights = getattr(alife_state, "kernel_weights", None)
+            applied = False
+            if kernel_weights is not None and hasattr(mesh, "apply_inter_column_coupling"):
+                applied = mesh.apply_inter_column_coupling(
+                    kernel_weights,
+                    blend=_LENIA_COUPLING_BLEND,
+                    source="alife_dynamics.lenia",
+                )
+            state.response_modifiers["lenia_coupling_applied"] = bool(applied)
+
             # Store entropy and credit info in state
             if hasattr(alife_state, "entropy"):
                 state.response_modifiers["entropy"] = alife_state.entropy
@@ -670,6 +695,10 @@ class CognitiveIntegrationPhase(Phase):
                 state.response_modifiers["compute_credits_gini"] = (
                     self._alife_dynamics.get_status().get("gini_coefficient", 0.0)
                     if hasattr(self._alife_dynamics, "get_status") else 0.0
+                )
+            if getattr(alife_state, "growth_signal", None) is not None:
+                state.response_modifiers["lenia_mean_growth"] = float(
+                    getattr(alife_state, "mean_growth", 0.0)
                 )
         except (ImportError, AttributeError, RuntimeError) as exc:
             _record_cognitive_degradation(
@@ -697,10 +726,20 @@ class CognitiveIntegrationPhase(Phase):
             mesh = ServiceContainer.get("neural_mesh", default=None)
             mesh_state = {}
             if mesh:
-                mesh_state = {
-                    "column_activations": getattr(mesh, "column_activations", None),
-                    "inter_column_weights": getattr(mesh, "inter_column_weights", None),
-                }
+                # The extension layer reads columns_W / contributions /
+                # stabilities / error_rates / specialization_profiles. Passing
+                # column_activations + inter_column_weights meant columns_W
+                # resolved to [] — the replicator received no column weights at
+                # all — and every other field silently defaulted to a synthetic
+                # constant, so replication and speciation ran against 0.5s
+                # instead of against the mesh.
+                if hasattr(mesh, "alife_mesh_state"):
+                    mesh_state = mesh.alife_mesh_state()
+                else:
+                    mesh_state = {
+                        "column_activations": getattr(mesh, "column_activations", None),
+                        "inter_column_weights": getattr(mesh, "inter_column_weights", None),
+                    }
             tick_count = getattr(self.kernel, "cycle_count", 0)
             ext_state = await self._alife_extensions.tick(
                 mesh_state=mesh_state,

@@ -254,20 +254,62 @@ class WholeSystemPhiService:
         *,
         channel_names: tuple[str, ...] | None = None,
     ) -> None:
-        additions: list[Any] = list(transitions or [])
-        if channel_names:
-            from core.consciousness.integrated_information import (
-                InterventionalTransition,
-            )
+        """Add interventional rows to the discrete estimator.
 
-            additions = [
-                InterventionalTransition(
-                    channel_names=tuple(channel_names),
-                    before=tuple(before),
-                    after=tuple(after),
+        ``channel_names`` is required in practice: rows are dropped without it.
+
+        Anonymous rows are not merely useless, they are unsafe. Constant
+        channels are dropped before estimation, so a raw 13-tuple no longer
+        corresponds to the 8 surviving elements. When the arity does not match
+        the row is rejected at projection — that is what emptied the checked-in
+        campaign (5 trials in, ``n_interventional_transitions: 0``,
+        ``n_projection_rejected_transitions: 5``) while the artifact kept the
+        name ``estimate_with_interventions``.
+
+        When the arity *coincidentally* matches, the row is worse than useless:
+        it is interpreted positionally against whatever channels happened to
+        survive, silently attributing an intervention on one channel to another.
+        A misaligned interventional row is fabricated causal evidence. So rows
+        without names are refused outright rather than passed downstream to be
+        either rejected or misread.
+        """
+        raw = list(transitions or [])
+        if not channel_names:
+            if raw:
+                record_degradation(
+                    "whole_system_phi",
+                    ValueError(
+                        f"{len(raw)} interventional transitions supplied without "
+                        "channel_names; refusing them (they could not be aligned to "
+                        "the estimator's retained channels)"
+                    ),
+                    action="dropped anonymous interventional rows",
+                    enforce_failure_policy=False,
                 )
-                for before, after in transitions or []
-            ]
+                logger.error(
+                    "WholeSystemPhi: REFUSED %d interventional transitions that "
+                    "arrived without channel_names. Unnamed rows cannot be aligned "
+                    "to the retained channels and would be silently misread if the "
+                    "arity happened to match. Pass channel_names.",
+                    len(raw),
+                )
+            if probe_report:
+                with self._lock:
+                    self._latest_probe = dict(probe_report)
+            return
+
+        from core.consciousness.integrated_information import (
+            InterventionalTransition,
+        )
+
+        additions: list[Any] = [
+            InterventionalTransition(
+                channel_names=tuple(channel_names),
+                before=tuple(before),
+                after=tuple(after),
+            )
+            for before, after in raw
+        ]
         with self._lock:
             self._interventional.extend(additions)
             self._interventional = self._interventional[-200:]

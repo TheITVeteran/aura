@@ -327,6 +327,26 @@ def minimum_information_bipartition(
 # Surrogates, bootstrap, diagnostics
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Significance threshold for the family-wise grain-selection test.
+PHI_ALPHA = 0.10
+
+# How far below alpha the test's p-floor must sit before a positive result is
+# allowed to count. An empirical p from N surrogates cannot go below 1/(N+1);
+# a "significant" p that IS that floor is a statement about the test's
+# resolution, not about the data. Requiring an order of magnitude of headroom
+# means a result that clears alpha did so with room to spare.
+PHI_RESOLUTION_MARGIN = 10.0
+
+# Minimum surrogates for a claim: 1/(N+1) ≤ PHI_ALPHA / PHI_RESOLUTION_MARGIN.
+PHI_MIN_CLAIM_SURROGATES = int(round(PHI_RESOLUTION_MARGIN / PHI_ALPHA)) - 1  # 99
+
+# Default for a *claim-grade* run. The live service deliberately runs cheaper
+# (it is telemetry, and reports integration_established=False rather than a
+# false positive); the measurement tool that produces citable artifacts should
+# use this or more.
+PHI_CLAIM_SURROGATES = 500
+
+
 def _circular_shift_surrogate(X: np.ndarray, rng: np.random.Generator) -> np.ndarray:
     """Independently rotate each channel in time: preserves every marginal
     and autocorrelation, destroys cross-channel coupling — the null for
@@ -884,16 +904,71 @@ class PhiEstimate:
     observed_channel_names: tuple[str, ...] = ()
     quotient_groups: tuple[tuple[int, ...], ...] = ()
 
+    def p_floor(self) -> float:
+        """The smallest p this test could possibly report.
+
+        An empirical p from N surrogates is (1 + #{null ≥ observed}) / (N + 1),
+        so its minimum is 1/(N+1). With 20 surrogates that floor is 0.047619 —
+        and a reported p of exactly 0.047619 means only "no null draw beat the
+        observed score". It does not distinguish a true p of 0.04 from 0.004,
+        nor from a result that would not replicate at all.
+        """
+        n = int(self.grain_selection_surrogates or 0)
+        return 1.0 / (n + 1) if n > 0 else 1.0
+
+    def surrogate_resolution_sufficient(self) -> bool:
+        """Can this null distribution resolve a claim at ``PHI_ALPHA``?
+
+        A significance claim made at the resolution limit of its own test is not
+        a claim. We require the floor to sit an order of magnitude below the
+        threshold, so a p that clears alpha does so with room to spare rather
+        than because it could not have been any smaller.
+        """
+        return self.p_floor() <= PHI_ALPHA / PHI_RESOLUTION_MARGIN
+
     def integration_established(self) -> bool:
-        """Family-wise evidence at the selected grain, not a raw maximum."""
+        """Family-wise evidence at the selected grain, not a raw maximum.
+
+        Requires enough surrogates to resolve the threshold: the checked-in
+        campaign reported family-wise p = 0.047619 from 20 surrogates, which is
+        exactly 1/(20+1) — the floor. It cleared p ≤ 0.10 only because the test
+        had no finer resolution to offer.
+        """
+        if not self.surrogate_resolution_sufficient():
+            return False
         if not self.emergent_grain_k:
             return self.z >= 3.0 and self.ci_5 > 0.0
         return (
             self.emergent_z >= 3.0
             and self.emergent_ci_5 > 0.0
-            and self.grain_selection_p <= 0.10
+            and self.grain_selection_p <= PHI_ALPHA
             and self.grain_selection_used_holdout
         )
+
+    def claim_limits(self) -> list[str]:
+        """Everything that stops this estimate being a publishable claim.
+
+        Returned on the artifact so a reader does not have to reconstruct the
+        caveats from the raw numbers.
+        """
+        limits: list[str] = []
+        if not self.surrogate_resolution_sufficient():
+            limits.append(
+                f"surrogate_resolution: {self.grain_selection_surrogates} surrogates "
+                f"give a p-floor of {self.p_floor():.6f}; at least "
+                f"{PHI_MIN_CLAIM_SURROGATES} are needed to resolve p ≤ {PHI_ALPHA} "
+                f"with a {PHI_RESOLUTION_MARGIN}x margin"
+            )
+        if self.grain_selection_p <= self.p_floor() + 1e-12 and self.grain_selection_surrogates:
+            limits.append(
+                f"p_at_floor: family-wise p={self.grain_selection_p:.6f} is the "
+                f"minimum this test can report; the true p is unresolved"
+            )
+        if not self.grain_selection_used_holdout and self.emergent_grain_k:
+            limits.append("grain_selection_not_held_out: selection and evaluation share data")
+        if self.n_samples < 1000:
+            limits.append(f"short_window: {self.n_samples} samples")
+        return limits
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -942,6 +1017,15 @@ class PhiEstimate:
             "exact_macro": dict(self.exact_macro),
             "diagnostics": dict(self.diagnostics),
             "integration_established": self.integration_established(),
+            # A reader must not have to derive 1/(N+1) by hand to discover that
+            # a reported p sits at the test's resolution limit.
+            "p_floor": round(self.p_floor(), 8),
+            "p_at_floor": bool(
+                self.grain_selection_surrogates
+                and self.grain_selection_p <= self.p_floor() + 1e-12
+            ),
+            "surrogate_resolution_sufficient": self.surrogate_resolution_sufficient(),
+            "claim_limits": self.claim_limits(),
             "claim": self.claim,
         }
 
@@ -954,17 +1038,28 @@ def _bounded_claim(est: "PhiEstimate") -> str:
         if est.mip_certified_exact
         else "bounded heuristic MIP candidate"
     )
+    p_note = f"family-wise p={est.grain_selection_p:.3f}"
+    if est.grain_selection_surrogates and est.grain_selection_p <= est.p_floor() + 1e-12:
+        # Report the floor inline. "p=0.048" reads as a finding; "p=0.048, the
+        # floor for 20 surrogates" reads as what it is.
+        p_note += (
+            f" (= the 1/(N+1) floor for {est.grain_selection_surrogates} "
+            f"surrogates; true p unresolved)"
+        )
+    limits = est.claim_limits()
+    limits_note = f" Claim limits: {'; '.join(limits)}." if limits else ""
     return (
         f"Micro Φ̂={est.phi_raw:.4f} nats over {est.n_channels} estimator "
         f"elements covering {est.n_observed_channels or est.n_channels} live channels "
         f"({est.n_samples} samples; {mip_proof}; z={est.z:.1f}). Selected "
         f"held-out grain k={est.emergent_grain_k}: Φ̂={est.emergent_phi_raw:.4f}, "
-        f"z={est.emergent_z:.1f}, family-wise p={est.grain_selection_p:.3f}, "
+        f"z={est.emergent_z:.1f}, {p_note}, "
         f"90% CI [{est.emergent_ci_5:.4f}, {est.emergent_ci_95:.4f}]. "
-        f"{verdict}. This is an "
+        f"{verdict}.{limits_note} This is an "
         "estimate of integrated information of the system's macro-dynamics "
         "under a Gaussian model of its OWN measured channels — evidence "
-        "about integration structure, not a consciousness meter."
+        "about integration structure, not a consciousness meter, and not "
+        "formal IIT 4.0 Φ."
     )
 
 

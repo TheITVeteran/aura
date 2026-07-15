@@ -32,6 +32,22 @@ def report() -> dict:
     return envelope.get("payload", envelope)
 
 
+def _final_estimate(report: dict) -> dict:
+    """The post-campaign estimate.
+
+    ``estimate_with_interventions`` was renamed to ``estimate_after_campaign``:
+    the old name asserted a causal role the interventions did not have (they
+    reach only the discrete estimator, never the Gaussian rail that produces the
+    headline Φ/z/p), and in the run that named itself that way every
+    interventional row had been rejected. Both keys are read so historical
+    artifacts stay checkable rather than being quietly regenerated away.
+    """
+    for key in ("estimate_after_campaign", "estimate_with_interventions"):
+        if key in report:
+            return report[key]
+    raise AssertionError("artifact has no post-campaign estimate")
+
+
 def test_report_identity_and_provenance(report):
     assert report["schema"] == "aura.whole_system_phi_live_report.v1"
     assert report["mode"] in {"organ_host", "live_api"}
@@ -51,13 +67,13 @@ def test_scope_claim_is_honest(report):
 
 def test_window_is_a_meaningful_period(report):
     assert report["window_seconds"] >= 600, "at least a 10-minute natural window"
-    est = report["estimate_with_interventions"]
+    est = _final_estimate(report)
     assert est["n_samples"] >= 600
     assert est["n_channels"] >= 6, "a real multi-organ channel set"
 
 
 def test_estimate_carries_the_full_evidence(report):
-    est = report["estimate_with_interventions"]
+    est = _final_estimate(report)
     for key in ("estimator", "phi_raw", "z", "null_mean", "null_std",
                 "ci_5", "ci_95", "mip", "grains", "emergent_grain_k",
                 "diagnostics", "integration_established", "claim"):
@@ -73,7 +89,7 @@ def test_estimate_carries_the_full_evidence(report):
 
 
 def test_channels_are_real_organs_not_synthetic(report):
-    est = report["estimate_with_interventions"]
+    est = _final_estimate(report)
     names = set(est["channel_names"])
     organs = {n.split(".")[0] for n in names}
     # a genuine multi-subsystem harvest, not a constructed ring
@@ -138,3 +154,98 @@ def test_live_api_mode_has_explicit_nonintervention_contract():
 
     _assert_campaign_contract(live_report)
     _assert_workload_contract(live_report)
+
+
+# ---------------------------------------------------------------------------
+# The honesty contract the original artifact did not have to satisfy
+# ---------------------------------------------------------------------------
+
+
+def test_a_positive_verdict_requires_a_resolvable_null(report):
+    """"Integration established" must not rest on the test's own resolution.
+
+    The checked-in run reported family-wise p = 0.047619 from 20 surrogates —
+    exactly 1/(20+1), the smallest value that test can produce. It cleared the
+    threshold only because it could not have been any smaller.
+
+    Note what is NOT required here: that p sits above the floor. A genuinely
+    integrated system beats *every* null draw, so its p is at the floor however
+    many surrogates you run — that is a strong result, not a weak one. What
+    matters is where the floor is. At 20 surrogates the floor (0.048) is
+    indistinguishable from "barely significant"; at 500 it is 0.002, so beating
+    all nulls means something.
+    """
+    est = _final_estimate(report)
+    if not est.get("integration_established"):
+        return  # a negative verdict needs no resolution guarantee
+
+    from core.consciousness.integrated_information import PHI_MIN_CLAIM_SURROGATES
+
+    surrogates = int(est.get("grain_selection_surrogates") or 0)
+    p = float(est.get("grain_selection_p", 1.0))
+    floor = 1.0 / (surrogates + 1) if surrogates else 1.0
+
+    assert surrogates >= PHI_MIN_CLAIM_SURROGATES, (
+        f"integration_established=True on only {surrogates} surrogates "
+        f"(p={p:.6f}, floor={floor:.6f}); at least {PHI_MIN_CLAIM_SURROGATES} "
+        "are needed before the threshold is resolvable at all"
+    )
+
+
+def test_interventional_rows_reach_the_estimator_or_are_reported_as_absent(report):
+    """A campaign's interventions must be accounted for, not silently dropped.
+
+    Five probe trials produced 13-channel rows that were handed to an estimator
+    expecting 8 named channels; all five were projection-rejected. The artifact
+    still called the result "estimate_with_interventions", and no test noticed
+    because the only assertion was `n_interventional_transitions >= 0`.
+    """
+    if report["mode"] == "live_api":
+        return  # never perturbed
+
+    est = _final_estimate(report)
+    macro = est.get("exact_macro") or {}
+    if not macro:
+        return
+
+    accepted = int(macro.get("n_interventional_transitions", 0))
+    rejected = int(macro.get("n_projection_rejected_transitions", 0))
+
+    if rejected and not accepted:
+        pytest.fail(
+            f"all {rejected} interventional rows were rejected at projection — "
+            "the campaign contributed nothing to the estimate. Pass "
+            "channel_names to add_interventional_transitions."
+        )
+
+
+def test_the_artifact_does_not_imply_interventions_drove_the_gaussian_rail(report):
+    """The Gaussian rail never consumes interventional rows.
+
+    phi_raw / z / family-wise p — every number behind integration_established —
+    come from the time-series estimator, which reads no interventions at all. An
+    artifact must not let a reader infer the perturbations moved them.
+    """
+    if "interventions" not in report:
+        return  # historical artifact predating the disclosure
+
+    interventions = report["interventions"]
+    assert "not_consumed_by" in interventions
+    assert "Gaussian" in interventions["not_consumed_by"]
+
+
+def test_regime_change_is_disclosed(report):
+    """The post-campaign window is not the same regime plus interventions.
+
+    The sample count rose 3600 → 3960: exactly the 90 s stabilization rest plus
+    6 × 45 s inter-trial rests. A quiet decay-and-recovery regime was appended to
+    a decision-workload regime, and coordinated affect drift during recovery can
+    raise integration on its own. So a pre→post change cannot be attributed to
+    the perturbations.
+    """
+    if report["mode"] == "live_api" or "regime_note" not in report:
+        return  # historical artifact predating the disclosure
+
+    note = report["regime_note"]
+    assert "rest" in note.lower()
+    assert "NOT evidence" in note

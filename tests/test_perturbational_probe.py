@@ -373,6 +373,47 @@ async def test_service_runs_live_probe_campaign_and_keeps_named_rows(monkeypatch
 
 
 def test_service_carries_interventional_rows_into_estimates(monkeypatch):
+    """Named interventional rows must actually REACH the estimator.
+
+    This previously asserted ``n_interventional_transitions >= 0``, which is
+    true of every possible input — including the real failure, where all rows
+    were rejected at projection and the count was 0. It also hid behind
+    ``if est.exact_macro:``, so it could skip entirely. A test that cannot fail
+    is how a whole probe campaign contributed zero interventions to an artifact
+    named "estimate_with_interventions" without anyone noticing.
+    """
+    monkeypatch.setenv("AURA_WSPHI_MIN_SAMPLES", "300")
+    monkeypatch.setenv("AURA_WSPHI_ESTIMATE_EVERY", "300")
+    service = WholeSystemPhiService()
+    names = tuple(f"ch{i}" for i in range(6))
+    service.add_interventional_transitions(
+        [((0, 1, 0, 1, 0, 1), (1, 0, 1, 0, 1, 0))],
+        probe_report={"pci": 0.4},
+        channel_names=names,
+    )
+    _feed_ring(service, 320)
+    est = service.maybe_estimate()
+    assert est is not None
+    assert est.exact_macro, "no discrete estimate was produced"
+    assert est.exact_macro["n_interventional_transitions"] > 0, (
+        "interventional rows never reached the estimator — they were rejected "
+        f"at projection ({est.exact_macro.get('n_projection_rejected_transitions')} "
+        "rejected)"
+    )
+    assert est.exact_macro["n_projection_rejected_transitions"] == 0
+    assert service.status()["latest_probe"]["pci"] == 0.4
+
+
+def test_anonymous_interventional_rows_are_refused(monkeypatch):
+    """Unnamed rows must be dropped at the door, not misread downstream.
+
+    In the checked-in campaign 13-bit anonymous rows met 8 retained channels and
+    were rejected at projection. But when the arity coincidentally matches (as
+    here: 6 rows, 6 live channels) an unnamed row is NOT rejected — it is read
+    positionally against whatever channels survived, silently attributing an
+    intervention on one channel to another. That is fabricated causal evidence,
+    so the rows are refused outright.
+    """
     monkeypatch.setenv("AURA_WSPHI_MIN_SAMPLES", "300")
     monkeypatch.setenv("AURA_WSPHI_ESTIMATE_EVERY", "300")
     service = WholeSystemPhiService()
@@ -380,12 +421,39 @@ def test_service_carries_interventional_rows_into_estimates(monkeypatch):
         [((0, 1, 0, 1, 0, 1), (1, 0, 1, 0, 1, 0))],
         probe_report={"pci": 0.4},
     )
+    assert service.status()["interventional_rows"] == 0, (
+        "an unnamed interventional row was accepted; if its arity matches the "
+        "retained channels it will be misaligned rather than rejected"
+    )
+
     _feed_ring(service, 320)
     est = service.maybe_estimate()
     assert est is not None
-    if est.exact_macro:
-        assert est.exact_macro["n_interventional_transitions"] >= 0
+    assert est.exact_macro
+    assert est.exact_macro["n_interventional_transitions"] == 0
+    # The probe report itself is still recorded — refusing the rows must not
+    # lose the trial's other evidence.
     assert service.status()["latest_probe"]["pci"] == 0.4
+
+
+def test_measure_tool_passes_channel_names_to_the_estimator():
+    """The one-line wiring defect that emptied the campaign.
+
+    tools/measure_whole_system_phi.py called add_interventional_transitions
+    without channel_names, so all five probe trials were projection-rejected.
+    """
+    import inspect
+
+    from tools import measure_whole_system_phi
+
+    src = inspect.getsource(measure_whole_system_phi)
+    call_start = src.find("host.service.add_interventional_transitions")
+    assert call_start != -1, "call site not found — update this test"
+    call = src[call_start : call_start + 400]
+    assert "channel_names=" in call, (
+        "measure_whole_system_phi calls add_interventional_transitions without "
+        "channel_names — every interventional row will be rejected at projection"
+    )
 
 
 @pytest.mark.asyncio

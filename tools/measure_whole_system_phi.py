@@ -204,6 +204,45 @@ class OrganHost:
         }
 
 
+_STABILIZATION_REST_S = 90.0
+_INTER_TRIAL_REST_S = 45.0
+
+
+def _rest_seconds(probe_trials: int) -> float:
+    """Rest appended to the sampling window by the campaign protocol.
+
+    This is the regime confound in one number: the checked-in run grew from
+    3600 to 3960 samples, and 90 + 6×45 = 360 accounts for all of it. The
+    "positive" estimate was computed over a window that had a quiet recovery
+    regime appended to it, not over the same regime plus interventions.
+    """
+    return _STABILIZATION_REST_S + _INTER_TRIAL_REST_S * max(0, probe_trials)
+
+
+def _raw_matrix_artifact(host: "OrganHost") -> dict:
+    """Preserve the timestamped matrix so the estimate can be recomputed.
+
+    Without the raw series a reader can only take the reported Φ on trust —
+    they cannot re-derive it, try a different estimator, use more surrogates,
+    or separate the regimes. An unreproducible number is not a result.
+    """
+    try:
+        rows = list(host.service._window)
+        names = sorted(set().union(*[set(r) for r in rows])) if rows else []
+        return {
+            "channel_names": names,
+            "n_samples": len(rows),
+            "matrix": [[float(r.get(k, float("nan"))) for k in names] for r in rows],
+            "note": (
+                "Row-major T×N samples in observation order, aligned to "
+                "channel_names. Recompute with "
+                "core.consciousness.integrated_information.estimate_whole_system_phi."
+            ),
+        }
+    except (AttributeError, TypeError, ValueError) as exc:
+        return {"error": f"raw matrix unavailable: {type(exc).__name__}: {exc}"}
+
+
 async def run_organ_host(minutes: float, hz: float, probe_trials: int) -> dict:
     from core.consciousness.perturbational_probe import PerturbationalProbe
 
@@ -249,20 +288,29 @@ async def run_organ_host(minutes: float, hz: float, probe_trials: int) -> dict:
             print(f"  trial {n + 1}: refused ({report.reason[:70]}…) — "
                   "resting 90s and retrying once")
             trials.append(report.to_dict())
-            await host.rest(90.0)
+            await host.rest(_STABILIZATION_REST_S)
             report = await asyncio.to_thread(
                 probe.run, n_baseline=40, n_response=40, interval_s=0.25,
             )
         trials.append(report.to_dict())
         if report.ran:
+            # channel_names is REQUIRED, not optional. Without it the rows go in
+            # as anonymous 13-bit tuples while the estimator — which has already
+            # dropped 5 constant channels — expects transitions aligned to the 8
+            # retained named channels. Every row is then rejected at projection
+            # (n_interventional_transitions=0, n_projection_rejected=5), and the
+            # artifact named "estimate_with_interventions" contains none.
             host.service.add_interventional_transitions(
-                report.transitions, probe_report=report.pci)
+                report.transitions,
+                probe_report=report.pci,
+                channel_names=report.channel_names,
+            )
         print(f"  trial {n + 1}: ran={report.ran} "
               f"pci={report.pci.get('pci', '—')} "
               f"sham={report.sham_pci.get('pci', '—')} "
               f"evoked={report.pci.get('evoked_complexity', '—')} "
               f"({report.reason})")
-        await host.rest(45.0)  # inter-trial recovery, always
+        await host.rest(_INTER_TRIAL_REST_S)  # inter-trial recovery, always
 
     # second estimate now that interventional rows exist
     host.service._since_estimate = 10 ** 9  # force due
@@ -306,10 +354,46 @@ async def run_organ_host(minutes: float, hz: float, probe_trials: int) -> dict:
         "organs_present": sorted(
             set().union(*[set(r) for r in [host.service.sample_runtime_channels()]])
         ),
-        "estimate_pre_intervention": estimate.to_dict(),
-        "estimate_with_interventions": estimate2.to_dict(),
+        # NOT "estimate_with_interventions". Two reasons, both material:
+        #
+        #  1. Interventional rows only enter the DISCRETE estimator. The Gaussian
+        #     rail — which produces phi_raw, z, and the family-wise p that decide
+        #     integration_established — never consumes them at all. Naming the
+        #     result after the interventions implies a causal role they do not
+        #     have on the headline number.
+        #  2. This window is not "the same regime plus interventions". It appends
+        #     one 90 s stabilization rest and one 45 s rest per trial — a quiet
+        #     decay-and-recovery regime bolted onto the decision-workload regime.
+        #     Coordinated drift across affect channels during recovery can raise
+        #     integration on its own, so a pre→post change cannot be attributed
+        #     to the perturbations.
+        #
+        # The name now says what it is: the estimate after the campaign.
+        "estimate_pre_campaign": estimate.to_dict(),
+        "estimate_after_campaign": estimate2.to_dict(),
+        "regime_note": (
+            "estimate_after_campaign covers BOTH the decision-workload regime and "
+            "the post-campaign rest/recovery regime "
+            f"({_rest_seconds(probe_trials)}s of added rest across "
+            f"{probe_trials} trials). A pre→post difference is NOT evidence that "
+            "the interventions caused it: the regime changed too. Compare like "
+            "with like before claiming a perturbation effect on the Gaussian rail."
+        ),
+        "interventions": {
+            "accepted": estimate2.exact_macro.get("n_interventional_transitions", 0),
+            "projection_rejected": estimate2.exact_macro.get(
+                "n_projection_rejected_transitions", 0
+            ),
+            "consumed_by": "discrete exact_macro estimator only",
+            "not_consumed_by": (
+                "the Gaussian rail (phi_raw / z / family-wise p / "
+                "integration_established) — it is a time-series estimator and "
+                "never reads interventional rows"
+            ),
+        },
         "campaign": campaign,
         "persisted_report": persisted,
+        "raw_matrix": _raw_matrix_artifact(host),
     }
 
 
@@ -368,8 +452,10 @@ async def run_live_api(minutes: float, hz: float, port: int) -> dict:
         ),
         "window_seconds": round(minutes * 60, 1),
         "hz": hz,
-        "estimate_pre_intervention": est.to_dict(),
-        "estimate_with_interventions": est.to_dict(),
+        # live_api never perturbs, so there is only one estimate. It is
+        # published under both keys rather than implying a campaign happened.
+        "estimate_pre_campaign": est.to_dict(),
+        "estimate_after_campaign": est.to_dict(),
         "campaign": {"trials_requested": 0, "trials_ran": 0,
                      "note": "live instance is never perturbed by tooling"},
     }
@@ -386,16 +472,43 @@ async def main() -> int:
     parser.add_argument("--mode", choices=["auto", "live_api", "organ_host"],
                         default="auto")
     parser.add_argument("--out", default="artifacts/phi/whole_system_live_report.json")
+    parser.add_argument(
+        "--surrogates", type=int, default=None,
+        help=(
+            "Circular-shift null draws. Defaults to the claim-grade count. The "
+            "empirical p-floor is 1/(N+1), so 20 surrogates can never report a "
+            "p below 0.047619 — a 'significant' result there is a statement "
+            "about the test's resolution, not the data."
+        ),
+    )
+    parser.add_argument(
+        "--bootstraps", type=int, default=None,
+        help="Moving-block bootstrap draws for the CI. 20 is far too few.",
+    )
     args = parser.parse_args()
 
     # Size the service's analysis window to the whole run (the default deque
     # keeps ~10 min at 2 Hz; a longer natural window needs the room).
     import os
 
+    from core.consciousness.integrated_information import PHI_CLAIM_SURROGATES
+
     window = max(1200, int(args.minutes * 60 * args.hz) + 600)
     os.environ.setdefault("AURA_WSPHI_WINDOW", str(window))
     os.environ.setdefault("AURA_WSPHI_MIN_SAMPLES", "240")
     os.environ.setdefault("AURA_WSPHI_ESTIMATE_EVERY", "240")
+
+    # This tool produces the artifact people cite, so it runs at claim grade by
+    # default. The live service stays cheap on purpose — it is telemetry, and it
+    # now reports integration_established=False rather than a false positive.
+    surrogates = args.surrogates if args.surrogates is not None else PHI_CLAIM_SURROGATES
+    bootstraps = args.bootstraps if args.bootstraps is not None else PHI_CLAIM_SURROGATES
+    os.environ["AURA_WSPHI_SURROGATES"] = str(surrogates)
+    os.environ["AURA_WSPHI_BOOTSTRAPS"] = str(bootstraps)
+    print(
+        f"[stats] {surrogates} surrogates (p-floor {1.0 / (surrogates + 1):.6f}), "
+        f"{bootstraps} bootstrap draws"
+    )
 
     mode = args.mode
     if mode == "auto":
@@ -427,7 +540,7 @@ async def main() -> int:
                                        schema_name="whole_system_phi_live_report",
                                        source="whole_system_phi")
 
-    est = body["estimate_with_interventions"]
+    est = body["estimate_after_campaign"]
     print("\n" + "=" * 72)
     print(f"WHOLE-SYSTEM Φ — {body['mode']} — {body['window_seconds'] / 60:.1f} min")
     print("=" * 72)

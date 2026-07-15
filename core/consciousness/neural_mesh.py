@@ -308,6 +308,11 @@ class NeuralMesh:
         # Inter-column weight matrix (columns × columns), sparse, distance-weighted
         self._inter_W = self._build_inter_column_weights()
 
+        # Live per-column activation (mean membrane state), refreshed each step.
+        # Initialized here so a reader that arrives before the first step gets a
+        # correctly-shaped zero vector rather than a missing attribute.
+        self._column_activations = np.zeros(self.cfg.columns, dtype=np.float32)
+
         # Projection matrix: 4096 → 64 (learned via slow PCA-like update)
         self._projection = self._rng.standard_normal(
             (self.cfg.projection_dim, self.cfg.total_neurons)
@@ -750,6 +755,11 @@ class NeuralMesh:
 
         # Inter-column coupling: column means → inter-column drive
         col_means = x_matrix.mean(axis=1)  # (64,) — computed ONCE, reused in stats
+        # Published for the layers that read the mesh's live state (ALife/Lenia,
+        # topology evolution, criticality). They fetch `mesh.column_activations`,
+        # and until this existed the attribute was simply absent — so every one
+        # of them hit `if activations is None: return` and never ran at all.
+        self._column_activations = col_means
         inter_drive = self._inter_W @ col_means  # (64,)
 
         # Build external input matrix (64, 64)
@@ -840,6 +850,168 @@ class NeuralMesh:
         self._update_stats()
 
         self._tick_count += 1
+
+    # ── live state surface ───────────────────────────────────────────
+    # The mesh's real dynamical state, published under the names its consumers
+    # actually read. Before these existed, `getattr(mesh, "column_activations",
+    # None)` returned None in ALife dynamics, topology evolution and the
+    # criticality regulator, so all three returned early on every tick — their
+    # mathematics ran only in unit tests. The advertised "living neural ecology"
+    # was structurally disconnected, not merely discarded.
+
+    @property
+    def column_activations(self) -> np.ndarray:
+        """Mean activation per column, shape (columns,).
+
+        This is the same vector the mesh feeds through ``_inter_W`` to produce
+        inter-column drive — the live state, not a copy computed for observers.
+        """
+        return self._column_activations
+
+    @property
+    def inter_column_weights(self) -> np.ndarray:
+        """The causal inter-column coupling matrix, shape (columns, columns).
+
+        Returned by reference: ``apply_inter_column_coupling`` is the supported
+        way to change it, but readers get the live matrix that actually drives
+        the mesh rather than a snapshot that silently diverges from it.
+        """
+        return self._inter_W
+
+    @property
+    def projection_weights(self) -> np.ndarray:
+        """Column → executive projection matrix."""
+        return self._projection
+
+    def alife_mesh_state(self) -> dict:
+        """The mesh's real state in the shape the ALife extension layer reads.
+
+        That layer's ``tick`` looks for ``columns_W``, ``contributions``,
+        ``stabilities``, ``error_rates`` and ``specialization_profiles``. It was
+        being handed ``column_activations``/``inter_column_weights`` instead —
+        names it does not read — so ``columns_W`` resolved to ``[]`` and the
+        replicator had nothing to replicate, while every other field fell back to
+        a synthetic constant. The speciation and replication mathematics were
+        running against defaults rather than against Aura.
+
+        ``columns_W`` is passed by reference on purpose: the replicator modifies
+        intra-column weights in place, which is how replication becomes causal.
+        """
+        x_matrix = np.array([c.x for c in self.columns], dtype=np.float32)
+        x_matrix = np.nan_to_num(x_matrix, nan=0.0, posinf=1.0, neginf=-1.0)
+
+        # Contribution: how strongly a column drives the rest of the mesh —
+        # its outgoing coupling mass scaled by its own activity.
+        outgoing = np.abs(self._inter_W).sum(axis=0)
+        outgoing = outgoing / (outgoing.max() + 1e-6)
+        activity = np.abs(self._column_activations)
+        activity = activity / (activity.max() + 1e-6)
+        contributions = (0.5 * outgoing + 0.5 * activity).astype(np.float32)
+
+        # Stability: low within-column dispersion = stable. Inverted and
+        # normalized so 1.0 is maximally stable.
+        dispersion = x_matrix.std(axis=1)
+        stabilities = (1.0 / (1.0 + dispersion)).astype(np.float32)
+
+        # Error rate: saturation is this mesh's observable failure mode — a
+        # column pinned at the clip bound has stopped carrying information.
+        error_rates = np.mean(np.abs(x_matrix) > 0.99, axis=1).astype(np.float32)
+
+        return {
+            "columns_W": [c.W for c in self.columns],  # by reference — in-place
+            "contributions": contributions,
+            "stabilities": stabilities,
+            "error_rates": error_rates,
+            "specialization_profiles": self._specialization_profiles(x_matrix),
+            # Kept for readers that want the coupling/activation view too.
+            "column_activations": self._column_activations,
+            "inter_column_weights": self._inter_W,
+        }
+
+    def _specialization_profiles(self, x_matrix: np.ndarray) -> np.ndarray:
+        """(columns, 8) specialization profile from real column state.
+
+        Eight coarse dimensions the mesh can actually observe about itself, so
+        speciation clusters on measured structure rather than on a zero matrix.
+        """
+        n = self.cfg.columns
+        prof = np.zeros((n, 8), dtype=np.float32)
+        prof[:, 0] = np.abs(x_matrix).mean(axis=1)          # activity
+        prof[:, 1] = x_matrix.std(axis=1)                    # dispersion
+        prof[:, 2] = (x_matrix > 0).mean(axis=1)             # excitatory balance
+        prof[:, 3] = np.abs(self._inter_W).sum(axis=1)       # incoming mass
+        prof[:, 4] = np.abs(self._inter_W).sum(axis=0)       # outgoing mass
+        prof[:, 5] = np.array(
+            [float(np.linalg.norm(c.W)) for c in self.columns], dtype=np.float32
+        )                                                     # recurrent strength
+        prof[:, 6] = np.array(
+            [float(c.tier.value) if hasattr(c.tier, "value") else 0.0
+             for c in self.columns],
+            dtype=np.float32,
+        ) if self.columns else 0.0                            # tier identity
+        prof[:, 7] = np.abs(self._column_activations)         # current drive
+        # Normalize each dimension so no single scale dominates clustering.
+        for j in range(8):
+            span = float(prof[:, j].max() - prof[:, j].min())
+            if span > 1e-6:
+                prof[:, j] = (prof[:, j] - prof[:, j].min()) / span
+        return np.nan_to_num(prof, nan=0.0, posinf=1.0, neginf=0.0)
+
+    def apply_inter_column_coupling(
+        self, weights: np.ndarray, *, blend: float = 0.1, source: str = "unknown"
+    ) -> bool:
+        """Blend an externally computed coupling matrix into the live mesh.
+
+        This is what makes the ALife/Lenia layer causal rather than telemetry:
+        its kernel produces a replacement coupling matrix, and without a way to
+        write it back the entire computation ended at a dataclass field.
+
+        Blended rather than assigned, and bounded by the same clip the mesh's own
+        normalization applies. A hard overwrite would let one layer discard the
+        STDP-learned structure in a single tick; the mesh's dynamics must stay
+        the composition of its influences, not the last writer.
+
+        Args:
+            weights: (columns, columns) coupling matrix.
+            blend:   fraction of the new matrix to mix in (0–1).
+            source:  who is writing, for degradation attribution.
+
+        Returns:
+            True when applied; False when refused (bad shape / non-finite).
+        """
+        try:
+            W = np.asarray(weights, dtype=np.float32)
+        except (TypeError, ValueError) as exc:
+            _record_neural_mesh_degradation(
+                exc,
+                action=f"refused inter-column coupling from {source}: not an array",
+                severity="warning",
+            )
+            return False
+
+        expected = (self.cfg.columns, self.cfg.columns)
+        if W.shape != expected:
+            _record_neural_mesh_degradation(
+                ValueError(f"coupling shape {W.shape} != {expected}"),
+                action=f"refused inter-column coupling from {source}: wrong shape",
+                severity="warning",
+            )
+            return False
+        if not np.all(np.isfinite(W)):
+            _record_neural_mesh_degradation(
+                ValueError("coupling matrix contained non-finite values"),
+                action=f"refused inter-column coupling from {source}: non-finite",
+                severity="warning",
+            )
+            return False
+
+        alpha = float(np.clip(blend, 0.0, 1.0))
+        if alpha <= 0.0:
+            return False
+        self._inter_W = np.clip(
+            (1.0 - alpha) * self._inter_W + alpha * W, -1.0, 1.0
+        ).astype(np.float32)
+        return True
 
     def _consume_buffer(self, attr: str, expected_cols: int,
                         offset: int = 0) -> np.ndarray | None:
