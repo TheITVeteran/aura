@@ -1332,6 +1332,37 @@ def test_contract_profile_unwraps_only_known_recent_continuity_payload(monkeypat
     assert all("old web-search discussion" not in msg["content"] for msg in compact)
 
 
+def test_contract_profile_unwraps_engine_grounding_and_internal_directives(monkeypatch):
+    monkeypatch.setenv("AURA_CORTEX_CTX", "8192")
+    gate = InferenceGate.__new__(InferenceGate)
+    current_user = "In exactly five words, state why checksums matter."
+    wrapped_user = (
+        "[CURRENT USER MESSAGE]\n"
+        f"{current_user}\n\n"
+        "[LIVE DESKTOP FULL-MIND CONTRACT]\n"
+        "- Hidden route guidance that must not consume the count-contract prompt.\n"
+        "[END LIVE DESKTOP FULL-MIND CONTRACT]\n\n"
+        "[GROUNDING EVIDENCE FOR THIS TURN]\n"
+        + ("unrelated retrieved memory " * 500)
+        + "\n[END GROUNDING EVIDENCE FOR THIS TURN]"
+    )
+
+    compact = gate._compact_prebuilt_messages(
+        [
+            {"role": "system", "content": "live mind context " * 800},
+            {"role": "user", "content": wrapped_user},
+        ],
+        history_limit=6,
+        budget_profile="contract",
+        current_user_content=current_user,
+    )
+
+    assert sum(len(msg["content"]) for msg in compact) <= 2_800
+    assert compact[-1] == {"role": "user", "content": current_user}
+    assert all("unrelated retrieved memory" not in msg["content"] for msg in compact)
+    assert all("Hidden route guidance" not in msg["content"] for msg in compact)
+
+
 def test_contract_profile_preserves_wrapper_when_long_user_requires_standard_profile(
     monkeypatch,
 ):

@@ -16,8 +16,9 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **Checkpoint 83 is pushed on exact
-  `main` at `5df12f9d`; exact-app reproof is open**. Checkpoint 80 made cached
+- Current bounded implementation milestone: **Checkpoint 84 is pushed on exact
+  `main` at `abf2319d`; Checkpoint 85 is source-green and exact-app reproof is
+  open**. Checkpoint 80 made cached
   readiness truthful and fast,
   removed synchronous Phi/Eternal maintenance from the foreground cycle, and
   reduced live CognitiveEngine samples from a 59.65-second retry cascade to
@@ -33,11 +34,19 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   objective and gives bounded autonomous reflection a signed least-authority
   compute lease. Checkpoint 83 is closing the explicit-output latency defect by
   making visible word/sentence/exact-reply constraints a typed generation
-  ceiling with end-to-end token and repair receipts. Broader pressure, plateau, GUI, portability, semantic,
+  ceiling with end-to-end token and repair receipts. Checkpoint 84 hardened
+  semantic count quality and authorship receipts; its exact-app campaign passed
+  five exact replies at a 7.13-second median, then exposed a 64.68-second
+  five-word failure, a 7.6K-character hidden-grounding prompt, a missed worker
+  retry wall, and a vacuous final-contract proof on the early fail-closed exit.
+  Checkpoint 85 removes only recognized engine-added suffixes from compact
+  prompts, gives typed count retries their exact requirement, and makes every
+  constrained early exit unproven until final validation actually runs.
+  Broader pressure, plateau, GUI, portability, semantic,
   release, and causal-proof obligations remain open unless their rows
   explicitly close.
 - Overall completion percentage: **30% evidence-weighted planning estimate at
-  pushed Checkpoint 83**. The exact
+  pushed Checkpoint 84**. The exact
   Checkpoint 80 app earns bounded live credit for readiness, health, base boot,
   and one-attempt chat latency, but not output quality, sustained load, GUI
   frame SLO, portability, semantic review, release, or soak. The newly
@@ -49,7 +58,7 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   generated denominator; new obligations increase it, regressions reopen it,
   and source-green/live-open work never receives full closure credit.
 - Total checkpoint forecast: **approximately 240-325 total checkpoints for the
-  expanded program, with 83 pushed and approximately 157-242 remaining before
+  expanded program, with 84 pushed and approximately 156-241 remaining before
   final soak/release closure**. The prior `226-304` range expands by 8-12 explicit
   checkpoints for a falsifiable lateral-conceptual-leap program spanning
   mechanism construction, held-out evaluation, novelty and prior-art review,
@@ -176,6 +185,7 @@ Status rules:
 | `EXTREME-001` | `OPEN` | Train and validate high-level navigation, diagnosis, repair, problem-solving, and assistance in hazardous/extreme simulated environments, then require governed digital-twin and hardware-transfer evidence before physical-world claims. | Capability Addendum 33, `CTX3-EXTREME-*` |
 | `COLLEAGUE-001` | `OPEN` | Validate the resident local synthetic-colleague contract through broad hidden day-in-the-life workflows, proactive precision, privacy, restart/update survival, honest degradation, and low correction burden. | Addendum 30 |
 | `UI-001` | `IN PROGRESS 2026-07-12` | Audit every desktop route, screen, control and state for live-data truth, interaction completeness, accessibility, long text, responsive layout, visual stability, specific recovery, and screenshot evidence. | Pass F 11; Matrix 14 |
+| `RUNTIME-SETTINGS-001` | `IN PROGRESS (CONTROL PLANE/EXACT-APP PROOF OPEN) 2026-07-14` | Replace local-only and safety-shaped settings with one typed, versioned, authenticated runtime control plane. Atomically validate and commit compare-and-swap patches; persist schema/version/revision and tamper-evident audit receipts; notify live owners only after durable commit; report per-owner applied/deferred/failed state; support read-after-write, reset, migration, rollback, restart, and concurrent-client conflict behavior. The desktop shell must hydrate backend truth rather than treat localStorage as governance authority. `Autonomous Actions` must gate autonomous scheduling/admission while preserving direct user work and Constitution/Will; approval mode must add user-confirmation policy for all, destructive-only, or no-additional-confirmation actions without bypassing standing authority or governance; voice input/output, auto-listen, TTS rate, enrichment, and reflection must bind to their real runtime owners. Re-enable a control only after deterministic tests and exact signed-app effect/readback/restart proof show that changing it alters the intended live behavior and nothing broader. | `UI-001`, `AUTONOMY-AUTHORITY-001`, `ENTERPRISE-CONTROL-001`, `VOICE-001`, `ADAPTATION-STATE-AUTHORITY-001`, `DATA-LIFECYCLE-001`, `COMPATIBILITY-001`; inert-settings report 2026-07-14 |
 | `SPLASH-001` | `OPEN 2026-07-13` | Replace the unpolished Aura splash with a production launch experience derived from the supplied retro references: disciplined CRT/scanline texture, geometric terminal-era typography, restrained cyan/magenta/green neon, crisp hierarchy, and an original Aura identity rather than imitation. Every phase/progress/status line must come from real boot state, preserve a usable failure/recovery path, support Retina and small screens, meet contrast and reduced-motion requirements, avoid GPU-heavy decorative churn, hand off without flash or layout shift, and pass deterministic visual-regression plus signed-app screenshot/video proof. | `UI-001`, `RUNTIME-001`, `LAUNCH-PROVENANCE-001`, `PERF-001`, `VALIDATE-001`; user splash and aesthetic references supplied 2026-07-13 |
 | `ACCESSIBILITY-I18N-001` | `OPEN 2026-07-13` | Certify the complete desktop, splash, voice, notification, and paired-device surface for keyboard navigation, focus order, screen-reader names/state, reduced motion/transparency, zoom and dynamic text, contrast/color independence, captions/transcripts, non-audio alternatives, locale/time/number formatting, Unicode and bidirectional text safety, and long translated strings. Run automated checks plus real VoiceOver/keyboard/screenshot workflows without breaking dense expert use. | `UI-001`, `SPLASH-001`, `CONVERSATION-001`, `CAPABILITY-CERT-001`; Aura 1.0 release-gap audit 2026-07-13 |
 | `PERF-001` | `IN PROGRESS (ATTRIBUTION INSTRUMENTATION SOURCE GREEN; SLO PROGRAM OPEN) 2026-07-14` | Establish and enforce end-to-end latency, throughput, memory, thermal, startup, model-switch, queue-growth, and UI responsiveness budgets without reducing intelligence or correctness. Checkpoint 80 adds per-service health-evaluation duration and detailed boot-phase marks, then removes four measured latency cascades at their owners. Machine-readable end-to-end SLOs, load/queue/thermal envelopes, regression budgets, GUI frame proof, exact-app distributions, and release enforcement remain open. | Runtime/resource/colleague SLOs; original context performance goals; `FOREGROUND-LATENCY-001`, `HEALTH-SURFACE-001`; Checkpoint 80 |
@@ -257,7 +267,8 @@ notification and expanded causal-faithfulness/IIT requirements are mapped to
 `IIT-CONCLUSION-001`. The recurring foreground-objective contamination,
 background-reflection authority refusal, and superhuman lateral conceptual-leap
 requirements are mapped to `OBJECTIVE-LIFECYCLE-001`,
-`AUTONOMY-AUTHORITY-001`, and `CONCEPTUAL-LEAP-001`; machine ingestion and
+  `AUTONOMY-AUTHORITY-001`, and `CONCEPTUAL-LEAP-001`. The 2026-07-14 inert
+  localStorage settings finding is mapped to `RUNTIME-SETTINGS-001`; machine ingestion and
 zero-unmapped proof remain open under `SCOPE-001`.
 
 ### Scope Clarification For The Current Pass
@@ -15998,3 +16009,112 @@ Progress and immediate next work:
   authority, and curiosity persistence cascades reported during this source
   checkpoint. Final multi-hour and 24-72 hour soaks remain deferred until every
   shorter gate is green.
+
+## Checkpoint 2026-07-14-84: Semantic Compact-Output Quality and Authorship Truth
+
+Checkpoint 84 is pushed on `main` at `abf2319d`. It advances
+`FOREGROUND-LATENCY-001`, `CONVERSATION-001`, `PERF-001`, `FAULT-001`,
+`OBSERVE-001`, and `TEST-DEPTH-001` without treating a syntactically short or
+deterministically truncated string as a successful semantic answer.
+
+- Compact count contracts reject punctuation-join artifacts, count-constraint
+  narration, and answers that lose the current topic. One-to-three-word factual
+  answers remain eligible, and a required reference plus explicit label can
+  satisfy instrumentation continuity.
+- Count repair retains only an already-complete, on-topic sentence inside the
+  requested bounds. It no longer truncates arbitrary first words or pads an
+  underlength draft with generic filler. The same worker receives a semantic
+  retry instruction, and its receipt cannot be promoted to applied or passed
+  when the worker reported failure.
+- Exact contracts reserve tokenizer-measured content plus termination capacity,
+  reject extra action tails, and exempt repeated text from stale detection only
+  when the parsed unconditional exact target matches the returned bytes.
+- Every final route records whether the requested contract was evaluated,
+  required, satisfied, and proven. The mutation ledger distinguishes native
+  model bytes from deterministic transformations, and `full_mind_path` requires
+  the final proof rather than inheriting an earlier worker claim.
+
+The rebuilt signed app produced five consecutive exact `Reply exactly: "yes"`
+turns through CognitiveEngine and Cortex with no fallback. All five returned
+`yes`, high confidence, a proven full-mind path, and truthful deterministic
+mutation authorship; latencies were 11.66, 6.85, 7.15, 7.13, and 6.49 seconds
+(median 7.13 seconds). The next five-word sample did not close:
+
+- `In exactly five words, state why checksums matter.` took 64.68 seconds and
+  returned the in-band fail-closed sentence instead of an answer.
+- The first 32B draft was `Seven. Seven is the Number of Letters in
+  "checksums".` The worker correctly rejected it, but a 7,578-character prompt
+  consumed 22 seconds and crossed the 20-second surface-retry wall before a
+  corrective draft could run. The route then spent another 42 seconds on a
+  second CognitiveEngine call that exhausted into empty output and opened the
+  Cortex circuit.
+- The early failure payload retained the typed worker contract but defaulted its
+  final-contract fields to `evaluated=true`, `required=false`, and
+  `satisfied=true`. That was a vacuous proof for failure text and is reopened
+  here rather than counted as contract evidence.
+- Inter-turn boot-health requests also returned non-200 during the campaign;
+  their bodies were not retained by the first driver, so
+  `HEALTH-SURFACE-001` remains open. The later app restart is separately
+  explained by signed-app provenance still naming `abf2319d` after `main`
+  advanced to `533a5a32`; that commit mismatch is not being conflated with the
+  earlier health-surface result.
+
+## Checkpoint 2026-07-14-85: Lossless Visible Contract Prompts and Non-Vacuous Failure Proof
+
+This source candidate closes the three owners exposed by the Checkpoint 84 live
+count failure. Exact installed-app proof remains mandatory before the live
+obligation can close.
+
+- Contract compaction now recognizes only Aura's own bounded internal suffixes:
+  current-turn grounding evidence, recent-conversation continuity, and live
+  desktop full-mind directives. When the complete canonical visible user turn
+  precedes only those suffixes, the Cortex receives that complete turn rather
+  than a hidden 7K-plus wrapper. A long visible request or unrecognized content
+  remains lossless on the standard profile; supplied user evidence is never
+  dropped merely because its text resembles a marker.
+- Missing word or sentence count now activates the semantic count retry, not
+  only topic/meta failures. The retry receives the immutable admitted minimum,
+  maximum, or exact count, must count the final visible answer before ending,
+  uses deterministic retry sampling, and still may not inflate the hard token
+  ceiling or recover by arbitrary truncation.
+- Live-turn proof now infers a pending constrained contract from the worker
+  receipt. If an early exit has no final validation evidence, it reports
+  `evaluated=false`, `required=true`, `satisfied=false`,
+  `evaluation_not_completed`, and `proven=false`. Unconstrained early paths keep
+  their explicit no-contract semantics; constrained success still requires the
+  normal final evaluator.
+- `RUNTIME-SETTINGS-001` records the newly supplied settings finding as a
+  release-blocking control-plane obligation. Current source already contains a
+  PATCH route and some runtime readers, so the work is not described as starting
+  from zero; the desktop shell, transactional/versioned store, approval policy,
+  enrichment/reflection owners, restart/concurrency receipts, and exact-app
+  effect proof remain open.
+
+Verification on the source candidate:
+
+- The five affected contract suites pass `626/626` in 296.76 seconds, covering
+  response reliability, InferenceGate tiering/compaction, MLX runtime contracts,
+  live-mind controls, and the complete server conversation lane.
+- Focused regressions prove hidden grounding removal, exact count retry guidance,
+  and non-vacuous early-failure proof. Configured Ruff `F/I/B025`, Python byte
+  compilation, and `git diff --check` pass.
+- The enterprise static ratchet, production readiness contract (`37/37`), and
+  closeout rubric (`20/20`) pass without a baseline increase.
+
+Progress and immediate next work:
+
+- Evidence-weighted completion remains `30%`: this source correction has no
+  exact-app count, health, GUI, portability, release, semantic-audit, or soak
+  credit yet. Checkpoint 84 is the latest pushed checkpoint; the forecast
+  remains `240-325` total with `156-241` remaining after that push.
+  `RUNTIME-SETTINGS-001` decomposes already-counted UI, governance, voice, and
+  data-lifecycle work rather than silently expanding or shrinking the range.
+- Commit and push this bounded source candidate directly to `main`, rebuild the
+  signed app from that exact commit, then rerun at least five word, five
+  sentence, and five exact samples while retaining every post-turn health body
+  and complete terminal/Neural delta. No live claim closes unless visible text,
+  latency, Cortex ownership, final proof, readiness, and absence of relevant
+  lag/Skynet/MLX/health faults all pass together.
+- Final multi-hour and 24-72 hour soaks remain deferred until every shorter
+  source, deterministic, fault-injection, bounded live, GUI, portability, and
+  release gate is green.

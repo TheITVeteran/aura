@@ -2253,6 +2253,46 @@ def test_full_mind_path_requires_final_output_contract_proof(monkeypatch):
     assert "final_output_contract_unsatisfied" in payload["full_mind_missing_proofs"]
 
 
+def test_early_constrained_exit_cannot_claim_vacuous_final_contract_proof(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    _force_full_mind_runtime(monkeypatch, chat_routes)
+    trace = _bound_live_mind_controls_trace()
+    trace["live_mind_surface_control_receipt"]["requested_output_contract"] = {
+        "kind": "word_count",
+        "explicit_brevity": True,
+        "word_min": 5,
+        "word_max": 5,
+    }
+    trace.update(
+        {
+            "engine_think_invoked": True,
+            "cognitive_engine_reply_accepted": False,
+            "cognitive_engine_reply_failed": True,
+            "response_path": "desktop_cognitive_engine_required_no_reply",
+        }
+    )
+
+    payload = chat_routes._build_live_turn_contract_payload(
+        desktop_required=True,
+        request_surface="desktop-ui",
+        lane_status={"conversation_ready": False, "state": "failed"},
+        response_confidence="failed",
+        status="desktop_cognitive_engine_unavailable",
+        reply_source="desktop_cognitive_engine_required_no_reply",
+        turn_trace=trace,
+    )
+
+    assert payload["final_requested_output_contract_evaluated"] is False
+    assert payload["final_requested_output_contract_required"] is True
+    assert payload["final_requested_output_contract_kind"] == "word_count"
+    assert payload["final_requested_output_contract_satisfied"] is False
+    assert payload["final_requested_output_contract_proven"] is False
+    assert payload["final_requested_output_contract_reasons"] == [
+        "evaluation_not_completed"
+    ]
+
+
 def test_text_mutation_receipt_never_serializes_literal_violation_content():
     from core.brain.live_mind_contract import append_text_mutation
 

@@ -4522,15 +4522,44 @@ def _build_live_turn_contract_payload(
         or trace.get("deterministic_repair_applied", False)
         or (legacy_post_generation_repair_applied and not text_mutations)
     )
+    requested_contract = live_mind_surface_control_receipt.get(
+        "requested_output_contract"
+    )
+    requested_contract = (
+        dict(requested_contract) if isinstance(requested_contract, dict) else {}
+    )
+    requested_contract_kind = str(
+        requested_contract.get("kind") or ""
+    ).strip()
+    inferred_contract_required = bool(
+        requested_contract_kind and requested_contract_kind != "none"
+    )
+    final_contract_evidence_present = (
+        "final_requested_output_contract_evaluated" in trace
+    )
     final_output_contract_evaluated = bool(
-        trace.get("final_requested_output_contract_evaluated", True)
+        trace.get(
+            "final_requested_output_contract_evaluated",
+            not inferred_contract_required,
+        )
     )
     final_output_contract_required = bool(
-        trace.get("final_requested_output_contract_required", False)
+        trace.get(
+            "final_requested_output_contract_required",
+            inferred_contract_required,
+        )
     )
     final_output_contract_satisfied = bool(
-        trace.get("final_requested_output_contract_satisfied", True)
+        trace.get(
+            "final_requested_output_contract_satisfied",
+            not inferred_contract_required,
+        )
     )
+    final_output_contract_reasons = list(
+        trace.get("final_requested_output_contract_reasons") or []
+    )
+    if inferred_contract_required and not final_contract_evidence_present:
+        final_output_contract_reasons = ["evaluation_not_completed"]
     final_output_contract_proven = bool(
         final_output_contract_evaluated
         and (
@@ -4685,12 +4714,12 @@ def _build_live_turn_contract_payload(
         "final_requested_output_contract_evaluated": final_output_contract_evaluated,
         "final_requested_output_contract_required": final_output_contract_required,
         "final_requested_output_contract_kind": str(
-            trace.get("final_requested_output_contract_kind") or ""
+            trace.get("final_requested_output_contract_kind")
+            or requested_contract_kind
+            or ""
         ),
         "final_requested_output_contract_satisfied": final_output_contract_satisfied,
-        "final_requested_output_contract_reasons": list(
-            trace.get("final_requested_output_contract_reasons") or []
-        ),
+        "final_requested_output_contract_reasons": final_output_contract_reasons,
         "final_requested_output_contract_proven": final_output_contract_proven,
         "live_mind_controls_structurally_bound": live_mind_controls_structurally_bound,
         "live_mind_required_subsystems_ok": live_mind_required_subsystems_ok,

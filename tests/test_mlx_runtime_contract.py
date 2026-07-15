@@ -207,7 +207,14 @@ def test_worker_count_contract_retry_demands_semantic_task_ownership():
                 "content": "In exactly five words, state why checksums matter.",
             },
         ],
-        ["missing_current_topic_anchor"],
+        ["missing_requested_word_count"],
+        {
+            "requested_output_contract": {
+                "kind": "word_count",
+                "word_min": 5,
+                "word_max": 5,
+            }
+        },
     )
 
     assert retry_messages is not None
@@ -215,6 +222,8 @@ def test_worker_count_contract_retry_demands_semantic_task_ownership():
     assert "Solve the current semantic task first" in system
     assert "retain a concrete topic noun" in system
     assert "never describe the word or sentence constraint" in system
+    assert "exactly 5 words" in system
+    assert "Count the final visible answer" in system
 
 
 def test_worker_never_expands_admitted_cap_for_mode_specific_contracts():

@@ -5013,19 +5013,32 @@ class InferenceGate:
         if requested_profile == "contract" and current_user_content:
             visible = str(current_user_content or "").strip()
             continuity_prefix = "[CURRENT USER MESSAGE]\n"
-            continuity_marker = (
-                "\n\n[RECENT COMPLETED CONVERSATION FOR CONTINUITY ONLY]\n"
+            internal_suffix_markers = (
+                "\n\n[GROUNDING EVIDENCE FOR THIS TURN]\n",
+                "\n\n[RECENT COMPLETED CONVERSATION FOR CONTINUITY ONLY]\n",
+                "\n\n[LIVE DESKTOP FULL-MIND CONTRACT]\n",
             )
-            if (
-                visible
-                and latest_user_content.startswith(continuity_prefix)
-                and continuity_marker in latest_user_content
-            ):
-                wrapped_current = latest_user_content[
-                    len(continuity_prefix) : latest_user_content.index(continuity_marker)
-                ].strip()
-                if wrapped_current == visible:
-                    contract_user_content = visible
+
+            def _visible_precedes_only_internal_suffix(candidate: str) -> bool:
+                if candidate == visible:
+                    return True
+                if not visible or not candidate.startswith(visible):
+                    return False
+                suffix = candidate[len(visible) :]
+                return any(suffix.startswith(marker) for marker in internal_suffix_markers)
+
+            unwrapped_candidate = latest_user_content
+            if latest_user_content.startswith(continuity_prefix):
+                unwrapped_candidate = latest_user_content[len(continuity_prefix) :]
+            marker_positions = [
+                unwrapped_candidate.index(marker)
+                for marker in internal_suffix_markers
+                if marker in unwrapped_candidate
+            ]
+            if marker_positions:
+                unwrapped_candidate = unwrapped_candidate[: min(marker_positions)].strip()
+            if _visible_precedes_only_internal_suffix(unwrapped_candidate):
+                contract_user_content = visible
         if profile == "contract":
             # A short output contract does not imply a short input. The compact
             # profile is lossless only while the complete current user turn fits

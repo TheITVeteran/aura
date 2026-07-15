@@ -70,6 +70,8 @@ _OPERATOR_EVIDENCE_META_TAIL_RE = re.compile(
 )
 _SEMANTIC_COUNT_CONTRACT_RETRY_REASONS = frozenset(
     {
+        "missing_requested_sentence_count",
+        "missing_requested_word_count",
         "missing_current_topic_anchor",
         "output_contract_meta_reply",
         "punctuation_join_artifact",
@@ -80,6 +82,39 @@ _SEMANTIC_COUNT_CONTRACT_RETRY_INSTRUCTION = (
     "the current user message when the requested count permits, and never "
     "describe the word or sentence constraint."
 )
+
+
+def _semantic_count_contract_retry_instruction(job: dict[str, Any]) -> str:
+    """Render the admitted count contract as explicit retry guidance."""
+
+    contract = job.get("requested_output_contract")
+    if not isinstance(contract, dict):
+        return _SEMANTIC_COUNT_CONTRACT_RETRY_INSTRUCTION
+
+    kind = str(contract.get("kind") or "").strip().lower()
+    requirement = ""
+    if kind == "word_count":
+        word_min = _safe_int(contract.get("word_min"), 0)
+        word_max = _safe_int(contract.get("word_max"), 0)
+        if word_min > 0 and word_min == word_max:
+            requirement = f" The final answer must contain exactly {word_min} words."
+        elif word_min > 0 and word_max >= word_min:
+            requirement = (
+                f" The final answer must contain between {word_min} and "
+                f"{word_max} words inclusive."
+            )
+    elif kind == "sentence_count":
+        sentence_count = _safe_int(contract.get("sentence_count"), 0)
+        if sentence_count > 0:
+            requirement = (
+                f" The final answer must contain exactly {sentence_count} "
+                f"sentence{'s' if sentence_count != 1 else ''}."
+            )
+
+    return (
+        f"{_SEMANTIC_COUNT_CONTRACT_RETRY_INSTRUCTION}{requirement} "
+        "Count the final visible answer before ending it; return only that answer."
+    )
 
 
 def _safe_float(value: Any, default: float) -> float:
@@ -792,6 +827,7 @@ def _repair_live_user_surface_operational_status(
 def _messages_with_user_surface_retry(
     messages: Any,
     reasons: list[str],
+    job: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]] | None:
     if not isinstance(messages, list):
         return None
@@ -813,7 +849,9 @@ def _messages_with_user_surface_retry(
     ) and not self_condition_retry:
         operational_status_retry = f" {_LIVE_STATUS_CONCRETE_SIGNAL_INSTRUCTION}"
     if set(reasons) & _SEMANTIC_COUNT_CONTRACT_RETRY_REASONS:
-        semantic_count_retry = f" {_SEMANTIC_COUNT_CONTRACT_RETRY_INSTRUCTION}"
+        semantic_count_retry = (
+            f" {_semantic_count_contract_retry_instruction(job or {})}"
+        )
     retry_instruction = (
         "The previous assistant draft failed the live user-surface quality gate "
         f"for: {', '.join(reasons[:8]) or 'quality_gate_failed'}. Regenerate the "
@@ -840,8 +878,9 @@ def _build_user_surface_quality_retry_prompt(
     tools: Any,
     fallback_prompt: Any,
     reasons: list[str],
+    job: dict[str, Any] | None = None,
 ) -> str:
-    retry_messages = _messages_with_user_surface_retry(messages, reasons)
+    retry_messages = _messages_with_user_surface_retry(messages, reasons, job)
     if retry_messages is not None and hasattr(tokenizer, "apply_chat_template"):
         try:
             rendered = tokenizer.apply_chat_template(
@@ -878,7 +917,9 @@ def _build_user_surface_quality_retry_prompt(
     ) and not self_condition_retry:
         operational_status_retry = f" {_LIVE_STATUS_CONCRETE_SIGNAL_INSTRUCTION}\n"
     if set(reasons) & _SEMANTIC_COUNT_CONTRACT_RETRY_REASONS:
-        semantic_count_retry = f" {_SEMANTIC_COUNT_CONTRACT_RETRY_INSTRUCTION}\n"
+        semantic_count_retry = (
+            f" {_semantic_count_contract_retry_instruction(job or {})}\n"
+        )
     retry_note = (
         "\n\n[LIVE USER-SURFACE RETRY]\n"
         f"Previous assistant draft failed for: {', '.join(reasons[:8]) or 'quality_gate_failed'}.\n"
@@ -3837,8 +3878,15 @@ def _mlx_worker_loop(
                                                     tools=tools,
                                                     fallback_prompt=original_prompt,
                                                     reasons=rejection_reasons,
+                                                    job=job,
                                                 )
-                                                _prepare_clean_retry_kwargs(kwargs, structured=False)
+                                                _prepare_clean_retry_kwargs(
+                                                    kwargs,
+                                                    structured=bool(
+                                                        set(rejection_reasons)
+                                                        & _SEMANTIC_COUNT_CONTRACT_RETRY_REASONS
+                                                    ),
+                                                )
                                                 continue
                                             logger.warning(
                                                 "🚨 [WORKER] Live user-surface quality gate exhausted retries."
