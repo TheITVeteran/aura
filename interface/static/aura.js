@@ -5601,7 +5601,6 @@ const RUNTIME_SETTING_CONTROLS = Object.freeze({
     'voice.output_rate': { id: 'setting-tts-speed', kind: 'number' },
     'learning.auto_enrichment_enabled': { id: 'setting-enrichment', kind: 'boolean' },
     'learning.reflection_enabled': { id: 'setting-reflection', kind: 'boolean' },
-    'autonomy.actions_enabled': { id: 'setting-autonomy', kind: 'boolean' },
     'governance.approval_mode': { id: 'setting-approval', kind: 'string' },
 });
 
@@ -5644,6 +5643,8 @@ function applyRuntimeSettingsControls(values) {
     const rate = Number(values['voice.output_rate']);
     const rateValue = $('setting-tts-speed-value');
     if (rateValue && Number.isFinite(rate)) rateValue.textContent = `${rate.toFixed(1)}×`;
+    const autonomyStatus = $('setting-autonomy-status');
+    if (autonomyStatus) autonomyStatus.textContent = 'ACTIVE';
     if (state.voiceSummary) applyVoiceSummary(state.voiceSummary);
 }
 

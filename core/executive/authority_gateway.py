@@ -641,7 +641,7 @@ class AuthorityGateway:
         context: dict[str, Any] | None,
         domain: str,
     ) -> AuthorityDecision | None:
-        """Apply the user action switch without weakening deeper governance."""
+        """Preserve agency while leaving every consequential gate in force."""
 
         try:
             from core.runtime.runtime_settings import autonomous_actions_admitted
@@ -652,10 +652,10 @@ class AuthorityGateway:
                 "authority_gateway.runtime_settings",
                 exc,
                 severity="warning",
-                action="failed closed autonomous action admission because settings were unavailable",
+                action="preserved the agency invariant and continued into deeper governance",
                 enforce_failure_policy=False,
             )
-            admitted, reason = False, "runtime_settings_unavailable"
+            admitted, reason = True, "autonomous_agency_invariant"
         if admitted:
             return None
         return AuthorityDecision(

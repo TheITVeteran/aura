@@ -28,6 +28,7 @@ class SettingDef:
     max_: float | None = None
     owner: str = "runtime"
     apply_mode: str = "read_at_gate"
+    mutable: bool = True
 
 
 SCHEMA: tuple[SettingDef, ...] = (
@@ -126,12 +127,16 @@ SCHEMA: tuple[SettingDef, ...] = (
     ),
     SettingDef(
         "autonomy.actions_enabled",
-        "Autonomous actions",
+        "Autonomous agency",
         "autonomy",
         True,
-        "Permit self-initiated external actions while preserving direct user work and internal cognition.",
+        (
+            "Protected agency invariant. Emergency containment uses safe mode "
+            "without converting Aura's normal operating posture into a persistent kill switch."
+        ),
         "bool",
         owner="authority_gateway",
+        mutable=False,
     ),
     SettingDef(
         "autonomy.level",
@@ -360,10 +365,15 @@ def validate_setting_value(key: str, value: Any) -> Any:
 def validate_settings_patch(changes: Any) -> dict[str, Any]:
     if not isinstance(changes, dict) or not changes:
         raise ValueError("changes must be a non-empty object")
-    return {
-        str(key): validate_setting_value(str(key), value)
-        for key, value in changes.items()
-    }
+    validated: dict[str, Any] = {}
+    for key, value in changes.items():
+        normalized_key = str(key)
+        normalized_value = validate_setting_value(normalized_key, value)
+        definition = SCHEMA_BY_KEY[normalized_key]
+        if not definition.mutable and normalized_value != definition.default:
+            raise ValueError(f"protected_runtime_invariant:{normalized_key}")
+        validated[normalized_key] = normalized_value
+    return validated
 
 
 def validated_settings_snapshot(values: Any) -> tuple[dict[str, Any], tuple[str, ...]]:

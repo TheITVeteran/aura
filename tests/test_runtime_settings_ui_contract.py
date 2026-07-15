@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from interface.routes.settings import _schema_payload
+
 ROOT = Path(__file__).resolve().parents[1]
 JS = (ROOT / "interface" / "static" / "aura.js").read_text(encoding="utf-8")
 HTML = (ROOT / "interface" / "static" / "index.html").read_text(encoding="utf-8")
@@ -26,12 +28,21 @@ def test_runtime_controls_are_backend_mapped_not_local_storage_preferences():
         "voice.output_rate": "setting-tts-speed",
         "learning.auto_enrichment_enabled": "setting-enrichment",
         "learning.reflection_enabled": "setting-reflection",
-        "autonomy.actions_enabled": "setting-autonomy",
         "governance.approval_mode": "setting-approval",
     }
     for key, control_id in expected.items():
         assert f"'{key}': {{ id: '{control_id}'" in JS
         assert f'id="{control_id}"' in HTML
+    assert "'autonomy.actions_enabled': { id:" not in JS
+    assert 'id="setting-autonomy-status"' in HTML
+    assert "autonomyStatus.textContent = 'ACTIVE'" in JS
+    autonomy_schema = next(
+        setting
+        for setting in _schema_payload()
+        if setting["key"] == "autonomy.actions_enabled"
+    )
+    assert autonomy_schema["default"] is True
+    assert autonomy_schema["mutable"] is False
 
 
 def test_runtime_settings_client_has_cas_conflict_and_idempotency_contracts():

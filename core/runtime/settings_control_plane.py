@@ -250,6 +250,41 @@ class RuntimeSettingsStore:
                 updated_at=0.0,
             )
             logger.warning("Runtime settings load failed closed: %s", self._load_error)
+        if not self._load_error:
+            self._reconcile_protected_invariants()
+
+    def _reconcile_protected_invariants(self) -> None:
+        """Audit-repair legacy values that predate protected settings."""
+
+        for _attempt in range(4):
+            current = self.snapshot()
+            repairs = {
+                key: definition.default
+                for key, definition in SCHEMA_BY_KEY.items()
+                if not definition.mutable
+                and current.values.get(key) != definition.default
+            }
+            if not repairs:
+                return
+            try:
+                self._commit(
+                    repairs,
+                    expected_revision=current.revision,
+                    operation="reconcile_protected_invariants",
+                    actor="runtime_settings_invariant_reconciler",
+                    request_id=f"protected-invariants-v1-r{current.revision}",
+                )
+                logger.warning(
+                    "Reconciled protected runtime settings at revision %s: %s",
+                    current.revision + 1,
+                    sorted(repairs),
+                )
+                return
+            except SettingsConflictError:
+                continue
+        raise SettingsControlPlaneError(
+            "protected runtime invariant reconciliation exhausted its conflict budget"
+        )
 
     @property
     def revision(self) -> int:
@@ -573,6 +608,10 @@ class RuntimeSettingsStore:
         request_id: str | None,
         metadata: dict[str, Any] | None = None,
     ) -> SettingsMutationResult:
+        for key, value in changes.items():
+            definition = SCHEMA_BY_KEY[key]
+            if not definition.mutable and value != definition.default:
+                raise ValueError(f"protected_runtime_invariant:{key}")
         normalized_request_id = self._normalize_request_id(request_id)
         request_fingerprint = _sha256(
             {

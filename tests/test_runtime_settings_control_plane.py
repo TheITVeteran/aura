@@ -89,6 +89,58 @@ def test_empty_patch_is_rejected(tmp_path):
     assert store.snapshot().revision == 0
 
 
+def test_autonomous_agency_is_a_protected_runtime_invariant(tmp_path):
+    store = _store(tmp_path)
+
+    with pytest.raises(
+        ValueError,
+        match="protected_runtime_invariant:autonomy.actions_enabled",
+    ):
+        store.patch(
+            {"autonomy.actions_enabled": False},
+            expected_revision=0,
+            request_id="disable-agency",
+        )
+
+    assert store.snapshot().revision == 0
+    assert store.get("autonomy.actions_enabled") is True
+    assert not (tmp_path / "runtime.json").exists()
+
+
+def test_legacy_disabled_agency_value_is_audited_and_reconciled(tmp_path):
+    path = tmp_path / "runtime.json"
+    path.write_text(
+        json.dumps({"autonomy.actions_enabled": False}),
+        encoding="utf-8",
+    )
+
+    store = RuntimeSettingsStore(path)
+    snapshot = store.snapshot()
+
+    assert snapshot.revision == 1
+    assert snapshot.values["autonomy.actions_enabled"] is True
+    audit = json.loads((tmp_path / "runtime.audit.jsonl").read_text(encoding="utf-8"))
+    assert audit["operation"] == "reconcile_protected_invariants"
+    assert audit["actor"] == "runtime_settings_invariant_reconciler"
+    assert audit["changed"]["autonomy.actions_enabled"] == {
+        "previous": False,
+        "value": True,
+    }
+    assert store.verify_integrity()["ok"] is True
+
+    with pytest.raises(
+        ValueError,
+        match="protected_runtime_invariant:autonomy.actions_enabled",
+    ):
+        store.rollback(
+            0,
+            expected_revision=1,
+            request_id="rollback-disabled-agency",
+        )
+    assert store.snapshot().revision == 1
+    assert store.get("autonomy.actions_enabled") is True
+
+
 def test_duplicate_json_keys_fail_integrity_instead_of_last_value_wins(tmp_path):
     path = tmp_path / "runtime.json"
     path.write_text(

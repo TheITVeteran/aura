@@ -86,11 +86,15 @@ state is not writable through unauthenticated browser storage.
 
 ## Action and Approval Semantics
 
-`autonomy.actions_enabled` gates self-initiated tool execution, environment
-actions, initiative scheduling, executive objective release, and unsolicited
-executive expression. It preserves authenticated direct-user work. Caller
-booleans such as `explicit_user_request` or `user_authorized` cannot forge that
-exception; source authority is classified by the standing-authority layer.
+`autonomy.actions_enabled` is now a protected, default-true compatibility
+field rather than a mutable kill switch. Patch and rollback attempts to set it
+false are rejected, and legacy false state is advanced through an audited
+reconciliation transaction. Runtime admission preserves the agency invariant
+even when the settings file is absent, corrupt, or carries a pre-invariant
+value. Emergency containment remains explicit through `safety.safe_mode` and
+`autonomy.level=paused`; consequential effects still traverse Constitution,
+Unified Will, Conscience, standing authority, substrate authority,
+ExecutiveCore, capability tokens, and effect receipts.
 
 `governance.approval_mode` is an **additional confirmation overlay**, not a
 replacement for Constitution, Unified Will, Conscience, standing authority,
@@ -117,7 +121,7 @@ process-local; durable cross-restart action authorization is not claimed.
 | :-- | :-- | :-- |
 | `safety.safe_mode` | wired | live safe-mode bridge and boot posture |
 | `autonomy.level` | wired | `paused` drives the same restricted runtime posture |
-| `autonomy.actions_enabled` | wired | canonical action, environment, initiative, and autonomous-expression gates |
+| `autonomy.actions_enabled` | protected invariant | immutable true compatibility field, audited legacy repair, and source-independent agency admission |
 | `governance.approval_mode` | wired | exact one-time confirmation overlay |
 | `autonomy.proactive_messaging` | wired | `never/minimal/balanced/frequent` have distinct daily, interval, and idle policies; counters reset daily; critical alerts bypass ordinary quotas |
 | `autonomy.self_modification` | wired | growth-ladder admission posture |

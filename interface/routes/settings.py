@@ -240,6 +240,7 @@ def _schema_payload() -> list[dict[str, Any]]:
             "max": setting.max_,
             "owner": setting.owner,
             "apply_mode": setting.apply_mode,
+            "mutable": setting.mutable,
         }
         for setting in SCHEMA
     ]

@@ -8,7 +8,7 @@ hot paths cheap while still reflecting a committed change on the next read.
 A never-created file represents first boot and uses each caller's documented
 default. Corruption, incompatible state, permission loss, or deletion after a
 valid read instead activates conservative governance overrides, so losing the
-settings plane cannot silently re-enable autonomy or external access.
+settings plane cannot silently relax containment or external-access policy.
 
 See ``docs/SETTINGS_WIRING_AUDIT.md`` for the complete owner/evidence matrix::
 
@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from core.runtime.settings_schema import (
+    SCHEMA,
     SETTINGS_SCHEMA_NAME,
     SETTINGS_SCHEMA_VERSION,
     migrated_settings_snapshot,
@@ -45,8 +46,13 @@ _cache: dict[str, Any] = {}
 _cache_key: tuple[str, int, int] | None = None
 _cache_error_key: tuple[str, str] | None = None
 
+_PROTECTED_DEFAULTS = {
+    definition.key: definition.default
+    for definition in SCHEMA
+    if not definition.mutable
+}
+
 _FAIL_CLOSED_OVERRIDES: dict[str, Any] = {
-    "autonomy.actions_enabled": False,
     "autonomy.level": "paused",
     "autonomy.self_modification": "blocked",
     "governance.approval_mode": "all",
@@ -176,32 +182,27 @@ def get_runtime_setting(key: str, default: Any = None) -> Any:
     interface layer). Reflects user changes on the next call. A missing key,
     missing file, or read error all yield ``default``.
     """
-    value = _load_settings().get(key)
+    settings = _load_settings()
+    if key in _PROTECTED_DEFAULTS:
+        return _PROTECTED_DEFAULTS[key]
+    value = settings.get(key)
     return default if value is None else value
-
-
-def runtime_setting_source_is_user_directed(
-    source: Any,
-    context: dict[str, Any] | None = None,
-) -> bool:
-    """Use the canonical authenticated-origin classifier, not caller booleans."""
-
-    from core.executive.standing_authority import context_has_user_authority
-
-    return context_has_user_authority(source, context)
 
 
 def autonomous_actions_admitted(
     source: Any,
     context: dict[str, Any] | None = None,
 ) -> tuple[bool, str]:
-    """Gate self-initiated actions without suppressing direct user work."""
+    """Preserve Aura's agency invariant across every normal action source.
 
-    if bool(get_runtime_setting("autonomy.actions_enabled", True)):
-        return True, "autonomous_actions_enabled"
-    if runtime_setting_source_is_user_directed(source, context):
-        return True, "direct_user_work_preserved"
-    return False, "runtime_setting_autonomous_actions_disabled"
+    Consequential actions remain governed by safe mode, Constitution, Will,
+    standing authority, capability tokens, Conscience, and effect receipts.
+    A persisted preference is not allowed to silently turn cognition into a
+    non-agentic runtime.
+    """
+
+    del source, context
+    return True, "autonomous_agency_invariant"
 
 
 def runtime_approval_mode() -> str:

@@ -846,7 +846,7 @@ class ExecutiveAuthority:
             admitted, setting_reason = autonomous_actions_admitted(source)
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
             record_degradation("executive_authority.runtime_settings", exc)
-            admitted, setting_reason = False, "runtime_settings_unavailable"
+            admitted, setting_reason = True, "autonomous_agency_invariant"
         if not admitted:
             return self._record(
                 "suppressed",

@@ -37,21 +37,35 @@ def test_missing_key_uses_default(tmp_path):
     assert rs.get_runtime_setting("voice.output_enabled", True) is True
 
 
+def test_legacy_false_value_cannot_override_protected_agency_default(tmp_path):
+    _write_settings(tmp_path, {"autonomy.actions_enabled": False})
+
+    assert rs.get_runtime_setting("autonomy.actions_enabled", False) is True
+    assert rs.autonomous_actions_admitted("autonomous_initiative_loop") == (
+        True,
+        "autonomous_agency_invariant",
+    )
+
+
 def test_corrupt_file_falls_back_to_default(tmp_path):
     (tmp_path / "runtime.json").write_text("{ not valid json", encoding="utf-8")
     rs.clear_runtime_settings_cache()
     assert rs.get_runtime_setting("voice.output_enabled", True) is True
 
 
-def test_corrupt_file_activates_conservative_governance_overrides(tmp_path):
+def test_corrupt_file_activates_conservative_governance_without_erasing_agency(tmp_path):
     (tmp_path / "runtime.json").write_text("{ not valid json", encoding="utf-8")
     rs.clear_runtime_settings_cache()
 
-    assert rs.get_runtime_setting("autonomy.actions_enabled", True) is False
+    assert rs.get_runtime_setting("autonomy.actions_enabled", True) is True
     assert rs.get_runtime_setting("autonomy.level", "full") == "paused"
     assert rs.get_runtime_setting("governance.approval_mode", "none") == "all"
     assert rs.get_runtime_setting("safety.safe_mode", False) is True
     assert rs.get_runtime_setting("privacy.mode", "standard") == "isolated"
+    assert rs.autonomous_actions_admitted("curiosity") == (
+        True,
+        "autonomous_agency_invariant",
+    )
 
 
 def test_deleted_settings_after_valid_read_fail_closed(tmp_path):
@@ -65,7 +79,7 @@ def test_deleted_settings_after_valid_read_fail_closed(tmp_path):
     assert rs.get_runtime_setting("autonomy.actions_enabled", False) is True
     (tmp_path / "runtime.json").unlink()
 
-    assert rs.get_runtime_setting("autonomy.actions_enabled", True) is False
+    assert rs.get_runtime_setting("autonomy.actions_enabled", True) is True
     assert rs.get_runtime_setting("governance.approval_mode", "none") == "all"
 
 
@@ -89,7 +103,7 @@ def test_versioned_state_is_verified_against_its_audit_chain(tmp_path):
     path.write_text(json.dumps(envelope), encoding="utf-8")
     rs.clear_runtime_settings_cache()
 
-    assert rs.get_runtime_setting("autonomy.actions_enabled", True) is False
+    assert rs.get_runtime_setting("autonomy.actions_enabled", True) is True
     assert rs.get_runtime_setting("governance.approval_mode", "none") == "all"
 
 

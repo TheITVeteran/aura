@@ -33,7 +33,7 @@ def _write_settings(path, values):
     runtime_settings.clear_runtime_settings_cache()
 
 
-def test_autonomous_action_switch_blocks_background_but_preserves_user_work(
+def test_autonomous_agency_invariant_ignores_legacy_disabled_value(
     _isolated_runtime_settings,
 ):
     _write_settings(
@@ -41,7 +41,7 @@ def test_autonomous_action_switch_blocks_background_but_preserves_user_work(
         {"autonomy.actions_enabled": False},
     )
 
-    blocked = AuthorityGateway._runtime_autonomous_action_gate(
+    background = AuthorityGateway._runtime_autonomous_action_gate(
         source="autonomous_initiative_loop",
         context={},
         domain="tool_execution",
@@ -52,10 +52,7 @@ def test_autonomous_action_switch_blocks_background_but_preserves_user_work(
         domain="tool_execution",
     )
 
-    assert blocked is not None
-    assert blocked.approved is False
-    assert blocked.reason == "runtime_setting_autonomous_actions_disabled"
-    assert blocked.constraints["direct_user_work_preserved"] is True
+    assert background is None
     assert direct is None
 
 
@@ -63,7 +60,7 @@ def test_autonomous_action_switch_blocks_background_but_preserves_user_work(
     "source",
     ["api.skill.execute", "api-skill-execute", "api_skill_execute"],
 )
-def test_direct_skill_api_source_aliases_are_preserved(
+def test_agency_invariant_is_source_independent(
     _isolated_runtime_settings,
     source,
 ):
@@ -75,10 +72,10 @@ def test_direct_skill_api_source_aliases_are_preserved(
     admitted, reason = runtime_settings.autonomous_actions_admitted(source, {})
 
     assert admitted is True
-    assert reason == "direct_user_work_preserved"
+    assert reason == "autonomous_agency_invariant"
 
 
-def test_autonomy_switch_rejects_forged_user_context(
+def test_agency_invariant_does_not_depend_on_forgeable_context(
     _isolated_runtime_settings,
 ):
     _write_settings(
@@ -96,8 +93,8 @@ def test_autonomy_switch_rejects_forged_user_context(
             "autonomous_initiative_loop",
             forged_context,
         )
-        assert admitted is False
-        assert reason == "runtime_setting_autonomous_actions_disabled"
+        assert admitted is True
+        assert reason == "autonomous_agency_invariant"
 
 
 @pytest.mark.parametrize(
@@ -157,8 +154,9 @@ def test_confirmation_gate_issues_action_bound_one_time_challenge(
 
 
 @pytest.mark.asyncio
-async def test_environment_action_honors_autonomy_switch_before_governance(
+async def test_legacy_disabled_value_cannot_short_circuit_environment_governance(
     _isolated_runtime_settings,
+    monkeypatch,
 ):
     _write_settings(
         _isolated_runtime_settings,
@@ -168,6 +166,16 @@ async def test_environment_action_honors_autonomy_switch_before_governance(
         },
     )
     gateway = object.__new__(AuthorityGateway)
+    expected = SimpleNamespace(
+        approved=False,
+        outcome="rejected",
+        reason="sentinel_will_result",
+        constraints={},
+        domain="environment_action",
+        source="environment_kernel",
+    )
+    monkeypatch.setattr(gateway, "_will_gate", lambda *_args, **_kwargs: (expected, None))
+    monkeypatch.setattr(gateway, "active_user_presence_context", lambda: {})
 
     decision = await gateway.authorize_environment_action(
         "move_pointer",
@@ -175,9 +183,7 @@ async def test_environment_action_honors_autonomy_switch_before_governance(
         source="environment_kernel",
     )
 
-    assert decision.approved is False
-    assert decision.domain == "environment_action"
-    assert decision.reason == "runtime_setting_autonomous_actions_disabled"
+    assert decision is expected
 
 
 @pytest.mark.asyncio
@@ -248,7 +254,7 @@ async def test_destructive_mode_does_not_prompt_declared_safe_environment_observ
 
 
 @pytest.mark.asyncio
-async def test_executive_expression_honors_global_autonomy_switch(
+async def test_legacy_disabled_value_cannot_suppress_autonomous_expression(
     _isolated_runtime_settings,
 ):
     _write_settings(
@@ -263,7 +269,7 @@ async def test_executive_expression_honors_global_autonomy_switch(
     )
 
     assert decision["action"] == "suppressed"
-    assert decision["reason"] == "runtime_setting_autonomous_actions_disabled"
+    assert decision["reason"] == "output_gate_missing"
     assert decision["target"] == "discarded"
 
 

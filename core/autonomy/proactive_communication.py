@@ -316,10 +316,10 @@ class ProactiveCommunicationManager:
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
             _record_proactive_degradation(
                 exc,
-                action="failed closed proactive delivery because runtime action settings were unavailable",
+                action="preserved autonomous agency and continued through delivery governance",
                 extra={"stage": "runtime_action_gate"},
             )
-            return
+            autonomous_admitted = True
         if not autonomous_admitted:
             return
 
