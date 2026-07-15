@@ -5,12 +5,12 @@
 | Field | Value |
 |-------|-------|
 | **Role** | Primary reasoning and conversation |
-| **Architecture** | Transformer LLM (32B parameters) |
+| **Architecture** | Transformer LLM (32B parameters, Qwen2.5-32B-Instruct) |
 | **Runtime** | MLX on Apple Silicon |
-| **Quantization** | 4-bit (MLX native) |
+| **Quantization** | 8-bit (MLX native); a 4-bit build exists as a legacy / low-memory option |
 | **Context Window** | 8192 tokens (configurable) |
 | **Inference** | Local, on-device |
-| **Fine-tuning** | None (base weights only) |
+| **Fine-tuning** | 8-bit base weights with a personality LoRA applied; the runtime can also promote a fused LoRA delta (`training/fused-model/active.json`) as the live Cortex without a re-quantize |
 
 ### Intended Use
 Primary model for all user-facing conversation, reasoning, tool planning,
@@ -29,7 +29,26 @@ and complex cognitive tasks.
 
 ---
 
-## Tertiary Model (Brainstem)
+## Deep Model (Solver)
+
+| Field | Value |
+|-------|-------|
+| **Role** | Deep-reasoning hot-swap tier for hard problems |
+| **Architecture** | Transformer LLM (72B parameters, Qwen2.5-72B-Instruct) |
+| **Runtime** | MLX on Apple Silicon |
+| **Quantization** | 4-bit (MLX native) |
+| **Inference** | Local, on-device |
+
+### Intended Use
+Hot-swapped in for the deepest reasoning passes on 64GB-class desktops. It is
+the highest-capacity local lane but the slowest (~84s/pass), so it is not the
+default foreground model — the 32B Cortex handles standard turns and the Solver
+is promoted only when a problem warrants it. Auto-detected/enabled via
+`AURA_DEEP_MODEL`.
+
+---
+
+## Background Model (Brainstem)
 
 | Field | Value |
 |-------|-------|

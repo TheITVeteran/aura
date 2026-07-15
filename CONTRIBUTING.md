@@ -7,15 +7,17 @@ git clone https://github.com/youngbryan97/aura.git
 cd aura
 pip install -e ".[dev]"
 
-# Fast tests only
-python -m pytest tests/ -x -q -k "not slow and not integration"
+# Fast contract sweep (~100 tests, <10s) — run after every change
+make smoke
 
-# Lint and format
-ruff check .
-ruff format --check .
+# Full offline suite — 6 bounded process chunks. A single pytest process over
+# the whole suite is OOM-killed (~83%), so always go through the chunk runner
+# (make test → tools/run_test_chunks.py), never a bare `pytest tests/`.
+make test
 
-# Type-check the parts where we care most
-mypy core/will.py core/constitution.py core/executive/ --ignore-missing-imports
+# Syntax sweep + lint
+make compile
+make lint
 ```
 
 ## Architecture rules
