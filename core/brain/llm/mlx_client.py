@@ -688,13 +688,24 @@ async def _model_load_admission_context(
     timeout_s = _model_load_admission_timeout_s(
         foreground_request=foreground_request
     )
+    from core.brain.lane_admission import QoSClass
+
+    # The PRIMARY cortex (GUARANTEED QoS) always loads at FOREGROUND priority,
+    # even when a background prewarm task triggered it. It is the user-facing
+    # default model — background priority (80) meant the fairness gate blocked
+    # its load behind every continuous foreground fallback inference (priority
+    # 10), forever: the cortex could never load while the fallback answered,
+    # and the fallback answered because the cortex never loaded (2026-07-15
+    # soak deadlock, resource_timeout). At equal priority the load and the
+    # fallback inference interleave FIFO, so the cortex finally comes up.
+    is_primary_cortex = qos is QoSClass.GUARANTEED
     request = AdmissionRequest(
         owner=f"mlx.model_load:{os.path.basename(client.model_path)}",
         work_class=WorkClass.MODEL_LOAD,
         lane=lane,
         priority=(
             AdmissionPriority.FOREGROUND
-            if foreground_request
+            if (foreground_request or is_primary_cortex)
             else AdmissionPriority.BACKGROUND
         ),
         timeout_s=timeout_s,
@@ -767,7 +778,7 @@ async def _model_load_admission_context(
         request_gb=request_gb,
         priority=(
             int(AdmissionPriority.FOREGROUND)
-            if foreground_request
+            if (foreground_request or is_primary_cortex)
             else int(AdmissionPriority.BACKGROUND)
         ),
         foreground=foreground_request,
