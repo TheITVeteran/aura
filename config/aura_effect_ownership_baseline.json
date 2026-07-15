@@ -2065,6 +2065,54 @@
       "scope": "<module>.runtime_write_text"
     },
     {
+      "callee": "core.runtime.atomic_writer.atomic_append_text",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/runtime/settings_control_plane.py",
+      "scope": "<module>.RuntimeSettingsStore._append_application_receipt_locked"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.ensure_private_directory",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/runtime/settings_control_plane.py",
+      "scope": "<module>.RuntimeSettingsStore._append_application_receipt_locked"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.atomic_append_text",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/runtime/settings_control_plane.py",
+      "scope": "<module>.RuntimeSettingsStore._commit"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.ensure_private_directory",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/runtime/settings_control_plane.py",
+      "scope": "<module>.RuntimeSettingsStore._commit"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.ensure_private_directory",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/runtime/settings_control_plane.py",
+      "scope": "<module>.RuntimeSettingsStore._recover_audit_tail_locked"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.atomic_write_text",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/runtime/settings_control_plane.py",
+      "scope": "<module>.RuntimeSettingsStore._write_snapshot_locked"
+    },
+    {
       "callee": "core.runtime.atomic_writer.atomic_write_text",
       "canonical_owner": true,
       "category": "direct_atomic_file_write",
@@ -2437,14 +2485,6 @@
       "canonical_owner": false,
       "category": "direct_atomic_file_write",
       "count": 1,
-      "path": "interface/routes/settings.py",
-      "scope": "<module>.SettingsStore._save"
-    },
-    {
-      "callee": "core.runtime.atomic_writer.atomic_write_text",
-      "canonical_owner": false,
-      "category": "direct_atomic_file_write",
-      "count": 1,
       "path": "skills/hobbies.py",
       "scope": "<module>.HobbyEngine._save_entertainment_log"
     },
@@ -2807,6 +2847,30 @@
       "count": 1,
       "path": "core/architect/safety_gate.py",
       "scope": "<module>.ASASafetyGate._write_autopsy"
+    },
+    {
+      "callee": "<file_write_gateway>.append_text_async",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/autonomic/allostasis.py",
+      "scope": "<module>.AllostasisEngine._persist"
+    },
+    {
+      "callee": "<file_write_gateway>.ensure_directory_async",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/autonomic/allostasis.py",
+      "scope": "<module>.AllostasisEngine._persist"
+    },
+    {
+      "callee": "<file_write_gateway>.write_json_async",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/autonomic/allostasis.py",
+      "scope": "<module>.AllostasisEngine._persist"
     },
     {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().append_text",
@@ -12065,22 +12129,6 @@
       "scope": "<module>.BryanModelEngine._write_now"
     },
     {
-      "callee": "_SETTINGS_DIR.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "interface/routes/settings.py",
-      "scope": "<module>"
-    },
-    {
-      "callee": "os.replace",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "interface/routes/settings.py",
-      "scope": "<module>.SettingsStore._save"
-    },
-    {
       "callee": "GEN_IMAGES_DIR.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -13658,6 +13706,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "5bbbf4ef3cc53855c37bba29ddac38d948e963736282eeb722e6bddd3a93e227",
+  "inventory_sha256": "cbd32a42d91cc66ce19fc6ed388c4a3400d00e2171baa3f868e4c8b0a531da10",
   "schema_version": 1
 }
