@@ -83,6 +83,9 @@ class ToolExecutionHandle:
     authority_receipt_id: str | None = None
     will_receipt_id: str | None = None
     standing_authority_token: str | None = None
+    # The signed grant the sink authenticates. Unlike capability_token_id this
+    # is unforgeable without the Will's private key.
+    signed_capability: dict[str, Any] | None = None
 
 
 @dataclass
@@ -530,6 +533,7 @@ class ConstitutionalCore:
                 authority_receipt_id=authority_decision.substrate_receipt_id,
                 will_receipt_id=authority_decision.will_receipt_id,
                 standing_authority_token=authority_decision.standing_authority_token,
+                signed_capability=getattr(authority_decision, "signed_capability", None),
             )
             self._emit_tool_event(
                 "approved" if approved else "rejected",

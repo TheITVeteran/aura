@@ -199,11 +199,30 @@ async def test_base_skill_blocks_direct_execution_when_runtime_live(service_cont
 @pytest.mark.asyncio
 async def test_capability_engine_executes_skill_inside_governed_scope(service_container, monkeypatch):
     _live_runtime(service_container)
+
+    # The real ConstitutionalCore hands back a handle carrying a capability
+    # signed by the Will; the sink refuses to execute without one. Mint a
+    # genuine grant here so this fixture reflects the real contract rather than
+    # testing a path that cannot happen.
+    from core.governance.capability_chain import get_capability_issuer
+
+    _signed = get_capability_issuer().issue_from_decision(
+        SimpleNamespace(
+            outcome="proceed",
+            domain="tool_execution",
+            receipt_id="will-1",
+            constraints=[],
+        ),
+        action="demo_skill",
+        payload={"value": "ok"},
+    )
+
     begin_tool_execution = _AsyncCallRecorder(
         SimpleNamespace(
             approved=True,
             constraints={},
             capability_token_id="tok-1",
+            signed_capability=_signed.to_dict(),
             decision=ConstitutionalDecision(
                 proposal_id="tool-1",
                 kind=ProposalKind.TOOL,

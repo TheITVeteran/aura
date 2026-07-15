@@ -112,6 +112,11 @@ class AuthorityDecision:
     failure_pressure: float = 0.0
     canonical_self_version: int | None = None
     standing_authority_token: str | None = None
+    # The signed grant that lets a sink authenticate this decision without
+    # trusting the caller. ``capability_token_id`` above is only an opaque id —
+    # it proves nothing on its own, because anyone can mint a uuid. This is the
+    # field a consequential sink must verify.
+    signed_capability: dict[str, Any] | None = None
 
 
 class AuthorityGateway:
@@ -908,6 +913,14 @@ class AuthorityGateway:
                 }
             )
             decision.capability_token_id = token.token_id
+            decision.signed_capability = self._mint_signed_capability(
+                will_decision,
+                decision,
+                action=tool_name,
+                payload=args,
+                scope=f"intent:{intent.intent_id}",
+                ttl_s=self.TOOL_TOKEN_TTL_S,
+            )
             decision.standing_authority_token = lease.token
             if lease.token:
                 with self._standing_lease_lock:
@@ -1029,6 +1042,14 @@ class AuthorityGateway:
                 }
             )
             decision.capability_token_id = token.token_id
+            decision.signed_capability = self._mint_signed_capability(
+                will_decision,
+                decision,
+                action=intent_name,
+                payload=runtime_payload,
+                scope=f"intent:{intent.intent_id}",
+                ttl_s=self.TOOL_TOKEN_TTL_S,
+            )
         return decision
 
     def authorize_belief_update(
@@ -1652,7 +1673,60 @@ class AuthorityGateway:
         return decision
 
     def verify_tool_access(self, tool_name: str, token_id: str | None) -> bool:
+        """Legacy opaque-token check.
+
+        This proves only that *some* token exists in this process naming this
+        tool. It cannot establish that the token came from the Will — any caller
+        that can import ``core.agency.capability_system`` can mint one. Sinks
+        must verify ``AuthorityDecision.signed_capability`` instead; this
+        remains for callers still on the old contract and as a cheap pre-filter.
+        """
         return self._capabilities.verify_access(tool_name, token_id)
+
+    def _mint_signed_capability(
+        self,
+        will_decision: Any,
+        decision: AuthorityDecision,
+        *,
+        action: str,
+        payload: Any = None,
+        scope: str = "",
+        ttl_s: float = 300.0,
+    ) -> dict[str, Any] | None:
+        """Mint the signed grant a sink can authenticate.
+
+        Returns None when no capability could be minted. A None here is not a
+        soft failure to be ignored: a sink in strict mode refuses to execute
+        without a verified capability, so a mint failure fails the action closed
+        rather than degrading it into an unauthenticated execution.
+        """
+        if will_decision is None:
+            return None
+        try:
+            from core.governance.capability_chain import get_capability_issuer
+
+            cap = get_capability_issuer().issue_from_decision(
+                will_decision,
+                action=action,
+                payload=payload,
+                scope=scope,
+                ttl_s=ttl_s,
+            )
+            return cap.to_dict()
+        except Exception as exc:  # noqa: BLE001 - mint failure must be visible
+            record_degradation(
+                "authority_gateway",
+                exc,
+                action=(
+                    f"could not mint a signed capability for '{action}' — sinks in "
+                    "strict mode will refuse this action"
+                ),
+                enforce_failure_policy=False,
+            )
+            logger.error(
+                "Capability mint FAILED for '%s': %s", action, exc, exc_info=True
+            )
+            return None
 
     def finalize_tool_execution(
         self,

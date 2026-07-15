@@ -51,6 +51,14 @@ from core.executive.execution_policy import (  # noqa: E402
 from core.executive.standing_authority import (  # noqa: E402
     AUTONOMOUS_AUTHORITY_ORIGINS,
 )
+from core.governance.capability_chain import (  # noqa: E402
+    CapabilityDenial,
+    CapabilityViolation,
+    capability_enforcement_mode,
+    capability_from_context,
+    enforce_capability,
+    get_capability_verifier,
+)
 from core.runtime.base_module import AuraBaseModule  # noqa: E402
 from core.runtime.service_access import (  # noqa: E402
     optional_service,
@@ -2423,18 +2431,122 @@ class CapabilityEngine(AuraBaseModule):
             declared_effect_scope=self._effect_scope_for(skill_name, meta),
         )
 
+    def _capability_chain_denial(
+        self,
+        ctx: dict[str, Any],
+        skill_name: str,
+        params: Any,
+        constitutional_runtime_live: bool,
+    ) -> dict[str, Any] | None:
+        """Authenticate the Will's grant at the moment of execution.
+
+        This is the point where the constitutional chain actually closes: the
+        capability presented here must be a signature over *this* decision, for
+        *this* action, with *these* parameters — not merely a token that exists.
+
+        Returns a denial payload to abort the execution, or None to proceed.
+        Enforcement follows ``AURA_CAPABILITY_ENFORCEMENT``:
+
+            strict  refuse execution without a verified capability (default once
+                    the runtime is constitutionally live)
+            warn    record the violation and proceed — migration only
+            off     skip entirely — for tests and pre-runtime boot paths
+
+        The default is strict whenever the constitutional runtime is live,
+        because a governance check that can be quietly skipped is the failure
+        this whole change exists to remove.
+        """
+        mode = capability_enforcement_mode(default="strict" if constitutional_runtime_live else "off")
+        if mode == "off":
+            return None
+
+        try:
+            enforce_capability(
+                ctx,
+                sink=f"capability_engine.execute_skill:{skill_name}",
+                # String rather than ActionDomain: importing core.will here would
+                # cycle (the Will imports the engine's container). The verifier
+                # normalizes enum and str identically.
+                domain="tool_execution",
+                action=skill_name,
+                payload=params,
+            )
+            return None
+        except CapabilityViolation as exc:
+            _record_capability_degradation(
+                exc,
+                action=(
+                    f"{'refused' if mode == 'strict' else 'permitted (warn mode)'} "
+                    f"'{skill_name}': {exc.denial.value}"
+                ),
+                severity="degraded" if mode == "strict" else "warning",
+                enforce_failure_policy=False,
+            )
+            if mode != "strict":
+                self.logger.warning(
+                    "⚠️  CapabilityEngine: '%s' executing WITHOUT verified Will "
+                    "authority (%s) — warn mode",
+                    skill_name,
+                    exc.denial.value,
+                )
+                return None
+            self.logger.warning(
+                "🔒 CapabilityEngine: '%s' refused — %s (%s)",
+                skill_name,
+                exc.denial.value,
+                exc.detail,
+            )
+            return {
+                "ok": False,
+                "error": f"Will authority not established: {exc.denial.value}",
+                "status": "blocked_by_capability_chain",
+                "denial": exc.denial.value,
+                "detail": exc.detail,
+            }
+
     @staticmethod
     def _context_governed_execution(ctx: dict[str, Any], skill_name: str) -> bool:
+        """Is this execution carrying real authority from the Will?
+
+        Authority is established by *authenticating a signature*, never by a
+        caller's claim. A context that merely says it was verified
+        (``_capability_token_verified``) is not evidence of anything — that flag
+        was the bypass this method used to honour, and any code path or
+        deserialized payload could set it.
+        """
+        cap = capability_from_context(ctx)
+        if cap is not None:
+            result = get_capability_verifier().verify(
+                cap,
+                expected_action_digest=None,  # bound at the execution sink
+                consume=False,                # this is an advisory read, not a spend
+            )
+            if result.ok:
+                return True
+            _record_capability_degradation(
+                CapabilityViolation(
+                    result.denial or CapabilityDenial.MALFORMED, result.detail
+                ),
+                action=(
+                    f"treated '{skill_name}' as ungoverned: presented capability "
+                    f"failed verification"
+                ),
+                severity="warning",
+            )
+            return False
+
+        # Legacy opaque-token path. This establishes only that a token naming
+        # this skill exists in-process — not that the Will issued it. It is kept
+        # so callers still on the old contract are not silently downgraded to
+        # "ungoverned", but it is not accepted as proof of Will provenance and
+        # a bare self-asserted flag is never sufficient on its own.
         token_id = str((ctx or {}).get("capability_token_id") or "").strip()
         if not token_id:
             return False
-        if bool((ctx or {}).get("_capability_token_verified")):
-            return True
         try:
             from core.executive.authority_gateway import get_authority_gateway
 
             if get_authority_gateway().verify_tool_access(skill_name, token_id):
-                ctx["_capability_token_verified"] = True
                 return True
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
             _record_capability_degradation(
@@ -3904,13 +4016,19 @@ class CapabilityEngine(AuraBaseModule):
                     ctx["executive_constraints"] = merged_constraints
                     ctx = self._apply_executive_constraints(ctx)
 
+                # The signed grant is the authority. Attach it so the execution
+                # sink below can authenticate the Will's decision itself rather
+                # than trusting that this function already did.
+                signed_capability = getattr(tool_handle, "signed_capability", None)
+                if signed_capability:
+                    ctx["signed_capability"] = signed_capability
+
                 capability_token_id = getattr(tool_handle, "capability_token_id", None)
                 if capability_token_id:
                     if get_authority_gateway().verify_tool_access(
                         skill_name, capability_token_id
                     ):
                         ctx["capability_token_id"] = capability_token_id
-                        ctx["_capability_token_verified"] = True
                         self._record_verified_standing_authority(ctx, tool_handle)
                     else:
                         return {
@@ -3924,6 +4042,12 @@ class CapabilityEngine(AuraBaseModule):
                         "error": "Capability token missing",
                         "status": "blocked_by_missing_capability_token",
                     }
+
+                denial = self._capability_chain_denial(
+                    ctx, skill_name, params, constitutional_runtime_live
+                )
+                if denial is not None:
+                    return denial
             except (ImportError, AttributeError, RuntimeError) as e:
                 severity = "degraded" if constitutional_runtime_live else "warning"
                 _record_capability_degradation(

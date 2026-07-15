@@ -370,18 +370,51 @@ def test_capability_engine_edi_scopes_live_user_file_and_desktop_actions():
     ) == "subprocess"
 
 
-def test_capability_engine_edi_governance_requires_verified_capability_token():
+def test_capability_engine_edi_governance_requires_verified_capability_token(tmp_path, monkeypatch):
+    """Governed execution must be established by a signature, not a claim.
+
+    This previously asserted that ``_capability_token_verified: True`` in the
+    context was sufficient — i.e. it encoded the fabricated-governance-context
+    bypass as the contract. Authority now comes from a capability signed by the
+    Will, so a caller asserting its own verification proves nothing.
+    """
     from core.capability_engine import CapabilityEngine
+    from core.governance.capability_chain import (
+        attach_capability,
+        get_capability_issuer,
+        reset_capability_chain,
+    )
+
+    monkeypatch.setenv("AURA_CAPABILITY_KEY_DIR", str(tmp_path / "keys"))
+    reset_capability_chain()
 
     assert CapabilityEngine._context_governed_execution({}, "file_operation") is False
     assert CapabilityEngine._context_governed_execution(
         {"capability_token_id": "unverified-token"},
         "file_operation",
     ) is False
+
+    # The old bypass is now inert.
     assert CapabilityEngine._context_governed_execution(
         {"capability_token_id": "verified-token", "_capability_token_verified": True},
         "file_operation",
+    ) is False
+
+    # A real signed grant from a real decision does establish governance.
+    class _Decision:
+        outcome = "proceed"
+        domain = "tool_execution"
+        receipt_id = "r-1"
+        constraints: list[str] = []
+
+    cap = get_capability_issuer().issue_from_decision(
+        _Decision(), action="file_operation", payload={"path": "/tmp/x"}
+    )
+    assert CapabilityEngine._context_governed_execution(
+        attach_capability({}, cap), "file_operation"
     ) is True
+
+    reset_capability_chain()
 
 
 def test_continual_learning_validator_rejects_refused_skill_registration(tmp_path: Path):

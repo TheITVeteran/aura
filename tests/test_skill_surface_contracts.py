@@ -850,7 +850,11 @@ async def test_os_automation_outer_authority_closure_failure_rewrites_success(mo
         timeout_seconds = 30
 
         async def safe_execute(self, params, context):
-            assert context["_capability_token_verified"] is True
+            # The engine no longer stamps a self-asserted "_capability_token_verified"
+            # flag — authority travels as a signed capability, and a boolean in a
+            # dict was exactly the bypass that made sinks forgeable. The token id
+            # still marks that the constitutional path ran.
+            assert context["capability_token_id"] == "token-os-1"
             return {
                 "ok": True,
                 "status": "completed_verified",

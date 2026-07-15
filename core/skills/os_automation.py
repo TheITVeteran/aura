@@ -1304,7 +1304,11 @@ end tell
         script_hash: str,
         context: dict[str, Any],
     ) -> dict[str, Any]:
-        if bool(context.get("_capability_token_verified")):
+        # Delegation is only honoured against a capability actually signed by the
+        # Will. This used to accept ``context["_capability_token_verified"]`` — a
+        # bare boolean any caller could set — and hand back full desktop-control
+        # authority on the strength of it. A claim is not a grant.
+        if cls._delegated_authority_is_authentic(context):
             return {
                 "approved": True,
                 "reason": "delegated_capability_engine_authority",
@@ -1314,6 +1318,30 @@ end tell
                 "authority_receipt_id": context.get("authority_receipt_id"),
             }
         return await cls._authorize(goal, script, script_hash, context)
+
+    @staticmethod
+    def _delegated_authority_is_authentic(context: dict[str, Any]) -> bool:
+        """True only for a capability whose signature verifies under the Will key."""
+        try:
+            from core.governance.capability_chain import (
+                capability_from_context,
+                get_capability_verifier,
+            )
+
+            cap = capability_from_context(context)
+            if cap is None:
+                return False
+            # Not consumed here: this is a delegation check, and the execution
+            # sink is what spends the grant.
+            return get_capability_verifier().verify(cap, consume=False).ok
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "os_automation",
+                exc,
+                action="refused delegated authority: capability chain unavailable",
+                enforce_failure_policy=False,
+            )
+            return False
 
     @staticmethod
     async def _authorize(

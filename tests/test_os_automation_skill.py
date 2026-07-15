@@ -10,6 +10,43 @@ from core.skills import os_automation as os_automation_module
 from core.skills.os_automation import OSAutomationCompilerSkill, OSAutomationInput
 
 
+class _WillDecision:
+    """Minimal stand-in for a WillDecision that approved a desktop action."""
+
+    outcome = "proceed"
+    domain = "tool_execution"
+    receipt_id = "r-os-1"
+    constraints: list[str] = []
+
+
+def _delegated_context(**extra: Any) -> dict[str, Any]:
+    """A context carrying genuine delegated authority.
+
+    Delegation used to be claimable with ``_capability_token_verified: True``;
+    it now requires a capability actually signed by the Will, so these tests
+    mint a real one rather than asserting their own authorization.
+    """
+    from core.governance.capability_chain import attach_capability, get_capability_issuer
+
+    cap = get_capability_issuer().issue_from_decision(
+        _WillDecision(), action="os_automation", payload=None
+    )
+    ctx: dict[str, Any] = {"capability_token_id": "outer-token"}
+    attach_capability(ctx, cap)
+    ctx.update(extra)
+    return ctx
+
+
+@pytest.fixture(autouse=True)
+def _isolated_capability_keys(tmp_path, monkeypatch):
+    monkeypatch.setenv("AURA_CAPABILITY_KEY_DIR", str(tmp_path / "caps"))
+    from core.governance.capability_chain import reset_capability_chain
+
+    reset_capability_chain()
+    yield
+    reset_capability_chain()
+
+
 class _Engine:
     def __init__(self, *responses: str) -> None:
         self.responses = list(responses)
@@ -133,11 +170,7 @@ async def test_delegated_execution_uses_foreground_primary_and_verifies_effect(
     )
     result = await OSAutomationCompilerSkill().execute(
         OSAutomationInput(goal="Open Notes."),
-        {
-            "_capability_token_verified": True,
-            "capability_token_id": "outer-token",
-            "origin": "desktop_ui",
-        },
+        _delegated_context(origin="desktop_ui"),
     )
 
     assert result["ok"] is True
@@ -172,7 +205,7 @@ end tell
 
     result = await OSAutomationCompilerSkill().execute(
         OSAutomationInput(goal="Click the Continue button."),
-        {"_capability_token_verified": True, "capability_token_id": "outer-token"},
+        _delegated_context(),
     )
 
     assert result["ok"] is True
@@ -202,7 +235,7 @@ async def test_failed_effect_gets_one_evidence_driven_repair(
 
     result = await OSAutomationCompilerSkill().execute(
         OSAutomationInput(goal="Arrange the current Chrome window on the left side."),
-        {"_capability_token_verified": True, "capability_token_id": "outer-token"},
+        _delegated_context(),
     )
 
     assert result["ok"] is True
@@ -232,7 +265,7 @@ async def test_transport_success_without_effect_never_reports_success(
 
     result = await OSAutomationCompilerSkill().execute(
         OSAutomationInput(goal="Arrange the current Chrome window on the left side."),
-        {"_capability_token_verified": True, "capability_token_id": "outer-token"},
+        _delegated_context(),
     )
 
     assert result["ok"] is False
@@ -381,7 +414,7 @@ async def test_deterministic_execute_never_constructs_cognitive_engine(
 
     result = await OSAutomationCompilerSkill().execute(
         OSAutomationInput(goal="Open Notes."),
-        {"_capability_token_verified": True, "capability_token_id": "outer-token"},
+        _delegated_context(),
     )
 
     assert result["ok"] is True
@@ -466,3 +499,62 @@ async def test_mixed_supported_and_unverified_action_never_compiles_or_executes(
         "deletion" in reason
         for reason in result["effect_contract"]["unsupported_reasons"]
     )
+
+
+@pytest.mark.asyncio
+async def test_fabricated_delegated_authority_is_refused() -> None:
+    """A caller cannot grant itself desktop control by claiming it was verified.
+
+    ``_authority_for_script`` used to return approved=True on the strength of
+    ``context["_capability_token_verified"]`` alone — a bare boolean in a dict
+    that any code path, deserialized payload, or model-authored context could
+    set. It must now fall through to real authorization.
+    """
+    authorized: list[str] = []
+
+    async def _real_authorize(goal, script, script_hash, context):
+        authorized.append(goal)
+        return {"approved": False, "reason": "unit_refusal"}
+
+    original = OSAutomationCompilerSkill._authorize
+    OSAutomationCompilerSkill._authorize = staticmethod(_real_authorize)  # type: ignore[assignment]
+    try:
+        decision = await OSAutomationCompilerSkill._authority_for_script(
+            "Open Notes.",
+            'tell application "Notes" to activate',
+            "hash-1",
+            {
+                "_capability_token_verified": True,
+                "capability_token_id": "i-made-this-up",
+                "will_receipt_id": "r-fabricated",
+            },
+        )
+    finally:
+        OSAutomationCompilerSkill._authorize = original  # type: ignore[assignment]
+
+    assert decision["approved"] is False
+    assert decision.get("delegated") is not True
+    assert authorized == ["Open Notes."], "fabricated context skipped real authorization"
+
+
+@pytest.mark.asyncio
+async def test_authentic_signed_capability_still_delegates() -> None:
+    """The legitimate delegated path keeps working — this is a fix, not a wall."""
+
+    async def _must_not_run(*_a: Any, **_kw: Any) -> dict[str, Any]:
+        raise AssertionError("a genuine capability must not re-authorize")
+
+    original = OSAutomationCompilerSkill._authorize
+    OSAutomationCompilerSkill._authorize = staticmethod(_must_not_run)  # type: ignore[assignment]
+    try:
+        decision = await OSAutomationCompilerSkill._authority_for_script(
+            "Open Notes.",
+            'tell application "Notes" to activate',
+            "hash-1",
+            _delegated_context(),
+        )
+    finally:
+        OSAutomationCompilerSkill._authorize = original  # type: ignore[assignment]
+
+    assert decision["approved"] is True
+    assert decision["delegated"] is True
