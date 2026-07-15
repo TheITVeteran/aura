@@ -2254,6 +2254,13 @@ body.neural-visual-paused #pane-neural .live-dot {
     overflow-wrap: anywhere;
 }
 
+/* A section that can explain itself gets a quiet affordance saying so. */
+.section-label-explained {
+    cursor: help;
+    border-bottom: 1px dotted rgba(255, 255, 255, 0.16);
+    align-self: flex-start;
+}
+
 /* ── Imagination workspace ───────────────────────────────── */
 .imagine-toolbar {
     display: flex;

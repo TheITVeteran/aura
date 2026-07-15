@@ -470,14 +470,14 @@
                         <div class="bar-fill neural" id="neural-bar"></div>
                     </div>
                     <div id="neural-backlog" class="neural-backlog" hidden></div>
-                    <div class="section-label">THOUGHT CARDS</div>
+                    <div class="section-label">THOUGHTS</div>
                     <div id="neural-feed"></div>
                 </div>
 
                 <!-- Telemetry Tab -->
                 <div id="pane-telemetry" class="tab-pane">
                     <div class="telemetry-toolbar">
-                        <div class="section-label telemetry-toolbar-label">LIQUID STATE GAUGES</div>
+                        <div class="section-label telemetry-toolbar-label">HOW SHE'S FEELING</div>
                         <button id="metric-guide-toggle" class="metric-guide-toggle" type="button" aria-expanded="false" aria-controls="metric-guide-panel">
                             <span>Metric Guide</span>
                             <span class="metric-guide-toggle-icon">?</span>
@@ -544,7 +544,7 @@
                         </div>
                     </div>
 
-                    <div class="section-label">NEURAL DYNAMICS (V/A/D)</div>
+                    <div class="section-label">MOOD OVER TIME</div>
                     <div class="neural-dynamics-wrap">
                         <canvas id="neural-vad-canvas" width="300" height="120"></canvas>
                         <div class="vad-overlay">
@@ -554,7 +554,7 @@
                         </div>
                     </div>
 
-                    <div class="section-label">SOMATIC HARDWARE</div>
+                    <div class="section-label">BODY &amp; HARDWARE</div>
                     <div class="gauge-row">
                         <div class="gauge-label"><span>THERMAL LOAD</span><span id="s-thermal-val">--</span></div>
                         <div class="gauge-bar">
@@ -586,10 +586,9 @@
                         </div>
                     </div>
 
-                    <div class="consciousness-section section-label">CONSCIOUSNESS STATE</div>
+                    <div class="consciousness-section section-label">AWARENESS</div>
                     <div class="consciousness-grid">
-                        <div class="con-box"><span class="con-val" id="c-gwt">--</span><span class="con-lbl">GWT
-                                WINNER</span></div>
+                        <div class="con-box"><span class="con-val" id="c-gwt">--</span><span class="con-lbl">FOCUS OF ATTENTION</span></div>
                         <div class="con-box"><span class="con-val" id="c-coherence">--</span><span
                                 class="con-lbl">COHERENCE</span></div>
                         <div class="con-box"><span class="con-val" id="c-vitality">--</span><span
@@ -604,16 +603,16 @@
                                 class="con-lbl">META-LOOP</span></div>
                     </div>
 
-                    <div class="section-label">EXECUTIVE AUTHORITY</div>
+                    <div class="section-label">WHAT SHE'S DOING &amp; WHY</div>
                     <div class="consciousness-grid executive-grid">
                         <div class="con-box"><span class="con-val" id="c-closure">--</span><span class="con-lbl">CLOSURE</span></div>
-                        <div class="con-box"><span class="con-val" id="exec-need">--</span><span class="con-lbl">DOMINANT NEED</span></div>
-                        <div class="con-box"><span class="con-val" id="exec-pressure">--</span><span class="con-lbl">PRESSURE</span></div>
+                        <div class="con-box"><span class="con-val" id="exec-need">--</span><span class="con-lbl">STRONGEST NEED</span></div>
+                        <div class="con-box"><span class="con-val" id="exec-pressure">--</span><span class="con-lbl">URGENCY</span></div>
                         <div class="con-box"><span class="con-val" id="e-reliability">--</span><span class="con-lbl">RELIABILITY</span></div>
-                        <div class="con-box"><span class="con-val" id="e-subjectivity">--</span><span class="con-lbl">STATE COUPLING</span></div>
-                        <div class="con-box"><span class="con-val" id="e-enterprise">--</span><span class="con-lbl">ENTERPRISE</span></div>
-                        <div class="con-box"><span class="con-val" id="exec-released">0/0</span><span class="con-lbl">RELEASES</span></div>
-                        <div class="con-box"><span class="con-val" id="exec-suppressed">0</span><span class="con-lbl">SUPPRESSED</span></div>
+                        <div class="con-box"><span class="con-val" id="e-subjectivity">--</span><span class="con-lbl">GROUNDED IN STATE</span></div>
+                        <div class="con-box"><span class="con-val" id="e-enterprise">--</span><span class="con-lbl">TRUSTWORTHY</span></div>
+                        <div class="con-box"><span class="con-val" id="exec-released">0/0</span><span class="con-lbl">ACTIONS RELEASED</span></div>
+                        <div class="con-box"><span class="con-val" id="exec-suppressed">0</span><span class="con-lbl">ACTIONS HELD BACK</span></div>
                     </div>
                     <div class="executive-card">
                         <div class="executive-line">
@@ -634,13 +633,13 @@
                         </div>
                     </div>
 
-                    <div class="section-label">CONSTITUTIONAL HEALTH</div>
+                    <div class="section-label">VALUES &amp; CONSISTENCY</div>
                     <div class="consciousness-grid">
                         <div class="con-box"><span class="con-val" id="c-policy-mode">--</span><span class="con-lbl">POLICY MODE</span></div>
-                        <div class="con-box"><span class="con-val" id="c-fragmentation">0%</span><span class="con-lbl">FRAGMENTATION</span></div>
+                        <div class="con-box"><span class="con-val" id="c-fragmentation">0%</span><span class="con-lbl">SELF-CONFLICT</span></div>
                         <div class="con-box"><span class="con-val" id="c-contradictions">0</span><span class="con-lbl">CONTRADICTIONS</span></div>
-                        <div class="con-box"><span class="con-val" id="c-contested">0</span><span class="con-lbl">CONTESTED</span></div>
-                        <div class="con-box"><span class="con-val" id="c-commitments">0</span><span class="con-lbl">COMMITMENTS</span></div>
+                        <div class="con-box"><span class="con-val" id="c-contested">0</span><span class="con-lbl">DISPUTED BELIEFS</span></div>
+                        <div class="con-box"><span class="con-val" id="c-commitments">0</span><span class="con-lbl">PROMISES KEPT</span></div>
                         <div class="con-box"><span class="con-val" id="c-tools-available">0/0</span><span class="con-lbl">TOOLS</span></div>
                     </div>
                     <div class="flag-strip" id="health-flags">
@@ -649,25 +648,25 @@
                     <div class="narrative-box state-summary-box" id="rolling-summary">Awaiting continuity summary...</div>
                     <div class="narrative-box phenomenal-box" id="phenomenal-summary">Operational field offline.</div>
 
-                    <div class="section-label">QUALITATIVE STATE ENGINE</div>
+                    <div class="section-label">INNER EXPERIENCE</div>
                     <div class="consciousness-grid">
-                        <div class="con-box"><span class="con-val" id="q-pri">0.00</span><span class="con-lbl">PRI</span></div>
-                        <div class="con-box"><span class="con-val" id="q-norm">0.00</span><span class="con-lbl">‖Q‖</span></div>
-                        <div class="con-box"><span class="con-val" id="q-dim">--</span><span class="con-lbl">DOMINANT</span></div>
-                        <div class="con-box"><span class="con-val" id="q-attractor">--</span><span class="con-lbl">ATTRACTOR</span></div>
-                        <div class="con-box"><span class="con-val" id="q-identity">100%</span><span class="con-lbl">IDENTITY</span></div>
+                        <div class="con-box"><span class="con-val" id="q-pri">0.00</span><span class="con-lbl">RESONANCE</span></div>
+                        <div class="con-box"><span class="con-val" id="q-norm">0.00</span><span class="con-lbl">STATE STRENGTH</span></div>
+                        <div class="con-box"><span class="con-val" id="q-dim">--</span><span class="con-lbl">LEADING FEELING</span></div>
+                        <div class="con-box"><span class="con-val" id="q-attractor">--</span><span class="con-lbl">SETTLED?</span></div>
+                        <div class="con-box"><span class="con-val" id="q-identity">100%</span><span class="con-lbl">SELF-CONSISTENCY</span></div>
                     </div>
 
-                    <div class="section-label">RESILIENCE MATRIX</div>
+                    <div class="section-label">FALLBACKS &amp; SAFETY NETS</div>
                     <div class="consciousness-grid">
                         <div class="con-box"><span class="con-val" id="r-llm-tier">CLOUD</span><span class="con-lbl">LLM TIER</span></div>
                         <div class="con-box"><span class="con-val" id="r-snapshot">--</span><span class="con-lbl">SNAPSHOT</span></div>
-                        <div class="con-box"><span class="con-val" id="r-stt">CLOSED</span><span class="con-lbl">STT BREAKER</span></div>
-                        <div class="con-box"><span class="con-val" id="r-tts">CLOSED</span><span class="con-lbl">TTS BREAKER</span></div>
+                        <div class="con-box"><span class="con-val" id="r-stt">CLOSED</span><span class="con-lbl">SPEECH INPUT</span></div>
+                        <div class="con-box"><span class="con-val" id="r-tts">CLOSED</span><span class="con-lbl">SPEECH OUTPUT</span></div>
                         <div class="con-box"><span class="con-val" id="r-hardening">ACTIVE</span><span class="con-lbl">HARDENING</span></div>
                     </div>
 
-                    <div class="section-label">FULL RUNTIME</div>
+                    <div class="section-label">RUNTIME STATUS</div>
                     <div class="consciousness-grid">
                         <div class="con-box"><span class="con-val" id="fr-profile">--</span><span class="con-lbl">PROFILE</span></div>
                         <div class="con-box"><span class="con-val" id="fr-ready">--</span><span class="con-lbl">ORGANS</span></div>
@@ -677,14 +676,14 @@
                         <div class="con-box"><span class="con-val" id="fr-social">--</span><span class="con-lbl">SOCIAL</span></div>
                     </div>
 
-                    <div class="section-label">MYCELIAL NETWORK</div>
+                    <div class="section-label">INTERNAL SIGNAL NETWORK</div>
                     <div class="consciousness-grid">
                         <div class="con-box"><span class="con-val" id="m-health">--</span><span class="con-lbl">STATUS</span></div>
                         <div class="con-box"><span class="con-val" id="m-nodes">0</span><span class="con-lbl">NODES</span></div>
                         <div class="con-box"><span class="con-val" id="m-edges">0</span><span class="con-lbl">EDGES</span></div>
                     </div>
 
-                    <div class="section-label">PNEUMA ENGINE</div>
+                    <div class="section-label">THOUGHT DYNAMICS</div>
                     <div class="consciousness-grid">
                         <div class="con-box"><span class="con-val" id="pn-online">--</span><span class="con-lbl">STATUS</span></div>
                         <div class="con-box"><span class="con-val" id="pn-temp">0.70</span><span class="con-lbl">TEMPERATURE</span></div>
@@ -693,13 +692,13 @@
                         <div class="con-box"><span class="con-val" id="pn-attractors">0</span><span class="con-lbl">ATTRACTORS</span></div>
                     </div>
 
-                    <div class="section-label">MHAF FIELD</div>
+                    <div class="section-label">INTEGRATION FIELD</div>
                     <div class="consciousness-grid">
                         <div class="con-box"><span class="con-val" id="mhaf-online">--</span><span class="con-lbl">STATUS</span></div>
-                        <div class="con-box"><span class="con-val" id="mhaf-phi">0.00</span><span class="con-lbl">Φ (PHI)</span></div>
+                        <div class="con-box"><span class="con-val" id="mhaf-phi">0.00</span><span class="con-lbl">INTEGRATION (Φ)</span></div>
                         <div class="con-box"><span class="con-val" id="mhaf-nodes">0</span><span class="con-lbl">NODES</span></div>
                         <div class="con-box"><span class="con-val" id="mhaf-edges">0</span><span class="con-lbl">EDGES</span></div>
-                        <div class="con-box"><span class="con-val" id="mhaf-lexicon">0</span><span class="con-lbl">LEXICON</span></div>
+                        <div class="con-box"><span class="con-val" id="mhaf-lexicon">0</span><span class="con-lbl">CONCEPTS</span></div>
                     </div>
 
                     <div class="section-label">SECURITY</div>
@@ -710,7 +709,7 @@
                         <div class="con-box"><span class="con-val" id="sec-passphrase">--</span><span class="con-lbl">AUTH</span></div>
                     </div>
 
-                    <div class="section-label">CIRCADIAN STATE</div>
+                    <div class="section-label">BODY CLOCK</div>
                     <div class="consciousness-grid">
                         <div class="con-box"><span class="con-val" id="circ-phase">--</span><span class="con-lbl">PHASE</span></div>
                         <div class="con-box"><span class="con-val" id="circ-arousal">0.00</span><span class="con-lbl">AROUSAL</span></div>
@@ -718,15 +717,15 @@
                         <div class="con-box"><span class="con-val" id="circ-energy">0.00</span><span class="con-lbl">ENERGY</span></div>
                     </div>
 
-                    <div class="section-label">SUBSTRATE LEARNING</div>
+                    <div class="section-label">LEARNING FROM EXPERIENCE</div>
                     <div class="consciousness-grid">
-                        <div class="con-box"><span class="con-val" id="lora-captured">0</span><span class="con-lbl">CAPTURED</span></div>
-                        <div class="con-box"><span class="con-val" id="lora-flushed">0</span><span class="con-lbl">CRYSTALLIZED</span></div>
+                        <div class="con-box"><span class="con-val" id="lora-captured">0</span><span class="con-lbl">EXAMPLES CAPTURED</span></div>
+                        <div class="con-box"><span class="con-val" id="lora-flushed">0</span><span class="con-lbl">SAVED TO WEIGHTS</span></div>
                         <div class="con-box"><span class="con-val" id="lora-quality">0.00</span><span class="con-lbl">AVG QUALITY</span></div>
                         <div class="con-box"><span class="con-val" id="lora-buffer">0</span><span class="con-lbl">BUFFER</span></div>
                     </div>
 
-                    <div class="section-label">IDENTITY NARRATIVE</div>
+                    <div class="section-label">WHO SHE THINKS SHE IS</div>
                     <div class="narrative-box" id="identity-narrative">consolidating lived experience...</div>
                     <div class="consciousness-grid" style="margin-top:6px;">
                         <div class="con-box"><span class="con-val" id="consol-version">v0</span><span class="con-lbl">VERSION</span></div>
@@ -734,10 +733,10 @@
                         <div class="con-box"><span class="con-val" id="consol-age">--</span><span class="con-lbl">AGE</span></div>
                     </div>
 
-                    <div class="section-label">TEMPORAL NARRATIVE</div>
+                    <div class="section-label">WHAT'S HAPPENING NOW</div>
                     <div class="narrative-box" id="narrative">waiting for active narrative...</div>
 
-                    <div class="section-label">BELIEF GRAPH</div>
+                    <div class="section-label">WHAT SHE BELIEVES</div>
                     <div id="belief-graph"></div>
                 </div>
 
@@ -805,25 +804,25 @@
 
                 <!-- Skills Tab -->
                 <div id="pane-skills" class="tab-pane">
-                    <div class="section-label">TOOL MATRIX</div>
+                    <div class="section-label">TOOLS</div>
                     <div class="consciousness-grid tool-overview-grid">
                         <div class="con-box"><span class="con-val" id="tool-available-count">0</span><span class="con-lbl">AVAILABLE</span></div>
                         <div class="con-box"><span class="con-val" id="tool-degraded-count">0</span><span class="con-lbl">DEGRADED</span></div>
                         <div class="con-box"><span class="con-val" id="tool-voice-state">--</span><span class="con-lbl">VOICE</span></div>
-                        <div class="con-box"><span class="con-val" id="tool-last-stage">IDLE</span><span class="con-lbl">LAST EVENT</span></div>
+                        <div class="con-box"><span class="con-val" id="tool-last-stage">IDLE</span><span class="con-lbl">LAST TOOL EVENT</span></div>
                     </div>
                     <div class="tool-last-detail" id="tool-last-detail">Tool orchestration channel awaiting events.</div>
-                    <div class="section-label">REGISTERED SKILLS</div>
+                    <div class="section-label">SKILLS</div>
                     <div id="skills-list">
                         <div class="mem-empty">Loading skills...</div>
                     </div>
 
                     <div class="section-label">LEARNING &amp; GROWTH</div>
                     <div class="consciousness-grid tool-overview-grid">
-                        <div class="con-box"><span class="con-val" id="learn-generations">--</span><span class="con-lbl">WEIGHT CYCLES</span></div>
+                        <div class="con-box"><span class="con-val" id="learn-generations">--</span><span class="con-lbl">TRAINING CYCLES</span></div>
                         <div class="con-box"><span class="con-val" id="learn-promoted">--</span><span class="con-lbl">PROMOTED</span></div>
-                        <div class="con-box"><span class="con-val" id="learn-practice-rate">--</span><span class="con-lbl">PRACTICE ACC</span></div>
-                        <div class="con-box"><span class="con-val" id="learn-pairs">--</span><span class="con-lbl">PAIRS BANKED</span></div>
+                        <div class="con-box"><span class="con-val" id="learn-practice-rate">--</span><span class="con-lbl">PRACTICE ACCURACY</span></div>
+                        <div class="con-box"><span class="con-val" id="learn-pairs">--</span><span class="con-lbl">EXAMPLES BANKED</span></div>
                     </div>
                     <div class="tool-last-detail" id="learn-detail">Learning status loading…</div>
                 </div>

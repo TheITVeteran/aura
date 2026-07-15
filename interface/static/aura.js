@@ -815,23 +815,23 @@ const METRIC_GUIDE_BY_ID = {
 };
 
 const SECTION_GUIDE_BY_LABEL = {
-    'LIQUID STATE GAUGES': 'overview',
-    'NEURAL DYNAMICS (V/A/D)': 'neural_dynamics',
-    'SOMATIC HARDWARE': 'somatic_hardware',
-    'CONSCIOUSNESS STATE': 'consciousness_state',
-    'EXECUTIVE AUTHORITY': 'executive_authority',
-    'CONSTITUTIONAL HEALTH': 'constitutional_health',
-    'QUALITATIVE STATE ENGINE': 'qualia_engine',
-    'RESILIENCE MATRIX': 'resilience_matrix',
-    'MYCELIAL NETWORK': 'mycelial_network',
-    'PNEUMA ENGINE': 'pneuma_engine',
-    'MHAF FIELD': 'mhaf_field',
+    "HOW SHE'S FEELING": 'overview',
+    'MOOD OVER TIME': 'neural_dynamics',
+    'BODY & HARDWARE': 'somatic_hardware',
+    'AWARENESS': 'consciousness_state',
+    "WHAT SHE'S DOING & WHY": 'executive_authority',
+    'VALUES & CONSISTENCY': 'constitutional_health',
+    'INNER EXPERIENCE': 'qualia_engine',
+    'FALLBACKS & SAFETY NETS': 'resilience_matrix',
+    'INTERNAL SIGNAL NETWORK': 'mycelial_network',
+    'THOUGHT DYNAMICS': 'pneuma_engine',
+    'INTEGRATION FIELD': 'mhaf_field',
     'SECURITY': 'security_state',
-    'CIRCADIAN STATE': 'circadian_state_cluster',
-    'SUBSTRATE LEARNING': 'substrate_learning',
-    'IDENTITY NARRATIVE': 'identity_narrative',
-    'TEMPORAL NARRATIVE': 'temporal_narrative',
-    'BELIEF GRAPH': 'belief_graph'
+    'BODY CLOCK': 'circadian_state_cluster',
+    'LEARNING FROM EXPERIENCE': 'substrate_learning',
+    'WHO SHE THINKS SHE IS': 'identity_narrative',
+    "WHAT'S HAPPENING NOW": 'temporal_narrative',
+    'WHAT SHE BELIEVES': 'belief_graph'
 };
 
 const metricGuideState = {
@@ -5964,6 +5964,31 @@ function regenerateResponse() {
 
 $('regen-btn')?.addEventListener('click', regenerateResponse);
 
+// ── Plain-language tooltips ───────────────────────────────
+// METRIC_GUIDE already carries a readable explanation of every metric, but it
+// was reachable only by opening the guide panel and selecting a gauge, so the
+// telemetry wall read as unexplained jargon. Attach each explanation to its own
+// tile/row on hover; the guide panel still gives the fuller how/why.
+function attachPlainLanguageTooltips() {
+    for (const [id, key] of Object.entries(METRIC_GUIDE_BY_ID)) {
+        const el = $(id);
+        const guide = METRIC_GUIDE[key];
+        if (!el || !guide || !guide.what) continue;
+        // Overrides the existing "Explain <metric>" titles: those name the
+        // interaction, not the metric, which is the whole complaint.
+        const host = el.closest('.con-box') || el.closest('.gauge-row') || el;
+        host.title = `${guide.label} — ${guide.what}`;
+    }
+    document.querySelectorAll('.section-label').forEach(label => {
+        const key = SECTION_GUIDE_BY_LABEL[label.textContent.trim()];
+        const guide = key && METRIC_GUIDE[key];
+        if (guide && guide.what && !label.title) {
+            label.title = `${guide.label} — ${guide.what}`;
+            label.classList.add('section-label-explained');
+        }
+    });
+}
+
 // ── Imagination workspace ─────────────────────────────────
 // Renders the frame ImaginationEngine is actually holding, straight from
 // /api/imagination. Everything drawn here is a real field of that frame; when
@@ -6325,6 +6350,7 @@ const hudOverflow = (() => {
     return { init, schedule };
 })();
 
+attachPlainLanguageTooltips();
 hudOverflow.init();
 // Values change width as they populate ("0s" -> "1h20m"); re-measure when the
 // document's fonts settle so the first paint is not measured against fallbacks.
