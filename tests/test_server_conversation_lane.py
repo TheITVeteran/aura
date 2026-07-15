@@ -4779,7 +4779,9 @@ async def test_api_chat_desktop_surface_requires_cognitive_engine_and_blocks_ker
     monkeypatch.setattr(KernelInterface, "get_instance", staticmethod(lambda: _FakeKernelInterface()))
 
     response = await server_module.api_chat(
-        server_module.ChatRequest(message="Tell me something original about the ocean."),
+        server_module.ChatRequest(
+            message="Sample 1: In exactly five words, state why checksums matter."
+        ),
         SimpleNamespace(
             headers={
                 "X-Aura-Surface": "desktop-ui",
@@ -4791,10 +4793,15 @@ async def test_api_chat_desktop_surface_requires_cognitive_engine_and_blocks_ker
         None,
     )
 
+    payload = json.loads(response.body)
     assert response.status_code == 200  # in-band fail-closed delivery for real users
     assert kernel_calls == []
     assert b"failed closed instead of sending an ungrounded answer" in response.body
     assert b"desktop_cognitive_engine_required_no_reply" in response.body
+    assert payload["live_turn_contract"]["final_requested_output_contract_required"] is True
+    assert payload["live_turn_contract"]["final_requested_output_contract_evaluated"] is False
+    assert payload["live_turn_contract"]["final_requested_output_contract_kind"] == "word_count"
+    assert payload["live_turn_contract"]["final_requested_output_contract_proven"] is False
 
 
 @pytest.mark.asyncio
@@ -8990,6 +8997,86 @@ async def test_cognitive_engine_repair_retry_adopts_winning_receipt(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_worker_exhausted_quality_rejection_skips_duplicate_route_retry(monkeypatch):
+    from core.providers import engine_connection_pool as pool_module
+    from interface.routes import chat as chat_routes
+
+    metadata = _bound_live_mind_controls_metadata()
+    metadata.update(
+        {
+            "desktop_cognitive_engine_failure": True,
+            "failure_reason": "surface_quality_rejected",
+            "generation_failure_class": "surface_quality_rejected",
+        }
+    )
+    metadata["live_mind_surface_control_receipt"].update(
+        {
+            "surface_quality_gate_enabled": True,
+            "surface_quality_gate_passed": False,
+            "surface_quality_gate_attempts": 3,
+            "surface_quality_gate_reasons": ["missing_requested_word_count"],
+        }
+    )
+
+    class _FakeCognitiveEngine:
+        def __init__(self):
+            self.calls = 0
+
+        async def think(self, *_args, **_kwargs):
+            self.calls += 1
+            if self.calls > 1:
+                raise AssertionError("worker-owned quality retries must not be repeated")
+            return SimpleNamespace(
+                content="The generation was rejected by its output checks.",
+                metadata=metadata,
+            )
+
+    class _Pool:
+        async def acquire_engine_connection(self, *_args, **_kwargs):
+            return None
+
+        async def execute_with_retry(self, _name, operation, **_kwargs):
+            return await operation()
+
+    engine = _FakeCognitiveEngine()
+    monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _Pool())
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: engine
+            if name == "cognitive_engine"
+            else default
+        ),
+    )
+
+    trace = {}
+    reply = await chat_routes._run_cognitive_engine_chat_turn(
+        "In exactly five words, state why checksums matter.",
+        visible_user_message=(
+            "In exactly five words, state why checksums matter."
+        ),
+        origin="user",
+        timeout_s=60.0,
+        lane={
+            "conversation_ready": True,
+            "state": "ready",
+            "foreground_endpoint": "Cortex",
+        },
+        source="desktop_ui",
+        require_engine=True,
+        turn_trace=trace,
+    )
+
+    assert reply is None
+    assert engine.calls == 1
+    assert trace["cognitive_engine_reply_failed"] is True
+    assert trace["live_mind_surface_control_receipt"][
+        "surface_quality_gate_attempts"
+    ] == 3
+
+
+@pytest.mark.asyncio
 async def test_metadata_less_retry_cannot_inherit_rejected_generation_proof(monkeypatch):
     from core.providers import engine_connection_pool as pool_module
     from interface.routes import chat as chat_routes
@@ -9080,7 +9167,7 @@ async def test_metadata_less_retry_cannot_inherit_rejected_generation_proof(monk
         "chat.cognitive_engine_retry_grounding",
     ]
     for previous, current in zip(
-        receipt["text_mutations"], receipt["text_mutations"][1:]
+        receipt["text_mutations"], receipt["text_mutations"][1:], strict=False
     ):
         assert previous["after_chars"] == current["before_chars"]
 

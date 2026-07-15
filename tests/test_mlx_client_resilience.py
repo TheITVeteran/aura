@@ -1530,6 +1530,59 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(client._deferred_reboot_reason)
         self.assertEqual(client._consecutive_empty, 0)
 
+    async def test_surface_quality_rejection_preserves_worker_without_empty_retry(self):
+        client = MLXLocalClient(model_path=QWEN32_MODEL)
+        client._process = ProcessProbe(alive=True)
+        client._init_done = True
+        self._attach_local_ipc_queues(client)
+        client._set_lane_state("ready")
+        client._recurrent_depth_status = {
+            "active": True,
+            "config": {"n_loops": 2},
+            "expected_loops": 2,
+            "required": True,
+        }
+        recorded = SyncCallProbe()
+        wait_probe = AsyncCallProbe(
+            return_value={
+                "status": "ok",
+                "text": "",
+                "tokens_used": 9,
+                "surface_control_receipt": {
+                    "surface_quality_gate_enabled": True,
+                    "surface_quality_gate_passed": False,
+                    "surface_quality_gate_attempts": 3,
+                    "surface_quality_gate_reasons": [
+                        "missing_requested_word_count",
+                        "missing_current_topic_anchor",
+                    ],
+                },
+            }
+        )
+
+        with ReplaceAttr(client, "_record_degraded_event", recorded):
+            with ReplaceAttr(client, "_wait_for_generation_result", wait_probe):
+                result = await client._generate_inner(
+                    "hello",
+                    _retry=True,
+                    foreground_request=True,
+                    owner_label="test",
+                    deadline=get_deadline(30.0),
+                )
+
+        self.assertIsNone(result)
+        self.assertEqual(len(wait_probe.await_args_list), 1)
+        self.assertEqual(len(recorded.call_args_list), 0)
+        self.assertIsNone(client._deferred_reboot_reason)
+        self.assertEqual(client._consecutive_empty, 0)
+        self.assertEqual(client.get_lane_status()["state"], "ready")
+        self.assertEqual(
+            client.get_last_surface_control_receipt()[
+                "surface_quality_gate_reasons"
+            ],
+            ["missing_requested_word_count", "missing_current_topic_anchor"],
+        )
+
     async def test_foreground_empty_generation_exhaustion_records_terminal_incident(self):
         client = MLXLocalClient(model_path=QWEN32_MODEL)
         client._process = ProcessProbe(alive=True)

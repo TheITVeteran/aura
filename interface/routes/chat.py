@@ -4376,6 +4376,59 @@ def _enforce_final_requested_output_contract(
     return str(repaired or "")
 
 
+def _prime_requested_output_contract_trace(
+    trace: dict[str, Any],
+    *,
+    user_message: str,
+) -> None:
+    """Bind the user-authored contract before any early return can occur."""
+
+    try:
+        from core.conversation.response_reliability import requested_output_contract
+
+        contract = requested_output_contract(user_message)
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        record_degradation("chat.output_contract_preflight", exc)
+        trace.update(
+            {
+                "final_requested_output_contract_evaluated": False,
+                "final_requested_output_contract_required": None,
+                "final_requested_output_contract_kind": "unknown",
+                "final_requested_output_contract_satisfied": False,
+                "final_requested_output_contract_reasons": [
+                    f"preflight_error:{type(exc).__name__}"
+                ],
+            }
+        )
+        return
+
+    if not contract.constrained:
+        trace.update(
+            {
+                "requested_output_contract": {},
+                "final_requested_output_contract_evaluated": True,
+                "final_requested_output_contract_required": False,
+                "final_requested_output_contract_kind": str(
+                    getattr(contract, "kind", "none") or "none"
+                ),
+                "final_requested_output_contract_satisfied": True,
+                "final_requested_output_contract_reasons": [],
+            }
+        )
+        return
+
+    trace.update(
+        {
+            "requested_output_contract": contract.as_dict(),
+            "final_requested_output_contract_evaluated": False,
+            "final_requested_output_contract_required": True,
+            "final_requested_output_contract_kind": str(contract.kind or "unknown"),
+            "final_requested_output_contract_satisfied": False,
+            "final_requested_output_contract_reasons": ["evaluation_not_completed"],
+        }
+    )
+
+
 def _build_live_turn_contract_payload(
     *,
     desktop_required: bool,
@@ -4524,7 +4577,7 @@ def _build_live_turn_contract_payload(
     )
     requested_contract = live_mind_surface_control_receipt.get(
         "requested_output_contract"
-    )
+    ) or trace.get("requested_output_contract")
     requested_contract = (
         dict(requested_contract) if isinstance(requested_contract, dict) else {}
     )
@@ -5645,6 +5698,10 @@ async def _run_cognitive_engine_chat_turn(
                 "live_mind_controls_worker_applied": False,
                 "response_path": "",
             }
+        )
+        _prime_requested_output_contract_trace(
+            turn_trace,
+            user_message=visible,
         )
 
     def _mark_turn_trace(**fields: Any) -> None:
@@ -6960,10 +7017,21 @@ async def _run_cognitive_engine_chat_turn(
         failure_reason = str(
             thought_metadata.get("failure_reason") or "failure_envelope"
         )[:240]
-        retry_reply = await _attempt_repair_retry(
-            text,
-            (failure_reason,),
-        )
+        generation_failure_class = str(
+            thought_metadata.get("generation_failure_class") or ""
+        ).strip()
+        quality_retry_exhausted = generation_failure_class == "surface_quality_rejected"
+        if quality_retry_exhausted:
+            logger.warning(
+                "CognitiveEngine worker already exhausted its bounded semantic quality "
+                "retries; skipping a duplicate route-level model call."
+            )
+            retry_reply = None
+        else:
+            retry_reply = await _attempt_repair_retry(
+                text,
+                (failure_reason,),
+            )
         if retry_reply:
             _mark_turn_trace(
                 cognitive_engine_reply_accepted=True,
@@ -6973,7 +7041,7 @@ async def _run_cognitive_engine_chat_turn(
             return retry_reply
         _record_exhausted_cognitive_failure(
             failure_reason,
-            retry_attempted=True,
+            retry_attempted=not quality_retry_exhausted,
         )
         return None
     if not text or text == "…" or text.startswith("background_thought_suppressed"):
@@ -16102,6 +16170,10 @@ async def api_chat(
         "post_generation_repair_applied": False,
         "deterministic_repair_applied": False,
     }
+    _prime_requested_output_contract_trace(
+        _live_turn_trace,
+        user_message=_semantic_user_message,
+    )
 
     def _live_turn_contract(
         *,
@@ -16119,6 +16191,23 @@ async def api_chat(
             reply_source=reply_source,
             turn_trace=_live_turn_trace,
         )
+
+    def _enforce_main_requested_output_contract(reply_text: Any) -> tuple[str, bool]:
+        final_text = _enforce_final_requested_output_contract(
+            _live_turn_trace,
+            user_message=_semantic_user_message,
+            reply_text=str(reply_text or ""),
+        )
+        evaluated = bool(
+            _live_turn_trace.get("final_requested_output_contract_evaluated")
+        )
+        required = bool(
+            _live_turn_trace.get("final_requested_output_contract_required")
+        )
+        satisfied = bool(
+            _live_turn_trace.get("final_requested_output_contract_satisfied")
+        )
+        return final_text, bool(evaluated and (not required or satisfied))
 
     def _remaining_foreground_budget(*, reserve: float = 0.0) -> float:
         elapsed = time.monotonic() - request_started_at
@@ -16548,6 +16637,12 @@ async def api_chat(
                     ",".join(getattr(recovered_assessment, "reasons", ()) or ()),
                 )
 
+            recovered = _enforce_final_requested_output_contract(
+                recovery_trace,
+                user_message=_semantic_user_message,
+                reply_text=recovered,
+            )
+
             recovered_lane = _collect_conversation_lane_status()
             recovery_contract = _build_live_turn_contract_payload(
                 desktop_required=True,
@@ -16558,6 +16653,14 @@ async def api_chat(
                 reply_source=str(recovery_trace.get("response_path") or "cognitive_engine"),
                 turn_trace=recovery_trace,
             )
+            if not bool(
+                recovery_contract.get("final_requested_output_contract_proven")
+            ):
+                logger.warning(
+                    "Desktop CognitiveEngine recovery did not satisfy the user-authored "
+                    "output contract; continuing to the normal fail-closed path."
+                )
+                return None
             if not bool(recovery_contract.get("full_mind_path")):
                 if bool(recovery_contract.get("authentic_cognitive_reply")):
                     # Authentic mind-authored text with only state-completeness
@@ -16849,6 +16952,17 @@ async def api_chat(
                 return await _fail_closed_degraded_desktop_reply(
                     final_text,
                     response_path="desktop_required_fastpath_quality_failed",
+                )
+
+            final_text, output_contract_proven = (
+                _enforce_main_requested_output_contract(final_text)
+            )
+            if not output_contract_proven:
+                return await _fail_closed_degraded_desktop_reply(
+                    final_text,
+                    response_path="fastpath_requested_output_contract_not_proven",
+                    status="requested_output_contract_not_proven",
+                    reason="requested_output_contract_not_proven",
                 )
 
             _record_recent_response(final_text, _semantic_user_message)
@@ -17730,6 +17844,12 @@ async def api_chat(
                     )
                     runtime_grounding_ok = bool(runtime_grounding)
                 if runtime_grounding and runtime_grounding_ok:
+                    runtime_grounding, runtime_contract_proven = (
+                        _enforce_main_requested_output_contract(runtime_grounding)
+                    )
+                    if not runtime_contract_proven:
+                        runtime_grounding = ""
+                if runtime_grounding and runtime_grounding_ok:
                     _live_turn_trace.update(
                         {
                             "cognitive_engine_reply_accepted": True,
@@ -17806,6 +17926,13 @@ async def api_chat(
                 else ""
             )
             if identity_repair:
+                identity_repair = _apply_aura_voice_shaping(identity_repair)
+                identity_repair, identity_contract_proven = (
+                    _enforce_main_requested_output_contract(identity_repair)
+                )
+                if not identity_contract_proven:
+                    identity_repair = ""
+            if identity_repair:
                 _live_turn_trace.update(
                     {
                         "cognitive_engine_reply_accepted": True,
@@ -17824,7 +17951,6 @@ async def api_chat(
                     "Desktop CognitiveEngine produced no acceptable reply for an identity "
                     "turn; serving canonical identity/continuity grounding instead of legacy fallback."
                 )
-                identity_repair = _apply_aura_voice_shaping(identity_repair)
                 if pending_exchange_id:
                     await _complete_logged_exchange(
                         pending_exchange_id,
@@ -17870,6 +17996,13 @@ async def api_chat(
                     )
                     capability_inventory = ""
             if capability_inventory:
+                capability_inventory = _apply_aura_voice_shaping(capability_inventory)
+                capability_inventory, capability_contract_proven = (
+                    _enforce_main_requested_output_contract(capability_inventory)
+                )
+                if not capability_contract_proven:
+                    capability_inventory = ""
+            if capability_inventory:
                 _live_turn_trace.update(
                     {
                         "bounded_contract_used": True,
@@ -17885,7 +18018,6 @@ async def api_chat(
                     "inventory turn; serving grounded governed-tool inventory instead of "
                     "self-process repair or legacy fallback."
                 )
-                capability_inventory = _apply_aura_voice_shaping(capability_inventory)
                 if pending_exchange_id:
                     await _complete_logged_exchange(
                         pending_exchange_id,
@@ -17972,6 +18104,12 @@ async def api_chat(
                     except _CHAT_RECOVERABLE_ERRORS as exc:
                         record_degradation("chat", exc)
                         logger.debug("Minimal desktop self-process repair assessment skipped: %s", exc)
+            if bounded_repair:
+                bounded_repair, bounded_contract_proven = (
+                    _enforce_main_requested_output_contract(bounded_repair)
+                )
+                if not bounded_contract_proven:
+                    bounded_repair = ""
             if bounded_repair:
                 _live_turn_trace.update(
                     {

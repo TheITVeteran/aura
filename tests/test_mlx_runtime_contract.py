@@ -209,6 +209,9 @@ def test_worker_count_contract_retry_demands_semantic_task_ownership():
         ],
         ["missing_requested_word_count"],
         {
+            "user_surface_validation_prompt": (
+                "In exactly five words, state why checksums matter."
+            ),
             "requested_output_contract": {
                 "kind": "word_count",
                 "word_min": 5,
@@ -223,6 +226,8 @@ def test_worker_count_contract_retry_demands_semantic_task_ownership():
     assert "retain a concrete topic noun" in system
     assert "never describe the word or sentence constraint" in system
     assert "exactly 5 words" in system
+    assert "current-topic terms" in system
+    assert "checksum" in system
     assert "Count the final visible answer" in system
 
 

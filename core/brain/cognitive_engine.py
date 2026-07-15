@@ -1960,7 +1960,27 @@ class CognitiveEngine:
         self,
         mode: ThinkingMode,
         reason: str,
+        *,
+        generation_metadata: dict[str, Any] | None = None,
     ) -> Thought:
+        generation_metadata = (
+            dict(generation_metadata)
+            if isinstance(generation_metadata, dict)
+            else {}
+        )
+        metadata: dict[str, Any] = {
+            "desktop_cognitive_engine_failure": True,
+            "failure_reason": str(reason or "unknown")[:240],
+            "model_retry_suppressed": True,
+        }
+        surface_receipt = generation_metadata.get("surface_control_receipt")
+        if isinstance(surface_receipt, dict) and surface_receipt:
+            metadata["live_mind_surface_control_receipt"] = dict(surface_receipt)
+        generation_failure_class = str(
+            generation_metadata.get("error") or ""
+        ).strip()
+        if generation_failure_class:
+            metadata["generation_failure_class"] = generation_failure_class[:120]
         thought = Thought(
             id=str(uuid.uuid4()),
             content=(
@@ -1971,11 +1991,7 @@ class CognitiveEngine:
             mode=ThinkingMode.FAST,
             confidence=0.1,
             reasoning=[f"Desktop CognitiveEngine failure surfaced without model retry: {reason}"],
-            metadata={
-                "desktop_cognitive_engine_failure": True,
-                "failure_reason": str(reason or "unknown")[:240],
-                "model_retry_suppressed": True,
-            },
+            metadata=metadata,
         )
         self.thoughts.append(thought)
         return thought
@@ -2627,18 +2643,28 @@ class CognitiveEngine:
                 context.get("desktop_cognitive_engine_required", False)
                 or context.get("cognitive_engine_required", False)
             ):
-                record_degradation(
-                    "cognitive_engine",
-                    RuntimeError("compact desktop generation returned no usable text"),
-                    severity="degraded",
-                    action=(
-                        "surfaced bounded desktop inference failure without entering "
-                        "a second heavyweight model path"
-                    ),
-                )
+                generation_failure_class = str(
+                    router_generation_metadata.get("error") or ""
+                ).strip()
+                if generation_failure_class != "surface_quality_rejected":
+                    record_degradation(
+                        "cognitive_engine",
+                        RuntimeError("compact desktop generation returned no usable text"),
+                        severity="degraded",
+                        action=(
+                            "surfaced bounded desktop inference failure without entering "
+                            "a second heavyweight model path"
+                        ),
+                    )
+                else:
+                    logger.warning(
+                        "Desktop quick CognitiveEngine generation was intentionally "
+                        "rejected by the worker quality gate."
+                    )
                 return self._desktop_cognitive_failure_thought(
                     mode,
-                    "compact_desktop_generation_empty",
+                    generation_failure_class or "compact_desktop_generation_empty",
+                    generation_metadata=router_generation_metadata,
                 )
             return None
         imagination_feedback = self._learn_imagination_workspace_outcome(

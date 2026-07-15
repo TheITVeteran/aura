@@ -935,6 +935,59 @@ async def test_cognitive_engine_desktop_quick_failure_does_not_enter_second_mode
 
 
 @pytest.mark.asyncio
+async def test_cognitive_engine_preserves_worker_quality_rejection_metadata(monkeypatch):
+    engine = CognitiveEngine()
+    state = AuraState.default()
+    engine.state_repository = StateRepositoryFixture(state)
+
+    class _Router:
+        async def think(self, **_kwargs):
+            return None
+
+        @staticmethod
+        def get_last_generation_metadata():
+            return {
+                "error": "surface_quality_rejected",
+                "surface_control_receipt": {
+                    "surface_quality_gate_enabled": True,
+                    "surface_quality_gate_passed": False,
+                    "surface_quality_gate_attempts": 3,
+                    "surface_quality_gate_reasons": [
+                        "missing_requested_word_count"
+                    ],
+                },
+            }
+
+    monkeypatch.setattr(
+        "core.brain.cognitive_engine.get_container",
+        lambda: SimpleNamespace(
+            get=lambda name, default=None: _Router()
+            if name == "llm_router"
+            else default
+        ),
+    )
+
+    thought = await engine._run_thinking_loop(
+        state,
+        "In exactly five words, state why checksums matter.",
+        ThinkingMode.FAST,
+        "desktop_ui",
+        context={
+            "desktop_quick_reply_contract": True,
+            "cognitive_engine_required": True,
+            "desktop_cognitive_engine_required": True,
+        },
+        is_background=False,
+        timeout_s=30.0,
+    )
+
+    assert thought.metadata["generation_failure_class"] == "surface_quality_rejected"
+    receipt = thought.metadata["live_mind_surface_control_receipt"]
+    assert receipt["surface_quality_gate_attempts"] == 3
+    assert receipt["surface_quality_gate_passed"] is False
+
+
+@pytest.mark.asyncio
 async def test_cognitive_engine_strict_answer_recovery_propagates_cancellation(monkeypatch):
     import core.brain.llm_health_router as router_module
 

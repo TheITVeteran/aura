@@ -473,7 +473,7 @@ class InferenceGate:
             dict(raw_provider_receipt) if isinstance(raw_provider_receipt, dict) else {}
         )
         getter = getattr(client, "get_last_surface_control_receipt", None)
-        if success and not receipt and callable(getter):
+        if not receipt and callable(getter):
             try:
                 raw_receipt = getter()
                 if isinstance(raw_receipt, dict):
@@ -494,6 +494,19 @@ class InferenceGate:
             ):
                 if source_key in receipt:
                     metadata[metadata_key] = receipt[source_key]
+            if (
+                not success
+                and bool(receipt.get("surface_quality_gate_enabled"))
+                and not bool(receipt.get("surface_quality_gate_passed"))
+            ):
+                metadata["error"] = "surface_quality_rejected"
+                raw_reasons = receipt.get("surface_quality_gate_reasons")
+                if isinstance(raw_reasons, (list, tuple)):
+                    metadata["failure_reasons"] = [
+                        str(reason).strip()[:120]
+                        for reason in raw_reasons
+                        if str(reason).strip()
+                    ][:8]
         self._publish_generation_metadata(metadata, receipt)
 
     @classmethod
@@ -7106,6 +7119,18 @@ class InferenceGate:
                             visible_user_prompt,
                             is_user_facing=_is_user_facing,
                         )
+                    primary_failure_metadata = self.get_last_generation_metadata()
+                    primary_surface_quality_rejected = (
+                        str(primary_failure_metadata.get("error") or "").strip()
+                        == "surface_quality_rejected"
+                    )
+                    if primary_surface_quality_rejected and desktop_cognitive_engine_contract:
+                        logger.warning(
+                            "🧠 %s exhausted its worker-owned semantic quality retries; "
+                            "preserving the lane and refusing a duplicate inference-gate retry.",
+                            local_label,
+                        )
+                        return None
                     if health_probe:
                         logger.warning(
                             "🧠 %s proof health probe returned no text; refusing local fallback for lane certification.",

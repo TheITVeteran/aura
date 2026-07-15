@@ -1254,6 +1254,24 @@ def _sanitize_surface_control_receipt(value: Any) -> dict[str, Any]:
     return receipt
 
 
+def _surface_quality_rejection_reasons(value: Any) -> tuple[str, ...]:
+    """Identify an intentional worker quality rejection, not an empty decode."""
+
+    receipt = value if isinstance(value, dict) else {}
+    if not bool(receipt.get("surface_quality_gate_enabled")):
+        return ()
+    if bool(receipt.get("surface_quality_gate_passed")):
+        return ()
+    raw_reasons = receipt.get("surface_quality_gate_reasons")
+    if not isinstance(raw_reasons, (list, tuple)):
+        return ()
+    return tuple(
+        str(reason).strip()[:120]
+        for reason in raw_reasons
+        if str(reason).strip()
+    )[:8]
+
+
 def _coerce_timeout_seconds(value: Any) -> float | None:
     """Normalize public timeout kwargs into positive request deadlines."""
     if value is None or isinstance(value, Deadline):
@@ -2266,6 +2284,12 @@ class MLXLocalClient:
         self._set_task_surface_control_receipt(receipt)
         if receipt:
             self._last_surface_control_receipt = receipt
+
+    def _preserve_lane_after_surface_quality_rejection(self) -> None:
+        """Clear empty-decode pressure while keeping the healthy worker resident."""
+
+        self._consecutive_empty = 0
+        self._set_lane_state("ready")
 
     def get_last_interoception(self) -> dict[str, Any]:
         """The substrate interoception payload of the most recent completed
@@ -5718,6 +5742,15 @@ class MLXLocalClient:
             "runtime_fact_status_contract": bool(
                 kwargs.get("runtime_fact_status_contract", False)
             ),
+            "requires_memory_grounding": bool(
+                kwargs.get("requires_memory_grounding", False)
+            ),
+            "memory_state_contract": bool(
+                kwargs.get("memory_state_contract", False)
+            ),
+            "grounded_recall_contract": bool(
+                kwargs.get("grounded_recall_contract", False)
+            ),
             "grounded_runtime_status_contract": bool(
                 kwargs.get("grounded_runtime_status_contract", False)
             ),
@@ -5848,6 +5881,23 @@ class MLXLocalClient:
                 text = res.get("text", "").strip()
                 self._mark_progress()
                 if not text and not res.get("soft_cancelled"):
+                    quality_rejection_reasons = _surface_quality_rejection_reasons(
+                        self.get_last_surface_control_receipt()
+                    )
+                    if quality_rejection_reasons:
+                        # The worker decoded and deliberately rejected its own
+                        # drafts. Treating that as cache corruption used to
+                        # repeat the whole request, recycle a healthy 32B
+                        # process, and open the Cortex circuit. Preserve the
+                        # receipt and leave the lane resident for the caller's
+                        # typed recovery policy instead.
+                        self._preserve_lane_after_surface_quality_rejection()
+                        logger.warning(
+                            "🛡️ [MLX] Worker rejected the visible draft for semantic "
+                            "quality (%s); preserving the resident lane.",
+                            ",".join(quality_rejection_reasons),
+                        )
+                        return None
                     # Empty warmup can prove process/shader liveness, but it
                     # cannot prove conversation readiness. Keep the lane out of
                     # "ready" until a visible generation succeeds.

@@ -420,6 +420,48 @@ async def test_router_think_failsofts_when_client_returns_no_text():
 
 
 @pytest.mark.asyncio
+async def test_quality_rejection_does_not_trip_healthy_local_endpoint():
+    class _QualityRejectedClient:
+        async def think(self, *_args, **_kwargs):
+            return None
+
+        @staticmethod
+        def get_last_generation_metadata():
+            return {
+                "error": "surface_quality_rejected",
+                "failure_reasons": ["missing_requested_word_count"],
+                "surface_control_receipt": {
+                    "surface_quality_gate_enabled": True,
+                    "surface_quality_gate_passed": False,
+                    "surface_quality_gate_attempts": 3,
+                },
+            }
+
+    router = HealthAwareLLMRouter()
+    endpoint = EndpointHealth(
+        name="Cortex",
+        url="internal",
+        model="local-test",
+        is_local=True,
+        tier="local",
+        client=_QualityRejectedClient(),
+    )
+
+    result = await router._call_endpoint(
+        endpoint,
+        "In exactly five words, state why checksums matter.",
+        "Speak as Aura.",
+        timeout=30.0,
+    )
+
+    assert result["ok"] is False
+    assert result["error"] == "surface_quality_rejected"
+    assert result["failure_reasons"] == ["missing_requested_word_count"]
+    assert endpoint.failure_count == 0
+    assert endpoint.state.value == "closed"
+
+
+@pytest.mark.asyncio
 async def test_router_recovers_to_cloud_when_foreground_local_lane_returns_no_text():
     router = HealthAwareLLMRouter()
     cloud = _TimeoutRecordingClient()

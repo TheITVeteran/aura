@@ -16,8 +16,8 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **Checkpoint 84 is pushed on exact
-  `main` at `abf2319d`; Checkpoint 85 is source-green and exact-app reproof is
+- Current bounded implementation milestone: **Checkpoint 85 is pushed on exact
+  `main` at `2d2c1cbb`; Checkpoint 86 is source-green and exact-app reproof is
   open**. Checkpoint 80 made cached
   readiness truthful and fast,
   removed synchronous Phi/Eternal maintenance from the foreground cycle, and
@@ -42,11 +42,17 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   Checkpoint 85 removes only recognized engine-added suffixes from compact
   prompts, gives typed count retries their exact requirement, and makes every
   constrained early exit unproven until final validation actually runs.
+  Checkpoint 86 keeps worker-owned semantic rejection out of the empty-decode,
+  process-restart, endpoint-circuit, and duplicate-route-retry failure cascade;
+  gives count retries concrete prompt-derived topic terms; inhibits token-level
+  non-parametric recall when it would compete with a structural output contract;
+  and makes every successful early response path run the same final requested-
+  output proof as the normal CognitiveEngine path.
   Broader pressure, plateau, GUI, portability, semantic,
   release, and causal-proof obligations remain open unless their rows
   explicitly close.
 - Overall completion percentage: **30% evidence-weighted planning estimate at
-  pushed Checkpoint 84**. The exact
+  pushed Checkpoint 85**. The exact
   Checkpoint 80 app earns bounded live credit for readiness, health, base boot,
   and one-attempt chat latency, but not output quality, sustained load, GUI
   frame SLO, portability, semantic review, release, or soak. The newly
@@ -58,7 +64,7 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   generated denominator; new obligations increase it, regressions reopen it,
   and source-green/live-open work never receives full closure credit.
 - Total checkpoint forecast: **approximately 240-325 total checkpoints for the
-  expanded program, with 84 pushed and approximately 156-241 remaining before
+  expanded program, with 85 pushed and approximately 155-240 remaining before
   final soak/release closure**. The prior `226-304` range expands by 8-12 explicit
   checkpoints for a falsifiable lateral-conceptual-leap program spanning
   mechanism construction, held-out evaluation, novelty and prior-art review,
@@ -16105,8 +16111,8 @@ Progress and immediate next work:
 
 - Evidence-weighted completion remains `30%`: this source correction has no
   exact-app count, health, GUI, portability, release, semantic-audit, or soak
-  credit yet. Checkpoint 84 is the latest pushed checkpoint; the forecast
-  remains `240-325` total with `156-241` remaining after that push.
+  credit yet. Checkpoint 85 is pushed on `main` at `2d2c1cbb`; the forecast
+  remains `240-325` total with `155-240` remaining after that push.
   `RUNTIME-SETTINGS-001` decomposes already-counted UI, governance, voice, and
   data-lifecycle work rather than silently expanding or shrinking the range.
 - Commit and push this bounded source candidate directly to `main`, rebuild the
@@ -16115,6 +16121,92 @@ Progress and immediate next work:
   and complete terminal/Neural delta. No live claim closes unless visible text,
   latency, Cortex ownership, final proof, readiness, and absence of relevant
   lag/Skynet/MLX/health faults all pass together.
+- Final multi-hour and 24-72 hour soaks remain deferred until every shorter
+  source, deterministic, fault-injection, bounded live, GUI, portability, and
+  release gate is green.
+
+## Checkpoint 2026-07-14-86: Semantic Rejection Ownership and Final-Path Contract Truth
+
+This source candidate closes the retry/circuit cascade and proof gaps exposed by
+the exact installed-app campaign at clean `main@8f43d544`. It advances
+`FOREGROUND-LATENCY-001`, `CONVERSATION-001`, `FAULT-001`, `HEALTH-SURFACE-001`,
+`MEMORY-001`, `OBSERVE-001`, and `TEST-DEPTH-001`. Exact rebuilt-app proof is
+still mandatory and this section does not claim live closure.
+
+Retained exact-app evidence before the correction:
+
+- Five consecutive `Reply exactly: "yes"` requests returned visible `yes`
+  through CognitiveEngine and Cortex with HTTP 200, high confidence, no
+  fallback, a proven full-mind path, and post-turn boot-health HTTP 200.
+  Latencies were 4.584, 2.391, 2.373, 2.347, and 2.314 seconds.
+- `In exactly five words, state why checksums matter.` failed closed after
+  39.681 seconds. The worker correctly rejected three invalid drafts, but the
+  client reclassified that deliberate semantic rejection as empty generation,
+  retried the complete request, scheduled a healthy-worker restart, and let the
+  health router open the Cortex circuit. The route then attempted another full
+  CognitiveEngine repair call. Post-turn health remained structurally truthful
+  but temporarily reported `working`/Cortex warmup.
+- The failure response also advertised a vacuous final requested-output proof:
+  `evaluated=true`, `required=false`, `satisfied=true`, and `proven=true` even
+  though the visible five-word contract had not been met. The retained request,
+  health bodies, and complete log sequence identify separate semantic-quality,
+  infrastructure-health, retry-ownership, and proof-truth defects rather than
+  collapsing them into generic model failure.
+
+Source correction:
+
+- The MLX worker remains the single owner of its bounded semantic-quality retry.
+  Its count retry now receives the immutable count requirement plus normalized
+  prompt-derived topic terms, and must count the final visible answer before
+  ending. Structural exact/count contracts inhibit token-level non-parametric
+  recall unless the request explicitly requires memory grounding, preventing a
+  retrieval prior from competing with decoder structure without disabling real
+  grounded recall.
+- A worker receipt that proves decoded drafts were deliberately rejected is now
+  a typed `surface_quality_rejected` outcome. The MLX client preserves the
+  resident ready lane and receipt instead of performing an empty-decode retry or
+  reboot. InferenceGate preserves the failed receipt and skips its duplicate
+  retry for the desktop CognitiveEngine contract. The health router returns the
+  semantic outcome without incrementing endpoint failures or opening the
+  infrastructure circuit. CognitiveEngine carries the typed failure and receipt
+  without misreporting it as a service degradation, and the chat route refuses
+  another model call after worker retry exhaustion.
+- The request-authored output contract is bound to the turn trace before any
+  early return. Grounded recovery, fast path, runtime-fact, identity/continuity,
+  capability-inventory, and self-process repair replies all pass through the
+  same final visible-contract evaluator as the normal path. An unevaluated or
+  unsatisfied constrained result cannot be promoted to full-mind proof or
+  successful recovery.
+
+Verification on the source candidate:
+
+- The complete server conversation and CognitiveEngine background suites pass
+  `293/293` in 137.02 seconds. The MLX runtime/client, InferenceGate, health
+  router, non-parametric worker, and chat reliability suites pass `456/456` in
+  253.76 seconds. These 749 tests include retry ownership, no-reboot/no-circuit
+  behavior, failed-receipt propagation, memory-admission policy, non-vacuous
+  early failure, and early identity-path final-contract enforcement.
+- Configured Ruff over every touched Python file, Python byte compilation, and
+  `git diff --check` pass. The enterprise static ratchet passes without a
+  baseline increase, the production readiness contract passes `37/37`, and the
+  enterprise closeout rubric passes `20/20` against the final tracked diff. No
+  pushed or live credit is inferred from those source gates.
+
+Progress and immediate next work:
+
+- Evidence-weighted completion remains `30%`. After this candidate is pushed,
+  it is total Checkpoint `86` of the current `240-325` forecast, with
+  approximately `154-239` checkpoints remaining before final soak/release
+  closure. This checkpoint earns source and deterministic evidence only; it
+  does not earn exact-app count, mixed-load, GUI, portability, semantic-review,
+  release, or soak credit.
+- Publish this bounded source checkpoint directly to `main`, verify the remote
+  object ID, rebuild and sign `/Applications/Aura.app` from that exact clean
+  commit, and retain at least five exact, five word-count, and five sentence-
+  count responses plus every post-turn health body and complete terminal/Neural
+  delta. Every visible contract, Cortex ownership, final proof, health state,
+  retry count, latency ceiling, and relevant warning signature must pass
+  together before the live obligation closes.
 - Final multi-hour and 24-72 hour soaks remain deferred until every shorter
   source, deterministic, fault-injection, bounded live, GUI, portability, and
   release gate is green.

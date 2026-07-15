@@ -14,6 +14,7 @@ from core.brain.nonparametric_memory import NonParametricMemory
 from core.brain.nonparametric_worker import (
     HiddenStateTap,
     cached_generate_with_memory,
+    foreground_memory_admitted_for_job,
     make_tapped_nonparametric_processor,
 )
 
@@ -22,6 +23,30 @@ def _softmax(a: np.ndarray) -> np.ndarray:
     a = a - a.max()
     e = np.exp(a)
     return e / e.sum()
+
+
+def test_structural_contract_inhibits_token_recall_without_memory_requirement():
+    assert (
+        foreground_memory_admitted_for_job(
+            {"requested_output_contract": {"kind": "word_count"}}
+        )
+        is False
+    )
+    assert (
+        foreground_memory_admitted_for_job(
+            {
+                "requested_output_contract": {"kind": "word_count"},
+                "requires_memory_grounding": True,
+            }
+        )
+        is True
+    )
+    assert (
+        foreground_memory_admitted_for_job(
+            {"requested_output_contract": {"kind": "none"}}
+        )
+        is True
+    )
 
 
 # ── the tap captures the hidden the forward already produced ────────────────

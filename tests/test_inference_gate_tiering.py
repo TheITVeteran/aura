@@ -3144,6 +3144,37 @@ async def test_inference_gate_fresh_task_never_borrows_global_receipt():
     )
 
 
+def test_inference_gate_preserves_failed_surface_receipt_as_semantic_rejection():
+    gate = InferenceGate()
+
+    class _Client:
+        @staticmethod
+        def get_last_surface_control_receipt():
+            return {
+                "surface_quality_gate_enabled": True,
+                "surface_quality_gate_passed": False,
+                "surface_quality_gate_attempts": 3,
+                "surface_quality_gate_reasons": ["missing_requested_word_count"],
+                "requested_output_contract": {
+                    "kind": "word_count",
+                    "word_min": 5,
+                    "word_max": 5,
+                },
+            }
+
+    gate._record_client_generation_metadata(
+        _Client(),
+        label="Cortex",
+        success=False,
+        text="",
+    )
+
+    metadata = gate.get_last_generation_metadata()
+    assert metadata["error"] == "surface_quality_rejected"
+    assert metadata["failure_reasons"] == ["missing_requested_word_count"]
+    assert metadata["surface_control_receipt"]["surface_quality_gate_attempts"] == 3
+
+
 def test_inference_gate_records_stabilization_without_prior_provider_receipt():
     gate = InferenceGate()
     gate._clear_last_generation_metadata()

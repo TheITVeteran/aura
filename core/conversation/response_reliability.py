@@ -2520,6 +2520,18 @@ def _count_contract_topic_anchors(user_message: Any) -> set[str]:
     return anchors
 
 
+def requested_output_topic_anchors(user_message: Any) -> tuple[str, ...]:
+    """Return stable, prompt-derived topic terms for constrained-output retries.
+
+    The retry layer needs concrete terms, not a vague instruction to stay on
+    topic.  Only normalized word forms produced by this module's existing
+    contract parser are returned, so raw prompt text is never copied into a
+    privileged retry instruction.
+    """
+
+    return tuple(sorted(_count_contract_topic_anchors(user_message)))
+
+
 def _reply_topic_forms(reply_text: Any) -> set[str]:
     forms: set[str] = set()
     for token in _WORD_RE.findall(str(reply_text or "")):

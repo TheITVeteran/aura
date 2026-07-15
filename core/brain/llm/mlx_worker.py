@@ -111,8 +111,26 @@ def _semantic_count_contract_retry_instruction(job: dict[str, Any]) -> str:
                 f"sentence{'s' if sentence_count != 1 else ''}."
             )
 
+    topic_requirement = ""
+    validation_prompt = str(job.get("user_surface_validation_prompt") or "").strip()
+    if validation_prompt:
+        try:
+            from core.conversation.response_reliability import (
+                requested_output_topic_anchors,
+            )
+
+            anchors = requested_output_topic_anchors(validation_prompt)[:8]
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            anchors = ()
+        if anchors:
+            topic_requirement = (
+                " Include at least one of these current-topic terms exactly as "
+                f"written: {', '.join(anchors)}."
+            )
+
     return (
-        f"{_SEMANTIC_COUNT_CONTRACT_RETRY_INSTRUCTION}{requirement} "
+        f"{_SEMANTIC_COUNT_CONTRACT_RETRY_INSTRUCTION}{requirement}"
+        f"{topic_requirement} "
         "Count the final visible answer before ending it; return only that answer."
     )
 
@@ -3198,7 +3216,7 @@ def _mlx_worker_loop(
                 _np_tap = None
                 try:
                     from core.brain.nonparametric_worker import maybe_build_foreground
-                    _np_foreground = maybe_build_foreground(model)
+                    _np_foreground = maybe_build_foreground(model, job=job)
                     if _np_foreground is not None:
                         _np_tap, _np_proc = _np_foreground
                         logits_processors.append(_np_proc)

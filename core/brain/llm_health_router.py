@@ -3304,6 +3304,40 @@ class HealthAwareLLMRouter:
                             payload["surface_control_receipt"] = surface_control_receipt
                         return payload
                     else:
+                        generation_metadata: dict[str, Any] = {}
+                        metadata_getter = getattr(
+                            client, "get_last_generation_metadata", None
+                        )
+                        if callable(metadata_getter):
+                            try:
+                                raw_metadata = metadata_getter()
+                                if isinstance(raw_metadata, dict):
+                                    generation_metadata = dict(raw_metadata)
+                            except (AttributeError, RuntimeError, TypeError, ValueError):
+                                generation_metadata = {}
+                        if (
+                            str(generation_metadata.get("error") or "").strip()
+                            == "surface_quality_rejected"
+                        ):
+                            # The endpoint is healthy; its worker intentionally
+                            # rejected a semantically invalid visible draft.
+                            # Preserve that typed outcome without tripping the
+                            # infrastructure circuit as "no text".
+                            return {
+                                "ok": False,
+                                "error": "surface_quality_rejected",
+                                "endpoint": ep.name,
+                                "surface_control_receipt": dict(
+                                    generation_metadata.get(
+                                        "surface_control_receipt"
+                                    )
+                                    or {}
+                                ),
+                                "failure_reasons": list(
+                                    generation_metadata.get("failure_reasons")
+                                    or []
+                                ),
+                            }
                         # [BOOT RESILIENCE] Preserve hard local-lane failures so the
                         # UI and router stop reporting an endless warmup loop.
                         client_failure = _local_client_failure_reason(client) if ep.is_local else ""

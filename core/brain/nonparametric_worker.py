@@ -27,13 +27,12 @@ per-token error leaves generation exactly as it would have been without memory.
 from __future__ import annotations
 
 import logging
-import os
 from collections.abc import Callable
 from typing import Any
 
 import numpy as np
 
-from core.brain.nonparametric_generation import cosine_from_l2, normalize
+from core.brain.nonparametric_generation import normalize
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Brain.NonParametricWorker")
@@ -62,14 +61,55 @@ def foreground_enabled() -> bool:
     )
 
 
-def maybe_build_foreground(model: Any) -> tuple[HiddenStateTap, Callable[[Any, Any], Any]] | None:
+_STRUCTURAL_OUTPUT_CONTRACT_KINDS = frozenset(
+    {
+        "exact_reply",
+        "list_count",
+        "paragraph_count",
+        "sentence_count",
+        "word_count",
+    }
+)
+
+
+def foreground_memory_admitted_for_job(job: Any) -> bool:
+    """Keep token-level recall from competing with structural decoding.
+
+    A structural contract is a decoder constraint, not a retrieval request.
+    The non-parametric store may still participate when the caller explicitly
+    declares that memory grounding is required; otherwise Aura's ordinary
+    model and response-contract machinery own the turn.
+    """
+
+    if not isinstance(job, dict):
+        return True
+    contract = job.get("requested_output_contract")
+    kind = (
+        str(contract.get("kind") or "").strip().lower()
+        if isinstance(contract, dict)
+        else ""
+    )
+    if kind not in _STRUCTURAL_OUTPUT_CONTRACT_KINDS:
+        return True
+    return bool(
+        job.get("requires_memory_grounding")
+        or job.get("memory_state_contract")
+        or job.get("grounded_recall_contract")
+    )
+
+
+def maybe_build_foreground(
+    model: Any,
+    *,
+    job: Any = None,
+) -> tuple[HiddenStateTap, Callable[[Any, Any], Any]] | None:
     """Build (tap, processor) for the live worker iff foreground memory is on and non-empty.
 
     Returns None when disabled, when there is no datastore, or when the datastore is empty —
     so the live path pays nothing (no tap, no processor) unless there is genuinely something
     to recall. Fully fail-open: any error returns None and the worker generates normally.
     """
-    if not foreground_enabled():
+    if not foreground_enabled() or not foreground_memory_admitted_for_job(job):
         return None
     try:
         dim = int(getattr(getattr(model, "args", None), "hidden_size", 0) or 0)
