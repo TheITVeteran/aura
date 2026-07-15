@@ -205,12 +205,16 @@ Candidate Write → Will Decision → Receipt → Storage → Verification
 
 ## User Controls
 
-| Action | Command | Effect |
-|--------|---------|--------|
-| List memories | `make memory-list` | Show all stored memories |
-| Search memories | `make memory-search Q="query"` | Find specific memories |
+Bulk lifecycle operations are exposed as `make` targets; per-memory
+browse/search/edit/delete run through the app's memory panel, which is backed
+by the memory API (`interface/routes/memory.py`).
+
+| Action | Command / mechanism | Effect |
+|--------|---------------------|--------|
+| List memories | App memory panel (`GET /memory/recent`, `/episodic`, `/semantic`) | Browse stored memories by store |
+| Search / inspect | App memory panel | Find and open a specific memory |
+| Delete one | App memory panel (`POST /memory/delete`) | Remove a specific memory |
 | Export all | `make memory-export` | JSON export of all memory |
-| Delete one | `make memory-delete ID=<id>` | Remove specific memory |
 | Delete all | `make memory-purge` | Wipe all memories |
 | Backup | `make backup` | Full state backup |
 | Restore | `make restore BACKUP=<path>` | Restore from backup |

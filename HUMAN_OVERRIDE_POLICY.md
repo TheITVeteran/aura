@@ -47,8 +47,8 @@ AURA_TOOLS_BLOCKLIST=shell,network,browser
 # Export all memories
 make memory-export
 
-# Delete specific memories
-make memory-delete ID=<memory-id>
+# Delete a specific memory — through the app's memory controls, which call the
+# POST /memory/delete API (interface/routes/memory.py)
 
 # Delete all memories
 make memory-purge
@@ -64,14 +64,16 @@ make restore BACKUP=<path>
 
 ```bash
 # Audit all Will receipts
-make governance-audit
+python tools/receipt_coverage_validator.py --artifacts artifacts/current
 
 # List all ungoverned actions (should be 0)
 make governance-lint
-
-# Force-revoke a previous authorization
-make will-revoke RECEIPT=<receipt-id>
 ```
+
+Will receipts are an append-only, integrity-hashed audit log — past receipts
+cannot be rewritten or revoked (that tamper-evidence is the point). To withdraw
+authority going *forward*, reset identity (`make identity-reset`) or revoke a
+paired device's granted scope through the app (`POST /devices/revoke-scope`).
 
 ## Override Hierarchy
 

@@ -44,7 +44,7 @@ User Input → Sanitizer → Working Memory → Model Context
 | Cloud fallback opt-in | `AURA_CLOUD_FALLBACK_POLICY` |
 | Prompt classification | Auto-classify before cloud send |
 | Memory export | `make memory-export` |
-| Memory delete | `make memory-delete` / `make memory-purge` |
+| Memory delete | `make memory-purge` (all) / app memory panel `POST /memory/delete` (one) |
 | Log purge | `make log-purge` |
 | Full data export | `make data-export` (GDPR-style) |
 | Full data delete | `make data-purge` |
