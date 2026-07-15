@@ -732,6 +732,272 @@ private final class LauncherChipLabel: NSView {
     }
 }
 
+/// Scanline-cut wordmark, matching the web splash's treatment: the glyphs are
+/// filled with horizontal stripes and bloomed with a layered neon glow.
+///
+/// The striped glyphs are composited offscreen first, then drawn into the view
+/// through `setShadow`. Drawing stripes directly under a text clip would confine
+/// the shadow to the clip region and kill the bloom — the glow has to come from
+/// an already-striped image.
+private final class ScanlineWordmarkView: NSView {
+    var text: String { didSet { invalidateCache() } }
+    var tint: NSColor { didSet { invalidateCache() } }
+    var glow: NSColor { didSet { invalidateCache() } }
+    var pointSize: CGFloat { didSet { invalidateCache() } }
+
+    /// Stripe pitch as a fraction of point size, so it tracks the type like the
+    /// web build's `em`-based pitch.
+    private let stripeRatio: CGFloat = 0.055
+    private var cachedImage: NSImage?
+    private var cachedScale: CGFloat = 0
+
+    init(text: String, tint: NSColor, glow: NSColor, pointSize: CGFloat) {
+        self.text = text
+        self.tint = tint
+        self.glow = glow
+        self.pointSize = pointSize
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        wantsLayer = true
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    private func invalidateCache() {
+        cachedImage = nil
+        invalidateIntrinsicContentSize()
+        needsDisplay = true
+    }
+
+    private var font: NSFont {
+        // Avenir Next Heavy reads closest to the web build's Syne 900; the
+        // system black weight is a dependable fallback on any macOS.
+        NSFont(name: "AvenirNextCondensed-Heavy", size: pointSize)
+            ?? NSFont.systemFont(ofSize: pointSize, weight: .black)
+    }
+
+    private var attributes: [NSAttributedString.Key: Any] {
+        [
+            .font: font,
+            .kern: pointSize * 0.02,
+            .foregroundColor: NSColor.white,
+        ]
+    }
+
+    override var intrinsicContentSize: NSSize {
+        let size = (text as NSString).size(withAttributes: attributes)
+        // Room for the bloom so it is never clipped by the view bounds.
+        return NSSize(width: ceil(size.width) + pointSize * 0.5,
+                      height: ceil(size.height) + pointSize * 0.35)
+    }
+
+    /// White glyphs -> stripe clip -> tinted stripes, as a standalone image.
+    private func stripedImage(scale: CGFloat) -> NSImage? {
+        let size = intrinsicContentSize
+        guard size.width > 1, size.height > 1 else { return nil }
+        let pixelsWide = Int(size.width * scale)
+        let pixelsHigh = Int(size.height * scale)
+        guard pixelsWide > 0, pixelsHigh > 0,
+              let rep = NSBitmapImageRep(
+                bitmapDataPlanes: nil,
+                pixelsWide: pixelsWide,
+                pixelsHigh: pixelsHigh,
+                bitsPerSample: 8,
+                samplesPerPixel: 4,
+                hasAlpha: true,
+                isPlanar: false,
+                colorSpaceName: .deviceRGB,
+                bytesPerRow: 0,
+                bitsPerPixel: 0
+              )
+        else { return nil }
+        rep.size = size
+
+        NSGraphicsContext.saveGraphicsState()
+        defer { NSGraphicsContext.restoreGraphicsState() }
+        guard let gctx = NSGraphicsContext(bitmapImageRep: rep) else { return nil }
+        NSGraphicsContext.current = gctx
+        let ctx = gctx.cgContext
+
+        let attributed = NSAttributedString(string: text, attributes: attributes)
+        let textSize = attributed.size()
+        let origin = NSPoint(x: (size.width - textSize.width) / 2.0,
+                             y: (size.height - textSize.height) / 2.0)
+        attributed.draw(at: origin)
+
+        // Punch transparent bands through the glyphs. destinationOut keeps the
+        // stripe geometry independent of glyph shape, exactly like the CSS
+        // repeating-gradient clipped to text.
+        ctx.saveGState()
+        ctx.setBlendMode(.destinationOut)
+        let stripe = max(1.0, pointSize * stripeRatio)
+        let period = stripe * 1.92
+        ctx.setFillColor(NSColor.black.cgColor)
+        var y = origin.y
+        while y < size.height {
+            ctx.fill(CGRect(x: 0, y: y + stripe, width: size.width, height: period - stripe))
+            y += period
+        }
+        ctx.restoreGState()
+
+        // Tint the surviving stripes.
+        ctx.saveGState()
+        ctx.setBlendMode(.sourceIn)
+        ctx.setFillColor(tint.cgColor)
+        ctx.fill(CGRect(origin: .zero, size: size))
+        ctx.restoreGState()
+
+        let image = NSImage(size: size)
+        image.addRepresentation(rep)
+        return image
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        let scale = window?.backingScaleFactor ?? 2.0
+        if cachedImage == nil || cachedScale != scale {
+            cachedImage = stripedImage(scale: scale)
+            cachedScale = scale
+        }
+        guard let image = cachedImage else { return }
+        let rect = NSRect(origin: .zero, size: image.size)
+
+        // Layered bloom, mirroring the web build's drop-shadow chain.
+        for (blur, alpha) in [(3.0, 0.90), (14.0, 0.50), (40.0, 0.24)] {
+            ctx.saveGState()
+            ctx.setShadow(offset: .zero,
+                          blur: CGFloat(blur),
+                          color: glow.withAlphaComponent(CGFloat(alpha)).cgColor)
+            image.draw(in: rect)
+            ctx.restoreGState()
+        }
+        image.draw(in: rect)
+    }
+}
+
+/// Aura's orbital mark. Each electron is driven along its ellipse by a
+/// CAKeyframeAnimation bound to that exact path, so it is always on the curve
+/// and never deformed — the failure mode of scaling a circle to fake an ellipse.
+private final class AuraSigilView: NSView {
+    private let cage = CALayer()
+
+    init(diameter: CGFloat) {
+        super.init(frame: NSRect(x: 0, y: 0, width: diameter, height: diameter))
+        translatesAutoresizingMaskIntoConstraints = false
+        wantsLayer = true
+        build(diameter: diameter)
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: diameter),
+            heightAnchor.constraint(equalToConstant: diameter),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    private func build(diameter: CGFloat) {
+        guard let root = layer else { return }
+        let center = CGPoint(x: diameter / 2, y: diameter / 2)
+        let rx = diameter * 0.41
+        let ry = diameter * 0.155
+
+        cage.frame = CGRect(x: 0, y: 0, width: diameter, height: diameter)
+        root.addSublayer(cage)
+
+        let orbits: [(angle: CGFloat, color: NSColor, alpha: CGFloat, period: Double, dot: CGFloat)] = [
+            (0, .auraCyan, 0.72, 8.0, 4.2),
+            (62, .auraViolet, 0.64, 9.5, 3.6),
+            (-58, .auraCyan, 0.5, 11.0, 3.2),
+        ]
+
+        for orbit in orbits {
+            let ellipse = CGMutablePath()
+            ellipse.addEllipse(in: CGRect(x: center.x - rx, y: center.y - ry,
+                                          width: rx * 2, height: ry * 2))
+
+            let container = CALayer()
+            container.frame = cage.bounds
+            let radians = orbit.angle * .pi / 180
+            container.transform = CATransform3DMakeRotation(radians, 0, 0, 1)
+
+            let ring = CAShapeLayer()
+            ring.frame = cage.bounds
+            ring.path = ellipse
+            ring.fillColor = nil
+            ring.strokeColor = orbit.color.withAlphaComponent(orbit.alpha).cgColor
+            ring.lineWidth = 1.6
+            ring.shadowColor = orbit.color.cgColor
+            ring.shadowOpacity = 0.75
+            ring.shadowRadius = 5
+            ring.shadowOffset = .zero
+            container.addSublayer(ring)
+
+            let electron = CALayer()
+            electron.bounds = CGRect(x: 0, y: 0, width: orbit.dot * 2, height: orbit.dot * 2)
+            // Seed the model position on the ellipse itself (its rightmost
+            // point, where addEllipse starts). Without this the layer's model
+            // position stays at (0,0) and any render that does not consult the
+            // presentation layer — a snapshot, reduced motion, a removed
+            // animation — puts the electron in the container's corner instead
+            // of on its orbit.
+            electron.position = CGPoint(x: center.x + rx, y: center.y)
+            electron.cornerRadius = orbit.dot
+            electron.backgroundColor = NSColor.white.cgColor
+            electron.shadowColor = orbit.color.cgColor
+            electron.shadowOpacity = 0.95
+            electron.shadowRadius = 6
+            electron.shadowOffset = .zero
+            container.addSublayer(electron)
+
+            // Binding position to the ellipse path is what guarantees the dot
+            // is on the curve rather than approximated with offsets.
+            let travel = CAKeyframeAnimation(keyPath: "position")
+            travel.path = ellipse
+            travel.duration = orbit.period
+            travel.repeatCount = .infinity
+            travel.calculationMode = .paced
+            travel.timeOffset = orbit.period * 0.37
+            travel.isRemovedOnCompletion = false
+            electron.add(travel, forKey: "orbit")
+
+            cage.addSublayer(container)
+        }
+
+        let spin = CABasicAnimation(keyPath: "transform.rotation.z")
+        spin.fromValue = 0
+        spin.toValue = 2 * Double.pi
+        spin.duration = 34
+        spin.repeatCount = .infinity
+        cage.add(spin, forKey: "cage")
+
+        let core = CALayer()
+        let coreR = diameter * 0.11
+        core.bounds = CGRect(x: 0, y: 0, width: coreR * 2, height: coreR * 2)
+        core.position = center
+        core.cornerRadius = coreR
+        core.backgroundColor = NSColor.auraViolet.cgColor
+        core.shadowColor = NSColor.auraCyan.cgColor
+        core.shadowOpacity = 0.9
+        core.shadowRadius = 14
+        core.shadowOffset = .zero
+        root.addSublayer(core)
+
+        let coreGloss = CALayer()
+        coreGloss.bounds = CGRect(x: 0, y: 0, width: coreR * 0.8, height: coreR * 0.8)
+        coreGloss.position = CGPoint(x: center.x - coreR * 0.28, y: center.y + coreR * 0.3)
+        coreGloss.cornerRadius = coreR * 0.4
+        coreGloss.backgroundColor = NSColor.white.withAlphaComponent(0.85).cgColor
+        coreGloss.filters = [CIFilter(name: "CIGaussianBlur", parameters: ["inputRadius": coreR * 0.35])].compactMap { $0 }
+        root.addSublayer(coreGloss)
+    }
+}
+
 private final class CapsuleButton: NSButton {
     enum Style {
         case accent
@@ -1374,10 +1640,13 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         actionTray.layer?.borderWidth = 1
         contentCard.addSubview(actionTray)
 
-        let eyebrowLabel = NSTextField(labelWithString: "AURA LAUNCHER")
-        eyebrowLabel.translatesAutoresizingMaskIntoConstraints = false
-        eyebrowLabel.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .semibold)
-        eyebrowLabel.textColor = NSColor.auraCyan.withAlphaComponent(0.82)
+        // AURA LAUNCHER — the brand lockup, scanline-cut to match the web splash.
+        let eyebrowLabel = ScanlineWordmarkView(
+            text: "AURA LUNA",
+            tint: NSColor(calibratedRed: 0.79, green: 0.55, blue: 1.0, alpha: 1.0),
+            glow: .auraViolet,
+            pointSize: 26
+        )
 
         let headerChips = NSStackView()
         headerChips.translatesAutoresizingMaskIntoConstraints = false
@@ -1437,15 +1706,9 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         iconPlate.layer?.shadowOffset = .zero
         heroPanel.addSubview(iconPlate)
 
-        let iconView = NSImageView()
-        iconView.translatesAutoresizingMaskIntoConstraints = false
-        iconView.imageScaling = .scaleProportionallyUpOrDown
-        if let iconURL = Bundle.main.url(forResource: "Aura", withExtension: "icns"),
-           let icon = NSImage(contentsOf: iconURL) {
-            iconView.image = icon
-        } else {
-            iconView.image = NSApp.applicationIconImage
-        }
+        // Aura's own mark rather than the generic app icon: live orbits whose
+        // electrons ride real ellipse paths.
+        let iconView = AuraSigilView(diameter: 92)
         iconPlate.addSubview(iconView)
 
         titleLabel = NSTextField(labelWithString: "Aura is waking up")
@@ -1585,10 +1848,10 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
             iconPlate.widthAnchor.constraint(equalToConstant: 116),
             iconPlate.heightAnchor.constraint(equalToConstant: 116),
 
-            iconView.leadingAnchor.constraint(equalTo: iconPlate.leadingAnchor, constant: 12),
-            iconView.trailingAnchor.constraint(equalTo: iconPlate.trailingAnchor, constant: -12),
-            iconView.topAnchor.constraint(equalTo: iconPlate.topAnchor, constant: 12),
-            iconView.bottomAnchor.constraint(equalTo: iconPlate.bottomAnchor, constant: -12),
+            // The sigil carries its own 92pt intrinsic size; centre it in the
+            // 116pt plate rather than pinning edges and fighting that.
+            iconView.centerXAnchor.constraint(equalTo: iconPlate.centerXAnchor),
+            iconView.centerYAnchor.constraint(equalTo: iconPlate.centerYAnchor),
 
             summaryCard.trailingAnchor.constraint(equalTo: heroPanel.trailingAnchor, constant: -32),
             summaryCard.topAnchor.constraint(equalTo: eyebrowLabel.bottomAnchor, constant: 18),
