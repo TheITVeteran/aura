@@ -75,7 +75,7 @@ python -m pytest tests/test_orchestrator_compatibility.py -q
 python -m pytest tests/test_runtime_stability_edges.py -q
 python -m py_compile \
   aura_main.py \
-  core/actors/sensory_gate.py \
+  core/bus/sensory_gate.py \
   core/bus/actor_bus.py \
   core/bus/local_pipe_bus.py \
   core/conversation/conversation_loop.py \
@@ -103,7 +103,7 @@ python -m py_compile \
   core/capability_engine.py \
   core/bus/local_pipe_bus.py \
   core/ops/graceful_shutdown.py \
-  core/actors/sensory_gate.py \
+  core/bus/sensory_gate.py \
   core/state/vault.py \
   core/orchestrator/mixins/incoming_logic.py \
   core/orchestrator/mixins/boot/boot_resilience.py \
@@ -379,9 +379,6 @@ python -m pytest tests/test_semantic_verifier.py -q
 
 # Unknown-unknown generation + entropy probe
 python -m pytest tests/test_unknown_generator.py -q
-
-# Distributed abstractions (compression + grad sync fallback)
-python -m pytest tests/test_distributed_substrate.py -q
 
 # Autonomous research-core driver (unit + integration)
 python -m pytest tests/test_research_core.py -q

@@ -62,15 +62,15 @@ Every major Aura capability has a threat, a test, a runtime guard, and an incide
 
 | Capability | Primary Threat | Runtime Guard | Test | Runbook |
 |-----------|---------------|---------------|------|---------|
-| Chat/conversation | T01, T02 | Input sanitizer + integrity check | `tests/test_sanitizer.py` | `docs/runbooks/prompt_injection.md` |
-| Tool execution | T04, T07, T10 | Sandbox + Will + permission matrix | `tests/test_sandbox.py` | `docs/runbooks/tool_failure.md` |
-| Memory write | T03, T13 | Will receipt + integrity hash | `tests/test_will_gate.py` | `docs/runbooks/memory_corruption.md` |
-| Autonomous action | T07, T08 | Will + AuthorityGateway + feature flag | `tests/test_autonomy.py` | `docs/runbooks/excessive_agency.md` |
-| Cloud fallback | T05, T11 | Privacy classification + opt-in policy | `tests/test_cloud_fallback.py` | `docs/runbooks/cloud_provider.md` |
-| Self-repair | T08 | Same Will path as all actions | `tests/test_self_repair.py` | `docs/runbooks/self_repair.md` |
-| Model loading | T05, T06 | Checksum verification + resource governor | `tests/test_model_loading.py` | `docs/runbooks/model_failure.md` |
-| Plugin/skill loading | T15 | Manifest + signature + sandbox | `tests/test_skill_loading.py` | `docs/runbooks/plugin_security.md` |
-| Backup/restore | T14 | State hash verification + audit trail | `tests/test_backup_restore.py` | `docs/runbooks/disaster_recovery.md` |
+| Chat/conversation | T01, T02 | Input sanitizer + integrity check | `tests/test_steering_injection.py` | `docs/runbooks/prompt-injection.md` |
+| Tool execution | T04, T07, T10 | Sandbox + Will + permission matrix | `tests/test_sandbox_runner_hardening.py` | `docs/runbooks/tool-timeout-storm.md` |
+| Memory write | T03, T13 | Will receipt + integrity hash | `tests/test_will_gate_for_plastic_updates.py` | `docs/runbooks/memory-corruption.md` |
+| Autonomous action | T07, T08 | Will + AuthorityGateway + feature flag | `tests/test_autonomy_latitude.py` | `docs/runbooks/excessive-agency.md` |
+| Cloud fallback | T05, T11 | Privacy classification + opt-in policy | `tests/test_fallback_client_runtime_contract.py` | `docs/runbooks/cloud-provider.md` |
+| Self-repair | T08 | Same Will path as all actions | `tests/test_self_repair_backlog.py` | `docs/runbooks/self-repair-failed.md` |
+| Model loading | T05, T06 | Checksum verification + resource governor | `tests/test_model_loader_consolidation.py` | `docs/runbooks/model-fails-to-load.md` |
+| Plugin/skill loading | T15 | Manifest + signature + sandbox | `tests/test_plugin_allowlist.py` | `docs/runbooks/tool-timeout-storm.md` |
+| Backup/restore | T14 | State hash verification + audit trail | `tests/test_restore_drill.py` | `docs/runbooks/disaster-recovery.md` |
 
 ## 5. Residual Risks
 

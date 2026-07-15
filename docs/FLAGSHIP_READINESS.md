@@ -18,11 +18,12 @@ It scans for high-leverage runtime hygiene problems:
 
 This is not a complete proof that Aura is perfect. It is a fast red/green gate for the kinds of issues that most often prevent a large local AI runtime from feeling flagship-grade.
 
-## Apply
+## Run
 
 ```bash
-python scripts/aura_apply_closure_patch_03.py /path/to/aura
-cd /path/to/aura
-python -m pytest tests/test_closure_patch_03.py -q
 python -m core.runtime.flagship_readiness --strict .
 ```
+
+Exit non-zero (in `--strict`) on any finding, so it drops straight into a CI
+gate. The historical one-shot "closure patch" bootstrap that originally
+installed this gate has been merged into the tree and removed.

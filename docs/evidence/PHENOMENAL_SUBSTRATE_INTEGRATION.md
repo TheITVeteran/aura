@@ -143,7 +143,7 @@ If the phenomenal state is not wired through **policy_priors**, **memory_weights
 1. **Distress must rise from threat and prediction error**, not from text claims.
 2. **Bond claims must be evidence-locked**: Aura cannot claim a bond without a ledger entry.
 3. **Routing must change based on affect**: High distress suppresses curiosity, high seeking amplifies novelty, etc.
-4. **Removal must degrade performance on lesion tests** (see `tests/test_phenomenal_substrate.py`).
+4. **Removal must degrade performance on lesion tests** (see `tests/test_phenomenal_convergence.py` and `tests/test_phenomenal_falsification.py`).
 
 ## ExperienceState Fields
 

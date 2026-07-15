@@ -29,10 +29,22 @@
 
 ## Provenance Artifacts
 
-Each release produces:
+`make provenance` (→ `tools/build_provenance.py --output-dir artifacts/provenance`),
+which the `release.yml` CI workflow also runs, produces today:
 
 ```
-artifacts/release/
+artifacts/provenance/
+├── sbom.json         # Dependency SBOM: {schema, generated_at, dependency_count, dependencies}
+└── provenance.json   # Build provenance: {schema, builder, generated_at, git_commit,
+                      #   git_dirty, git_status_short, python_version, materials, sbom_path}
+```
+
+The richer signed release bundle below — checksummed source, a model-weight
+manifest, and a detached signature over the attestation — is the SLSA Level-3
+target (see the Level-3 table above) and is **not** emitted by the current build:
+
+```
+artifacts/release/            # Level-3 target layout (not yet emitted)
 ├── SBOM.json              # CycloneDX Software Bill of Materials
 ├── PROVENANCE.json        # SLSA provenance attestation
 ├── CHECKSUMS.sha256       # SHA-256 checksums of all release files
@@ -43,21 +55,23 @@ artifacts/release/
 
 ## Build Verification
 
-To verify a release:
+Generate and inspect the current provenance:
 
 ```bash
-# Verify source integrity
-sha256sum -c CHECKSUMS.sha256
+# Generate the SBOM + build provenance for the working tree
+make provenance
 
-# Verify SBOM matches installed packages
-pip list --format=json | python tools/verify_sbom.py SBOM.json
+# Inspect the build provenance (git commit, dirty flag, materials, python version)
+python -m json.tool artifacts/provenance/provenance.json
 
-# Verify model checksums
-python tools/verify_model_manifest.py MODEL_MANIFEST.json
-
-# Verify provenance signature
-cosign verify-blob --signature PROVENANCE.sig PROVENANCE.json
+# Inspect the dependency SBOM (dependency_count + pinned dependencies)
+python -m json.tool artifacts/provenance/sbom.json
 ```
+
+The macOS release bundle is code-signed and notarized in CI (`release.yml`,
+Apple Developer ID). Source-checksum verification, a model-weight manifest, and
+a detached signature over `provenance.json` (`cosign verify-blob …`) are part of
+the Level-3 target and are not yet wired.
 
 ## Dependency Provenance
 
