@@ -22,6 +22,7 @@ import re
 import threading as _threading
 import time
 import weakref
+from collections import deque
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from pathlib import Path
@@ -334,6 +335,15 @@ class InferenceGate:
         self._last_cortex_check: float = 0.0
         self._cortex_recovery_attempts: int = 0
         self._cortex_recovery_exhausted_at: float = 0.0  # [STABILITY v53]
+        # Warmup backoff: a cortex load that keeps exceeding its deadline under
+        # thermal throttle / GPU contention gets force-killed and re-spawned,
+        # thrashing the single GPU slot and starving the foreground fallback
+        # that's serving the turn (2026-07-15 soak: 210s walls). After repeated
+        # stuck-cortex kills, cool down and let the resident fallback carry
+        # smoothly until thermal recovers, then take one clean reload shot.
+        self._cortex_stuck_kill_times: deque[float] = deque(maxlen=16)
+        self._cortex_warmup_backoff_until: float = 0.0
+        self._cortex_warmup_backoff_streak: int = 0
         self._last_stale_reset_log_at: float = (
             0.0  # [HARDENING v54] Rate-limit stale state warnings
         )
@@ -828,6 +838,52 @@ class InferenceGate:
                 "reason": "" if force_warmup else "memory_probe_failed",
             }
 
+    def _note_cortex_stuck_kill(self) -> None:
+        """Record a stuck-cortex force-kill and arm a warmup cooldown once the
+        kills cluster.
+
+        Each kill means a load attempt exceeded the deadline (thermal throttle /
+        GPU contention) and got reaped. Re-spawning immediately just repeats the
+        thrash, and every repeat grabs the single GPU slot for a 20GB weight
+        load, starving the foreground fallback that is actually serving the turn.
+        After ``AURA_CORTEX_STUCK_KILL_THRESHOLD`` kills inside a rolling window
+        we cool down for an escalating interval, during which warmup is deferred
+        and the resident fallback carries smoothly until thermal recovers.
+        """
+        now = time.monotonic()
+        window = InferenceGate._env_float("AURA_CORTEX_STUCK_KILL_WINDOW_S", 300.0)
+        threshold = max(1, int(InferenceGate._env_float("AURA_CORTEX_STUCK_KILL_THRESHOLD", 2.0)))
+        self._cortex_stuck_kill_times.append(now)
+        recent = [t for t in self._cortex_stuck_kill_times if now - t <= window]
+        if len(recent) < threshold:
+            return
+        base = InferenceGate._env_float("AURA_CORTEX_WARMUP_BACKOFF_S", 90.0)
+        cap = InferenceGate._env_float("AURA_CORTEX_WARMUP_BACKOFF_CAP_S", 240.0)
+        self._cortex_warmup_backoff_streak += 1
+        cooldown = min(cap, base * self._cortex_warmup_backoff_streak)
+        self._cortex_warmup_backoff_until = now + cooldown
+        logger.warning(
+            "🧊 [CORTEX BACKOFF] %d stuck-load kills in %.0fs — deferring warmup %.0fs so the "
+            "resident fallback carries and thermal recovers before the next reload shot.",
+            len(recent),
+            window,
+            cooldown,
+        )
+
+    def _cortex_warmup_backoff_reason(self) -> str | None:
+        """Non-None while a post-thrash warmup cooldown is active."""
+        remaining = self._cortex_warmup_backoff_until - time.monotonic()
+        if remaining <= 0.0:
+            return None
+        return f"warmup_backoff:{remaining:.0f}s"
+
+    def _reset_cortex_warmup_backoff(self) -> None:
+        """Clear the cooldown after the cortex proves it can serve again."""
+        if self._cortex_warmup_backoff_until or self._cortex_stuck_kill_times:
+            self._cortex_stuck_kill_times.clear()
+            self._cortex_warmup_backoff_until = 0.0
+            self._cortex_warmup_backoff_streak = 0
+
     def _cortex_warmup_deferral_reason(self, context: str = "background") -> str | None:
         if str(os.environ.get("AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE", "")).strip().lower() in {
             "1",
@@ -836,6 +892,9 @@ class InferenceGate:
             "on",
         }:
             return None
+        backoff = self._cortex_warmup_backoff_reason()
+        if backoff is not None:
+            return backoff
         snapshot = self._cortex_warmup_admission_snapshot(context)
         return None if snapshot["can_admit"] else str(snapshot["reason"] or "memory_pressure")
 
@@ -2081,6 +2140,8 @@ class InferenceGate:
         timeout = max(15.0, float(timeout or 90.0))
         lane = self.get_conversation_status()
         if self._lane_can_attempt_visible_conversation_turn(lane):
+            # Cortex is serving again — clear any post-thrash warmup cooldown.
+            self._reset_cortex_warmup_backoff()
             return lane
         # Recovery cap: a lane that was EVER ready and is now warming/
         # recovering must NOT hold the turn for the full cold-boot budget.
@@ -7555,6 +7616,17 @@ class InferenceGate:
                             )
                         if not legitimately_loading:
                             if proc and is_running:
+                                # A worker that was still warming/recovering when it
+                                # overran the load deadline is a stuck LOAD (thermal /
+                                # GPU-starved), not the idle-but-wedged nwait case —
+                                # only stuck loads feed the warmup-backoff so the
+                                # cortex stops thrashing the GPU the fallback needs.
+                                was_stuck_load = bool(
+                                    getattr(self._mlx_client, "_warmup_in_flight", False)
+                                ) or str(getattr(self._mlx_client, "_lane_state", "")) in {
+                                    "warming",
+                                    "recovering",
+                                }
                                 logger.warning(
                                     "🧹 [CASCADE CLEANUP] Force-killing stuck cortex worker pid=%s",
                                     getattr(proc, "pid", "unknown"),
@@ -7564,6 +7636,8 @@ class InferenceGate:
                                     proc.join(timeout=2.0)
                                 elif hasattr(proc, "wait"):
                                     proc.wait(timeout=2.0)
+                                if was_stuck_load:
+                                    self._note_cortex_stuck_kill()
                             if hasattr(self._mlx_client, "_drain_queue"):
                                 self._mlx_client._drain_queue()
                             # Replace queues to sever any stuck feeder threads.
