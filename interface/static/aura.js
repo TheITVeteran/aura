@@ -6519,6 +6519,12 @@ const imagination = (() => {
     let timer = null;
     let inFlight = false;
     let lastFrameId = null;
+    let rendering = false;
+    let renders = [];
+    let autoRender = false;
+    // A frame that already failed to render must not be retried on every poll —
+    // that would pin the GPU against a frame that cannot succeed.
+    const renderFailed = new Set();
 
     const PRESSURES = [
         ['salience', 'SALIENCE'],
@@ -6529,7 +6535,29 @@ const imagination = (() => {
         ['verification_pressure', 'VERIFY'],
     ];
 
+    function bindControls() {
+        const btn = $('imagine-render-btn');
+        if (btn && !btn.dataset.bound) {
+            btn.dataset.bound = '1';
+            btn.addEventListener('click', () => visualize());
+        }
+        const auto = $('imagine-auto-toggle');
+        if (auto && !auto.dataset.bound) {
+            auto.dataset.bound = '1';
+            auto.addEventListener('change', () => {
+                autoRender = auto.checked;
+                setRenderState(
+                    autoRender
+                        ? 'Will render each new frame as she imagines it.'
+                        : '',
+                    autoRender ? 'ok' : null);
+                if (autoRender) refresh();
+            });
+        }
+    }
+
     function activate() {
+        bindControls();
         if (timer) return;
         refresh();
         timer = setInterval(refresh, POLL_MS);
@@ -6582,6 +6610,8 @@ const imagination = (() => {
         setText('imagine-state', `${status.toUpperCase()} · ${(payload && payload.frames) || 0} FRAMES`);
 
         renderWorlds((payload && payload.worlds) || []);
+        renders = Array.isArray(payload && payload.renders) ? payload.renders : [];
+        renderGallery();
 
         const empty = $('imagine-empty');
         const live = $('imagine-live');
@@ -6607,6 +6637,7 @@ const imagination = (() => {
             if (changed) setTimeout(() => objective.classList.remove('imagine-flash'), 700);
         }
 
+        renderFrameImage(frame);
         renderCanvas(frame.mental_canvas || {}, frame.associative_links || []);
         renderAttractors(frame.attractor_state || {});
         renderPressures(frame);
@@ -6622,6 +6653,96 @@ const imagination = (() => {
                 || 'This is an internal hypothetical model, not external perception or proof.';
             boundary.classList.toggle('imagine-boundary-open', !(advisory && noEffects));
         }
+    }
+
+    function renderFor(frameId) {
+        return renders.find(r => r && r.frame_id === frameId) || null;
+    }
+
+    // Shows the image only against the frame that produced it. A render from an
+    // older frame is left in the gallery rather than displayed as if it were
+    // what she is picturing now.
+    function renderFrameImage(frame) {
+        const wrap = $('imagine-image-wrap');
+        const img = $('imagine-image');
+        const cap = $('imagine-image-caption');
+        const btn = $('imagine-render-btn');
+        if (!wrap || !img) return;
+        const mine = renderFor(frame.frame_id);
+        if (mine && mine.url) {
+            if (img.getAttribute('src') !== mine.url) img.setAttribute('src', mine.url);
+            wrap.hidden = false;
+            if (cap) cap.textContent = mine.prompt || '';
+            if (btn) btn.disabled = true;
+        } else {
+            wrap.hidden = true;
+            img.removeAttribute('src');
+            if (btn) btn.disabled = rendering;
+        }
+        maybeAutoRender(frame);
+    }
+
+    function maybeAutoRender(frame) {
+        if (!autoRender || rendering) return;
+        if (!frame || !frame.frame_id) return;
+        if (renderFor(frame.frame_id)) return;
+        if (renderFailed.has(frame.frame_id)) return;
+        const canvas = frame.mental_canvas || {};
+        if (!canvas.image_prompt) return;
+        visualize();
+    }
+
+    function setRenderState(text, tone) {
+        const el = $('imagine-render-state');
+        if (!el) return;
+        el.textContent = text || '';
+        el.className = 'imagine-render-state' + (tone ? ` imagine-render-${tone}` : '');
+    }
+
+    async function visualize() {
+        if (rendering) return;
+        rendering = true;
+        const btn = $('imagine-render-btn');
+        if (btn) btn.disabled = true;
+        setRenderState('Rendering what she is picturing…', 'busy');
+        const started = Date.now();
+        try {
+            const resp = await fetch('/api/imagination/visualize', {
+                method: 'POST',
+                headers: auraDesktopHeaders({ 'Content-Type': 'application/json' }),
+                body: '{}',
+            });
+            const data = await resp.json().catch(() => ({}));
+            if (!resp.ok || !data.ok) {
+                const why = data.error || `render failed (${resp.status})`;
+                if (lastFrameId) renderFailed.add(lastFrameId);
+                setRenderState(why, 'error');
+            } else {
+                const secs = ((Date.now() - started) / 1000).toFixed(1);
+                setRenderState(data.cached ? 'Already rendered.' : `Rendered in ${secs}s.`, 'ok');
+                await refresh();
+            }
+        } catch (err) {
+            if (lastFrameId) renderFailed.add(lastFrameId);
+            setRenderState(`Render failed: ${err}`, 'error');
+        } finally {
+            rendering = false;
+            if (btn) btn.disabled = !!renderFor(lastFrameId);
+        }
+    }
+
+    function renderGallery() {
+        const host = $('imagine-gallery');
+        if (!host) return;
+        if (!renders.length) {
+            host.innerHTML = '<div class="imagine-empty-inline">Nothing rendered yet.</div>';
+            return;
+        }
+        host.innerHTML = renders.slice().reverse().map(r => `
+            <figure class="imagine-thumb">
+                <img src="${escHtml(String(r.url))}" alt="${escHtml(String(r.prompt || 'imagined image'))}" loading="lazy">
+                <figcaption>${escHtml(String(r.modality || ''))}</figcaption>
+            </figure>`).join('');
     }
 
     // Objects and relations from the frame's mental canvas, laid out on a ring
@@ -6752,7 +6873,7 @@ const imagination = (() => {
         }).join('');
     }
 
-    return { activate, deactivate, refresh };
+    return { activate, deactivate, refresh, visualize };
 })();
 
 // ── Header vitals overflow ────────────────────────────────

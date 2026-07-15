@@ -13,6 +13,7 @@ This closes the "image generation" gap in tool parity.
 import asyncio
 import gc
 import logging
+import os
 import time
 import uuid
 from io import BytesIO
@@ -85,14 +86,26 @@ class ImageGenInput(BaseModel):
     )
     width: int = Field(1024, ge=256, le=2048, description="Image width in pixels.")
     height: int = Field(1024, ge=256, le=2048, description="Image height in pixels.")
-    steps: int = Field(40, ge=10, le=100, description="Number of inference steps.")
+    # Lower bounds widened for distilled/turbo models, which are trained for
+    # 1-4 steps at guidance 0 and are the only way to get interactive latency on
+    # this hardware. The old floors (steps>=10, guidance>=1.0) made those models
+    # impossible to drive correctly.
+    steps: int = Field(40, ge=1, le=100, description="Number of inference steps.")
     guidance_scale: float = Field(
         8.0,
-        ge=1.0,
+        ge=0.0,
         le=20.0,
-        description="Adherence to prompt (higher = more literal).",
+        description="Adherence to prompt (higher = more literal; 0 for turbo models).",
     )
     seed: int | None = Field(None, description="Random seed for reproducibility.")
+    enhance: bool = Field(
+        True,
+        description=(
+            "Append quality boosters to the prompt. Disable when the prompt is "
+            "already exactly what should be drawn (e.g. rendering Aura's own "
+            "mental canvas), since the boosters override its intent."
+        ),
+    )
     source_image_path: str | None = Field(
         None,
         description="Path to source image for img2img / editing tasks.",
@@ -123,7 +136,12 @@ class ImageGenSkill(BaseSkill):
         self._img2img_pipeline: Any | None = None
         self._model_loaded = False
         self._device: str | None = None
-        self._model_id = "stabilityai/stable-diffusion-xl-base-1.0"
+        # SDXL-Turbo over SDXL-base: same architecture, distilled to 1-4 steps.
+        # On this host SDXL-base needs float32 (float16 decodes to black on MPS)
+        # at 40 steps/1024px, which is minutes per image — unusable for anything
+        # interactive. Turbo measures 4.6s at 4 steps. AURA_IMAGE_MODEL overrides
+        # for anyone who wants base quality and can wait.
+        self._model_id = os.environ.get("AURA_IMAGE_MODEL", "stabilityai/sdxl-turbo")
         self._fallback_model_id = "runwayml/stable-diffusion-v1-5"
         self._output_dir = Path(config.paths.data_dir) / "generated_images"
         self._lane_lease: Any | None = None
@@ -325,8 +343,15 @@ class ImageGenSkill(BaseSkill):
         logger.info("Restoring diffusion pipeline after failed candidate: %s", reason)
         return await self._ensure_pipeline(img2img=self._resident_mode == "img2img")
 
-    def _enhance_prompt(self, prompt: str, style: str | None) -> str:
-        """Apply automatic prompt engineering for maximum quality."""
+    def _enhance_prompt(self, prompt: str, style: str | None, enhance: bool = True) -> str:
+        """Apply automatic prompt engineering for maximum quality.
+
+        The quality suffix is not free: "masterpiece, 8k, HDR, cinematic
+        lighting" overwhelms an abstract prompt and pulls the sampler toward a
+        photoreal scene. Rendering Aura's own mental canvas through it turned
+        "internal associative canvas: silent in the foreground…" into a sunlit
+        plaza. Callers who mean their prompt literally pass enhance=False.
+        """
         style_prefixes = {
             "photorealistic": "photorealistic, ultra-detailed photograph, ",
             "anime": "anime style, studio ghibli, vibrant colors, ",
@@ -346,7 +371,11 @@ class ImageGenSkill(BaseSkill):
                 f"{style} style, ",
             )
 
-        suffix = ", masterpiece, best quality, 8k, HDR, cinematic lighting, sharp focus"
+        suffix = (
+            ", masterpiece, best quality, 8k, HDR, cinematic lighting, sharp focus"
+            if enhance
+            else ""
+        )
         return f"{prefix}{prompt}{suffix}"
 
     async def execute(
@@ -385,7 +414,7 @@ class ImageGenSkill(BaseSkill):
                 "error": "Image generation model failed to load. Check torch/diffusers installation.",
             }
 
-        enhanced_prompt = self._enhance_prompt(params.prompt, params.style)
+        enhanced_prompt = self._enhance_prompt(params.prompt, params.style, params.enhance)
         negative = params.negative_prompt or (
             "blur, low quality, distortion, watermark, text, ugly, bad anatomy, deformed"
         )
@@ -403,12 +432,14 @@ class ImageGenSkill(BaseSkill):
             if pipeline is None:
                 return {"ok": False, "error": "Image generation pipeline is unavailable."}
 
+            steps, guidance = self._sampler_settings(params.steps, params.guidance_scale)
+
             def _generate() -> Any:
                 return pipeline(
                     prompt=enhanced_prompt,
                     negative_prompt=negative,
-                    num_inference_steps=params.steps,
-                    guidance_scale=params.guidance_scale,
+                    num_inference_steps=steps,
+                    guidance_scale=guidance,
                     width=params.width,
                     height=params.height,
                     generator=generator,
@@ -462,7 +493,7 @@ class ImageGenSkill(BaseSkill):
         except _IMAGEGEN_RECOVERABLE_ERRORS as exc:
             return {"ok": False, "error": f"Failed to load source image: {exc}"}
 
-        enhanced_prompt = self._enhance_prompt(params.prompt, params.style)
+        enhanced_prompt = self._enhance_prompt(params.prompt, params.style, params.enhance)
         negative = params.negative_prompt or (
             "blur, low quality, distortion, watermark, text"
         )
@@ -553,6 +584,18 @@ class ImageGenSkill(BaseSkill):
             "summary": f"Generated {mode} image from prompt: {prompt[:80]}",
             "message": f"Image created ({mode}): {relative_url}",
         }
+
+    def _sampler_settings(self, steps: int, guidance: float) -> tuple[int, float]:
+        """Reconcile requested sampler settings with what the model expects.
+
+        Distilled/turbo checkpoints are adversarially trained for 1-4 steps with
+        classifier-free guidance disabled. Handing them a caller's 40-step,
+        guidance-8 default costs ten times the latency *and* degrades the image,
+        so those requests are clamped rather than honoured literally.
+        """
+        if "turbo" not in str(self._model_id).lower():
+            return steps, guidance
+        return max(1, min(int(steps), 4)), 0.0
 
     @staticmethod
     def _is_degenerate(image: Any) -> bool:

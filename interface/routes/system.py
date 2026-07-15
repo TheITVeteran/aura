@@ -15,12 +15,13 @@ import subprocess
 import sys
 import threading
 import time
+from collections import OrderedDict
 from concurrent.futures import CancelledError, Future, ThreadPoolExecutor
 from datetime import UTC, datetime
 from typing import Any, cast
 
 import fastapi.responses as fastapi_responses
-from fastapi import APIRouter, Body, Request
+from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from core.config import config
@@ -50,6 +51,7 @@ from interface.auth import (
     paired_device_session_id,
     request_access_profile,
 )
+from interface.routes.devices import _owner_authenticated
 from interface.websocket_manager import broadcast_bus, runtime_heartbeat_payload, ws_manager
 
 _SYSTEM_RECOVERABLE_ERRORS = (
@@ -2760,6 +2762,102 @@ def _collect_imagination_status() -> dict[str, Any]:
     return payload
 
 
+# Renders of imagination frames, newest last. Keyed by frame_id so a frame is
+# never rendered twice and the panel can pair an image with the frame that
+# produced it. Bounded: this is a view cache, not a gallery.
+_IMAGINATION_RENDERS: "OrderedDict[str, dict[str, Any]]" = OrderedDict()
+_IMAGINATION_RENDER_LIMIT = 12
+_IMAGINATION_RENDER_LOCK = asyncio.Lock()
+
+
+@router.post("/imagination/visualize")
+async def api_imagination_visualize(request: Request) -> JSONResponse:
+    """Render the current imagination frame's own mental canvas into an image.
+
+    Aura's imagination engine describes what it would picture — `mental_canvas.
+    image_prompt` is prose, not pixels — and its own externalization_path says to
+    request governed image execution to actually see it. This is that request: it
+    takes the prompt she already wrote for herself and puts it through the
+    ordinary governed image_gen lane. It invents no prompt of its own.
+
+    Owner-only, because it spends real compute (loads a diffusion pipeline
+    beside the resident model) rather than just reading state.
+    """
+    if not _owner_authenticated(request):
+        raise HTTPException(status_code=403, detail="Rendering imagination is owner-only")
+
+    snapshot = await asyncio.to_thread(_collect_imagination_status)
+    frame = snapshot.get("latest") if isinstance(snapshot, dict) else None
+    if not isinstance(frame, dict):
+        return JSONResponse(
+            {"ok": False, "error": "Aura has not imagined anything to render."},
+            status_code=409,
+        )
+
+    canvas = frame.get("mental_canvas") if isinstance(frame.get("mental_canvas"), dict) else {}
+    prompt = str(canvas.get("image_prompt") or "").strip()
+    if not prompt:
+        return JSONResponse(
+            {"ok": False, "error": "This frame carries no mental canvas to render."},
+            status_code=409,
+        )
+
+    frame_id = str(frame.get("frame_id") or "")
+    async with _IMAGINATION_RENDER_LOCK:
+        cached = _IMAGINATION_RENDERS.get(frame_id)
+        if cached:
+            return JSONResponse({"ok": True, "render": cached, "cached": True})
+
+        try:
+            from core.capability_engine import execute_tool
+
+            result = await execute_tool(
+                "image_gen",
+                {
+                    "prompt": prompt,
+                    # Her canvas names its own sensory style; use hers.
+                    "style": canvas.get("sensory_style") or None,
+                    # No quality boosters: "masterpiece, 8k, HDR, cinematic
+                    # lighting" overrides an abstract prompt and renders a
+                    # photoreal scene instead of the canvas she described. This
+                    # must draw her words, not a stock-photo reading of them.
+                    "enhance": False,
+                    "width": 512,
+                    "height": 512,
+                    "steps": 4,
+                    "guidance_scale": 0.0,
+                },
+            )
+        except _SYSTEM_RECOVERABLE_ERRORS as exc:
+            record_degradation("system", exc, action="imagination render failed")
+            logger.warning("Imagination render failed: %s", exc)
+            return JSONResponse(
+                {"ok": False, "error": f"Render failed: {exc}"}, status_code=503
+            )
+
+        if not isinstance(result, dict) or not result.get("ok") or not result.get("url"):
+            detail = ""
+            if isinstance(result, dict):
+                detail = str(result.get("error") or result.get("message") or "")
+            return JSONResponse(
+                {"ok": False, "error": detail or "Image generation did not return an image."},
+                status_code=503,
+            )
+
+        render = {
+            "frame_id": frame_id,
+            "url": result.get("url"),
+            "prompt": prompt,
+            "objective": frame.get("objective"),
+            "modality": canvas.get("modality"),
+            "created_at": time.time(),
+        }
+        _IMAGINATION_RENDERS[frame_id] = render
+        while len(_IMAGINATION_RENDERS) > _IMAGINATION_RENDER_LIMIT:
+            _IMAGINATION_RENDERS.popitem(last=False)
+        return JSONResponse({"ok": True, "render": render, "cached": False})
+
+
 @router.get("/imagination")
 async def api_imagination() -> JSONResponse:
     """Aura's live imagination workspace, for the Imagine panel.
@@ -2786,6 +2884,9 @@ async def api_imagination() -> JSONResponse:
         )
         logger.debug("World list unavailable for imagination panel: %s", exc)
     payload["worlds"] = worlds if isinstance(worlds, list) else []
+    # Newest last; the panel pairs render.frame_id with latest.frame_id so an
+    # image is only ever shown against the frame that actually produced it.
+    payload["renders"] = list(_IMAGINATION_RENDERS.values())
     return JSONResponse(_json_safe(payload))
 
 

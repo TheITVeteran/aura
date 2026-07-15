@@ -761,6 +761,24 @@
                     <div id="imagine-live" hidden>
                         <div class="imagine-objective" id="imagine-objective"></div>
 
+                        <!-- Rendering spends real compute (a diffusion pipeline loads
+                             beside the resident model), so it is opt-in and never
+                             starts on its own. The prompt rendered is the one Aura
+                             wrote for herself in mental_canvas.image_prompt. -->
+                        <div class="section-label">WHAT SHE'S PICTURING</div>
+                        <div class="imagine-render-bar">
+                            <button id="imagine-render-btn" class="imagine-render-btn" type="button">◉ RENDER THIS</button>
+                            <label class="imagine-auto">
+                                <input type="checkbox" id="imagine-auto-toggle">
+                                <span>Keep rendering new ones</span>
+                            </label>
+                        </div>
+                        <div id="imagine-render-state" class="imagine-render-state"></div>
+                        <figure id="imagine-image-wrap" class="imagine-image-wrap" hidden>
+                            <img id="imagine-image" class="imagine-image" alt="The image Aura's current imagination frame describes">
+                            <figcaption id="imagine-image-caption" class="imagine-image-caption"></figcaption>
+                        </figure>
+
                         <div class="section-label">MENTAL CANVAS</div>
                         <div class="imagine-canvas-wrap">
                             <svg id="imagine-canvas" class="imagine-canvas" viewBox="0 0 320 190"
@@ -782,6 +800,11 @@
                         <div id="imagine-counterfactuals" class="imagine-list"></div>
 
                         <div class="imagine-boundary" id="imagine-boundary"></div>
+                    </div>
+
+                    <div class="section-label">THINGS SHE'S PICTURED</div>
+                    <div id="imagine-gallery" class="imagine-gallery">
+                        <div class="imagine-empty-inline">Nothing rendered yet.</div>
                     </div>
 
                     <div class="section-label">WORLDS</div>

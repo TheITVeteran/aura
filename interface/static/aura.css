@@ -2308,6 +2308,92 @@ body.neural-visual-paused #pane-neural .live-dot {
     0%   { background: rgba(138, 43, 226, 0.34); }
     100% { background: rgba(138, 43, 226, 0.06); }
 }
+.imagine-render-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+}
+.imagine-render-btn {
+    font-family: var(--font-hud);
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: var(--primary-bright);
+    background: rgba(138, 43, 226, 0.16);
+    border: 1px solid var(--border-glow);
+    border-radius: 999px;
+    padding: 6px 12px;
+    cursor: pointer;
+    transition: background 0.16s ease, opacity 0.16s ease;
+}
+.imagine-render-btn:hover:not(:disabled) { background: rgba(138, 43, 226, 0.3); }
+.imagine-render-btn:disabled { opacity: 0.4; cursor: default; }
+.imagine-auto {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text-dim);
+    font-size: 0.62rem;
+    cursor: pointer;
+}
+.imagine-render-state {
+    font-family: var(--font-stream);
+    font-size: 0.58rem;
+    color: var(--text-dim);
+    margin-bottom: 10px;
+    min-height: 0.8em;
+}
+.imagine-render-busy { color: var(--primary-bright); }
+.imagine-render-ok { color: var(--success); }
+.imagine-render-error { color: var(--warn, #f0a06a); }
+.imagine-image-wrap {
+    margin: 0 0 16px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    background: #0a0614;
+}
+.imagine-image {
+    display: block;
+    width: 100%;
+    height: auto;
+    animation: imagineReveal 0.6s ease-out;
+}
+@keyframes imagineReveal {
+    from { opacity: 0; filter: blur(12px); }
+    to   { opacity: 1; filter: blur(0); }
+}
+.imagine-image-caption {
+    color: var(--text-dim);
+    font-size: 0.6rem;
+    line-height: 1.5;
+    padding: 8px 10px;
+    overflow-wrap: anywhere;
+}
+.imagine-gallery {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+    gap: 6px;
+    margin-bottom: 16px;
+}
+.imagine-thumb {
+    margin: 0;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+    background: #0a0614;
+}
+.imagine-thumb img { display: block; width: 100%; height: auto; }
+.imagine-thumb figcaption {
+    font-family: var(--font-stream);
+    font-size: 0.5rem;
+    color: var(--text-dim);
+    padding: 3px 5px;
+    text-align: center;
+}
+
 .imagine-canvas-wrap {
     border: 1px solid var(--border);
     border-radius: 8px;
