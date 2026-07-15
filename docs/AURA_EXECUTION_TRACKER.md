@@ -16,9 +16,9 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **Checkpoint 86 is pushed on exact
-  `main` at `5b2307ba`; Checkpoint 87 is source-green and exact signed-app proof
-  is open**. Checkpoint 80 made cached
+- Current bounded implementation milestone: **Checkpoint 88 is pushed on exact
+  `main` at `5a56bea5`; Checkpoint 87 is pushed at `747bceea` and its exact
+  signed-app proof is open**. Checkpoint 80 made cached
   readiness truthful and fast,
   removed synchronous Phi/Eternal maintenance from the foreground cycle, and
   reduced live CognitiveEngine samples from a 59.65-second retry cascade to
@@ -57,14 +57,27 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   embodied environment actions and unsolicited executive output; and hardens
   malformed enrichment input, partial persistence, daily proactive reset,
   critical quota bypass, burst prevention, and failed-delivery retry. The
-  bounded settings/governance suite passes 97/97. Installed-app readback,
+  bounded settings/governance suite passes 139/139. Installed-app readback,
   restart, exact owner-effect, confirmation, accessibility, and GUI proof
   remain open and receive no live credit.
+  Checkpoint 88 closes the reported tokenless local DNS-rebinding path with
+  duplicate-aware strict Host/Origin parsing, exact literal-loopback authority,
+  a mandatory pre-exception Host gate, and the same boundary across
+  internal-only mode, public paths, owner profiles, dependencies, chat trust,
+  and WebSockets. Authenticated master-token and scoped paired-LAN paths remain
+  available. The direct adversarial matrix passes 38/38 and the expanded
+  authentication/security slice passes 95/95; broader threat modeling,
+  dependency, privacy, artifact, and penetration obligations remain open.
+  A separate non-current `fable-improvement-pass` endurance attempt is retained
+  as failed evidence: it stopped at 36/200 turns, served 31 timeout responses,
+  had p50 latency 213.245 seconds, repeatedly reported a 503 conversation lane
+  and Cortex warmup/admission failure, and emitted no terminal verdict. It is
+  neither a pass nor exact-Checkpoint-88 evidence.
   Broader pressure, plateau, GUI, portability, semantic,
   release, and causal-proof obligations remain open unless their rows
   explicitly close.
 - Overall completion percentage: **30% evidence-weighted planning estimate at
-  pushed Checkpoint 86**. The exact
+  pushed Checkpoint 88**. The exact
   Checkpoint 80 app earns bounded live credit for readiness, health, base boot,
   and one-attempt chat latency, but not output quality, sustained load, GUI
   frame SLO, portability, semantic review, release, or soak. The newly
@@ -76,7 +89,7 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   generated denominator; new obligations increase it, regressions reopen it,
   and source-green/live-open work never receives full closure credit.
 - Total checkpoint forecast: **approximately 240-325 total checkpoints for the
-  expanded program, with 86 pushed and approximately 154-239 remaining before
+  expanded program, with 88 pushed and approximately 152-237 remaining before
   final soak/release closure**. The prior `226-304` range expands by 8-12 explicit
   checkpoints for a falsifiable lateral-conceptual-leap program spanning
   mechanism construction, held-out evaluation, novelty and prior-art review,
@@ -203,13 +216,13 @@ Status rules:
 | `EXTREME-001` | `OPEN` | Train and validate high-level navigation, diagnosis, repair, problem-solving, and assistance in hazardous/extreme simulated environments, then require governed digital-twin and hardware-transfer evidence before physical-world claims. | Capability Addendum 33, `CTX3-EXTREME-*` |
 | `COLLEAGUE-001` | `OPEN` | Validate the resident local synthetic-colleague contract through broad hidden day-in-the-life workflows, proactive precision, privacy, restart/update survival, honest degradation, and low correction burden. | Addendum 30 |
 | `UI-001` | `IN PROGRESS 2026-07-12` | Audit every desktop route, screen, control and state for live-data truth, interaction completeness, accessibility, long text, responsive layout, visual stability, specific recovery, and screenshot evidence. | Pass F 11; Matrix 14 |
-| `RUNTIME-SETTINGS-001` | `IN PROGRESS (CP87 SOURCE GREEN; EXACT-APP/THREE DEAD CONTROLS OPEN) 2026-07-14` | The source now has one typed version-2 schema; strict atomic compare-and-swap patch/reset/rollback; request idempotency and superseded replay truth; interprocess serialization; crash recovery; retained revision history; chained mutation and owner-application receipts; integrity verification; authenticated backend hydration; and per-owner applied/deferred/failed state. `Autonomous Actions` gates autonomous tools, environment actions, initiatives, executive objectives, and unsolicited output while canonical source authority preserves direct user work. Approval modes issue an exact action/arguments/source/risk/scope challenge that expires and can be consumed once without bypassing standing authority, Constitution, Will, Conscience, substrate, ExecutiveCore, tokens, or effect receipts. Proactive frequency modes now have real differentiated cadence, daily reset, critical quota bypass, one-at-a-time release, and retained retry; enrichment/reflection have real owner gates and malformed/partial-failure handling. The bounded settings/governance suite passes 97/97. SHA-256 journals are corruption/tamper evidence, not a keyed hostile-admin signature. `permissions.files_workspace`, `memory.review_window`, and `dev.diagnostics_enabled` remain known-dead and must be implemented before their controls can ship; privacy redaction remains partial. Exact signed-app effect/readback/conflict/restart/rollback/confirmation/accessibility proof remains mandatory before closure. | `UI-001`, `AUTONOMY-AUTHORITY-001`, `ENTERPRISE-CONTROL-001`, `VOICE-001`, `ADAPTATION-STATE-AUTHORITY-001`, `DATA-LIFECYCLE-001`, `COMPATIBILITY-001`; CP87 and `docs/SETTINGS_WIRING_AUDIT.md` |
+| `RUNTIME-SETTINGS-001` | `IN PROGRESS (CP87 PUSHED; EXACT-APP/THREE DEAD CONTROLS OPEN) 2026-07-15` | The source now has one typed version-2 schema; strict atomic compare-and-swap patch/reset/rollback; request idempotency and superseded replay truth; interprocess serialization; crash recovery; retained revision history; chained mutation and owner-application receipts; integrity verification; authenticated backend hydration; and per-owner applied/deferred/failed state. `Autonomous Actions` gates autonomous tools, environment actions, initiatives, executive objectives, and unsolicited output while canonical source authority preserves direct user work. Approval modes issue an exact action/arguments/source/risk/scope challenge that expires and can be consumed once without bypassing standing authority, Constitution, Will, Conscience, substrate, ExecutiveCore, tokens, or effect receipts. Proactive frequency modes now have real differentiated cadence, daily reset, critical quota bypass, one-at-a-time release, and retained retry; enrichment/reflection have real owner gates and malformed/partial-failure handling. The bounded settings/governance suite passes 139/139. SHA-256 journals are corruption/tamper evidence, not a keyed hostile-admin signature. `permissions.files_workspace`, `memory.review_window`, and `dev.diagnostics_enabled` remain known-dead and must be implemented before their controls can ship; privacy redaction remains partial. Exact signed-app effect/readback/conflict/restart/rollback/confirmation/accessibility proof remains mandatory before closure. | `UI-001`, `AUTONOMY-AUTHORITY-001`, `ENTERPRISE-CONTROL-001`, `VOICE-001`, `ADAPTATION-STATE-AUTHORITY-001`, `DATA-LIFECYCLE-001`, `COMPATIBILITY-001`; CP87 `747bceea` and `docs/SETTINGS_WIRING_AUDIT.md` |
 | `SPLASH-001` | `OPEN 2026-07-13` | Replace the unpolished Aura splash with a production launch experience derived from the supplied retro references: disciplined CRT/scanline texture, geometric terminal-era typography, restrained cyan/magenta/green neon, crisp hierarchy, and an original Aura identity rather than imitation. Every phase/progress/status line must come from real boot state, preserve a usable failure/recovery path, support Retina and small screens, meet contrast and reduced-motion requirements, avoid GPU-heavy decorative churn, hand off without flash or layout shift, and pass deterministic visual-regression plus signed-app screenshot/video proof. | `UI-001`, `RUNTIME-001`, `LAUNCH-PROVENANCE-001`, `PERF-001`, `VALIDATE-001`; user splash and aesthetic references supplied 2026-07-13 |
 | `ACCESSIBILITY-I18N-001` | `OPEN 2026-07-13` | Certify the complete desktop, splash, voice, notification, and paired-device surface for keyboard navigation, focus order, screen-reader names/state, reduced motion/transparency, zoom and dynamic text, contrast/color independence, captions/transcripts, non-audio alternatives, locale/time/number formatting, Unicode and bidirectional text safety, and long translated strings. Run automated checks plus real VoiceOver/keyboard/screenshot workflows without breaking dense expert use. | `UI-001`, `SPLASH-001`, `CONVERSATION-001`, `CAPABILITY-CERT-001`; Aura 1.0 release-gap audit 2026-07-13 |
 | `PERF-001` | `IN PROGRESS (ATTRIBUTION INSTRUMENTATION SOURCE GREEN; SLO PROGRAM OPEN) 2026-07-14` | Establish and enforce end-to-end latency, throughput, memory, thermal, startup, model-switch, queue-growth, and UI responsiveness budgets without reducing intelligence or correctness. Checkpoint 80 adds per-service health-evaluation duration and detailed boot-phase marks, then removes four measured latency cascades at their owners. Machine-readable end-to-end SLOs, load/queue/thermal envelopes, regression budgets, GUI frame proof, exact-app distributions, and release enforcement remain open. | Runtime/resource/colleague SLOs; original context performance goals; `FOREGROUND-LATENCY-001`, `HEALTH-SURFACE-001`; Checkpoint 80 |
 | `OBSERVE-001` | `IN PROGRESS 2026-07-12` | Standardize structured logs, traces, metrics, crash taxonomy, receipt correlation, privacy-aware incident export, operator diagnosis, and replayable failure reconstruction. | Pass F 2, 4, and 10; Matrix 12 and 15 |
 | `TOOL-DISPOSITION-001` | `IN PROGRESS (CANONICAL DEFERRED STATUS SOURCE GREEN; EXACT-APP UI OPEN) 2026-07-14` | Make requested, admitted, running, succeeded, denied, deferred, cancelled, timed-out, and failed tool dispositions canonical from execution through ConstitutionalCore, event stream, both desktop shells, receipts, memory/learning, incidents, and operator export. Checkpoint 81 fixes the recurring `auto_refactor FAILED` notification where the governed action actually returned a neutral recent-user temporal deferral: the producer now emits `stage=deferred`, `success=null`, and no error, and both shells defensively honor nested deferred evidence. Prove exact-app autonomous initiative displays `DEFERRED`, does not create a failure incident or negative surprise, and still renders genuine tool failure as failure. | `OBSERVE-001`, `EXPECT-001`, `FAULT-001`, `UI-001`, `AUTONOMY-AUTHORITY-001`; recurring live notification 2026-07-14 and Checkpoint 81 |
-| `SECURITY-001` | `IN PROGRESS 2026-07-12` | Complete threat modeling, secret/privacy boundaries, prompt/tool/desktop abuse tests, dependency and license review, SBOM/provenance, signed artifacts, and recovery from hostile inputs. | Pass F 9-10; Matrix 15-16 |
+| `SECURITY-001` | `IN PROGRESS (DNS-REBINDING AUTHORITY BOUNDARY CP88 PUSHED; WHOLE PROGRAM OPEN) 2026-07-15` | Checkpoint 88 blocks tokenless DNS rebinding before local/public/internal/desktop exceptions, strictly parses duplicate Host and Origin authorities without DNS normalization, applies the same trust boundary to owner profiles, dependencies, chat, and WebSockets, and preserves master-token plus scoped paired-LAN access. The direct adversarial matrix passes 38/38 and the adjacent security/authentication slice passes 95/95. Still complete the full threat model, parser/API fuzzing and independent penetration pass, secret/privacy boundaries, prompt/tool/desktop abuse tests, proxy deployment contract, browser response hardening, dependency/license review, SBOM/provenance, signed artifacts, and hostile-input recovery. | Pass F 9-10; Matrix 15-16; CP88 `5a56bea5`; `docs/LOCAL_API_TRUST_BOUNDARY.md` |
 | `ENTERPRISE-CONTROL-001` | `OPEN 2026-07-13` | Provide inspectable owner/administrator policy without turning ordinary agency into approval theater: authenticated principals and paired-device roles, least-privilege profiles, standing-authority budgets/revocation, data/telemetry/retention controls, tamper-evident audit export, managed configuration, emergency stop/recovery, separation of duties for consequential effects, and explicit local single-owner defaults. Prove policy changes, revocation, and audit continuity across restart and offline operation. | `AUTONOMY-AUTHORITY-001`, `SECURITY-001`, `IDENTITY-001`, `OPERATIONS-001`; enterprise-quality closure audit 2026-07-13 |
 | `DATA-LIFECYCLE-001` | `OPEN 2026-07-13` | Inventory every persistent store and derived artifact; assign schema/version/owner, authority, encryption/key rotation, retention, quota, compaction, backup, point-in-time restore, export, deletion/tombstone propagation, migration, downgrade policy, corruption detection/repair, disk-full behavior, crash consistency, and provenance. Prove upgrade/rollback across every supported prior schema and restore the exact agent without silent loss, duplication, stale resurrection, or cross-identity leakage. | `MEMORY-001`, `STATE-001`, `STORAGE-GATEWAY-001`, `SECURITY-001`, `OPERATIONS-001`; Aura 1.0 release-gap audit 2026-07-13 |
 | `COMPATIBILITY-001` | `OPEN 2026-07-13` | Version and compatibility-test public/internal APIs, WebSocket events, receipts, state schemas, settings/config precedence, environment variables, plugins/skills, model adapters, prompts/tool contracts, native bridge, paired devices, and artifacts. Require additive evolution or explicit migrations, deprecation telemetry, unknown-field tolerance where safe, fail-closed incompatible writes, golden cross-version fixtures, and no silent behavior drift after model or dependency replacement. | `ARCH-001`, `TOOLS-001`, `DATA-LIFECYCLE-001`, `OPERATIONS-001`, `REPO-001`; Aura 1.0 release-gap audit 2026-07-13 |
@@ -15174,7 +15187,6 @@ Progress and immediate next work:
 - Final multi-hour and 24-72 hour soaks remain deferred until every shorter
   source, deterministic, fault-injection, bounded live, GUI, portability, and
   release gate is green.
-
 ## Checkpoint 2026-07-14-78: Exact Principal Boundaries, Ephemeral Code Execution, Transactional Identity, and Bounded Causal Integration
 
 This checkpoint advances `FOREGROUND-LATENCY-001`, `IIT-SYSTEM-001`,
@@ -16222,3 +16234,150 @@ Progress and immediate next work:
 - Final multi-hour and 24-72 hour soaks remain deferred until every shorter
   source, deterministic, fault-injection, bounded live, GUI, portability, and
   release gate is green.
+
+## Checkpoint 2026-07-15-87: Authoritative Runtime Settings and Exact Action Confirmation
+
+Checkpoint 87 is pushed on `main` at
+`747bceeabf82da24fecbf0c75c277186c6d9444b`. It advances
+`RUNTIME-SETTINGS-001`, `AUTONOMY-AUTHORITY-001`, `ACTION-SPINE-001`,
+`ENTERPRISE-CONTROL-001`, `VOICE-001`, `ADAPTATION-STATE-AUTHORITY-001`,
+`DATA-LIFECYCLE-001`, `FAULT-001`, and `TEST-DEPTH-001`. This is source and
+deterministic evidence only; exact installed-app proof remains open.
+
+Implemented boundary:
+
+- A strict version-2 settings schema rejects unknown keys, type coercion,
+  non-finite numbers, and incompatible writes. Legacy proactive booleans have
+  an explicit migration into typed frequency modes.
+- The durable control plane provides atomic compare-and-swap patch, reset,
+  rollback, bounded revision retention, request idempotency, interprocess and
+  thread serialization, crash recovery, duplicate-key rejection, mutation
+  receipts, owner-application receipts, and chain verification. A concurrent
+  writer returns the latest durable revision and visible supersession rather
+  than regressing the shell to an older response.
+- Runtime readers verify versioned state before owners consume it. Corruption,
+  incompatible state, lost permissions, or deletion after a valid read selects
+  conservative action, approval, privacy, cloud, permission, and safe-mode
+  values instead of silently re-enabling autonomy.
+- Desktop controls hydrate from the authenticated backend before enabling,
+  submit CAS writes with request IDs, render owner application state, recover
+  from conflicts, and acknowledge frontend-owned effects. The former
+  localStorage-only governance controls are no longer decorative.
+- Approval modes bind one opaque, expiring, one-use challenge to the exact
+  action name, canonical arguments digest, source, risk, and scope. Confirmed
+  chat retries reuse the same visible turn, while cancellation, dismissal,
+  transport failure, expiry, changed arguments, and replay cannot authorize a
+  later action.
+- `Autonomous Actions` now gates autonomous tools, environment actions,
+  initiatives, executive objectives, and unsolicited expression while direct
+  authenticated user work retains its canonical authority. Environment risk
+  maps conservatively to effect scope before confirmation.
+- Proactive modes have distinct quotas and intervals, local-calendar reset,
+  critical bypass, stale-user-activity expiry, one ordinary release per cycle,
+  retained failures, and bounded exponential retry. Enrichment and reflection
+  have real owner gates; malformed model/input structures and partial storage
+  failures produce typed outcomes instead of runtime-wide degradation.
+
+Verification:
+
+- The integrated bounded settings/governance suite passes `139/139` in 66.47
+  seconds after rebasing onto the newer UI and image-generation checkpoints.
+- The focused desktop confirmation contract passes `1/1`; the Conscience
+  contract passes `5/5`.
+- Every touched Python file compiles, Ruff `F/I/B025` passes, the merged
+  JavaScript parses, and `git diff --check` passes.
+
+Remaining burden:
+
+- `permissions.files_workspace`, `memory.review_window`, and
+  `dev.diagnostics_enabled` remain explicitly known-dead and unavailable;
+  privacy redaction remains partial. They were not relabeled implemented.
+- Rebuild and sign the app from exact CP87-or-later clean provenance, then prove
+  settings hydration, readback, conflict, restart persistence, reset, rollback,
+  integrity, every owner effect, every approval mode, cancellation/expiry,
+  changed-argument rejection, one-use consumption, accessibility, keyboard
+  focus, and responsive layout in the installed shell, terminal, and Neural
+  stream.
+- Evidence-weighted completion remains `30%`. At this checkpoint the total
+  count was `87` of the `240-325` forecast, leaving approximately `153-238`.
+  Exact-app, GUI, portability, broader semantic review, release, and soak credit
+  remain zero for this checkpoint.
+
+## Checkpoint 2026-07-15-88: DNS-Rebinding and Local Browser Authority Hardening
+
+Checkpoint 88 is pushed on `main` at
+`5a56bea5c8adff24e554b068a7e9f122921af6d4`. It advances `SECURITY-001`,
+`ENTERPRISE-CONTROL-001`, `IDENTITY-001`, `COMPATIBILITY-001`,
+`DATA-LIFECYCLE-001`, and `TEST-DEPTH-001` without claiming the whole security
+program complete.
+
+Finding and correction:
+
+- The supplied report was valid against the prior boundary. A browser could
+  rebind an attacker authority to loopback, send matching attacker-controlled
+  `Host` and `Origin` headers, inherit a loopback socket peer, and reach
+  tokenless local-owner policy. Private memory export and settings mutation
+  were therefore reachable in the demonstrated configuration.
+- Host and Origin are now parsed as strict authorities with duplicate-header,
+  malformed-port, user-info, path/query/fragment, scheme, and ambiguity checks.
+  Trusted tokenless local hosts are exactly `localhost`, `127.0.0.1`, and
+  `::1`; no DNS lookup or alternate numeric spelling can expand the set.
+- A loopback peer with an untrusted Host is rejected before public health or
+  pairing paths, internal-only return, CSRF classification, desktop markers,
+  or tokenless local policy. The same authority boundary controls owner-profile
+  classification, route dependencies, chat defensive trust, and WebSocket
+  pre-authentication.
+- `ws`/`wss` origins are compared with their HTTP/HTTPS equivalents. A socket
+  is still not registered with the broadcast manager before authentication.
+- A valid master token remains usable across an intentional proxy authority.
+  A paired-device token remains limited to its existing deny-by-default
+  conversation/read-only allowlist and strict same-request LAN authority.
+- CORS remains origin-allowlisted and now includes the PATCH operation used by
+  the authoritative settings shell; CORS never substitutes for authentication.
+
+Verification:
+
+- `tests/test_dns_rebinding_auth.py` passes `38/38`, covering the published GET
+  and PATCH exploit, no-Origin and forged-desktop variants, loopback and LAN
+  rebinding, public-path and internal-only ordering, duplicate/missing Host,
+  lookalike and alternate numeric forms, malformed Origin/authority syntax,
+  owner-profile escalation, IPv4/IPv6 preservation, local dev origins, WSS,
+  and the explicit master-token exception.
+- The expanded runtime-security, paired-device, audit-security, WebSocket, and
+  source-contract slice passes `95/95` in 50.06 seconds. The settings suite was
+  rerun on the same integrated tree and passes `139/139`.
+- Python compilation, Ruff `F/I/B025`, JavaScript syntax, and diff hygiene pass.
+  The exact remote head was verified after push.
+
+Reconciled failed endurance evidence:
+
+- The separate `fable-improvement-pass` worktree attempted a 200-turn endurance
+  campaign from a non-current build. Its artifact contains a start record and
+  only 36 turn records, with no terminal verdict.
+- Outcomes were 31 `timeout`, three `protected_foreground`, and two
+  `grounded_introspection`. Latency ranged from 85.53 to 216.10 seconds with a
+  213.245-second median. Logs repeatedly show `worker_not_alive`, deferred or
+  denied 32B model load, 330-second spawn-gate timeout, foreground warmup
+  failure, inference-gate degradation, and 503 conversation-lane snapshots.
+- Zero recorded process deaths or hijacks in those 36 turns does not rescue the
+  campaign: useful conversation availability failed and the driver did not
+  finish. Because the build is not CP88, this is retained as diagnostic evidence
+  for `FOREGROUND-LATENCY-001`, `INFERENCE-RELIABILITY-001`, `RUNTIME-001`, and
+  `FAULT-001`, not promoted to an exact-main regression verdict or soak credit.
+
+Progress and remaining burden:
+
+- Evidence-weighted completion remains `30%`. Checkpoint 88 is total `88` of
+  the current `240-325` forecast, leaving approximately `152-237` checkpoints
+  before final soak/release closure. The newly supplied vulnerability is mapped
+  inside the already-open `SECURITY-001` burden and does not silently shrink or
+  expand that range.
+- Independent penetration testing, parser/API fuzzing, proxy attestation,
+  browser response policy, secrets, privacy/data lifecycle, dependency/SBOM,
+  provenance, signing, update security, hostile tool/model/plugin campaigns,
+  clean-machine proof, and exact installed-app security evidence remain open.
+  The durable boundary and residuals are recorded in
+  `docs/LOCAL_API_TRUST_BOUNDARY.md`.
+- Exact CP87 settings proof and every shorter runtime, GUI, portability,
+  semantic, security, and release gate remain prerequisites. Final multi-hour
+  and 24-72 hour soaks remain deferred.

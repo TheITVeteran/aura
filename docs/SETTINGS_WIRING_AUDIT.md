@@ -1,6 +1,6 @@
 # Runtime Settings Control-Plane Audit
 
-**Status (2026-07-14): CP87 source candidate green; exact signed-app proof open.**
+**Status (2026-07-15): CP87 pushed at `747bceea`; exact signed-app proof open.**
 
 The desktop settings surface no longer treats `localStorage` as runtime or
 governance authority. Runtime settings are hydrated from an authenticated API,
@@ -148,14 +148,15 @@ silently.
 
 ## Source Evidence and Remaining Live Proof
 
-The CP87 source candidate has deterministic coverage for strict validation,
+The pushed CP87 checkpoint has deterministic coverage for strict validation,
 CAS conflicts, idempotent replay, concurrent writers, crash recovery, rollback,
 migration, state and journal tampering, stale dispatch suppression, owner
 acknowledgements, safe-mode bridging, direct-user preservation, forged-context
 rejection, exact one-use confirmation, environment-action coverage, desktop
 approval propagation, learning gates, malformed model/input handling,
 proactive cadence, daily reset, critical quota bypass, and failed-delivery
-retention. The bounded settings/governance suite passes `97/97`.
+retention. The bounded settings/governance suite passes `139/139`; the focused
+desktop confirmation and Conscience contracts add `1/1` and `5/5` passes.
 
 The following are still required before `RUNTIME-SETTINGS-001` can close:
 
