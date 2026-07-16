@@ -16,10 +16,10 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **Checkpoint 93 is the current
-  evidence candidate in the `main` worktree; Checkpoint 92 source is pushed at
-  `c3c624c0`, and the exact latest-main signed-app campaign remains open after
-  CP93**. Checkpoint 80 made cached
+- Current bounded implementation milestone: **Checkpoint 94 is the current
+  source candidate in the `main` worktree; Checkpoint 93 is pushed at
+  `085b3166`, and exact rebuilt-app proof remains open for CP94**. Checkpoint 80
+  made cached
   readiness truthful and fast,
   removed synchronous Phi/Eternal maintenance from the foreground cycle, and
   reduced live CognitiveEngine samples from a 59.65-second retry cascade to
@@ -109,6 +109,17 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   exits zero, all 20 deterministic items are correct, the content-addressed
   output and three-entry append chain validate, and the artifact remains
   explicitly ineligible for either an Aura capability or general-frontier claim.
+  The exact CP93 installed app reached full readiness but exposed six source
+  defects that block live credit: ordinary mycelial pulse churn prevented every
+  full root-vault commit from converging; ALife criticality called a removed
+  NeuralMesh keyword; nested reliability routes prevented OpenAPI generation;
+  large mycelium responses rebuilt and serialized on every concurrent request;
+  Ulysses activation occurred after runtime-manifest capture; and legitimate
+  spawning/handshaking states were rendered as critical boot failure. Checkpoint
+  94 gives these owners explicit contracts, coherent snapshot persistence,
+  structural cache invalidation, single-flight response serialization, and
+  ordered boot activation. Two adjacent full-suite failures also close shared
+  foreground-origin drift and partial-initialization inference-gate handling.
   A separate non-current `fable-improvement-pass` endurance attempt is retained
   as failed evidence: it stopped at 36/200 turns, served 31 timeout responses,
   had p50 latency 213.245 seconds, repeatedly reported a 503 conversation lane
@@ -118,7 +129,7 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   release, and causal-proof obligations remain open unless their rows
   explicitly close.
 - Overall completion percentage: **29% evidence-weighted planning estimate at
-  Checkpoint 93**. The exact
+  Checkpoint 94**. The exact
   Checkpoint 80 app earns bounded live credit for readiness, health, base boot,
   and one-attempt chat latency, but not output quality, sustained load, GUI
   frame SLO, portability, semantic review, release, or soak. The newly
@@ -130,12 +141,12 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   `PROGRESS-CONTROL-001` and `SCOPE-001` must replace the manual estimate with a
   generated denominator; new obligations increase it, regressions reopen it,
   and source-green/live-open work never receives full closure credit.
-  CP92-93 close bounded evidence-integrity work already present in the
-  denominator; they do not earn installed-app, real-model capability,
-  portability, release, or soak credit and therefore do not move the rounded
+  CP92-94 close bounded evidence-integrity and runtime-convergence work already
+  present in the denominator. CP94 has no exact rebuilt-app, portability,
+  release, or soak credit yet and therefore does not move the rounded
   percentage.
 - Total checkpoint forecast: **approximately 252-343 total checkpoints for the
-  expanded program, with 93 checkpoints and approximately 159-250 remaining before
+  expanded program, with 94 checkpoints and approximately 158-249 remaining before
   final soak/release closure**. The prior `226-304` range expands by 8-12 explicit
   checkpoints for a falsifiable lateral-conceptual-leap program spanning
   mechanism construction, held-out evaluation, novelty and prior-art review,
@@ -16849,7 +16860,8 @@ Verification:
 
 ## Checkpoint 2026-07-15-93: Exact Clean Frontier V5 Control Restoration
 
-Checkpoint 93 is the current evidence candidate in the `main` worktree. It
+Checkpoint 93 is pushed on `main` at
+`085b31665e14194840225a1b44a74d39a09e1bb6`. It
 advances `FRONTIER-COGNITION-001`, `PROOF-001`, `REPO-001`, and
 `TEST-DEPTH-001`. No live-app, real-model capability, frontier-parity,
 portability, release, or soak credit is awarded.
@@ -16880,7 +16892,99 @@ Progress and next boundary:
   the unchanged `252-343` forecast, leaving approximately `159-250` total
   implementation, cleanup, integration, verification, live, portability,
   release, and soak checkpoints.
-- Commit and push the exact artifact, verify remote source and evidence object
-  IDs, then build and sign the exact CP93 app for graph, shell-revision, chat-
-  delivery, health, Neural/terminal, GUI, and shutdown proof. Multi-hour and
+- The exact CP93 app was subsequently built, signed, provenance-verified,
+  launched to full readiness, and shut down cleanly. Its graph, persistence,
+  ALife, boot-contract, and OpenAPI defects are retained as the causal input to
+  CP94 rather than being hidden behind aggregate readiness. Multi-hour and
   24-72 hour soaks remain deferred until every shorter gate is green.
+
+## Checkpoint 2026-07-15-94: Runtime Snapshot Convergence and Contract Repair
+
+Checkpoint 94 is the current source candidate in the `main` worktree. It
+advances `TOPOLOGY-CONSISTENCY-001`, `RUNTIME-001`, `BOOT-HEALTH-001`,
+`HEALTH-SURFACE-001`, `PERF-001`, `IIT-LIVE-001`, `ARCH-001`, `FAULT-001`,
+`ASYNC-TASK-001`, `CONVERSATION-001`, `REPO-001`, and `TEST-DEPTH-001`.
+Exact installed-app proof remains open; this section awards source and bounded
+deterministic credit only.
+
+Implemented runtime contracts:
+
+- Root-vault persistence now commits one coherent point-in-time mycelial
+  snapshot while its topology barrier is held. Ordinary pulse and reinforcement
+  changes may advance the live revision during serialization without invalidating
+  a complete snapshot; the next scheduled sync catches up. The infrastructure
+  receipt exposes committed revision, current revision, commit time, and lag,
+  while singleton retirement and commit-barrier checks still fail closed.
+- Mycelial mutation now separates the all-state revision from a structural
+  revision. Expensive graph response caches bind to strong owner identity and
+  the structural revision, so topology changes invalidate immediately while
+  fast pulse churn does not force graph reconstruction. The `/api/mycelium` and
+  `/api/mycelial/graph` routes use independent one-second single-flight caches
+  of immutable serialized bytes and return independent response objects. Errors,
+  background placeholders, and snapshots raced by structural mutation are not
+  cached.
+- NeuralMesh now owns an atomic effective modulatory tuple derived from a
+  neurochemical base and bounded criticality factors. The ALife integration
+  uses the explicit criticality-adjustment contract instead of passing a stale
+  `modulatory_gain` keyword, preserving the base values and plasticity while
+  publishing effective status for inspection.
+- Ulysses materialization and status run off the event loop before orchestrator
+  start, service-registry lock, runtime ownership, and manifest capture. Boot
+  health treats `spawning` and `handshaking` as truthful warmup states rather
+  than critical failure.
+- Nested reliability diagnostics declare an explicit response class and no
+  generated response model, removing unresolved local annotation forward
+  references. Full server OpenAPI generation succeeds with 153 paths including
+  the reliability route.
+- Foreground objective classification in CognitiveEngine now consumes the
+  shared canonical origin contract, including desktop and native-shell forms.
+  InferenceGate cooldown and reset inspection tolerate valid partial/pre-init
+  instances without masking a real initialized circuit state.
+- Frontier's cancellation-safe lock-worker drain is now explicitly bounded by
+  worker-future completion, and the root-override test uses an isolated pytest
+  path. These remove all three new enterprise-ratchet findings without weakening
+  cancellation or configuration behavior.
+
+Bounded evidence:
+
+- Mycelium, NeuralMesh, ALife, runtime, boot-contract, reliability,
+  CognitiveEngine, InferenceGate, latent-cortex, Frontier, and configuration
+  campaigns pass 690/690 combined test invocations across non-overlapping
+  focused files.
+- A twelve-reader mycelium stress test performs one snapshot build and eleven
+  cache hits, gives every caller a distinct response object, and forces an
+  immediate rebuild after structural revision change. Persistence tests prove
+  coherent raced commits, later catch-up, retired-owner exclusion, and the
+  commit barrier.
+- Full server OpenAPI generation succeeds with 153 paths. Python compilation,
+  changed-source Ruff fatal/error checks, diff hygiene, the 20/20 closeout
+  rubric, production-readiness, architecture, model-load ownership, resource
+  ownership, configured lint, governance lint, and the enterprise static
+  ratchet are green on the dirty candidate.
+- Mechanical closeout passes every substantive gate and fails only its required
+  clean-worktree precondition. Semantic closeout remains explicitly open after
+  the reconciled latent-cortex additions: 428 of 4,216 tracked code files are
+  fully current, 3,757 are unreviewed, and 26 receipts are orphaned. These
+  figures prohibit any whole-codebase reviewed or all-issues-fixed claim.
+- Three independently developed latent-cortex commits already present on
+  `origin/main` were fast-forwarded without overlap before final verification;
+  their 31-test controlled-recurrence, virtual-width, layer-schedule, and
+  fast-weight campaign remains green. They are reconciled work, not silently
+  recounted as additional CP94 checkpoints.
+
+Progress and next boundary:
+
+- Evidence-weighted completion remains `29%`. This is total checkpoint `94` of
+  the unchanged `252-343` total-checkpoint forecast, leaving approximately
+  `158-249` implementation, cleanup, integration, verification, live,
+  portability, release, and soak checkpoints.
+- Commit and push CP94 directly to `main`, repeat the mechanical closeout audit
+  from the clean commit, then build and sign that exact source. The installed
+  app must prove boot classification, Ulysses manifest presence, multiple
+  root-vault intervals, ALife modulation cycles, OpenAPI, concurrent graph
+  latency, full health/proof/certification/readiness, clean Neural and terminal
+  streams, exact provenance, and complete shutdown before live credit.
+- Continue to the next bounded open tracker owner after that proof. Multi-hour
+  and 24-72 hour soaks remain deferred until every shorter deterministic,
+  fault-injection, exact-app, GUI, security, portability, semantic, and release
+  requirement is green.

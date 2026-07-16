@@ -297,6 +297,7 @@ class NeuralMesh:
         self._validate_config()
         self._rng = np.random.default_rng(seed=42)
         self._lock = threading.Lock()
+        self._modulation_lock = threading.Lock()
 
         # Build columns
         self.columns: list[CorticalColumn] = []
@@ -318,7 +319,12 @@ class NeuralMesh:
             (self.cfg.projection_dim, self.cfg.total_neurons)
         ).astype(np.float32) * (1.0 / np.sqrt(self.cfg.total_neurons))
 
-        # Neuromodulatory gain (set externally by NeurochemicalSystem)
+        # Neurochemistry supplies the base state; criticality supplies bounded
+        # multiplicative factors. Publishing one immutable tuple keeps mesh
+        # ticks coherent without taking a controller lock on the hot path.
+        self._base_modulatory_state = (1.0, 1.0, 1.0)
+        self._criticality_modulatory_factors = (1.0, 1.0)
+        self._modulatory_state = (1.0, 1.0, 1.0)
         self._modulatory_gain: float = 1.0
         self._modulatory_plasticity: float = 1.0  # scales STDP rate
         self._modulatory_noise: float = 1.0        # scales noise
@@ -679,8 +685,18 @@ class NeuralMesh:
                     .astype(np.float32, copy=False)
                     * np.float32(0.95)
                 )
-            self._modulatory_gain = max(0.1, min(1.0, self._modulatory_gain))
-            self._modulatory_noise = max(0.0, min(1.0, self._modulatory_noise))
+            with self._modulation_lock:
+                gain, plasticity, noise = self._modulatory_state
+                self._modulatory_state = (
+                    max(0.1, min(1.0, gain)),
+                    plasticity,
+                    max(0.0, min(1.0, noise)),
+                )
+                (
+                    self._modulatory_gain,
+                    self._modulatory_plasticity,
+                    self._modulatory_noise,
+                ) = self._modulatory_state
             self._refresh_cached_snapshots()
 
     def _tick(self):
@@ -692,7 +708,8 @@ class NeuralMesh:
         now = time.monotonic()
         dt = self.cfg.dt
         cfg = self.cfg
-        gain = cfg.activation_gain * self._modulatory_gain
+        modulatory_gain, _, modulatory_noise = self._modulatory_state
+        gain = cfg.activation_gain * modulatory_gain
         # Apply subcortical arousal gating to mesh gain
         try:
             from core.consciousness.subcortical_core import get_subcortical_core
@@ -723,7 +740,7 @@ class NeuralMesh:
                 severity="warning",
                 extra={"effective_gain": gain},
             )
-        noise_sigma = cfg.noise_sigma * self._modulatory_noise
+        noise_sigma = cfg.noise_sigma * modulatory_noise
         noise_sigma, valid_noise_sigma = _finite_float(noise_sigma, cfg.noise_sigma)
         noise_sigma, noise_unchanged = _clamp_float(noise_sigma, lower=0.0, upper=1.0)
         if not valid_noise_sigma or not noise_unchanged:
@@ -1083,7 +1100,7 @@ class NeuralMesh:
         if self._foreground_request_active():
             return
 
-        lr = self.cfg.stdp_lr * self._modulatory_plasticity
+        lr = self.cfg.stdp_lr * self._modulatory_state[1]
         lr, lr_valid = _finite_float(lr, self.cfg.stdp_lr)
         lr, lr_unchanged = _clamp_float(lr, lower=0.0, upper=0.05)
         window, window_valid = _finite_float(self.cfg.stdp_window, 0.02)
@@ -1252,9 +1269,28 @@ class NeuralMesh:
             action="sanitized association ingress before NeuralMesh injection",
         )
 
-    def set_modulatory_state(self, gain: float = 1.0, plasticity: float = 1.0,
-                             noise: float = 1.0):
-        """Called by NeurochemicalSystem to modulate mesh dynamics globally."""
+    def _publish_modulatory_state_locked(self) -> None:
+        base_gain, base_plasticity, base_noise = self._base_modulatory_state
+        criticality_gain, criticality_noise = self._criticality_modulatory_factors
+        effective = (
+            max(0.1, min(3.0, base_gain * criticality_gain)),
+            max(0.0, min(5.0, base_plasticity)),
+            max(0.0, min(3.0, base_noise * criticality_noise)),
+        )
+        self._modulatory_state = effective
+        (
+            self._modulatory_gain,
+            self._modulatory_plasticity,
+            self._modulatory_noise,
+        ) = effective
+
+    def set_modulatory_state(
+        self,
+        gain: float = 1.0,
+        plasticity: float = 1.0,
+        noise: float = 1.0,
+    ) -> None:
+        """Set the neurochemical base state without erasing other controllers."""
         gain_value, gain_valid = _finite_float(gain, 1.0)
         plasticity_value, plasticity_valid = _finite_float(plasticity, 1.0)
         noise_value, noise_valid = _finite_float(noise, 1.0)
@@ -1285,9 +1321,66 @@ class NeuralMesh:
                     "noise": noise_value,
                 },
             )
-        self._modulatory_gain = gain_value
-        self._modulatory_plasticity = plasticity_value
-        self._modulatory_noise = noise_value
+        with self._modulation_lock:
+            self._base_modulatory_state = (
+                gain_value,
+                plasticity_value,
+                noise_value,
+            )
+            self._publish_modulatory_state_locked()
+
+    def set_criticality_adjustment(
+        self,
+        *,
+        gain: float = 1.0,
+        noise: float = 1.0,
+    ) -> None:
+        """Apply bounded criticality factors over the neurochemical base state."""
+        gain_value, gain_valid = _finite_float(gain, 1.0)
+        noise_value, noise_valid = _finite_float(noise, 1.0)
+        gain_value, gain_unchanged = _clamp_float(
+            gain_value,
+            lower=0.5,
+            upper=2.0,
+        )
+        noise_value, noise_unchanged = _clamp_float(
+            noise_value,
+            lower=0.5,
+            upper=2.0,
+        )
+        if not all((gain_valid, noise_valid, gain_unchanged, noise_unchanged)):
+            _record_neural_mesh_degradation(
+                ValueError("NeuralMesh criticality adjustment was non-finite or out of bounds"),
+                action="normalized criticality modulation before applying it",
+                severity="warning",
+                extra={"gain": gain_value, "noise": noise_value},
+            )
+        with self._modulation_lock:
+            self._criticality_modulatory_factors = (gain_value, noise_value)
+            self._publish_modulatory_state_locked()
+
+    def get_modulatory_state(self) -> dict[str, dict[str, float]]:
+        """Return one coherent base, criticality, and effective modulation snapshot."""
+        with self._modulation_lock:
+            base_gain, base_plasticity, base_noise = self._base_modulatory_state
+            criticality_gain, criticality_noise = self._criticality_modulatory_factors
+            effective_gain, effective_plasticity, effective_noise = self._modulatory_state
+        return {
+            "base": {
+                "gain": base_gain,
+                "plasticity": base_plasticity,
+                "noise": base_noise,
+            },
+            "criticality": {
+                "gain": criticality_gain,
+                "noise": criticality_noise,
+            },
+            "effective": {
+                "gain": effective_gain,
+                "plasticity": effective_plasticity,
+                "noise": effective_noise,
+            },
+        }
 
     def get_executive_projection(self) -> np.ndarray:
         """Project full 4096-d state down to 64-d for LiquidSubstrate injection.
@@ -1342,6 +1435,8 @@ class NeuralMesh:
         return self._global_synchrony
 
     def get_status(self) -> dict:
+        modulation = self.get_modulatory_state()
+        effective_modulation = modulation["effective"]
         return {
             "running": self._running,
             "tick_count": self._tick_count,
@@ -1350,8 +1445,10 @@ class NeuralMesh:
             "mean_energy": round(self._mean_column_energy, 4),
             "global_synchrony": round(self._global_synchrony, 4),
             "tier_energies": {t.name: round(v, 4) for t, v in self._tier_energies.items()},
-            "modulatory_gain": round(self._modulatory_gain, 3),
-            "modulatory_plasticity": round(self._modulatory_plasticity, 3),
+            "modulatory_gain": round(effective_modulation["gain"], 3),
+            "modulatory_plasticity": round(effective_modulation["plasticity"], 3),
+            "modulatory_noise": round(effective_modulation["noise"], 3),
+            "modulation": modulation,
             "accelerator": _MLX_ACCELERATOR,
             "accelerator_reason": _MLX_ACCELERATOR_REASON,
             "consecutive_tick_failures": self._consecutive_tick_failures,

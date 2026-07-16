@@ -574,7 +574,8 @@ def test_health_pulse_cannot_claim_healthy_when_conversation_lane_failed(monkeyp
     assert "desktop_cognitive_engine_required_no_reply" in pulse
 
 
-def test_health_pulse_reports_booting_during_boot_grace(monkeypatch):
+@pytest.mark.parametrize("lane_state", ["warming", "spawning", "handshaking"])
+def test_health_pulse_reports_booting_during_boot_grace(monkeypatch, lane_state):
     from core.container import ServiceContainer
     from core.ops.subsystem_audit import SubsystemAudit
     from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
@@ -612,7 +613,7 @@ def test_health_pulse_reports_booting_during_boot_grace(monkeypatch):
         def get_conversation_status():
             return {
                 "conversation_ready": False,
-                "state": "warming",
+                "state": lane_state,
                 "warmup_in_flight": True,
             }
 
@@ -1252,7 +1253,6 @@ def test_dream_coordinator_defers_dream_work_during_proof_runs(monkeypatch):
 
 
 def test_dream_coordinator_defers_dream_work_during_boot_grace(monkeypatch):
-    from core.container import ServiceContainer
     from core.maintenance.dream_coordinator import DreamCoordinator
 
     async def scenario():
@@ -1385,7 +1385,6 @@ def test_event_loop_monitor_uses_active_runtime_lag_budget_during_proof(monkeypa
 
 
 def test_event_loop_monitor_treats_dict_lane_generation_as_active(monkeypatch):
-    from core.container import ServiceContainer
     from core.utils.concurrency import EventLoopMonitor
 
     class _Gate:

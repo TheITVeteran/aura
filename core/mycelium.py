@@ -336,6 +336,10 @@ class MycelialNetwork:
             self._mapping_admission_token: Optional[object] = None
             self._mapping_generation: int = 0
             self._topology_revision: int = 0
+            self._topology_structure_revision: int = 0
+            self._last_vault_sync_revision: Optional[int] = None
+            self._last_vault_sync_at: Optional[float] = None
+            self._last_vault_sync_lag_revisions: int = 0
             self._mapping_started_at: Optional[float] = None
             self._mapping_completed_at: Optional[float] = None
             self._mapping_last_error: Optional[str] = None
@@ -396,6 +400,7 @@ class MycelialNetwork:
     def _mark_topology_mutated_locked(self, *, structure_changed: bool = False) -> None:
         self._topology_revision += 1
         if structure_changed:
+            self._topology_structure_revision += 1
             self._publish_topology_read_models_locked()
 
     def _setup_default_pathways(self):
@@ -1937,6 +1942,14 @@ class MycelialNetwork:
             snapshot[module_key] = detached
         return snapshot
 
+    def get_route_cache_token(self) -> tuple[int, int]:
+        """Return the active topology owner's identity and structure revision."""
+        with MycelialNetwork._lock:
+            owner = self._active_owner_locked()
+            if owner is not None and owner is not self:
+                return owner.get_route_cache_token()
+            return id(self), self._topology_structure_revision
+
     def get_graph_snapshot(self) -> Dict[str, Any]:
         """Return topology and code map from one published generation."""
         with MycelialNetwork._lock:
@@ -1951,6 +1964,8 @@ class MycelialNetwork:
                 "mapping_generation": self._mapping_generation,
                 "mapping_state": self._mapping_state_locked(),
                 "mapping_last_error": self._mapping_last_error,
+                "topology_revision": self._topology_revision,
+                "topology_structure_revision": self._topology_structure_revision,
             }
 
     def get_runtime_snapshot(self) -> Dict[str, Any]:
@@ -2043,6 +2058,8 @@ class MycelialNetwork:
             "mapped": self.infrastructure_mapped,
             "mapping_state": self._mapping_state_locked(),
             "mapping_generation": self._mapping_generation,
+            "topology_revision": self._topology_revision,
+            "topology_structure_revision": self._topology_structure_revision,
             "deferred_reason": self._deferred_mapping_reason,
             "mapping_started_at": self._mapping_started_at,
             "mapping_completed_at": self._mapping_completed_at,
@@ -2060,6 +2077,11 @@ class MycelialNetwork:
             },
             "modules": {k: v["path"] for k, v in mapped_files.items()},
             "physical_hyphae_sample": dict(list(physical_hyphae.items())[:20]),
+            "vault_sync": {
+                "revision": self._last_vault_sync_revision,
+                "committed_at": self._last_vault_sync_at,
+                "lag_revisions_at_commit": self._last_vault_sync_lag_revisions,
+            },
         }
 
     # ======================================================================
@@ -2214,6 +2236,8 @@ class MycelialNetwork:
             "pathways": pathways,
             "pathway_count": len(pathways),
             "hyphae": hyphae,
+            "topology_revision": self._topology_revision,
+            "topology_structure_revision": self._topology_structure_revision,
             "hyphae_summary": {
                 "total": len(hyphae),
                 "logical": logical_count,
@@ -2858,7 +2882,7 @@ class MycelialNetwork:
         )
         db_path = config.paths.base_dir / vault_path
 
-        def _sync_worker() -> None:
+        def _sync_worker() -> tuple[int, int]:
             with MycelialNetwork._vault_io_lock:
                 with MycelialNetwork._lock:
                     if (
@@ -2897,18 +2921,29 @@ class MycelialNetwork:
                             raise RuntimeError(
                                 "mycelium retired before root-vault commit"
                             )
-                        if self._topology_revision != snapshot_revision:
-                            raise RuntimeError(
-                                "mycelium topology changed before root-vault commit"
-                            )
+                        current_revision = self._topology_revision
                         conn.commit()
+                        self._last_vault_sync_revision = snapshot_revision
+                        self._last_vault_sync_at = time.time()
+                        self._last_vault_sync_lag_revisions = max(
+                            0,
+                            current_revision - snapshot_revision,
+                        )
+                        return snapshot_revision, current_revision
 
         try:
-            await run_io_bound(_sync_worker)
+            snapshot_revision, current_revision = await run_io_bound(_sync_worker)
         except (sqlite3.Error, OSError, RuntimeError, TypeError, ValueError) as exc:
             record_degradation("mycelium", exc)
             logger.error("🛡️ AEGIS: Vault Sync Failed! %s", exc)
             return False
+        if current_revision != snapshot_revision:
+            logger.debug(
+                "🛡️ AEGIS: Vault committed coherent revision %d while live topology "
+                "advanced to %d; the next interval will capture the newer state.",
+                snapshot_revision,
+                current_revision,
+            )
         logger.debug("🛡️ AEGIS: Vault Sync Complete.")
         return True
 
@@ -3014,6 +3049,7 @@ class MycelialNetwork:
                         instance._topology_revision + 1,
                         topology["topology_revision"] + 1,
                     )
+                    instance._topology_structure_revision += 1
                     instance._mapping_completed_at = time.time()
                     instance._mapping_last_error = None
                     instance._deferred_mapping_reason = None

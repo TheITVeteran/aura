@@ -613,12 +613,18 @@ class CognitiveIntegrationPhase(Phase):
             state.response_modifiers["branching_ratio"] = crit_state.branching_ratio
             state.response_modifiers["avalanche_exponent"] = crit_state.avalanche_exponent
 
-            # Apply adjustments to the mesh
-            if hasattr(mesh, "set_modulatory_state"):
-                mesh.set_modulatory_state(
-                    modulatory_gain=adjustments.get("gain", 1.0),
-                    modulatory_noise=adjustments.get("noise", 1.0),
+            # Criticality is a multiplicative controller over the chemical
+            # base state. It must not overwrite plasticity or masquerade as a
+            # NeurochemicalSystem update.
+            apply_criticality = getattr(mesh, "set_criticality_adjustment", None)
+            if not callable(apply_criticality):
+                raise RuntimeError(
+                    "NeuralMesh does not implement the criticality modulation contract"
                 )
+            apply_criticality(
+                gain=adjustments.get("gain", 1.0),
+                noise=adjustments.get("noise", 1.0),
+            )
 
             # Feed E/I ratio to neurochemical system
             ei_ratio = adjustments.get("ei_ratio", 1.0)

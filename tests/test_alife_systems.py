@@ -226,6 +226,63 @@ class TestALifeIntegration:
         assert "alife_extensions" in source
         assert "endogenous_fitness" in source
 
+    @pytest.mark.asyncio
+    async def test_criticality_runner_uses_layered_neural_mesh_contract(self, monkeypatch):
+        from core.container import ServiceContainer
+        from core.phases.cognitive_integration_phase import CognitiveIntegrationPhase
+        from core.state.aura_state import AuraState
+
+        calls = []
+
+        class Regulator:
+            @staticmethod
+            async def tick(_activations, _weights):
+                return type(
+                    "CriticalityState",
+                    (),
+                    {"branching_ratio": 0.9, "avalanche_exponent": -1.4},
+                )()
+
+            @staticmethod
+            def get_criticality_score():
+                return 0.8
+
+            @staticmethod
+            def get_adjustments():
+                return {"gain": 1.25, "noise": 0.75, "ei_ratio": 1.1}
+
+        class Mesh:
+            column_activations = np.zeros((4, 4), dtype=np.float32)
+            inter_column_weights = np.zeros((4, 4), dtype=np.float32)
+
+            @staticmethod
+            def set_criticality_adjustment(*, gain, noise):
+                calls.append(("mesh", gain, noise))
+
+        class Neurochemistry:
+            @staticmethod
+            def set_ei_target(value):
+                calls.append(("neurochemistry", value))
+
+        services = {
+            "neural_mesh": Mesh(),
+            "neurochemical_system": Neurochemistry(),
+        }
+        monkeypatch.setattr(
+            ServiceContainer,
+            "get",
+            staticmethod(lambda name, default=None: services.get(name, default)),
+        )
+
+        phase = object.__new__(CognitiveIntegrationPhase)
+        phase._criticality_regulator = Regulator()
+        state = AuraState()
+
+        await phase._run_criticality(state)
+
+        assert calls == [("mesh", 1.25, 0.75), ("neurochemistry", 1.1)]
+        assert state.response_modifiers["criticality_score"] == 0.8
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])

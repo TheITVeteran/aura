@@ -879,6 +879,19 @@ class TestRollback:
 # ═══════════════════════════════════════════════════════════════════════
 
 class TestDiagnosticsDashboard:
+    def test_router_builds_openapi_without_unresolved_local_response_types(self):
+        from fastapi import FastAPI
+
+        from core.resilience.diagnostics_dashboard import create_diagnostics_router
+
+        app = FastAPI()
+        app.include_router(create_diagnostics_router(), prefix="/api/diagnostics")
+
+        schema = app.openapi()
+
+        assert "/api/diagnostics/reliability" in schema["paths"]
+        assert "/api/diagnostics/reliability/control-plane" in schema["paths"]
+
     def test_collect_diagnostics(self):
         from core.resilience.diagnostics_dashboard import collect_reliability_diagnostics
         diag = collect_reliability_diagnostics()

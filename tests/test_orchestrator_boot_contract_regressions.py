@@ -65,7 +65,14 @@ def test_canonical_boot_refreshes_health_before_manifest():
 
     assert "await _enforce_boot_probes(ready_label)" in boot_slice
     assert "activate_live_mind_runtime" in boot_slice
+    assert "await _activate_ulysses_covenant_for_boot()" in boot_slice
     assert boot_slice.index("activate_live_mind_runtime") < boot_slice.index(
+        "ServiceContainer.lock_registration()"
+    )
+    assert boot_slice.index("await _activate_ulysses_covenant_for_boot()") < boot_slice.index(
+        "await orchestrator.start()"
+    )
+    assert boot_slice.index("await _activate_ulysses_covenant_for_boot()") < boot_slice.index(
         "ServiceContainer.lock_registration()"
     )
     assert "readiness_snapshot = await asyncio.to_thread(" in boot_slice
@@ -77,6 +84,46 @@ def test_canonical_boot_refreshes_health_before_manifest():
     assert boot_slice.index("_refresh_orchestrator_health_before_manifest") < boot_slice.index(
         "_write_runtime_manifest,"
     )
+
+
+@pytest.mark.asyncio
+async def test_ulysses_covenant_boot_helper_materializes_status_off_loop(monkeypatch):
+    import threading
+
+    import aura_main
+    import core.sovereignty.ulysses as ulysses
+
+    event_loop_thread = threading.current_thread()
+    observed: dict[str, object] = {}
+
+    class Covenant:
+        @staticmethod
+        def status():
+            observed["status_thread"] = threading.current_thread()
+            return {
+                "active_contracts": 3,
+                "hard": 1,
+                "integrity": 1.0,
+                "chain_length": 3,
+            }
+
+    def boot():
+        observed["boot_thread"] = threading.current_thread()
+        return Covenant()
+
+    monkeypatch.setattr(ulysses, "boot_ulysses_covenant", boot)
+    monkeypatch.setattr(aura_main, "_env_flag", lambda _name, _default: True)
+
+    status = await aura_main._activate_ulysses_covenant_for_boot()
+
+    assert status == {
+        "active_contracts": 3,
+        "hard": 1,
+        "integrity": 1.0,
+        "chain_length": 3,
+    }
+    assert observed["boot_thread"] is not event_loop_thread
+    assert observed["status_thread"] is not event_loop_thread
 
 
 def test_runtime_manifest_pre_ready_snapshot_gets_bounded_refresh_task():

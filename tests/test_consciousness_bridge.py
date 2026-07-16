@@ -14,7 +14,6 @@ Coverage:
   - Integration: cross-component data flow, causal coupling
 """
 
-import asyncio
 import math
 import threading
 import time
@@ -161,6 +160,31 @@ class TestNeuralMesh:
         assert mesh._modulatory_gain == 3.0  # clamped
         assert mesh._modulatory_plasticity == 0.0
         assert mesh._modulatory_noise == 0.0
+
+    def test_criticality_modulation_layers_over_neurochemical_base(self):
+        mesh = self._make_mesh()
+        mesh.set_modulatory_state(gain=1.4, plasticity=0.7, noise=0.8)
+        mesh.set_criticality_adjustment(gain=0.5, noise=2.0)
+
+        modulation = mesh.get_modulatory_state()
+        assert modulation["base"] == {
+            "gain": 1.4,
+            "plasticity": 0.7,
+            "noise": 0.8,
+        }
+        assert modulation["criticality"] == {"gain": 0.5, "noise": 2.0}
+        assert modulation["effective"]["gain"] == pytest.approx(0.7)
+        assert modulation["effective"]["plasticity"] == pytest.approx(0.7)
+        assert modulation["effective"]["noise"] == pytest.approx(1.6)
+
+        mesh.set_modulatory_state(gain=2.0, plasticity=0.9, noise=0.5)
+        modulation = mesh.get_modulatory_state()
+        assert modulation["criticality"] == {"gain": 0.5, "noise": 2.0}
+        assert modulation["effective"] == {
+            "gain": pytest.approx(1.0),
+            "plasticity": pytest.approx(0.9),
+            "noise": pytest.approx(1.0),
+        }
 
     def test_inter_column_weights_sparse(self):
         mesh = self._make_mesh()
@@ -689,7 +713,6 @@ class TestUnifiedField:
 
     def test_plasticity_preserves_sparsity(self):
         uf = self._make_field()
-        initial_density = np.count_nonzero(uf.W_field) / uf.W_field.size
         for _ in range(100):
             uf._tick()
         final_density = np.count_nonzero(uf.W_field) / uf.W_field.size

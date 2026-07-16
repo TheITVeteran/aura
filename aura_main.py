@@ -891,6 +891,34 @@ async def bootstrap_aura(orchestrator: Any):
         logger.error("❌ Failed to apply gap-closing patches: %s", exc)
 
 
+async def _activate_ulysses_covenant_for_boot() -> dict[str, Any] | None:
+    """Materialize the health-required governance organ before runtime start."""
+
+    if not _env_flag("AURA_ENABLE_ULYSSES_COVENANT", True):
+        logger.info("Ulysses Covenant disabled by explicit runtime configuration.")
+        return None
+    try:
+        from core.sovereignty.ulysses import boot_ulysses_covenant
+
+        covenant = await asyncio.to_thread(boot_ulysses_covenant)
+        status = await asyncio.to_thread(covenant.status)
+        if not isinstance(status, dict):
+            raise TypeError("Ulysses Covenant status must be a mapping")
+        logger.info(
+            "⚓ Ulysses Covenant online — %d active bindings (%d hard), "
+            "integrity %.2f, chain length %d.",
+            status["active_contracts"],
+            status["hard"],
+            status["integrity"],
+            status["chain_length"],
+        )
+        return status
+    except _AURA_MAIN_BOUNDARY_ERRORS as exc:
+        record_degradation("aura_main", exc)
+        logger.warning("Ulysses Covenant boot failed: %s", exc)
+        return None
+
+
 async def _boot_runtime_orchestrator(
     *,
     ready_label: str,
@@ -941,6 +969,9 @@ async def _boot_runtime_orchestrator(
     else:
         logger.info("🧬 Morphogenetic runtime disabled for foreground-only boot.")
     _mark_runtime_boot_phase("morphogenesis_start")
+
+    await _activate_ulysses_covenant_for_boot()
+    _mark_runtime_boot_phase("ulysses_covenant")
 
     await orchestrator.start()
     _mark_runtime_boot_phase("orchestrator_runtime_start")
@@ -1141,22 +1172,6 @@ async def _boot_runtime_orchestrator(
         except _AURA_MAIN_BOUNDARY_ERRORS as exc:
             record_degradation("aura_main", exc)
             logger.warning("Whole-system Φ boot failed: %s", exc)
-
-    if _env_flag("AURA_ENABLE_ULYSSES_COVENANT", True):
-        try:
-            from core.sovereignty.ulysses import boot_ulysses_covenant
-
-            covenant = boot_ulysses_covenant()
-            status = covenant.status()
-            logger.info(
-                "⚓ Ulysses Covenant online — %d active bindings (%d hard), "
-                "integrity %.2f, chain length %d.",
-                status["active_contracts"], status["hard"],
-                status["integrity"], status["chain_length"],
-            )
-        except _AURA_MAIN_BOUNDARY_ERRORS as exc:
-            record_degradation("aura_main", exc)
-            logger.warning("Ulysses Covenant boot failed: %s", exc)
 
     if not _foreground_only_runtime() and _env_flag("AURA_ENABLE_SENSORIMOTOR_GROUNDING", True):
         try:

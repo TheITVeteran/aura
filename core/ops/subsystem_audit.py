@@ -87,14 +87,22 @@ def _conversation_lane_is_boot_warming(lane: dict[str, Any] | None) -> bool:
     if warmup_active and state in {
         "",
         "cold",
+        "handshaking",
         "initializing",
         "recovering",
+        "spawning",
         "starting",
         "unknown",
         "warming",
     }:
         return True
-    return state in {"initializing", "starting", "warming"} and not reason
+    return state in {
+        "handshaking",
+        "initializing",
+        "spawning",
+        "starting",
+        "warming",
+    } and not reason
 
 
 def _conversation_lane_is_busy(lane: dict[str, Any] | None) -> bool:

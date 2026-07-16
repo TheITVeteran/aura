@@ -872,15 +872,20 @@ class InferenceGate:
 
     def _cortex_warmup_backoff_reason(self) -> str | None:
         """Non-None while a post-thrash warmup cooldown is active."""
-        remaining = self._cortex_warmup_backoff_until - time.monotonic()
+        backoff_until = float(
+            getattr(self, "_cortex_warmup_backoff_until", 0.0) or 0.0
+        )
+        remaining = backoff_until - time.monotonic()
         if remaining <= 0.0:
             return None
         return f"warmup_backoff:{remaining:.0f}s"
 
     def _reset_cortex_warmup_backoff(self) -> None:
         """Clear the cooldown after the cortex proves it can serve again."""
-        if self._cortex_warmup_backoff_until or self._cortex_stuck_kill_times:
-            self._cortex_stuck_kill_times.clear()
+        kill_times = getattr(self, "_cortex_stuck_kill_times", None)
+        if getattr(self, "_cortex_warmup_backoff_until", 0.0) or kill_times:
+            if kill_times is not None:
+                kill_times.clear()
             self._cortex_warmup_backoff_until = 0.0
             self._cortex_warmup_backoff_streak = 0
 

@@ -167,14 +167,14 @@ def create_diagnostics_router() -> Any:
     # walk bounded histories, and the live event loop must never inherit a
     # subsystem's lock contention (or worse) as loop stall time.
 
-    @router.get("/reliability")
-    async def reliability_diagnostics() -> JSONResponse:
+    @router.get("/reliability", response_class=JSONResponse, response_model=None)
+    async def reliability_diagnostics() -> Any:
         """Full reliability diagnostics report."""
         payload = await asyncio.to_thread(collect_reliability_diagnostics)
         return JSONResponse(content=payload)
 
-    @router.get("/reliability/faults")
-    async def fault_report() -> JSONResponse:
+    @router.get("/reliability/faults", response_class=JSONResponse, response_model=None)
+    async def fault_report() -> Any:
         """Fault taxonomy report."""
         try:
             from core.resilience.fault_taxonomy import get_fault_registry
@@ -183,8 +183,8 @@ def create_diagnostics_router() -> Any:
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, KeyError, OSError) as exc:
             return JSONResponse(content={"error": str(exc)}, status_code=500)
 
-    @router.get("/reliability/slos")
-    async def slo_report() -> JSONResponse:
+    @router.get("/reliability/slos", response_class=JSONResponse, response_model=None)
+    async def slo_report() -> Any:
         """SLO burn rates and budget status."""
         try:
             from slo.slo_monitor import get_slo_monitor
@@ -193,8 +193,8 @@ def create_diagnostics_router() -> Any:
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, KeyError, OSError) as exc:
             return JSONResponse(content={"error": str(exc)}, status_code=500)
 
-    @router.get("/reliability/fmea")
-    async def fmea_report() -> JSONResponse:
+    @router.get("/reliability/fmea", response_class=JSONResponse, response_model=None)
+    async def fmea_report() -> Any:
         """FMEA coverage and risk report."""
         try:
             from core.resilience.fmea_registry import get_fmea_registry
@@ -211,8 +211,8 @@ def create_diagnostics_router() -> Any:
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, KeyError, OSError) as exc:
             return JSONResponse(content={"error": str(exc)}, status_code=500)
 
-    @router.get("/reliability/contracts")
-    async def contract_report() -> JSONResponse:
+    @router.get("/reliability/contracts", response_class=JSONResponse, response_model=None)
+    async def contract_report() -> Any:
         """Design-by-contract violation report."""
         try:
             from core.resilience.contracts import get_contract_tracker
@@ -221,8 +221,8 @@ def create_diagnostics_router() -> Any:
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, KeyError, OSError) as exc:
             return JSONResponse(content={"error": str(exc)}, status_code=500)
 
-    @router.get("/reliability/drift")
-    async def drift_report() -> JSONResponse:
+    @router.get("/reliability/drift", response_class=JSONResponse, response_model=None)
+    async def drift_report() -> Any:
         """Empirical probability drift: static FMEA bands vs observed rates."""
         try:
             from core.resilience.fault_evidence import get_fault_evidence_store
@@ -242,8 +242,8 @@ def create_diagnostics_router() -> Any:
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, KeyError, OSError) as exc:
             return JSONResponse(content={"error": str(exc)}, status_code=500)
 
-    @router.get("/reliability/traces")
-    async def trace_report() -> JSONResponse:
+    @router.get("/reliability/traces", response_class=JSONResponse, response_model=None)
+    async def trace_report() -> Any:
         """Tracing statistics and recent spans."""
         try:
             from core.observability.tracing import get_tracer
@@ -261,8 +261,12 @@ def create_diagnostics_router() -> Any:
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, KeyError, OSError) as exc:
             return JSONResponse(content={"error": str(exc)}, status_code=500)
 
-    @router.get("/reliability/control-plane")
-    async def control_plane_report() -> JSONResponse:
+    @router.get(
+        "/reliability/control-plane",
+        response_class=JSONResponse,
+        response_model=None,
+    )
+    async def control_plane_report() -> Any:
         """Desired state, resource leases, conditions, circuits, and blockers."""
         try:
             from core.runtime.operator_control_plane import (

@@ -1480,13 +1480,14 @@ async def _evidence_persistence_lock(path: Path):
 
     async def await_worker(future: asyncio.Future[Any]) -> tuple[Any, bool]:
         cancellation_requested = False
-        while True:
+        while not future.done():
             try:
-                return await asyncio.shield(future), cancellation_requested
+                await asyncio.shield(future)
             except asyncio.CancelledError:
                 if future.cancelled():
                     raise
                 cancellation_requested = True
+        return future.result(), cancellation_requested
 
     try:
         _, cancelled_during_enter = await await_worker(

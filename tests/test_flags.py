@@ -47,9 +47,10 @@ class TestResolutionPrecedence:
         value, source = flag.value_with_source()
         assert value == 9 and source == "settings"
 
-    def test_aura_root_override_is_typed_and_read_through(self, monkeypatch):
-        monkeypatch.setenv("AURA_ROOT", " /tmp/aura-runtime ")
-        assert aura_root_override() == "/tmp/aura-runtime"
+    def test_aura_root_override_is_typed_and_read_through(self, monkeypatch, tmp_path):
+        expected = tmp_path / "aura-runtime"
+        monkeypatch.setenv("AURA_ROOT", f" {expected} ")
+        assert aura_root_override() == str(expected)
         assert get_flag("AURA_ROOT") is not None
 
 

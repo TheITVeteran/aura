@@ -885,6 +885,60 @@ async def test_mycelial_graph_route_uses_canonical_mapped_file_snapshot(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_mycelial_graph_route_singleflights_serialization_and_invalidates_on_structure(
+    monkeypatch,
+):
+    from interface.routes import subsystems as subsystem_routes
+
+    class DummyMycelium:
+        structure_revision = 1
+
+        def get_route_cache_token(self):
+            return id(self), self.structure_revision
+
+    mycelium = DummyMycelium()
+    build_calls = []
+
+    def build(owner):
+        build_calls.append(owner.structure_revision)
+        time.sleep(0.05)
+        return subsystem_routes.JSONResponse(
+            {
+                "nodes": [{"id": f"revision-{owner.structure_revision}"}],
+                "links": [],
+            }
+        )
+
+    monkeypatch.setattr(
+        subsystem_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: mycelium if name == "mycelium" else default
+        ),
+    )
+    monkeypatch.setattr(subsystem_routes, "_build_mycelial_graph_response", build)
+    subsystem_routes._MYCELIAL_GRAPH_RESPONSE_CACHE.clear()
+
+    responses = await asyncio.gather(
+        *(subsystem_routes.api_mycelial_graph() for _ in range(12))
+    )
+
+    assert build_calls == [1]
+    assert len({bytes(response.body) for response in responses}) == 1
+    cache_states = [response.headers["x-aura-snapshot-cache"] for response in responses]
+    assert cache_states.count("miss") == 1
+    assert cache_states.count("hit") == 11
+    assert len({id(response) for response in responses}) == 12
+
+    mycelium.structure_revision = 2
+    refreshed = await subsystem_routes.api_mycelial_graph()
+
+    assert build_calls == [1, 2]
+    assert refreshed.headers["x-aura-snapshot-cache"] == "miss"
+    assert json.loads(refreshed.body)["nodes"] == [{"id": "revision-2"}]
+
+
+@pytest.mark.asyncio
 async def test_mycelium_route_uses_one_runtime_snapshot(monkeypatch):
     from interface.routes import subsystems as subsystem_routes
 
@@ -1189,6 +1243,7 @@ async def test_maintenance_heartbeat_advances_topology_revision(network):
     with MycelialNetwork._lock:
         network.hyphae["heartbeat->revision"].last_pulse = time.monotonic() - 301.0
         before_revision = network._topology_revision
+        before_structure_revision = network._topology_structure_revision
 
     await network._pulse_once()
 
@@ -1196,6 +1251,17 @@ async def test_maintenance_heartbeat_advances_topology_revision(network):
     assert refreshed is not None
     assert refreshed.last_pulse > time.monotonic() - 5.0
     assert network._topology_revision == before_revision + 1
+    assert network._topology_structure_revision == before_structure_revision
+
+
+def test_route_cache_token_changes_only_for_structural_topology_mutation(network):
+    initial_token = network.get_route_cache_token()
+    network.establish_connection("cache", "structure", priority=1.0)
+    structural_token = network.get_route_cache_token()
+    network.pulse_hypha("cache", "structure", success=True)
+
+    assert structural_token != initial_token
+    assert network.get_route_cache_token() == structural_token
 
 
 @pytest.mark.asyncio
@@ -1429,7 +1495,7 @@ async def test_restore_and_sync_are_linearized_against_newer_memory_revision(
 
 
 @pytest.mark.asyncio
-async def test_vault_sync_aborts_when_topology_changes_before_commit(
+async def test_vault_sync_commits_coherent_snapshot_while_live_topology_advances(
     network, monkeypatch, tmp_path
 ):
     monkeypatch.setenv("AURA_ROOT", str(tmp_path))
@@ -1452,17 +1518,31 @@ async def test_vault_sync_aborts_when_topology_changes_before_commit(
 
     sync_task = asyncio.create_task(network.vault_sync())
     assert await asyncio.to_thread(entered.wait, 2.0)
+    captured_revision = network._topology_revision
     network.register_pathway("raced_memory", r"raced", "raced_skill")
     release.set()
 
-    assert await sync_task is False
+    assert await sync_task is True
     vault_path = tmp_path / "data" / "mycelium_vault.db"
     with sqlite3.connect(vault_path) as connection:
         row = connection.execute(
             "SELECT data FROM aegis_vault WHERE key = ?", ("topology_v3",)
         ).fetchone()
     assert row is not None
-    assert "raced_memory" not in json.loads(row[0])["pathways"]
+    committed = json.loads(row[0])
+    assert "raced_memory" not in committed["pathways"]
+    assert committed["topology_revision"] == captured_revision
+    assert network._last_vault_sync_revision == captured_revision
+    assert network._last_vault_sync_lag_revisions >= 1
+
+    assert await network.vault_sync() is True
+    with sqlite3.connect(vault_path) as connection:
+        row = connection.execute(
+            "SELECT data FROM aegis_vault WHERE key = ?", ("topology_v3",)
+        ).fetchone()
+    assert row is not None
+    assert "raced_memory" in json.loads(row[0])["pathways"]
+    assert network._last_vault_sync_lag_revisions == 0
 
 
 @pytest.mark.asyncio

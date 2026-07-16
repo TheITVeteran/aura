@@ -10,10 +10,12 @@ from __future__ import annotations
 import logging
 import re
 import sqlite3
+import threading
+import time
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from core.container import ServiceContainer
 from core.runtime.errors import record_degradation
@@ -89,6 +91,95 @@ _SUBSYSTEM_ROUTE_ERRORS = (
     TypeError,
     ValueError,
     sqlite3.Error,
+)
+_TOPOLOGY_RESPONSE_CACHE_TTL_S = 1.0
+
+
+def _topology_route_cache_token(mycelium: Any) -> tuple[Any, ...]:
+    token_reader = getattr(mycelium, "get_route_cache_token", None)
+    if callable(token_reader):
+        token = token_reader()
+        if isinstance(token, tuple):
+            return token
+        if isinstance(token, list):
+            return tuple(token)
+        return (token,)
+    return (id(mycelium),)
+
+
+class _SerializedResponseCache:
+    """Singleflight a bounded serialized snapshot without sharing Response objects."""
+
+    def __init__(self, *, ttl_s: float) -> None:
+        self._ttl_s = max(0.0, float(ttl_s))
+        self._lock = threading.Lock()
+        self._owner: Any = None
+        self._token: tuple[Any, ...] | None = None
+        self._expires_at = 0.0
+        self._body: bytes | None = None
+        self._status_code = 200
+        self._headers: dict[str, str] = {}
+
+    def clear(self) -> None:
+        with self._lock:
+            self._owner = None
+            self._token = None
+            self._expires_at = 0.0
+            self._body = None
+            self._status_code = 200
+            self._headers = {}
+
+    def render(self, owner: Any, builder: Any) -> Response:
+        with self._lock:
+            now = time.monotonic()
+            token = _topology_route_cache_token(owner)
+            if (
+                self._owner is owner
+                and self._token == token
+                and self._body is not None
+                and now < self._expires_at
+            ):
+                headers = dict(self._headers)
+                headers["X-Aura-Snapshot-Cache"] = "hit"
+                return Response(
+                    content=self._body,
+                    status_code=self._status_code,
+                    headers=headers,
+                )
+
+            response = builder(owner)
+            response.headers["X-Aura-Snapshot-Cache"] = "miss"
+            final_token = _topology_route_cache_token(owner)
+            cacheable = (
+                final_token == token
+                and response.status_code < 400
+                and response.background is None
+            )
+            if cacheable:
+                self._owner = owner
+                self._token = final_token
+                self._expires_at = time.monotonic() + self._ttl_s
+                self._body = bytes(response.body)
+                self._status_code = response.status_code
+                self._headers = {
+                    key: value
+                    for key, value in response.headers.items()
+                    if key.lower() != "x-aura-snapshot-cache"
+                }
+            else:
+                self._owner = None
+                self._token = None
+                self._expires_at = 0.0
+                self._body = None
+                self._headers = {}
+            return response
+
+
+_MYCELIUM_RESPONSE_CACHE = _SerializedResponseCache(
+    ttl_s=_TOPOLOGY_RESPONSE_CACHE_TTL_S,
+)
+_MYCELIAL_GRAPH_RESPONSE_CACHE = _SerializedResponseCache(
+    ttl_s=_TOPOLOGY_RESPONSE_CACHE_TTL_S,
 )
 
 
@@ -528,7 +619,11 @@ async def api_mycelium():
     mycelium = ServiceContainer.get("mycelium", default=None)
     if not mycelium:
         return JSONResponse({"error": "Mycelial Network offline"}, status_code=503)
-    return await run_io_bound(_build_mycelium_response, mycelium)
+    return await run_io_bound(
+        _MYCELIUM_RESPONSE_CACHE.render,
+        mycelium,
+        _build_mycelium_response,
+    )
 
 
 def _build_mycelium_response(mycelium: Any) -> JSONResponse:
@@ -541,7 +636,14 @@ def _build_mycelium_response(mycelium: Any) -> JSONResponse:
     else:
         topology = mycelium.get_network_topology()
         topology["infrastructure"] = mycelium.get_infrastructure_report()
-    return JSONResponse(topology)
+    headers = {}
+    topology_revision = topology.get("topology_revision")
+    structure_revision = topology.get("topology_structure_revision")
+    if isinstance(topology_revision, int):
+        headers["X-Aura-Topology-Revision"] = str(topology_revision)
+    if isinstance(structure_revision, int):
+        headers["X-Aura-Topology-Structure-Revision"] = str(structure_revision)
+    return JSONResponse(topology, headers=headers)
 
 
 @router.get("/mycelial/graph")
@@ -550,7 +652,11 @@ async def api_mycelial_graph():
     mycelium = ServiceContainer.get("mycelium", default=None)
     if not mycelium:
         return JSONResponse({"nodes": [], "links": [], "cohesion": 0, "pathway_count": 0})
-    return await run_io_bound(_build_mycelial_graph_response, mycelium)
+    return await run_io_bound(
+        _MYCELIAL_GRAPH_RESPONSE_CACHE.render,
+        mycelium,
+        _build_mycelial_graph_response,
+    )
 
 
 def _build_mycelial_graph_response(mycelium: Any) -> JSONResponse:
@@ -603,6 +709,10 @@ def _build_mycelial_graph_response(mycelium: Any) -> JSONResponse:
             )
             mapping_generation = int(graph_snapshot.get("mapping_generation") or 0)
             mapping_state = str(graph_snapshot.get("mapping_state") or "unknown")
+            topology_revision = int(graph_snapshot.get("topology_revision") or 0)
+            structure_revision = int(
+                graph_snapshot.get("topology_structure_revision") or 0
+            )
         else:
             topo = mycelium.get_network_topology()
             snapshotter = getattr(mycelium, "get_mapped_files_snapshot", None)
@@ -613,6 +723,8 @@ def _build_mycelial_graph_response(mycelium: Any) -> JSONResponse:
             critical_modules = list(topo.get("critical_modules") or [])
             mapping_generation = 0
             mapping_state = "legacy"
+            topology_revision = 0
+            structure_revision = 0
         nodes_map: dict[str, Any] = {}
         links: list[dict[str, Any]] = []
 
@@ -771,16 +883,24 @@ def _build_mycelial_graph_response(mycelium: Any) -> JSONResponse:
                                   "color": "rgba(0,229,255,0.35)", "width": 1.5,
                                   "particles": 1, "distance": 80})
 
-        return JSONResponse({
-            "nodes": list(nodes_map.values()),
-            "links": links,
-            "system_cohesion": topo.get("system_cohesion", 0) if nodes_map else 0.5,
-            "pathway_count": topo.get("pathway_count", 0),
-            "mapping_generation": mapping_generation,
-            "mapping_state": mapping_state,
-            "ram_usage": ram_usage,
-            "cpu_usage": cpu_usage
-        })
+        return JSONResponse(
+            {
+                "nodes": list(nodes_map.values()),
+                "links": links,
+                "system_cohesion": topo.get("system_cohesion", 0) if nodes_map else 0.5,
+                "pathway_count": topo.get("pathway_count", 0),
+                "mapping_generation": mapping_generation,
+                "mapping_state": mapping_state,
+                "topology_revision": topology_revision,
+                "topology_structure_revision": structure_revision,
+                "ram_usage": ram_usage,
+                "cpu_usage": cpu_usage,
+            },
+            headers={
+                "X-Aura-Topology-Revision": str(topology_revision),
+                "X-Aura-Topology-Structure-Revision": str(structure_revision),
+            },
+        )
     except _SUBSYSTEM_ROUTE_ERRORS as e:
         record_degradation('subsystems', e)
         logger.error("Mycelial graph generation failed: %s", e, exc_info=True)

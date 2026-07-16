@@ -22,6 +22,7 @@ from core.runtime.pipeline_blueprint import instantiate_legacy_runtime_phases
 from core.runtime.service_registry import get_runtime_service
 from core.state.aura_state import AuraState, CognitiveMode
 from core.utils.concurrency import RobustLock
+from core.utils.queues import USER_FACING_ORIGINS
 
 from .autopoiesis import AutopoieticGraph
 from .live_mind_contract import (
@@ -33,6 +34,8 @@ from .reasoning_strategies import ReasoningStrategies, StrategyType
 from .types import ThinkingMode, Thought
 
 logger = logging.getLogger(__name__)
+
+_USER_FACING_ORIGINS = USER_FACING_ORIGINS
 
 _THOUGHT_HISTORY_LIMIT = working_history_retention_policy(
     "AURA_COGNITIVE_THOUGHT_HISTORY_MAX"
@@ -3141,25 +3144,14 @@ class CognitiveEngine:
         purpose = str(kwargs.get("purpose", "") or "").strip().lower()
         origin = str(kwargs.get("origin", "") or "").strip().lower()
         user_facing_purposes = {"chat", "conversation", "expression", "reply", "user_response"}
-        user_facing_origins = {
-            "user",
-            "voice",
-            "admin",
-            "api",
-            "gui",
-            "ws",
-            "websocket",
-            "direct",
-            "external",
-        }
-
         if not origin:
             origin = "system"
             kwargs["origin"] = origin
 
         if "is_background" not in kwargs:
             kwargs["is_background"] = not (
-                purpose in user_facing_purposes or origin in user_facing_origins
+                purpose in user_facing_purposes
+                or is_foreground_objective_origin(origin)
             )
 
         if kwargs.get("is_background") and "prefer_tier" not in kwargs:
