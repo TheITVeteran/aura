@@ -35,7 +35,7 @@
     "control_ledger": {
       "capability_claim_eligible": false,
       "evidence_class": "synthetic_pipeline_control",
-      "head_entry_sha256": "5417a46bfefebbcbe02d79f3d1a77eb9793b00f5f0cd6d2c26c602fcd963fcfa",
+      "head_entry_sha256": "f602866b33c8c2470adce24c5b3e5a925b95209a57d10dfa6101a9c4ae4d28de",
       "retention": {
         "max_entries": 96,
         "pruned_count": 0,
@@ -70,6 +70,20 @@
           "overall_gap": null,
           "previous_entry_sha256": "160b1afb1fd0f53da42f0c63c9a57bba89ac96a4dcc3ba948ea35a5a422d3343",
           "schema": "aura.frontier_evidence_index_entry.v1"
+        },
+        {
+          "at": 1784169784.1422012,
+          "battery_version": "2026-07-15.v5",
+          "challenge_id": null,
+          "comparison_stratum_sha256": null,
+          "effective_n": 20,
+          "entry_sha256": "f602866b33c8c2470adce24c5b3e5a925b95209a57d10dfa6101a9c4ae4d28de",
+          "evidence_class": "synthetic_pipeline_control",
+          "evidence_sha256": "4129cc502ad447cfbb6d1c12ca57a89c73046b4df6b117f6d07b382f7066e748",
+          "overall_candidate_score": 1.0,
+          "overall_gap": null,
+          "previous_entry_sha256": "5417a46bfefebbcbe02d79f3d1a77eb9793b00f5f0cd6d2c26c602fcd963fcfa",
+          "schema": "aura.frontier_evidence_index_entry.v1"
         }
       ],
       "schema_version": 5,
@@ -78,22 +92,22 @@
         "direction": "claim_ineligible_evidence_class",
         "endpoint_delta": null,
         "measured_points": 0,
-        "points": 2
+        "points": 3
       }
     },
     "evidence_class": "synthetic_pipeline_control",
     "general_frontier_claim_eligible": false,
-    "generated_at": "2026-07-15 19:32:10 PDT",
-    "git_commit": "85691a6d12731d602608f2cfc6e291bb9b9a8534",
+    "generated_at": "2026-07-15 19:43:04 PDT",
+    "git_commit": "c3c624c01eef745ca31517a8ac789898f0b15801",
     "host": {
       "platform": "macOS-26.4.1-arm64-arm-64bit",
       "python": "3.12.13"
     },
     "latest_evidence": {
       "challenge_id": null,
-      "entry_sha256": "5417a46bfefebbcbe02d79f3d1a77eb9793b00f5f0cd6d2c26c602fcd963fcfa",
+      "entry_sha256": "f602866b33c8c2470adce24c5b3e5a925b95209a57d10dfa6101a9c4ae4d28de",
       "evidence_class": "synthetic_pipeline_control",
-      "evidence_sha256": "692f1567df631d7d08fc4855d2b8ba55c31680e74f0c47fc1fe3fa6301d9e593",
+      "evidence_sha256": "4129cc502ad447cfbb6d1c12ca57a89c73046b4df6b117f6d07b382f7066e748",
       "outputs_retained": true,
       "overall_candidate_score": 1.0,
       "overall_gap": null

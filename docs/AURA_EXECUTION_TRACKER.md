@@ -16,9 +16,10 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **Checkpoint 91 is the current
-  source candidate in the `main` worktree; Checkpoint 90 is pushed at `acfe7d68`, and
-  the exact latest-main signed-app campaign remains open after CP91**. Checkpoint 80 made cached
+- Current bounded implementation milestone: **Checkpoint 93 is the current
+  evidence candidate in the `main` worktree; Checkpoint 92 source is pushed at
+  `c3c624c0`, and the exact latest-main signed-app campaign remains open after
+  CP93**. Checkpoint 80 made cached
   readiness truthful and fast,
   removed synchronous Phi/Eternal maintenance from the foreground cycle, and
   reduced live CognitiveEngine samples from a 59.65-second retry cascade to
@@ -100,6 +101,14 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   replacement runtime advertises a different verified commit. Bounded source
   and adjacent tests are green; exact CP91 app graph stress and shell-revision
   transition proof remain open.
+  Checkpoint 92 fixes two defects exposed by the first exact v5 controls: the
+  asynchronous persistence adapter now acquires and releases its re-entrant
+  interprocess lock on one dedicated worker, and every later v5 append preserves
+  or cryptographically recovers the original v4 lineage instead of erasing it.
+  Checkpoint 93 regenerates the control from exact clean CP92 source. The command
+  exits zero, all 20 deterministic items are correct, the content-addressed
+  output and three-entry append chain validate, and the artifact remains
+  explicitly ineligible for either an Aura capability or general-frontier claim.
   A separate non-current `fable-improvement-pass` endurance attempt is retained
   as failed evidence: it stopped at 36/200 turns, served 31 timeout responses,
   had p50 latency 213.245 seconds, repeatedly reported a 503 conversation lane
@@ -109,7 +118,7 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   release, and causal-proof obligations remain open unless their rows
   explicitly close.
 - Overall completion percentage: **29% evidence-weighted planning estimate at
-  Checkpoint 91**. The exact
+  Checkpoint 93**. The exact
   Checkpoint 80 app earns bounded live credit for readiness, health, base boot,
   and one-attempt chat latency, but not output quality, sustained load, GUI
   frame SLO, portability, semantic review, release, or soak. The newly
@@ -121,8 +130,12 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   `PROGRESS-CONTROL-001` and `SCOPE-001` must replace the manual estimate with a
   generated denominator; new obligations increase it, regressions reopen it,
   and source-green/live-open work never receives full closure credit.
+  CP92-93 close bounded evidence-integrity work already present in the
+  denominator; they do not earn installed-app, real-model capability,
+  portability, release, or soak credit and therefore do not move the rounded
+  percentage.
 - Total checkpoint forecast: **approximately 252-343 total checkpoints for the
-  expanded program, with 91 checkpoints and approximately 161-252 remaining before
+  expanded program, with 93 checkpoints and approximately 159-250 remaining before
   final soak/release closure**. The prior `226-304` range expands by 8-12 explicit
   checkpoints for a falsifiable lateral-conceptual-leap program spanning
   mechanism construction, held-out evaluation, novelty and prior-art review,
@@ -227,7 +240,7 @@ Status rules:
 | `CODING-001` | `OPEN` | Reach human-level-plus unseen-repository coding and governed closed-loop self-repair from failing evidence through root cause, mutation, review, validation, rollback, commit, learning, and monitoring. | Pass F 8; Matrix 8 |
 | `IMMUNE-CODING-001` | `OPEN 2026-07-13` | Make Aura's repair, optimization, self-modification, adaptive-immunity, healing-swarm, and code-maintenance cells a frontier-quality software-engineering system rather than patch generators. Build one typed repair workspace and causal authority chain from live incident/reproducer through cross-module architecture and runtime diagnosis, hypothesis ranking, isolated multi-file implementation, migration/compatibility analysis, static/type/security/performance review, targeted plus adjacent/property/fuzz/mutation/race/fault tests, independent adversarial review, canary, compensation/rollback, signed receipt, outcome monitoring, and evidence-gated learning. Route each phase to the strongest policy-eligible coding/reasoning model through a versioned provider-neutral contract; preserve provenance and source context across handoffs; support Python, native/Swift, web UI, data/schema, async/concurrency, security, model/runtime, and operations faults. Autonomous reversible repairs use standing authority without per-action approval, while consequence budgets and exact rollback constrain unsafe self-mutation. Certify the quality claim only through sealed unseen-repository tasks, historical Aura fault replay, injected live failures, regression resistance, cost/latency budgets, long-horizon repair success, and matched comparison against the declared frontier baseline; reject shallow tests, benchmark leakage, reviewer collusion, fake success, and themed multi-agent federation. | `CODING-001`, `ADAPT-001`, `FAULT-001`, `ACTION-SPINE-001`, `AUTONOMY-AUTHORITY-001`, `PROOF-001`, `TEST-DEPTH-001`; frontier-quality immune coding request 2026-07-13 |
 | `ADAPTATION-STATE-AUTHORITY-001` | `OPEN 2026-07-14` | Put every adaptive/self-improvement state mutation behind a canonical typed persistence transaction. `heuristic_synthesizer` and sibling cells must receive an invocation-bound governed write scope from their owning curiosity/repair transaction, use the storage gateway atomically, validate schema/version/provenance, preserve cancellation, compensate partial updates, and emit one terminal receipt. A missing scope must fail before mutation without collapsing unrelated curiosity or singularity services; the failure graph must retain the originating `GovernanceViolationError`, classify it as authority/persistence rather than `unknown`, coalesce recursive wrappers into one incident, and expose the actual owner and recovery action. Prove successful write, missing/forged/expired scope, disk-full/corruption, cancellation, concurrent writers, restart recovery, and exact-app curiosity continuity without broad exemptions or direct-write bypasses. | `IMMUNE-CODING-001`, `ADAPT-001`, `STORAGE-GATEWAY-001`, `FAULT-001`, `ACTION-SPINE-001`; live `adaptation.heuristic_synthesizer.state` governance cascade through `curiosity_explorer` and `singularity_loops` at 12:43 on 2026-07-14 |
-| `FRONTIER-COGNITION-001` | `OPEN 2026-07-13` | Build one canonical frontier cognition and engineering substrate that every applicable Aura organ can invoke without creating a second mind: immune and repair cells, morphogenesis, organ design, self-modification, optimization, incident response, operations, capability construction, research, planning, and review. Provide versioned capability negotiation across the strongest policy-eligible local or remote models; repository/world semantic graphs; persistent long-context task state; grounded retrieval; multimodal perception; terminal/browser/desktop/tool use; hypothesis, planning, implementation, verification, critique, context compression, handoff, and resumable long-horizon execution; explicit uncertainty, cost, latency, privacy, authority, and fallback contracts; and identity/memory/substrate integration through the canonical workspace and action spine. A provider or model label is never proof. Claim parity with GPT 5.6, Fable 5, Mythos, Sol Ultra, or a successor only after contamination-resistant matched sealed evaluations of coding, reasoning, research, tool use, multimodal work, repair, regression resistance, and sustained completion at declared budgets; retain the strongest measured configuration and reject benchmark-only uplift or an ungoverned model bypass. | `CODING-001`, `IMMUNE-CODING-001`, `TOOLS-001`, `SUBSTRATE-001`, `INTELLIGENCE-001`, `PROOF-001`, `AUTONOMY-AUTHORITY-001`; system-wide Sol Ultra/frontier capability request clarified 2026-07-13 |
+| `FRONTIER-COGNITION-001` | `IN PROGRESS (V5 PIPELINE CONTROL GREEN; REAL MATCHED CAPABILITY EVIDENCE OPEN) 2026-07-15` | Build one canonical frontier cognition and engineering substrate that every applicable Aura organ can invoke without creating a second mind: immune and repair cells, morphogenesis, organ design, self-modification, optimization, incident response, operations, capability construction, research, planning, and review. Provide versioned capability negotiation across the strongest policy-eligible local or remote models; repository/world semantic graphs; persistent long-context task state; grounded retrieval; multimodal perception; terminal/browser/desktop/tool use; hypothesis, planning, implementation, verification, critique, context compression, handoff, and resumable long-horizon execution; explicit uncertainty, cost, latency, privacy, authority, and fallback contracts; and identity/memory/substrate integration through the canonical workspace and action spine. A provider or model label is never proof. Claim parity with GPT 5.6, Fable 5, Mythos, Sol Ultra, or a successor only after contamination-resistant matched sealed evaluations of coding, reasoning, research, tool use, multimodal work, repair, regression resistance, and sustained completion at declared budgets; retain the strongest measured configuration and reject benchmark-only uplift or an ungoverned model bypass. CP93 proves only that the deterministic v5 pipeline can execute and durably append 20/20 outputs from exact clean source; the artifact has no trusted matched reference, real Aura-model stability window, signed independent receipts, or capability-eligible ledger entry. | `CODING-001`, `IMMUNE-CODING-001`, `TOOLS-001`, `SUBSTRATE-001`, `INTELLIGENCE-001`, `PROOF-001`, `AUTONOMY-AUTHORITY-001`; system-wide Sol Ultra/frontier capability request clarified 2026-07-13; Checkpoints 91-93 |
 | `CONCEPTUAL-LEAP-001` | `OPEN 2026-07-14` | Build and certify superhuman lateral conceptual invention rather than equating retrieval or recombination with novelty. Create one canonical abductive search-and-construction loop that can identify representation failure, relax hidden assumptions, generate new primitives/definitions/analogies/objectives, derive internally coherent mathematical or reasoning architectures, search consequences, construct executable models or proofs, seek counterexamples, revise, and transfer the result to unrelated held-out domains. Maintain provenance over all retrieved influences and use timestamped prior-art search, semantic and structural similarity analysis, contamination controls, and expert adjudication to distinguish genuinely new useful structure from paraphrase, interpolation, random novelty, or benchmark leakage. Require preregistered sealed out-of-distribution paradigm tasks; matched frontier-model, retrieval-only, recombination-only, stochastic-search, and human-expert baselines; validity, compression, predictive/control utility, transfer, sample efficiency, cost, and time-to-insight measures; adversarial theorem/model checking; ablations of each mechanism; independent replication; and longitudinal live evidence that accepted inventions causally improve Aura without identity fragmentation or unsafe self-modification. A single surprising answer, self-reported creativity, or provider label earns no credit. | `FRONTIER-COGNITION-001`, `INTELLIGENCE-001`, `PROOF-001`, `ADAPT-001`, `MORPHOGENETIC-ENGINEERING-001`, `TEST-DEPTH-001`, `REPLICATION-001`; superhuman lateral-conceptual-leap requirement 2026-07-14 |
 | `MORPHOGENETIC-ENGINEERING-001` | `OPEN 2026-07-13` | Give lineage-bearing cells and organ-forming systems frontier-grade diagnosis and software engineering through `FRONTIER-COGNITION-001`, while preventing arbitrary live-code proliferation. Implement a typed organogenesis lifecycle from unmet causal need and lesion evidence through interface/specification, dependency and data-contract design, isolated construction, generated and adversarial tests, resource/authority/lifecycle registration, compatibility and migration proof, staged canary, canonical-workspace integration, causal contribution measurement, monitoring, repair, consolidation, pruning, extinction, and exact rollback. Organs must solve held-out needs better than the pre-formation baseline, remain inspectable and bounded across restart, and merge into canonical ownership rather than accumulate themed cells, duplicate services, or self-validating swarms. | `FRONTIER-COGNITION-001`, `IMMUNE-CODING-001`, `ADAPT-001`, `THRONG-001`, `ARCH-001`, `SUBSTRATE-001`, `ACTION-SPINE-001`, `RESOURCE-001`, `TEST-DEPTH-001`; frontier-quality cells and organ formation clarification 2026-07-13 |
 | `ADAPT-001` | `IN PROGRESS (CRSM CLOSURE INFRASTRUCTURE SOURCE GREEN; REAL TRAINING + QUALITY PROOF OPEN) 2026-07-13` | Correct and safely enable one-shot hidden-state adaptation; validate CRSM/CAA/LoRA/compounding with uncontaminated behavioral holdouts, calibration, rollback, and real capability-growth curves. Checkpoint 69 introduces the CRSM closer and boot owner; Checkpoint 70 corrects its one-hour timeout; Checkpoint 71 makes it default-on with an explicit kill switch, exact prepare/train/fuse commands, dynamic headroom, one allow-listed semantic-weight authority transaction, durable nested model-lane ownership, delegated provenance, cancellation cleanup, and monitor-observed exact dataset/model/count closure. If eligible data exceeds one bounded selection, closure now fails honestly; a durable content-addressed cursor/batch protocol must train every eligible capture exactly once across resumable batches before aggregate closure. The separately operated `python training/train_and_fuse.py --crsm-delta --tag crsm-closeout` result, produced artifacts, signed-app autonomous run, uncontaminated held-out uplift, rollback, CAA steering extraction, and longitudinal growth remain release-blocking and must not be inferred from source or exit code alone. | Pass F 8; Addendum 25; learning/substrate closure; Checkpoints 69-71 |
@@ -16731,14 +16744,19 @@ Frontier-evidence v5 correction:
   learning side effects while preserving ordinary runtime learning outside the
   measurement boundary. Procedural-memory persistence itself now uses the
   governed file-write owner.
-- The checked-in artifact remains a v4 20-item deterministic pipeline control
-  until v5 is regenerated from the exact clean CP91 commit. It has
-  no trusted reference, no admitted real Aura-model stability window, no
-  capability ledger entry, and `general_frontier_claim_eligible=false`. The
-  four classes cannot establish broad reasoning, knowledge, coding, agency,
-  writing, calibration, or general frontier parity. Six-domain held-out,
-  contamination-controlled, matched-budget, repeated, independently reviewed
-  model evidence remains open.
+- CP91 migrated the checked-in 20-item deterministic pipeline control to v5.
+  Its first exact run retained a `0.55` diagnostic and exposed a sealed-checkout
+  write dependency; the isolation correction produced 20/20 outputs but then
+  exposed a thread-affine lock-release defect after durable publication. CP92
+  closes that persistence defect and preserves the v4 migration lineage. CP93
+  reruns from exact clean CP92 source, exits zero, validates a three-entry
+  content-addressed chain, and scores `1.0`. This is still synthetic pipeline
+  control evidence: it has no trusted reference, admitted real Aura-model
+  stability window, independent signed receipts, capability ledger entry, or
+  general-frontier eligibility. Four deterministic classes cannot establish
+  broad reasoning, knowledge, coding, agency, writing, calibration, or general
+  frontier parity. Six-domain held-out, contamination-controlled,
+  matched-budget, repeated, independently reviewed model evidence remains open.
 
 Deterministic evidence on the integrated candidate:
 
@@ -16784,12 +16802,11 @@ Progress and immediate next work:
   the complete operational mirror/self-model and causal-IIT programs.
   `CHAT-DELIVERY-001` decomposes already-counted conversation, shell, and
   lifecycle work, so it does not silently change this range.
-- Run the final dirty-candidate closeout enumeration, commit and push the source
-  candidate directly to `main`, regenerate the v5 Frontier control artifact from
-  that exact clean source, commit its provenance, and verify both remote object
-  IDs. A dirty-source control artifact is retained only as diagnostic input and
-  cannot earn capability credit.
-- Rebuild and sign `/Applications/Aura.app` from the exact final CP91 commit.
+- CP92-93 complete the exact-clean v5 control regeneration and preserve both
+  failed diagnostics rather than promoting them to capability evidence. The
+  current control artifact and source checkpoint still require remote object-ID
+  verification after CP93 is pushed.
+- Rebuild and sign `/Applications/Aura.app` from the exact final CP93 commit.
   Stress graph/UI/health reads during mapping, pulse, reinforcement, vault sync,
   shutdown, and restart; prove no partial generation or size-change exception.
   Prove old-to-new verified shell transition, draft preservation, one-time
@@ -16798,3 +16815,72 @@ Progress and immediate next work:
 - Final multi-hour and 24-72 hour soaks remain deferred until every shorter
   deterministic, fault-injection, exact-app, GUI, security, portability,
   semantic, and release requirement is green.
+
+## Checkpoint 2026-07-15-92: Frontier Persistence Ownership and Lineage
+
+Checkpoint 92 source is pushed on `main` at `c3c624c0`. It advances
+`FRONTIER-COGNITION-001`, `FAULT-001`, `DATA-LIFECYCLE-001`, and
+`TEST-DEPTH-001`; it does not establish a real-model capability result.
+
+Implemented and preserved evidence:
+
+- The asynchronous Frontier publication context owns one dedicated worker for
+  both acquisition and release of the re-entrant interprocess lock. Cancellation
+  is deferred only long enough to drain acquisition or release, preventing a
+  leaked lock while preserving cancellation at the caller boundary.
+- A deterministic regression forces the former adapter's two calls onto
+  distinct worker objects and proves the corrected context enters and exits on
+  one worker. Compare-and-swap behavior remains covered.
+- V5 appends inherit a validated legacy-artifact SHA. Artifacts affected by the
+  prior erasure bug recover only from one no-follow, hash-matching preserved v4
+  file; malformed names, tampering, and ambiguous lineage fail closed.
+- The pre-fix run that reached 20/20 and score `1.0` before failing during lock
+  release is retained as diagnostic blob `692f1567...`, linked after the earlier
+  `0.55` diagnostic. It is not represented as a successfully completed command
+  or a capability result.
+
+Verification:
+
+- Frontier protocol and artifact tests pass `33/33`; focused ownership,
+  compare-and-swap, inheritance, recovery, and tamper tests pass `3/3`.
+- Compilation, configured Ruff, source hygiene, diff hygiene, and governance
+  lint pass. Governance remains at 1,840 recognized calls in 1,728 buckets with
+  1,692 explicit pre-existing migration-debt calls.
+
+## Checkpoint 2026-07-15-93: Exact Clean Frontier V5 Control Restoration
+
+Checkpoint 93 is the current evidence candidate in the `main` worktree. It
+advances `FRONTIER-COGNITION-001`, `PROOF-001`, `REPO-001`, and
+`TEST-DEPTH-001`. No live-app, real-model capability, frontier-parity,
+portability, release, or soak credit is awarded.
+
+Exact control result:
+
+- The immutable bootstrap started from clean CP92 commit
+  `c3c624c01eef745ca31517a8ac789898f0b15801`, reproduced its tree in a fresh
+  read-only checkout, and completed with process exit code zero.
+- All 20 deterministic items across math, reasoning, coding, and factual
+  classes were correct. The candidate score is `1.0`; there are no failed,
+  fallback, empty, or invalid items. All 20 remain deliberately marked
+  unverified because this synthetic control has no independent signed receipts.
+- Blob `4129cc502ad447cfbb6d1c12ca57a89c73046b4df6b117f6d07b382f7066e748`
+  matches the canonical payload digest. The control ledger has three linked
+  entries, the latest head is
+  `f602866b33c8c2470adce24c5b3e5a925b95209a57d10dfa6101a9c4ae4d28de`,
+  and the original v4 lineage remains
+  `b3c298bd32ddc72ee8e1376f046269042c6f821cf36aef3ced95c34451ff1266`.
+- The report truthfully remains `synthetic_pipeline_control`,
+  `capability_claim_eligible=false`, `general_frontier_claim_eligible=false`,
+  and `overall_gap=null`. It proves pipeline execution and evidence durability,
+  not Aura-model capability or frontier parity.
+
+Progress and next boundary:
+
+- Evidence-weighted completion remains `29%`. This is total checkpoint `93` of
+  the unchanged `252-343` forecast, leaving approximately `159-250` total
+  implementation, cleanup, integration, verification, live, portability,
+  release, and soak checkpoints.
+- Commit and push the exact artifact, verify remote source and evidence object
+  IDs, then build and sign the exact CP93 app for graph, shell-revision, chat-
+  delivery, health, Neural/terminal, GUI, and shutdown proof. Multi-hour and
+  24-72 hour soaks remain deferred until every shorter gate is green.
