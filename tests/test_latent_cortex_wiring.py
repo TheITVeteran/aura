@@ -384,10 +384,61 @@ async def test_client_latent_reason_timeout_cancels_recycles_and_releases(monkey
     )
 
     assert result["reason"] == "latent_timeout:TimeoutError"
-    assert reboot_reasons == ["latent_reason_deadline"]
+    assert reboot_reasons == ["latent_reason_deadline_unacknowledged"]
     assert client._active_generations == 0
     assert client._pending_generations == {}
     assert client._current_request_id == ""
+    assert client._request_lock.locked() is False
+
+
+@pytest.mark.asyncio
+async def test_client_latent_reason_timeout_keeps_clean_cooperatively_cancelled_worker(
+    monkeypatch,
+):
+    from core.brain.llm import mlx_client
+
+    client = MLXLocalClient(model_path="/models/test-32b")
+    client._process = _ResidentProcess()
+    client._init_done = True
+    client._req_q = queue.Queue()
+    reboot_reasons: list[str] = []
+    await_count = 0
+
+    monkeypatch.setattr(
+        mlx_client,
+        "get_memory_pressure_snapshot",
+        lambda: SimpleNamespace(refuse_heavy_local_generation=False),
+    )
+
+    async def timeout_then_ack(future, *, timeout_s=None):
+        nonlocal await_count
+        await_count += 1
+        if await_count == 1:
+            raise TimeoutError
+        return {
+            "status": "error",
+            "message": "soft_cancelled",
+            "receipt": {
+                "params_unchanged": True,
+                "fast_weights_applied": True,
+                "fast_weights_erased": True,
+            },
+        }
+
+    async def record_reboot(reason, mark_failed=False):
+        reboot_reasons.append(reason)
+
+    monkeypatch.setattr(mlx_client, "_await_shared_future", timeout_then_ack)
+    monkeypatch.setattr(client, "reboot_worker", record_reboot)
+
+    result = await client.latent_reason_async(
+        prompt="bounded episode", timeout_s=5.0, foreground_request=False
+    )
+
+    assert result["reason"] == "latent_timeout:cooperative_cancelled"
+    assert result["receipt"]["params_unchanged"] is True
+    assert reboot_reasons == []
+    assert client._active_generations == 0
     assert client._request_lock.locked() is False
 
 
@@ -718,6 +769,71 @@ def test_allocation_scales_with_stakes_and_uncertainty():
     assert low_cfg["latent_opt"] is True and low_cfg["fast_weights"] is True
     assert high_cfg["latent_opt_steps"] >= low_cfg["latent_opt_steps"]
     assert high_cfg["fast_weights_max_layers"] >= low_cfg["fast_weights_max_layers"]
+
+
+def test_resident_32b_interactive_allocation_keeps_full_stack_inside_live_budget():
+    svc = LatentCortexService()
+
+    cfg, budget = svc.allocate(
+        stakes=0.7,
+        uncertainty=0.8,
+        model_parameter_count=32_000_000_000,
+        foreground_request=True,
+        timeout_s=128.0,
+    )
+
+    assert cfg["n_slots"] == 4
+    assert cfg["n_branches"] == 2
+    assert cfg["max_steps"] == cfg["min_steps"] == 2
+    assert cfg["exchange_interval"] == 1
+    assert cfg["latent_opt"] is True and cfg["latent_opt_steps"] == 1
+    assert cfg["fast_weights"] is True
+    assert cfg["fast_weights_opt_steps"] == 1
+    assert cfg["fast_weights_max_layers"] == 2
+    assert cfg["decode_max_tokens"] == 288
+    assert budget["wall_clock_s"] <= 120.0
+    assert (
+        svc.get_status()["last_allocation"]["allocation_profile"]
+        == "resident_32b_interactive_full_stack_v1"
+    )
+
+
+def test_service_applies_resident_identity_profile_before_worker_ipc(monkeypatch):
+    svc = LatentCortexService()
+    captured: dict = {}
+
+    class Resident32Client:
+        def get_worker_identity_snapshot(self):
+            return {"worker_model_parameter_count": 32_500_000_000}
+
+        async def latent_reason_async(self, **kwargs):
+            captured.update(kwargs)
+            return {"ok": False, "reason": "profile_observed"}
+
+    import core.brain.llm.mlx_client as mlx_client_mod
+
+    monkeypatch.setattr(
+        mlx_client_mod,
+        "get_mlx_client",
+        lambda *args, **kwargs: Resident32Client(),
+    )
+
+    result = asyncio.run(
+        svc.deep_reason(
+            "hard live question",
+            stakes=0.7,
+            uncertainty=0.8,
+            config_overrides={"decode_max_tokens": 2048},
+            timeout_s=128.0,
+            foreground_request=True,
+        )
+    )
+
+    assert result == {"ok": False, "reason": "profile_observed"}
+    assert captured["config"]["decode_max_tokens"] == 288
+    assert captured["config"]["max_steps"] == 2
+    assert captured["config"]["exchange_interval"] == 1
+    assert captured["budget"]["wall_clock_s"] <= 120.0
 
 
 def test_allocation_damped_by_body_pressure(monkeypatch):

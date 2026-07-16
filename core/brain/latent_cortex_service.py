@@ -69,7 +69,15 @@ class LatentCortexService:
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
             return 0.0
 
-    def allocate(self, *, stakes: float, uncertainty: float) -> tuple[dict, dict]:
+    def allocate(
+        self,
+        *,
+        stakes: float,
+        uncertainty: float,
+        model_parameter_count: int = 0,
+        foreground_request: bool = False,
+        timeout_s: float | None = None,
+    ) -> tuple[dict, dict]:
         """(config, budget) for one episode: the Will's thought allocation.
 
         More stakes/uncertainty ⇒ deeper recurrence, wider branches, bigger
@@ -82,6 +90,14 @@ class LatentCortexService:
             pressure = self._unit_signal(self._body_pressure(), name="body_pressure")
         except ValueError:
             pressure = 0.0
+        if (
+            isinstance(model_parameter_count, bool)
+            or not isinstance(model_parameter_count, int)
+            or model_parameter_count < 0
+        ):
+            raise ValueError("model_parameter_count must be a non-negative integer")
+        if type(foreground_request) is not bool:
+            raise ValueError("foreground_request must be a boolean")
         headroom = 1.0 - 0.7 * pressure
 
         max_steps = max(2, min(16, round((4 + 10 * uncertainty) * headroom)))
@@ -112,11 +128,44 @@ class LatentCortexService:
             "max_layer_apps": int((2_000_000 + 8_000_000 * stakes) * headroom),
             "wall_clock_s": float(30.0 + 90.0 * stakes * headroom),
         }
+        allocation_profile = "general_full_stack_v1"
+        if foreground_request and model_parameter_count >= 20_000_000_000:
+            # Interactive resident-scale profile: every production mechanism
+            # remains causal, but the 32B lane receives a bounded amount of
+            # virtual width and optimizer work instead of a small-model lab
+            # schedule that cannot meet the desktop deadline.
+            allocation_profile = "resident_32b_interactive_full_stack_v1"
+            config.update(
+                {
+                    "n_slots": 4,
+                    "max_steps": 2,
+                    "min_steps": 2,
+                    "n_branches": 2 if stakes >= 0.3 else 1,
+                    "exchange_interval": 1,
+                    "latent_opt_steps": 1,
+                    "fast_weights_opt_steps": 1,
+                    "fast_weights_max_layers": 2,
+                    "decode_max_tokens": 288,
+                }
+            )
+            if timeout_s is not None:
+                try:
+                    owner_timeout_s = float(timeout_s)
+                except (TypeError, ValueError, OverflowError) as exc:
+                    raise ValueError("timeout_s must be finite and positive") from exc
+                if not math.isfinite(owner_timeout_s) or owner_timeout_s <= 0.0:
+                    raise ValueError("timeout_s must be finite and positive")
+                budget["wall_clock_s"] = min(
+                    max(105.0, budget["wall_clock_s"]),
+                    max(15.0, owner_timeout_s - 8.0),
+                )
         self._last_allocation = {
             "stakes": stakes,
             "uncertainty": uncertainty,
             "body_pressure": pressure,
             "headroom": headroom,
+            "allocation_profile": allocation_profile,
+            "model_parameter_count": model_parameter_count,
             "config": dict(config),
             "budget": dict(budget),
         }
@@ -230,6 +279,17 @@ class LatentCortexService:
             "n_branches"
         ) != config.get("n_branches"):
             errors.append("branch_cardinality_mismatch")
+        exchange_interval = config.get("exchange_interval")
+        if (
+            type(exchange_interval) is int
+            and exchange_interval > 0
+            and type(config.get("n_branches")) is int
+            and config["n_branches"] > 1
+            and positive_int(receipt, "steps_taken")
+            and receipt["steps_taken"] >= exchange_interval
+            and not positive_int(receipt, "exchanges")
+        ):
+            errors.append("branch_exchange_unproven")
         budget = receipt.get("budget")
         if not isinstance(budget, dict) or not positive_int(budget, "spent_layer_apps"):
             errors.append("missing_compute_receipt")
@@ -466,16 +526,10 @@ class LatentCortexService:
         if not math.isfinite(timeout_s) or timeout_s <= 0.0:
             return self._record_failure("invalid_timeout")
         try:
-            config, budget = self.allocate(stakes=stakes, uncertainty=uncertainty)
-        except (TypeError, ValueError, OverflowError):
+            stakes = self._unit_signal(stakes, name="stakes")
+            uncertainty = self._unit_signal(uncertainty, name="uncertainty")
+        except ValueError:
             return self._record_failure("invalid_cognitive_economy")
-        if config_overrides is not None:
-            config.update(dict(config_overrides))
-        if require_full_stack:
-            config["latent_opt"] = True
-            config["latent_opt_control"] = False
-            config["fast_weights"] = True
-
         try:
             from core.brain.llm.mlx_client import get_mlx_client
 
@@ -489,6 +543,51 @@ class LatentCortexService:
             return self._record_failure(f"client_unavailable:{type(exc).__name__}")
         if client is None:
             return self._record_failure("no_resident_model")
+        worker_identity: dict[str, Any] = {}
+        identity_getter = getattr(client, "get_worker_identity_snapshot", None)
+        if callable(identity_getter):
+            try:
+                candidate_identity = identity_getter()
+            except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+                candidate_identity = {}
+            if isinstance(candidate_identity, dict):
+                worker_identity = dict(candidate_identity)
+        try:
+            model_parameter_count = int(
+                worker_identity.get("worker_model_parameter_count") or 0
+            )
+        except (TypeError, ValueError, OverflowError):
+            model_parameter_count = 0
+        try:
+            config, budget = self.allocate(
+                stakes=stakes,
+                uncertainty=uncertainty,
+                model_parameter_count=max(0, model_parameter_count),
+                foreground_request=foreground_request,
+                timeout_s=timeout_s,
+            )
+        except (TypeError, ValueError, OverflowError):
+            return self._record_failure("invalid_cognitive_economy")
+        allocation_profile = str(
+            self._last_allocation.get("allocation_profile") or ""
+        )
+        if config_overrides is not None:
+            config.update(dict(config_overrides))
+        if allocation_profile == "resident_32b_interactive_full_stack_v1":
+            try:
+                requested_decode_tokens = int(config.get("decode_max_tokens") or 288)
+            except (TypeError, ValueError, OverflowError):
+                return self._record_failure("invalid_decode_token_override")
+            config["decode_max_tokens"] = max(
+                64,
+                min(288, requested_decode_tokens),
+            )
+        if require_full_stack:
+            config["latent_opt"] = True
+            config["latent_opt_control"] = False
+            config["fast_weights"] = True
+        self._last_allocation["config"] = dict(config)
+        self._last_allocation["budget"] = dict(budget)
 
         try:
             from core.brain.llm_health_router import (
@@ -616,7 +715,9 @@ class LatentCortexService:
                     "episode_id",
                     "steps_taken",
                     "halting_reason",
+                    "n_slots",
                     "n_branches",
+                    "exchanges",
                     "schedule_hash",
                     "checkpoint_fingerprint",
                     "checkpoint_fingerprint_method",
@@ -644,6 +745,11 @@ class LatentCortexService:
                     "fast_weight_optimized_steps",
                     "fast_weight_budget_exhausted",
                     "fast_weights_erased",
+                    "decode_requested_tokens",
+                    "decode_generated_tokens",
+                    "decode_termination",
+                    "last_stage",
+                    "stage_timings_s",
                     "honest_flags",
                 )
                 if k in self._last_receipt

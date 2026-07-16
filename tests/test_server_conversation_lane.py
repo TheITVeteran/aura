@@ -9369,6 +9369,72 @@ async def test_cognitive_owner_suppression_blocks_duplicate_route_retry(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_empty_cognitive_result_with_owner_suppression_does_not_retry(monkeypatch):
+    from core.providers import engine_connection_pool as pool_module
+    from interface.routes import chat as chat_routes
+
+    metadata = _bound_live_mind_controls_metadata()
+    metadata.update(
+        {
+            "generation_failure_class": "latent_timeout:cooperative_cancelled",
+            "model_retry_suppressed": True,
+            "latent_cortex_selected": True,
+            "latent_cortex_attempted": True,
+            "latent_cortex_succeeded": False,
+            "latent_cortex_failure_reason": "latent_timeout:cooperative_cancelled",
+        }
+    )
+
+    class _FakeCognitiveEngine:
+        def __init__(self):
+            self.calls = 0
+
+        async def think(self, *_args, **_kwargs):
+            self.calls += 1
+            if self.calls > 1:
+                raise AssertionError("empty single-owner result must not be retried")
+            return SimpleNamespace(content="", metadata=metadata)
+
+    class _Pool:
+        async def acquire_engine_connection(self, *_args, **_kwargs):
+            return None
+
+    engine = _FakeCognitiveEngine()
+    monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _Pool())
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: engine
+            if name == "cognitive_engine"
+            else default
+        ),
+    )
+
+    trace = {}
+    reply = await chat_routes._run_cognitive_engine_chat_turn(
+        "Compare the two architectures and choose one.",
+        visible_user_message="Compare the two architectures and choose one.",
+        origin="user",
+        timeout_s=60.0,
+        lane={
+            "conversation_ready": True,
+            "state": "ready",
+            "foreground_endpoint": "Cortex",
+        },
+        source="desktop_ui",
+        require_engine=True,
+        turn_trace=trace,
+    )
+
+    assert reply is None
+    assert engine.calls == 1
+    assert trace["model_retry_suppressed"] is True
+    assert trace["single_owner_generation_exhausted"] is True
+    assert trace["latent_cortex_attempted"] is True
+
+
+@pytest.mark.asyncio
 async def test_metadata_less_retry_cannot_inherit_rejected_generation_proof(monkeypatch):
     from core.providers import engine_connection_pool as pool_module
     from interface.routes import chat as chat_routes

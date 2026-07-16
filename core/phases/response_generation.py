@@ -1635,6 +1635,12 @@ class ResponseGenerationPhase(BasePhase):
                             {
                                 "latent_cortex_fallback_used": True,
                                 "latent_cortex_failure_reason": failure_reason,
+                                "latent_cortex_receipt": (
+                                    dict(latent_result.get("receipt") or {})
+                                    if isinstance(latent_result, dict)
+                                    and isinstance(latent_result.get("receipt"), dict)
+                                    else {}
+                                ),
                             }
                         )
                         logger.warning(
@@ -1904,6 +1910,17 @@ class ResponseGenerationPhase(BasePhase):
                     )
 
             except TimeoutError:
+                state.response_modifiers.update(latent_trace)
+                state.response_modifiers.update(
+                    {
+                        "model_retry_suppressed": True,
+                        "generation_failure_class": (
+                            str(latent_trace.get("latent_cortex_failure_reason") or "")
+                            or "response_generation_deadline_exhausted"
+                        )[:120],
+                        "response_path": "cognitive_engine_generation_timeout",
+                    }
+                )
                 logger.error(
                     "🛑 ResponseGeneration Phase TIMEOUT (%.0fs). Logic took too long.",
                     request_timeout + 4.0,

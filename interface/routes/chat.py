@@ -6553,6 +6553,12 @@ async def _run_cognitive_engine_chat_turn(
         metadata_response_path = str(metadata.get("response_path") or "").strip()
         if adopt_response_path and metadata_response_path:
             turn_trace["response_path"] = metadata_response_path
+        if bool(metadata.get("model_retry_suppressed", False)):
+            turn_trace["model_retry_suppressed"] = True
+            turn_trace["single_owner_generation_exhausted"] = True
+            turn_trace["generation_failure_class"] = str(
+                metadata.get("generation_failure_class") or ""
+            )[:120]
 
     failure_incident_recorded = False
 
@@ -7759,10 +7765,7 @@ async def _run_cognitive_engine_chat_turn(
                 thought_metadata.get("failure_reason") or "failure_envelope"
             )[:240],
         )
-        logger.warning(
-            "CognitiveEngine desktop chat produced a failure envelope; %s.",
-            no_reply_action,
-        )
+        logger.warning("CognitiveEngine desktop chat produced a failure envelope; %s.", no_reply_action)
         failure_reason = str(
             thought_metadata.get("failure_reason") or "failure_envelope"
         )[:240]
@@ -7773,26 +7776,16 @@ async def _run_cognitive_engine_chat_turn(
             thought_metadata.get("model_retry_suppressed", False)
         )
         quality_retry_exhausted = generation_failure_class == "surface_quality_rejected"
-        single_owner_exhausted = bool(
-            model_retry_suppressed or quality_retry_exhausted
-        )
+        single_owner_exhausted = model_retry_suppressed or quality_retry_exhausted
         if single_owner_exhausted:
             logger.warning(
                 "CognitiveEngine retained single ownership of the failed turn "
                 "(failure_class=%s); skipping a duplicate route-level model call.",
                 generation_failure_class or failure_reason,
             )
-            _mark_turn_trace(
-                model_retry_suppressed=True,
-                single_owner_generation_exhausted=True,
-                generation_failure_class=generation_failure_class,
-            )
             retry_reply = None
         else:
-            retry_reply = await _attempt_repair_retry(
-                text,
-                (failure_reason,),
-            )
+            retry_reply = await _attempt_repair_retry(text, (failure_reason,))
         if retry_reply:
             _mark_turn_trace(
                 cognitive_engine_reply_accepted=True,
@@ -7807,10 +7800,10 @@ async def _run_cognitive_engine_chat_turn(
         return None
     if not text or text == "…" or text.startswith("background_thought_suppressed"):
         if require_engine:
-            retry_reply = await _attempt_repair_retry(
-                text,
-                ("empty_cognitive_engine_reply",),
-            )
+            model_retry_suppressed = bool(thought_metadata.get("model_retry_suppressed", False))
+            retry_reply = None
+            if not model_retry_suppressed:
+                retry_reply = await _attempt_repair_retry(text, ("empty_cognitive_engine_reply",))
             if retry_reply:
                 if turn_trace is not None:
                     turn_trace.update(
@@ -7822,7 +7815,7 @@ async def _run_cognitive_engine_chat_turn(
                 return retry_reply
             _record_exhausted_cognitive_failure(
                 "empty_cognitive_engine_reply",
-                retry_attempted=True,
+                retry_attempted=not model_retry_suppressed,
             )
             logger.warning(
                 "CognitiveEngine desktop chat produced no usable text; required live "

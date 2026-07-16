@@ -29,7 +29,7 @@ import logging
 import os
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from core.brain.llm.latent_cortex.engine import LatentCortexEngine
 from core.brain.llm.latent_cortex.schedules import ScheduleLibrary
@@ -223,6 +223,8 @@ def handle_latent_reason(
     model_path: str,
     worker_identity: dict[str, Any] | None = None,
     surface_control_state: dict[str, Any] | None = None,
+    cancel_check: Callable[[], bool] | None = None,
+    progress: Callable[[dict], None] | None = None,
 ) -> dict[str, Any]:
     """Run one latent-reasoning episode on the resident model.
 
@@ -254,6 +256,8 @@ def handle_latent_reason(
         messages=messages if isinstance(messages, list) else None,
         budget=budget,
         domain=str(job.get("domain", "general")),
+        cancel_check=cancel_check,
+        progress=progress,
     )
     if worker_identity is None:
         from core.brain.llm.latent_cortex.runtime_identity import build_worker_identity

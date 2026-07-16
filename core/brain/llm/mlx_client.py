@@ -3760,6 +3760,29 @@ class MLXLocalClient:
     def expert_adapter_resident(self) -> str | None:
         return getattr(self, "_expert_adapter_path", None)
 
+    def get_worker_identity_snapshot(self) -> dict[str, Any]:
+        """Return immutable identity evidence for resident-scale policy decisions."""
+
+        identity = getattr(self, "_worker_identity", None)
+        return dict(identity) if isinstance(identity, dict) else {}
+
+    @staticmethod
+    def _clean_latent_cancel_ack(response: Any) -> bool:
+        if not isinstance(response, dict):
+            return False
+        reason = str(response.get("message") or response.get("reason") or "")
+        receipt = response.get("receipt")
+        if reason != "soft_cancelled" or not isinstance(receipt, dict):
+            return False
+        if receipt.get("params_unchanged") is not True:
+            return False
+        if (
+            receipt.get("fast_weights_applied") is True
+            and receipt.get("fast_weights_erased") is not True
+        ):
+            return False
+        return True
+
     async def latent_reason_async(
         self,
         prompt: str | None = None,
@@ -3956,7 +3979,23 @@ class MLXLocalClient:
                 res = await _await_shared_future(fut, timeout_s=bounded_timeout_s)
             except TimeoutError:
                 self.soft_cancel_active_generation("latent_reason_deadline")
-                deferred_reboot = "latent_reason_deadline"
+                try:
+                    cancel_ack = await _await_shared_future(
+                        fut,
+                        timeout_s=min(
+                            12.0,
+                            max(3.0, bounded_timeout_s * 0.10),
+                        ),
+                    )
+                except (TimeoutError, BrokenPipeError, OSError):
+                    cancel_ack = None
+                if self._clean_latent_cancel_ack(cancel_ack):
+                    return {
+                        **base,
+                        "receipt": dict(cancel_ack.get("receipt") or {}),
+                        "reason": "latent_timeout:cooperative_cancelled",
+                    }
+                deferred_reboot = "latent_reason_deadline_unacknowledged"
                 return {**base, "reason": "latent_timeout:TimeoutError"}
 
             if not isinstance(res, dict):

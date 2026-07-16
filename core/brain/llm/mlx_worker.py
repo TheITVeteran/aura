@@ -4596,8 +4596,24 @@ def _mlx_worker_loop(
                 # workspace recurrence + branches (+ optional latent opt /
                 # episode fast weights), all under checkpoint invariants.
                 # See docs/RECURSIVE_LATENT_CORTEX.md.
-                response = {"id": job.get("id"), "action": "latent_reason"}
+                request_id = str(job.get("id") or "")
+                job_seq = max(0, int(job.get("seq") or 0))
+                response = {"id": request_id, "action": "latent_reason"}
                 recycle_after_response = False
+                clear_stale_soft_cancel(cancel_seq, job_seq)
+                watchdog.start_job()
+
+                def _latent_progress(payload: dict[str, Any]) -> None:
+                    watchdog.activity()
+                    ipc_writer.put(
+                        {
+                            "id": request_id,
+                            "action": "latent_reason",
+                            "status": "progress",
+                            **dict(payload),
+                        }
+                    )
+
                 try:
                     from core.brain.llm.latent_cortex.worker_handler import (
                         handle_latent_reason,
@@ -4630,6 +4646,11 @@ def _mlx_worker_loop(
                                     model_path=model_path,
                                     worker_identity=worker_identity,
                                     surface_control_state=surface_control_state,
+                                    cancel_check=lambda: soft_cancel_requested(
+                                        cancel_seq,
+                                        job_seq,
+                                    ),
+                                    progress=_latent_progress,
                                 )
                         finally:
                             _restore_surface_generation_controls(
@@ -4664,6 +4685,15 @@ def _mlx_worker_loop(
                     response.update(
                         {"status": "error", "message": f"latent_reason_failed: {latent_exc}"}
                     )
+                finally:
+                    watchdog.stop_job()
+                    if soft_cancel_requested(cancel_seq, job_seq):
+                        try:
+                            cancel_seq.value = 0
+                        except (AttributeError, OSError, TypeError, ValueError):
+                            logger.debug(
+                                "Latent episode soft-cancel acknowledgement failed."
+                            )
                 ipc_writer.put(response)
                 if recycle_after_response:
                     logger.critical(

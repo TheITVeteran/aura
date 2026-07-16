@@ -934,6 +934,41 @@ async def test_cognitive_engine_desktop_quick_failure_does_not_enter_second_mode
     assert "won't fabricate" in thought.content
 
 
+def test_desktop_failure_thought_preserves_latent_attempt_receipt():
+    engine = CognitiveEngine()
+    receipt = {
+        "episode_id": "live-timeout",
+        "params_unchanged": True,
+        "last_stage": "decode",
+    }
+
+    thought = engine._desktop_cognitive_failure_thought(
+        ThinkingMode.DEEP,
+        "latent_timeout:cooperative_cancelled",
+        generation_metadata={
+            "generation_failure_class": "latent_timeout:cooperative_cancelled",
+            "latent_cortex_selected": True,
+            "latent_cortex_attempted": True,
+            "latent_cortex_succeeded": False,
+            "latent_cortex_fallback_used": True,
+            "latent_cortex_failure_reason": "latent_timeout:cooperative_cancelled",
+            "latent_cortex_receipt": receipt,
+            "live_mind_controls_bound": True,
+            "response_path": "cognitive_engine_generation_timeout",
+        },
+    )
+
+    assert thought.metadata["model_retry_suppressed"] is True
+    assert thought.metadata["latent_cortex_selected"] is True
+    assert thought.metadata["latent_cortex_attempted"] is True
+    assert thought.metadata["latent_cortex_succeeded"] is False
+    assert thought.metadata["latent_cortex_receipt"] == receipt
+    assert (
+        thought.metadata["generation_failure_class"]
+        == "latent_timeout:cooperative_cancelled"
+    )
+
+
 @pytest.mark.asyncio
 async def test_cognitive_engine_preserves_worker_quality_rejection_metadata(monkeypatch):
     engine = CognitiveEngine()

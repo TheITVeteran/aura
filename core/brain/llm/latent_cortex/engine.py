@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import time
 import uuid
 from collections.abc import Callable
 
@@ -54,6 +55,10 @@ _LATENT_PHASE_ERRORS = (
 
 class _FastWeightCleanupError(RuntimeError):
     """The resident model could not be proven clean after an episode."""
+
+
+class _LatentEpisodeCancelled(Exception):
+    """Cooperative cancellation observed at a checkpoint-safe boundary."""
 
 
 def _logits_digest(logits) -> str:
@@ -102,6 +107,62 @@ class LatentCortexEngine:
                 f"recurrent region empty: prelude_end={self.prelude_end} "
                 f"coda_start={self.coda_start} for {self.n_layers} layers"
             )
+
+    @staticmethod
+    def _cancel_requested(cancel_check: Callable[[], bool] | None) -> bool:
+        if cancel_check is None:
+            return False
+        try:
+            return bool(cancel_check())
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            return False
+
+    @staticmethod
+    def _emit_progress(
+        progress: Callable[[dict], None] | None,
+        payload: dict,
+    ) -> None:
+        if progress is None:
+            return
+        try:
+            progress(dict(payload))
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            logger.debug("Latent progress callback failed; episode continues.")
+
+    def _stage_checkpoint(
+        self,
+        *,
+        receipt: EpisodeReceipt,
+        budget: ComputeBudget,
+        stage: str,
+        stage_started: float,
+        episode_started: float,
+        progress: Callable[[dict], None] | None,
+        cancel_check: Callable[[], bool] | None,
+        **detail,
+    ) -> float:
+        now = time.monotonic()
+        duration_s = max(0.0, now - stage_started)
+        receipt.last_stage = str(stage)
+        receipt.stage_timings_s[str(stage)] = round(
+            float(receipt.stage_timings_s.get(str(stage), 0.0)) + duration_s,
+            6,
+        )
+        self._emit_progress(
+            progress,
+            {
+                "stage": str(stage),
+                "stage_duration_s": round(duration_s, 6),
+                "elapsed_s": round(max(0.0, now - episode_started), 6),
+                "spent_layer_apps": int(budget.spent_layer_apps),
+                **detail,
+            },
+        )
+        if self._cancel_requested(cancel_check):
+            receipt.flag("soft_cancelled")
+            receipt.halting_reason = receipt.halting_reason or f"cancelled_after_{stage}"
+            raise _LatentEpisodeCancelled(str(stage))
+        return now
 
     # ── Tokenization ────────────────────────────────────────────────────
     def _encode(self, prompt: str | None, messages: list | None, token_ids: list[int] | None):
@@ -190,6 +251,8 @@ class LatentCortexEngine:
         max_tokens: int | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
+        cancel_check: Callable[[], bool] | None = None,
+        progress: Callable[[dict], None] | None = None,
     ) -> tuple[list[int], str]:
         """Minimal sampler: first token from ``initial_logits`` (the logits of
         the last persisted position — prompt tail or final thought slot), then
@@ -209,6 +272,8 @@ class LatentCortexEngine:
         token = self._sample(initial_logits, temp, nucleus)
         termination = "token_limit"
         for index in range(max(1, int(limit))):
+            if self._cancel_requested(cancel_check):
+                raise _LatentEpisodeCancelled("decode")
             if token in eos:
                 termination = "eos"
                 break
@@ -229,6 +294,16 @@ class LatentCortexEngine:
                 h = layer(h, mask, cache[i])
             logits = self._logits(h)[0, -1]
             token = self._sample(logits, temp, nucleus)
+            if (index + 1) % 16 == 0:
+                self._emit_progress(
+                    progress,
+                    {
+                        "stage": "decode",
+                        "decode_generated_tokens": len(out),
+                        "decode_requested_tokens": int(limit),
+                        "spent_layer_apps": int(budget.spent_layer_apps),
+                    },
+                )
         return out, termination
 
     # ── Probe decoding for branch selection / verifier loops ────────────
@@ -310,8 +385,11 @@ class LatentCortexEngine:
         decode_max_tokens: int | None = None,
         ablate_slot: int | None = None,
         ablate_mode: str = "zero",
+        cancel_check: Callable[[], bool] | None = None,
+        progress: Callable[[dict], None] | None = None,
     ) -> LatentReasoningResult:
         receipt = EpisodeReceipt(episode_id=uuid.uuid4().hex[:12])
+        episode_started = time.monotonic()
         receipt.n_layers = self.n_layers
         receipt.prelude_end = self.prelude_end
         receipt.coda_start = self.coda_start
@@ -352,6 +430,9 @@ class LatentCortexEngine:
                     decode_max_tokens,
                     ablate_slot=ablate_slot,
                     ablate_mode=ablate_mode,
+                    cancel_check=cancel_check,
+                    progress=progress,
+                    episode_started=episode_started,
                 )
             except _FastWeightCleanupError as exc:
                 record_degradation(
@@ -361,6 +442,10 @@ class LatentCortexEngine:
                     severity="critical",
                 )
                 failure_reason = "fast_weight_cleanup_unproven"
+            except _LatentEpisodeCancelled:
+                receipt.flag("soft_cancelled")
+                receipt.halting_reason = receipt.halting_reason or "soft_cancelled"
+                failure_reason = "soft_cancelled"
             except _LATENT_PHASE_ERRORS as exc:
                 record_degradation(
                     "latent_cortex",
@@ -377,7 +462,12 @@ class LatentCortexEngine:
                         cache = self._fresh_cache()
                         _, tail_logits = self._prefill(tokens, cache, budget)
                         out_tokens, decode_termination = self._decode(
-                            cache, budget, tail_logits, max_tokens=decode_max_tokens
+                            cache,
+                            budget,
+                            tail_logits,
+                            max_tokens=decode_max_tokens,
+                            cancel_check=cancel_check,
+                            progress=progress,
                         )
                         receipt.decode_requested_tokens = (
                             decode_max_tokens
@@ -388,6 +478,12 @@ class LatentCortexEngine:
                         receipt.decode_termination = decode_termination
                         if decode_termination.startswith("budget_"):
                             receipt.flag(f"decode_{decode_termination}")
+                    except _LatentEpisodeCancelled:
+                        receipt.flag("soft_cancelled")
+                        receipt.halting_reason = (
+                            receipt.halting_reason or "soft_cancelled"
+                        )
+                        failure_reason = "soft_cancelled"
                     except _LATENT_PHASE_ERRORS as inner_exc:
                         record_degradation(
                             "latent_cortex",
@@ -410,6 +506,21 @@ class LatentCortexEngine:
                     action="refused output because the post-episode invariant probe failed",
                     severity="critical",
                 )
+        receipt.last_stage = "complete" if not failure_reason else receipt.last_stage
+        receipt.stage_timings_s["total"] = round(
+            max(0.0, time.monotonic() - episode_started),
+            6,
+        )
+        self._emit_progress(
+            progress,
+            {
+                "stage": "complete" if not failure_reason else "failed",
+                "last_stage": receipt.last_stage,
+                "elapsed_s": receipt.stage_timings_s["total"],
+                "reason": failure_reason,
+                "spent_layer_apps": int(budget.spent_layer_apps),
+            },
+        )
         receipt.budget = budget.to_receipt()
         if (
             not failure_reason
@@ -453,9 +564,20 @@ class LatentCortexEngine:
         *,
         ablate_slot: int | None = None,
         ablate_mode: str = "zero",
+        cancel_check: Callable[[], bool] | None = None,
+        progress: Callable[[dict], None] | None = None,
+        episode_started: float | None = None,
     ) -> tuple[list[int], EpisodeReceipt]:
         import mlx.core as mx
 
+        episode_started = (
+            float(episode_started)
+            if episode_started is not None
+            else time.monotonic()
+        )
+        stage_started = time.monotonic()
+        if self._cancel_requested(cancel_check):
+            raise _LatentEpisodeCancelled("admission")
         cache = self._fresh_cache()
         runner = WindowRunner(self.model.model, budget)
         decode_limit = (
@@ -493,6 +615,16 @@ class LatentCortexEngine:
             )
 
         embeddings, _tail_logits = self._prefill(tokens, cache, budget)
+        stage_started = self._stage_checkpoint(
+            receipt=receipt,
+            budget=budget,
+            stage="prefill",
+            stage_started=stage_started,
+            episode_started=episode_started,
+            progress=progress,
+            cancel_check=cancel_check,
+            input_tokens=len(tokens),
+        )
 
         schedule = self._resolve_schedule(domain)
         receipt.schedule_hash = schedule.schedule_hash
@@ -507,6 +639,17 @@ class LatentCortexEngine:
             runner,
             cache,
             self.prelude_end,
+        )
+        stage_started = self._stage_checkpoint(
+            receipt=receipt,
+            budget=budget,
+            stage="branch_seed",
+            stage_started=stage_started,
+            episode_started=episode_started,
+            progress=progress,
+            cancel_check=cancel_check,
+            branches=len(ensemble.branches),
+            slots=self.config.workspace.n_slots,
         )
 
         # ── Recurrent computation under the schedule program ────────────
@@ -527,6 +670,20 @@ class LatentCortexEngine:
                 if not admitted:
                     recurrence_budget_limited = True
                     break
+                stage_started = self._stage_checkpoint(
+                    receipt=receipt,
+                    budget=budget,
+                    stage="recurrence",
+                    stage_started=stage_started,
+                    episode_started=episode_started,
+                    progress=progress,
+                    cancel_check=cancel_check,
+                    max_branch_steps=max(
+                        (branch.steps for branch in ensemble.branches),
+                        default=0,
+                    ),
+                    exchanges=ensemble.exchanges,
+                )
             if recurrence_budget_limited:
                 break
         for branch in ensemble.branches:
@@ -572,6 +729,18 @@ class LatentCortexEngine:
         receipt.best_step = winner.halting.best_step
         receipt.halting_reason = winner.halt_reason
         receipt.reverted_to_best = winner.halt_reason.endswith("_reverted")
+        stage_started = self._stage_checkpoint(
+            receipt=receipt,
+            budget=budget,
+            stage="branch_select",
+            stage_started=stage_started,
+            episode_started=episode_started,
+            progress=progress,
+            cancel_check=cancel_check,
+            selected_branch=winner.index,
+            steps_taken=winner.steps,
+            exchanges=ensemble.exchanges,
+        )
 
         # ── Latent optimization on the winner ────────────────────────────
         if self.config.latent_opt.enabled:
@@ -625,6 +794,17 @@ class LatentCortexEngine:
                 receipt.flag("latent_opt_budget_exhausted")
             if not receipt.latent_opt_applied:
                 receipt.flag("latent_opt_no_accepted_step")
+            stage_started = self._stage_checkpoint(
+                receipt=receipt,
+                budget=budget,
+                stage="latent_optimization",
+                stage_started=stage_started,
+                episode_started=episode_started,
+                progress=progress,
+                cancel_check=cancel_check,
+                attempts=optimizer.trace.attempts,
+                accepted=optimizer.trace.accepted,
+            )
 
         # ── Episode fast weights (attach → optimize → decode under ΔW) ──
         fast_weights: EpisodicFastWeights | None = None
@@ -634,6 +814,15 @@ class LatentCortexEngine:
             if fast_weight_baseline_cost + safety_reserve > budget.remaining_layer_apps:
                 raise RuntimeError("compute budget cannot admit fast-weight baseline probe")
             fw_baseline = self._fw_probe(budget)
+            stage_started = self._stage_checkpoint(
+                receipt=receipt,
+                budget=budget,
+                stage="fast_weight_baseline",
+                stage_started=stage_started,
+                episode_started=episode_started,
+                progress=progress,
+                cancel_check=cancel_check,
+            )
             seed_stat = float(mx.mean(per_position_rms(winner.z)))
             wrapped = fast_weights.attach(
                 self.model.model,
@@ -646,6 +835,16 @@ class LatentCortexEngine:
 
         try:
             if fast_weights is not None:
+                stage_started = self._stage_checkpoint(
+                    receipt=receipt,
+                    budget=budget,
+                    stage="fast_weight_attach",
+                    stage_started=stage_started,
+                    episode_started=episode_started,
+                    progress=progress,
+                    cancel_check=cancel_check,
+                    wrapped_layers=receipt.fast_weights_layers,
+                )
                 loss_fn = build_proxy_loss(
                     self.model, winner.anchor, tokens, self.config.latent_opt
                 )
@@ -663,6 +862,17 @@ class LatentCortexEngine:
                     ),
                     reserve_layer_apps=safety_reserve,
                 )
+                stage_started = self._stage_checkpoint(
+                    receipt=receipt,
+                    budget=budget,
+                    stage="fast_weight_optimization",
+                    stage_started=stage_started,
+                    episode_started=episode_started,
+                    progress=progress,
+                    cancel_check=cancel_check,
+                    attempts=fast_weights.lifecycle.optimization_attempts,
+                    accepted=fast_weights.lifecycle.optimized_steps,
+                )
 
             # Experiment-3 instrumentation: destroy one refined thought slot
             # just before persistence, so its causal contribution and
@@ -675,14 +885,39 @@ class LatentCortexEngine:
             # ── Commit the winner + decode the answer ────────────────────
             slot_logits = self._persist_branch(winner, cache, runner)
             receipt.first_logits_digest = _logits_digest(slot_logits)
+            stage_started = self._stage_checkpoint(
+                receipt=receipt,
+                budget=budget,
+                stage="persist",
+                stage_started=stage_started,
+                episode_started=episode_started,
+                progress=progress,
+                cancel_check=cancel_check,
+            )
             out_tokens, decode_termination = self._decode(
-                cache, budget, slot_logits, max_tokens=decode_max_tokens
+                cache,
+                budget,
+                slot_logits,
+                max_tokens=decode_max_tokens,
+                cancel_check=cancel_check,
+                progress=progress,
             )
             receipt.decode_requested_tokens = decode_limit
             receipt.decode_generated_tokens = len(out_tokens)
             receipt.decode_termination = decode_termination
             if decode_termination.startswith("budget_"):
                 receipt.flag(f"decode_{decode_termination}")
+            stage_started = self._stage_checkpoint(
+                receipt=receipt,
+                budget=budget,
+                stage="decode",
+                stage_started=stage_started,
+                episode_started=episode_started,
+                progress=progress,
+                cancel_check=cancel_check,
+                generated_tokens=len(out_tokens),
+                termination=decode_termination,
+            )
         finally:
             if fast_weights is not None:
                 self._finalize_fast_weights(fast_weights, fw_baseline, receipt, budget)

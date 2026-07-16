@@ -1910,6 +1910,19 @@ class CognitiveEngine:
                 logger.error("Failed last-resort structured recovery: %s", rec_err)
             return self._empty_thought(mode, "strict_answer_recovery_failed")
 
+        if bool(
+            context.get("desktop_cognitive_engine_required", False)
+            or context.get("cognitive_engine_required", False)
+        ):
+            return self._desktop_cognitive_failure_thought(
+                mode,
+                str(
+                    state.response_modifiers.get("generation_failure_class")
+                    or "user_cycle_no_response"
+                ),
+                generation_metadata=dict(state.response_modifiers),
+            )
+
         logger.warning(
             "🛡️ CognitiveEngine: user-facing cycle for origin=%s produced no answer-quality response.",
             origin,
@@ -2008,13 +2021,40 @@ class CognitiveEngine:
             "model_retry_suppressed": True,
         }
         surface_receipt = generation_metadata.get("surface_control_receipt")
+        if not isinstance(surface_receipt, dict):
+            surface_receipt = generation_metadata.get(
+                "live_mind_surface_control_receipt"
+            )
         if isinstance(surface_receipt, dict) and surface_receipt:
             metadata["live_mind_surface_control_receipt"] = dict(surface_receipt)
         generation_failure_class = str(
-            generation_metadata.get("error") or reason or ""
+            generation_metadata.get("generation_failure_class")
+            or generation_metadata.get("error")
+            or reason
+            or ""
         ).strip()
         if generation_failure_class:
             metadata["generation_failure_class"] = generation_failure_class[:120]
+        for key in (
+            "latent_cortex_selected",
+            "latent_cortex_selection_reason",
+            "latent_cortex_depth_worthy",
+            "latent_cortex_attempted",
+            "latent_cortex_succeeded",
+            "latent_cortex_fallback_used",
+            "latent_cortex_failure_reason",
+            "latent_cortex_identity_bound",
+            "latent_cortex_final_text_transformed",
+            "latent_cortex_receipt",
+            "live_mind_controls_bound",
+            "live_mind_generation_controls",
+            "live_mind_snapshot_ready",
+            "live_mind_required_subsystems_ok",
+            "response_path",
+        ):
+            if key in generation_metadata:
+                value = generation_metadata[key]
+                metadata[key] = dict(value) if isinstance(value, dict) else value
         thought = Thought(
             id=str(uuid.uuid4()),
             content=(

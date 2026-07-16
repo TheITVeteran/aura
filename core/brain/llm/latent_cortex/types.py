@@ -402,6 +402,11 @@ class EpisodeReceipt:
     decode_termination: str = "not_started"
     decode_temperature: float = 0.0
     decode_top_p: float = 1.0
+    # Runtime lifecycle evidence. Timings are stage-local wall-clock seconds;
+    # progress messages use the same stage names so a parent can distinguish a
+    # slow live episode from a wedged worker without peeking into model state.
+    last_stage: str = "not_started"
+    stage_timings_s: dict[str, float] = field(default_factory=dict)
     # Economy.
     budget: dict[str, Any] = field(default_factory=dict)
     # Honesty flags: anything a consumer must know before trusting the output
@@ -466,6 +471,11 @@ class EpisodeReceipt:
             "decode_termination": self.decode_termination,
             "decode_temperature": self.decode_temperature,
             "decode_top_p": self.decode_top_p,
+            "last_stage": self.last_stage,
+            "stage_timings_s": {
+                str(name): round(float(seconds), 6)
+                for name, seconds in self.stage_timings_s.items()
+            },
             "budget": dict(self.budget),
             "honest_flags": list(self.honest_flags),
         }

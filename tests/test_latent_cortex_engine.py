@@ -85,7 +85,41 @@ def test_full_episode_produces_tokens_and_truthful_receipt(tiny_model):
     assert r.decode_requested_tokens == 8
     assert r.decode_generated_tokens == len(result.tokens)
     assert r.decode_termination in {"eos", "token_limit"}
+    assert r.last_stage == "complete"
+    assert r.stage_timings_s["prefill"] >= 0.0
+    assert r.stage_timings_s["recurrence"] >= 0.0
+    assert r.stage_timings_s["decode"] >= 0.0
+    assert r.stage_timings_s["total"] >= 0.0
     assert not r.honest_flags, f"clean episode must carry no flags: {r.honest_flags}"
+
+
+def test_episode_cooperatively_cancels_at_safe_stage_and_preserves_checkpoint(
+    tiny_model,
+):
+    engine = LatentCortexEngine(tiny_model, config=_config())
+    cancel = False
+    stages: list[str] = []
+
+    def progress(payload):
+        nonlocal cancel
+        stage = str(payload.get("stage") or "")
+        stages.append(stage)
+        if stage == "prefill":
+            cancel = True
+
+    result = engine.reason(
+        token_ids=PROMPT_TOKENS,
+        progress=progress,
+        cancel_check=lambda: cancel,
+    )
+
+    assert result.ok is False
+    assert result.reason == "soft_cancelled"
+    assert result.receipt.params_unchanged is True
+    assert result.receipt.last_stage == "prefill"
+    assert "soft_cancelled" in result.receipt.honest_flags
+    assert stages[0] == "prefill"
+    assert stages[-1] == "failed"
 
 
 def test_episodes_are_deterministic(tiny_model):

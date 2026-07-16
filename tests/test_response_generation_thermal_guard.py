@@ -144,6 +144,12 @@ class _LatentService:
         return self.result
 
 
+class _TimedOutLatentService(_LatentService):
+    async def deep_reason(self, **kwargs):
+        self.calls.append(kwargs)
+        raise TimeoutError("resident latent deadline")
+
+
 def _live_latent_receipt():
     return {
         "episode_id": "episode-live-32b",
@@ -290,6 +296,39 @@ async def test_selected_latent_refusal_falls_back_to_exactly_one_generation(monk
     assert result.response_modifiers["latent_cortex_succeeded"] is False
     assert result.response_modifiers["latent_cortex_fallback_used"] is True
     assert result.response_modifiers["latent_cortex_failure_reason"] == "worker_not_ready"
+
+
+@pytest.mark.asyncio
+async def test_latent_timeout_preserves_attempt_and_suppresses_second_model_owner(
+    monkeypatch,
+):
+    objective = "Compare both architectures, then choose and verify the safer one."
+    state = AuraState()
+    state.cognition.current_objective = objective
+    state.cognition.current_origin = "desktop_ui"
+    state.cognition.current_mode = CognitiveMode.DELIBERATE
+    router = _Router()
+    latent = _TimedOutLatentService({})
+    phase = ResponseGenerationPhase(
+        _Container({"llm_router": router, "latent_cortex": latent})
+    )
+    monkeypatch.setattr(
+        "core.phases.response_generation.ContextAssembler.build_messages",
+        lambda *_args, **_kwargs: [{"role": "user", "content": objective}],
+    )
+
+    result = await phase.execute(state, context=_latent_context(objective))
+
+    assert len(latent.calls) == 1
+    assert router.calls == []
+    assert result.response_modifiers["latent_cortex_selected"] is True
+    assert result.response_modifiers["latent_cortex_attempted"] is True
+    assert result.response_modifiers["latent_cortex_succeeded"] is False
+    assert result.response_modifiers["model_retry_suppressed"] is True
+    assert (
+        result.response_modifiers["generation_failure_class"]
+        == "response_generation_deadline_exhausted"
+    )
 
 
 @pytest.mark.asyncio

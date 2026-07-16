@@ -16,9 +16,9 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **Checkpoint 98 is the current
-  source candidate in the `main` worktree; Checkpoint 97 is pushed at
-  `70cbb4b1`, and exact rebuilt-app proof remains open after CP98**. Checkpoint 80
+- Current bounded implementation milestone: **Checkpoint 99 is the current
+  source candidate in the `main` worktree; Checkpoint 98 is pushed at
+  `2c3fd39d`, and exact rebuilt-app proof remains open after CP99**. Checkpoint 80
   made cached
   readiness truthful and fast,
   removed synchronous Phi/Eternal maintenance from the foreground cycle, and
@@ -166,8 +166,20 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   Checkpoint 98 closes those source owners with one deadline-bearing generation
   lease shared by ordinary and latent work, CognitiveEngine deadline propagation,
   single-owner retry suppression, stronger compound-prompt analysis, and honest
-  bounded-recovery authorship. Exact CP98 app proof is still open, so no live or
-  intelligence-gain credit is awarded.
+  bounded-recovery authorship. The exact CP98 app proved that ownership repair
+  but still failed the resident-32B result: one selected latent episode held the
+  lane without a competing health/gate owner, then exceeded 120 seconds,
+  cooperatively requested cancellation, recycled the resident worker, and let
+  an internal empty-result correction start a second CognitiveEngine cycle.
+  The terminal receipt consequently erased the first latent attempt and returned
+  a truthful failed-closed answer after 133.26 seconds. Checkpoint 99 replaces
+  the small-model lab allocation with an exact-parameter-count resident-32B
+  interactive full-stack profile; adds per-stage progress/timing receipts and
+  worker watchdog activity; cooperatively cancels at checkpoint-safe boundaries
+  while proving fast-weight erase and parameter identity before preserving the
+  warm worker; and carries failed latent evidence through CognitiveEngine and
+  the desktop route without a second owner. Exact CP99 app proof is still open,
+  so no live or intelligence-gain credit is awarded.
   A separate non-current `fable-improvement-pass` endurance attempt is retained
   as failed evidence: it stopped at 36/200 turns, served 31 timeout responses,
   had p50 latency 213.245 seconds, repeatedly reported a 503 conversation lane
@@ -177,7 +189,7 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   release, and causal-proof obligations remain open unless their rows
   explicitly close.
 - Overall completion percentage: **27% evidence-weighted planning estimate at
-  Checkpoint 98**. The exact
+  Checkpoint 99**. The exact
   Checkpoint 80 app earns bounded live credit for readiness, health, base boot,
   and one-attempt chat latency, but not output quality, sustained load, GUI
   frame SLO, portability, semantic review, release, or soak. The newly
@@ -189,16 +201,16 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   `PROGRESS-CONTROL-001` and `SCOPE-001` must replace the manual estimate with a
   generated denominator; new obligations increase it, regressions reopen it,
   and source-green/live-open work never receives full closure credit.
-  CP92-98 close bounded evidence-integrity, runtime-convergence, and initial
+  CP92-99 close bounded evidence-integrity, runtime-convergence, and initial
   latent ownership/lifecycle work already present in the denominator. The full
   Anima Rationis program adds causal ingress, consolidation, anti-interference,
   equal-compute science, live 32B, and independent certification obligations;
-  source mechanics do not receive capability credit. CP98 has no
+  source mechanics do not receive capability credit. CP99 has no
   exact rebuilt-app, portability,
   release, or soak credit yet and therefore does not move the rounded
   percentage.
 - Total checkpoint forecast: **approximately 292-399 total checkpoints for the
-  expanded program, with 98 checkpoints and approximately 194-301 remaining before
+  expanded program, with 99 checkpoints and approximately 193-300 remaining before
   final soak/release closure**. The Recursive Latent Cortex / Anima Rationis
   requirement adds **40-56 total checkpoints** for independent foundation
   review; seven-mechanism hardening; exact compute and lifecycle accounting;
@@ -17534,3 +17546,99 @@ Bounded verification and next boundary:
   gate kill/event-loop/health regression, and an independently valid public
   receipt. A failure reopens the real owner again. Multi-hour and 24-72 hour
   soaks remain deferred until all shorter gates are green.
+
+## Checkpoint 2026-07-16-99: Resident-Scale Latent Lifecycle and Proof Continuity
+
+Checkpoint 99 is the current source candidate in the `main` worktree. It
+advances `RLC-COMPUTE-001`, `RLC-LIFECYCLE-001`, `RLC-RUNTIME-001`,
+`RLC-LIVE32B-001`, `CHAT-001`, `EFFECT-001`, `FAULT-001`,
+`OBSERVABILITY-001`, and `TEST-DEPTH-001`. It repairs the exact resident-32B
+owners exposed by the second live attempt. It does not relabel that failure or
+award capability, frontier, release, portability, or soak credit before a clean
+CP99 app reproduces the complete public receipt.
+
+Failed CP98 live evidence retained:
+
+- The exact signed CP98 app at `2c3fd39d` reached ready with the fused Aura 32B
+  worker, recurrent depth active, verified source/workspace/signature identity,
+  all required probes green, and 11/11 heartbeats. The same compound request
+  selected and entered one latent episode under the shared generation lease;
+  health pulses stayed `PASS/WORKING` and no competing waiter reclaimed it.
+- The live policy nevertheless allocated a small-model laboratory workload to
+  the 32B interactive lane: up to approximately 12 recurrence steps, multiple
+  optimizer steps and wrapped layers, and the uncapped conversation decode.
+  The episode exceeded its 120-second budget, soft-cancelled, recycled the
+  resident worker, and returned no answer. The empty-result path then started a
+  second internal CognitiveEngine correction against the restarting worker.
+  HTTP completed after 133.26 seconds with
+  `desktop_cognitive_engine_unavailable`, `full_mind_path=false`, and a truthful
+  failed-closed response, but the terminal proof had overwritten the original
+  selected/attempted latent metadata. This is a failed live proof.
+
+Resident-scale execution and lifecycle implementation:
+
+- The service reads the resident worker's exact parameter-count identity before
+  allocation. A foreground model at or above 20 billion parameters receives
+  `resident_32b_interactive_full_stack_v1`: four latent slots, two tied-weight
+  branches, two recurrent steps, exchange every step, one accepted-gradient
+  latent-optimization attempt, one episode-fast-weight optimization attempt
+  across at most two recurrent layers, and at most 288 answer tokens. This is a
+  bounded version of the complete mechanism stack, not a vanilla or mechanism-
+  disabled shortcut. Generic/lab allocation remains stakes-, uncertainty-, and
+  body-pressure-scaled.
+- The 32B episode wall fits inside the 120-second latent owner and leaves eight
+  seconds for worker response/cleanup plus the CognitiveEngine's separate outer
+  reserve. Foreground config overrides cannot silently restore an unbounded
+  decode. A live success receipt with two branches must prove actual consensus
+  exchange in addition to recurrence, gradient optimization, fast-weight
+  application/erase, checkpoint invariance, complete decode, and exact runtime
+  identity.
+- The engine now emits stage-local timing and compute receipts for prefill,
+  branch seed, every recurrence step, branch selection, latent optimization,
+  fast-weight baseline/attach/optimization, thought persistence, decode, and
+  total runtime. The MLX worker publishes those as progress IPC messages and
+  refreshes its job watchdog, so parent health can distinguish forward progress
+  from a wedged subprocess.
+- Soft cancellation is checked at checkpoint-safe stage boundaries and every
+  decode token. Cancellation after temporary synapse attachment still runs the
+  fast-weight cleanup proof and the post-episode checkpoint invariant. The
+  client waits for that signed terminal acknowledgement; a clean
+  `params_unchanged=true` receipt with proven fast-weight erase preserves the
+  resident worker, while missing, malformed, or unclean acknowledgement still
+  forces a recycle.
+- ResponseGeneration persists latent selection, attempt, failure, partial
+  receipt, owner-suppression, and path metadata on deadline exits. CognitiveEngine
+  returns a typed desktop failure thought carrying that evidence, and both
+  failure-envelope and empty-result route branches enforce the same single-owner
+  suppression. A later retry can no longer erase the original episode or start
+  a second model cycle merely because the first content string is empty.
+
+Bounded verification and next boundary:
+
+- The engine/service/client/phase/CognitiveEngine/desktop-route campaign passes
+  409/409. All ten Recursive Latent Cortex suites pass 230/230; 86 of those
+  overlap the focused campaign. Adjacent MLX resilience, foreground-preemption,
+  and boot-health suites pass 86/86, for 639 non-overlapping bounded test
+  invocations. Ruff/lint and whole-tree compile are green.
+- Production readiness (37/37), enterprise static, local security (2,627 files /
+  zero findings), governance ownership, source hygiene, cognitive candidate
+  coverage (13/13), closeout rubric (20/20), and architecture-quality ratchets
+  are green. Governance remains at 1,842 recognized calls in 1,730 buckets with
+  1,692 historical migration-debt calls. The architecture score remains 42.32
+  with 54 oversized files, nine cycles, and a 693-module largest cycle; no
+  baseline was relaxed, and centralizing suppression metadata reduced the
+  largest file from CP98's 20,520 lines to 20,513. The underlying architecture
+  and semantic remediation surfaces remain red release gates.
+- Evidence-weighted completion remains `27%`: total checkpoint `99` of the
+  faithful `292-399` forecast, with approximately `193-300` implementation,
+  cleanup, integration, verification, live, portability, release, and soak
+  checkpoints remaining.
+- Next, complete every bounded gate, commit and push CP99 directly to `main`,
+  run the clean exact-commit closeout audit, rebuild/sign `/Applications/Aura.app`,
+  and issue the same compound resident-32B request. Credit requires a single
+  successful latent episode with the resident profile, nonzero branch exchange,
+  applied and erased fast weights, accepted latent optimization, stage timings,
+  complete visible output, exact worker/model/app/source identity, no ordinary
+  or recovery generation, no worker recycle, and no event-loop, health, Skynet,
+  Neural, or MLX regression. Multi-hour and 24-72 hour soaks remain deferred
+  until every shorter proof and release gate is green.
