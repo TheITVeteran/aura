@@ -414,6 +414,17 @@ async def test_client_latent_reason_timeout_keeps_clean_cooperatively_cancelled_
         nonlocal await_count
         await_count += 1
         if await_count == 1:
+            client._record_latent_progress(
+                {
+                    "id": client._current_request_id,
+                    "action": "latent_reason",
+                    "status": "progress",
+                    "stage": "prefill",
+                    "elapsed_s": 4.8,
+                    "input_tokens": 4096,
+                    "untrusted": "must-not-escape",
+                }
+            )
             raise TimeoutError
         return {
             "status": "error",
@@ -422,6 +433,8 @@ async def test_client_latent_reason_timeout_keeps_clean_cooperatively_cancelled_
                 "params_unchanged": True,
                 "fast_weights_applied": True,
                 "fast_weights_erased": True,
+                "last_stage": "prefill",
+                "input_token_count": 4096,
             },
         }
 
@@ -437,6 +450,9 @@ async def test_client_latent_reason_timeout_keeps_clean_cooperatively_cancelled_
 
     assert result["reason"] == "latent_timeout:cooperative_cancelled"
     assert result["receipt"]["params_unchanged"] is True
+    assert result["progress"]["stage"] == "prefill"
+    assert result["progress"]["input_tokens"] == 4096
+    assert "untrusted" not in result["progress"]
     assert reboot_reasons == []
     assert client._active_generations == 0
     assert client._request_lock.locked() is False

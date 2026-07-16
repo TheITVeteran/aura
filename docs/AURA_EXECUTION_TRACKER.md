@@ -16,9 +16,9 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **Checkpoint 99 is the current
-  source candidate in the `main` worktree; Checkpoint 98 is pushed at
-  `2c3fd39d`, and exact rebuilt-app proof remains open after CP99**. Checkpoint 80
+- Current bounded implementation milestone: **Checkpoint 100 is the current
+  source candidate in the `main` worktree; Checkpoint 99 is pushed at
+  `370fe6dc`, and exact rebuilt-app proof remains open after CP100**. Checkpoint 80
   made cached
   readiness truthful and fast,
   removed synchronous Phi/Eternal maintenance from the foreground cycle, and
@@ -178,8 +178,16 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   worker watchdog activity; cooperatively cancels at checkpoint-safe boundaries
   while proving fast-weight erase and parameter identity before preserving the
   warm worker; and carries failed latent evidence through CognitiveEngine and
-  the desktop route without a second owner. Exact CP99 app proof is still open,
-  so no live or intelligence-gain credit is awarded.
+  the desktop route without a second owner. The exact CP99 app reached a clean,
+  healthy fused-32B runtime, but the same compound turn again exhausted the
+  latent deadline after 120 seconds and returned no authentic answer at 126.92
+  seconds. The clean cooperative acknowledgement preserved the worker and the
+  route did not retry, but a returned timeout still left the ordinary fallback
+  reachable inside ResponseGeneration and the public failure contract again
+  erased the latent receipt. Checkpoint 100 closes those returned-result owners
+  and retains bounded parent progress while carrying worker stage evidence
+  through the public contract. Exact CP100 app proof is still open, so no live or
+  intelligence-gain credit is awarded.
   A separate non-current `fable-improvement-pass` endurance attempt is retained
   as failed evidence: it stopped at 36/200 turns, served 31 timeout responses,
   had p50 latency 213.245 seconds, repeatedly reported a 503 conversation lane
@@ -189,7 +197,7 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   release, and causal-proof obligations remain open unless their rows
   explicitly close.
 - Overall completion percentage: **27% evidence-weighted planning estimate at
-  Checkpoint 99**. The exact
+  Checkpoint 100**. The exact
   Checkpoint 80 app earns bounded live credit for readiness, health, base boot,
   and one-attempt chat latency, but not output quality, sustained load, GUI
   frame SLO, portability, semantic review, release, or soak. The newly
@@ -201,16 +209,16 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   `PROGRESS-CONTROL-001` and `SCOPE-001` must replace the manual estimate with a
   generated denominator; new obligations increase it, regressions reopen it,
   and source-green/live-open work never receives full closure credit.
-  CP92-99 close bounded evidence-integrity, runtime-convergence, and initial
+  CP92-100 close bounded evidence-integrity, runtime-convergence, and initial
   latent ownership/lifecycle work already present in the denominator. The full
   Anima Rationis program adds causal ingress, consolidation, anti-interference,
   equal-compute science, live 32B, and independent certification obligations;
-  source mechanics do not receive capability credit. CP99 has no
+  source mechanics do not receive capability credit. CP100 has no
   exact rebuilt-app, portability,
   release, or soak credit yet and therefore does not move the rounded
   percentage.
 - Total checkpoint forecast: **approximately 292-399 total checkpoints for the
-  expanded program, with 99 checkpoints and approximately 193-300 remaining before
+  expanded program, with 100 checkpoints and approximately 192-299 remaining before
   final soak/release closure**. The Recursive Latent Cortex / Anima Rationis
   requirement adds **40-56 total checkpoints** for independent foundation
   review; seven-mechanism hardening; exact compute and lifecycle accounting;
@@ -17549,13 +17557,13 @@ Bounded verification and next boundary:
 
 ## Checkpoint 2026-07-16-99: Resident-Scale Latent Lifecycle and Proof Continuity
 
-Checkpoint 99 is the current source candidate in the `main` worktree. It
+Checkpoint 99 is pushed on `main` at `370fe6dc`. It
 advances `RLC-COMPUTE-001`, `RLC-LIFECYCLE-001`, `RLC-RUNTIME-001`,
 `RLC-LIVE32B-001`, `CHAT-001`, `EFFECT-001`, `FAULT-001`,
 `OBSERVABILITY-001`, and `TEST-DEPTH-001`. It repairs the exact resident-32B
 owners exposed by the second live attempt. It does not relabel that failure or
-award capability, frontier, release, portability, or soak credit before a clean
-CP99 app reproduces the complete public receipt.
+award capability, frontier, release, portability, or soak credit. Its exact app
+attempt failed and is retained below; Checkpoint 100 follows it.
 
 Failed CP98 live evidence retained:
 
@@ -17633,12 +17641,90 @@ Bounded verification and next boundary:
   faithful `292-399` forecast, with approximately `193-300` implementation,
   cleanup, integration, verification, live, portability, release, and soak
   checkpoints remaining.
-- Next, complete every bounded gate, commit and push CP99 directly to `main`,
-  run the clean exact-commit closeout audit, rebuild/sign `/Applications/Aura.app`,
-  and issue the same compound resident-32B request. Credit requires a single
-  successful latent episode with the resident profile, nonzero branch exchange,
-  applied and erased fast weights, accepted latent optimization, stage timings,
-  complete visible output, exact worker/model/app/source identity, no ordinary
-  or recovery generation, no worker recycle, and no event-loop, health, Skynet,
-  Neural, or MLX regression. Multi-hour and 24-72 hour soaks remain deferred
-  until every shorter proof and release gate is green.
+- CP99 was committed, pushed, audited from a clean exact head, bundled, signed,
+  and exercised through the same compound resident-32B request. The attempt
+  failed after 126.916 seconds as recorded in the following CP100 section.
+  Multi-hour and 24-72 hour soaks remain deferred until every shorter proof and
+  release gate is green.
+
+## Checkpoint 2026-07-16-100: Returned-Timeout Ownership and Failure Evidence
+
+Checkpoint 100 is the current source candidate in the `main` worktree. It
+advances `RLC-LIFECYCLE-001`, `RLC-RUNTIME-001`, `RLC-LIVE32B-001`,
+`CHAT-001`, `FAULT-001`, `OBSERVABILITY-001`, and `TEST-DEPTH-001`. It closes
+the exact metadata and owner-state defects exposed by the clean CP99 app; it
+does not claim that the resident-32B episode is fast enough or that Recursive
+Latent Cortex improves capability.
+
+Exact CP99 live evidence retained:
+
+- The exact signed app at `370fe6dc` matched clean `main`, passed strict bundle
+  verification, reached full runtime and conversation readiness on the fused
+  Aura 32B with recurrent depth active, and kept all required probe groups
+  healthy during the compound turn. The selected latent episode remained the
+  only resident owner and the worker acknowledged cooperative cancellation
+  with its parameter/temporary-weight cleanup proof, so no worker recycle or
+  route-level duplicate generation occurred.
+- The episode still exceeded its 120-second deadline. HTTP returned 200 after
+  126.916 seconds with `desktop_cognitive_engine_unavailable`, no authentic
+  answer, and `full_mind_path=false`. Because the service returned a typed
+  `latent_timeout:cooperative_cancelled` result rather than raising
+  `TimeoutError`, ResponseGeneration did not enter CP99's exception-only
+  metadata path. It logged that it would use ordinary generation, while the
+  outer cycle ended before a useful fallback. The terminal public contract
+  consequently reported the latent path as unselected/unattempted and omitted
+  the worker stage receipt. This is a failed live proof retained at
+  `artifacts/current/cp99_live_latent_turn.json`.
+
+Single-owner and evidence implementation:
+
+- The parent MLX client now keeps one bounded, allowlisted progress snapshot
+  for every active latent request. Stage IPC updates cannot copy arbitrary
+  worker fields into public evidence. A clean deadline acknowledgement returns
+  the last progress snapshot beside the invariant receipt and logs stage,
+  input-token count, elapsed time, and stage timings before ownership cleanup.
+- The service retains separate last-success and last-failure receipts plus the
+  latest parent progress. Failure health/status no longer discards the evidence
+  needed to distinguish a prefill bottleneck, later optimization/decode cost,
+  or a stalled worker.
+- ResponseGeneration now classifies both raised and returned terminal outcomes.
+  A timeout, integrity failure, runtime-identity failure, or any receipt proving
+  that a latent episode actually entered the resident model marks the owner
+  exhausted, persists the partial receipt/progress, and returns without making
+  an ordinary model call. Early refusals that did not consume the worker, such
+  as `worker_not_ready`, retain the explicit one-generation fallback.
+- CognitiveEngine carries the worker's partial receipt in its typed failure
+  thought. The desktop route adopts it, and the public live-turn contract now
+  includes `last_stage` and `stage_timings_s`; a later
+  failure envelope can no longer rewrite the episode as never attempted.
+
+Bounded verification and next boundary:
+
+- Six exact returned-timeout, cooperative-cancellation, CognitiveEngine, route,
+  and public-contract regressions pass 6/6. The full latent engine/service/client,
+  ResponseGeneration, CognitiveEngine failure, and desktop conversation
+  campaign passes 410/410 in 190.74 seconds. The campaign includes malformed
+  IPC, cancellation cleanup, proof filtering, early-refusal fallback, and
+  returned terminal-result ownership. No test allowance or baseline was relaxed.
+- Ruff/lint, whole-tree compile, enterprise static, production readiness
+  (37/37), closeout rubric (20/20), governance ownership, source hygiene,
+  cognitive candidate coverage (13/13), and local security (2,627 files / zero
+  findings) are green. The direct architecture-quality gate is truthfully red,
+  not waived: score 42.32 versus baseline 46.38, 8,675 dependency edges versus
+  7,528, 54 oversized files versus 37, nine import cycles versus six, and a
+  693-module largest cycle. CP100 keeps the maximum file size unchanged at
+  20,513 lines and does not refresh the baseline. The broader architecture
+  remediation program remains a release gate.
+- Evidence-weighted completion remains `27%`: total checkpoint `100` of the
+  faithful `292-399` forecast, with approximately `192-299` implementation,
+  cleanup, integration, verification, live, portability, release, and soak
+  checkpoints remaining.
+- Next, commit and push CP100 to `main`, run the clean exact-head audit,
+  rebuild/sign the installed app, and
+  repeat the same resident-32B turn. The public failure receipt must now expose
+  exact input and stage cost if the episode misses its deadline. That measured
+  owner is then reduced without disabling recurrence, branch exchange, latent
+  optimization, fast weights, or latent-conditioned decode. Live credit still
+  requires a nonempty authentic answer, complete mechanism and identity receipt,
+  no second generation, no worker recycle, and clean runtime logs. Multi-hour
+  and 24-72 hour soaks remain deferred until every shorter gate is green.

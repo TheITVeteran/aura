@@ -5098,8 +5098,8 @@ def _build_live_turn_contract_payload(
             "decode_top_p",
             "latent_opt_applied",
             "latent_opt_steps",
-            "fast_weights_applied",
-            "fast_weights_erased",
+            "fast_weights_applied", "fast_weights_erased",
+            "last_stage", "stage_timings_s",
             "honest_flags",
         )
         if key in raw_latent_receipt

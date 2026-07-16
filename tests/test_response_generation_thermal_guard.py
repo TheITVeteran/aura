@@ -332,6 +332,61 @@ async def test_latent_timeout_preserves_attempt_and_suppresses_second_model_owne
 
 
 @pytest.mark.asyncio
+async def test_returned_latent_timeout_preserves_receipt_and_suppresses_fallback(
+    monkeypatch,
+):
+    objective = "Compare both architectures, then choose and verify the safer one."
+    state = AuraState()
+    state.cognition.current_objective = objective
+    state.cognition.current_origin = "desktop_ui"
+    state.cognition.current_mode = CognitiveMode.DELIBERATE
+    router = _Router()
+    receipt = {
+        "episode_id": "live-timeout",
+        "input_token_count": 4096,
+        "params_unchanged": True,
+        "last_stage": "prefill",
+        "stage_timings_s": {"prefill": 119.2},
+    }
+    progress = {
+        "stage": "prefill",
+        "elapsed_s": 119.2,
+        "input_tokens": 4096,
+    }
+    latent = _LatentService(
+        {
+            "ok": False,
+            "reason": "latent_timeout:cooperative_cancelled",
+            "receipt": receipt,
+            "progress": progress,
+        }
+    )
+    phase = ResponseGenerationPhase(
+        _Container({"llm_router": router, "latent_cortex": latent})
+    )
+    monkeypatch.setattr(
+        "core.phases.response_generation.ContextAssembler.build_messages",
+        lambda *_args, **_kwargs: [{"role": "user", "content": objective}],
+    )
+
+    result = await phase.execute(state, context=_latent_context(objective))
+
+    assert len(latent.calls) == 1
+    assert router.calls == []
+    assert result.response_modifiers["model_retry_suppressed"] is True
+    assert (
+        result.response_modifiers["generation_failure_class"]
+        == "latent_timeout:cooperative_cancelled"
+    )
+    assert result.response_modifiers["latent_cortex_receipt"] == receipt
+    assert result.response_modifiers["latent_cortex_progress"] == progress
+    assert (
+        result.response_modifiers["response_path"]
+        == "cognitive_engine_latent_owner_exhausted"
+    )
+
+
+@pytest.mark.asyncio
 async def test_response_generation_downshifts_on_thermal_pressure(monkeypatch):
     state = AuraState()
     state.cognition.current_objective = "Perform a deep architectural audit"

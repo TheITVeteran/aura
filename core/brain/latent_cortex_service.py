@@ -12,8 +12,9 @@ pressure — a system heading toward crisis spends less on deep thought, which
 is exactly what the allostasis seam is for.
 
 Fail-honest: any refusal (kill switch, busy lane, no resident model, worker
-error) returns ``{"ok": False, "reason": ...}`` so callers fall back to
-ordinary generation EXPLICITLY. Nothing here fakes an answer.
+error) returns ``{"ok": False, "reason": ...}`` with bounded evidence so the
+caller can decide whether no model work ran or the single model owner was
+already exhausted. Nothing here fakes an answer.
 """
 from __future__ import annotations
 
@@ -41,6 +42,8 @@ class LatentCortexService:
         self._episodes = 0
         self._ok_episodes = 0
         self._last_receipt: dict[str, Any] = {}
+        self._last_failure_receipt: dict[str, Any] = {}
+        self._last_progress: dict[str, Any] = {}
         self._last_refusal = ""
         self._failure_streak = 0
         self._last_attempt_at = 0.0
@@ -619,6 +622,8 @@ class LatentCortexService:
 
         self._episodes += 1
         self._last_attempt_at = time.time()
+        self._last_progress = {}
+        self._last_failure_receipt = {}
         started = time.monotonic()
         try:
             try:
@@ -649,9 +654,15 @@ class LatentCortexService:
         self._last_latency_s = elapsed
         if not isinstance(result, dict):
             return self._record_failure("invalid_client_response")
+        raw_receipt = result.get("receipt")
+        result_receipt = (
+            dict(raw_receipt) if isinstance(raw_receipt, dict) else {}
+        )
+        raw_progress = result.get("progress")
+        self._last_progress = (
+            dict(raw_progress) if isinstance(raw_progress, dict) else {}
+        )
         if result.get("ok"):
-            raw_receipt = result.get("receipt")
-            receipt = dict(raw_receipt) if isinstance(raw_receipt, dict) else {}
             contract_errors = self._receipt_contract_errors(
                 raw_receipt,
                 config,
@@ -667,13 +678,15 @@ class LatentCortexService:
                 )
                 failed = dict(result)
                 failed.update(self._record_failure(reason))
-                failed["receipt"] = receipt
+                failed["receipt"] = result_receipt
+                self._last_failure_receipt = result_receipt
                 return failed
             self._ok_episodes += 1
             self._failure_streak = 0
             self._last_refusal = ""
             self._last_success_at = time.time()
-            self._last_receipt = receipt
+            self._last_receipt = result_receipt
+            self._last_failure_receipt = {}
             logger.info(
                 "🧠 Latent episode ok: %d steps, %d branches, halt=%s, %.1fs",
                 int(self._last_receipt.get("steps_taken") or 0),
@@ -682,8 +695,22 @@ class LatentCortexService:
                 elapsed,
             )
         else:
+            self._last_failure_receipt = result_receipt
             self._record_failure(str(result.get("reason") or "unknown"))
-            logger.info("🧠 Latent episode refused/failed: %s (%.1fs)", self._last_refusal, elapsed)
+            logger.info(
+                "🧠 Latent episode refused/failed: %s (%.1fs) stage=%s "
+                "input_tokens=%s timings=%s progress=%s",
+                self._last_refusal,
+                elapsed,
+                result_receipt.get("last_stage")
+                or self._last_progress.get("stage")
+                or "unknown",
+                result_receipt.get("input_token_count")
+                or self._last_progress.get("input_tokens")
+                or "unknown",
+                result_receipt.get("stage_timings_s") or {},
+                self._last_progress,
+            )
         return result
 
     # ── Health ──────────────────────────────────────────────────────────
@@ -709,6 +736,21 @@ class LatentCortexService:
             "last_success_at": self._last_success_at,
             "last_latency_s": round(self._last_latency_s, 3),
             "last_allocation": dict(self._last_allocation),
+            "last_progress": dict(self._last_progress),
+            "last_failure_receipt": {
+                key: self._last_failure_receipt.get(key)
+                for key in (
+                    "episode_id",
+                    "input_token_count",
+                    "params_unchanged",
+                    "fast_weights_applied",
+                    "fast_weights_erased",
+                    "last_stage",
+                    "stage_timings_s",
+                    "honest_flags",
+                )
+                if key in self._last_failure_receipt
+            },
             "last_receipt": {
                 k: self._last_receipt.get(k)
                 for k in (

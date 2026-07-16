@@ -698,6 +698,36 @@ class ResponseGenerationPhase(BasePhase):
         return max(0.0, min(requested, available))
 
     @staticmethod
+    def _latent_owner_exhausted(
+        reason: str,
+        receipt: dict[str, Any],
+    ) -> bool:
+        """Whether the selected latent path already consumed the model owner."""
+
+        normalized = str(reason or "").strip()
+        if normalized.startswith(
+            (
+                "latent_timeout:",
+                "latent_integrity:",
+                "worker_identity_failed:",
+                "runtime_identity_deadline_exhausted",
+                "runtime_identity_unbound",
+            )
+        ):
+            return True
+        input_token_count = receipt.get("input_token_count")
+        input_evidence = bool(
+            type(input_token_count) is int and input_token_count > 0
+        )
+        return bool(
+            str(receipt.get("episode_id") or "").strip()
+            and (
+                str(receipt.get("last_stage") or "").strip()
+                or input_evidence
+            )
+        )
+
+    @staticmethod
     def _generation_metadata_snapshot(router: Any) -> dict[str, Any]:
         getter = getattr(router, "get_last_generation_metadata", None)
         if not callable(getter):
@@ -1488,6 +1518,7 @@ class ResponseGenerationPhase(BasePhase):
                 "latent_cortex_failure_reason": "",
                 "latent_cortex_identity_bound": False,
                 "latent_cortex_receipt": {},
+                "latent_cortex_progress": {},
             }
             try:
                 request_timeout = self._request_timeout(
@@ -1611,6 +1642,11 @@ class ResponseGenerationPhase(BasePhase):
                                 "latent_cortex_succeeded": True,
                                 "latent_cortex_identity_bound": identity_bound,
                                 "latent_cortex_receipt": latent_receipt,
+                                "latent_cortex_progress": (
+                                    dict(latent_result.get("progress") or {})
+                                    if isinstance(latent_result.get("progress"), dict)
+                                    else {}
+                                ),
                                 "response_path": "cognitive_engine_latent_cortex",
                             }
                         )
@@ -1641,8 +1677,37 @@ class ResponseGenerationPhase(BasePhase):
                                     and isinstance(latent_result.get("receipt"), dict)
                                     else {}
                                 ),
+                                "latent_cortex_progress": (
+                                    dict(latent_result.get("progress") or {})
+                                    if isinstance(latent_result, dict)
+                                    and isinstance(latent_result.get("progress"), dict)
+                                    else {}
+                                ),
                             }
                         )
+                        state.response_modifiers.update(latent_trace)
+                        latent_receipt = latent_trace["latent_cortex_receipt"]
+                        if self._latent_owner_exhausted(
+                            failure_reason,
+                            latent_receipt,
+                        ):
+                            state.response_modifiers.update(
+                                {
+                                    "model_retry_suppressed": True,
+                                    "generation_failure_class": failure_reason[:120],
+                                    "response_path": "cognitive_engine_latent_owner_exhausted",
+                                }
+                            )
+                            logger.error(
+                                "Recursive Latent Cortex exhausted the single resident "
+                                "owner (%s); refusing a late ordinary generation. "
+                                "stage=%s input_tokens=%s progress=%s",
+                                failure_reason,
+                                latent_receipt.get("last_stage") or "unknown",
+                                latent_receipt.get("input_token_count") or "unknown",
+                                latent_trace.get("latent_cortex_progress") or {},
+                            )
+                            return state
                         logger.warning(
                             "Recursive Latent Cortex declined the selected foreground turn (%s); using one ordinary resident generation.",
                             failure_reason,

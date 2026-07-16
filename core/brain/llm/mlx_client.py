@@ -1973,6 +1973,7 @@ class MLXLocalClient:
         self._last_heartbeat = 0.0
         self._last_progress_at = 0.0
         self._last_token_progress_at = 0.0
+        self._latent_progress_by_request: dict[str, dict[str, Any]] = {}
         self._last_ready_at = 0.0
         self._last_generation_completed_at = 0.0
         self._last_user_facing_completed_at = 0.0
@@ -2221,6 +2222,43 @@ class MLXLocalClient:
 
     def _mark_progress(self) -> None:
         self._last_progress_at = time.time()
+
+    def _record_latent_progress(self, response: dict[str, Any]) -> None:
+        """Retain bounded parent-side evidence for the active latent stage."""
+
+        request_id = str(response.get("id") or "")
+        if not request_id:
+            return
+        allowed = {
+            "stage",
+            "stage_duration_s",
+            "elapsed_s",
+            "spent_layer_apps",
+            "input_tokens",
+            "branches",
+            "slots",
+            "max_branch_steps",
+            "exchanges",
+            "selected_branch",
+            "steps_taken",
+            "attempts",
+            "accepted",
+            "wrapped_layers",
+            "generated_tokens",
+            "termination",
+        }
+        snapshot = {
+            key: response.get(key)
+            for key in allowed
+            if key in response
+        }
+        snapshot.update(
+            {
+                "request_id": request_id,
+                "received_at_unix": time.time(),
+            }
+        )
+        self._latent_progress_by_request[request_id] = snapshot
 
     def _rebase_after_system_sleep(self) -> float:
         """Rebase active wall-clock anchors after host sleep/wake.
@@ -3949,6 +3987,11 @@ class MLXLocalClient:
 
             fut = _new_shared_future()
             self._pending_generations[req_id] = fut
+            self._latent_progress_by_request[req_id] = {
+                "request_id": req_id,
+                "stage": "submitted",
+                "received_at_unix": time.time(),
+            }
             self._current_gen_future = fut
             self._active_generations += 1
             requested_tokens_raw = wire_config.get("decode_max_tokens", 0)
@@ -3990,9 +4033,26 @@ class MLXLocalClient:
                 except (TimeoutError, BrokenPipeError, OSError):
                     cancel_ack = None
                 if self._clean_latent_cancel_ack(cancel_ack):
+                    receipt = dict(cancel_ack.get("receipt") or {})
+                    progress = dict(
+                        self._latent_progress_by_request.get(req_id) or {}
+                    )
+                    logger.warning(
+                        "Latent owner deadline reached cleanly: stage=%s "
+                        "input_tokens=%s elapsed=%s timings=%s",
+                        receipt.get("last_stage")
+                        or progress.get("stage")
+                        or "unknown",
+                        receipt.get("input_token_count")
+                        or progress.get("input_tokens")
+                        or "unknown",
+                        progress.get("elapsed_s") or "unknown",
+                        receipt.get("stage_timings_s") or {},
+                    )
                     return {
                         **base,
-                        "receipt": dict(cancel_ack.get("receipt") or {}),
+                        "receipt": receipt,
+                        "progress": progress,
                         "reason": "latent_timeout:cooperative_cancelled",
                     }
                 deferred_reboot = "latent_reason_deadline_unacknowledged"
@@ -4071,11 +4131,17 @@ class MLXLocalClient:
                     "ok": True,
                     "text": str(res.get("text") or ""),
                     "receipt": receipt,
+                    "progress": dict(
+                        self._latent_progress_by_request.get(req_id) or {}
+                    ),
                     "reason": str(res.get("reason") or ""),
                 }
             return {
                 **base,
                 "receipt": receipt,
+                "progress": dict(
+                    self._latent_progress_by_request.get(req_id) or {}
+                ),
                 "reason": reason or "latent_reason_failed",
             }
         except asyncio.CancelledError:
@@ -4116,6 +4182,7 @@ class MLXLocalClient:
                             self._set_durable_lane_preemptible(True)
                         )
             finally:
+                self._latent_progress_by_request.pop(req_id, None)
                 self._release_request_lock()
                 if foreground_owner_cm is not None:
                     await foreground_owner_cm.__aexit__(None, None, None)
@@ -4707,6 +4774,8 @@ class MLXLocalClient:
                         audit.heartbeat(tier_name)
                     continue
                 if status in {"progress", "token"}:
+                    if action == "latent_reason" and isinstance(res, dict):
+                        self._record_latent_progress(res)
                     self._mark_token_progress(res.get("id"))
                     live_intero = res.get("interoception_live")
                     if isinstance(live_intero, dict) and live_intero:

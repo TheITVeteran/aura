@@ -105,6 +105,8 @@ def _proven_latent_cortex_trace():
             "decode_requested_tokens": 512,
             "decode_generated_tokens": 64,
             "decode_termination": "eos",
+            "last_stage": "complete",
+            "stage_timings_s": {"prefill": 1.0, "decode": 2.0, "total": 4.0},
             "runtime_identity": {
                 "schema": "aura.latent_cortex.runtime_identity.v1",
                 "identity_bound": True,
@@ -516,6 +518,8 @@ def test_full_mind_contract_accepts_identity_bound_latent_cortex_path(monkeypatc
     assert payload["latent_cortex_identity_bound"] is True
     assert payload["authentic_cognitive_reply"] is True
     assert payload["full_mind_path"] is True
+    assert payload["latent_cortex_receipt"]["last_stage"] == "complete"
+    assert payload["latent_cortex_receipt"]["stage_timings_s"]["total"] == 4.0
     assert "source_root" not in payload["latent_cortex_receipt"]["runtime_identity"]
 
 
@@ -9382,6 +9386,11 @@ async def test_empty_cognitive_result_with_owner_suppression_does_not_retry(monk
             "latent_cortex_attempted": True,
             "latent_cortex_succeeded": False,
             "latent_cortex_failure_reason": "latent_timeout:cooperative_cancelled",
+            "latent_cortex_receipt": {
+                "episode_id": "live-timeout",
+                "last_stage": "prefill",
+                "stage_timings_s": {"prefill": 119.2},
+            },
         }
     )
 
@@ -9432,6 +9441,7 @@ async def test_empty_cognitive_result_with_owner_suppression_does_not_retry(monk
     assert trace["model_retry_suppressed"] is True
     assert trace["single_owner_generation_exhausted"] is True
     assert trace["latent_cortex_attempted"] is True
+    assert trace["latent_cortex_receipt"]["last_stage"] == "prefill"
 
 
 @pytest.mark.asyncio
