@@ -16,9 +16,9 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **Checkpoint 101 is the current
-  source candidate in the `main` worktree; Checkpoint 100 is pushed at
-  `8007b98a`, and exact rebuilt-app proof remains open after CP101**. Checkpoint 80
+- Current bounded implementation milestone: **Checkpoint 102 is the current
+  source candidate in the `main` worktree; Checkpoint 101 is pushed at
+  `d44c5db3`, and exact rebuilt-app proof remains open after CP102**. Checkpoint 80
   made cached
   readiness truthful and fast,
   removed synchronous Phi/Eternal maintenance from the foreground cycle, and
@@ -194,8 +194,14 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   Checkpoint 101 derives the 32.76-billion logical count from the Qwen2
   architecture, separately receipts packed storage, bounds and hash-receipts
   the live latent context, and forbids that secondary decode in the production
-  full-stack profile. Exact CP101 app proof is still open, so no capability or
-  intelligence-gain credit is awarded.
+  full-stack profile. The exact CP101 app proved those repairs and reduced the
+  complete worker episode to 59.91 seconds, but the fast-weight optimizer's
+  globally clipped update was numerically invisible at resident adapter scale;
+  all line-search candidates failed to improve its proxy, so the success
+  contract correctly rejected the otherwise complete decode. Checkpoint 102
+  replaces that optimizer with receipt-bound resident-scale preconditioning.
+  Exact CP102 app proof is still open, so no capability or intelligence-gain
+  credit is awarded.
   A separate non-current `fable-improvement-pass` endurance attempt is retained
   as failed evidence: it stopped at 36/200 turns, served 31 timeout responses,
   had p50 latency 213.245 seconds, repeatedly reported a 503 conversation lane
@@ -205,7 +211,7 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   release, and causal-proof obligations remain open unless their rows
   explicitly close.
 - Overall completion percentage: **27% evidence-weighted planning estimate at
-  Checkpoint 101**. The exact
+  Checkpoint 102**. The exact
   Checkpoint 80 app earns bounded live credit for readiness, health, base boot,
   and one-attempt chat latency, but not output quality, sustained load, GUI
   frame SLO, portability, semantic review, release, or soak. The newly
@@ -217,16 +223,16 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   `PROGRESS-CONTROL-001` and `SCOPE-001` must replace the manual estimate with a
   generated denominator; new obligations increase it, regressions reopen it,
   and source-green/live-open work never receives full closure credit.
-  CP92-101 close bounded evidence-integrity, runtime-convergence, and initial
+  CP92-102 close bounded evidence-integrity, runtime-convergence, and initial
   latent ownership/lifecycle work already present in the denominator. The full
   Anima Rationis program adds causal ingress, consolidation, anti-interference,
   equal-compute science, live 32B, and independent certification obligations;
-  source mechanics do not receive capability credit. CP101 has no
+  source mechanics do not receive capability credit. CP102 has no
   exact rebuilt-app, portability,
   release, or soak credit yet and therefore does not move the rounded
   percentage.
 - Total checkpoint forecast: **approximately 292-399 total checkpoints for the
-  expanded program, with 101 checkpoints and approximately 191-298 remaining before
+  expanded program, with 102 checkpoints and approximately 190-297 remaining before
   final soak/release closure**. The Recursive Latent Cortex / Anima Rationis
   requirement adds **40-56 total checkpoints** for independent foundation
   review; seven-mechanism hardening; exact compute and lifecycle accounting;
@@ -17810,11 +17816,87 @@ Bounded verification and next boundary:
   faithful `292-399` forecast, with approximately `191-298` implementation,
   cleanup, integration, verification, live, portability, release, and soak
   checkpoints remaining.
-- Next, commit and push CP101 to `main`, run the clean exact-head audit,
-  rebuild/sign the installed app, and repeat the identical compound turn. Live
-  credit requires the architecture-derived 32B identity, bounded context
-  receipt, two recurrent steps, branch exchange, accepted latent optimization,
-  applied-and-erased fast weights, complete latent-conditioned decode, one
-  authentic answer, no second generation, no worker recycle, and clean Neural
-  and terminal logs. Multi-hour and 24-72 hour soaks remain deferred until every
-  shorter gate is green.
+- CP101 was committed and pushed to `main` at `d44c5db3`, passed the clean
+  exact-head audit over 5,260 tracked files / 1,225,846 code lines, and was
+  rebuilt and signed into the installed app with exact clean source and app
+  identity. The identical compound turn reached HTTP 200 in 60.850 seconds.
+  Its receipt proves the architecture-derived 32,763,876,352 logical parameters
+  beside 5,120,300,032 packed elements; context compaction reduced 47,825
+  characters to 6,785 and the tokenized input from 11,045 to 1,562; prefill fell
+  from CP100's 99.484 seconds to 12.263 seconds. It ran two recurrent steps,
+  branch exchange, one accepted latent optimization step, temporary fast-weight
+  attachment and proven erase, and a complete 160-token latent-conditioned
+  decode. The worker remained warm and no route retry or second model owner ran.
+- The turn still failed closed because the temporary-synapse optimizer attempted
+  one update but accepted no proxy-improving step, producing
+  `fast_weight_no_accepted_step`; the service correctly refused to count nominal
+  attachment as causal optimization. Fast-weight optimization consumed 3.092
+  seconds, decode 31.963 seconds, and the complete worker episode 59.914 seconds.
+  This failed evidence is retained at
+  `artifacts/current/cp101_live_latent_turn.json`. One boot-health singleflight
+  also exceeded its 2.5-second HTTP wait budget under foreground load even
+  though all required, proof-readiness, and certification probes remained green;
+  the health-poll scheduling/SLO owner remains open rather than being silenced.
+
+## Checkpoint 2026-07-16-102: Resident-Scale Temporary-Synapse Descent
+
+Checkpoint 102 is the current source candidate in the `main` worktree. It
+advances `RLC-MECH-006`, `RLC-COMPUTE-001`, `RLC-LIFECYCLE-001`,
+`RLC-RUNTIME-001`, `RLC-LIVE32B-001`, `OBSERVABILITY-001`, and
+`TEST-DEPTH-001`. It closes the exact optimizer defect measured by CP101. It
+does not claim live success until the exact rebuilt app accepts the same
+mechanism and delivers an authentic answer.
+
+Optimizer and evidence implementation:
+
+- The previous optimizer globally clipped the combined gradient of every U/V
+  element to unit norm before multiplying by the resident profile's 0.005
+  learning rate. As adapter cardinality grew, the per-element move collapsed
+  below the proxy's effective numerical resolution; backtracking only made the
+  invisible update smaller. CP102 replaces it with
+  `rms_normalized_sgd_backtracking_v1`: each temporary tensor receives a
+  clipped RMS-normalized descent direction, the configured learning rate bounds
+  update RMS independent of tensor cardinality, and the existing 12-step
+  backtracking search retains only a finite improvement above floating-point
+  noise. Base weights remain outside the gradient target, all candidate
+  forwards remain budget charged, rejected candidates restore the prior best
+  parameters, and cleanup still proves exact W0 behavior after detach.
+- The episode receipt now exposes optimizer identity, strictly descending proxy
+  loss trail, one finite positive global-gradient norm per attempt, one finite
+  positive accepted step size per accepted update, and total line-search
+  backtracks. The service refuses success on a wrong optimizer, flat or rising
+  loss, mismatched attempts/gradients/steps, zero or non-finite values, invalid
+  backtrack accounting, missing accepted work, budget exhaustion, or unproven
+  erase. These fields survive service status and the public live-turn contract.
+
+Bounded verification and next boundary:
+
+- A quantized-proxy regression constructs 16,384 temporary parameters at a
+  precision boundary where the prior cardinality-sensitive SGD move cannot
+  change the observed loss. The new optimizer produces one visible accepted
+  descent step with the expected gradient and step receipts. Existing identity,
+  transactional attach, compute charging, completion reserve, failure cleanup,
+  export, engine, service/client, ResponseGeneration, and desktop-route tests
+  remain green. The expanded campaign passes 402/402; five adversarial receipt
+  variants independently prove rejection of wrong optimizer identity, flat
+  loss, missing gradient evidence, zero accepted step size, and negative
+  backtrack accounting. Ruff/lint and changed-tree compile are green.
+- Enterprise static, production readiness (37/37), closeout rubric (20/20),
+  governance ownership, source hygiene, cognitive candidate coverage (13/13),
+  and local security (2,628 files / zero findings) are green. The direct
+  architecture-quality gate remains red and unwaived at score 42.3, 2,440
+  modules, 8,676 dependency edges, nine cycles, 54 oversized modules, and
+  20,513 maximum lines; CP102 adds no module, edge, cycle, or largest-file line,
+  and the baseline remains unchanged.
+- Evidence-weighted completion remains `27%`: total checkpoint `102` of the
+  faithful `292-399` forecast, with approximately `190-297` implementation,
+  cleanup, integration, verification, live, portability, release, and soak
+  checkpoints remaining.
+- Next, commit and push CP102 to `main`, run the clean exact-head audit,
+  rebuild/sign the installed app, and repeat the
+  identical compound turn. Live credit requires a strictly descending
+  fast-weight loss receipt, complete full-stack success, an authentic answer,
+  no second generation, no worker recycle, and clean Neural/terminal evidence.
+  The foreground health-poll wait-budget warning is separately retained for
+  repair. Multi-hour and 24-72 hour soaks remain deferred until every shorter
+  gate is green.

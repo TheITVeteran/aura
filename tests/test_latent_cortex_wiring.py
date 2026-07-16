@@ -1086,6 +1086,11 @@ def test_service_routes_through_client_and_records_receipt(monkeypatch):
                     "fast_weight_optimized_steps": 2,
                     "fast_weight_rejected_steps": 0,
                     "fast_weight_budget_exhausted": False,
+                    "fast_weight_optimizer": "rms_normalized_sgd_backtracking_v1",
+                    "fast_weight_loss_trail": [2.0, 1.5, 1.0],
+                    "fast_weight_gradient_norm_trail": [3.0, 2.0],
+                    "fast_weight_accepted_step_sizes": [0.005, 0.0025],
+                    "fast_weight_line_search_backtracks": 1,
                     "honest_flags": [],
                 },
                 "reason": "",
@@ -1168,6 +1173,54 @@ def test_service_rejects_nominal_full_stack_without_accepted_optimization():
 
     assert "latent_optimization_no_accepted_steps" in errors
     assert "fast_weight_optimization_no_accepted_steps" in errors
+
+
+@pytest.mark.parametrize(
+    ("override", "expected_error"),
+    [
+        (
+            {"fast_weight_optimizer": "plain_sgd"},
+            "fast_weight_optimizer_unproven",
+        ),
+        (
+            {"fast_weight_loss_trail": [2.0, 2.0]},
+            "fast_weight_loss_descent_unproven",
+        ),
+        (
+            {"fast_weight_gradient_norm_trail": []},
+            "fast_weight_gradient_evidence_invalid",
+        ),
+        (
+            {"fast_weight_accepted_step_sizes": [0.0]},
+            "fast_weight_step_evidence_invalid",
+        ),
+        (
+            {"fast_weight_line_search_backtracks": -1},
+            "fast_weight_line_search_evidence_invalid",
+        ),
+    ],
+)
+def test_service_rejects_unproven_fast_weight_descent(override, expected_error):
+    config = {"fast_weights": True}
+    receipt = {
+        "fast_weights_applied": True,
+        "fast_weights_erased": True,
+        "fast_weights_layers": 2,
+        "fast_weight_optimization_attempts": 1,
+        "fast_weight_optimized_steps": 1,
+        "fast_weight_rejected_steps": 0,
+        "fast_weight_budget_exhausted": False,
+        "fast_weight_optimizer": "rms_normalized_sgd_backtracking_v1",
+        "fast_weight_loss_trail": [2.0, 1.0],
+        "fast_weight_gradient_norm_trail": [3.0],
+        "fast_weight_accepted_step_sizes": [0.005],
+        "fast_weight_line_search_backtracks": 0,
+        **override,
+    }
+
+    errors = LatentCortexService._receipt_contract_errors(receipt, config)
+
+    assert expected_error in errors
 
 
 @pytest.mark.parametrize(

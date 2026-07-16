@@ -5069,12 +5069,9 @@ def _build_live_turn_contract_payload(
     latent_cortex_receipt = {
         key: raw_latent_receipt.get(key)
         for key in (
-            "episode_id",
-            "checkpoint_fingerprint",
-            "checkpoint_fingerprint_method",
-            "checkpoint_file_count",
-            "worker_boot_id",
-            "worker_pid",
+            "episode_id", "checkpoint_fingerprint",
+            "checkpoint_fingerprint_method", "checkpoint_file_count",
+            "worker_boot_id", "worker_pid",
             "worker_model_path", "worker_model_parameter_count",
             "worker_model_stored_parameter_element_count", "worker_model_parameter_count_basis",
             "worker_source_sha256",
@@ -5099,6 +5096,9 @@ def _build_live_turn_contract_payload(
             "latent_opt_applied",
             "latent_opt_steps",
             "fast_weights_applied", "fast_weights_erased",
+            "fast_weight_optimizer", "fast_weight_loss_trail",
+            "fast_weight_gradient_norm_trail", "fast_weight_accepted_step_sizes",
+            "fast_weight_line_search_backtracks",
             "last_stage", "stage_timings_s",
             "honest_flags",
         )

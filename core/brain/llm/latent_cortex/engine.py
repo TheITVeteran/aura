@@ -975,6 +975,17 @@ class LatentCortexEngine:
         receipt.fast_weight_optimized_steps = lifecycle.optimized_steps
         receipt.fast_weight_rejected_steps = lifecycle.rejected_steps
         receipt.fast_weight_budget_exhausted = lifecycle.budget_exhausted
+        receipt.fast_weight_optimizer = lifecycle.optimizer
+        receipt.fast_weight_loss_trail = list(lifecycle.loss_trail)
+        receipt.fast_weight_gradient_norm_trail = list(
+            lifecycle.gradient_global_norm_trail
+        )
+        receipt.fast_weight_accepted_step_sizes = list(
+            lifecycle.accepted_step_sizes
+        )
+        receipt.fast_weight_line_search_backtracks = (
+            lifecycle.line_search_backtracks
+        )
         if lifecycle.budget_exhausted:
             receipt.flag("fast_weight_budget_exhausted")
         if lifecycle.optimized_steps <= 0:

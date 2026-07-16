@@ -412,6 +412,11 @@ class EpisodeReceipt:
     fast_weight_optimized_steps: int = 0
     fast_weight_rejected_steps: int = 0
     fast_weight_budget_exhausted: bool = False
+    fast_weight_optimizer: str = ""
+    fast_weight_loss_trail: list[float] = field(default_factory=list)
+    fast_weight_gradient_norm_trail: list[float] = field(default_factory=list)
+    fast_weight_accepted_step_sizes: list[float] = field(default_factory=list)
+    fast_weight_line_search_backtracks: int = 0
     # Decode completeness. A token-limit or EOS stop is complete; a budget stop
     # is a truncated answer and cannot satisfy the production receipt contract.
     decode_requested_tokens: int = 0
@@ -490,6 +495,19 @@ class EpisodeReceipt:
             "fast_weight_optimized_steps": self.fast_weight_optimized_steps,
             "fast_weight_rejected_steps": self.fast_weight_rejected_steps,
             "fast_weight_budget_exhausted": self.fast_weight_budget_exhausted,
+            "fast_weight_optimizer": self.fast_weight_optimizer,
+            "fast_weight_loss_trail": [
+                round(v, 6) for v in self.fast_weight_loss_trail
+            ],
+            "fast_weight_gradient_norm_trail": [
+                round(v, 6) for v in self.fast_weight_gradient_norm_trail
+            ],
+            "fast_weight_accepted_step_sizes": [
+                round(v, 12) for v in self.fast_weight_accepted_step_sizes
+            ],
+            "fast_weight_line_search_backtracks": (
+                self.fast_weight_line_search_backtracks
+            ),
             "decode_requested_tokens": self.decode_requested_tokens,
             "decode_generated_tokens": self.decode_generated_tokens,
             "decode_termination": self.decode_termination,

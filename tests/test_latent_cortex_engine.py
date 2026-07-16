@@ -267,6 +267,12 @@ def test_fast_weight_episode_proves_erase_and_invariant():
     assert r.fast_weight_optimization_attempts >= 1
     assert r.fast_weight_optimized_steps >= 1
     assert r.fast_weight_budget_exhausted is False
+    assert r.fast_weight_optimizer == "rms_normalized_sgd_backtracking_v1"
+    assert len(r.fast_weight_loss_trail) == r.fast_weight_optimized_steps + 1
+    assert len(r.fast_weight_gradient_norm_trail) == (
+        r.fast_weight_optimization_attempts
+    )
+    assert len(r.fast_weight_accepted_step_sizes) == r.fast_weight_optimized_steps
     assert r.fast_weights_erased is True
     assert r.params_unchanged is True
     assert parameter_fingerprint(model) == before, "episode must leave W0 untouched"

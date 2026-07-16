@@ -296,6 +296,34 @@ def test_fast_weights_optimize_changes_function_then_erase_restores(tiny_model):
     assert fw.lifecycle.erased and fw.lifecycle.erase_proven
 
 
+def test_fast_weight_optimizer_is_visible_at_resident_parameter_scale():
+    wrapper = SimpleNamespace(
+        U=mx.zeros((8192, 2)),
+        V=mx.zeros((2, 8192)),
+    )
+    fw = EpisodicFastWeights(
+        FastWeightsConfig(enabled=True, rank=2, opt_steps=1, lr=0.01)
+    )
+    fw.handles = [SimpleNamespace(wrapper=wrapper)]
+    target = mx.ones(wrapper.V.shape, dtype=mx.float16)
+
+    def quantized_proxy_loss():
+        visible = wrapper.V.astype(mx.float16)
+        return mx.mean(mx.square(visible - target))
+
+    before = float(quantized_proxy_loss())
+    fw.optimize(quantized_proxy_loss)
+    after = float(quantized_proxy_loss())
+
+    assert fw.lifecycle.optimizer == "rms_normalized_sgd_backtracking_v1"
+    assert fw.lifecycle.optimized_steps == 1
+    assert fw.lifecycle.rejected_steps == 0
+    assert after < before
+    assert fw.lifecycle.loss_trail == [before, after]
+    assert len(fw.lifecycle.gradient_global_norm_trail) == 1
+    assert len(fw.lifecycle.accepted_step_sizes) == 1
+
+
 def test_fast_weight_optimizer_charges_before_faulting_gradient(tiny_model):
     fw = EpisodicFastWeights(
         FastWeightsConfig(enabled=True, rank=1, target="down_proj", opt_steps=1)

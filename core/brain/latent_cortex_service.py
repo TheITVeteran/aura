@@ -192,6 +192,14 @@ class LatentCortexService:
         def nonnegative_int(mapping: dict[str, Any], key: str) -> bool:
             return type(mapping.get(key)) is int and mapping[key] >= 0
 
+        def finite_number_list(value: Any) -> bool:
+            return isinstance(value, list) and all(
+                not isinstance(item, bool)
+                and isinstance(item, (int, float))
+                and math.isfinite(float(item))
+                for item in value
+            )
+
         def sha256(value: Any) -> bool:
             return (
                 isinstance(value, str)
@@ -441,6 +449,38 @@ class LatentCortexService:
                 errors.append("fast_weight_optimization_accounting_mismatch")
             if receipt.get("fast_weight_budget_exhausted") is not False:
                 errors.append("fast_weight_optimization_budget_exhausted")
+            loss_trail = receipt.get("fast_weight_loss_trail")
+            gradient_trail = receipt.get("fast_weight_gradient_norm_trail")
+            step_sizes = receipt.get("fast_weight_accepted_step_sizes")
+            if receipt.get("fast_weight_optimizer") != (
+                "rms_normalized_sgd_backtracking_v1"
+            ):
+                errors.append("fast_weight_optimizer_unproven")
+            if (
+                not finite_number_list(loss_trail)
+                or len(loss_trail)
+                != receipt.get("fast_weight_optimized_steps", 0) + 1
+                or any(
+                    later >= earlier
+                    for earlier, later in zip(loss_trail, loss_trail[1:])
+                )
+            ):
+                errors.append("fast_weight_loss_descent_unproven")
+            if (
+                not finite_number_list(gradient_trail)
+                or len(gradient_trail)
+                != receipt.get("fast_weight_optimization_attempts", 0)
+                or any(float(value) <= 0.0 for value in gradient_trail)
+            ):
+                errors.append("fast_weight_gradient_evidence_invalid")
+            if (
+                not finite_number_list(step_sizes)
+                or len(step_sizes) != receipt.get("fast_weight_optimized_steps", 0)
+                or any(float(value) <= 0.0 for value in step_sizes)
+            ):
+                errors.append("fast_weight_step_evidence_invalid")
+            if not nonnegative_int(receipt, "fast_weight_line_search_backtracks"):
+                errors.append("fast_weight_line_search_evidence_invalid")
         return errors
 
     @staticmethod
@@ -791,6 +831,11 @@ class LatentCortexService:
                     "params_unchanged",
                     "fast_weights_applied",
                     "fast_weights_erased",
+                    "fast_weight_optimizer",
+                    "fast_weight_loss_trail",
+                    "fast_weight_gradient_norm_trail",
+                    "fast_weight_accepted_step_sizes",
+                    "fast_weight_line_search_backtracks",
                     "last_stage",
                     "stage_timings_s",
                     "honest_flags",

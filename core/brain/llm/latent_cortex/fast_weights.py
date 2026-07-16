@@ -38,6 +38,7 @@ from typing import Any
 from core.brain.llm.latent_cortex.types import ComputeBudget, FastWeightsConfig
 
 logger = logging.getLogger("Aura.LatentCortex.FastWeights")
+FAST_WEIGHT_OPTIMIZER = "rms_normalized_sgd_backtracking_v1"
 
 _TARGET_ATTRS = {
     "o_proj": ("self_attn", "o_proj"),
@@ -105,6 +106,7 @@ class FastWeightsLifecycle:
     layers: list[int] = field(default_factory=list)
     target: str = ""
     rank: int = 0
+    optimizer: str = FAST_WEIGHT_OPTIMIZER
     optimization_attempts: int = 0
     optimized_steps: int = 0
     rejected_steps: int = 0
@@ -112,6 +114,8 @@ class FastWeightsLifecycle:
     budget_exhausted: bool = False
     detach_conflicts: int = 0
     loss_trail: list[float] = field(default_factory=list)
+    gradient_global_norm_trail: list[float] = field(default_factory=list)
+    accepted_step_sizes: list[float] = field(default_factory=list)
     erased: bool = False
     erase_proven: bool | None = None
     exported: bool = False
@@ -122,6 +126,7 @@ class FastWeightsLifecycle:
             "layers": list(self.layers),
             "target": self.target,
             "rank": self.rank,
+            "optimizer": self.optimizer,
             "optimization_attempts": self.optimization_attempts,
             "optimized_steps": self.optimized_steps,
             "rejected_steps": self.rejected_steps,
@@ -129,6 +134,12 @@ class FastWeightsLifecycle:
             "budget_exhausted": self.budget_exhausted,
             "detach_conflicts": self.detach_conflicts,
             "loss_trail": [round(v, 6) for v in self.loss_trail],
+            "gradient_global_norm_trail": [
+                round(v, 6) for v in self.gradient_global_norm_trail
+            ],
+            "accepted_step_sizes": [
+                round(v, 12) for v in self.accepted_step_sizes
+            ],
             "erased": self.erased,
             "erase_proven": self.erase_proven,
             "exported": self.exported,
@@ -253,10 +264,12 @@ class EpisodicFastWeights:
 
         ``loss_fn`` closes over the model (with wrappers attached) and
         returns a scalar. We lift the wrapper params into an explicit list,
-        rebind them inside the traced function, and step with plain SGD +
-        global-norm clipping and bounded backtracking. A candidate is retained
-        only when it strictly improves the proxy; base weights never appear as
-        grad targets.
+        rebind them inside the traced function, and step along a per-tensor
+        RMS-preconditioned descent direction with bounded backtracking. This
+        keeps a resident-scale update numerically visible without allowing the
+        number of adapter elements to inflate its RMS magnitude. A candidate is
+        retained only when it improves the proxy beyond floating-point noise;
+        base weights never appear as grad targets.
         """
         import mlx.core as mx
 
@@ -318,7 +331,11 @@ class EpisodicFastWeights:
             if not math.isfinite(current_loss) or not math.isfinite(gnorm_value):
                 self.lifecycle.rejected_steps += 1
                 break
-            clip = mx.minimum(1.0, 1.0 / gnorm)
+            self.lifecycle.gradient_global_norm_trail.append(gnorm_value)
+            directions = []
+            for grad in grads:
+                grad_rms = mx.maximum(mx.sqrt(mx.mean(mx.square(grad))), 1e-12)
+                directions.append(mx.clip(grad / grad_rms, -8.0, 8.0))
             step_size = float(self.config.lr)
             accepted = False
             for backtrack in range(12):
@@ -332,8 +349,8 @@ class EpisodicFastWeights:
                 if budget is not None:
                     budget.charge_layer_apps(candidate_cost)
                 candidate = [
-                    p - step_size * g * clip
-                    for p, g in zip(params, grads, strict=True)
+                    parameter - step_size * direction
+                    for parameter, direction in zip(params, directions, strict=True)
                 ]
                 try:
                     candidate_value = with_params(candidate)
@@ -342,11 +359,16 @@ class EpisodicFastWeights:
                     bind_params(params)
                     raise
                 candidate_loss = float(candidate_value)
-                if math.isfinite(candidate_loss) and candidate_loss < current_loss:
+                minimum_improvement = max(1e-6, abs(current_loss) * 1e-7)
+                if (
+                    math.isfinite(candidate_loss)
+                    and current_loss - candidate_loss >= minimum_improvement
+                ):
                     params = candidate
                     self.lifecycle.loss_trail.append(candidate_loss)
                     self.lifecycle.optimized_steps += 1
                     self.lifecycle.line_search_backtracks += backtrack
+                    self.lifecycle.accepted_step_sizes.append(step_size)
                     accepted = True
                     break
                 step_size *= 0.5
@@ -463,6 +485,7 @@ class EpisodicFastWeights:
 __all__ = [
     "EpisodicDeltaLinear",
     "EpisodicFastWeights",
+    "FAST_WEIGHT_OPTIMIZER",
     "FastWeightHandle",
     "FastWeightsLifecycle",
 ]
