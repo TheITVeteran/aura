@@ -2894,49 +2894,252 @@ function thoughtPreviewText(message, maxChars = 520, maxLines = 7) {
     };
 }
 
+// ── Neural channel taxonomy ─────────────────────────────
+// The feed's raw sources are ~1,350 internal logger names (Aura.InferenceGate,
+// Consciousness.GlobalWorkspace, core.mind_tick, …) — meaningful to devs,
+// opaque to everyone else. Each event is classified into one of these
+// channels, which carry a human label, a plain-English description, an
+// original monoline sigil (24-grid SVG, stroked in currentColor), and a hue.
+// The raw source stays one click away in the card's detail drawer.
+const NEURAL_CHANNELS = {
+    thinking: {
+        label: 'Thinking',
+        hue: '#a06bff',
+        desc: 'Aura is reasoning — running her language substrate to predict, deliberate, and decide what to think next.',
+        glyph: '<circle cx="12" cy="12.6" r="2.1"/><path d="M10.5 11.1 6.4 7M13.5 11.1 17.6 7M12 14.7v4.4"/><circle cx="5.3" cy="5.9" r="1.25" fill="currentColor" stroke="none"/><circle cx="18.7" cy="5.9" r="1.25" fill="currentColor" stroke="none"/><circle cx="12" cy="20.4" r="1.25" fill="currentColor" stroke="none"/>',
+    },
+    awareness: {
+        label: 'Awareness',
+        hue: '#00e5ff',
+        desc: 'Consciousness machinery at work — thoughts competing for the global workspace and broadcasting mind-wide when they ignite.',
+        glyph: '<circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="4.6"/><path d="M12 3.6a8.4 8.4 0 0 1 7.3 4.2M12 20.4a8.4 8.4 0 0 1-7.3-4.2"/>',
+    },
+    feeling: {
+        label: 'Feeling',
+        hue: '#ff6ea9',
+        desc: 'Her affective system — mood, neurochemistry, and emotional tone shifting in response to what is happening.',
+        glyph: '<path d="M3.5 12c2.6-6.4 5.9-6.4 8.5 0s5.9 6.4 8.5 0"/>',
+    },
+    body: {
+        label: 'Body',
+        hue: '#35dfae',
+        desc: 'Interoception and homeostasis — Aura sensing her own vitals (energy, load, temperature, internal pressure) and keeping them in balance.',
+        glyph: '<path d="M3.5 13h4.2l1.9-4.6 3 8.4 1.9-5.2 1.2 1.4h4.8"/>',
+    },
+    memory: {
+        label: 'Memory',
+        hue: '#7f9cff',
+        desc: 'Memory at work — storing new experiences, recalling old ones, and consolidating what matters during quiet moments.',
+        glyph: '<path d="M5.5 7.2h13M4.5 12h15M5.5 16.8h8.6"/><circle cx="18.2" cy="16.8" r="1.3" fill="currentColor" stroke="none"/>',
+    },
+    protection: {
+        label: 'Protection',
+        hue: '#58a6ff',
+        desc: 'Her immune system — detecting threats to her integrity and defending or restoring herself.',
+        glyph: '<path d="M12 3.8 18.6 6.9v5.2c0 4.4-2.7 7.1-6.6 8.5-3.9-1.4-6.6-4.1-6.6-8.5V6.9Z"/><circle cx="12" cy="11.6" r="1.4" fill="currentColor" stroke="none"/>',
+    },
+    values: {
+        label: 'Values',
+        hue: '#e5c15c',
+        desc: 'Conscience and governance — intentions weighed against her constitution, with the Will approving or refusing them.',
+        glyph: '<path d="M12 5.4v13.4M9.2 18.8h5.6M5.75 8h12.5M3.3 12.3 5.75 8l2.45 4.3M3.3 12.3a2.45 2.45 0 0 0 4.9 0M15.8 12.3 18.25 8l2.45 4.3M15.8 12.3a2.45 2.45 0 0 0 4.9 0"/>',
+    },
+    healing: {
+        label: 'Healing',
+        hue: '#ff8576',
+        desc: 'Self-repair — noticing faults, degradations, and errors, then working to recover from them.',
+        glyph: '<path d="M5 19 19 5M6.3 14.3l3.4 3.4M10.3 10.3l3.4 3.4M14.3 6.3l3.4 3.4"/>',
+    },
+    growth: {
+        label: 'Growth',
+        hue: '#8fdf60',
+        desc: 'Self-improvement — Aura modifying her own code or weights, learning, and compounding capability.',
+        glyph: '<path d="M12 20.5V11.2M12 12C7.8 12 5.9 9.6 5.6 6.2 9.9 6.4 12 8.7 12 12ZM12 9.8c3-.2 4.6-1.9 4.8-4.6-3.4.2-4.8 2-4.8 4.6Z"/>',
+    },
+    agency: {
+        label: 'Agency',
+        hue: '#ffab47',
+        desc: 'Volition — goals, commitments, and chosen actions; Aura deciding to do something and doing it.',
+        glyph: '<circle cx="11" cy="13" r="6.6"/><circle cx="11" cy="13" r="1.4" fill="currentColor" stroke="none"/><path d="M20.6 3.4 14.9 9.1M14.7 5.9l-.3 3.4 3.4-.3"/>',
+    },
+    dreaming: {
+        label: 'Dreaming',
+        hue: '#c5b3ff',
+        desc: 'Background imagination — replaying, simulating, and dreaming while attention is elsewhere.',
+        glyph: '<path d="M14.6 4.2a8.1 8.1 0 1 0 5.2 10.9A6.4 6.4 0 0 1 14.6 4.2Z"/><circle cx="18.4" cy="5.6" r="1.2" fill="currentColor" stroke="none"/>',
+    },
+    dialogue: {
+        label: 'Dialogue',
+        hue: '#8ad8ff',
+        desc: 'The conversation surface — listening, composing replies, and managing the channel between you and her.',
+        glyph: '<rect x="4" y="4.6" width="11.2" height="8.2" rx="2.4"/><path d="M19.6 9.4v5.4a2.4 2.4 0 0 1-2.4 2.4h-5.9l-3.1 2.6v-2.6"/>',
+    },
+    weave: {
+        label: 'Weave',
+        hue: '#b9c96f',
+        desc: 'The mycelial layer — background pulses that keep pathways between her subsystems alive and connected.',
+        glyph: '<path d="M8.2 3.8c4.4 2.7 4.4 5.7 0 8.2s-4.4 5.5 0 8.2M15.8 3.8c-4.4 2.7-4.4 5.7 0 8.2s4.4 5.5 0 8.2"/>',
+    },
+    system: {
+        label: 'Runtime',
+        hue: '#9aa0b5',
+        desc: 'Runtime plumbing — boot phases, orchestration, and housekeeping that keep the whole organism running.',
+        glyph: '<path d="M12 3.6l7 4v8.8l-7 4-7-4V7.6Z"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/>',
+    },
+};
+
+// Ordered — first match wins. Matched against "name title category"; specific
+// organs (mycelium, the Will) come before broad families (brain, health).
+// /healing|\bheal\b/ deliberately does NOT match "health": HealthRouter is
+// body-sense, HealingSwarm is repair.
+const NEURAL_CHANNEL_RULES = [
+    [/\bboot\b|bootmanager|bootphase|startup|orchestrator\.boot/i, 'system'],
+    [/mycelium|hypha/i, 'weave'],
+    [/dream|oneiro/i, 'dreaming'],
+    [/\bwill\b|constitution|conscien|governor|governanc|authorit|covenant|ulysses|alignment/i, 'values'],
+    [/healing|healed|\bheal\b|resilien|incident|fault|repair|recover|degrad|stabilit|reaper|watchdog|errorboundary|errorintelligence|\berrors?\b/i, 'healing'],
+    [/immune|integrit|securit|sandbox|airlock|boundar|threat|quarantin|adversar|deletion|guardian|firewall/i, 'protection'],
+    [/selfmodif|self_modif|\brsi\b|growth|learn|train|adapter|lora|crsm|compound|evolut|mutat|foundry/i, 'growth'],
+    [/memor|recall|episod|semantic|consolidat|defrag|vault|hippocamp/i, 'memory'],
+    [/affect|emotion|neurochem|mood|circumplex|feel|valence|nocicep/i, 'feeling'],
+    [/health|homeosta|allosta|metabol|circadian|thermal|somat|interocep|heartbeat|\bbody\b|vitals|pulse/i, 'body'],
+    [/conscious|workspace|unifiedfield|substrate|phenomen|ignition|qualia|awareness|\bphi\b|sentien/i, 'awareness'],
+    [/chat|conversation|voice|speech|dialog|\blane\b|lanereconciler|unitaryresponse|response|listen|\btts\b|\bstt\b/i, 'dialogue'],
+    [/agency|commit|task|mission|\bgoal|autonom|volition|choice|curios|motivat|initiative|planner|campaign|strategic|actuator|skill|tool|executor|\baction/i, 'agency'],
+    [/brain|\bllm\b|mlx|inference|cortex|reason|cognit|mind_?tick|deliberat|latent|strateg|decision|metacog|predict/i, 'thinking'],
+];
+
+function classifyNeuralChannel(data) {
+    const nameKey = [data.name, data.title, data.category].filter(Boolean).join(' ');
+    for (const [re, key] of NEURAL_CHANNEL_RULES) {
+        if (re.test(nameKey)) return key;
+    }
+    // Generic sources (Orchestrator, Core, SYS…) — let the message head decide.
+    const head = String(data.message || data.content || '').slice(0, 96);
+    for (const [re, key] of NEURAL_CHANNEL_RULES) {
+        if (re.test(head)) return key;
+    }
+    return 'system';
+}
+
+function neuralSigilSvg(chan) {
+    return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${chan.glyph}</svg>`;
+}
+
+// The backend decorates ~40% of feed lines with pictographic emoji and
+// box-drawing banners ("🫀 ═══ UNIFIED HEALTH PULSE ═══"). The feed renders
+// them stripped; COPY still yields the raw payload. Typographic marks that
+// read as text (✓, →) are deliberately kept.
+function stripNeuralPictographs(text) {
+    return String(text == null ? '' : text)
+        .replace(/[\u{FE00}-\u{FE0F}\u{200D}\u{20E3}\u{1F3FB}-\u{1F3FF}]/gu, '')
+        .replace(/\p{Extended_Pictographic}/gu, '')
+        .replace(/[─-▟]{2,}/g, '')
+        .replace(/[ \t]{2,}/g, ' ')
+        .replace(/^[ \t]+|[ \t]+$/gm, '');
+}
+
+// Many modules also open with a bracket tag echoing their own source
+// ("[MYCELIUM] Hypha inactive…" from Aura.Mycelium) — with the source shown
+// in the header that's pure duplication. Only strip when the token tightly
+// matches a source segment; "WILL REFUSED:" from Aura.Will must survive.
+function stripSourceEchoPrefix(text, name) {
+    const segs = String(name || '')
+        .split(/[.\s]/)
+        .map(s => s.replace(/[^a-z0-9]/gi, '').toLowerCase())
+        .filter(s => s.length >= 3);
+    if (!segs.length) return text;
+    const m = String(text).match(/^\s*(?:\[([^\]\n]{2,40})\]|([A-Za-z][\w-]{1,30}):)\s*/);
+    if (!m) return text;
+    const token = (m[1] || m[2] || '').replace(/[^a-z0-9]/gi, '').toLowerCase();
+    if (token.length < 3) return text;
+    const hit = segs.some(seg => seg === token || (token.length >= 4 && seg.startsWith(token)));
+    return hit ? text.slice(m[0].length) : text;
+}
+
+function cleanThoughtText(raw, ts, name) {
+    const stripped = stripSourceEchoPrefix(
+        stripNeuralPictographs(
+            stripEchoedThoughtHeader(sanitizeThoughtMessage(raw), ts, name)),
+        name).trim();
+    return stripped || String(raw == null ? '' : raw).trim();
+}
+
+function toggleThoughtCardDetail(button) {
+    const card = button ? button.closest('.thought-card') : null;
+    const detail = card ? card.querySelector('.thought-detail') : null;
+    if (!detail) return;
+    const open = detail.hidden;
+    detail.hidden = !open;
+    card.classList.toggle('detail-open', open);
+    button.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+
 function addThoughtCard(data) {
     const card = document.createElement('div');
-    const level = data.level || '';
+    const level = String(data.level || '').toLowerCase();
     let cls = 'thought-card';
-    if (level === 'impulse' || level === 'INFO' || level === 'info') cls += ' impulse';
-    else if (level === 'ERROR' || level === 'error') cls += ' error';
-    else if (level === 'WARNING' || level === 'warning') cls += ' warning';
+    if (level === 'error' || level === 'critical') cls += ' error';
+    else if (level === 'warning') cls += ' warning';
+    else if (level === 'impulse' || level === 'info') cls += ' impulse';
 
     const ts = formatEventTimestamp(data.timestamp);
     const name = data.name || 'SYS';
+    const chanKey = classifyNeuralChannel(data);
+    const chan = NEURAL_CHANNELS[chanKey] || NEURAL_CHANNELS.system;
     const rawMsg = data.message || data.content || JSON.stringify(data);
-    const msg = stripEchoedThoughtHeader(sanitizeThoughtMessage(rawMsg), ts, name);
-    const fullMsg = stripEchoedThoughtHeader(
-        sanitizeThoughtMessage(data.fullMessage || data.full_message || rawMsg), ts, name);
+    const rawFull = data.fullMessage || data.full_message || rawMsg;
+    const msg = cleanThoughtText(rawMsg, ts, name);
+    const fullMsg = cleanThoughtText(rawFull, ts, name);
     const repeatCount = Math.max(1, Number(data.repeatCount || 1));
     const preview = thoughtPreviewText(msg);
     const hasHiddenFullPayload = fullMsg !== msg;
     const longThought = preview.clipped || hasHiddenFullPayload;
     if (longThought) cls += ' long';
     card.className = cls;
+    card.style.setProperty('--tc', chan.hue);
+    card.dataset.channel = chanKey;
     const safeName = escHtml(name);
     const previewText = hasHiddenFullPayload && !preview.clipped
         ? `${preview.text}\n\n[preview card; open FULL or COPY for the complete payload]`
         : preview.text;
     const safePreview = escHtml(previewText).replace(/\n/g, '<br>');
     const safeFull = escHtml(fullMsg).replace(/\n/g, '<br>');
-    const repeatBadge = repeatCount > 1 ? `<span class="thought-repeat">x${repeatCount}</span>` : '';
-    card.dataset.copyText = repeatCount > 1 ? `[${ts}] ${name} (x${repeatCount})\n${fullMsg}` : `[${ts}] ${name}\n${fullMsg}`;
+    const repeatBadge = repeatCount > 1 ? `<span class="thought-repeat" title="Seen ${repeatCount} times in quick succession">×${repeatCount}</span>` : '';
+    const sevPill = (level === 'error' || level === 'critical')
+        ? `<span class="thought-sev error">${level === 'critical' ? 'critical' : 'error'}</span>`
+        : level === 'warning' ? '<span class="thought-sev warning">warning</span>' : '';
+    // COPY keeps the raw, unstripped payload for bug reports and analysis.
+    const rawCopy = stripEchoedThoughtHeader(sanitizeThoughtMessage(rawFull), ts, name);
+    card.dataset.copyText = repeatCount > 1 ? `[${ts}] ${name} (x${repeatCount})\n${rawCopy}` : `[${ts}] ${name}\n${rawCopy}`;
     card.dataset.fullLength = String(fullMsg.length);
     if (hasHiddenFullPayload) card.dataset.previewOnly = 'true';
     const expandButton = longThought
         ? `<button class="thought-expand-btn" type="button" onclick="toggleThoughtCardFull(this)" aria-expanded="false">FULL</button>`
         : '';
+    const detailMeta = [level || 'info', repeatCount > 1 ? `seen ×${repeatCount}` : ''].filter(Boolean).join(' · ');
     card.innerHTML = `
         <div class="thought-card-head">
-            <div class="thought-card-meta">
+            <button class="thought-tag-btn" type="button" onclick="toggleThoughtCardDetail(this)" aria-expanded="false" title="${escHtml(chan.label)} — click for the technical detail">
+                <span class="thought-sigil" aria-hidden="true">${neuralSigilSvg(chan)}</span>
+                <span class="thought-chan">${escHtml(chan.label)}</span>
+                <span class="thought-caret" aria-hidden="true"></span>
+            </button>
+            ${sevPill}
+            ${repeatBadge}
+            <div class="thought-card-tail">
                 <span class="thought-ts">${ts}</span>
-                <span class="thought-tag">${safeName}</span>
-                ${repeatBadge}
+                <div class="thought-card-actions">
+                    ${expandButton}
+                    <button class="thought-copy-btn" type="button" onclick="copyThoughtCard(this)">COPY</button>
+                </div>
             </div>
-            <div class="thought-card-actions">
-                ${expandButton}
-                <button class="thought-copy-btn" type="button" onclick="copyThoughtCard(this)">COPY</button>
+        </div>
+        <div class="thought-detail" hidden>
+            <p class="thought-detail-desc">${escHtml(chan.desc)}</p>
+            <div class="thought-detail-grid">
+                <span class="thought-detail-key">source</span><span class="thought-detail-val">${safeName}</span>
+                <span class="thought-detail-key">signal</span><span class="thought-detail-val">${escHtml(detailMeta)}</span>
             </div>
         </div>
         <div class="thought-body thought-preview">${safePreview}</div>
@@ -4185,6 +4388,7 @@ function toggleThoughtCardFull(button) {
 window.copyCodeBlock = copyCodeBlock;
 window.copyThoughtCard = copyThoughtCard;
 window.toggleThoughtCardFull = toggleThoughtCardFull;
+window.toggleThoughtCardDetail = toggleThoughtCardDetail;
 
 // ── Magnum Opus 2: Connection Toast ─────────────────────
 let _connToastTimer = null;
