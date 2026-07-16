@@ -34,6 +34,9 @@ class DeliberationResult:
     answer: str
     passes: int
     used_model: bool
+    # True when the answer came from a Recursive Latent Cortex episode on the
+    # resident model (workspace recurrence), not ordinary token generation.
+    used_latent_cortex: bool = False
     timestamp: float = field(default_factory=time.time)
 
 
@@ -66,6 +69,7 @@ class DeepDeliberationEngine:
         refined = self._heuristic_refine(question)
         answer = ""
         used_model = False
+        used_latent_cortex = False
         passes = 0
 
         brain = resolve_brain(self.orchestrator)
@@ -86,7 +90,34 @@ class DeepDeliberationEngine:
                 if refine_out:
                     refined = refine_out.strip()[:400]
                     passes += 1
+                # DEEP pass, first choice: a Recursive Latent Cortex episode
+                # on the resident model — workspace recurrence buys real
+                # computational depth before any token is committed. Honest
+                # refusals (busy lane, disabled, no worker) fall through to
+                # ordinary generation below.
+                try:
+                    from core.brain.latent_cortex_service import get_latent_cortex_service
+
+                    latent = await asyncio.wait_for(
+                        get_latent_cortex_service(self.orchestrator).deep_reason(
+                            refined,
+                            stakes=0.6,
+                            uncertainty=0.7,
+                            domain="deliberation",
+                            timeout_s=min(120.0, timeout * 2),
+                        ),
+                        timeout=min(150.0, timeout * 3),
+                    )
+                    if latent.get("ok") and str(latent.get("text") or "").strip():
+                        answer = str(latent["text"]).strip()
+                        passes += 1
+                        used_model = True
+                        used_latent_cortex = True
+                except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, TimeoutError) as exc:
+                    _degrade(exc, action="fell back to ordinary generation after latent cortex episode failed")
                 for _ in range(max(1, budget)):
+                    if answer:
+                        break
                     ans_out = coerce_text(await asyncio.wait_for(
                         brain.think(
                             "Answer thoroughly and precisely:\n" + refined,
@@ -115,6 +146,7 @@ class DeepDeliberationEngine:
             answer=answer,
             passes=passes,
             used_model=used_model,
+            used_latent_cortex=used_latent_cortex,
         )
 
     def get_status(self) -> dict[str, Any]:

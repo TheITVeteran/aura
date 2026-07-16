@@ -219,6 +219,11 @@ class EpisodeReceipt:
     selected_branch: int = 0
     exchanges: int = 0
     # Optimization evidence.
+    # Digest of the first-decode logits (next-token distribution conditioned
+    # on [prompt; refined thoughts]) — the cheap causal audit surface: any
+    # change to the latent computation shows up here even when greedy tokens
+    # collapse into the same attractor.
+    first_logits_digest: str = ""
     latent_opt_applied: bool = False
     latent_opt_mode: str = ""  # gradient | control | off
     latent_opt_loss_trail: list[float] = field(default_factory=list)
@@ -250,6 +255,7 @@ class EpisodeReceipt:
             "steps_taken": self.steps_taken,
             "residual_trail": [round(r, 6) for r in self.residual_trail],
             "halting_reason": self.halting_reason,
+            "first_logits_digest": self.first_logits_digest,
             "best_step": self.best_step,
             "reverted_to_best": self.reverted_to_best,
             "branch_scores": [round(s, 6) for s in self.branch_scores],
@@ -273,12 +279,16 @@ class LatentReasoningResult:
     text: str
     receipt: EpisodeReceipt
     reason: str = ""  # populated when ok is False or a fallback occurred
+    # Raw output token ids — substrate-level callers (the experiments harness
+    # driving random-weight models with synthetic vocabularies) verify these.
+    tokens: list[int] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "ok": self.ok,
             "text": self.text,
             "reason": self.reason,
+            "tokens": list(self.tokens),
             "receipt": self.receipt.to_dict(),
         }
 

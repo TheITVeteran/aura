@@ -4571,6 +4571,51 @@ def _mlx_worker_loop(
                     )
                 ipc_writer.put(response)
 
+            elif action == "latent_reason":
+                # Recursive Latent Cortex episode on the RESIDENT model —
+                # workspace recurrence + branches (+ optional latent opt /
+                # episode fast weights), all under checkpoint invariants.
+                # See docs/RECURSIVE_LATENT_CORTEX.md.
+                response = {"id": job.get("id"), "action": "latent_reason"}
+                try:
+                    from core.brain.llm.latent_cortex.worker_handler import (
+                        handle_latent_reason,
+                    )
+
+                    with metal_semaphore:
+                        body = handle_latent_reason(
+                            job, model=model, tokenizer=tokenizer, model_path=model_path
+                        )
+                        if body.pop("requires_cache_clear", False):
+                            # Fast-weight erase unproven ⇒ pre-episode prompt
+                            # KV states may embed the temporary weights.
+                            try:
+                                if prompt_cache_lru is not None:
+                                    prompt_cache_lru.clear()
+                            except (RuntimeError, AttributeError, TypeError, ValueError):
+                                logger.debug("Prompt cache clear skipped after latent episode.")
+                            if mx and device != "cpu":
+                                _clear_mlx_cache(mx)
+                    response.update(body)
+                except (
+                    ImportError,
+                    RuntimeError,
+                    AttributeError,
+                    TypeError,
+                    ValueError,
+                    KeyError,
+                    OSError,
+                ) as latent_exc:
+                    _record_mlx_degradation(
+                        latent_exc,
+                        action="reported latent_reason failure to parent IPC",
+                        severity="warning",
+                    )
+                    response.update(
+                        {"status": "error", "message": f"latent_reason_failed: {latent_exc}"}
+                    )
+                ipc_writer.put(response)
+
         except KeyboardInterrupt:
             logger.info("🛑 [WORKER] Shutdown signal received; exiting quietly.")
             break

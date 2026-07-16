@@ -41,6 +41,7 @@ class ServiceNames:
     # Functional Subsystems
     CAPABILITY = "capability_engine"
     COGNITIVE = "cognitive_engine"
+    LATENT_CORTEX = "latent_cortex"      # core/brain/latent_cortex_service.py
     LLM_ROUTER = "llm_router"
     BRAIN = "brain"
     SOUL = "soul"

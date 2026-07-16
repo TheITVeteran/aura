@@ -24,6 +24,7 @@ def register_derived_engines(orchestrator: Any = None) -> dict[str, Any]:
     """Register the character-derived engines from their home organs."""
     from core.affect.affective_resonance import register_affective_resonance
     from core.brain.deep_deliberation import register_deep_deliberation
+    from core.brain.latent_cortex_service import register_latent_cortex
     from core.ethics.adversarial_conscience import register_adversarial_conscience
     from core.evals.adaptive_test_chamber import register_test_chamber
     from core.goals.directive_conflict_sentinel import register_directive_sentinel
@@ -42,6 +43,10 @@ def register_derived_engines(orchestrator: Any = None) -> dict[str, Any]:
         "hal": register_directive_sentinel,
         "culture_mind": register_outcome_simulator,
         "deep_thought": register_deep_deliberation,
+        # Not character-derived, but the same safe pure-registration boot
+        # path: the Recursive Latent Cortex facade (worker episodes are only
+        # ever started by explicit calls, never by registration).
+        "latent_cortex": register_latent_cortex,
         "brainiac": register_knowledge_bottling,
         "tron": register_user_advocate,
         "caine": register_scenario_forge,

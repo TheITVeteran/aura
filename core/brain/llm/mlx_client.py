@@ -3758,6 +3758,76 @@ class MLXLocalClient:
     def expert_adapter_resident(self) -> str | None:
         return getattr(self, "_expert_adapter_path", None)
 
+    async def latent_reason_async(
+        self,
+        prompt: str | None = None,
+        *,
+        messages: list | None = None,
+        config: dict[str, Any] | None = None,
+        budget: dict[str, Any] | None = None,
+        domain: str = "general",
+        timeout_s: float = 300.0,
+    ) -> dict[str, Any]:
+        """Run a Recursive Latent Cortex episode on the RESIDENT worker model.
+
+        Workspace recurrence + virtual-width branches over the frozen
+        checkpoint (docs/RECURSIVE_LATENT_CORTEX.md). Refuses while a
+        generation is in flight (the episode needs exclusive weights/KV) and
+        never spawns a worker just to think — no resident model, no episode.
+        Returns ``{"ok": bool, "text": str, "receipt": {...}, "reason": str}``.
+        """
+        if self._closed:
+            return {"ok": False, "reason": "client_closed"}
+        if (
+            self._req_q is None
+            or not (self._process and self._process.is_alive() and self._init_done)
+        ):
+            return {"ok": False, "reason": "worker_not_ready"}
+        if int(getattr(self, "_active_generations", 0) or 0) > 0 or self._warmup_in_flight:
+            return {"ok": False, "reason": "generation_active"}
+
+        req_id = uuid.uuid4().hex
+        fut = _new_shared_future()
+        self._pending_generations[req_id] = fut
+        job: dict[str, Any] = {
+            "id": req_id,
+            "action": "latent_reason",
+            "domain": str(domain or "general"),
+        }
+        if prompt is not None:
+            job["prompt"] = str(prompt)
+        if messages is not None:
+            job["messages"] = list(messages)
+        if config:
+            job["config"] = dict(config)
+        if budget:
+            job["budget"] = dict(budget)
+        try:
+            await run_io_bound(self._req_q.put, job, True, 2.0)
+            res = await _await_shared_future(fut, timeout_s=max(30.0, float(timeout_s)))
+        except (TimeoutError, BrokenPipeError, OSError) as exc:
+            self._pending_generations.pop(req_id, None)
+            _record_mlx_degradation(
+                exc,
+                action="reported latent_reason timeout without touching the resident model",
+                severity="warning",
+            )
+            return {"ok": False, "reason": f"latent_timeout:{type(exc).__name__}"}
+
+        if res and res.get("status") == "ok":
+            return {
+                "ok": True,
+                "text": str(res.get("text") or ""),
+                "receipt": dict(res.get("receipt") or {}),
+                "reason": str(res.get("reason") or ""),
+            }
+        return {
+            "ok": False,
+            "text": "",
+            "receipt": dict((res or {}).get("receipt") or {}),
+            "reason": str((res or {}).get("message") or "latent_reason_failed"),
+        }
+
     async def reload_model_artifact(self, model_path: str) -> dict[str, Any]:
         """Serve a newly published fused artifact by re-pointing this lane.
 
@@ -4370,6 +4440,7 @@ class MLXLocalClient:
                     "stream_done",
                     "set_expert_adapter",
                     "nonparametric_ingest",
+                    "latent_reason",
                 ):
                     future = self._pending_generations.pop(req_id, None) if req_id else None
                     if future and not future.done():
