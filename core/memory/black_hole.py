@@ -23,6 +23,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from core.runtime.atomic_writer import atomic_write_bytes_if_absent, ensure_private_directory
 from core.runtime.errors import record_degradation
+from core.runtime.flags import FlagKind, declare
 from core.runtime.service_registry import get_runtime_service
 
 logger = logging.getLogger("Aura.BlackHole")
@@ -79,8 +80,15 @@ class BlackHoleEncryptionUnavailable(RuntimeError):
     """
 
 
+_LOCAL_KEY_DIR_FLAG = declare(
+    "AURA_BLACK_HOLE_KEY_DIR", kind=FlagKind.STRING, default="",
+    description="Override directory for the BlackHole local encryption key",
+    owner="core.memory.black_hole",
+)
+
+
 def _local_key_path():
-    override = os.environ.get("AURA_BLACK_HOLE_KEY_DIR", "").strip()
+    override = str(_LOCAL_KEY_DIR_FLAG.value() or "").strip()
     if override:
         return Path(override).expanduser() / "black_hole_local.key"
     try:

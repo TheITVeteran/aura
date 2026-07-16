@@ -88,6 +88,7 @@ from core.runtime.atomic_writer import (
     ensure_private_directory,
     interprocess_file_lock,
 )
+from core.runtime.flags import FlagKind, declare
 
 logger = logging.getLogger("Aura.Governance.CapabilityChain")
 
@@ -337,8 +338,28 @@ class VerificationResult:
 # ---------------------------------------------------------------------------
 
 
+_KEY_DIR_FLAG = declare(
+    "AURA_CAPABILITY_KEY_DIR", kind=FlagKind.STRING, default="",
+    description="Override directory for the Will's capability signing keys",
+    owner="core.governance.capability_chain",
+)
+_FORCE_HMAC_FLAG = declare(
+    "AURA_CAPABILITY_FORCE_HMAC", kind=FlagKind.BOOL, default=False,
+    description=(
+        "Force the degraded symmetric HMAC mode instead of Ed25519 "
+        "(verifiers can then mint — test seam only)"
+    ),
+    owner="core.governance.capability_chain",
+)
+_ENFORCEMENT_FLAG = declare(
+    "AURA_CAPABILITY_ENFORCEMENT", kind=FlagKind.STRING, default="",
+    description="How hard sinks enforce the capability chain: strict | warn | off",
+    owner="core.governance.capability_chain",
+)
+
+
 def _key_dir() -> Path:
-    override = os.environ.get("AURA_CAPABILITY_KEY_DIR", "").strip()
+    override = str(_KEY_DIR_FLAG.value() or "").strip()
     if override:
         return Path(override).expanduser()
     try:
@@ -363,6 +384,42 @@ def _hmac_path() -> Path:
 
 def _key_id_for(material: bytes, kind: str) -> str:
     return f"{kind}-{hashlib.sha256(material).hexdigest()[:16]}"
+
+
+def _read_settled_private_material(
+    path: Path, *, attempts: int = 5, max_bytes: int = 64 * 1024
+) -> bytes:
+    """Read private material, tolerating a concurrent *creation* landing.
+
+    The TOCTOU guard in :func:`_read_private_material` is right to refuse a file
+    that changes under it — but "a racing initializer just finished writing this
+    key" and "someone is tampering with my key" are different events, and only
+    the second deserves a hard failure.
+
+    The race is real and reachable on first boot: several threads call
+    ``_load_or_create_ed25519`` at once, exactly one wins
+    ``atomic_write_bytes_if_absent``, and the losers immediately read the
+    winner's file — while the winner's link/rename may still be settling. The
+    loser then sees st_dev/st_ino move and raises, so a cold start with any
+    concurrency could fail to obtain an identity at all.
+
+    Retries are bounded and only cover the transient window; a file that keeps
+    changing across every attempt still raises, because that is no longer a
+    race — it is something else.
+    """
+    last: Exception | None = None
+    for attempt in range(attempts):
+        try:
+            return _read_private_material(path, max_bytes=max_bytes)
+        except (RuntimeError, FileNotFoundError) as exc:
+            # RuntimeError here is the guard's "changed while opening/reading";
+            # FileNotFoundError is the rename window itself.
+            last = exc
+            if attempt == attempts - 1:
+                break
+            time.sleep(0.005 * (attempt + 1))
+    assert last is not None
+    raise last
 
 
 def _read_private_material(path: Path, *, max_bytes: int = 64 * 1024) -> bytes:
@@ -462,11 +519,7 @@ class _KeyMaterial:
     @classmethod
     def _load_uncached(cls) -> dict[str, Any]:
         storage = cls._ensure_dir()
-        forced_hmac = os.environ.get("AURA_CAPABILITY_FORCE_HMAC", "").strip().lower() in {
-            "1",
-            "true",
-            "yes",
-        }
+        forced_hmac = bool(_FORCE_HMAC_FLAG.value())
 
         if _ED25519_AVAILABLE and not forced_hmac:
             try:
@@ -521,8 +574,11 @@ class _KeyMaterial:
     def _load_or_create_ed25519(cls, storage: bool) -> tuple[Any, bool]:
         path = _priv_path()
         if storage and os.path.lexists(path):
+            # lexists() goes true the instant a racing initializer links the
+            # file, so this read is in the same settling window as the
+            # lost-race read below — not only the obvious one.
             loaded = serialization.load_pem_private_key(
-                _read_private_material(path), password=None
+                _read_settled_private_material(path), password=None
             )
             if not isinstance(loaded, Ed25519PrivateKey):
                 raise ValueError(f"{path} is not an Ed25519 private key")
@@ -539,8 +595,10 @@ class _KeyMaterial:
         if atomic_write_bytes_if_absent(path, data, mode=0o600):
             logger.info("Minted a new Will capability signing key at %s", path)
             return priv, True
+        # We lost the create race: another initializer is mid-write. Its file is
+        # authoritative, but may still be settling, so tolerate that window.
         loaded = serialization.load_pem_private_key(
-            _read_private_material(path), password=None
+            _read_settled_private_material(path), password=None
         )
         if not isinstance(loaded, Ed25519PrivateKey):
             raise ValueError(f"{path} is not an Ed25519 private key")
@@ -562,7 +620,8 @@ class _KeyMaterial:
         path = _hmac_path()
         if storage and os.path.lexists(path):
             try:
-                secret = _read_private_material(path, max_bytes=4096)
+                # Same settling window as the Ed25519 path above.
+                secret = _read_settled_private_material(path, max_bytes=4096)
                 if 32 <= len(secret) <= 4096:
                     return secret, True
                 logger.error(
@@ -579,7 +638,8 @@ class _KeyMaterial:
         try:
             if atomic_write_bytes_if_absent(path, secret, mode=0o600):
                 return secret, True
-            winner = _read_private_material(path, max_bytes=4096)
+            # Lost the create race — see _load_or_create_ed25519.
+            winner = _read_settled_private_material(path, max_bytes=4096)
             if not 32 <= len(winner) <= 4096:
                 raise ValueError("persisted capability HMAC key has an invalid length")
             return winner, True
@@ -640,7 +700,7 @@ def capability_enforcement_mode(default: str = "strict") -> str:
     An unrecognized value resolves to ``strict`` rather than to the caller's
     default: a typo in an env var must not silently disable governance.
     """
-    raw = os.environ.get("AURA_CAPABILITY_ENFORCEMENT", "").strip().lower()
+    raw = str(_ENFORCEMENT_FLAG.value() or "").strip().lower()
     if not raw:
         return default if default in _VALID_ENFORCEMENT_MODES else "strict"
     if raw not in _VALID_ENFORCEMENT_MODES:

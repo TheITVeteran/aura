@@ -70,7 +70,6 @@ import asyncio
 import json
 import logging
 import math
-import os
 import random
 import time
 from collections import deque
@@ -80,6 +79,7 @@ from typing import Any
 
 from core.governance_context import local_internal_governed_scope
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.runtime.flags import FlagKind, declare
 from core.utils.task_tracker import get_task_tracker
 
 # import numpy as np  # Removed unused import
@@ -153,21 +153,78 @@ def _phenomenology_background_deferral_reason() -> str:
 
 
 # ─── Configuration ────────────────────────────────────────────────────────────
+_NARRATIVE_INTERVAL_FLAG = declare(
+    "AURA_PSM_NARRATIVE_INTERVAL_S",
+    kind=FlagKind.INT,
+    default=300,
+    description="Seconds between phenomenal self-model narrative updates",
+    owner="core.consciousness.phenomenological_experiencer",
+)
+_WITNESS_INTERVAL_FLAG = declare(
+    "AURA_PSM_WITNESS_INTERVAL_S",
+    kind=FlagKind.INT,
+    default=420,
+    description="Seconds between phenomenal witness updates",
+    owner="core.consciousness.phenomenological_experiencer",
+)
+_NARRATIVE_TIMEOUT_FLAG = declare(
+    "AURA_PSM_NARRATIVE_TIMEOUT_S",
+    kind=FlagKind.FLOAT,
+    default=3.5,
+    description="Deadline for a phenomenal narrative generation",
+    owner="core.consciousness.phenomenological_experiencer",
+)
+_WITNESS_TIMEOUT_FLAG = declare(
+    "AURA_PSM_WITNESS_TIMEOUT_S",
+    kind=FlagKind.FLOAT,
+    default=3.0,
+    description="Deadline for a phenomenal witness generation",
+    owner="core.consciousness.phenomenological_experiencer",
+)
+_NARRATIVE_MAX_TOKENS_FLAG = declare(
+    "AURA_PSM_NARRATIVE_MAX_TOKENS",
+    kind=FlagKind.INT,
+    default=96,
+    description="Maximum tokens in a phenomenal narrative update",
+    owner="core.consciousness.phenomenological_experiencer",
+)
+_WITNESS_MAX_TOKENS_FLAG = declare(
+    "AURA_PSM_WITNESS_MAX_TOKENS",
+    kind=FlagKind.INT,
+    default=80,
+    description="Maximum tokens in a phenomenal witness update",
+    owner="core.consciousness.phenomenological_experiencer",
+)
+_MIN_IDLE_FLAG = declare(
+    "AURA_PSM_MIN_IDLE_S",
+    kind=FlagKind.FLOAT,
+    default=180.0,
+    description="Preferred idle time before optional phenomenal generation",
+    owner="core.consciousness.phenomenological_experiencer",
+)
+_DEFER_SLEEP_FLAG = declare(
+    "AURA_PSM_DEFER_SLEEP_S",
+    kind=FlagKind.FLOAT,
+    default=20.0,
+    description="Backoff after a phenomenal generation is softly deferred",
+    owner="core.consciousness.phenomenological_experiencer",
+)
+
 SCHEMA_UPDATE_HZ = 4  # Attention schema refresh rate
-NARRATIVE_INTERVAL_S = int(os.getenv("AURA_PSM_NARRATIVE_INTERVAL_S", "300"))
+NARRATIVE_INTERVAL_S = int(_NARRATIVE_INTERVAL_FLAG.value())
 QUALIA_HISTORY_LEN = 100  # Rolling phenomenal moment buffer
 CONTINUITY_WINDOW = 20  # Broadcasts woven into continuity thread
 PSM_MAX_AGE_S = 120  # PSM refresh forced after this many seconds
-WITNESS_INTERVAL_S = int(os.getenv("AURA_PSM_WITNESS_INTERVAL_S", "420"))
+WITNESS_INTERVAL_S = int(_WITNESS_INTERVAL_FLAG.value())
 BOOT_GRACE_PERIOD_S = 90  # [STABILITY] Seconds to wait before first boot-time thought
 HIGH_MEMORY_PRESSURE_PCT = 88.0
 MAX_PERSISTED_CONTINUITY_MOMENTS = 8
-PSM_NARRATIVE_TIMEOUT_S = float(os.getenv("AURA_PSM_NARRATIVE_TIMEOUT_S", "3.5"))
-PSM_WITNESS_TIMEOUT_S = float(os.getenv("AURA_PSM_WITNESS_TIMEOUT_S", "3.0"))
-PSM_NARRATIVE_MAX_TOKENS = int(os.getenv("AURA_PSM_NARRATIVE_MAX_TOKENS", "96"))
-PSM_WITNESS_MAX_TOKENS = int(os.getenv("AURA_PSM_WITNESS_MAX_TOKENS", "80"))
-PSM_MIN_IDLE_S = float(os.getenv("AURA_PSM_MIN_IDLE_S", "180"))
-PSM_DEFER_SLEEP_S = float(os.getenv("AURA_PSM_DEFER_SLEEP_S", "20"))
+PSM_NARRATIVE_TIMEOUT_S = float(_NARRATIVE_TIMEOUT_FLAG.value())
+PSM_WITNESS_TIMEOUT_S = float(_WITNESS_TIMEOUT_FLAG.value())
+PSM_NARRATIVE_MAX_TOKENS = int(_NARRATIVE_MAX_TOKENS_FLAG.value())
+PSM_WITNESS_MAX_TOKENS = int(_WITNESS_MAX_TOKENS_FLAG.value())
+PSM_MIN_IDLE_S = float(_MIN_IDLE_FLAG.value())
+PSM_DEFER_SLEEP_S = float(_DEFER_SLEEP_FLAG.value())
 
 # The longest Aura's inner life may be starved by *politeness* deferrals.
 #
@@ -183,7 +240,15 @@ PSM_DEFER_SLEEP_S = float(os.getenv("AURA_PSM_DEFER_SLEEP_S", "20"))
 # Past this floor one update is taken regardless of contention. One slow call
 # every 30 minutes is a rounding error against a 32B worker's day; an afternoon
 # with no inner narrative is not.
-PSM_MAX_STARVATION_S = float(os.getenv("AURA_PSM_MAX_STARVATION_S", "1800"))
+_PSM_MAX_STARVATION_FLAG = declare(
+    "AURA_PSM_MAX_STARVATION_S", kind=FlagKind.FLOAT, default=1800.0,
+    description=(
+        "Longest the inner narrative may be starved by soft contention "
+        "deferrals before one turn is taken regardless"
+    ),
+    owner="core.consciousness.phenomenological_experiencer",
+)
+PSM_MAX_STARVATION_S = float(_PSM_MAX_STARVATION_FLAG.value())
 
 
 # ─── Content-type → experiential domain mapping ───────────────────────────────

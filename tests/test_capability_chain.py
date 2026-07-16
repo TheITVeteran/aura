@@ -626,3 +626,136 @@ def test_signatures_are_domain_separated():
     result = get_capability_verifier().verify(replace(cap, signature=foreign_sig))
     assert not result.ok
     assert result.denial is CapabilityDenial.BAD_SIGNATURE
+
+
+def test_concurrent_initializers_survive_the_key_settling_window(tmp_path, monkeypatch):
+    """A cold start with concurrency must still obtain an identity.
+
+    The race, which the 4-worker test above only sometimes reached: exactly one
+    initializer wins ``atomic_write_bytes_if_absent``; every other one then
+    reads the winner's file *while the winner's link/rename is still settling*.
+    The TOCTOU guard in _read_private_material sees st_dev/st_ino move and
+    raises "private material changed while reading" — so on first boot, with
+    enough threads, the Will could fail to get a signing key at all.
+
+    Both read sites are affected, which is the part that is easy to miss:
+    ``lexists()`` goes true the instant the winner links the file, so the
+    "key already exists" path is in the same window as the lost-race path.
+
+    Retrying is correct here and does NOT weaken the guard: "a racing
+    initializer just landed this file" and "someone is tampering with my key"
+    are different events. Retries are bounded, so a file that keeps changing
+    across every attempt still raises.
+    """
+    from cryptography.hazmat.primitives import serialization
+
+    from core.governance.capability_chain import _KeyMaterial
+
+    workers = 16
+    monkeypatch.setenv("AURA_CAPABILITY_KEY_DIR", str(tmp_path / "keys"))
+    reset_capability_chain()
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        materials = list(
+            pool.map(lambda _i: _KeyMaterial._load_or_create_ed25519(True), range(workers))
+        )
+
+    identities = {
+        private.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
+        for private, persisted in materials
+        if persisted
+    }
+    assert len(identities) == 1, (
+        f"{workers} concurrent initializers produced {len(identities)} distinct "
+        "signing identities — capabilities minted under one would not verify "
+        "under another"
+    )
+
+
+def test_settling_retry_still_refuses_material_that_keeps_changing(tmp_path, monkeypatch):
+    """The retry must not turn the tamper guard into a warning.
+
+    A file that changes on every attempt is not a settling race.
+    """
+    import core.governance.capability_chain as chain
+
+    monkeypatch.setenv("AURA_CAPABILITY_KEY_DIR", str(tmp_path / "keys"))
+    reset_capability_chain()
+
+    path = tmp_path / "always-moving.bin"
+    path.write_bytes(b"x" * 64)
+    os.chmod(path, 0o600)
+
+    calls = {"n": 0}
+
+    def _never_settles(_path, *, max_bytes=64 * 1024):
+        calls["n"] += 1
+        raise RuntimeError(f"private material changed while reading: {_path}")
+
+    monkeypatch.setattr(chain, "_read_private_material", _never_settles)
+
+    with pytest.raises(RuntimeError, match="changed while reading"):
+        chain._read_settled_private_material(path)
+
+    assert calls["n"] > 1, "the retry never actually retried"
+    assert calls["n"] <= 8, "retries are not bounded"
+
+
+def test_settling_retry_recovers_from_a_transient_toctou_race(tmp_path, monkeypatch):
+    """Deterministic proof that the settling retry works.
+
+    The 16-worker test above verifies convergence, but it is a TIMING test and
+    does not reliably reproduce the race — it passes with the fix reverted. So
+    it is a smoke check, not the guard. This is the guard: inject the exact
+    failure the TOCTOU window produces and assert the read recovers.
+    """
+    import core.governance.capability_chain as chain
+
+    monkeypatch.setenv("AURA_CAPABILITY_KEY_DIR", str(tmp_path / "keys"))
+    reset_capability_chain()
+
+    path = tmp_path / "settling.bin"
+    path.write_bytes(b"the winner's key material")
+    os.chmod(path, 0o600)
+
+    real = chain._read_private_material
+    calls = {"n": 0}
+
+    def _races_twice_then_settles(_path, *, max_bytes=64 * 1024):
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            # Exactly what a concurrent link/rename produces mid-read.
+            raise RuntimeError(f"private material changed while reading: {_path}")
+        return real(_path, max_bytes=max_bytes)
+
+    monkeypatch.setattr(chain, "_read_private_material", _races_twice_then_settles)
+
+    assert chain._read_settled_private_material(path) == b"the winner's key material"
+    assert calls["n"] == 3, "did not retry through the transient window"
+
+
+def test_settling_retry_recovers_from_the_rename_window(tmp_path, monkeypatch):
+    """The file can be briefly absent while a rename lands."""
+    import core.governance.capability_chain as chain
+
+    monkeypatch.setenv("AURA_CAPABILITY_KEY_DIR", str(tmp_path / "keys"))
+    reset_capability_chain()
+
+    path = tmp_path / "renaming.bin"
+    path.write_bytes(b"key")
+    os.chmod(path, 0o600)
+
+    real = chain._read_private_material
+    calls = {"n": 0}
+
+    def _absent_once(_path, *, max_bytes=64 * 1024):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise FileNotFoundError(str(_path))
+        return real(_path, max_bytes=max_bytes)
+
+    monkeypatch.setattr(chain, "_read_private_material", _absent_once)
+    assert chain._read_settled_private_material(path) == b"key"
