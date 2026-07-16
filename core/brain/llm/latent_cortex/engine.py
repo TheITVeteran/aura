@@ -261,6 +261,8 @@ class LatentCortexEngine:
         verifier: Callable[[str], float] | None = None,
         domain: str = "general",
         decode_max_tokens: int | None = None,
+        ablate_slot: int | None = None,
+        ablate_mode: str = "zero",
     ) -> LatentReasoningResult:
         receipt = EpisodeReceipt(episode_id=uuid.uuid4().hex[:12])
         receipt.n_layers = self.n_layers
@@ -274,7 +276,14 @@ class LatentCortexEngine:
 
         try:
             out_tokens, receipt = self._latent_episode(
-                tokens, budget, verifier, domain, receipt, decode_max_tokens
+                tokens,
+                budget,
+                verifier,
+                domain,
+                receipt,
+                decode_max_tokens,
+                ablate_slot=ablate_slot,
+                ablate_mode=ablate_mode,
             )
         except _LATENT_PHASE_ERRORS as exc:
             record_degradation(
@@ -334,6 +343,9 @@ class LatentCortexEngine:
         domain: str,
         receipt: EpisodeReceipt,
         decode_max_tokens: int | None,
+        *,
+        ablate_slot: int | None = None,
+        ablate_mode: str = "zero",
     ) -> tuple[list[int], EpisodeReceipt]:
         import mlx.core as mx
 
@@ -449,6 +461,14 @@ class LatentCortexEngine:
                 return loss_fn(z_pass)
 
             fast_weights.optimize(fw_loss)
+
+        # Experiment-3 instrumentation: destroy one refined thought slot just
+        # before persistence, so the causal contribution of THAT slot to the
+        # final answer is measurable (and its restoration testable).
+        if ablate_slot is not None:
+            winner.workspace.ablate(int(ablate_slot), mode=ablate_mode)
+            winner.z = winner.workspace.z
+            receipt.flag(f"slot_ablated:{int(ablate_slot)}:{ablate_mode}")
 
         try:
             # ── Commit the winner + decode the answer ────────────────────
