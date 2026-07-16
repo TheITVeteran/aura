@@ -1177,7 +1177,12 @@ class TemporalDilationScheduler:
                                 dt = ServiceContainer.get("deep_thought", default=None)
                                 refined = query
                                 if dt is not None and hasattr(dt, "deliberate"):
-                                    _delib = await dt.deliberate(query, budget=1, timeout=12.0)
+                                    _delib = await dt.deliberate(
+                                        query,
+                                        budget=1,
+                                        timeout_s=12.0,
+                                        foreground_request=False,
+                                    )
                                     refined = _delib.refined_question
                                     logger.debug("🪐 Deep Thought deliberated an idle thread.")
                                 caine = ServiceContainer.get("caine", default=None)

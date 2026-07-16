@@ -8,6 +8,7 @@ have to infer what happened.
 """
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -19,6 +20,7 @@ ABSOLUTE_MAX_RECURRENT_STEPS = 64
 ABSOLUTE_MAX_SLOTS = 128
 ABSOLUTE_MAX_BRANCHES = 8
 ABSOLUTE_MAX_LAYER_APPS = 500_000_000  # token-layer applications per episode
+ABSOLUTE_MAX_WALL_CLOCK_S = 900.0
 
 # Default per-episode compute in token-layer applications. Sized so a 64-layer
 # model with a 2k prompt (prefill 2048*64 ≈ 131k) plus 32 slots recurring over
@@ -121,8 +123,53 @@ class ComputeBudget:
     started_monotonic: float = field(default_factory=time.monotonic)
     spent_layer_apps: int = 0
 
+    def __post_init__(self) -> None:
+        if isinstance(self.max_layer_apps, bool) or not isinstance(self.max_layer_apps, int):
+            raise TypeError("max_layer_apps must be an integer")
+        if self.max_layer_apps <= 0:
+            raise ValueError("max_layer_apps must be positive")
+        self.max_layer_apps = min(self.max_layer_apps, ABSOLUTE_MAX_LAYER_APPS)
+        if isinstance(self.wall_clock_s, bool) or not isinstance(self.wall_clock_s, (int, float)):
+            raise TypeError("wall_clock_s must be numeric")
+        self.wall_clock_s = float(self.wall_clock_s)
+        if not math.isfinite(self.wall_clock_s) or self.wall_clock_s <= 0.0:
+            raise ValueError("wall_clock_s must be finite and positive")
+        self.wall_clock_s = min(self.wall_clock_s, ABSOLUTE_MAX_WALL_CLOCK_S)
+        if self.spent_layer_apps < 0:
+            raise ValueError("spent_layer_apps cannot be negative")
+
     def charge(self, tokens: int, layers: int) -> None:
-        self.spent_layer_apps += int(tokens) * int(layers)
+        if (
+            isinstance(tokens, bool)
+            or isinstance(layers, bool)
+            or not isinstance(tokens, int)
+            or not isinstance(layers, int)
+            or tokens < 0
+            or layers < 0
+        ):
+            raise ValueError("budget charges require non-negative integer tokens and layers")
+        self.charge_layer_apps(tokens * layers)
+
+    def charge_layer_apps(self, layer_apps: int) -> None:
+        if isinstance(layer_apps, bool) or not isinstance(layer_apps, int) or layer_apps < 0:
+            raise ValueError("layer-app charge must be a non-negative integer")
+        if layer_apps > self.remaining_layer_apps:
+            raise RuntimeError(
+                f"compute budget exhausted: requested={layer_apps} "
+                f"remaining={self.remaining_layer_apps}"
+            )
+        self.spent_layer_apps += layer_apps
+
+    def can_afford(self, tokens: int, layers: int, *, reserve_layer_apps: int = 0) -> bool:
+        if any(
+            isinstance(value, bool) or not isinstance(value, int) or value < 0
+            for value in (tokens, layers, reserve_layer_apps)
+        ):
+            return False
+        return (
+            not self.exhausted
+            and tokens * layers + reserve_layer_apps <= self.remaining_layer_apps
+        )
 
     @property
     def exhausted(self) -> bool:
@@ -140,6 +187,7 @@ class ComputeBudget:
             "spent_layer_apps": self.spent_layer_apps,
             "wall_clock_s": self.wall_clock_s,
             "elapsed_s": round(time.monotonic() - self.started_monotonic, 3),
+            "exhausted": self.exhausted,
         }
 
 
@@ -165,30 +213,123 @@ class CortexConfig:
     def validate(self) -> list[str]:
         """Return a list of human-readable violations (empty ⇒ valid)."""
         problems: list[str] = []
-        if not 1 <= self.workspace.n_slots <= ABSOLUTE_MAX_SLOTS:
+
+        def finite(value: Any) -> bool:
+            return (
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and math.isfinite(float(value))
+            )
+
+        def integer_in(value: Any, minimum: int, maximum: int) -> bool:
+            return type(value) is int and minimum <= value <= maximum
+
+        if not integer_in(self.workspace.n_slots, 1, ABSOLUTE_MAX_SLOTS):
             problems.append(f"n_slots {self.workspace.n_slots} outside [1, {ABSOLUTE_MAX_SLOTS}]")
-        if not 1 <= self.recurrence.max_steps <= ABSOLUTE_MAX_RECURRENT_STEPS:
+        if not isinstance(self.workspace.roles, (list, tuple)) or not self.workspace.roles or any(
+            not isinstance(role, str) or not role.strip() for role in self.workspace.roles
+        ) or len(self.workspace.roles) > ABSOLUTE_MAX_SLOTS:
+            problems.append("workspace roles must be non-empty strings")
+        if not integer_in(self.workspace.seed, -(2**63), 2**63 - 1):
+            problems.append("workspace seed must be a signed 64-bit integer")
+        if not finite(self.workspace.anchor_scale) or not 0.0 <= self.workspace.anchor_scale <= 1.0:
+            problems.append("anchor_scale must be finite and inside [0, 1]")
+        if not integer_in(
+            self.recurrence.max_steps, 1, ABSOLUTE_MAX_RECURRENT_STEPS
+        ):
             problems.append(
                 f"max_steps {self.recurrence.max_steps} outside [1, {ABSOLUTE_MAX_RECURRENT_STEPS}]"
             )
-        if self.recurrence.min_steps > self.recurrence.max_steps:
-            problems.append("min_steps exceeds max_steps")
-        if not 0.0 < self.recurrence.alpha <= 1.0:
+        if not (
+            type(self.recurrence.min_steps) is int
+            and type(self.recurrence.max_steps) is int
+            and 1 <= self.recurrence.min_steps <= self.recurrence.max_steps
+        ):
+            problems.append("min_steps must be inside [1, max_steps]")
+        if not isinstance(self.recurrence.alpha_schedule, str) or self.recurrence.alpha_schedule not in {
+            "constant",
+            "cosine",
+        }:
+            problems.append("alpha_schedule must be constant or cosine")
+        if not finite(self.recurrence.alpha) or not 0.0 < self.recurrence.alpha <= 1.0:
             problems.append(f"alpha {self.recurrence.alpha} outside (0, 1]")
-        if self.recurrence.rms_clip_ratio < 1.0:
-            problems.append("rms_clip_ratio must be >= 1.0")
-        if not 1 <= self.branches.n_branches <= ABSOLUTE_MAX_BRANCHES:
+        if not finite(self.recurrence.rms_clip_ratio) or not 1.0 <= self.recurrence.rms_clip_ratio <= 100.0:
+            problems.append("rms_clip_ratio must be finite and inside [1, 100]")
+        if not finite(self.recurrence.convergence_eps) or not 0.0 < self.recurrence.convergence_eps <= 1.0:
+            problems.append("convergence_eps must be finite and inside (0, 1]")
+        if not finite(self.recurrence.divergence_ratio) or not 1.0 < self.recurrence.divergence_ratio <= 1000.0:
+            problems.append("divergence_ratio must be finite and inside (1, 1000]")
+        if not integer_in(self.branches.n_branches, 1, ABSOLUTE_MAX_BRANCHES):
             problems.append(
                 f"n_branches {self.branches.n_branches} outside [1, {ABSOLUTE_MAX_BRANCHES}]"
             )
-        if self.branches.comm_slot >= self.workspace.n_slots:
+        if not integer_in(
+            self.branches.exchange_interval, 1, ABSOLUTE_MAX_RECURRENT_STEPS
+        ):
+            problems.append("exchange_interval outside recurrent-step limits")
+        if not finite(self.branches.exchange_gamma) or not 0.0 <= self.branches.exchange_gamma <= 1.0:
+            problems.append("exchange_gamma must be finite and inside [0, 1]")
+        if not (
+            type(self.branches.comm_slot) is int
+            and type(self.workspace.n_slots) is int
+            and 0 <= self.branches.comm_slot < self.workspace.n_slots
+        ):
             problems.append("comm_slot index outside workspace")
-        if not 0.0 < self.prelude_frac < 0.5:
+        if not finite(self.branches.collapse_cos_threshold) or not -1.0 <= self.branches.collapse_cos_threshold <= 1.0:
+            problems.append("collapse_cos_threshold must be finite and inside [-1, 1]")
+        if not finite(self.branches.jitter_scale) or not 0.0 <= self.branches.jitter_scale <= 1.0:
+            problems.append("jitter_scale must be finite and inside [0, 1]")
+        if type(self.latent_opt.enabled) is not bool:
+            problems.append("latent_opt.enabled must be boolean")
+        if type(self.latent_opt.control_mode) is not bool:
+            problems.append("latent_opt.control_mode must be boolean")
+        if not integer_in(
+            self.latent_opt.steps, 1, ABSOLUTE_MAX_RECURRENT_STEPS
+        ):
+            problems.append("latent_opt.steps outside recurrent-step limits")
+        if not finite(self.latent_opt.lr) or not 0.0 < self.latent_opt.lr <= 1.0:
+            problems.append("latent_opt.lr must be finite and inside (0, 1]")
+        if not finite(self.latent_opt.lambda_reconstruct) or self.latent_opt.lambda_reconstruct < 0.0:
+            problems.append("latent_opt.lambda_reconstruct must be finite and non-negative")
+        if not finite(self.latent_opt.lambda_manifold) or self.latent_opt.lambda_manifold < 0.0:
+            problems.append("latent_opt.lambda_manifold must be finite and non-negative")
+        if not finite(self.latent_opt.max_grad_norm) or not 0.0 < self.latent_opt.max_grad_norm <= 1000.0:
+            problems.append("latent_opt.max_grad_norm must be finite and inside (0, 1000]")
+        if not finite(self.prelude_frac) or not 0.0 < self.prelude_frac < 0.5:
             problems.append(f"prelude_frac {self.prelude_frac} outside (0, 0.5)")
-        if not 0.0 < self.coda_frac < 0.5:
+        if not finite(self.coda_frac) or not 0.0 < self.coda_frac < 0.5:
             problems.append(f"coda_frac {self.coda_frac} outside (0, 0.5)")
-        if self.fast_weights.enabled and self.fast_weights.rank < 1:
-            problems.append("fast_weights.rank must be >= 1")
+        if finite(self.prelude_frac) and finite(self.coda_frac) and self.prelude_frac + self.coda_frac >= 1.0:
+            problems.append("prelude_frac + coda_frac must be < 1")
+        if self.schedule is not None and not isinstance(self.schedule, dict):
+            problems.append("schedule must be a mapping or null")
+        if not integer_in(self.decode_max_tokens, 1, 8192):
+            problems.append("decode_max_tokens outside [1, 8192]")
+        if not finite(self.decode_temperature) or not 0.0 <= self.decode_temperature <= 2.0:
+            problems.append("decode_temperature must be finite and inside [0, 2]")
+        if type(self.fast_weights.enabled) is not bool:
+            problems.append("fast_weights.enabled must be boolean")
+        if not integer_in(self.fast_weights.rank, 1, 64):
+            problems.append("fast_weights.rank outside [1, 64]")
+        if not finite(self.fast_weights.scale) or not 0.0 < self.fast_weights.scale <= 16.0:
+            problems.append("fast_weights.scale must be finite and inside (0, 16]")
+        if not isinstance(self.fast_weights.target, str) or self.fast_weights.target not in {
+            "o_proj",
+            "down_proj",
+        }:
+            problems.append("fast_weights.target must be o_proj or down_proj")
+        if not integer_in(
+            self.fast_weights.opt_steps, 1, ABSOLUTE_MAX_RECURRENT_STEPS
+        ):
+            problems.append("fast_weights.opt_steps outside recurrent-step limits")
+        if not finite(self.fast_weights.lr) or not 0.0 < self.fast_weights.lr <= 1.0:
+            problems.append("fast_weights.lr must be finite and inside (0, 1]")
+        if not integer_in(
+            self.fast_weights.max_wrapped_layers,
+            1,
+            ABSOLUTE_MAX_RECURRENT_STEPS,
+        ):
+            problems.append("fast_weights.max_wrapped_layers outside [1, 64]")
         return problems
 
 
@@ -200,6 +341,8 @@ class EpisodeReceipt:
     started_at: float = field(default_factory=time.time)
     # Invariant proofs (governance.CheckpointInvariant fills these).
     checkpoint_fingerprint: str = ""
+    checkpoint_fingerprint_method: str = ""
+    checkpoint_file_count: int = 0
     params_unchanged: bool | None = None
     fast_weights_erased: bool | None = None
     # Topology actually used.
@@ -227,8 +370,21 @@ class EpisodeReceipt:
     latent_opt_applied: bool = False
     latent_opt_mode: str = ""  # gradient | control | off
     latent_opt_loss_trail: list[float] = field(default_factory=list)
+    latent_opt_attempts: int = 0
+    latent_opt_steps: int = 0
+    latent_opt_rejected: int = 0
+    latent_opt_budget_exhausted: bool = False
     fast_weights_applied: bool = False
     fast_weights_layers: int = 0
+    fast_weight_optimization_attempts: int = 0
+    fast_weight_optimized_steps: int = 0
+    fast_weight_rejected_steps: int = 0
+    fast_weight_budget_exhausted: bool = False
+    # Decode completeness. A token-limit or EOS stop is complete; a budget stop
+    # is a truncated answer and cannot satisfy the production receipt contract.
+    decode_requested_tokens: int = 0
+    decode_generated_tokens: int = 0
+    decode_termination: str = "not_started"
     # Economy.
     budget: dict[str, Any] = field(default_factory=dict)
     # Honesty flags: anything a consumer must know before trusting the output
@@ -244,6 +400,8 @@ class EpisodeReceipt:
             "episode_id": self.episode_id,
             "started_at": self.started_at,
             "checkpoint_fingerprint": self.checkpoint_fingerprint,
+            "checkpoint_fingerprint_method": self.checkpoint_fingerprint_method,
+            "checkpoint_file_count": self.checkpoint_file_count,
             "params_unchanged": self.params_unchanged,
             "fast_weights_erased": self.fast_weights_erased,
             "n_layers": self.n_layers,
@@ -264,8 +422,19 @@ class EpisodeReceipt:
             "latent_opt_applied": self.latent_opt_applied,
             "latent_opt_mode": self.latent_opt_mode,
             "latent_opt_loss_trail": [round(v, 6) for v in self.latent_opt_loss_trail],
+            "latent_opt_attempts": self.latent_opt_attempts,
+            "latent_opt_steps": self.latent_opt_steps,
+            "latent_opt_rejected": self.latent_opt_rejected,
+            "latent_opt_budget_exhausted": self.latent_opt_budget_exhausted,
             "fast_weights_applied": self.fast_weights_applied,
             "fast_weights_layers": self.fast_weights_layers,
+            "fast_weight_optimization_attempts": self.fast_weight_optimization_attempts,
+            "fast_weight_optimized_steps": self.fast_weight_optimized_steps,
+            "fast_weight_rejected_steps": self.fast_weight_rejected_steps,
+            "fast_weight_budget_exhausted": self.fast_weight_budget_exhausted,
+            "decode_requested_tokens": self.decode_requested_tokens,
+            "decode_generated_tokens": self.decode_generated_tokens,
+            "decode_termination": self.decode_termination,
             "budget": dict(self.budget),
             "honest_flags": list(self.honest_flags),
         }
@@ -298,6 +467,7 @@ __all__ = [
     "ABSOLUTE_MAX_LAYER_APPS",
     "ABSOLUTE_MAX_RECURRENT_STEPS",
     "ABSOLUTE_MAX_SLOTS",
+    "ABSOLUTE_MAX_WALL_CLOCK_S",
     "BranchConfig",
     "ComputeBudget",
     "CortexConfig",

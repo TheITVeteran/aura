@@ -26,11 +26,14 @@ returns the checklist so an operator run can't quietly skip a control.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
+import math
 import random
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from core.brain.verifiers.foundry import wilson_lower_bound, wilson_upper_bound
 
@@ -42,6 +45,7 @@ CONJECTURE = "CONJECTURE"
 REFUTED = "REFUTED"
 
 _MIN_N_FOR_VERDICT = 20  # below this, everything is CONJECTURE
+_BOOTSTRAP_RESAMPLES = 10_000
 
 
 # ── Self-verifying task generators ──────────────────────────────────────
@@ -176,6 +180,279 @@ class ArmResult:
         }
 
 
+@dataclass(frozen=True)
+class PairedObservation:
+    """One task evaluated by treatment and control under measured compute."""
+
+    task_id: str
+    family: str
+    treatment_success: bool
+    control_success: bool
+    treatment_layer_apps: int | None = None
+    control_layer_apps: int | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "task_id": self.task_id,
+            "family": self.family,
+            "treatment_success": self.treatment_success,
+            "control_success": self.control_success,
+            "treatment_layer_apps": self.treatment_layer_apps,
+            "control_layer_apps": self.control_layer_apps,
+        }
+
+
+def _coerce_solver_outcome(value: Any) -> tuple[bool, int | None]:
+    if isinstance(value, tuple) and len(value) == 2:
+        success, layer_apps = value
+        if not isinstance(success, bool):
+            raise ValueError("solver success must be boolean")
+        if type(layer_apps) is not int or layer_apps < 0:
+            raise ValueError("solver layer-app receipt must be a non-negative integer")
+        return success, layer_apps
+    if isinstance(value, bool):
+        return value, None
+    raise ValueError("solver must return bool or (bool, non-negative layer_apps)")
+
+
+def _exact_paired_pvalue_greater(wins: int, losses: int) -> float:
+    """Exact one-sided McNemar/binomial p for treatment wins > losses."""
+    discordant = wins + losses
+    if discordant <= 0:
+        return 1.0
+    numerator = sum(math.comb(discordant, k) for k in range(wins, discordant + 1))
+    return min(1.0, numerator / (2**discordant))
+
+
+def _paired_bootstrap_interval(
+    differences: list[int], *, alpha: float, seed: int = 20260715
+) -> tuple[float, float]:
+    if (
+        isinstance(alpha, bool)
+        or not isinstance(alpha, (int, float))
+        or not math.isfinite(float(alpha))
+        or not 0.0 < alpha <= 0.5
+    ):
+        raise ValueError("bootstrap alpha must be inside (0, 0.5]")
+    if not differences:
+        return 0.0, 0.0
+    if len(set(differences)) == 1:
+        value = float(differences[0])
+        return value, value
+    import numpy as np
+
+    values = np.asarray(differences, dtype=np.float64)
+    rng = np.random.default_rng(seed)
+    means = np.empty((_BOOTSTRAP_RESAMPLES,), dtype=np.float64)
+    for start in range(0, _BOOTSTRAP_RESAMPLES, 500):
+        count = min(500, _BOOTSTRAP_RESAMPLES - start)
+        indices = rng.integers(0, len(values), size=(count, len(values)))
+        means[start : start + count] = values[indices].mean(axis=1)
+    low, high = np.quantile(means, [alpha, 1.0 - alpha])
+    return float(low), float(high)
+
+
+def _holm_adjust(pvalues: dict[str, float]) -> dict[str, float]:
+    ordered = sorted(pvalues.items(), key=lambda item: item[1])
+    adjusted: dict[str, float] = {}
+    running = 0.0
+    count = len(ordered)
+    for index, (name, pvalue) in enumerate(ordered):
+        running = max(running, min(1.0, (count - index) * pvalue))
+        adjusted[name] = running
+    return adjusted
+
+
+def grade_paired_treatment_vs_control(
+    experiment: str,
+    statement: str,
+    observations_by_family: dict[str, list[PairedObservation]],
+    *,
+    alpha: float = 0.05,
+    minimum_effect: float = 0.0,
+    compute_tolerance: float = 0.05,
+    require_compute: bool = True,
+) -> Claim:
+    """Paired, multiplicity-corrected capability comparison."""
+    for name, value in (
+        ("alpha", alpha),
+        ("minimum_effect", minimum_effect),
+        ("compute_tolerance", compute_tolerance),
+    ):
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(
+            float(value)
+        ):
+            raise ValueError(f"{name} must be a finite number")
+    if not 0.0 < alpha <= 0.5:
+        raise ValueError("alpha must be inside (0, 0.5]")
+    if not 0.0 <= minimum_effect < 1.0:
+        raise ValueError("minimum_effect must be inside [0, 1)")
+    if not 0.0 <= compute_tolerance <= 1.0:
+        raise ValueError("compute_tolerance must be inside [0, 1]")
+    if type(require_compute) is not bool:
+        raise ValueError("require_compute must be boolean")
+
+    family_stats: dict[str, dict[str, Any]] = {}
+    raw_pvalues: dict[str, float] = {}
+    all_differences: list[int] = []
+    invalid_compute: list[str] = []
+    underpowered: list[str] = []
+    seen_task_ids: set[str] = set()
+    family_bound_alpha = alpha / max(1, len(observations_by_family))
+    for family, observations in observations_by_family.items():
+        if not isinstance(family, str) or not family.strip():
+            raise ValueError("paired evidence family names must be non-empty strings")
+        if not isinstance(observations, list):
+            raise ValueError(f"paired evidence for {family} must be a list")
+        for observation in observations:
+            if not isinstance(observation, PairedObservation):
+                raise ValueError(f"paired evidence for {family} contains an invalid row")
+            if not observation.task_id or observation.task_id in seen_task_ids:
+                raise ValueError("paired evidence task ids must be non-empty and unique")
+            seen_task_ids.add(observation.task_id)
+            if observation.family != family:
+                raise ValueError(
+                    f"paired evidence family mismatch: {observation.family!r} != {family!r}"
+                )
+            if type(observation.treatment_success) is not bool or type(
+                observation.control_success
+            ) is not bool:
+                raise ValueError("paired evidence outcomes must be boolean")
+            for cost in (
+                observation.treatment_layer_apps,
+                observation.control_layer_apps,
+            ):
+                if cost is not None and (type(cost) is not int or cost < 0):
+                    raise ValueError(
+                        "paired evidence compute must be non-negative integers or null"
+                    )
+        differences = [
+            int(obs.treatment_success) - int(obs.control_success) for obs in observations
+        ]
+        wins = differences.count(1)
+        losses = differences.count(-1)
+        missing_compute = any(
+            obs.treatment_layer_apps is None or obs.control_layer_apps is None
+            for obs in observations
+        )
+        nonpositive_compute = any(
+            obs.treatment_layer_apps is not None
+            and obs.control_layer_apps is not None
+            and (obs.treatment_layer_apps <= 0 or obs.control_layer_apps <= 0)
+            for obs in observations
+        )
+        mismatched = [
+            obs.task_id
+            for obs in observations
+            if obs.treatment_layer_apps is not None
+            and obs.control_layer_apps is not None
+            and (
+                abs(obs.treatment_layer_apps - obs.control_layer_apps)
+                / max(1, obs.control_layer_apps)
+            )
+            > compute_tolerance
+        ]
+        if require_compute and (missing_compute or nonpositive_compute or mismatched):
+            invalid_compute.append(family)
+        effect = sum(differences) / len(differences) if differences else 0.0
+        ci_low, ci_high = _paired_bootstrap_interval(
+            differences,
+            alpha=family_bound_alpha,
+        )
+        pvalue = _exact_paired_pvalue_greater(wins, losses)
+        if len(observations) < _MIN_N_FOR_VERDICT:
+            underpowered.append(family)
+        else:
+            raw_pvalues[family] = pvalue
+        family_stats[family] = {
+            "n": len(observations),
+            "treatment_wins": wins,
+            "control_wins": losses,
+            "ties": len(observations) - wins - losses,
+            "paired_effect": round(effect, 6),
+            "effect_interval": [round(ci_low, 6), round(ci_high, 6)],
+            "effect_bound_alpha": family_bound_alpha,
+            "one_sided_exact_p": pvalue,
+            "missing_compute": missing_compute,
+            "nonpositive_compute": nonpositive_compute,
+            "compute_mismatch_task_ids": mismatched,
+        }
+        all_differences.extend(differences)
+
+    adjusted = _holm_adjust(raw_pvalues)
+    positive_families = [
+        family
+        for family, stats in family_stats.items()
+        if family in adjusted
+        and adjusted[family] < alpha
+        and stats["effect_interval"][0] > minimum_effect
+        and family not in invalid_compute
+    ]
+    regressed_families = [
+        family
+        for family, stats in family_stats.items()
+        if stats["effect_interval"][1] < -minimum_effect
+    ]
+    pooled_wins = all_differences.count(1)
+    pooled_losses = all_differences.count(-1)
+    pooled_effect = (
+        sum(all_differences) / len(all_differences) if all_differences else 0.0
+    )
+    pooled_low, pooled_high = _paired_bootstrap_interval(
+        all_differences,
+        alpha=alpha,
+        seed=20260716,
+    )
+    pooled_p = _exact_paired_pvalue_greater(pooled_wins, pooled_losses)
+    evidence = {
+        "method": (
+            "paired exact McNemar/binomial + Holm correction + "
+            "alpha-derived one-sided percentile bounds"
+        ),
+        "alpha": alpha,
+        "minimum_effect": minimum_effect,
+        "compute_tolerance": compute_tolerance,
+        "bootstrap_resamples": _BOOTSTRAP_RESAMPLES,
+        "families": family_stats,
+        "holm_adjusted_p": adjusted,
+        "positive_families": positive_families,
+        "regressed_families": regressed_families,
+        "underpowered_families": underpowered,
+        "invalid_compute_families": invalid_compute,
+        "pooled": {
+            "n": len(all_differences),
+            "treatment_wins": pooled_wins,
+            "control_wins": pooled_losses,
+            "paired_effect": round(pooled_effect, 6),
+            "effect_interval": [round(pooled_low, 6), round(pooled_high, 6)],
+            "effect_bound_alpha": alpha,
+            "one_sided_exact_p": pooled_p,
+        },
+    }
+    pooled_positive = (
+        len(all_differences) >= _MIN_N_FOR_VERDICT
+        and pooled_p < alpha
+        and pooled_low > minimum_effect
+    )
+    required_positive = max(2, math.ceil(len(family_stats) * 2 / 3))
+    evidence["required_positive_families"] = required_positive
+    if invalid_compute or underpowered:
+        tier = CONJECTURE
+    elif (
+        len(positive_families) >= required_positive
+        and pooled_positive
+        and not regressed_families
+    ):
+        tier = PROVEN
+    elif positive_families and pooled_positive and not regressed_families:
+        tier = SUPPORTED
+    elif regressed_families or (all_differences and pooled_high <= 0.0):
+        tier = REFUTED
+    else:
+        tier = CONJECTURE
+    return Claim(experiment=experiment, statement=statement, tier=tier, evidence=evidence)
+
+
 @dataclass
 class Claim:
     experiment: str
@@ -218,9 +495,11 @@ def grade_treatment_vs_control(
         "not_better_families": losses,
         "underpowered_families": small,
     }
-    if len(wins) >= 2:
-        tier = PROVEN
-    elif len(wins) == 1:
+    evidence["aggregate_only"] = True
+    evidence["limitation"] = (
+        "aggregate Wilson intervals lack paired task outcomes and cannot earn PROVEN"
+    )
+    if wins:
         tier = SUPPORTED
     elif small and not losses:
         tier = CONJECTURE
@@ -235,11 +514,11 @@ def grade_treatment_vs_control(
 
 
 def run_recurrence_sweep(
-    solve: Callable[[Task, int], bool],
+    solve: Callable[[Task, int], bool | tuple[bool, int]],
     tasks: list[Task],
     step_grid: list[int],
     *,
-    baseline: Callable[[Task], bool] | None = None,
+    baseline: Callable[[Task], bool | tuple[bool, int]] | None = None,
 ) -> dict[str, Any]:
     """Accuracy as a function of forced recurrence depth.
 
@@ -248,32 +527,70 @@ def run_recurrence_sweep(
     equal-FLOP conventional arm (longer CoT / best-of-N), supplied by the
     caller so its compute accounting is visible in the report, not implied.
     """
+    if not step_grid or sorted(set(step_grid)) != step_grid or any(step < 1 for step in step_grid):
+        raise ValueError("step_grid must be sorted, unique, and positive")
     curve: list[dict[str, Any]] = []
+    outcomes_by_step: dict[int, list[tuple[bool, int | None]]] = {}
     for steps in step_grid:
         arm = ArmResult(name=f"steps={steps}")
         for task in tasks:
+            success, cost = _coerce_solver_outcome(solve(task, steps))
             arm.n += 1
-            arm.successes += int(bool(solve(task, steps)))
+            arm.successes += int(success)
+            arm.layer_apps += int(cost or 0)
+            outcomes_by_step.setdefault(steps, []).append((success, cost))
         curve.append(arm.to_dict())
     result: dict[str, Any] = {"curve": curve}
+    baseline_outcomes: list[tuple[bool, int | None]] = []
     if baseline is not None:
         base = ArmResult(name="equal_flop_baseline")
         for task in tasks:
+            success, cost = _coerce_solver_outcome(baseline(task))
             base.n += 1
-            base.successes += int(bool(baseline(task)))
+            base.successes += int(success)
+            base.layer_apps += int(cost or 0)
+            baseline_outcomes.append((success, cost))
         result["baseline"] = base.to_dict()
     accs = [c["accuracy"] for c in curve]
-    result["monotone_gain"] = all(b >= a - 1e-9 for a, b in zip(accs, accs[1:])) and accs[-1] > accs[0]
-    result["claim"] = Claim(
-        experiment="exp1_recurrence_sweep",
-        statement="additional recurrent steps systematically improve accuracy",
-        tier=(
-            CONJECTURE
-            if len(tasks) < _MIN_N_FOR_VERDICT
-            else (SUPPORTED if result["monotone_gain"] else REFUTED)
-        ),
-        evidence={"curve": curve, "n_tasks": len(tasks)},
-    ).to_dict()
+    result["monotone_gain"] = len(accs) >= 2 and all(
+        b >= a - 1e-9 for a, b in zip(accs, accs[1:], strict=False)
+    ) and accs[-1] > accs[0]
+    if baseline is None:
+        claim = Claim(
+            experiment="exp1_recurrence_sweep",
+            statement="additional recurrent steps improve equal-compute accuracy",
+            tier=CONJECTURE,
+            evidence={
+                "curve": curve,
+                "n_tasks": len(tasks),
+                "limitation": "equal-compute baseline missing",
+            },
+        )
+    else:
+        deepest = outcomes_by_step[step_grid[-1]]
+        paired: dict[str, list[PairedObservation]] = {}
+        for index, (task, treatment, control) in enumerate(
+            zip(tasks, deepest, baseline_outcomes, strict=True)
+        ):
+            paired.setdefault(task.family, []).append(
+                PairedObservation(
+                    task_id=f"{task.family}:{task.depth}:{task.seed}:{index}",
+                    family=task.family,
+                    treatment_success=treatment[0],
+                    control_success=control[0],
+                    treatment_layer_apps=treatment[1],
+                    control_layer_apps=control[1],
+                )
+            )
+        claim = grade_paired_treatment_vs_control(
+            "exp1_recurrence_sweep",
+            "additional recurrent steps improve equal-compute accuracy",
+            paired,
+        )
+        if not result["monotone_gain"] and claim.tier in {PROVEN, SUPPORTED}:
+            claim.tier = CONJECTURE
+            claim.evidence["voided"] = "deepest arm won but recurrence curve was not monotone"
+    result["claim"] = claim.to_dict()
     return result
 
 
@@ -281,7 +598,7 @@ def run_recurrence_sweep(
 
 
 def run_depth_extrapolation(
-    solve: Callable[[Task, int], bool],
+    solve: Callable[[Task, int], bool | tuple[bool, int]],
     family: str,
     depths: list[int],
     step_grid: list[int],
@@ -301,14 +618,18 @@ def run_depth_extrapolation(
         matrix[depth] = {}
         t_required[depth] = None
         for steps in step_grid:
-            wins = sum(int(bool(solve(t, steps))) for t in tasks)
+            wins = sum(
+                int(_coerce_solver_outcome(solve(task, steps))[0]) for task in tasks
+            )
             acc = wins / len(tasks)
             matrix[depth][steps] = round(acc, 4)
             if acc >= 0.5 and t_required[depth] is None:
                 t_required[depth] = steps
     solved = [d for d in depths if t_required[d] is not None]
     pairs = [(d, t_required[d]) for d in solved]
-    increasing = all(t2 >= t1 for (_, t1), (_, t2) in zip(pairs, pairs[1:]))
+    increasing = all(
+        t2 >= t1 for (_, t1), (_, t2) in zip(pairs, pairs[1:], strict=False)
+    )
     scaling = len(solved) >= 3 and increasing and len(set(t for _, t in pairs)) > 1
     tier = CONJECTURE if per_depth * len(depths) < _MIN_N_FOR_VERDICT else (
         SUPPORTED if scaling else (REFUTED if len(solved) >= 3 else CONJECTURE)
@@ -344,13 +665,35 @@ def run_slot_causality(
         intact.n += 1
         intact.successes += int(bool(solve_with_ablation(task, None)))
     per_slot: dict[int, ArmResult] = {}
+    paired_claims: dict[int, Claim] = {}
     for slot in slot_indices:
         arm = ArmResult(name=f"ablated_slot_{slot}")
-        for task in tasks:
+        observations: dict[str, list[PairedObservation]] = {}
+        for index, task in enumerate(tasks):
+            ablated_success = bool(solve_with_ablation(task, slot))
+            intact_success = bool(solve_with_ablation(task, None))
             arm.n += 1
-            arm.successes += int(bool(solve_with_ablation(task, slot)))
+            arm.successes += int(ablated_success)
+            observations.setdefault(task.family, []).append(
+                PairedObservation(
+                    task_id=f"{task.family}:{task.depth}:{task.seed}:{index}:slot{slot}",
+                    family=task.family,
+                    treatment_success=intact_success,
+                    control_success=ablated_success,
+                )
+            )
         per_slot[slot] = arm
-    damaged = [s for s, a in per_slot.items() if a.ub < intact.lb]
+        paired_claims[slot] = grade_paired_treatment_vs_control(
+            "exp3_slot_causality",
+            f"slot {slot} carries causally necessary computation",
+            observations,
+            require_compute=False,
+        )
+    damaged = [
+        slot
+        for slot, claim in paired_claims.items()
+        if claim.tier in {PROVEN, SUPPORTED}
+    ]
     tier = CONJECTURE if intact.n < _MIN_N_FOR_VERDICT else (
         SUPPORTED if damaged else REFUTED
     )
@@ -364,6 +707,9 @@ def run_slot_causality(
             tier=tier,
             evidence={"damaged_slots": damaged, "intact_accuracy": intact.accuracy},
         ).to_dict(),
+        "paired_slot_claims": {
+            slot: claim.to_dict() for slot, claim in paired_claims.items()
+        },
     }
 
 
@@ -382,9 +728,10 @@ def run_virtual_width(
     premise is CHECKED, not assumed: a >10% compute mismatch voids the claim."""
     treatment: dict[str, ArmResult] = {}
     control: dict[str, ArmResult] = {}
+    paired: dict[str, list[PairedObservation]] = {}
     for family, tasks in tasks_by_family.items():
         t_arm, c_arm = ArmResult(name=f"branches_k{k}"), ArmResult(name=f"sampling_k{k}")
-        for task in tasks:
+        for index, task in enumerate(tasks):
             ok_b, cost_b = solve_branches(task, k)
             ok_s, cost_s = solve_sampling(task, k)
             t_arm.n += 1
@@ -393,20 +740,22 @@ def run_virtual_width(
             c_arm.n += 1
             c_arm.successes += int(bool(ok_s))
             c_arm.layer_apps += int(cost_s)
+            paired.setdefault(family, []).append(
+                PairedObservation(
+                    task_id=f"{family}:{task.depth}:{task.seed}:{index}",
+                    family=family,
+                    treatment_success=bool(ok_b),
+                    control_success=bool(ok_s),
+                    treatment_layer_apps=int(cost_b),
+                    control_layer_apps=int(cost_s),
+                )
+            )
         treatment[family], control[family] = t_arm, c_arm
-    claim = grade_treatment_vs_control(
+    claim = grade_paired_treatment_vs_control(
         "exp4_virtual_width",
         "latent branches beat equal-FLOP self-consistency sampling",
-        treatment,
-        control,
+        paired,
     )
-    total_t = sum(a.layer_apps for a in treatment.values())
-    total_c = sum(a.layer_apps for a in control.values())
-    if total_c and abs(total_t - total_c) / total_c > 0.10:
-        claim.tier = CONJECTURE
-        claim.evidence["voided"] = (
-            f"compute mismatch {total_t} vs {total_c} layer-apps exceeds 10%"
-        )
     return {
         "treatment": {f: a.to_dict() for f, a in treatment.items()},
         "control": {f: a.to_dict() for f, a in control.items()},
@@ -417,8 +766,18 @@ def run_virtual_width(
 # ── Experiment 5: latent optimization vs random control ─────────────────
 
 
+def _latent_opt_arm_order(family: str, task: Task, index: int) -> tuple[str, str, str]:
+    commitment = f"latent-opt-order-v1:{family}:{task.depth}:{task.seed}:{index}".encode()
+    digest = hashlib.sha256(commitment).digest()
+    family_offset = hashlib.sha256(f"{family}:latent-opt-order-v1".encode()).digest()[0] & 1
+    gradient_first = (index + family_offset) % 2 == 0
+    pair = ["gradient", "control"] if gradient_first else ["control", "gradient"]
+    pair.insert((index + digest[1]) % 3, "off")
+    return pair[0], pair[1], pair[2]
+
+
 def run_latent_opt_control(
-    solve_arm: Callable[[Task, str], bool],
+    solve_arm: Callable[[Task, str], bool | tuple[bool, int]],
     tasks_by_family: dict[str, list[Task]],
 ) -> dict[str, Any]:
     """Arms: 'off', 'gradient', 'control' (matched-magnitude random).
@@ -427,21 +786,48 @@ def run_latent_opt_control(
     not merely beat doing nothing. That is the spec's essential control."""
     arms = ("off", "gradient", "control")
     results: dict[str, dict[str, ArmResult]] = {a: {} for a in arms}
+    per_task: dict[str, dict[str, list[tuple[bool, int | None]]]] = {
+        arm: {} for arm in arms
+    }
+    execution_order: list[dict[str, Any]] = []
     for family, tasks in tasks_by_family.items():
-        for arm in arms:
-            r = ArmResult(name=arm)
-            for task in tasks:
+        family_results = {arm: ArmResult(name=arm) for arm in arms}
+        for index, task in enumerate(tasks):
+            order = _latent_opt_arm_order(family, task, index)
+            task_id = f"{family}:{task.depth}:{task.seed}:{index}"
+            execution_order.append({"task_id": task_id, "arms": list(order)})
+            for arm in order:
+                success, cost = _coerce_solver_outcome(solve_arm(task, arm))
+                r = family_results[arm]
                 r.n += 1
-                r.successes += int(bool(solve_arm(task, arm)))
-            results[arm][family] = r
-    claim = grade_treatment_vs_control(
+                r.successes += int(success)
+                r.layer_apps += int(cost or 0)
+                per_task[arm].setdefault(family, []).append((success, cost))
+        for arm, result in family_results.items():
+            results[arm][family] = result
+    paired: dict[str, list[PairedObservation]] = {}
+    for family, tasks in tasks_by_family.items():
+        for index, task in enumerate(tasks):
+            gradient = per_task["gradient"][family][index]
+            control = per_task["control"][family][index]
+            paired.setdefault(family, []).append(
+                PairedObservation(
+                    task_id=f"{family}:{task.depth}:{task.seed}:{index}",
+                    family=family,
+                    treatment_success=gradient[0],
+                    control_success=control[0],
+                    treatment_layer_apps=gradient[1],
+                    control_layer_apps=control[1],
+                )
+            )
+    claim = grade_paired_treatment_vs_control(
         "exp5_latent_opt",
         "gradient direction (not mere perturbation) improves outcomes",
-        results["gradient"],
-        results["control"],
+        paired,
     )
     return {
         "arms": {a: {f: r.to_dict() for f, r in fam.items()} for a, fam in results.items()},
+        "execution_order": execution_order,
         "claim": claim.to_dict(),
     }
 
@@ -510,6 +896,7 @@ __all__ = [
     "ArmResult",
     "CONJECTURE",
     "Claim",
+    "PairedObservation",
     "PROVEN",
     "REFUTED",
     "SUPPORTED",
@@ -517,6 +904,7 @@ __all__ = [
     "Task",
     "frontier_comparison_protocol",
     "grade_treatment_vs_control",
+    "grade_paired_treatment_vs_control",
     "khop_reachability",
     "modular_chain",
     "nested_boolean",

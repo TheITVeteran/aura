@@ -46,6 +46,68 @@ logger = logging.getLogger("Aura.LatentCortex.WorkerHandler")
 
 _schedule_library: ScheduleLibrary | None = None
 
+_CONFIG_KEYS = {
+    "alpha",
+    "alpha_schedule",
+    "anchor_scale",
+    "coda_frac",
+    "collapse_cos_threshold",
+    "comm_slot",
+    "convergence_eps",
+    "decode_max_tokens",
+    "decode_temperature",
+    "divergence_ratio",
+    "exchange_gamma",
+    "exchange_interval",
+    "fast_weights",
+    "fast_weights_lr",
+    "fast_weights_max_layers",
+    "fast_weights_opt_steps",
+    "fast_weights_rank",
+    "fast_weights_scale",
+    "fast_weights_target",
+    "jitter_scale",
+    "latent_opt",
+    "latent_opt_control",
+    "latent_opt_lambda_manifold",
+    "latent_opt_lambda_reconstruct",
+    "latent_opt_lr",
+    "latent_opt_max_grad_norm",
+    "latent_opt_steps",
+    "max_steps",
+    "min_steps",
+    "n_branches",
+    "n_slots",
+    "prelude_frac",
+    "rms_clip_ratio",
+    "schedule",
+    "seed",
+}
+
+
+def _typed_value(raw: dict[str, Any], key: str, default: Any, expected: type) -> Any:
+    value = raw.get(key, default)
+    if expected is bool:
+        if type(value) is not bool:
+            raise ValueError(f"{key} must be a JSON boolean")
+        return value
+    if expected is int:
+        if type(value) is not int:
+            raise ValueError(f"{key} must be a JSON integer")
+        return value
+    if expected is float:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"{key} must be a JSON number")
+        try:
+            return float(value)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError(f"{key} must be a finite JSON number") from exc
+    if expected is str:
+        if not isinstance(value, str):
+            raise ValueError(f"{key} must be a string")
+        return value
+    raise TypeError(f"unsupported wire type for {key}")
+
 
 def cortex_enabled() -> bool:
     return str(os.environ.get("AURA_LATENT_CORTEX", "1")).strip() != "0"
@@ -68,35 +130,66 @@ def _library() -> ScheduleLibrary | None:
 
 def config_from_job(job_config: dict[str, Any] | None) -> CortexConfig:
     """Translate the wire config into a validated CortexConfig."""
+    if job_config is not None and not isinstance(job_config, dict):
+        raise ValueError("latent_reason config must be a mapping")
     raw = dict(job_config or {})
+    unknown = sorted(set(raw) - _CONFIG_KEYS)
+    if unknown:
+        raise ValueError(f"latent_reason config contains unknown keys: {unknown}")
     cfg = CortexConfig(
         workspace=WorkspaceConfig(
-            n_slots=int(raw.get("n_slots", 16)),
-            seed=int(raw.get("seed", 0)),
+            n_slots=_typed_value(raw, "n_slots", 16, int),
+            seed=_typed_value(raw, "seed", 0, int),
+            anchor_scale=_typed_value(raw, "anchor_scale", 0.05, float),
         ),
         recurrence=RecurrenceConfig(
-            max_steps=int(raw.get("max_steps", 8)),
-            min_steps=int(raw.get("min_steps", 2)),
-            alpha=float(raw.get("alpha", 0.5)),
-            alpha_schedule=str(raw.get("alpha_schedule", "cosine")),
+            max_steps=_typed_value(raw, "max_steps", 8, int),
+            min_steps=_typed_value(raw, "min_steps", 2, int),
+            alpha=_typed_value(raw, "alpha", 0.5, float),
+            alpha_schedule=_typed_value(raw, "alpha_schedule", "cosine", str),
+            rms_clip_ratio=_typed_value(raw, "rms_clip_ratio", 3.0, float),
+            convergence_eps=_typed_value(raw, "convergence_eps", 0.02, float),
+            divergence_ratio=_typed_value(raw, "divergence_ratio", 10.0, float),
         ),
         branches=BranchConfig(
-            n_branches=int(raw.get("n_branches", 2)),
-            exchange_interval=int(raw.get("exchange_interval", 4)),
+            n_branches=_typed_value(raw, "n_branches", 2, int),
+            exchange_interval=_typed_value(raw, "exchange_interval", 4, int),
+            exchange_gamma=_typed_value(raw, "exchange_gamma", 0.35, float),
+            comm_slot=_typed_value(raw, "comm_slot", 0, int),
+            collapse_cos_threshold=_typed_value(
+                raw, "collapse_cos_threshold", 0.98, float
+            ),
+            jitter_scale=_typed_value(raw, "jitter_scale", 0.02, float),
         ),
         latent_opt=LatentOptConfig(
-            enabled=bool(raw.get("latent_opt", False)),
-            steps=int(raw.get("latent_opt_steps", 4)),
-            control_mode=bool(raw.get("latent_opt_control", False)),
+            enabled=_typed_value(raw, "latent_opt", False, bool),
+            steps=_typed_value(raw, "latent_opt_steps", 4, int),
+            lr=_typed_value(raw, "latent_opt_lr", 0.05, float),
+            lambda_reconstruct=_typed_value(
+                raw, "latent_opt_lambda_reconstruct", 1.0, float
+            ),
+            lambda_manifold=_typed_value(
+                raw, "latent_opt_lambda_manifold", 0.5, float
+            ),
+            max_grad_norm=_typed_value(raw, "latent_opt_max_grad_norm", 1.0, float),
+            control_mode=_typed_value(raw, "latent_opt_control", False, bool),
         ),
         fast_weights=FastWeightsConfig(
-            enabled=bool(raw.get("fast_weights", False)),
-            rank=int(raw.get("fast_weights_rank", 2)),
-            target=str(raw.get("fast_weights_target", "o_proj")),
+            enabled=_typed_value(raw, "fast_weights", False, bool),
+            rank=_typed_value(raw, "fast_weights_rank", 2, int),
+            scale=_typed_value(raw, "fast_weights_scale", 1.0, float),
+            target=_typed_value(raw, "fast_weights_target", "o_proj", str),
+            opt_steps=_typed_value(raw, "fast_weights_opt_steps", 4, int),
+            lr=_typed_value(raw, "fast_weights_lr", 0.01, float),
+            max_wrapped_layers=_typed_value(
+                raw, "fast_weights_max_layers", 8, int
+            ),
         ),
+        prelude_frac=_typed_value(raw, "prelude_frac", 0.25, float),
+        coda_frac=_typed_value(raw, "coda_frac", 0.25, float),
         schedule=raw.get("schedule"),
-        decode_max_tokens=int(raw.get("decode_max_tokens", 512)),
-        decode_temperature=float(raw.get("decode_temperature", 0.0)),
+        decode_max_tokens=_typed_value(raw, "decode_max_tokens", 512, int),
+        decode_temperature=_typed_value(raw, "decode_temperature", 0.0, float),
     )
     problems = cfg.validate()
     if problems:
@@ -105,12 +198,17 @@ def config_from_job(job_config: dict[str, Any] | None) -> CortexConfig:
 
 
 def budget_from_job(job_budget: dict[str, Any] | None) -> ComputeBudget:
+    if job_budget is not None and not isinstance(job_budget, dict):
+        raise ValueError("latent_reason budget must be a mapping")
     raw = dict(job_budget or {})
+    unknown = sorted(set(raw) - {"max_layer_apps", "wall_clock_s"})
+    if unknown:
+        raise ValueError(f"latent_reason budget contains unknown keys: {unknown}")
     kwargs: dict[str, Any] = {}
     if "max_layer_apps" in raw:
-        kwargs["max_layer_apps"] = int(raw["max_layer_apps"])
+        kwargs["max_layer_apps"] = _typed_value(raw, "max_layer_apps", 0, int)
     if "wall_clock_s" in raw:
-        kwargs["wall_clock_s"] = float(raw["wall_clock_s"])
+        kwargs["wall_clock_s"] = _typed_value(raw, "wall_clock_s", 0.0, float)
     return ComputeBudget(**kwargs)
 
 
@@ -161,6 +259,13 @@ def handle_latent_reason(
     body["requires_cache_clear"] = (
         result.receipt.fast_weights_applied
         and result.receipt.fast_weights_erased is not True
+    )
+    body["requires_worker_recycle"] = (
+        result.receipt.params_unchanged is False
+        or (
+            result.receipt.fast_weights_applied
+            and result.receipt.fast_weights_erased is not True
+        )
     )
     return body
 

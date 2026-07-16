@@ -7,6 +7,8 @@ the seam the live path uses.
 from __future__ import annotations
 
 import asyncio
+import queue
+from types import SimpleNamespace
 
 import pytest
 
@@ -17,7 +19,12 @@ from core.brain.llm.latent_cortex.worker_handler import (
     cortex_enabled,
     handle_latent_reason,
 )
+from core.brain.llm.mlx_client import MLXLocalClient
 
+
+class _ResidentProcess:
+    def is_alive(self) -> bool:
+        return True
 
 # ── Worker handler ──────────────────────────────────────────────────────
 
@@ -37,12 +44,58 @@ def test_config_from_job_rejects_out_of_band_requests():
         config_from_job({"n_branches": 640})
     with pytest.raises(ValueError):
         config_from_job({"max_steps": 100000})
+    with pytest.raises(ValueError, match="JSON boolean"):
+        config_from_job({"fast_weights": "false"})
+    with pytest.raises(ValueError, match="unknown keys"):
+        config_from_job({"fast_weight": True})
+    with pytest.raises(ValueError):
+        config_from_job({"exchange_interval": 0})
+    with pytest.raises(ValueError):
+        config_from_job({"decode_temperature": float("nan")})
+
+
+def test_config_from_job_maps_every_advanced_mechanism():
+    cfg = config_from_job(
+        {
+            "latent_opt": True,
+            "latent_opt_steps": 6,
+            "latent_opt_lr": 0.02,
+            "fast_weights": True,
+            "fast_weights_opt_steps": 3,
+            "fast_weights_lr": 0.005,
+            "fast_weights_max_layers": 4,
+            "exchange_gamma": 0.2,
+            "convergence_eps": 0.01,
+        }
+    )
+    assert cfg.latent_opt.enabled is True and cfg.latent_opt.steps == 6
+    assert cfg.latent_opt.lr == 0.02
+    assert cfg.fast_weights.enabled is True and cfg.fast_weights.opt_steps == 3
+    assert cfg.fast_weights.lr == 0.005 and cfg.fast_weights.max_wrapped_layers == 4
+    assert cfg.branches.exchange_gamma == 0.2
+    assert cfg.recurrence.convergence_eps == 0.01
 
 
 def test_budget_from_job_caps_apply():
     budget = budget_from_job({"max_layer_apps": 10**15, "wall_clock_s": 5.0})
     assert budget.wall_clock_s == 5.0
-    assert budget.remaining_layer_apps <= 500_000_000  # ABSOLUTE_MAX cap governs
+    assert budget.max_layer_apps == 500_000_000
+    assert budget.remaining_layer_apps == 500_000_000
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"max_layer_apps": -1},
+        {"wall_clock_s": 0},
+        {"wall_clock_s": float("inf")},
+        {"max_layer_apps": "1000"},
+        {"typo": 1},
+    ],
+)
+def test_budget_from_job_rejects_invalid_values(payload):
+    with pytest.raises((TypeError, ValueError)):
+        budget_from_job(payload)
 
 
 def test_kill_switch_refuses_honestly(monkeypatch):
@@ -103,6 +156,336 @@ def test_handler_runs_full_episode_on_tiny_model(monkeypatch, tmp_path):
     assert body["requires_cache_clear"] is False
 
 
+@pytest.mark.asyncio
+async def test_client_latent_reason_owns_and_releases_resident_lane(monkeypatch):
+    from core.brain.llm import mlx_client
+
+    client = MLXLocalClient(model_path="/models/test-32b")
+    client._process = _ResidentProcess()
+    client._init_done = True
+    client._req_q = queue.Queue()
+    monkeypatch.setattr(
+        mlx_client,
+        "get_memory_pressure_snapshot",
+        lambda: SimpleNamespace(refuse_heavy_local_generation=False),
+    )
+
+    task = asyncio.create_task(
+        client.latent_reason_async(
+            prompt="reason deeply",
+            config={"decode_max_tokens": 16},
+            timeout_s=5.0,
+            foreground_request=False,
+        )
+    )
+    request = await asyncio.to_thread(client._req_q.get, True, 2.0)
+    assert client._request_lock.locked() is True
+    assert client._active_generations == 1
+    future = client._pending_generations[request["id"]]
+    mlx_client._set_shared_future_result(
+        future,
+        {
+            "id": request["id"],
+            "status": "ok",
+            "text": "answer",
+            "receipt": {"episode_id": "ep-live"},
+        },
+    )
+
+    result = await task
+    assert request["action"] == "latent_reason"
+    assert request["seq"] > 0
+    assert result["ok"] is True and result["text"] == "answer"
+    assert client._active_generations == 0
+    assert client._current_request_id == ""
+    assert client._request_lock.locked() is False
+
+
+@pytest.mark.asyncio
+async def test_client_latent_reason_serializes_concurrent_requests(monkeypatch):
+    from core.brain.llm import mlx_client
+
+    client = MLXLocalClient(model_path="/models/test-32b")
+    client._process = _ResidentProcess()
+    client._init_done = True
+    client._req_q = queue.Queue()
+    monkeypatch.setattr(
+        mlx_client,
+        "get_memory_pressure_snapshot",
+        lambda: SimpleNamespace(refuse_heavy_local_generation=False),
+    )
+
+    first = asyncio.create_task(
+        client.latent_reason_async(
+            prompt="first", timeout_s=5.0, foreground_request=False
+        )
+    )
+    first_request = await asyncio.to_thread(client._req_q.get, True, 2.0)
+    second = asyncio.create_task(
+        client.latent_reason_async(
+            prompt="second", timeout_s=5.0, foreground_request=False
+        )
+    )
+    await asyncio.sleep(0.05)
+    assert client._req_q.empty(), "second episode must wait behind request ownership"
+
+    mlx_client._set_shared_future_result(
+        client._pending_generations[first_request["id"]],
+        {"id": first_request["id"], "status": "ok", "text": "one", "receipt": {}},
+    )
+    assert (await first)["ok"] is True
+    second_request = await asyncio.to_thread(client._req_q.get, True, 2.0)
+    mlx_client._set_shared_future_result(
+        client._pending_generations[second_request["id"]],
+        {"id": second_request["id"], "status": "ok", "text": "two", "receipt": {}},
+    )
+    assert (await second)["ok"] is True
+    assert client._request_lock.locked() is False
+
+
+@pytest.mark.asyncio
+async def test_client_latent_reason_timeout_cancels_recycles_and_releases(monkeypatch):
+    from core.brain.llm import mlx_client
+
+    client = MLXLocalClient(model_path="/models/test-32b")
+    client._process = _ResidentProcess()
+    client._init_done = True
+    client._req_q = queue.Queue()
+    reboot_reasons: list[str] = []
+
+    monkeypatch.setattr(
+        mlx_client,
+        "get_memory_pressure_snapshot",
+        lambda: SimpleNamespace(refuse_heavy_local_generation=False),
+    )
+
+    async def timeout(*args, **kwargs):
+        raise TimeoutError
+
+    async def record_reboot(reason, mark_failed=False):
+        reboot_reasons.append(reason)
+
+    monkeypatch.setattr(mlx_client, "_await_shared_future", timeout)
+    monkeypatch.setattr(client, "reboot_worker", record_reboot)
+
+    result = await client.latent_reason_async(
+        prompt="bounded episode", timeout_s=5.0, foreground_request=False
+    )
+
+    assert result["reason"] == "latent_timeout:TimeoutError"
+    assert reboot_reasons == ["latent_reason_deadline"]
+    assert client._active_generations == 0
+    assert client._pending_generations == {}
+    assert client._current_request_id == ""
+    assert client._request_lock.locked() is False
+
+
+@pytest.mark.asyncio
+async def test_client_latent_reason_caller_cancel_recycles_and_releases(monkeypatch):
+    from core.brain.llm import mlx_client
+
+    client = MLXLocalClient(model_path="/models/test-32b")
+    client._process = _ResidentProcess()
+    client._init_done = True
+    client._req_q = queue.Queue()
+    reboot_reasons: list[str] = []
+    monkeypatch.setattr(
+        mlx_client,
+        "get_memory_pressure_snapshot",
+        lambda: SimpleNamespace(refuse_heavy_local_generation=False),
+    )
+
+    async def record_reboot(reason, mark_failed=False):
+        reboot_reasons.append(reason)
+
+    monkeypatch.setattr(client, "reboot_worker", record_reboot)
+    task = asyncio.create_task(
+        client.latent_reason_async(
+            prompt="cancel this episode", timeout_s=30.0, foreground_request=False
+        )
+    )
+    request = await asyncio.to_thread(client._req_q.get, True, 2.0)
+    assert request["action"] == "latent_reason"
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert reboot_reasons == ["latent_reason_caller_cancelled"]
+    assert client._active_generations == 0
+    assert client._pending_generations == {}
+    assert client._current_request_id == ""
+    assert client._request_lock.locked() is False
+
+
+@pytest.mark.asyncio
+async def test_client_latent_reason_cancel_while_queued_releases_foreground_owner(
+    monkeypatch,
+):
+    from core.brain.llm import mlx_client
+
+    client = MLXLocalClient(model_path="/models/test-32b")
+    client._process = _ResidentProcess()
+    client._init_done = True
+    client._req_q = queue.Queue()
+    lock_wait_started = asyncio.Event()
+    owner_events: list[str] = []
+    monkeypatch.setattr(
+        mlx_client,
+        "get_memory_pressure_snapshot",
+        lambda: SimpleNamespace(refuse_heavy_local_generation=False),
+    )
+
+    class OwnerContext:
+        async def __aenter__(self):
+            owner_events.append("entered")
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            owner_events.append("exited")
+
+    async def wait_for_lane(**kwargs):
+        lock_wait_started.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(mlx_client, "_foreground_owner_context", lambda *a, **k: OwnerContext())
+    monkeypatch.setattr(client, "_acquire_request_lock", wait_for_lane)
+    task = asyncio.create_task(
+        client.latent_reason_async(prompt="queued", foreground_request=True)
+    )
+    await lock_wait_started.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert owner_events == ["entered", "exited"]
+    assert client._request_lock.locked() is False
+
+
+@pytest.mark.asyncio
+async def test_client_latent_reason_integrity_failure_recycles_resident(monkeypatch):
+    from core.brain.llm import mlx_client
+
+    client = MLXLocalClient(model_path="/models/test-32b")
+    client._process = _ResidentProcess()
+    client._init_done = True
+    client._req_q = queue.Queue()
+    reboot_reasons: list[str] = []
+    lifecycle_events: list[str] = []
+    monkeypatch.setattr(
+        mlx_client,
+        "get_memory_pressure_snapshot",
+        lambda: SimpleNamespace(refuse_heavy_local_generation=False),
+    )
+
+    async def record_reboot(reason, mark_failed=False):
+        assert client._request_lock.locked() is True
+        lifecycle_events.append("reboot")
+        reboot_reasons.append(reason)
+
+    async def record_fence(preemptible):
+        lifecycle_events.append(f"fence:{preemptible}")
+        return True
+
+    monkeypatch.setattr(client, "reboot_worker", record_reboot)
+    monkeypatch.setattr(client, "_set_durable_lane_preemptible", record_fence)
+    task = asyncio.create_task(
+        client.latent_reason_async(
+            prompt="prove cleanup", timeout_s=5.0, foreground_request=False
+        )
+    )
+    request = await asyncio.to_thread(client._req_q.get, True, 2.0)
+    mlx_client._set_shared_future_result(
+        client._pending_generations[request["id"]],
+        {
+            "id": request["id"],
+            "status": "error",
+            "message": "fast_weight_cleanup_unproven",
+            "receipt": {"fast_weights_erased": False},
+        },
+    )
+
+    result = await task
+    assert result["reason"] == "fast_weight_cleanup_unproven"
+    assert reboot_reasons == ["latent_integrity:fast_weight_cleanup_unproven"]
+    assert lifecycle_events == ["fence:False", "reboot"]
+    assert client._active_generations == 0
+    assert client._request_lock.locked() is False
+
+
+@pytest.mark.asyncio
+async def test_client_latent_reason_rejects_invalid_inputs_before_lane_fence(monkeypatch):
+    from core.brain.llm import mlx_client
+
+    client = MLXLocalClient(model_path="/models/test-32b")
+    client._process = _ResidentProcess()
+    client._init_done = True
+    client._req_q = queue.Queue()
+    fence_calls: list[bool] = []
+    monkeypatch.setattr(
+        mlx_client,
+        "get_memory_pressure_snapshot",
+        lambda: SimpleNamespace(refuse_heavy_local_generation=False),
+    )
+
+    async def record_fence(preemptible):
+        fence_calls.append(preemptible)
+        return True
+
+    monkeypatch.setattr(client, "_set_durable_lane_preemptible", record_fence)
+
+    assert (
+        await client.latent_reason_async(
+            prompt="q", config="bad", foreground_request=False
+        )
+    )["reason"] == "invalid_config"
+    assert (
+        await client.latent_reason_async(
+            prompt="q", budget="bad", foreground_request=False
+        )
+    )["reason"] == "invalid_budget"
+    assert (
+        await client.latent_reason_async(
+            prompt="q", foreground_request="false"
+        )
+    )["reason"] == "invalid_foreground_request"
+    assert fence_calls == []
+    assert client._request_lock.locked() is False
+
+
+@pytest.mark.asyncio
+async def test_client_latent_reason_contains_malformed_worker_receipt(monkeypatch):
+    from core.brain.llm import mlx_client
+
+    client = MLXLocalClient(model_path="/models/test-32b")
+    client._process = _ResidentProcess()
+    client._init_done = True
+    client._req_q = queue.Queue()
+    monkeypatch.setattr(
+        mlx_client,
+        "get_memory_pressure_snapshot",
+        lambda: SimpleNamespace(refuse_heavy_local_generation=False),
+    )
+    task = asyncio.create_task(
+        client.latent_reason_async(
+            prompt="q",
+            config={"decode_max_tokens": "malformed"},
+            timeout_s=5.0,
+            foreground_request=False,
+        )
+    )
+    request = await asyncio.to_thread(client._req_q.get, True, 2.0)
+    mlx_client._set_shared_future_result(
+        client._pending_generations[request["id"]],
+        {"id": request["id"], "status": "ok", "text": "bad", "receipt": "bad"},
+    )
+
+    result = await task
+    assert result["reason"] == "invalid_worker_receipt"
+    assert client._active_generations == 0
+    assert client._request_lock.locked() is False
+
+
 # ── Service economy ─────────────────────────────────────────────────────
 
 
@@ -114,6 +497,9 @@ def test_allocation_scales_with_stakes_and_uncertainty():
     assert high_cfg["n_branches"] > low_cfg["n_branches"]
     assert high_budget["max_layer_apps"] > low_budget["max_layer_apps"]
     assert high_budget["wall_clock_s"] > low_budget["wall_clock_s"]
+    assert low_cfg["latent_opt"] is True and low_cfg["fast_weights"] is True
+    assert high_cfg["latent_opt_steps"] >= low_cfg["latent_opt_steps"]
+    assert high_cfg["fast_weights_max_layers"] >= low_cfg["fast_weights_max_layers"]
 
 
 def test_allocation_damped_by_body_pressure(monkeypatch):
@@ -134,7 +520,8 @@ def test_service_kill_switch_and_status(monkeypatch):
     assert result["ok"] is False and "disabled" in result["reason"]
     status = svc.get_status()
     assert status["enabled"] is False
-    assert status["healthy"] is True
+    assert status["healthy"] is False
+    assert status["state"] == "disabled"
 
 
 def test_service_routes_through_client_and_records_receipt(monkeypatch):
@@ -151,8 +538,40 @@ def test_service_routes_through_client_and_records_receipt(monkeypatch):
             return {
                 "ok": True,
                 "text": "the deep answer",
-                "receipt": {"steps_taken": 7, "halting_reason": "converged",
-                            "n_branches": 2, "episode_id": "abc"},
+                "receipt": {
+                    "steps_taken": 7,
+                    "halting_reason": "converged",
+                    "n_branches": kwargs["config"]["n_branches"],
+                    "n_slots": kwargs["config"]["n_slots"],
+                    "episode_id": "abc",
+                    "schedule_hash": "b" * 64,
+                    "checkpoint_fingerprint": "a" * 64,
+                    "checkpoint_fingerprint_method": "sha256",
+                    "checkpoint_file_count": 8,
+                    "params_unchanged": True,
+                    "budget": {
+                        "max_layer_apps": 1_000,
+                        "spent_layer_apps": 100,
+                        "exhausted": False,
+                    },
+                    "decode_requested_tokens": kwargs["config"]["decode_max_tokens"],
+                    "decode_generated_tokens": 12,
+                    "decode_termination": "eos",
+                    "latent_opt_applied": True,
+                    "latent_opt_mode": "gradient",
+                    "latent_opt_attempts": 2,
+                    "latent_opt_steps": 2,
+                    "latent_opt_rejected": 0,
+                    "latent_opt_budget_exhausted": False,
+                    "fast_weights_applied": True,
+                    "fast_weights_erased": True,
+                    "fast_weights_layers": 2,
+                    "fast_weight_optimization_attempts": 2,
+                    "fast_weight_optimized_steps": 2,
+                    "fast_weight_rejected_steps": 0,
+                    "fast_weight_budget_exhausted": False,
+                    "honest_flags": [],
+                },
                 "reason": "",
             }
 
@@ -163,8 +582,99 @@ def test_service_routes_through_client_and_records_receipt(monkeypatch):
     assert result["ok"] and result["text"] == "the deep answer"
     assert captured["prompt"] == "hard question"
     assert captured["config"]["n_branches"] >= 2
+    assert captured["config"]["latent_opt"] is True
+    assert captured["config"]["fast_weights"] is True
     assert captured["budget"]["max_layer_apps"] > 0
     assert svc.get_status()["last_receipt"]["halting_reason"] == "converged"
+
+
+def test_service_rejects_nominal_full_stack_without_accepted_optimization():
+    config = {
+        "n_slots": 16,
+        "n_branches": 2,
+        "latent_opt": True,
+        "fast_weights": True,
+    }
+    receipt = {
+        "episode_id": "ep-noop",
+        "checkpoint_fingerprint": "a" * 64,
+        "checkpoint_fingerprint_method": "sha256",
+        "checkpoint_file_count": 8,
+        "params_unchanged": True,
+        "schedule_hash": "b" * 64,
+        "steps_taken": 4,
+        "n_slots": 16,
+        "n_branches": 2,
+        "budget": {
+            "max_layer_apps": 1_000,
+            "spent_layer_apps": 100,
+            "exhausted": False,
+        },
+        "decode_requested_tokens": 512,
+        "decode_generated_tokens": 12,
+        "decode_termination": "eos",
+        "honest_flags": [],
+        "latent_opt_applied": True,
+        "latent_opt_mode": "gradient",
+        "latent_opt_attempts": 1,
+        "latent_opt_steps": 0,
+        "latent_opt_rejected": 1,
+        "latent_opt_budget_exhausted": False,
+        "fast_weights_applied": True,
+        "fast_weights_erased": True,
+        "fast_weights_layers": 2,
+        "fast_weight_optimization_attempts": 1,
+        "fast_weight_optimized_steps": 0,
+        "fast_weight_rejected_steps": 1,
+        "fast_weight_budget_exhausted": False,
+    }
+
+    errors = LatentCortexService._receipt_contract_errors(receipt, config)
+
+    assert "latent_optimization_no_accepted_steps" in errors
+    assert "fast_weight_optimization_no_accepted_steps" in errors
+
+
+@pytest.mark.parametrize(
+    ("termination", "exhausted", "expected"),
+    [
+        ("budget_exhausted", True, "decode_incomplete"),
+        ("budget_unaffordable", False, "decode_incomplete"),
+        ("token_limit", True, "incomplete_or_exhausted_compute_receipt"),
+    ],
+)
+def test_service_rejects_truncated_or_exhausted_decode_receipts(
+    termination, exhausted, expected
+):
+    config = {
+        "n_slots": 16,
+        "n_branches": 2,
+        "decode_max_tokens": 512,
+    }
+    receipt = {
+        "episode_id": "ep-truncated",
+        "checkpoint_fingerprint": "a" * 64,
+        "checkpoint_fingerprint_method": "sha256",
+        "checkpoint_file_count": 8,
+        "params_unchanged": True,
+        "schedule_hash": "b" * 64,
+        "steps_taken": 4,
+        "n_slots": 16,
+        "n_branches": 2,
+        "budget": {
+            "max_layer_apps": 1_000,
+            "spent_layer_apps": 1_000 if exhausted else 900,
+            "exhausted": exhausted,
+        },
+        "decode_requested_tokens": 512,
+        "decode_generated_tokens": 20,
+        "decode_termination": termination,
+        "honest_flags": [],
+    }
+
+    errors = LatentCortexService._receipt_contract_errors(receipt, config)
+
+    assert expected in errors
 
 
 def test_service_reports_refusals_honestly(monkeypatch):
@@ -181,6 +691,142 @@ def test_service_reports_refusals_honestly(monkeypatch):
     result = asyncio.run(svc.deep_reason("q"))
     assert result["ok"] is False and result["reason"] == "generation_active"
     assert svc.get_status()["last_refusal"] == "generation_active"
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "expected_reason"),
+    [
+        ({"stakes": float("nan")}, "invalid_cognitive_economy"),
+        ({"uncertainty": "high"}, "invalid_cognitive_economy"),
+        ({"config_overrides": []}, "invalid_config_overrides"),
+        ({"require_full_stack": "yes"}, "invalid_require_full_stack"),
+        ({"foreground_request": "yes"}, "invalid_foreground_request"),
+        ({"question": 7}, "invalid_question"),
+        ({"messages": "not-a-list"}, "invalid_messages"),
+    ],
+)
+def test_service_rejects_malformed_inputs_before_model_client_lookup(
+    monkeypatch, kwargs, expected_reason
+):
+    monkeypatch.delenv("AURA_LATENT_CORTEX", raising=False)
+    svc = LatentCortexService()
+
+    import core.brain.llm.mlx_client as mlx_client_mod
+
+    def unexpected_lookup(*args, **kwargs):
+        raise AssertionError("malformed input must not touch the model client")
+
+    monkeypatch.setattr(mlx_client_mod, "get_mlx_client", unexpected_lookup)
+    question = kwargs.pop("question", "q")
+    result = asyncio.run(svc.deep_reason(question, **kwargs))
+
+    assert result == {"ok": False, "reason": expected_reason}
+
+
+def test_service_propagates_background_lane_priority(monkeypatch):
+    monkeypatch.delenv("AURA_LATENT_CORTEX", raising=False)
+    svc = LatentCortexService()
+    captured: dict[str, object] = {}
+
+    class BackgroundClient:
+        async def latent_reason_async(self, **kwargs):
+            captured.update(kwargs)
+            return {"ok": False, "reason": "generation_active"}
+
+    import core.brain.llm.mlx_client as mlx_client_mod
+
+    monkeypatch.setattr(
+        mlx_client_mod,
+        "get_mlx_client",
+        lambda *args, **kwargs: BackgroundClient(),
+    )
+
+    result = asyncio.run(svc.deep_reason("idle thought", foreground_request=False))
+
+    assert result == {"ok": False, "reason": "generation_active"}
+    assert captured["foreground_request"] is False
+
+
+def test_service_rejects_incomplete_success_receipt(monkeypatch):
+    monkeypatch.delenv("AURA_LATENT_CORTEX", raising=False)
+    svc = LatentCortexService()
+
+    class ShallowClient:
+        async def latent_reason_async(self, **kwargs):
+            return {"ok": True, "text": "shallow", "receipt": {"episode_id": "x"}}
+
+    import core.brain.llm.mlx_client as mlx_client_mod
+
+    monkeypatch.setattr(mlx_client_mod, "get_mlx_client", lambda *a, **k: ShallowClient())
+    result = asyncio.run(svc.deep_reason("q"))
+    assert result["ok"] is False
+    assert result["reason"].startswith("receipt_contract_failed:")
+    assert svc.get_status()["ok_episodes"] == 0
+
+
+@pytest.mark.parametrize(
+    ("worker_result", "expected_reason"),
+    [
+        (
+            {"ok": True, "text": "bad", "receipt": "not-a-mapping"},
+            "receipt_not_mapping",
+        ),
+        (
+            {
+                "ok": True,
+                "text": "bad",
+                "receipt": {
+                    "episode_id": "x",
+                    "steps_taken": "7",
+                    "n_slots": 16,
+                    "n_branches": 2,
+                    "budget": {"spent_layer_apps": "100"},
+                    "honest_flags": "none",
+                },
+            },
+            "no_recurrent_steps",
+        ),
+        ("not-a-mapping", "invalid_client_response"),
+    ],
+)
+def test_service_contains_malformed_worker_response(
+    monkeypatch, worker_result, expected_reason
+):
+    monkeypatch.delenv("AURA_LATENT_CORTEX", raising=False)
+    svc = LatentCortexService()
+
+    class MalformedClient:
+        async def latent_reason_async(self, **kwargs):
+            return worker_result
+
+    import core.brain.llm.mlx_client as mlx_client_mod
+
+    monkeypatch.setattr(
+        mlx_client_mod, "get_mlx_client", lambda *a, **k: MalformedClient()
+    )
+    result = asyncio.run(svc.deep_reason("q"))
+    assert result["ok"] is False
+    assert expected_reason in result["reason"]
+    assert svc.get_status()["failure_streak"] == 1
+
+
+def test_service_contains_client_exception_and_degrades_health(monkeypatch):
+    monkeypatch.delenv("AURA_LATENT_CORTEX", raising=False)
+    svc = LatentCortexService()
+
+    class BrokenClient:
+        async def latent_reason_async(self, **kwargs):
+            raise RuntimeError("worker exploded")
+
+    import core.brain.llm.mlx_client as mlx_client_mod
+
+    monkeypatch.setattr(mlx_client_mod, "get_mlx_client", lambda *a, **k: BrokenClient())
+    for _ in range(3):
+        result = asyncio.run(svc.deep_reason("q"))
+        assert result["ok"] is False
+    status = svc.get_status()
+    assert status["failure_streak"] == 3
+    assert status["healthy"] is False and status["state"] == "degraded"
 
 
 def test_service_name_registered_in_spine():

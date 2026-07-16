@@ -7,6 +7,7 @@ import fcntl
 import gc
 import json
 import logging
+import math
 import multiprocessing as mp
 import os
 import queue
@@ -3767,6 +3768,7 @@ class MLXLocalClient:
         budget: dict[str, Any] | None = None,
         domain: str = "general",
         timeout_s: float = 300.0,
+        foreground_request: bool = True,
     ) -> dict[str, Any]:
         """Run a Recursive Latent Cortex episode on the RESIDENT worker model.
 
@@ -3776,57 +3778,204 @@ class MLXLocalClient:
         never spawns a worker just to think — no resident model, no episode.
         Returns ``{"ok": bool, "text": str, "receipt": {...}, "reason": str}``.
         """
+        base = {"ok": False, "text": "", "receipt": {}}
         if self._closed:
-            return {"ok": False, "reason": "client_closed"}
+            return {**base, "reason": "client_closed"}
+        if not (isinstance(prompt, str) and prompt.strip()) and not (
+            isinstance(messages, list) and messages
+        ):
+            return {**base, "reason": "empty_prompt"}
+        if type(foreground_request) is not bool:
+            return {**base, "reason": "invalid_foreground_request"}
+        if config is not None and not isinstance(config, dict):
+            return {**base, "reason": "invalid_config"}
+        if budget is not None and not isinstance(budget, dict):
+            return {**base, "reason": "invalid_budget"}
+        wire_config = dict(config or {})
+        wire_budget = dict(budget or {})
+        try:
+            bounded_timeout_s = float(timeout_s)
+        except (TypeError, ValueError, OverflowError):
+            return {**base, "reason": "invalid_timeout"}
+        if not math.isfinite(bounded_timeout_s) or bounded_timeout_s <= 0.0:
+            return {**base, "reason": "invalid_timeout"}
+        bounded_timeout_s = min(900.0, max(5.0, bounded_timeout_s))
         if (
             self._req_q is None
             or not (self._process and self._process.is_alive() and self._init_done)
         ):
-            return {"ok": False, "reason": "worker_not_ready"}
-        if int(getattr(self, "_active_generations", 0) or 0) > 0 or self._warmup_in_flight:
-            return {"ok": False, "reason": "generation_active"}
-
-        req_id = uuid.uuid4().hex
-        fut = _new_shared_future()
-        self._pending_generations[req_id] = fut
-        job: dict[str, Any] = {
-            "id": req_id,
-            "action": "latent_reason",
-            "domain": str(domain or "general"),
-        }
-        if prompt is not None:
-            job["prompt"] = str(prompt)
-        if messages is not None:
-            job["messages"] = list(messages)
-        if config:
-            job["config"] = dict(config)
-        if budget:
-            job["budget"] = dict(budget)
+            return {**base, "reason": "worker_not_ready"}
         try:
-            await run_io_bound(self._req_q.put, job, True, 2.0)
-            res = await _await_shared_future(fut, timeout_s=max(30.0, float(timeout_s)))
-        except (TimeoutError, BrokenPipeError, OSError) as exc:
-            self._pending_generations.pop(req_id, None)
+            if get_memory_pressure_snapshot().refuse_heavy_local_generation:
+                return {**base, "reason": "memory_pressure"}
+        except (OSError, AttributeError, RuntimeError, TypeError, ValueError):
+            return {**base, "reason": "memory_pressure_unobservable"}
+
+        deadline = get_deadline(bounded_timeout_s)
+        owner_label = "latent_cortex_foreground" if foreground_request else "latent_cortex_lab"
+        foreground_owner_cm = None
+        if foreground_request:
+            foreground_owner_cm = _foreground_owner_context(
+                owner_label,
+                deadline=deadline,
+                foreground_request=True,
+                stale_after=bounded_timeout_s,
+            )
+            try:
+                await foreground_owner_cm.__aenter__()
+            except TimeoutError:
+                return {**base, "reason": "foreground_owner_busy"}
+
+        try:
+            acquired = await self._acquire_request_lock(
+                owner_label=owner_label,
+                deadline=deadline,
+                foreground_request=foreground_request,
+            )
+        except BaseException:  # noqa: BLE001 - cancellation must release foreground ownership
+            if foreground_owner_cm is not None:
+                await asyncio.shield(foreground_owner_cm.__aexit__(*sys.exc_info()))
+            raise
+        if not acquired:
+            if foreground_owner_cm is not None:
+                await foreground_owner_cm.__aexit__(None, None, None)
+            return {**base, "reason": "request_lane_busy"}
+
+        fut: SharedFuture | None = None
+        req_id = ""
+        deferred_reboot = ""
+        lane_fenced = False
+        try:
+            if (
+                self._req_q is None
+                or not (self._process and self._process.is_alive() and self._init_done)
+            ):
+                return {**base, "reason": "worker_not_ready"}
+            if self._warmup_in_flight or self._active_generations > 0:
+                return {**base, "reason": "generation_active"}
+            if not await self._set_durable_lane_preemptible(False):
+                return {**base, "reason": "lane_fence_lost"}
+            lane_fenced = True
+
+            req_id = uuid.uuid4().hex
+            self._job_seq_counter += 1
+            request_seq = self._job_seq_counter
+            job: dict[str, Any] = {
+                "id": req_id,
+                "seq": request_seq,
+                "action": "latent_reason",
+                "domain": str(domain or "general"),
+            }
+            if prompt is not None:
+                job["prompt"] = str(prompt)
+            if messages is not None:
+                job["messages"] = list(messages)
+            if config is not None:
+                job["config"] = wire_config
+            if budget is not None:
+                job["budget"] = wire_budget
+
+            fut = _new_shared_future()
+            self._pending_generations[req_id] = fut
+            self._current_gen_future = fut
+            self._active_generations += 1
+            requested_tokens_raw = wire_config.get("decode_max_tokens", 0)
+            requested_tokens = (
+                requested_tokens_raw
+                if type(requested_tokens_raw) is int and requested_tokens_raw > 0
+                else 0
+            )
+            prompt_chars = len(prompt or "") + sum(
+                len(str(message.get("content") or ""))
+                for message in (messages or [])
+                if isinstance(message, dict)
+            )
+            self._mark_generation_started(
+                req_id,
+                prompt_chars=prompt_chars,
+                requested_max_tokens=requested_tokens,
+                first_token_hard_ceiling_s=bounded_timeout_s,
+                request_seq=request_seq,
+            )
+            await run_io_bound(
+                self._req_q.put,
+                job,
+                True,
+                min(2.0, max(0.5, deadline.remaining or 2.0)),
+            )
+            try:
+                res = await _await_shared_future(fut, timeout_s=bounded_timeout_s)
+            except TimeoutError:
+                self.soft_cancel_active_generation("latent_reason_deadline")
+                deferred_reboot = "latent_reason_deadline"
+                return {**base, "reason": "latent_timeout:TimeoutError"}
+
+            if not isinstance(res, dict):
+                return {**base, "reason": "invalid_worker_response"}
+            raw_receipt = res.get("receipt")
+            if raw_receipt is not None and not isinstance(raw_receipt, dict):
+                return {**base, "reason": "invalid_worker_receipt"}
+            receipt = dict(raw_receipt or {})
+            reason = str(res.get("message") or res.get("reason") or "")
+            if reason in {
+                "checkpoint_invariant_violated",
+                "fast_weight_cleanup_unproven",
+            }:
+                deferred_reboot = f"latent_integrity:{reason}"
+            if res.get("status") == "ok":
+                self._mark_progress()
+                return {
+                    "ok": True,
+                    "text": str(res.get("text") or ""),
+                    "receipt": receipt,
+                    "reason": str(res.get("reason") or ""),
+                }
+            return {
+                **base,
+                "receipt": receipt,
+                "reason": reason or "latent_reason_failed",
+            }
+        except asyncio.CancelledError:
+            if fut is not None:
+                self.soft_cancel_active_generation("latent_reason_caller_cancelled")
+                deferred_reboot = "latent_reason_caller_cancelled"
+            raise
+        except (BrokenPipeError, OSError, TimeoutError, queue.Full) as exc:
+            deferred_reboot = f"latent_ipc_failed:{type(exc).__name__}"
             _record_mlx_degradation(
                 exc,
-                action="reported latent_reason timeout without touching the resident model",
+                action="recycled resident worker after latent_reason IPC failure",
                 severity="warning",
             )
-            return {"ok": False, "reason": f"latent_timeout:{type(exc).__name__}"}
-
-        if res and res.get("status") == "ok":
-            return {
-                "ok": True,
-                "text": str(res.get("text") or ""),
-                "receipt": dict(res.get("receipt") or {}),
-                "reason": str(res.get("reason") or ""),
-            }
-        return {
-            "ok": False,
-            "text": "",
-            "receipt": dict((res or {}).get("receipt") or {}),
-            "reason": str((res or {}).get("message") or "latent_reason_failed"),
-        }
+            return {**base, "reason": f"latent_ipc_failed:{type(exc).__name__}"}
+        finally:
+            try:
+                try:
+                    if fut is not None:
+                        await asyncio.shield(
+                            self._finish_generation_ownership(
+                                req_id,
+                                fut,
+                                None,
+                                release_lane=not bool(deferred_reboot),
+                            )
+                        )
+                finally:
+                    if deferred_reboot:
+                        await asyncio.shield(
+                            self.reboot_worker(
+                                reason=deferred_reboot,
+                                mark_failed=False,
+                            )
+                        )
+                    elif lane_fenced and fut is None and self._active_generations <= 0:
+                        await asyncio.shield(
+                            self._set_durable_lane_preemptible(True)
+                        )
+            finally:
+                self._release_request_lock()
+                if foreground_owner_cm is not None:
+                    await foreground_owner_cm.__aexit__(None, None, None)
 
     async def reload_model_artifact(self, model_path: str) -> dict[str, Any]:
         """Serve a newly published fused artifact by re-pointing this lane.
@@ -6699,6 +6848,8 @@ class MLXLocalClient:
         request_id: str,
         future: SharedFuture,
         foreground_watchdog: _threading.Timer | None,
+        *,
+        release_lane: bool = True,
     ) -> None:
         if foreground_watchdog is not None:
             foreground_watchdog.cancel()
@@ -6710,7 +6861,7 @@ class MLXLocalClient:
         self._active_generations = max(0, self._active_generations - 1)
         if self._current_request_id == request_id:
             self._clear_active_generation_tracking()
-        if self._active_generations <= 0:
+        if release_lane and self._active_generations <= 0:
             await self._set_durable_lane_preemptible(True)
 
     def _unload_safety_blocker(self) -> str | None:

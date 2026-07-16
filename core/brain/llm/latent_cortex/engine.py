@@ -15,9 +15,8 @@ reporting live in core/brain/latent_cortex_service.py.
 from __future__ import annotations
 
 import logging
-import time
 import uuid
-from typing import Any, Callable
+from collections.abc import Callable
 
 from core.brain.llm.latent_cortex.branches import BranchEnsemble, BranchState
 from core.brain.llm.latent_cortex.fast_weights import EpisodicFastWeights
@@ -37,7 +36,22 @@ from core.runtime.errors import record_degradation
 logger = logging.getLogger("Aura.LatentCortex.Engine")
 
 # Guard classes the engine treats as "latent phase failed, fall back honest".
-_LATENT_PHASE_ERRORS = (RuntimeError, ValueError, TypeError, AttributeError, KeyError)
+_LATENT_PHASE_ERRORS = (
+    AttributeError,
+    ImportError,
+    IndexError,
+    KeyError,
+    MemoryError,
+    OSError,
+    OverflowError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
+
+
+class _FastWeightCleanupError(RuntimeError):
+    """The resident model could not be proven clean after an episode."""
 
 
 def _logits_digest(logits) -> str:
@@ -48,7 +62,7 @@ def _logits_digest(logits) -> str:
 
     arr = logits.astype(mx.float32)
     mx.eval(arr)
-    return hashlib.sha256(memoryview(arr)).hexdigest()[:16]
+    return hashlib.sha256(memoryview(arr)).hexdigest()
 
 
 class LatentCortexEngine:
@@ -129,6 +143,11 @@ class LatentCortexEngine:
         from mlx_lm.models.base import create_attention_mask
 
         inner = self.model.model
+        if not tokens:
+            raise ValueError("latent episode requires at least one input token")
+        if not budget.can_afford(len(tokens), self.n_layers):
+            raise RuntimeError("compute budget cannot afford prompt prefill")
+        budget.charge(tokens=len(tokens), layers=self.n_layers)
         arr = mx.array([tokens])
         h = inner.embed_tokens(arr)
         embeddings = h
@@ -137,7 +156,6 @@ class LatentCortexEngine:
             h = layer(h, mask, cache[i])
         logits = self._logits(h[:, -1:, :])[0, -1]
         mx.eval(logits)
-        budget.charge(tokens=len(tokens), layers=self.n_layers)
         return embeddings, logits
 
     def _sample(self, logits, temperature: float) -> int:
@@ -155,7 +173,7 @@ class LatentCortexEngine:
         *,
         max_tokens: int | None = None,
         temperature: float | None = None,
-    ) -> list[int]:
+    ) -> tuple[list[int], str]:
         """Minimal sampler: first token from ``initial_logits`` (the logits of
         the last persisted position — prompt tail or final thought slot), then
         autoregressive continuation over the populated cache."""
@@ -168,21 +186,32 @@ class LatentCortexEngine:
         temp = temperature if temperature is not None else self.config.decode_temperature
 
         out: list[int] = []
+        if budget.exhausted:
+            return out, "budget_exhausted"
         token = self._sample(initial_logits, temp)
-        for _ in range(max(1, int(limit))):
+        termination = "token_limit"
+        for index in range(max(1, int(limit))):
             if token in eos:
+                termination = "eos"
                 break
             out.append(token)
-            if budget.exhausted:
+            if index + 1 >= limit:
+                termination = "token_limit"
                 break
+            if budget.exhausted:
+                termination = "budget_exhausted"
+                break
+            if not budget.can_afford(1, self.n_layers):
+                termination = "budget_unaffordable"
+                break
+            budget.charge(tokens=1, layers=self.n_layers)
             h = inner.embed_tokens(mx.array([[token]]))
             mask = create_attention_mask(h, cache)
             for i, layer in enumerate(inner.layers):
                 h = layer(h, mask, cache[i])
             logits = self._logits(h)[0, -1]
-            budget.charge(tokens=1, layers=self.n_layers)
             token = self._sample(logits, temp)
-        return out
+        return out, termination
 
     # ── Probe decoding for branch selection / verifier loops ────────────
     def _decode_probe(
@@ -210,7 +239,7 @@ class LatentCortexEngine:
             slot_logits = self._persist_branch(branch, cache, runner)
             return self._decode(
                 cache, budget, slot_logits, max_tokens=max_tokens, temperature=0.0
-            )
+            )[0]
         finally:
             _restore_recurrent_caches(cache, 0, self.n_layers, snaps)
 
@@ -269,53 +298,99 @@ class LatentCortexEngine:
         receipt.prelude_end = self.prelude_end
         receipt.coda_start = self.coda_start
         budget = budget or ComputeBudget()
+        if decode_max_tokens is not None:
+            if type(decode_max_tokens) is not int:
+                raise TypeError("decode_max_tokens override must be an integer")
+            if not 1 <= decode_max_tokens <= 8192:
+                raise ValueError("decode_max_tokens override outside [1, 8192]")
         tokens = self._encode(prompt, messages, token_ids)
 
         self.invariant.pre_episode()
         receipt.checkpoint_fingerprint = self.invariant.file_receipt.get("fingerprint", "")
+        receipt.checkpoint_fingerprint_method = self.invariant.file_receipt.get(
+            "method", ""
+        )
+        receipt.checkpoint_file_count = int(
+            self.invariant.file_receipt.get("files", 0) or 0
+        )
 
+        failure_reason = ""
+        out_tokens: list[int] = []
         try:
-            out_tokens, receipt = self._latent_episode(
-                tokens,
-                budget,
-                verifier,
-                domain,
-                receipt,
-                decode_max_tokens,
-                ablate_slot=ablate_slot,
-                ablate_mode=ablate_mode,
-            )
-        except _LATENT_PHASE_ERRORS as exc:
-            record_degradation(
-                "latent_cortex",
-                exc,
-                action="served vanilla decode with honest fallback receipt",
-            )
-            receipt.flag(f"fallback_vanilla:{type(exc).__name__}")
-            receipt.halting_reason = receipt.halting_reason or "latent_phase_error"
             try:
-                cache = self._fresh_cache()
-                _, tail_logits = self._prefill(tokens, cache, budget)
-                out_tokens = self._decode(
-                    cache, budget, tail_logits, max_tokens=decode_max_tokens
+                out_tokens, receipt = self._latent_episode(
+                    tokens,
+                    budget,
+                    verifier,
+                    domain,
+                    receipt,
+                    decode_max_tokens,
+                    ablate_slot=ablate_slot,
+                    ablate_mode=ablate_mode,
                 )
-            except _LATENT_PHASE_ERRORS as inner_exc:
+            except _FastWeightCleanupError as exc:
                 record_degradation(
                     "latent_cortex",
-                    inner_exc,
-                    action="reported failed episode after vanilla fallback also failed",
-                    severity="degraded",
+                    exc,
+                    action="refused fallback decode and requested resident-worker recycle",
+                    severity="critical",
                 )
-                receipt.budget = budget.to_receipt()
-                return LatentReasoningResult(
-                    ok=False,
-                    text="",
-                    receipt=receipt,
-                    reason=f"latent_and_fallback_failed:{inner_exc}",
+                failure_reason = "fast_weight_cleanup_unproven"
+            except _LATENT_PHASE_ERRORS as exc:
+                record_degradation(
+                    "latent_cortex",
+                    exc,
+                    action="served vanilla decode with honest fallback receipt",
                 )
-
-        receipt.params_unchanged = self.invariant.post_episode()
+                receipt.flag(f"fallback_vanilla:{type(exc).__name__}")
+                receipt.halting_reason = receipt.halting_reason or "latent_phase_error"
+                if receipt.fast_weights_applied and receipt.fast_weights_erased is not True:
+                    receipt.flag("fallback_refused_unproven_model_state")
+                    failure_reason = "fast_weight_cleanup_unproven"
+                else:
+                    try:
+                        cache = self._fresh_cache()
+                        _, tail_logits = self._prefill(tokens, cache, budget)
+                        out_tokens, decode_termination = self._decode(
+                            cache, budget, tail_logits, max_tokens=decode_max_tokens
+                        )
+                        receipt.decode_requested_tokens = (
+                            decode_max_tokens
+                            if decode_max_tokens is not None
+                            else self.config.decode_max_tokens
+                        )
+                        receipt.decode_generated_tokens = len(out_tokens)
+                        receipt.decode_termination = decode_termination
+                        if decode_termination.startswith("budget_"):
+                            receipt.flag(f"decode_{decode_termination}")
+                    except _LATENT_PHASE_ERRORS as inner_exc:
+                        record_degradation(
+                            "latent_cortex",
+                            inner_exc,
+                            action=(
+                                "reported failed episode after vanilla fallback also failed"
+                            ),
+                            severity="degraded",
+                        )
+                        failure_reason = f"latent_and_fallback_failed:{inner_exc}"
+        finally:
+            try:
+                receipt.params_unchanged = self.invariant.post_episode()
+            except _LATENT_PHASE_ERRORS as exc:
+                receipt.params_unchanged = False
+                receipt.flag(f"checkpoint_post_probe_failed:{type(exc).__name__}")
+                record_degradation(
+                    "latent_cortex",
+                    exc,
+                    action="refused output because the post-episode invariant probe failed",
+                    severity="critical",
+                )
         receipt.budget = budget.to_receipt()
+        if (
+            not failure_reason
+            and receipt.decode_termination not in {"eos", "token_limit"}
+        ):
+            failure_reason = f"decode_incomplete:{receipt.decode_termination}"
         if receipt.params_unchanged is False:
             receipt.flag("checkpoint_invariant_violated")
             return LatentReasoningResult(
@@ -323,6 +398,13 @@ class LatentCortexEngine:
                 text="",
                 receipt=receipt,
                 reason="checkpoint_invariant_violated",
+            )
+        if failure_reason:
+            return LatentReasoningResult(
+                ok=False,
+                text="",
+                receipt=receipt,
+                reason=failure_reason,
             )
 
         text = (
@@ -351,6 +433,40 @@ class LatentCortexEngine:
 
         cache = self._fresh_cache()
         runner = WindowRunner(self.model.model, budget)
+        decode_limit = (
+            decode_max_tokens
+            if decode_max_tokens is not None
+            else self.config.decode_max_tokens
+        )
+        prefill_cost = len(tokens) * self.n_layers
+        decode_cost = max(0, int(decode_limit) - 1) * self.n_layers
+        persist_cost = self.config.workspace.n_slots * self.n_layers
+        fast_weight_probe_cost = (
+            8 * self.n_layers if self.config.fast_weights.enabled else 0
+        )
+        completion_reserve = (
+            persist_cost + decode_cost + fast_weight_probe_cost
+        )
+        fallback_reserve = prefill_cost + decode_cost
+        safety_reserve = completion_reserve + fallback_reserve
+        branch_seed_cost = (
+            self.config.branches.n_branches
+            * self.config.workspace.n_slots
+            * self.prelude_end
+        )
+        fast_weight_baseline_cost = fast_weight_probe_cost
+        minimum_admission = (
+            prefill_cost
+            + branch_seed_cost
+            + safety_reserve
+            + fast_weight_baseline_cost
+        )
+        if minimum_admission > budget.remaining_layer_apps or budget.exhausted:
+            raise RuntimeError(
+                "compute budget cannot admit latent minimum while preserving fallback: "
+                f"required={minimum_admission} remaining={budget.remaining_layer_apps}"
+            )
+
         embeddings, _tail_logits = self._prefill(tokens, cache, budget)
 
         schedule = self._resolve_schedule(domain)
@@ -369,18 +485,25 @@ class LatentCortexEngine:
         )
 
         # ── Recurrent computation under the schedule program ────────────
+        recurrence_budget_limited = False
         for op in schedule.ops:
             for _ in range(op.repeats):
                 if ensemble.all_halted() or budget.exhausted:
                     break
-                ensemble.step_all(
+                admitted = ensemble.step_all(
                     runner,
                     cache,
                     op.start,
                     op.end,
                     budget=budget,
                     alpha_override=op.alpha,
+                    reserve_layer_apps=safety_reserve,
                 )
+                if not admitted:
+                    recurrence_budget_limited = True
+                    break
+            if recurrence_budget_limited:
+                break
         for branch in ensemble.branches:
             if not branch.halted:
                 final, reverted = branch.halting.final_state(branch.z)
@@ -388,19 +511,34 @@ class LatentCortexEngine:
                 branch.workspace.update(final)
                 branch.halted = True
                 branch.halt_reason = (
-                    "budget_exhausted" if budget.exhausted else "schedule_complete"
+                    "budget_reserved"
+                    if recurrence_budget_limited
+                    else "budget_exhausted"
+                    if budget.exhausted
+                    else "schedule_complete"
                 ) + ("_reverted" if reverted else "")
 
         receipt.exchanges = ensemble.exchanges
 
         # ── Branch selection ─────────────────────────────────────────────
-        if verifier is not None and self.tokenizer is not None:
+        branch_probe_cost = (
+            len(ensemble.branches)
+            * (self.config.workspace.n_slots + 47)
+            * self.n_layers
+        )
+        if (
+            verifier is not None
+            and self.tokenizer is not None
+            and branch_probe_cost + safety_reserve <= budget.remaining_layer_apps
+        ):
             def branch_score(branch: BranchState) -> float:
                 probe = self._decode_probe(branch, cache, runner, budget)
                 return float(verifier(self.tokenizer.decode(probe)))
 
             winner = ensemble.select(score_fn=branch_score)
         else:
+            if verifier is not None and self.tokenizer is not None:
+                receipt.flag("branch_verifier_skipped_budget")
             winner = ensemble.select()
         receipt.branch_scores = [float(b.score) for b in ensemble.branches]
         receipt.selected_branch = winner.index
@@ -414,7 +552,19 @@ class LatentCortexEngine:
         if self.config.latent_opt.enabled:
             loss_fn = build_proxy_loss(self.model, winner.anchor, tokens, self.config.latent_opt)
             optimizer = LatentOptimizer(
-                loss_fn, self.config.latent_opt, seed=self.config.workspace.seed
+                loss_fn,
+                self.config.latent_opt,
+                seed=self.config.workspace.seed,
+                budget=budget,
+                # The proxy itself is norm + LM-head work rather than a full
+                # transformer pass. Charging one full-stack slot pass per loss
+                # evaluation is intentionally conservative and keeps one
+                # common economy unit across recurrence, optimization, and
+                # decoding until the FLOP ledger lands.
+                layer_apps_per_loss=(
+                    self.config.workspace.n_slots * self.n_layers
+                ),
+                reserve_layer_apps=safety_reserve,
             )
             if verifier is not None and self.tokenizer is not None:
                 def z_score(z) -> float:
@@ -428,21 +578,37 @@ class LatentCortexEngine:
                         winner.z = saved
                         winner.workspace.update(saved)
 
-                z_opt, _ = optimizer.run_with_verifier(winner.z, z_score)
+                z_opt, _ = optimizer.run_with_verifier(
+                    winner.z,
+                    z_score,
+                    verifier_layer_apps=(
+                        (self.config.workspace.n_slots + 47) * self.n_layers
+                    ),
+                )
             else:
                 z_opt = optimizer.run(winner.z)
             winner.z = z_opt
             winner.workspace.update(z_opt)
-            receipt.latent_opt_applied = True
+            receipt.latent_opt_applied = optimizer.trace.accepted > 0
             receipt.latent_opt_mode = optimizer.trace.mode
             receipt.latent_opt_loss_trail = list(optimizer.trace.loss_trail)
+            receipt.latent_opt_attempts = optimizer.trace.attempts
+            receipt.latent_opt_steps = optimizer.trace.accepted
+            receipt.latent_opt_rejected = optimizer.trace.rejected
+            receipt.latent_opt_budget_exhausted = optimizer.trace.budget_exhausted
+            if optimizer.trace.budget_exhausted:
+                receipt.flag("latent_opt_budget_exhausted")
+            if not receipt.latent_opt_applied:
+                receipt.flag("latent_opt_no_accepted_step")
 
         # ── Episode fast weights (attach → optimize → decode under ΔW) ──
         fast_weights: EpisodicFastWeights | None = None
         fw_baseline = None
         if self.config.fast_weights.enabled:
             fast_weights = EpisodicFastWeights(self.config.fast_weights)
-            fw_baseline = self._fw_probe()
+            if fast_weight_baseline_cost + safety_reserve > budget.remaining_layer_apps:
+                raise RuntimeError("compute budget cannot admit fast-weight baseline probe")
+            fw_baseline = self._fw_probe(budget)
             seed_stat = float(mx.mean(per_position_rms(winner.z)))
             wrapped = fast_weights.attach(
                 self.model.model,
@@ -452,41 +618,100 @@ class LatentCortexEngine:
             )
             receipt.fast_weights_applied = True
             receipt.fast_weights_layers = wrapped
-            loss_fn = build_proxy_loss(
-                self.model, winner.anchor, tokens, self.config.latent_opt
-            )
-
-            def fw_loss():
-                z_pass = self._nocache_window_pass(winner.z)
-                return loss_fn(z_pass)
-
-            fast_weights.optimize(fw_loss)
-
-        # Experiment-3 instrumentation: destroy one refined thought slot just
-        # before persistence, so the causal contribution of THAT slot to the
-        # final answer is measurable (and its restoration testable).
-        if ablate_slot is not None:
-            winner.workspace.ablate(int(ablate_slot), mode=ablate_mode)
-            winner.z = winner.workspace.z
-            receipt.flag(f"slot_ablated:{int(ablate_slot)}:{ablate_mode}")
 
         try:
+            if fast_weights is not None:
+                loss_fn = build_proxy_loss(
+                    self.model, winner.anchor, tokens, self.config.latent_opt
+                )
+
+                def fw_loss():
+                    z_pass = self._nocache_window_pass(winner.z)
+                    return loss_fn(z_pass)
+
+                fast_weights.optimize(
+                    fw_loss,
+                    budget=budget,
+                    layer_apps_per_forward=(
+                        self.config.workspace.n_slots
+                        * (self.coda_start - self.prelude_end)
+                    ),
+                    reserve_layer_apps=safety_reserve,
+                )
+
+            # Experiment-3 instrumentation: destroy one refined thought slot
+            # just before persistence, so its causal contribution and
+            # restoration are measurable.
+            if ablate_slot is not None:
+                winner.workspace.ablate(int(ablate_slot), mode=ablate_mode)
+                winner.z = winner.workspace.z
+                receipt.flag(f"slot_ablated:{int(ablate_slot)}:{ablate_mode}")
+
             # ── Commit the winner + decode the answer ────────────────────
             slot_logits = self._persist_branch(winner, cache, runner)
             receipt.first_logits_digest = _logits_digest(slot_logits)
-            out_tokens = self._decode(
+            out_tokens, decode_termination = self._decode(
                 cache, budget, slot_logits, max_tokens=decode_max_tokens
             )
+            receipt.decode_requested_tokens = decode_limit
+            receipt.decode_generated_tokens = len(out_tokens)
+            receipt.decode_termination = decode_termination
+            if decode_termination.startswith("budget_"):
+                receipt.flag(f"decode_{decode_termination}")
         finally:
             if fast_weights is not None:
-                fast_weights.snapshot_for_export()
-                fast_weights.detach()
-                proven = fast_weights.prove_erase(self._fw_probe, fw_baseline)
-                receipt.fast_weights_erased = proven
-                if not proven:
-                    receipt.flag("fast_weight_erase_unproven")
+                self._finalize_fast_weights(fast_weights, fw_baseline, receipt, budget)
+
+        if fast_weights is not None and receipt.fast_weights_erased is not True:
+            raise _FastWeightCleanupError("fast-weight cleanup proof did not pass")
 
         return out_tokens, receipt
+
+    def _finalize_fast_weights(
+        self,
+        fast_weights: EpisodicFastWeights,
+        baseline,
+        receipt: EpisodeReceipt,
+        budget: ComputeBudget,
+    ) -> None:
+        """Best-effort cleanup that never masks the episode's first failure."""
+        try:
+            try:
+                fast_weights.snapshot_for_export()
+            except _LATENT_PHASE_ERRORS as exc:
+                receipt.flag(f"fast_weight_snapshot_failed:{type(exc).__name__}")
+                record_degradation(
+                    "latent_cortex",
+                    exc,
+                    action="discarded fast-weight consolidation snapshot before cleanup",
+                    severity="warning",
+                )
+        finally:
+            try:
+                fast_weights.detach()
+                receipt.fast_weights_erased = fast_weights.prove_erase(
+                    lambda: self._fw_probe(budget), baseline
+                )
+            except _LATENT_PHASE_ERRORS as exc:
+                receipt.fast_weights_erased = False
+                receipt.flag(f"fast_weight_cleanup_failed:{type(exc).__name__}")
+                record_degradation(
+                    "latent_cortex",
+                    exc,
+                    action="refused episode output and requested resident-worker recycle",
+                    severity="critical",
+                )
+        if receipt.fast_weights_erased is not True:
+            receipt.flag("fast_weight_erase_unproven")
+        lifecycle = fast_weights.lifecycle
+        receipt.fast_weight_optimization_attempts = lifecycle.optimization_attempts
+        receipt.fast_weight_optimized_steps = lifecycle.optimized_steps
+        receipt.fast_weight_rejected_steps = lifecycle.rejected_steps
+        receipt.fast_weight_budget_exhausted = lifecycle.budget_exhausted
+        if lifecycle.budget_exhausted:
+            receipt.flag("fast_weight_budget_exhausted")
+        if lifecycle.optimized_steps <= 0:
+            receipt.flag("fast_weight_no_accepted_step")
 
     # ── Fast-weight helpers ─────────────────────────────────────────────
     def _nocache_window_pass(self, z):
@@ -497,13 +722,16 @@ class LatentCortexEngine:
             h = inner.layers[i](h, None, None)
         return h
 
-    def _fw_probe(self):
+    def _fw_probe(self, budget: ComputeBudget):
         """Deterministic full-stack probe for erase proofs (cache-free)."""
         import mlx.core as mx
 
         inner = self.model.model
         vocab = inner.embed_tokens.weight.shape[0]
         probe_tokens = mx.array([[i % int(vocab) for i in range(1, 9)]])
+        if not budget.can_afford(8, self.n_layers):
+            raise RuntimeError("compute budget cannot afford fast-weight erase probe")
+        budget.charge(tokens=8, layers=self.n_layers)
         h = inner.embed_tokens(probe_tokens)
         for layer in inner.layers:
             h = layer(h, None, None)

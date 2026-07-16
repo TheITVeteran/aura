@@ -9,6 +9,8 @@ Two layers of honesty are tested here:
 """
 from __future__ import annotations
 
+import argparse
+
 import pytest
 
 from core.brain.llm.latent_cortex.experiments import (
@@ -17,6 +19,8 @@ from core.brain.llm.latent_cortex.experiments import (
     REFUTED,
     SUPPORTED,
     ArmResult,
+    PairedObservation,
+    grade_paired_treatment_vs_control,
     grade_treatment_vs_control,
     khop_reachability,
     modular_chain,
@@ -28,9 +32,15 @@ from core.brain.llm.latent_cortex.experiments import (
     run_virtual_width,
     task_battery,
 )
-
+from tools.latent_cortex_lab import _positive_float
 
 # ── Task generators ─────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf", "0", "-1"])
+def test_lab_deadline_parser_rejects_nonfinite_or_nonpositive_values(value):
+    with pytest.raises(argparse.ArgumentTypeError):
+        _positive_float(value)
 
 
 def test_generators_are_deterministic_and_self_verifying():
@@ -98,13 +108,135 @@ def test_grader_single_family_separation_is_supported():
     assert claim.tier == SUPPORTED
 
 
-def test_grader_two_family_separation_is_proven():
+def test_aggregate_grader_cannot_claim_proven_without_pairs():
     claim = grade_treatment_vs_control(
         "x", "s",
         {"khop": _arm("t", 40, 36), "modular": _arm("t", 40, 34)},
         {"khop": _arm("c", 40, 10), "modular": _arm("c", 40, 12)},
     )
+    assert claim.tier == SUPPORTED
+    assert claim.evidence["aggregate_only"] is True
+
+
+def test_paired_grader_can_prove_replicated_compute_matched_gain():
+    observations = {
+        family: [
+            PairedObservation(
+                task_id=f"{family}-{index}",
+                family=family,
+                treatment_success=True,
+                control_success=index % 4 == 0,
+                treatment_layer_apps=1000,
+                control_layer_apps=1000,
+            )
+            for index in range(40)
+        ]
+        for family in ("khop", "modular")
+    }
+    claim = grade_paired_treatment_vs_control("x", "s", observations)
     assert claim.tier == PROVEN
+    assert set(claim.evidence["positive_families"]) == {"khop", "modular"}
+
+
+def test_paired_grader_voids_missing_or_mismatched_compute():
+    missing = {
+        "khop": [
+            PairedObservation(f"t-{i}", "khop", True, False) for i in range(30)
+        ]
+    }
+    assert grade_paired_treatment_vs_control("x", "s", missing).tier == CONJECTURE
+    mismatch = {
+        "khop": [
+            PairedObservation(f"t-{i}", "khop", True, False, 2000, 1000)
+            for i in range(30)
+        ]
+    }
+    claim = grade_paired_treatment_vs_control("x", "s", mismatch)
+    assert claim.tier == CONJECTURE
+    assert claim.evidence["invalid_compute_families"] == ["khop"]
+
+    zero = {
+        "khop": [
+            PairedObservation(f"z-{i}", "khop", True, False, 0, 0)
+            for i in range(30)
+        ]
+    }
+    zero_claim = grade_paired_treatment_vs_control("x", "s", zero)
+    assert zero_claim.tier == CONJECTURE
+    assert zero_claim.evidence["invalid_compute_families"] == ["khop"]
+
+
+def test_paired_grader_rejects_duplicate_or_malformed_rows():
+    duplicate = PairedObservation("same", "khop", True, False, 100, 100)
+    with pytest.raises(ValueError, match="unique"):
+        grade_paired_treatment_vs_control(
+            "x", "s", {"khop": [duplicate, duplicate]}, require_compute=False
+        )
+    malformed = PairedObservation("bad", "khop", 1, False, 100, 100)
+    with pytest.raises(ValueError, match="boolean"):
+        grade_paired_treatment_vs_control(
+            "x", "s", {"khop": [malformed]}, require_compute=False
+        )
+    with pytest.raises(ValueError, match="alpha"):
+        grade_paired_treatment_vs_control("x", "s", {}, alpha=float("nan"))
+
+
+def test_paired_effect_bound_tracks_alpha_and_blocks_weak_strict_claims():
+    observations = {
+        "khop": [
+            PairedObservation(
+                f"task-{index}",
+                "khop",
+                index < 21,
+                False,
+                1000,
+                1000,
+            )
+            for index in range(30)
+        ]
+    }
+    ordinary = grade_paired_treatment_vs_control(
+        "x",
+        "s",
+        observations,
+        alpha=0.05,
+        minimum_effect=0.53,
+    )
+    strict = grade_paired_treatment_vs_control(
+        "x",
+        "s",
+        observations,
+        alpha=0.01,
+        minimum_effect=0.53,
+    )
+
+    ordinary_stats = ordinary.evidence["families"]["khop"]
+    strict_stats = strict.evidence["families"]["khop"]
+    assert ordinary_stats["effect_bound_alpha"] == 0.05
+    assert strict_stats["effect_bound_alpha"] == 0.01
+    assert strict_stats["effect_interval"][0] <= ordinary_stats["effect_interval"][0]
+    assert ordinary.evidence["positive_families"] == ["khop"]
+    assert strict.evidence["positive_families"] == []
+
+
+def test_paired_proven_requires_two_thirds_domain_breadth():
+    observations = {
+        family: [
+            PairedObservation(
+                f"{family}-{index}",
+                family,
+                family in {"a", "b"},
+                False,
+                1000,
+                1000,
+            )
+            for index in range(40)
+        ]
+        for family in ("a", "b", "c", "d")
+    }
+    claim = grade_paired_treatment_vs_control("x", "s", observations)
+    assert claim.tier == SUPPORTED
+    assert claim.evidence["required_positive_families"] == 3
 
 
 def test_grader_losses_are_refuted():
@@ -119,7 +251,12 @@ def test_grader_losses_are_refuted():
 def test_recurrence_sweep_grades_monotone_gain():
     # Synthetic solver: succeeds iff steps >= task depth (perfect scaling).
     tasks = task_battery(["modular"], [1, 2, 4], per_cell=8, seed=2)
-    result = run_recurrence_sweep(lambda t, s: s >= t.depth, tasks, [1, 2, 4])
+    result = run_recurrence_sweep(
+        lambda t, s: (s >= t.depth, 1000),
+        tasks,
+        [1, 2, 4],
+        baseline=lambda t: (t.depth == 1, 1000),
+    )
     assert result["monotone_gain"] is True
     assert result["claim"]["tier"] == SUPPORTED
     flat = run_recurrence_sweep(lambda t, s: t.seed % 2 == 0, tasks, [1, 2, 4])
@@ -167,20 +304,49 @@ def test_virtual_width_voids_unequal_compute():
         k=4,
     )
     assert cheat["claim"]["tier"] == CONJECTURE
-    assert "compute mismatch" in cheat["claim"]["evidence"]["voided"]
+    assert cheat["claim"]["evidence"]["invalid_compute_families"] == ["khop"]
 
 
 def test_latent_opt_control_only_rewards_direction():
     tasks = {"modular": task_battery(["modular"], [3], per_cell=24, seed=5)}
     directional = run_latent_opt_control(
-        lambda t, arm: arm == "gradient" or (arm == "control" and t.seed % 4 == 0),
+        lambda t, arm: (
+            arm == "gradient" or (arm == "control" and t.seed % 4 == 0),
+            1000,
+        ),
         tasks,
     )
     assert directional["claim"]["tier"] == SUPPORTED
     indiscriminate = run_latent_opt_control(
-        lambda t, arm: arm in ("gradient", "control"), tasks
+        lambda t, arm: (arm in ("gradient", "control"), 1000), tasks
     )
     assert indiscriminate["claim"]["tier"] in (REFUTED, CONJECTURE)
+
+
+def test_latent_opt_control_counterbalances_and_reports_execution_order():
+    tasks = {"modular": task_battery(["modular"], [3], per_cell=24, seed=55)}
+    observed_calls: list[tuple[int, str]] = []
+
+    def solve(task, arm):
+        observed_calls.append((task.seed, arm))
+        return arm == "gradient", 1000
+
+    result = run_latent_opt_control(solve, tasks)
+    reported = result["execution_order"]
+    flattened = [
+        (tasks["modular"][index].seed, arm)
+        for index, row in enumerate(reported)
+        for arm in row["arms"]
+    ]
+    assert observed_calls == flattened
+    gradient_first = sum(
+        row["arms"].index("gradient") < row["arms"].index("control")
+        for row in reported
+    )
+    assert abs(gradient_first - (len(reported) - gradient_first)) <= 1
+    assert {tuple(row["arms"]) for row in reported} != {
+        ("off", "gradient", "control")
+    }
 
 
 # ── End-to-end engine hookup (real tiny model) ──────────────────────────

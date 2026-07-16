@@ -143,6 +143,7 @@ CANONICAL_PRIMITIVE_OWNERS: dict[str, frozenset[str]] = {
         {
             "core/agency/tool_orchestrator.py",
             "core/agency/self_repair_backlog.py",
+            "core/brain/llm/latent_cortex/persistence.py",
             "core/runtime/action_executor.py",
             "core/runtime/flight_recorder.py",
             "core/security/tls_local.py",

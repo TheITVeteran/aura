@@ -22,8 +22,9 @@ the harness is allowed to say so.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
-from typing import Any, Callable
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
 
 from core.brain.llm.latent_cortex.recurrence import (
     HaltingController,
@@ -106,7 +107,7 @@ class BranchEnsemble:
         runner: WindowRunner,
         cache,
         prelude_end: int,
-    ) -> "BranchEnsemble":
+    ) -> BranchEnsemble:
         import mlx.core as mx
 
         branches: list[BranchState] = []
@@ -124,6 +125,7 @@ class BranchEnsemble:
             halting = HaltingController(
                 config=recurrence_cfg,
                 baseline_rms=float(mx.mean(per_position_rms(z0))),
+                best_state=z0,
             )
             branches.append(
                 BranchState(
@@ -146,9 +148,14 @@ class BranchEnsemble:
         budget: ComputeBudget,
         alpha_override: float | None = None,
         score_fn: Callable[[BranchState], float] | None = None,
-    ) -> None:
-        """Advance every unhalted branch one controlled recurrence step."""
-        for branch in self.active():
+        reserve_layer_apps: int = 0,
+    ) -> bool:
+        """Advance every live branch, or none when the whole round cannot fit."""
+        active = self.active()
+        round_cost = sum(int(branch.z.shape[1]) * (end - start) for branch in active)
+        if round_cost + reserve_layer_apps > budget.remaining_layer_apps:
+            return False
+        for branch in active:
             z_next = recurrence_step(
                 branch.z,
                 runner,
@@ -183,6 +190,7 @@ class BranchEnsemble:
         ):
             self.exchange()
             self.maintain_diversity()
+        return True
 
     # ── Communication ───────────────────────────────────────────────────
     def exchange(self) -> None:
@@ -209,7 +217,7 @@ class BranchEnsemble:
 
         agreements = mx.stack([_cos(s, mean) for s in summaries])  # (K,)
         weights = mx.softmax(agreements, axis=0)
-        consensus = sum(w * s for w, s in zip(weights, summaries))
+        consensus = sum(w * s for w, s in zip(weights, summaries, strict=True))
 
         gamma = float(self.config.exchange_gamma)
         slot = int(self.config.comm_slot)

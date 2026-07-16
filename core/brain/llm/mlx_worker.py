@@ -4577,6 +4577,7 @@ def _mlx_worker_loop(
                 # episode fast weights), all under checkpoint invariants.
                 # See docs/RECURSIVE_LATENT_CORTEX.md.
                 response = {"id": job.get("id"), "action": "latent_reason"}
+                recycle_after_response = False
                 try:
                     from core.brain.llm.latent_cortex.worker_handler import (
                         handle_latent_reason,
@@ -4586,6 +4587,7 @@ def _mlx_worker_loop(
                         body = handle_latent_reason(
                             job, model=model, tokenizer=tokenizer, model_path=model_path
                         )
+                        recycle_after_response = body.pop("requires_worker_recycle", False)
                         if body.pop("requires_cache_clear", False):
                             # Fast-weight erase unproven ⇒ pre-episode prompt
                             # KV states may embed the temporary weights.
@@ -4615,6 +4617,12 @@ def _mlx_worker_loop(
                         {"status": "error", "message": f"latent_reason_failed: {latent_exc}"}
                     )
                 ipc_writer.put(response)
+                if recycle_after_response:
+                    logger.critical(
+                        "Latent episode could not prove resident-model integrity; "
+                        "exiting worker after the error response for clean reload."
+                    )
+                    break
 
         except KeyboardInterrupt:
             logger.info("🛑 [WORKER] Shutdown signal received; exiting quietly.")

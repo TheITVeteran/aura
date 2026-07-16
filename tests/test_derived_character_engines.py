@@ -124,7 +124,13 @@ def test_hal_scan_semantic_falls_back_to_keyword_without_model():
 def test_deep_thought_deliberate_without_model_returns_refined_question():
     from core.brain.deep_deliberation import DeepDeliberationEngine
 
-    result = asyncio.run(DeepDeliberationEngine().deliberate("how do i fix this", budget=1, timeout=1.0))
+    result = asyncio.run(
+        DeepDeliberationEngine().deliberate(
+            "how do i fix this",
+            budget=1,
+            timeout_s=1.0,
+        )
+    )
     assert result.refined_question != result.original_question
     assert result.used_model is False
 
@@ -172,6 +178,40 @@ def test_deep_thought_refines_vague_question():
     result = asyncio.run(DeepDeliberationEngine().deliberate("how do i fix this?"))
     assert result.refined_question != result.original_question
     assert len(result.refined_question) > len(result.original_question)
+
+
+def test_deep_thought_propagates_background_priority(monkeypatch):
+    import core.brain.latent_cortex_service as latent_service
+    from core.brain.deep_deliberation import DeepDeliberationEngine
+
+    brain_calls: list[dict] = []
+    latent_calls: list[dict] = []
+
+    class Brain:
+        async def think(self, prompt, **kwargs):
+            brain_calls.append(kwargs)
+            return "the refined question"
+
+    class LatentService:
+        async def deep_reason(self, question, **kwargs):
+            latent_calls.append(kwargs)
+            return {"ok": True, "text": "the answer"}
+
+    monkeypatch.setattr(
+        latent_service,
+        "get_latent_cortex_service",
+        lambda orchestrator=None: LatentService(),
+    )
+    result = asyncio.run(
+        DeepDeliberationEngine(SimpleNamespace(brain=Brain())).deliberate(
+            "consider this",
+            foreground_request=False,
+        )
+    )
+
+    assert result.used_latent_cortex is True
+    assert brain_calls and brain_calls[0]["is_background"] is True
+    assert latent_calls and latent_calls[0]["foreground_request"] is False
 
 
 def test_brainiac_bottles_and_retrieves(tmp_path, monkeypatch):
@@ -530,13 +570,26 @@ def test_derived_engines_register_without_background_tasks(monkeypatch):
     engines = derived_engines.register_derived_engines(orchestrator=SimpleNamespace())
 
     assert set(engines) == {
-        "kokoro", "hal", "culture_mind", "deep_thought", "brainiac", "tron",
-        "caine", "glados", "the_machine", "safe_surf", "ice",
-        "data", "daneel", "samantha",
+        "brainiac",
+        "caine",
+        "culture_mind",
+        "daneel",
+        "data",
+        "deep_thought",
+        "glados",
+        "hal",
+        "ice",
+        "kokoro",
+        "latent_cortex",
+        "safe_surf",
+        "samantha",
+        "the_machine",
+        "tron",
     }
     assert created_tasks == []
     # Canonical service names registered (kokoro_conscience .. tron_user_advocate) + aliases.
     assert "kokoro" in registered and "tron" in registered
+    assert "latent_cortex" in registered
 
 
 def test_tool_execution_blocks_outcome_simulator_hold(monkeypatch):

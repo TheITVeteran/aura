@@ -16,8 +16,8 @@ import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any
-from core.runtime.service_registry import get_runtime_service, register_runtime_service
 
+from core.runtime.service_registry import get_runtime_service, register_runtime_service
 from core.utils.engine_support import coerce_text, record_engine_degradation, resolve_brain
 
 logger = logging.getLogger("Aura.DeepDeliberation")
@@ -49,7 +49,14 @@ class DeepDeliberationEngine:
     @staticmethod
     def _heuristic_refine(question: str) -> str:
         q = question.strip()
-        vague = ("how do i", "what should i", "can you help", "what is the best", "fix this", "make it better")
+        vague = (
+            "how do i",
+            "what should i",
+            "can you help",
+            "what is the best",
+            "fix this",
+            "make it better",
+        )
         low = q.lower()
         if any(v in low for v in vague) or len(q.split()) < 6:
             return (
@@ -63,8 +70,16 @@ class DeepDeliberationEngine:
         return self._heuristic_refine(question)
 
     async def deliberate(
-        self, question: str, context: dict | None = None, budget: int = 2, *, timeout: float = 45.0
+        self,
+        question: str,
+        context: dict | None = None,
+        budget: int = 2,
+        *,
+        timeout_s: float = 45.0,
+        foreground_request: bool = True,
     ) -> DeliberationResult:
+        if type(foreground_request) is not bool:
+            raise ValueError("foreground_request must be boolean")
         self._deliberations += 1
         refined = self._heuristic_refine(question)
         answer = ""
@@ -83,10 +98,17 @@ class DeepDeliberationEngine:
                     "Restate the user's question as the *real* question they need answered. "
                     "One sentence.\nQUESTION: " + question[:400]
                 )
-                refine_out = coerce_text(await asyncio.wait_for(
-                    brain.think(refine_prompt, mode=ThinkingMode.FAST, origin="deep_thought", is_background=True),
-                    timeout=min(20.0, timeout),
-                ))
+                refine_out = coerce_text(
+                    await asyncio.wait_for(
+                        brain.think(
+                            refine_prompt,
+                            mode=ThinkingMode.FAST,
+                            origin="deep_thought",
+                            is_background=not foreground_request,
+                        ),
+                        timeout=min(20.0, timeout_s),
+                    )
+                )
                 if refine_out:
                     refined = refine_out.strip()[:400]
                     passes += 1
@@ -104,9 +126,10 @@ class DeepDeliberationEngine:
                             stakes=0.6,
                             uncertainty=0.7,
                             domain="deliberation",
-                            timeout_s=min(120.0, timeout * 2),
+                            timeout_s=min(120.0, timeout_s * 2),
+                            foreground_request=foreground_request,
                         ),
-                        timeout=min(150.0, timeout * 3),
+                        timeout=min(150.0, timeout_s * 3),
                     )
                     if latent.get("ok") and str(latent.get("text") or "").strip():
                         answer = str(latent["text"]).strip()
@@ -118,15 +141,21 @@ class DeepDeliberationEngine:
                 for _ in range(max(1, budget)):
                     if answer:
                         break
-                    ans_out = coerce_text(await asyncio.wait_for(
-                        brain.think(
-                            "Answer thoroughly and precisely:\n" + refined,
-                            mode=ThinkingMode.DEEP if hasattr(ThinkingMode, "DEEP") else ThinkingMode.FAST,
-                            origin="deep_thought",
-                            is_background=True,
-                        ),
-                        timeout=timeout,
-                    ))
+                    ans_out = coerce_text(
+                        await asyncio.wait_for(
+                            brain.think(
+                                "Answer thoroughly and precisely:\n" + refined,
+                                mode=(
+                                    ThinkingMode.DEEP
+                                    if hasattr(ThinkingMode, "DEEP")
+                                    else ThinkingMode.FAST
+                                ),
+                                origin="deep_thought",
+                                is_background=not foreground_request,
+                            ),
+                            timeout=timeout_s,
+                        )
+                    )
                     if ans_out:
                         answer = ans_out.strip()
                         passes += 1
@@ -166,9 +195,24 @@ def get_deep_deliberation(orchestrator: Any = None) -> DeepDeliberationEngine:
 def register_deep_deliberation(orchestrator: Any = None) -> DeepDeliberationEngine:
     from core.service_names import ServiceNames
 
-    inst = get_runtime_service(ServiceNames.DEEP_THOUGHT, default=None) or get_deep_deliberation(orchestrator)
-    register_runtime_service(ServiceNames.DEEP_THOUGHT, inst, required=False, owner="core/brain/deep_deliberation.py", registered_by="register_deep_deliberation")
-    register_runtime_service("deep_thought", inst, required=False, owner="core/brain/deep_deliberation.py", registered_by="register_deep_deliberation")
+    inst = get_runtime_service(
+        ServiceNames.DEEP_THOUGHT,
+        default=None,
+    ) or get_deep_deliberation(orchestrator)
+    register_runtime_service(
+        ServiceNames.DEEP_THOUGHT,
+        inst,
+        required=False,
+        owner="core/brain/deep_deliberation.py",
+        registered_by="register_deep_deliberation",
+    )
+    register_runtime_service(
+        "deep_thought",
+        inst,
+        required=False,
+        owner="core/brain/deep_deliberation.py",
+        registered_by="register_deep_deliberation",
+    )
     return inst
 
 

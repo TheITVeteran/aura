@@ -17,7 +17,9 @@ ordinary generation EXPLICITLY. Nothing here fakes an answer.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+import math
 import os
 import time
 from typing import Any
@@ -40,9 +42,23 @@ class LatentCortexService:
         self._ok_episodes = 0
         self._last_receipt: dict[str, Any] = {}
         self._last_refusal = ""
+        self._failure_streak = 0
+        self._last_attempt_at = 0.0
+        self._last_success_at = 0.0
+        self._last_latency_s = 0.0
+        self._last_allocation: dict[str, Any] = {}
         logger.info("🧠 LatentCortexService initialized (Recursive Latent Cortex)")
 
     # ── Cognitive economy ───────────────────────────────────────────────
+    @staticmethod
+    def _unit_signal(value: Any, *, name: str) -> float:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"{name} must be a finite number")
+        number = float(value)
+        if not math.isfinite(number):
+            raise ValueError(f"{name} must be a finite number")
+        return min(1.0, max(0.0, number))
+
     def _body_pressure(self) -> float:
         """Total real+anticipatory body pressure in [0, 1]; 0 when unknown."""
         try:
@@ -60,26 +76,175 @@ class LatentCortexService:
         budget. Body pressure damps everything — deep thought is a luxury a
         strained body rations first.
         """
-        stakes = min(1.0, max(0.0, float(stakes)))
-        uncertainty = min(1.0, max(0.0, float(uncertainty)))
-        pressure = min(1.0, max(0.0, self._body_pressure()))
+        stakes = self._unit_signal(stakes, name="stakes")
+        uncertainty = self._unit_signal(uncertainty, name="uncertainty")
+        try:
+            pressure = self._unit_signal(self._body_pressure(), name="body_pressure")
+        except ValueError:
+            pressure = 0.0
         headroom = 1.0 - 0.7 * pressure
 
         max_steps = max(2, min(16, round((4 + 10 * uncertainty) * headroom)))
         n_branches = 1 if stakes < 0.3 else (3 if stakes > 0.75 and headroom > 0.6 else 2)
+        intensity = max(stakes, uncertainty)
+        latent_opt_steps = max(1, min(4, round((1 + 3 * intensity) * headroom)))
+        fast_weight_steps = max(1, min(3, round((1 + 2 * intensity) * headroom)))
+        fast_weight_layers = max(2, min(8, round((2 + 6 * intensity) * headroom)))
         config = {
             "n_slots": 16,
             "max_steps": max_steps,
             "min_steps": 2,
             "n_branches": n_branches,
             "alpha_schedule": "cosine",
+            # The production service exercises the complete machine. Ablation
+            # arms belong to the falsification harness, never the live default.
+            "latent_opt": True,
+            "latent_opt_steps": latent_opt_steps,
+            "latent_opt_lr": 0.03,
+            "fast_weights": True,
+            "fast_weights_rank": 2,
+            "fast_weights_opt_steps": fast_weight_steps,
+            "fast_weights_lr": 0.005,
+            "fast_weights_max_layers": fast_weight_layers,
             "decode_max_tokens": 512,
         }
         budget = {
             "max_layer_apps": int((2_000_000 + 8_000_000 * stakes) * headroom),
             "wall_clock_s": float(30.0 + 90.0 * stakes * headroom),
         }
+        self._last_allocation = {
+            "stakes": stakes,
+            "uncertainty": uncertainty,
+            "body_pressure": pressure,
+            "headroom": headroom,
+            "config": dict(config),
+            "budget": dict(budget),
+        }
         return config, budget
+
+    @staticmethod
+    def _receipt_contract_errors(
+        receipt: Any, config: dict[str, Any]
+    ) -> list[str]:
+        if not isinstance(receipt, dict):
+            return ["receipt_not_mapping"]
+        errors: list[str] = []
+
+        def positive_int(mapping: dict[str, Any], key: str) -> bool:
+            return type(mapping.get(key)) is int and mapping[key] > 0
+
+        def nonnegative_int(mapping: dict[str, Any], key: str) -> bool:
+            return type(mapping.get(key)) is int and mapping[key] >= 0
+
+        def sha256(value: Any) -> bool:
+            return (
+                isinstance(value, str)
+                and len(value) == 64
+                and all(character in "0123456789abcdef" for character in value)
+            )
+
+        if not str(receipt.get("episode_id") or ""):
+            errors.append("missing_episode_id")
+        if receipt.get("params_unchanged") is not True:
+            errors.append("checkpoint_invariant_unproven")
+        if (
+            not sha256(receipt.get("checkpoint_fingerprint"))
+            or receipt.get("checkpoint_fingerprint_method") != "sha256"
+            or not positive_int(receipt, "checkpoint_file_count")
+        ):
+            errors.append("exact_checkpoint_identity_unproven")
+        if not sha256(receipt.get("schedule_hash")):
+            errors.append("invalid_schedule_hash")
+        if not positive_int(receipt, "steps_taken"):
+            errors.append("no_recurrent_steps")
+        if type(config.get("n_slots")) is not int or receipt.get("n_slots") != config.get(
+            "n_slots"
+        ):
+            errors.append("workspace_cardinality_mismatch")
+        if type(config.get("n_branches")) is not int or receipt.get(
+            "n_branches"
+        ) != config.get("n_branches"):
+            errors.append("branch_cardinality_mismatch")
+        budget = receipt.get("budget")
+        if not isinstance(budget, dict) or not positive_int(budget, "spent_layer_apps"):
+            errors.append("missing_compute_receipt")
+        elif (
+            not positive_int(budget, "max_layer_apps")
+            or budget["spent_layer_apps"] > budget["max_layer_apps"]
+            or budget.get("exhausted") is not False
+        ):
+            errors.append("incomplete_or_exhausted_compute_receipt")
+        if not positive_int(receipt, "decode_requested_tokens") or receipt.get(
+            "decode_requested_tokens"
+        ) != config.get("decode_max_tokens"):
+            errors.append("decode_request_mismatch")
+        if not positive_int(receipt, "decode_generated_tokens"):
+            errors.append("decode_output_empty")
+        if receipt.get("decode_termination") not in {"eos", "token_limit"}:
+            errors.append("decode_incomplete")
+        raw_flags = receipt.get("honest_flags")
+        if not isinstance(raw_flags, list) or any(
+            not isinstance(flag, str) for flag in raw_flags
+        ):
+            errors.append("invalid_honest_flags")
+            flags: list[str] = []
+        else:
+            flags = raw_flags
+        if any(flag.startswith("fallback_vanilla") for flag in flags):
+            errors.append("vanilla_fallback")
+        if config.get("latent_opt") is True:
+            if receipt.get("latent_opt_applied") is not True:
+                errors.append("latent_optimization_not_applied")
+            if receipt.get("latent_opt_mode") != "gradient":
+                errors.append("latent_optimization_wrong_mode")
+            if not positive_int(receipt, "latent_opt_attempts"):
+                errors.append("latent_optimization_not_attempted")
+            if not positive_int(receipt, "latent_opt_steps"):
+                errors.append("latent_optimization_no_accepted_steps")
+            if not nonnegative_int(receipt, "latent_opt_rejected"):
+                errors.append("latent_optimization_rejection_count_invalid")
+            elif (
+                positive_int(receipt, "latent_opt_attempts")
+                and positive_int(receipt, "latent_opt_steps")
+                and (
+                    receipt["latent_opt_attempts"]
+                    != receipt["latent_opt_steps"] + receipt["latent_opt_rejected"]
+                )
+            ):
+                errors.append("latent_optimization_accounting_mismatch")
+            if receipt.get("latent_opt_budget_exhausted") is not False:
+                errors.append("latent_optimization_budget_exhausted")
+        if config.get("fast_weights") is True:
+            if receipt.get("fast_weights_applied") is not True:
+                errors.append("fast_weights_not_applied")
+            if receipt.get("fast_weights_erased") is not True:
+                errors.append("fast_weight_erase_unproven")
+            if not positive_int(receipt, "fast_weights_layers"):
+                errors.append("fast_weights_no_layers")
+            if not positive_int(receipt, "fast_weight_optimization_attempts"):
+                errors.append("fast_weight_optimization_not_attempted")
+            if not positive_int(receipt, "fast_weight_optimized_steps"):
+                errors.append("fast_weight_optimization_no_accepted_steps")
+            if not nonnegative_int(receipt, "fast_weight_rejected_steps"):
+                errors.append("fast_weight_rejection_count_invalid")
+            elif (
+                positive_int(receipt, "fast_weight_optimization_attempts")
+                and positive_int(receipt, "fast_weight_optimized_steps")
+                and (
+                    receipt["fast_weight_optimization_attempts"]
+                    != receipt["fast_weight_optimized_steps"]
+                    + receipt["fast_weight_rejected_steps"]
+                )
+            ):
+                errors.append("fast_weight_optimization_accounting_mismatch")
+            if receipt.get("fast_weight_budget_exhausted") is not False:
+                errors.append("fast_weight_optimization_budget_exhausted")
+        return errors
+
+    def _record_failure(self, reason: str) -> dict[str, Any]:
+        self._failure_streak += 1
+        self._last_refusal = str(reason or "unknown")
+        return {"ok": False, "reason": self._last_refusal}
 
     # ── The episode ─────────────────────────────────────────────────────
     async def deep_reason(
@@ -92,13 +257,40 @@ class LatentCortexService:
         domain: str = "general",
         config_overrides: dict[str, Any] | None = None,
         timeout_s: float = 300.0,
+        require_full_stack: bool = True,
+        foreground_request: bool = True,
     ) -> dict[str, Any]:
         """Run one latent-reasoning episode on the resident model."""
         if not _cortex_enabled():
-            self._last_refusal = "disabled:AURA_LATENT_CORTEX=0"
-            return {"ok": False, "reason": self._last_refusal}
-        if not question and not messages:
-            return {"ok": False, "reason": "empty_question"}
+            return self._record_failure("disabled:AURA_LATENT_CORTEX=0")
+        if question is not None and not isinstance(question, str):
+            return self._record_failure("invalid_question")
+        if messages is not None and not isinstance(messages, list):
+            return self._record_failure("invalid_messages")
+        if not (isinstance(question, str) and question.strip()) and not messages:
+            return self._record_failure("empty_question")
+        if config_overrides is not None and not isinstance(config_overrides, dict):
+            return self._record_failure("invalid_config_overrides")
+        if type(require_full_stack) is not bool:
+            return self._record_failure("invalid_require_full_stack")
+        if type(foreground_request) is not bool:
+            return self._record_failure("invalid_foreground_request")
+        try:
+            timeout_s = float(timeout_s)
+        except (TypeError, ValueError, OverflowError):
+            return self._record_failure("invalid_timeout")
+        if not math.isfinite(timeout_s) or timeout_s <= 0.0:
+            return self._record_failure("invalid_timeout")
+        try:
+            config, budget = self.allocate(stakes=stakes, uncertainty=uncertainty)
+        except (TypeError, ValueError, OverflowError):
+            return self._record_failure("invalid_cognitive_economy")
+        if config_overrides is not None:
+            config.update(dict(config_overrides))
+        if require_full_stack:
+            config["latent_opt"] = True
+            config["latent_opt_control"] = False
+            config["fast_weights"] = True
 
         try:
             from core.brain.llm.mlx_client import get_mlx_client
@@ -110,30 +302,59 @@ class LatentCortexService:
                 exc,
                 action="refused latent episode: resident model client unavailable",
             )
-            self._last_refusal = f"client_unavailable:{type(exc).__name__}"
-            return {"ok": False, "reason": self._last_refusal}
+            return self._record_failure(f"client_unavailable:{type(exc).__name__}")
         if client is None:
-            self._last_refusal = "no_resident_model"
-            return {"ok": False, "reason": self._last_refusal}
-
-        config, budget = self.allocate(stakes=stakes, uncertainty=uncertainty)
-        if config_overrides:
-            config.update(dict(config_overrides))
+            return self._record_failure("no_resident_model")
 
         self._episodes += 1
+        self._last_attempt_at = time.time()
         started = time.monotonic()
-        result = await client.latent_reason_async(
-            prompt=question,
-            messages=messages,
-            config=config,
-            budget=budget,
-            domain=domain,
-            timeout_s=timeout_s,
-        )
+        try:
+            result = await client.latent_reason_async(
+                prompt=question,
+                messages=messages,
+                config=config,
+                budget=budget,
+                domain=domain,
+                timeout_s=timeout_s,
+                foreground_request=foreground_request,
+            )
+        except asyncio.CancelledError:
+            raise
+        except (OSError, RuntimeError, AttributeError, TypeError, ValueError, TimeoutError) as exc:
+            record_degradation(
+                "latent_cortex",
+                exc,
+                action="contained resident latent episode failure and preserved caller fallback",
+                severity="warning",
+            )
+            self._last_latency_s = time.monotonic() - started
+            return self._record_failure(f"client_error:{type(exc).__name__}")
         elapsed = time.monotonic() - started
+        self._last_latency_s = elapsed
+        if not isinstance(result, dict):
+            return self._record_failure("invalid_client_response")
         if result.get("ok"):
+            raw_receipt = result.get("receipt")
+            receipt = dict(raw_receipt) if isinstance(raw_receipt, dict) else {}
+            contract_errors = self._receipt_contract_errors(raw_receipt, config)
+            if contract_errors:
+                reason = "receipt_contract_failed:" + ",".join(contract_errors)
+                record_degradation(
+                    "latent_cortex",
+                    RuntimeError(reason),
+                    action="refused to count incomplete latent episode as successful",
+                    severity="degraded",
+                )
+                failed = dict(result)
+                failed.update(self._record_failure(reason))
+                failed["receipt"] = receipt
+                return failed
             self._ok_episodes += 1
-            self._last_receipt = dict(result.get("receipt") or {})
+            self._failure_streak = 0
+            self._last_refusal = ""
+            self._last_success_at = time.time()
+            self._last_receipt = receipt
             logger.info(
                 "🧠 Latent episode ok: %d steps, %d branches, halt=%s, %.1fs",
                 int(self._last_receipt.get("steps_taken") or 0),
@@ -142,17 +363,33 @@ class LatentCortexService:
                 elapsed,
             )
         else:
-            self._last_refusal = str(result.get("reason") or "unknown")
+            self._record_failure(str(result.get("reason") or "unknown"))
             logger.info("🧠 Latent episode refused/failed: %s (%.1fs)", self._last_refusal, elapsed)
         return result
 
     # ── Health ──────────────────────────────────────────────────────────
     def get_status(self) -> dict[str, Any]:
+        enabled = _cortex_enabled()
+        state = (
+            "disabled"
+            if not enabled
+            else "degraded"
+            if self._failure_streak >= 3
+            else "operational"
+            if self._last_success_at > 0.0
+            else "idle_unproven"
+        )
         return {
-            "enabled": _cortex_enabled(),
+            "enabled": enabled,
+            "state": state,
             "episodes": self._episodes,
             "ok_episodes": self._ok_episodes,
+            "failure_streak": self._failure_streak,
             "last_refusal": self._last_refusal,
+            "last_attempt_at": self._last_attempt_at,
+            "last_success_at": self._last_success_at,
+            "last_latency_s": round(self._last_latency_s, 3),
+            "last_allocation": dict(self._last_allocation),
             "last_receipt": {
                 k: self._last_receipt.get(k)
                 for k in (
@@ -161,12 +398,24 @@ class LatentCortexService:
                     "halting_reason",
                     "n_branches",
                     "schedule_hash",
+                    "checkpoint_fingerprint",
+                    "checkpoint_fingerprint_method",
+                    "checkpoint_file_count",
                     "params_unchanged",
+                    "latent_opt_applied",
+                    "latent_opt_attempts",
+                    "latent_opt_steps",
+                    "latent_opt_budget_exhausted",
+                    "fast_weights_applied",
+                    "fast_weight_optimization_attempts",
+                    "fast_weight_optimized_steps",
+                    "fast_weight_budget_exhausted",
+                    "fast_weights_erased",
                     "honest_flags",
                 )
                 if k in self._last_receipt
             },
-            "healthy": True,
+            "healthy": enabled and self._failure_streak < 3,
         }
 
 

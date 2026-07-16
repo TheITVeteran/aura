@@ -28,12 +28,14 @@ import hashlib
 import io
 import json
 import logging
+import math
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
-from core.brain.llm.latent_cortex.types import FastWeightsConfig
+from core.brain.llm.latent_cortex.types import ComputeBudget, FastWeightsConfig
 
 logger = logging.getLogger("Aura.LatentCortex.FastWeights")
 
@@ -72,10 +74,12 @@ class EpisodicDeltaLinear:
         out_features, in_features = _linear_dims(base)
         seed = int.from_bytes(hashlib.sha256(tag.encode()).digest()[:4], "big")
         key = mx.random.key(seed)
-        # U seeded from workspace statistics (scaled small); V zero ⇒ identity.
-        self.U = mx.random.normal((out_features, rank), key=key) * (
-            0.01 * max(1e-3, float(seed_stat))
-        )
+        # U uses dimension-normalized LoRA-style scale, modulated by the
+        # workspace statistic; V remains exactly zero, so attachment is still
+        # bit-identical while the first V gradient stays above fp16/bf16 noise.
+        seed_scale = min(1.0, max(0.1, abs(float(seed_stat))))
+        init_std = seed_scale / math.sqrt(max(1, out_features))
+        self.U = mx.random.normal((out_features, rank), key=key) * init_std
         self.V = mx.zeros((rank, in_features))
         mx.eval(self.U, self.V)
 
@@ -101,7 +105,12 @@ class FastWeightsLifecycle:
     layers: list[int] = field(default_factory=list)
     target: str = ""
     rank: int = 0
+    optimization_attempts: int = 0
     optimized_steps: int = 0
+    rejected_steps: int = 0
+    line_search_backtracks: int = 0
+    budget_exhausted: bool = False
+    detach_conflicts: int = 0
     loss_trail: list[float] = field(default_factory=list)
     erased: bool = False
     erase_proven: bool | None = None
@@ -113,7 +122,12 @@ class FastWeightsLifecycle:
             "layers": list(self.layers),
             "target": self.target,
             "rank": self.rank,
+            "optimization_attempts": self.optimization_attempts,
             "optimized_steps": self.optimized_steps,
+            "rejected_steps": self.rejected_steps,
+            "line_search_backtracks": self.line_search_backtracks,
+            "budget_exhausted": self.budget_exhausted,
+            "detach_conflicts": self.detach_conflicts,
             "loss_trail": [round(v, 6) for v in self.loss_trail],
             "erased": self.erased,
             "erase_proven": self.erase_proven,
@@ -128,6 +142,7 @@ class EpisodicFastWeights:
         self.config = config
         self.handles: list[FastWeightHandle] = []
         self.lifecycle = FastWeightsLifecycle()
+        self.last_export_receipt: dict[str, Any] | None = None
 
     # ── Attach / detach ─────────────────────────────────────────────────
     def attach(
@@ -144,24 +159,36 @@ class EpisodicFastWeights:
         parent_attr, leaf_attr = _TARGET_ATTRS[self.config.target]
         start, end = layer_range
         candidates = list(range(start, end))[: max(1, self.config.max_wrapped_layers)]
-        for i in candidates:
-            layer = inner_model.layers[i]
-            parent = getattr(layer, parent_attr)
-            original = getattr(parent, leaf_attr)
-            wrapper = EpisodicDeltaLinear(
-                original,
-                rank=self.config.rank,
-                scale=self.config.scale,
-                seed_stat=seed_stat,
-                tag=f"{episode_id}:{i}:{self.config.target}",
-            )
-            setattr(parent, leaf_attr, wrapper)
-            self.handles.append(
-                FastWeightHandle(
-                    layer_index=i, parent=parent, attr=leaf_attr,
-                    original=original, wrapper=wrapper,
+        attached = False
+        try:
+            for i in candidates:
+                layer = inner_model.layers[i]
+                parent = getattr(layer, parent_attr)
+                original = getattr(parent, leaf_attr)
+                wrapper = EpisodicDeltaLinear(
+                    original,
+                    rank=self.config.rank,
+                    scale=self.config.scale,
+                    seed_stat=seed_stat,
+                    tag=f"{episode_id}:{i}:{self.config.target}",
                 )
-            )
+                setattr(parent, leaf_attr, wrapper)
+                self.handles.append(
+                    FastWeightHandle(
+                        layer_index=i,
+                        parent=parent,
+                        attr=leaf_attr,
+                        original=original,
+                        wrapper=wrapper,
+                    )
+                )
+            attached = True
+        finally:
+            if not attached:
+                # Attachment is a transaction. A malformed layer in the
+                # middle must not leave earlier layers wrapped, including when
+                # control exits through a non-Exception base error.
+                self.detach()
         self.lifecycle.attached_at = time.time()
         self.lifecycle.layers = [h.layer_index for h in self.handles]
         self.lifecycle.target = self.config.target
@@ -169,24 +196,38 @@ class EpisodicFastWeights:
         return len(self.handles)
 
     def detach(self) -> int:
-        """Restore every original module object. Idempotent."""
+        """Restore every original module object. Idempotent and conflict-aware."""
         restored = 0
-        for handle in self.handles:
-            if getattr(handle.parent, handle.attr) is handle.wrapper:
+        conflicts = 0
+        remaining: list[FastWeightHandle] = []
+        for handle in reversed(self.handles):
+            current = getattr(handle.parent, handle.attr)
+            if current is handle.original:
+                continue
+            if current is not handle.wrapper:
+                # Another writer touched a module owned by this episode. We
+                # still restore W0, but the conflict invalidates the proof.
+                conflicts += 1
+            try:
                 setattr(handle.parent, handle.attr, handle.original)
                 restored += 1
-        self.handles = []
-        self.lifecycle.erased = True
+            except (AttributeError, RuntimeError, TypeError):
+                remaining.append(handle)
+        self.handles = list(reversed(remaining))
+        self.lifecycle.detach_conflicts += conflicts
+        self.lifecycle.erased = not self.handles
         return restored
 
     def prove_erase(self, probe_fn: Callable[[], Any], baseline) -> bool:
         """Assert the model's function is EXACTLY the pre-attach baseline."""
         import mlx.core as mx
 
-        if self.handles:
+        if self.handles or not self.lifecycle.erased:
             raise RuntimeError("prove_erase called while fast weights still attached")
         after = probe_fn()
-        proven = bool(mx.allclose(after, baseline, atol=0.0, rtol=0.0))
+        proven = self.lifecycle.detach_conflicts == 0 and bool(
+            mx.allclose(after, baseline, atol=0.0, rtol=0.0)
+        )
         self.lifecycle.erase_proven = proven
         if not proven:
             from core.runtime.errors import record_degradation
@@ -199,24 +240,56 @@ class EpisodicFastWeights:
         return proven
 
     # ── Optimization (grads to U/V only; base frozen by construction) ──
-    def optimize(self, loss_fn: Callable[[], Any], *, steps: int | None = None) -> None:
+    def optimize(
+        self,
+        loss_fn: Callable[[], Any],
+        *,
+        steps: int | None = None,
+        budget: ComputeBudget | None = None,
+        layer_apps_per_forward: int = 0,
+        reserve_layer_apps: int = 0,
+    ) -> None:
         """Functional gradient steps on every wrapper's (U, V).
 
         ``loss_fn`` closes over the model (with wrappers attached) and
         returns a scalar. We lift the wrapper params into an explicit list,
         rebind them inside the traced function, and step with plain SGD +
-        global-norm clipping. Base weights never appear as grad targets.
+        global-norm clipping and bounded backtracking. A candidate is retained
+        only when it strictly improves the proxy; base weights never appear as
+        grad targets.
         """
         import mlx.core as mx
 
         if not self.handles:
             return
         n_steps = steps if steps is not None else self.config.opt_steps
+        if type(n_steps) is not int or n_steps < 0:
+            raise ValueError("fast-weight optimization steps must be a non-negative integer")
+        if (
+            isinstance(layer_apps_per_forward, bool)
+            or not isinstance(layer_apps_per_forward, int)
+            or layer_apps_per_forward < 0
+        ):
+            raise ValueError("layer_apps_per_forward must be a non-negative integer")
+        if (
+            isinstance(reserve_layer_apps, bool)
+            or not isinstance(reserve_layer_apps, int)
+            or reserve_layer_apps < 0
+        ):
+            raise ValueError("reserve_layer_apps must be a non-negative integer")
+        if budget is not None and layer_apps_per_forward <= 0:
+            raise ValueError(
+                "budgeted fast-weight optimization requires a positive forward cost"
+            )
 
-        def with_params(params):
-            for h, (u, v) in zip(self.handles, zip(params[0::2], params[1::2])):
+        def bind_params(params) -> None:
+            parameter_pairs = zip(params[0::2], params[1::2], strict=True)
+            for h, (u, v) in zip(self.handles, parameter_pairs, strict=True):
                 h.wrapper.U = u
                 h.wrapper.V = v
+
+        def with_params(params):
+            bind_params(params)
             return loss_fn()
 
         params = []
@@ -224,16 +297,64 @@ class EpisodicFastWeights:
             params.extend([h.wrapper.U, h.wrapper.V])
 
         grad_fn = mx.value_and_grad(with_params)
-        for _ in range(max(0, int(n_steps))):
+        for _ in range(n_steps):
+            gradient_cost = layer_apps_per_forward * 3
+            if budget is not None and (
+                budget.exhausted
+                or gradient_cost + reserve_layer_apps > budget.remaining_layer_apps
+            ):
+                self.lifecycle.budget_exhausted = True
+                break
+            if budget is not None:
+                budget.charge_layer_apps(gradient_cost)
+            self.lifecycle.optimization_attempts += 1
             value, grads = grad_fn(params)
-            self.lifecycle.loss_trail.append(float(value))
+            current_loss = float(value)
+            if not self.lifecycle.loss_trail:
+                self.lifecycle.loss_trail.append(current_loss)
             flat = mx.concatenate([mx.reshape(g, (-1,)) for g in grads])
             gnorm = mx.maximum(mx.linalg.norm(flat), 1e-12)
+            gnorm_value = float(gnorm)
+            if not math.isfinite(current_loss) or not math.isfinite(gnorm_value):
+                self.lifecycle.rejected_steps += 1
+                break
             clip = mx.minimum(1.0, 1.0 / gnorm)
-            params = [p - self.config.lr * g * clip for p, g in zip(params, grads)]
-            mx.eval(*params)
-            self.lifecycle.optimized_steps += 1
-        with_params(params)  # leave the best params installed
+            step_size = float(self.config.lr)
+            accepted = False
+            for backtrack in range(12):
+                candidate_cost = layer_apps_per_forward
+                if budget is not None and (
+                    budget.exhausted
+                    or candidate_cost + reserve_layer_apps > budget.remaining_layer_apps
+                ):
+                    self.lifecycle.budget_exhausted = True
+                    break
+                if budget is not None:
+                    budget.charge_layer_apps(candidate_cost)
+                candidate = [
+                    p - step_size * g * clip
+                    for p, g in zip(params, grads, strict=True)
+                ]
+                try:
+                    candidate_value = with_params(candidate)
+                    mx.eval(candidate_value, *candidate)
+                except BaseException:  # noqa: BLE001 - always restore bound params on interruption
+                    bind_params(params)
+                    raise
+                candidate_loss = float(candidate_value)
+                if math.isfinite(candidate_loss) and candidate_loss < current_loss:
+                    params = candidate
+                    self.lifecycle.loss_trail.append(candidate_loss)
+                    self.lifecycle.optimized_steps += 1
+                    self.lifecycle.line_search_backtracks += backtrack
+                    accepted = True
+                    break
+                step_size *= 0.5
+            if not accepted:
+                self.lifecycle.rejected_steps += 1
+                bind_params(params)
+                break
+        bind_params(params)  # leave the best params installed without another forward pass
 
     # ── Consolidation handoff ───────────────────────────────────────────
     def export_candidate(
@@ -261,42 +382,59 @@ class EpisodicFastWeights:
                 episode_id,
             )
             return None
+        self.last_export_receipt = None
         try:
-            from core.governance_context import local_internal_governed_scope
-            from core.runtime.file_write_gateway import get_file_write_gateway
+            from core.brain.llm.latent_cortex.persistence import (
+                get_latent_cortex_persistence,
+            )
 
-            target_dir = Path(queue_dir) / episode_id
+            target_dir = (Path(queue_dir).expanduser() / episode_id).resolve()
             arrays: dict[str, Any] = {}
-            for h_idx, handle in enumerate(self._exported_handles):
+            for handle in self._exported_handles:
                 arrays[f"layer{handle['layer_index']}_U"] = handle["U"]
                 arrays[f"layer{handle['layer_index']}_V"] = handle["V"]
             buffer = io.BytesIO()
             np.savez(buffer, **arrays)
+            delta_payload = buffer.getvalue()
+            delta_sha256 = hashlib.sha256(delta_payload).hexdigest()
+            lifecycle_receipt = self.lifecycle.to_receipt()
+            lifecycle_receipt["exported"] = True
             payload = {
+                "schema": "aura.latent_cortex.fast_weight_candidate.v1",
                 "episode_id": episode_id,
                 "created_at": time.time(),
                 "target": self.lifecycle.target,
                 "rank": self.lifecycle.rank,
                 "layers": self.lifecycle.layers,
                 "evidence": evidence,
-                "lifecycle": self.lifecycle.to_receipt(),
+                "lifecycle": lifecycle_receipt,
+                "artifacts": {
+                    "delta_weights.npz": {
+                        "sha256": delta_sha256,
+                        "size_bytes": len(delta_payload),
+                    }
+                },
             }
-            gateway = get_file_write_gateway()
-            with local_internal_governed_scope("latent_cortex_consolidation"):
-                gateway.ensure_directory(
-                    target_dir, source="latent_cortex.fast_weights"
-                )
-                gateway.write_bytes(
-                    target_dir / "delta_weights.npz",
-                    buffer.getvalue(),
-                    source="latent_cortex.fast_weights",
-                )
-                gateway.write_text(
-                    target_dir / "evidence.json",
-                    json.dumps(payload, indent=1, sort_keys=True),
-                    source="latent_cortex.fast_weights",
-                )
+            evidence_payload = json.dumps(payload, indent=1, sort_keys=True).encode("utf-8")
+            evidence_sha256 = hashlib.sha256(evidence_payload).hexdigest()
+            receipt = get_latent_cortex_persistence().publish_fast_weight_candidate(
+                target_dir,
+                delta_payload=delta_payload,
+                evidence_payload=evidence_payload,
+            )
+            committed_hashes = dict(receipt.sha256)
+            expected_hashes = {
+                str(target_dir / "delta_weights.npz"): delta_sha256,
+                str(target_dir / "evidence.json"): evidence_sha256,
+            }
+            if set(receipt.paths) != set(expected_hashes) or committed_hashes != expected_hashes:
+                raise RuntimeError("fast-weight batch receipt does not match payloads")
             self.lifecycle.exported = True
+            self.last_export_receipt = {
+                "transaction_id": receipt.transaction_id,
+                "paths": list(receipt.paths),
+                "sha256": committed_hashes,
+            }
             return target_dir
         except (ImportError, OSError, RuntimeError, ValueError) as exc:
             from core.runtime.errors import record_degradation

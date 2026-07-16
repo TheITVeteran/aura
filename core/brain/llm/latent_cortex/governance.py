@@ -11,10 +11,11 @@ The whole project's honesty rests on one sentence from the spec:
   by (path, size, mtime) so the 20GB resident model is hashed once per boot,
   not per episode. When full hashing is too costly mid-flight, a structural
   fingerprint (sizes + boundary chunks) is used and the receipt SAYS SO.
-- **Parameter fingerprint** — a deterministic sample of live tensors hashed
-  pre- and post-episode. Fast weights wrap modules without touching base
-  tensors, so ANY drift here means something illegitimately wrote to W₀ —
-  a CRITICAL degradation, and the episode's output is not to be trusted.
+- **Parameter fingerprint** — a deterministic sample of
+  live tensors hashed pre- and post-episode. Fast weights wrap modules without
+  touching base tensors, so detected drift means something illegitimately
+  wrote to W₀. This is an online corruption sentinel, not a full proof that
+  every unsampled element remained unchanged.
 """
 from __future__ import annotations
 
@@ -94,7 +95,7 @@ def checkpoint_file_fingerprint(model_path: str | Path) -> dict[str, Any]:
             method = "structural"
         combined.update(f"{f.name}:{cached};".encode())
     return {
-        "fingerprint": combined.hexdigest()[:32],
+        "fingerprint": combined.hexdigest(),
         "method": method,
         "files": len(files),
     }

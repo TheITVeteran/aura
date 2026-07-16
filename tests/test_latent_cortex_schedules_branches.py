@@ -1,25 +1,29 @@
 """Contract tests: layer-schedule programs + virtual-width branches."""
 from __future__ import annotations
 
+import hashlib
 import json
+import stat
 
 import pytest
 
 mx = pytest.importorskip("mlx.core")
 pytest.importorskip("mlx_lm")
 
-from mlx_lm.models.cache import KVCache
-from mlx_lm.models.qwen2 import Model, ModelArgs
+from mlx_lm.models.cache import KVCache  # noqa: E402
+from mlx_lm.models.qwen2 import Model, ModelArgs  # noqa: E402
 
-from core.brain.llm.latent_cortex.branches import BRANCH_ROLES, BranchEnsemble
-from core.brain.llm.latent_cortex.recurrence import WindowRunner
-from core.brain.llm.latent_cortex.schedules import (
+from core.brain.llm.latent_cortex.branches import BRANCH_ROLES, BranchEnsemble  # noqa: E402
+from core.brain.llm.latent_cortex.recurrence import WindowRunner  # noqa: E402
+from core.brain.llm.latent_cortex.schedules import (  # noqa: E402
     LayerSchedule,
+    PairedScheduleOutcome,
+    ScheduleComputeReceipt,
     ScheduleLibrary,
     ScheduleSearch,
     StageOp,
 )
-from core.brain.llm.latent_cortex.types import (
+from core.brain.llm.latent_cortex.types import (  # noqa: E402
     BranchConfig,
     ComputeBudget,
     RecurrenceConfig,
@@ -28,6 +32,53 @@ from core.brain.llm.latent_cortex.types import (
 
 N_LAYERS, P_END, C_START = 8, 2, 6
 PROMPT = [[5, 9, 17, 3, 42, 7, 11, 23, 2, 88]]
+
+
+def _digest(label: str) -> str:
+    return hashlib.sha256(label.encode("utf-8")).hexdigest()
+
+
+def _paired_outcome(
+    schedule: LayerSchedule,
+    domain: str,
+    index: int,
+    *,
+    candidate_success: bool = True,
+    default_success: bool = False,
+    run_order: str | None = None,
+    held_out: bool = True,
+    contamination_scan_passed: bool = True,
+    candidate_layer_apps: int = 1_000,
+    default_layer_apps: int = 1_000,
+    candidate_estimator: str = "estimator-v1",
+    default_estimator: str = "estimator-v1",
+    evaluator_build: str = "evaluator-v1",
+) -> PairedScheduleOutcome:
+    return PairedScheduleOutcome.create(
+        schedule_hash=schedule.schedule_hash,
+        domain=domain,
+        task_id=f"task-{index}",
+        task_commitment_sha256=_digest(f"task-commitment-{index}"),
+        candidate_success=candidate_success,
+        default_success=default_success,
+        candidate_compute=ScheduleComputeReceipt(
+            layer_apps=candidate_layer_apps,
+            estimator_sha256=_digest(candidate_estimator),
+        ),
+        default_compute=ScheduleComputeReceipt(
+            layer_apps=default_layer_apps,
+            estimator_sha256=_digest(default_estimator),
+        ),
+        run_order=run_order or ("candidate_first" if index % 2 == 0 else "default_first"),
+        held_out=held_out,
+        contamination_scan_passed=contamination_scan_passed,
+        scorer_receipt_sha256=_digest(f"scorer-{index}"),
+        verifier_receipt_sha256=_digest(f"verifier-{index}"),
+        evaluation_run_id=f"evaluation-run-{index // 10}",
+        evaluator_build_sha256=_digest(evaluator_build),
+        model_checkpoint_sha256=_digest("checkpoint-v1"),
+        evidence_protocol_sha256=_digest("schedule-protocol-v1"),
+    )
 
 
 @pytest.fixture(scope="module")
@@ -86,6 +137,20 @@ def test_schedule_validation_rejects_escapes_and_degenerates():
     assert LayerSchedule(ops=()).validate(prelude_end=2, coda_start=6)
     monster = LayerSchedule(ops=(StageOp(2, 6, 100_000),))
     assert monster.validate(prelude_end=2, coda_start=6)
+    with pytest.raises(ValueError):
+        LayerSchedule.from_dict({"ops": [{"start": "2", "end": 6}]})
+    with pytest.raises(ValueError):
+        LayerSchedule.from_dict({"ops": [{"start": 2, "end": 6, "alpha": float("nan")}]})
+    with pytest.raises(ValueError, match="finite number"):
+        LayerSchedule.from_dict(
+            {"ops": [{"start": 2, "end": 6, "alpha": 10**10_000}]}
+        )
+    assert LayerSchedule(ops=(StageOp(2, 6, 1, 10**10_000),)).validate(
+        prelude_end=2,
+        coda_start=6,
+    )
+    with pytest.raises(ValueError):
+        LayerSchedule.from_dict({"ops": [], "typo": True})
 
 
 def test_library_prefers_evidence_over_novelty(tmp_path):
@@ -93,26 +158,93 @@ def test_library_prefers_evidence_over_novelty(tmp_path):
     default = LayerSchedule.single_window(2, 6, 4)
     exotic = LayerSchedule(ops=(StageOp(2, 4, 3), StageOp(4, 6, 3)), name="exotic")
 
-    # Exotic schedule with too few trials must NOT displace the default.
-    for _ in range(3):
-        lib.record_outcome(exotic, "math", True)
+    for index in range(3):
+        lib.record_paired_outcome(exotic, "math", _paired_outcome(exotic, "math", index))
     best = lib.best_for_domain("math", prelude_end=2, coda_start=6, default_repeats=4)
     assert best.schedule_hash == default.schedule_hash
 
-    # With enough trials and a genuinely better Wilson LB, it wins.
-    for _ in range(20):
-        lib.record_outcome(exotic, "math", True)
-    for _ in range(10):
-        lib.record_outcome(default, "math", False)
+    for index in range(3, 40):
+        lib.record_paired_outcome(exotic, "math", _paired_outcome(exotic, "math", index))
     best = lib.best_for_domain("math", prelude_end=2, coda_start=6, default_repeats=4)
     assert best.schedule_hash == exotic.schedule_hash
+
+
+def test_library_rejects_unpaired_replay_and_unbalanced_evidence(tmp_path):
+    lib = ScheduleLibrary(tmp_path / "sched.json")
+    candidate = LayerSchedule(ops=(StageOp(2, 5, 3),), name="candidate")
+    assert not hasattr(lib, "record_outcome")
+
+    first = _paired_outcome(candidate, "math", 0, run_order="candidate_first")
+    lib.record_paired_outcome(candidate, "math", first)
+    with pytest.raises(ValueError, match="duplicate or conflicting"):
+        lib.record_paired_outcome(candidate, "math", first)
+    for index in range(1, 20):
+        lib.record_paired_outcome(
+            candidate,
+            "math",
+            _paired_outcome(candidate, "math", index, run_order="candidate_first"),
+        )
+    best = lib.best_for_domain("math", prelude_end=2, coda_start=6, default_repeats=4)
+    assert best.schedule_hash == LayerSchedule.single_window(2, 6, 4).schedule_hash
+
+
+@pytest.mark.parametrize(
+    ("overrides", "match"),
+    [
+        ({"held_out": False}, "held out"),
+        ({"contamination_scan_passed": False}, "contamination"),
+        ({"run_order": "unknown"}, "run_order"),
+        ({"candidate_estimator": "candidate", "default_estimator": "default"}, "estimators"),
+        ({"candidate_layer_apps": 1_200, "default_layer_apps": 1_000}, "compute matching"),
+    ],
+)
+def test_paired_schedule_evidence_rejects_invalid_trials(overrides, match):
+    candidate = LayerSchedule(ops=(StageOp(2, 5, 3),), name="candidate")
+    with pytest.raises(ValueError, match=match):
+        _paired_outcome(candidate, "math", 0, **overrides)
+
+
+def test_schedule_compute_receipt_rejects_unbounded_integer():
+    with pytest.raises(ValueError, match="bounded positive integer"):
+        ScheduleComputeReceipt(
+            layer_apps=10**10_000,
+            estimator_sha256=_digest("estimator"),
+        )
+
+
+def test_library_rejects_profile_drift_and_commitment_replay(tmp_path):
+    lib = ScheduleLibrary(tmp_path / "sched.json")
+    candidate = LayerSchedule(ops=(StageOp(2, 5, 3),), name="candidate")
+    lib.record_paired_outcome(candidate, "math", _paired_outcome(candidate, "math", 0))
+    with pytest.raises(ValueError, match="profile changed"):
+        lib.record_paired_outcome(
+            candidate,
+            "math",
+            _paired_outcome(candidate, "math", 1, evaluator_build="evaluator-v2"),
+        )
+
+    replay = _paired_outcome(candidate, "math", 2)
+    replay_payload = replay.to_dict()
+    replay_payload["task_commitment_sha256"] = _digest("task-commitment-0")
+    replay_payload["evidence_binding_sha256"] = PairedScheduleOutcome.binding_sha256(
+        schedule_hash=candidate.schedule_hash,
+        domain="math",
+        values={key: value for key, value in replay_payload.items() if key != "evidence_binding_sha256"},
+    )
+    replay = PairedScheduleOutcome.from_dict(
+        replay_payload,
+        schedule_hash=candidate.schedule_hash,
+        domain="math",
+    )
+    with pytest.raises(ValueError, match="task commitment"):
+        lib.record_paired_outcome(candidate, "math", replay)
 
 
 def test_library_ignores_records_invalid_for_current_topology(tmp_path):
     lib = ScheduleLibrary(tmp_path / "sched.json")
     stale = LayerSchedule(ops=(StageOp(2, 30, 4),), name="from-bigger-model")
-    for _ in range(20):
-        lib.record_outcome(stale, "math", True)
+    for index in range(20):
+        lib.record_paired_outcome(stale, "math", _paired_outcome(stale, "math", index))
     best = lib.best_for_domain("math", prelude_end=2, coda_start=6, default_repeats=4)
     assert best.schedule_hash == LayerSchedule.single_window(2, 6, 4).schedule_hash
 
@@ -121,13 +253,57 @@ def test_library_persistence_round_trip(tmp_path):
     path = tmp_path / "sched.json"
     lib = ScheduleLibrary(path)
     s = LayerSchedule(ops=(StageOp(2, 5, 2),), name="s")
-    for _ in range(9):
-        lib.record_outcome(s, "code", True, provenance="unit-test")
+    for index in range(25):
+        lib.record_paired_outcome(s, "code", _paired_outcome(s, "code", index))
     assert lib.save() is True
+    assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
     reloaded = ScheduleLibrary(path)
     best = reloaded.best_for_domain("code", prelude_end=2, coda_start=6, default_repeats=4)
     assert best.schedule_hash == s.schedule_hash
-    assert reloaded.status()["records"] == 1
+    assert reloaded.status() == {
+        "records": 1,
+        "observations": 25,
+        "domains": {"code": 1},
+        "revision": 1,
+    }
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        [],
+        "not-a-library",
+        {"version": 2, "revision": 0, "records": {}},
+        {"version": 2, "revision": 0, "records": [{"schedule": {}}]},
+    ],
+)
+def test_library_malformed_roots_fail_closed_without_crashing(tmp_path, payload):
+    path = tmp_path / "sched.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    lib = ScheduleLibrary(path)
+    assert lib.status() == {
+        "records": 0,
+        "observations": 0,
+        "domains": {},
+        "revision": 0,
+    }
+    assert lib.save() is False
+
+
+def test_stale_schedule_writer_merges_without_overwriting_newer_evidence(tmp_path):
+    path = tmp_path / "sched.json"
+    candidate = LayerSchedule(ops=(StageOp(2, 5, 2),), name="candidate")
+    first = ScheduleLibrary(path)
+    delayed = ScheduleLibrary(path)
+    first.record_paired_outcome(candidate, "code", _paired_outcome(candidate, "code", 0))
+    delayed.record_paired_outcome(candidate, "code", _paired_outcome(candidate, "code", 1))
+
+    assert first.save() is True
+    assert delayed.save() is True
+
+    reloaded = ScheduleLibrary(path)
+    assert reloaded.status()["observations"] == 2
+    assert reloaded.status()["revision"] == 2
 
 
 def test_search_is_deterministic_and_finds_planted_optimum():
@@ -201,7 +377,7 @@ def test_exchange_blends_comm_slot_only(tiny_model):
     ensemble, _, _ = _ensemble(tiny_model, cache, n_branches=2)
     before = [b.z for b in ensemble.branches]
     ensemble.exchange()
-    for b, prev in zip(ensemble.branches, before):
+    for b, prev in zip(ensemble.branches, before, strict=True):
         delta = mx.abs(b.z - prev)
         comm_delta = float(mx.max(delta[:, 0, :]))
         other_delta = float(mx.max(delta[:, 1:, :]))
@@ -243,3 +419,20 @@ def test_equal_flop_accounting_scales_with_branches(tiny_model):
     e3, r3, b3 = _ensemble(tiny_model, cache3, n_branches=3)
     e3.step_all(r3, cache3, P_END, C_START, budget=b3)
     assert b3.spent_layer_apps == 3 * single, "K branches must cost exactly K× per step"
+
+
+def test_branch_round_is_all_or_none_under_budget(tiny_model):
+    cache = _prefill(tiny_model)
+    ensemble, runner, _ = _ensemble(tiny_model, cache, n_branches=3)
+    one_branch_cost = 4 * (C_START - P_END)
+    budget = ComputeBudget(max_layer_apps=2 * one_branch_cost)
+    admitted = ensemble.step_all(
+        runner,
+        cache,
+        P_END,
+        C_START,
+        budget=budget,
+    )
+    assert admitted is False
+    assert budget.spent_layer_apps == 0
+    assert all(branch.steps == 0 for branch in ensemble.branches)

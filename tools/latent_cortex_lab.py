@@ -18,10 +18,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 import time
 from pathlib import Path
+from typing import NoReturn
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
@@ -29,25 +31,76 @@ sys.path.insert(0, str(REPO_ROOT))
 os.environ.setdefault("AURA_LOG_DIR", str(Path.home() / ".aura" / "lab-logs"))
 
 
+class LabDeadlineError(RuntimeError):
+    """Raised between bounded model operations so partial runs never get graded."""
+
+
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
+
+
+def _positive_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed) or parsed <= 0.0:
+        raise argparse.ArgumentTypeError("must be finite and positive")
+    return parsed
+
+
+def _parse_positive_csv(parser: argparse.ArgumentParser, raw: str, name: str) -> list[int]:
+    try:
+        parsed = [int(value.strip()) for value in raw.split(",") if value.strip()]
+    except ValueError:
+        parser.error(f"{name} must be a comma-separated list of integers")
+    if not parsed or any(value <= 0 for value in parsed):
+        parser.error(f"{name} must contain positive integers")
+    if len(set(parsed)) != len(parsed):
+        parser.error(f"{name} must not contain duplicates")
+    return parsed
+
+
+def _parser_error(parser: argparse.ArgumentParser, message: str) -> NoReturn:
+    parser.error(message)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", required=True, help="mlx model directory")
-    parser.add_argument("--experiments", default="1,2", help="comma list of 1..5")
-    parser.add_argument("--per-cell", type=int, default=8)
+    parser.add_argument(
+        "--experiments", default="1,2", help="comma list drawn from 1,2,3,5"
+    )
+    parser.add_argument("--per-cell", type=_positive_int, default=8)
     parser.add_argument("--depths", default="2,4,8")
     parser.add_argument("--steps", default="1,2,4,8")
     parser.add_argument("--families", default="khop,boolean,modular")
-    parser.add_argument("--n-slots", type=int, default=16)
-    parser.add_argument("--branches", type=int, default=2)
-    parser.add_argument("--max-minutes", type=float, default=30.0)
+    parser.add_argument("--n-slots", type=_positive_int, default=16)
+    parser.add_argument("--branches", type=_positive_int, default=2)
+    parser.add_argument("--max-minutes", type=_positive_float, default=30.0)
     parser.add_argument("--out", default="")
     parser.add_argument("--record-foundry", action="store_true")
     args = parser.parse_args()
 
-    from mlx_lm import load
+    from core.runtime.model_lane_control import standalone_model_lane
+
+    with standalone_model_lane(
+        owner_id=f"latent-cortex-lab:{os.getpid()}",
+        model_path=args.model,
+        purpose="benchmark",
+        preemptible=False,
+        metadata={"tool": "latent_cortex_lab", "operator_launched": True},
+    ):
+        return _run_admitted_lab(args, parser)
+
+
+def _run_admitted_lab(
+    args: argparse.Namespace, parser: argparse.ArgumentParser
+) -> int:
 
     from core.brain.llm.latent_cortex.engine import LatentCortexEngine
     from core.brain.llm.latent_cortex.experiments import (
+        TASK_FAMILIES,
         record_claim_to_foundry,
         run_depth_extrapolation,
         run_latent_opt_control,
@@ -55,7 +108,10 @@ def main() -> int:
         run_slot_causality,
         task_battery,
     )
+    from core.brain.llm.latent_cortex.governance import checkpoint_file_fingerprint
     from core.brain.llm.latent_cortex.types import (
+        ABSOLUTE_MAX_BRANCHES,
+        ABSOLUTE_MAX_SLOTS,
         BranchConfig,
         ComputeBudget,
         CortexConfig,
@@ -64,12 +120,39 @@ def main() -> int:
         WorkspaceConfig,
     )
 
+    supported_experiments = {"1", "2", "3", "5"}
+    wanted = {value.strip() for value in args.experiments.split(",") if value.strip()}
+    if not wanted:
+        _parser_error(parser, "--experiments cannot be empty")
+    unknown = sorted(wanted - supported_experiments)
+    if unknown:
+        _parser_error(
+            parser,
+            "unsupported experiment(s): "
+            + ",".join(unknown)
+            + "; experiment 4 remains an explicit open implementation obligation",
+        )
+    if args.n_slots > ABSOLUTE_MAX_SLOTS:
+        _parser_error(parser, f"--n-slots cannot exceed {ABSOLUTE_MAX_SLOTS}")
+    if args.branches > ABSOLUTE_MAX_BRANCHES:
+        _parser_error(parser, f"--branches cannot exceed {ABSOLUTE_MAX_BRANCHES}")
+    depths = _parse_positive_csv(parser, args.depths, "--depths")
+    steps = _parse_positive_csv(parser, args.steps, "--steps")
+    if steps != sorted(steps):
+        _parser_error(parser, "--steps must be sorted in increasing order")
+    families = [family.strip() for family in args.families.split(",") if family.strip()]
+    unknown_families = sorted(set(families) - set(TASK_FAMILIES))
+    if not families or unknown_families:
+        _parser_error(
+            parser,
+            "--families contains unsupported values: " + ",".join(unknown_families),
+        )
+
+    from mlx_lm import load
+
     deadline = time.monotonic() + args.max_minutes * 60.0
     model, tokenizer = load(args.model)
-    families = [f.strip() for f in args.families.split(",") if f.strip()]
-    depths = [int(d) for d in args.depths.split(",")]
-    steps = [int(s) for s in args.steps.split(",")]
-    wanted = {e.strip() for e in args.experiments.split(",")}
+    checkpoint_receipt = checkpoint_file_fingerprint(args.model)
 
     def make_engine(max_steps: int, *, latent_opt: str = "off", branches: int | None = None):
         return LatentCortexEngine(
@@ -78,7 +161,7 @@ def main() -> int:
             CortexConfig(
                 workspace=WorkspaceConfig(n_slots=args.n_slots, seed=7),
                 recurrence=RecurrenceConfig(
-                    max_steps=max_steps, min_steps=max_steps, convergence_eps=0.0
+                    max_steps=max_steps, min_steps=max_steps, convergence_eps=1e-9
                 ),
                 branches=BranchConfig(n_branches=branches or args.branches),
                 latent_opt=LatentOptConfig(
@@ -97,66 +180,99 @@ def main() -> int:
             return True
         return False
 
-    def solve(task, n_steps: int, *, latent_opt: str = "off", ablate=None) -> bool:
+    def solve(
+        task, n_steps: int, *, latent_opt: str = "off", ablate=None
+    ) -> tuple[bool, int]:
+        remaining_s = deadline - time.monotonic()
+        if remaining_s <= 0.0:
+            raise LabDeadlineError("lab wall-clock bound reached")
         engine = make_engine(n_steps, latent_opt=latent_opt)
+        budget = ComputeBudget(wall_clock_s=min(120.0, remaining_s))
         result = engine.reason(
             prompt=task.prompt,
-            budget=ComputeBudget(wall_clock_s=120.0),
+            budget=budget,
             ablate_slot=ablate,
             decode_max_tokens=64,
         )
-        return result.ok and task.verify(result.text)
+        if time.monotonic() > deadline:
+            raise LabDeadlineError("lab wall-clock bound reached during episode")
+        return result.ok and task.verify(result.text), budget.spent_layer_apps
 
     report: dict = {
         "model": args.model,
+        "checkpoint": checkpoint_receipt,
+        "frontier_claim_eligible": False,
+        "claim_scope": (
+            "offline mechanism and scaling evidence only; exact installed-app "
+            "resident-32B frontier certification is a separate required run"
+        ),
         "started_at": time.time(),
         "settings": vars(args),
+        "requested_experiments": sorted(wanted),
+        "deadline_exceeded": False,
         "results": {},
     }
 
     battery = task_battery(families, depths, args.per_cell, seed=11)
-    if "1" in wanted and not out_of_time():
-        print(f"▶ Experiment 1: recurrence sweep over {len(battery)} tasks …", flush=True)
-        report["results"]["exp1"] = run_recurrence_sweep(
-            lambda t, s: solve(t, s), battery, steps
-        )
-        print("  claim:", report["results"]["exp1"]["claim"]["tier"], flush=True)
-    if "2" in wanted and not out_of_time():
-        report["results"]["exp2"] = {}
-        for family in families:
-            if out_of_time():
-                break
-            print(f"▶ Experiment 2: depth extrapolation on {family} …", flush=True)
-            report["results"]["exp2"][family] = run_depth_extrapolation(
-                lambda t, s: solve(t, s), family, depths, steps, per_depth=args.per_cell
+    try:
+        if "1" in wanted and not out_of_time():
+            print(f"▶ Experiment 1: recurrence sweep over {len(battery)} tasks …", flush=True)
+            report["results"]["exp1"] = run_recurrence_sweep(
+                lambda t, s: solve(t, s), battery, steps
             )
-            print("  claim:", report["results"]["exp2"][family]["claim"]["tier"], flush=True)
-    if "3" in wanted and not out_of_time():
-        print("▶ Experiment 3: slot causality …", flush=True)
-        report["results"]["exp3"] = run_slot_causality(
-            lambda t, slot: solve(t, max(steps), ablate=slot),
-            battery,
-            slot_indices=list(range(0, args.n_slots, max(1, args.n_slots // 4))),
-        )
-        print("  claim:", report["results"]["exp3"]["claim"]["tier"], flush=True)
-    if "5" in wanted and not out_of_time():
-        print("▶ Experiment 5: latent opt vs random control …", flush=True)
-        by_family = {f: [t for t in battery if t.family == f] for f in families}
-        report["results"]["exp5"] = run_latent_opt_control(
-            lambda t, arm: solve(t, max(steps), latent_opt=arm), by_family
-        )
-        print("  claim:", report["results"]["exp5"]["claim"]["tier"], flush=True)
+            print("  claim:", report["results"]["exp1"]["claim"]["tier"], flush=True)
+        if "2" in wanted and not out_of_time():
+            report["results"]["exp2"] = {}
+            for family in families:
+                if out_of_time():
+                    raise LabDeadlineError("lab wall-clock bound reached")
+                print(f"▶ Experiment 2: depth extrapolation on {family} …", flush=True)
+                report["results"]["exp2"][family] = run_depth_extrapolation(
+                    lambda t, s: solve(t, s),
+                    family,
+                    depths,
+                    steps,
+                    per_depth=args.per_cell,
+                )
+                print(
+                    "  claim:",
+                    report["results"]["exp2"][family]["claim"]["tier"],
+                    flush=True,
+                )
+        if "3" in wanted and not out_of_time():
+            print("▶ Experiment 3: slot causality …", flush=True)
+            report["results"]["exp3"] = run_slot_causality(
+                lambda t, slot: solve(t, max(steps), ablate=slot)[0],
+                battery,
+                slot_indices=list(range(0, args.n_slots, max(1, args.n_slots // 4))),
+            )
+            print("  claim:", report["results"]["exp3"]["claim"]["tier"], flush=True)
+        if "5" in wanted and not out_of_time():
+            print("▶ Experiment 5: latent opt vs random control …", flush=True)
+            by_family = {family: [t for t in battery if t.family == family] for family in families}
+            report["results"]["exp5"] = run_latent_opt_control(
+                lambda t, arm: solve(t, max(steps), latent_opt=arm), by_family
+            )
+            print("  claim:", report["results"]["exp5"]["claim"]["tier"], flush=True)
+    except LabDeadlineError as exc:
+        report["deadline_exceeded"] = True
+        report["incomplete_reason"] = str(exc)
+        print(f"wall-clock bound reached: {exc}; incomplete experiment discarded", flush=True)
 
     report["finished_at"] = time.time()
     out_path = Path(args.out) if args.out else REPO_ROOT / "data" / "latent_cortex" / (
         f"lab_report_{int(time.time())}.json"
     )
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(report, indent=1, sort_keys=True), encoding="utf-8")
+    from core.brain.llm.latent_cortex.persistence import get_latent_cortex_persistence
+
+    get_latent_cortex_persistence().save_lab_report(
+        out_path,
+        json.dumps(report, indent=1, sort_keys=True).encode(),
+    )
     print(f"📄 report → {out_path}")
 
     if args.record_foundry:
-        for key, res in report["results"].items():
+        for res in report["results"].values():
             claims = [res["claim"]] if "claim" in res else [
                 v["claim"] for v in res.values() if isinstance(v, dict) and "claim" in v
             ]

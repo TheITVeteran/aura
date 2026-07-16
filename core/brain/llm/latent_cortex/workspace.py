@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from core.brain.llm.latent_cortex.types import WorkspaceConfig
@@ -26,7 +26,7 @@ logger = logging.getLogger("Aura.LatentCortex.Workspace")
 
 def _role_seed(role: str, base_seed: int) -> int:
     """Deterministic, platform-stable seed for a role anchor."""
-    digest = hashlib.sha256(f"{role}:{base_seed}".encode("utf-8")).digest()
+    digest = hashlib.sha256(f"{role}:{base_seed}".encode()).digest()
     return int.from_bytes(digest[:4], "big")
 
 
@@ -78,7 +78,7 @@ class LatentWorkspace:
         config: WorkspaceConfig,
         *,
         branch_role: str | None = None,
-    ) -> "LatentWorkspace":
+    ) -> LatentWorkspace:
         """Seed M slots from the pooled prompt embedding + role anchors.
 
         Each slot starts at the prompt's mean embedding, perturbed along its

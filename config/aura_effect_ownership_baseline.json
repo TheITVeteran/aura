@@ -2977,44 +2977,12 @@
       "scope": "<module>.IdentityService.save"
     },
     {
-      "callee": "<file_write_gateway>.ensure_directory",
-      "canonical_owner": false,
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_bytes_batch",
+      "canonical_owner": true,
       "category": "file_write_gateway",
       "count": 1,
-      "path": "core/brain/llm/latent_cortex/fast_weights.py",
-      "scope": "<module>.EpisodicFastWeights.export_candidate"
-    },
-    {
-      "callee": "<file_write_gateway>.write_bytes",
-      "canonical_owner": false,
-      "category": "file_write_gateway",
-      "count": 1,
-      "path": "core/brain/llm/latent_cortex/fast_weights.py",
-      "scope": "<module>.EpisodicFastWeights.export_candidate"
-    },
-    {
-      "callee": "<file_write_gateway>.write_text",
-      "canonical_owner": false,
-      "category": "file_write_gateway",
-      "count": 1,
-      "path": "core/brain/llm/latent_cortex/fast_weights.py",
-      "scope": "<module>.EpisodicFastWeights.export_candidate"
-    },
-    {
-      "callee": "<file_write_gateway>.ensure_directory",
-      "canonical_owner": false,
-      "category": "file_write_gateway",
-      "count": 1,
-      "path": "core/brain/llm/latent_cortex/schedules.py",
-      "scope": "<module>.ScheduleLibrary.save"
-    },
-    {
-      "callee": "<file_write_gateway>.write_text",
-      "canonical_owner": false,
-      "category": "file_write_gateway",
-      "count": 1,
-      "path": "core/brain/llm/latent_cortex/schedules.py",
-      "scope": "<module>.ScheduleLibrary.save"
+      "path": "core/brain/llm/latent_cortex/persistence.py",
+      "scope": "<module>.LatentCortexPersistence._commit"
     },
     {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_bytes",
@@ -13866,6 +13834,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "e188aedf7f11c66d34ce8c8a27606746fbc930beaa17544b090ffed00258344a",
+  "inventory_sha256": "8a2640e7027031b946b0d65ebb1046c5d4e611d36b921be36fdd926b64d57aff",
   "schema_version": 1
 }

@@ -13,10 +13,10 @@ import pytest
 mx = pytest.importorskip("mlx.core")
 pytest.importorskip("mlx_lm")
 
-from mlx_lm.models.cache import KVCache
-from mlx_lm.models.qwen2 import Model, ModelArgs
+from mlx_lm.models.cache import KVCache  # noqa: E402
+from mlx_lm.models.qwen2 import Model, ModelArgs  # noqa: E402
 
-from core.brain.llm.latent_cortex.recurrence import (
+from core.brain.llm.latent_cortex.recurrence import (  # noqa: E402
     HaltingController,
     WindowRunner,
     alpha_at,
@@ -24,9 +24,15 @@ from core.brain.llm.latent_cortex.recurrence import (
     relative_residual,
     rms_match,
 )
-from core.brain.llm.latent_cortex.types import ComputeBudget, RecurrenceConfig, WorkspaceConfig
-from core.brain.llm.latent_cortex.workspace import LatentWorkspace, per_position_rms
-
+from core.brain.llm.latent_cortex.types import (  # noqa: E402
+    ComputeBudget,
+    RecurrenceConfig,
+    WorkspaceConfig,
+)
+from core.brain.llm.latent_cortex.workspace import (  # noqa: E402
+    LatentWorkspace,
+    per_position_rms,
+)
 
 N_LAYERS, P_END, C_START = 8, 2, 6
 
@@ -139,6 +145,29 @@ def test_window_rewind_keeps_offsets_stable(tiny_model):
     assert all(c.offset == prompt_len + 4 for c in cache), "final persist fills every layer"
 
 
+def test_window_rewind_restores_cache_when_layer_raises(tiny_model, monkeypatch):
+    cache = _prefill(tiny_model, mx.array(PROMPT))
+    offsets_before = [entry.offset for entry in cache]
+    inner = tiny_model.model
+    target = inner.layers[P_END + 1]
+    layer_type = type(target)
+    original_call = layer_type.__call__
+
+    def injected_call(self, *args, **kwargs):
+        if self is target:
+            raise RuntimeError("injected recurrent layer failure")
+        return original_call(self, *args, **kwargs)
+
+    monkeypatch.setattr(layer_type, "__call__", injected_call)
+    z = inner.embed_tokens(mx.array([[1, 2, 3, 4]]))
+    budget = ComputeBudget()
+    runner = WindowRunner(inner, budget)
+    with pytest.raises(RuntimeError, match="injected recurrent"):
+        runner.run(z, cache, P_END, C_START, persist=False)
+    assert [entry.offset for entry in cache] == offsets_before
+    assert budget.spent_layer_apps == 4 * (C_START - P_END)
+
+
 # ── Controlled recurrence dynamics ──────────────────────────────────────
 
 
@@ -186,7 +215,7 @@ def test_overthinking_revert_returns_best_state():
     halting = HaltingController(config=cfg, baseline_rms=1.0)
     states = [mx.full((1, 2, 4), float(i + 1)) for i in range(5)]
     scores = [0.1, 0.9, 0.4, 0.2, 0.1]  # peak at step 1 — later steps overthink
-    for step, (state, score) in enumerate(zip(states, scores)):
+    for step, (state, score) in enumerate(zip(states, scores, strict=True)):
         halting.observe(step, state, residual=0.5, score=score)
     final, reverted = halting.final_state(states[-1])
     assert reverted is True
@@ -203,7 +232,9 @@ def test_alpha_cosine_schedule_decays():
 
 def test_budget_charged_and_halts(tiny_model):
     cache = _prefill(tiny_model, mx.array(PROMPT))
-    budget = ComputeBudget(max_layer_apps=4 * (C_START - P_END) * 2)  # two steps' worth
+    seed_cost = 4 * P_END
+    recurrence_cost = 4 * (C_START - P_END) * 2
+    budget = ComputeBudget(max_layer_apps=seed_cost + recurrence_cost)
     ws, runner = _seed_workspace(tiny_model, cache, budget=budget)
     cfg = RecurrenceConfig(max_steps=50, convergence_eps=1e-9, min_steps=1)
     halting = HaltingController(config=cfg, baseline_rms=float(mx.mean(per_position_rms(ws.z))))
@@ -224,13 +255,22 @@ def test_budget_charged_and_halts(tiny_model):
     assert budget.spent_layer_apps >= budget.max_layer_apps
 
 
+def test_budget_preflight_prevents_atomic_overshoot(tiny_model):
+    cache = _prefill(tiny_model, mx.array(PROMPT))
+    budget = ComputeBudget(max_layer_apps=15)
+    runner = WindowRunner(tiny_model.model, budget)
+    z = tiny_model.model.embed_tokens(mx.array([[1, 2, 3, 4]]))
+    with pytest.raises(RuntimeError, match="cannot afford"):
+        runner.run(z, cache, P_END, C_START, persist=False)
+    assert budget.spent_layer_apps == 0
+
+
 # ── Causality: slots must matter to decode ──────────────────────────────
 
 
 def test_slot_ablation_changes_decode_logits(tiny_model):
     inner = tiny_model.model
     prompt = mx.array(PROMPT)
-    prompt_len = prompt.shape[1]
 
     def episode(ablate: bool):
         from mlx_lm.models.base import create_attention_mask

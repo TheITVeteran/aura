@@ -28,19 +28,62 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import random
-import time
+import re
+import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
-from core.brain.verifiers.foundry import wilson_lower_bound
+from core.brain.verifiers.foundry import wilson_lower_bound, wilson_upper_bound
 
 logger = logging.getLogger("Aura.LatentCortex.Schedules")
 
 # A schedule may apply at most this many window-layer applications per slot
 # token, regardless of budget — programs beyond this are degenerate.
 MAX_TOTAL_LAYER_REPEATS = 4096
+SCHEDULE_LIBRARY_SCHEMA_VERSION = 2
+COMPUTE_MATCH_RELATIVE_TOLERANCE = 0.05
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_RUN_ORDERS = frozenset({"candidate_first", "default_first"})
+_MAX_LAYER_APPS = (1 << 63) - 1
+
+
+def _canonical_sha256(payload: dict[str, Any]) -> str:
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _require_sha256(value: Any, *, field_name: str) -> str:
+    if not isinstance(value, str) or _SHA256_RE.fullmatch(value) is None:
+        raise ValueError(f"{field_name} must be a lowercase SHA-256 digest")
+    return value
+
+
+def _require_identifier(value: Any, *, field_name: str, limit: int = 200) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{field_name} must be a string")
+    normalized = value.strip()
+    if not normalized or len(normalized) > limit or any(ord(char) < 32 for char in normalized):
+        raise ValueError(f"{field_name} must be a non-empty printable identifier")
+    return normalized
+
+
+def _safe_display(value: Any, *, limit: int = 120) -> str:
+    try:
+        rendered = repr(value)
+    except (TypeError, ValueError, OverflowError, RecursionError):
+        return f"<{type(value).__name__}:unprintable>"
+    if len(rendered) > limit:
+        return f"{rendered[:limit]}..."
+    return rendered
 
 
 @dataclass(frozen=True)
@@ -55,7 +98,13 @@ class StageOp:
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {"start": self.start, "end": self.end, "repeats": self.repeats}
         if self.alpha is not None:
-            out["alpha"] = round(float(self.alpha), 6)
+            try:
+                alpha = float(self.alpha)
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise ValueError("stage alpha must be a finite number") from exc
+            if not math.isfinite(alpha):
+                raise ValueError("stage alpha must be a finite number")
+            out["alpha"] = round(alpha, 6)
         return out
 
 
@@ -67,20 +116,58 @@ class LayerSchedule:
     name: str = ""
 
     @classmethod
-    def from_dict(cls, payload: dict[str, Any]) -> "LayerSchedule":
-        ops = tuple(
-            StageOp(
-                start=int(op["start"]),
-                end=int(op["end"]),
-                repeats=int(op.get("repeats", 1)),
-                alpha=(float(op["alpha"]) if op.get("alpha") is not None else None),
+    def from_dict(cls, payload: dict[str, Any]) -> LayerSchedule:
+        if not isinstance(payload, dict):
+            raise ValueError("schedule payload must be a mapping")
+        unknown = sorted(set(payload) - {"name", "ops"})
+        if unknown:
+            raise ValueError(f"schedule contains unknown keys: {unknown}")
+        raw_ops = payload.get("ops")
+        if not isinstance(raw_ops, list):
+            raise ValueError("schedule ops must be a list")
+        if len(raw_ops) > 256:
+            raise ValueError("schedule contains more than 256 ops")
+        parsed: list[StageOp] = []
+        for index, op in enumerate(raw_ops):
+            if not isinstance(op, dict):
+                raise ValueError(f"schedule op{index} must be a mapping")
+            op_unknown = sorted(set(op) - {"start", "end", "repeats", "alpha"})
+            if op_unknown:
+                raise ValueError(f"schedule op{index} contains unknown keys: {op_unknown}")
+            for key in ("start", "end"):
+                if type(op.get(key)) is not int:
+                    raise ValueError(f"schedule op{index}.{key} must be an integer")
+            repeats = op.get("repeats", 1)
+            if type(repeats) is not int:
+                raise ValueError(f"schedule op{index}.repeats must be an integer")
+            alpha = op.get("alpha")
+            alpha_float: float | None = None
+            if alpha is not None:
+                if isinstance(alpha, bool) or not isinstance(alpha, (int, float)):
+                    raise ValueError(f"schedule op{index}.alpha must be a finite number")
+                try:
+                    alpha_float = float(alpha)
+                except (TypeError, ValueError, OverflowError) as exc:
+                    raise ValueError(
+                        f"schedule op{index}.alpha must be a finite number"
+                    ) from exc
+                if not math.isfinite(alpha_float):
+                    raise ValueError(f"schedule op{index}.alpha must be a finite number")
+            parsed.append(
+                StageOp(
+                    start=op["start"],
+                    end=op["end"],
+                    repeats=repeats,
+                    alpha=alpha_float,
+                )
             )
-            for op in payload.get("ops", [])
-        )
-        return cls(ops=ops, name=str(payload.get("name", "")))
+        name = payload.get("name", "")
+        if not isinstance(name, str):
+            raise ValueError("schedule name must be a string")
+        return cls(ops=tuple(parsed), name=name[:200])
 
     @classmethod
-    def single_window(cls, prelude_end: int, coda_start: int, repeats: int) -> "LayerSchedule":
+    def single_window(cls, prelude_end: int, coda_start: int, repeats: int) -> LayerSchedule:
         return cls(
             ops=(StageOp(prelude_end, coda_start, repeats),),
             name=f"window[{prelude_end}:{coda_start}]x{repeats}",
@@ -95,7 +182,7 @@ class LayerSchedule:
 
     @property
     def schedule_hash(self) -> str:
-        return hashlib.sha256(self.canonical_json().encode("utf-8")).hexdigest()[:16]
+        return hashlib.sha256(self.canonical_json().encode("utf-8")).hexdigest()
 
     @property
     def total_layer_repeats(self) -> int:
@@ -106,21 +193,43 @@ class LayerSchedule:
         problems: list[str] = []
         if not self.ops:
             problems.append("schedule has no ops")
+        total_layer_repeats = 0
         for i, op in enumerate(self.ops):
+            if any(type(value) is not int for value in (op.start, op.end, op.repeats)):
+                problems.append(f"op{i} start/end/repeats must be integers")
+                continue
             if op.start < prelude_end or op.end > coda_start:
                 problems.append(
-                    f"op{i} [{op.start}:{op.end}) escapes recurrent region "
+                    f"op{i} [{_safe_display(op.start)}:{_safe_display(op.end)}) "
+                    "escapes recurrent region "
                     f"[{prelude_end}:{coda_start})"
                 )
             if op.start >= op.end:
-                problems.append(f"op{i} empty window [{op.start}:{op.end})")
+                problems.append(
+                    f"op{i} empty window "
+                    f"[{_safe_display(op.start)}:{_safe_display(op.end)})"
+                )
             if op.repeats < 1:
-                problems.append(f"op{i} repeats {op.repeats} < 1")
-            if op.alpha is not None and not 0.0 < op.alpha <= 1.0:
-                problems.append(f"op{i} alpha {op.alpha} outside (0, 1]")
-        if self.total_layer_repeats > MAX_TOTAL_LAYER_REPEATS:
+                problems.append(f"op{i} repeats {_safe_display(op.repeats)} < 1")
+            if op.alpha is not None:
+                try:
+                    alpha = float(op.alpha)
+                except (TypeError, ValueError, OverflowError):
+                    alpha = math.nan
+                if (
+                    isinstance(op.alpha, bool)
+                    or not isinstance(op.alpha, (int, float))
+                    or not math.isfinite(alpha)
+                    or not 0.0 < alpha <= 1.0
+                ):
+                    problems.append(
+                        f"op{i} alpha {_safe_display(op.alpha)} outside finite (0, 1]"
+                    )
+            if op.start < op.end and op.repeats >= 1:
+                total_layer_repeats += (op.end - op.start) * op.repeats
+        if total_layer_repeats > MAX_TOTAL_LAYER_REPEATS:
             problems.append(
-                f"total layer repeats {self.total_layer_repeats} exceeds "
+                f"total layer repeats {_safe_display(total_layer_repeats)} exceeds "
                 f"{MAX_TOTAL_LAYER_REPEATS}"
             )
         return problems
@@ -129,91 +238,462 @@ class LayerSchedule:
 # ── Reliability-tracked library ─────────────────────────────────────────
 
 
+@dataclass(frozen=True)
+class ScheduleComputeReceipt:
+    """Comparable measured work for one arm of a paired schedule trial."""
+
+    layer_apps: int
+    estimator_sha256: str
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.layer_apps) is not int
+            or self.layer_apps <= 0
+            or self.layer_apps > _MAX_LAYER_APPS
+        ):
+            raise ValueError("schedule compute layer_apps must be a bounded positive integer")
+        _require_sha256(self.estimator_sha256, field_name="estimator_sha256")
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> ScheduleComputeReceipt:
+        if not isinstance(payload, dict) or set(payload) != {"layer_apps", "estimator_sha256"}:
+            raise ValueError("schedule compute receipt has an invalid schema")
+        return cls(
+            layer_apps=payload["layer_apps"],
+            estimator_sha256=payload["estimator_sha256"],
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "layer_apps": self.layer_apps,
+            "estimator_sha256": self.estimator_sha256,
+        }
+
+
+@dataclass(frozen=True)
+class PairedScheduleOutcome:
+    """One held-out candidate/default comparison with tamper-evident provenance."""
+
+    task_id: str
+    task_commitment_sha256: str
+    candidate_success: bool
+    default_success: bool
+    candidate_compute: ScheduleComputeReceipt
+    default_compute: ScheduleComputeReceipt
+    run_order: str
+    held_out: bool
+    contamination_scan_passed: bool
+    scorer_receipt_sha256: str
+    verifier_receipt_sha256: str
+    evaluation_run_id: str
+    evaluator_build_sha256: str
+    model_checkpoint_sha256: str
+    evidence_protocol_sha256: str
+    evidence_binding_sha256: str
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        schedule_hash: str,
+        domain: str,
+        task_id: str,
+        task_commitment_sha256: str,
+        candidate_success: bool,
+        default_success: bool,
+        candidate_compute: ScheduleComputeReceipt,
+        default_compute: ScheduleComputeReceipt,
+        run_order: str,
+        held_out: bool,
+        contamination_scan_passed: bool,
+        scorer_receipt_sha256: str,
+        verifier_receipt_sha256: str,
+        evaluation_run_id: str,
+        evaluator_build_sha256: str,
+        model_checkpoint_sha256: str,
+        evidence_protocol_sha256: str,
+    ) -> PairedScheduleOutcome:
+        if not isinstance(candidate_compute, ScheduleComputeReceipt) or not isinstance(
+            default_compute, ScheduleComputeReceipt
+        ):
+            raise ValueError("paired schedule compute receipts are required")
+        values: dict[str, Any] = {
+            "task_id": task_id,
+            "task_commitment_sha256": task_commitment_sha256,
+            "candidate_success": candidate_success,
+            "default_success": default_success,
+            "candidate_compute": candidate_compute.to_dict(),
+            "default_compute": default_compute.to_dict(),
+            "run_order": run_order,
+            "held_out": held_out,
+            "contamination_scan_passed": contamination_scan_passed,
+            "scorer_receipt_sha256": scorer_receipt_sha256,
+            "verifier_receipt_sha256": verifier_receipt_sha256,
+            "evaluation_run_id": evaluation_run_id,
+            "evaluator_build_sha256": evaluator_build_sha256,
+            "model_checkpoint_sha256": model_checkpoint_sha256,
+            "evidence_protocol_sha256": evidence_protocol_sha256,
+        }
+        binding = cls.binding_sha256(
+            schedule_hash=schedule_hash,
+            domain=domain,
+            values=values,
+        )
+        outcome = cls(
+            task_id=task_id,
+            task_commitment_sha256=task_commitment_sha256,
+            candidate_success=candidate_success,
+            default_success=default_success,
+            candidate_compute=candidate_compute,
+            default_compute=default_compute,
+            run_order=run_order,
+            held_out=held_out,
+            contamination_scan_passed=contamination_scan_passed,
+            scorer_receipt_sha256=scorer_receipt_sha256,
+            verifier_receipt_sha256=verifier_receipt_sha256,
+            evaluation_run_id=evaluation_run_id,
+            evaluator_build_sha256=evaluator_build_sha256,
+            model_checkpoint_sha256=model_checkpoint_sha256,
+            evidence_protocol_sha256=evidence_protocol_sha256,
+            evidence_binding_sha256=binding,
+        )
+        outcome.validate(schedule_hash=schedule_hash, domain=domain)
+        return outcome
+
+    @staticmethod
+    def binding_sha256(*, schedule_hash: str, domain: str, values: dict[str, Any]) -> str:
+        _require_sha256(schedule_hash, field_name="schedule_hash")
+        normalized_domain = _require_identifier(domain, field_name="domain").lower()
+        return _canonical_sha256(
+            {
+                "domain": normalized_domain,
+                "schedule_hash": schedule_hash,
+                "outcome": values,
+            }
+        )
+
+    @classmethod
+    def from_dict(
+        cls,
+        payload: dict[str, Any],
+        *,
+        schedule_hash: str,
+        domain: str,
+    ) -> PairedScheduleOutcome:
+        expected = {
+            "task_id",
+            "task_commitment_sha256",
+            "candidate_success",
+            "default_success",
+            "candidate_compute",
+            "default_compute",
+            "run_order",
+            "held_out",
+            "contamination_scan_passed",
+            "scorer_receipt_sha256",
+            "verifier_receipt_sha256",
+            "evaluation_run_id",
+            "evaluator_build_sha256",
+            "model_checkpoint_sha256",
+            "evidence_protocol_sha256",
+            "evidence_binding_sha256",
+        }
+        if not isinstance(payload, dict) or set(payload) != expected:
+            raise ValueError("paired schedule outcome has an invalid schema")
+        outcome = cls(
+            task_id=payload["task_id"],
+            task_commitment_sha256=payload["task_commitment_sha256"],
+            candidate_success=payload["candidate_success"],
+            default_success=payload["default_success"],
+            candidate_compute=ScheduleComputeReceipt.from_dict(payload["candidate_compute"]),
+            default_compute=ScheduleComputeReceipt.from_dict(payload["default_compute"]),
+            run_order=payload["run_order"],
+            held_out=payload["held_out"],
+            contamination_scan_passed=payload["contamination_scan_passed"],
+            scorer_receipt_sha256=payload["scorer_receipt_sha256"],
+            verifier_receipt_sha256=payload["verifier_receipt_sha256"],
+            evaluation_run_id=payload["evaluation_run_id"],
+            evaluator_build_sha256=payload["evaluator_build_sha256"],
+            model_checkpoint_sha256=payload["model_checkpoint_sha256"],
+            evidence_protocol_sha256=payload["evidence_protocol_sha256"],
+            evidence_binding_sha256=payload["evidence_binding_sha256"],
+        )
+        outcome.validate(schedule_hash=schedule_hash, domain=domain)
+        return outcome
+
+    def _binding_values(self) -> dict[str, Any]:
+        payload = self.to_dict()
+        payload.pop("evidence_binding_sha256")
+        return payload
+
+    def validate(self, *, schedule_hash: str, domain: str) -> None:
+        _require_identifier(self.task_id, field_name="task_id")
+        _require_sha256(self.task_commitment_sha256, field_name="task_commitment_sha256")
+        if type(self.candidate_success) is not bool or type(self.default_success) is not bool:
+            raise ValueError("paired schedule outcomes must contain boolean arm results")
+        if self.run_order not in _RUN_ORDERS:
+            raise ValueError("run_order must be candidate_first or default_first")
+        if self.held_out is not True:
+            raise ValueError("schedule promotion evidence must be held out")
+        if self.contamination_scan_passed is not True:
+            raise ValueError("schedule promotion evidence failed contamination screening")
+        for field_name in (
+            "scorer_receipt_sha256",
+            "verifier_receipt_sha256",
+            "evaluator_build_sha256",
+            "model_checkpoint_sha256",
+            "evidence_protocol_sha256",
+            "evidence_binding_sha256",
+        ):
+            _require_sha256(getattr(self, field_name), field_name=field_name)
+        _require_identifier(self.evaluation_run_id, field_name="evaluation_run_id")
+        if self.candidate_compute.estimator_sha256 != self.default_compute.estimator_sha256:
+            raise ValueError("paired schedule arms used different compute estimators")
+        larger = max(self.candidate_compute.layer_apps, self.default_compute.layer_apps)
+        allowed_delta = max(1, math.ceil(larger * COMPUTE_MATCH_RELATIVE_TOLERANCE))
+        if abs(self.candidate_compute.layer_apps - self.default_compute.layer_apps) > allowed_delta:
+            raise ValueError("paired schedule arms exceeded the compute matching tolerance")
+        expected_binding = self.binding_sha256(
+            schedule_hash=schedule_hash,
+            domain=domain,
+            values=self._binding_values(),
+        )
+        if self.evidence_binding_sha256 != expected_binding:
+            raise ValueError("paired schedule evidence binding does not match its contents")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "task_id": self.task_id,
+            "task_commitment_sha256": self.task_commitment_sha256,
+            "candidate_success": self.candidate_success,
+            "default_success": self.default_success,
+            "candidate_compute": self.candidate_compute.to_dict(),
+            "default_compute": self.default_compute.to_dict(),
+            "run_order": self.run_order,
+            "held_out": self.held_out,
+            "contamination_scan_passed": self.contamination_scan_passed,
+            "scorer_receipt_sha256": self.scorer_receipt_sha256,
+            "verifier_receipt_sha256": self.verifier_receipt_sha256,
+            "evaluation_run_id": self.evaluation_run_id,
+            "evaluator_build_sha256": self.evaluator_build_sha256,
+            "model_checkpoint_sha256": self.model_checkpoint_sha256,
+            "evidence_protocol_sha256": self.evidence_protocol_sha256,
+            "evidence_binding_sha256": self.evidence_binding_sha256,
+        }
+
+
 @dataclass
 class ScheduleRecord:
     schedule: LayerSchedule
     domain: str
-    trials: int = 0
-    successes: int = 0
-    provenance: str = ""  # who/what promoted it (search run id, operator, ...)
-    updated_at: float = field(default_factory=time.time)
+    outcomes: dict[str, PairedScheduleOutcome] = field(default_factory=dict)
+
+    @property
+    def trials(self) -> int:
+        return len(self.outcomes)
+
+    @property
+    def successes(self) -> int:
+        return sum(int(outcome.candidate_success) for outcome in self.outcomes.values())
+
+    @property
+    def default_successes(self) -> int:
+        return sum(int(outcome.default_success) for outcome in self.outcomes.values())
 
     @property
     def reliability_lb(self) -> float:
         return wilson_lower_bound(self.successes, self.trials)
 
+    @property
+    def default_reliability_ub(self) -> float:
+        return wilson_upper_bound(self.default_successes, self.trials)
+
+    def _profile(self) -> tuple[str, str, str] | None:
+        profiles = {
+            (
+                outcome.evaluator_build_sha256,
+                outcome.model_checkpoint_sha256,
+                outcome.evidence_protocol_sha256,
+            )
+            for outcome in self.outcomes.values()
+        }
+        if len(profiles) != 1:
+            return None
+        return next(iter(profiles))
+
+    def promotion_ready(self, *, min_trials: int) -> bool:
+        if self.trials < min_trials or self._profile() is None:
+            return False
+        candidate_first = sum(
+            outcome.run_order == "candidate_first" for outcome in self.outcomes.values()
+        )
+        default_first = self.trials - candidate_first
+        return (
+            abs(candidate_first - default_first) <= 1
+            and self.reliability_lb > self.default_reliability_ub
+        )
+
+    def add_outcome(self, outcome: PairedScheduleOutcome, *, allow_identical: bool = False) -> bool:
+        outcome.validate(schedule_hash=self.schedule.schedule_hash, domain=self.domain)
+        existing = self.outcomes.get(outcome.task_id)
+        if existing is not None:
+            if allow_identical and existing == outcome:
+                return False
+            raise ValueError(f"duplicate or conflicting schedule task_id: {outcome.task_id}")
+        for prior in self.outcomes.values():
+            if prior.task_commitment_sha256 == outcome.task_commitment_sha256:
+                raise ValueError("replayed schedule task commitment")
+            if prior.scorer_receipt_sha256 == outcome.scorer_receipt_sha256:
+                raise ValueError("replayed schedule scorer receipt")
+            if prior.verifier_receipt_sha256 == outcome.verifier_receipt_sha256:
+                raise ValueError("replayed schedule verifier receipt")
+        current_profile = self._profile()
+        new_profile = (
+            outcome.evaluator_build_sha256,
+            outcome.model_checkpoint_sha256,
+            outcome.evidence_protocol_sha256,
+        )
+        if current_profile is not None and current_profile != new_profile:
+            raise ValueError("schedule evidence profile changed within one candidate record")
+        self.outcomes[outcome.task_id] = outcome
+        return True
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> ScheduleRecord:
+        if not isinstance(payload, dict) or set(payload) != {"schedule", "domain", "outcomes"}:
+            raise ValueError("schedule record has an invalid schema")
+        schedule = LayerSchedule.from_dict(payload["schedule"])
+        domain = _require_identifier(payload["domain"], field_name="domain").lower()
+        raw_outcomes = payload["outcomes"]
+        if not isinstance(raw_outcomes, list) or len(raw_outcomes) > 100_000:
+            raise ValueError("schedule outcomes must be a bounded list")
+        record = cls(schedule=schedule, domain=domain)
+        for raw_outcome in raw_outcomes:
+            record.add_outcome(
+                PairedScheduleOutcome.from_dict(
+                    raw_outcome,
+                    schedule_hash=schedule.schedule_hash,
+                    domain=domain,
+                )
+            )
+        return record
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "schedule": self.schedule.to_dict(),
             "domain": self.domain,
-            "trials": self.trials,
-            "successes": self.successes,
-            "provenance": self.provenance,
-            "updated_at": self.updated_at,
+            "outcomes": [self.outcomes[key].to_dict() for key in sorted(self.outcomes)],
         }
 
 
 class ScheduleLibrary:
-    """Per-domain schedule reliability ledger with evidence-gated selection.
+    """Per-domain schedule ledger gated by matched held-out evidence."""
 
-    ``best_for_domain`` only returns a searched schedule when its Wilson
-    lower bound beats the default single-window program's — otherwise the
-    default wins. This is the anti-self-deception gate: an exciting schedule
-    with three lucky trials does not displace the baseline.
-    """
-
-    MIN_TRIALS = 8
+    MIN_TRIALS = 20
+    MAX_SAVE_RETRIES = 4
 
     def __init__(self, path: Path | str | None = None) -> None:
         self._path = Path(path) if path else None
         self._records: dict[tuple[str, str], ScheduleRecord] = {}
+        self._revision = 0
+        self._lock = threading.RLock()
         if self._path is not None and self._path.exists():
             self._load()
 
     # ── Persistence (governed writes; loads are plain reads) ───────────
+    @staticmethod
+    def _parse_store(payload: Any) -> tuple[int, dict[tuple[str, str], ScheduleRecord]]:
+        if not isinstance(payload, dict) or set(payload) != {"version", "revision", "records"}:
+            raise ValueError("schedule library root has an invalid schema")
+        if payload["version"] != SCHEDULE_LIBRARY_SCHEMA_VERSION:
+            raise ValueError("unsupported schedule library schema version")
+        revision = payload["revision"]
+        if type(revision) is not int or revision < 0:
+            raise ValueError("schedule library revision must be a non-negative integer")
+        raw_records = payload["records"]
+        if not isinstance(raw_records, list) or len(raw_records) > 10_000:
+            raise ValueError("schedule library records must be a bounded list")
+        records: dict[tuple[str, str], ScheduleRecord] = {}
+        for raw_record in raw_records:
+            record = ScheduleRecord.from_dict(raw_record)
+            key = (record.domain, record.schedule.schedule_hash)
+            if key in records:
+                raise ValueError("duplicate schedule record in persisted library")
+            records[key] = record
+        return revision, records
+
+    def _read_store(self) -> tuple[int, dict[tuple[str, str], ScheduleRecord]]:
+        if self._path is None:
+            return 0, {}
+        payload = json.loads(self._path.read_text(encoding="utf-8"))
+        return self._parse_store(payload)
+
     def _load(self) -> None:
         try:
-            payload = json.loads(self._path.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as exc:
-            logger.warning("Schedule library unreadable at %s: %s — starting empty", self._path, exc)
+            revision, records = self._read_store()
+        except (OSError, TypeError, ValueError) as exc:
+            logger.warning(
+                "Schedule library unreadable at %s: %s - starting empty",
+                self._path,
+                exc,
+            )
             return
-        for row in payload.get("records", []):
-            try:
-                rec = ScheduleRecord(
-                    schedule=LayerSchedule.from_dict(row["schedule"]),
-                    domain=str(row["domain"]),
-                    trials=int(row["trials"]),
-                    successes=int(row["successes"]),
-                    provenance=str(row.get("provenance", "")),
-                    updated_at=float(row.get("updated_at", 0.0)),
-                )
-            except (KeyError, TypeError, ValueError) as exc:
-                logger.warning("Skipping corrupt schedule record: %s", exc)
+        with self._lock:
+            self._revision = revision
+            self._records = records
+
+    def _merge_records(self, incoming: dict[tuple[str, str], ScheduleRecord]) -> None:
+        for key, incoming_record in incoming.items():
+            current = self._records.get(key)
+            if current is None:
+                self._records[key] = incoming_record
                 continue
-            self._records[(rec.domain, rec.schedule.schedule_hash)] = rec
+            for task_id in sorted(incoming_record.outcomes):
+                current.add_outcome(
+                    incoming_record.outcomes[task_id],
+                    allow_identical=True,
+                )
+
+    def _serialized_payload(self, revision: int) -> bytes:
+        records = [self._records[key].to_dict() for key in sorted(self._records)]
+        return json.dumps(
+            {
+                "version": SCHEDULE_LIBRARY_SCHEMA_VERSION,
+                "revision": revision,
+                "records": records,
+            },
+            indent=1,
+            sort_keys=True,
+        ).encode("utf-8")
 
     def save(self) -> bool:
         if self._path is None:
             return False
-        payload = json.dumps(
-            {"version": 1, "records": [r.to_dict() for r in self._records.values()]},
-            indent=1,
-            sort_keys=True,
-        )
         try:
-            from core.governance_context import local_internal_governed_scope
-            from core.runtime.file_write_gateway import get_file_write_gateway
+            from core.brain.llm.latent_cortex.persistence import (
+                StaleScheduleLibraryError,
+                get_latent_cortex_persistence,
+            )
 
-            gateway = get_file_write_gateway()
-            with local_internal_governed_scope("latent_cortex_schedule_library"):
-                gateway.ensure_directory(
-                    self._path.parent, source="latent_cortex.schedules"
-                )
-                gateway.write_text(
-                    self._path, payload, source="latent_cortex.schedules"
-                )
-            return True
-        except (ImportError, OSError, RuntimeError, ValueError) as exc:
+            with self._lock:
+                for _attempt in range(self.MAX_SAVE_RETRIES):
+                    expected_revision = self._revision
+                    next_revision = expected_revision + 1
+                    try:
+                        get_latent_cortex_persistence().save_schedule_library(
+                            self._path,
+                            self._serialized_payload(next_revision),
+                            expected_revision=expected_revision,
+                        )
+                    except StaleScheduleLibraryError:
+                        disk_revision, disk_records = self._read_store()
+                        self._merge_records(disk_records)
+                        self._revision = disk_revision
+                        continue
+                    self._revision = next_revision
+                    return True
+                raise RuntimeError("schedule library remained stale after bounded CAS retries")
+        except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
             from core.runtime.errors import record_degradation
 
             record_degradation(
@@ -224,46 +704,61 @@ class ScheduleLibrary:
             return False
 
     # ── Evidence ────────────────────────────────────────────────────────
-    def record_outcome(
+    def record_paired_outcome(
         self,
         schedule: LayerSchedule,
         domain: str,
-        success: bool,
-        *,
-        provenance: str = "",
+        outcome: PairedScheduleOutcome,
     ) -> ScheduleRecord:
-        key = (domain, schedule.schedule_hash)
-        rec = self._records.get(key)
-        if rec is None:
-            rec = ScheduleRecord(schedule=schedule, domain=domain, provenance=provenance)
-            self._records[key] = rec
-        rec.trials += 1
-        rec.successes += int(bool(success))
-        rec.updated_at = time.time()
-        return rec
+        if not isinstance(schedule, LayerSchedule):
+            raise ValueError("schedule outcome requires a LayerSchedule")
+        normalized_domain = _require_identifier(domain, field_name="domain").lower()
+        if not isinstance(outcome, PairedScheduleOutcome):
+            raise ValueError("schedule outcome requires a PairedScheduleOutcome")
+        key = (normalized_domain, schedule.schedule_hash)
+        with self._lock:
+            record = self._records.get(key)
+            if record is None:
+                record = ScheduleRecord(schedule=schedule, domain=normalized_domain)
+                self._records[key] = record
+            record.add_outcome(outcome)
+            return record
 
     def best_for_domain(
         self, domain: str, *, prelude_end: int, coda_start: int, default_repeats: int
     ) -> LayerSchedule:
         default = LayerSchedule.single_window(prelude_end, coda_start, default_repeats)
-        default_rec = self._records.get((domain, default.schedule_hash))
-        default_lb = default_rec.reliability_lb if default_rec else 0.0
+        normalized_domain = str(domain or "").strip().lower()
+        with self._lock:
+            records = list(self._records.items())
 
-        best, best_lb = default, default_lb
-        for (dom, _), rec in self._records.items():
-            if dom != domain or rec.trials < self.MIN_TRIALS:
+        best, best_lb = default, 0.0
+        for (record_domain, _), record in records:
+            if record_domain != normalized_domain:
                 continue
-            if rec.schedule.validate(prelude_end=prelude_end, coda_start=coda_start):
-                continue  # topology changed since this record was earned
-            if rec.reliability_lb > best_lb:
-                best, best_lb = rec.schedule, rec.reliability_lb
+            if record.schedule.schedule_hash == default.schedule_hash:
+                continue
+            if record.schedule.validate(prelude_end=prelude_end, coda_start=coda_start):
+                continue
+            if not record.promotion_ready(min_trials=self.MIN_TRIALS):
+                continue
+            if record.reliability_lb > best_lb:
+                best, best_lb = record.schedule, record.reliability_lb
         return best
 
     def status(self) -> dict[str, Any]:
         domains: dict[str, int] = {}
-        for (dom, _h) in self._records:
-            domains[dom] = domains.get(dom, 0) + 1
-        return {"records": len(self._records), "domains": domains}
+        with self._lock:
+            records = list(self._records.items())
+            revision = self._revision
+        for (domain, _schedule_hash), _record in records:
+            domains[domain] = domains.get(domain, 0) + 1
+        return {
+            "records": len(records),
+            "observations": sum(record.trials for _key, record in records),
+            "domains": domains,
+            "revision": revision,
+        }
 
 
 # ── Evolutionary schedule search ────────────────────────────────────────
@@ -344,6 +839,10 @@ class ScheduleSearch:
         generations: int = 4,
         seed_schedule: LayerSchedule | None = None,
     ) -> SearchResult:
+        if population < 2 or population > 128:
+            raise ValueError("population outside [2, 128]")
+        if generations < 1 or generations > 256:
+            raise ValueError("generations outside [1, 256]")
         base = seed_schedule or LayerSchedule.single_window(self._p, self._c, 4)
         violations = base.validate(prelude_end=self._p, coda_start=self._c)
         if violations:
@@ -354,7 +853,10 @@ class ScheduleSearch:
         def score(s: LayerSchedule) -> float:
             key = s.schedule_hash
             if key not in scored:
-                scored[key] = (s, float(evaluator(s)))
+                value = float(evaluator(s))
+                if not math.isfinite(value):
+                    raise ValueError("schedule evaluator returned a non-finite score")
+                scored[key] = (s, value)
             return scored[key][1]
 
         pool = [base] + [self._mutate(base) for _ in range(population - 1)]
@@ -379,8 +881,12 @@ class ScheduleSearch:
 
 
 __all__ = [
+    "COMPUTE_MATCH_RELATIVE_TOLERANCE",
     "LayerSchedule",
     "MAX_TOTAL_LAYER_REPEATS",
+    "PairedScheduleOutcome",
+    "SCHEDULE_LIBRARY_SCHEMA_VERSION",
+    "ScheduleComputeReceipt",
     "ScheduleLibrary",
     "ScheduleRecord",
     "ScheduleSearch",

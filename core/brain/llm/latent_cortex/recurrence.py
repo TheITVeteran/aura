@@ -24,15 +24,16 @@ from __future__ import annotations
 
 import logging
 import math
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
+from core.brain.llm.latent_cortex.types import ComputeBudget, RecurrenceConfig
+from core.brain.llm.latent_cortex.workspace import per_position_rms
 from core.brain.llm.recurrent_depth import (
     _restore_recurrent_caches,
     _snapshot_recurrent_caches,
 )
-from core.brain.llm.latent_cortex.types import ComputeBudget, RecurrenceConfig
-from core.brain.llm.latent_cortex.workspace import per_position_rms
 
 logger = logging.getLogger("Aura.LatentCortex.Recurrence")
 
@@ -135,7 +136,9 @@ class HaltingController:
 
     def final_state(self, z_last) -> tuple[Any, bool]:
         """Return (state to ship, reverted?) — best state if it beats last."""
-        if self.best_state is not None and self.best_step < len(self.score_trail) - 1:
+        if self.best_state is not None and (
+            not self.score_trail or self.best_step < len(self.score_trail) - 1
+        ):
             return self.best_state, True
         return z_last, False
 
@@ -167,15 +170,27 @@ class WindowRunner:
     def run(self, h, cache, start: int, end: int, *, persist: bool) -> Any:
         import mlx.core as mx
 
+        tokens = int(h.shape[1])
+        layers = end - start
+        if not self._budget.can_afford(tokens, layers):
+            raise RuntimeError(
+                f"compute budget cannot afford window [{start}:{end}) for {tokens} slots"
+            )
+        # Reserve and account the whole atomic pass before execution. A layer
+        # fault can consume partial compute, so failed work must not disappear
+        # from the conservative ledger or become available to a fallback.
+        self._budget.charge(tokens=tokens, layers=layers)
+        snaps = None
         if not persist:
             snaps = _snapshot_recurrent_caches(cache, start, end)
-        mask = self._mask(h, cache[start:end])
-        for i in range(start, end):
-            h = self._inner.layers[i](h, mask, cache[i])
-        mx.eval(h)
-        if not persist:
-            _restore_recurrent_caches(cache, start, end, snaps)
-        self._budget.charge(tokens=int(h.shape[1]), layers=end - start)
+        try:
+            mask = self._mask(h, cache[start:end])
+            for i in range(start, end):
+                h = self._inner.layers[i](h, mask, cache[i])
+            mx.eval(h)
+        finally:
+            if snaps is not None:
+                _restore_recurrent_caches(cache, start, end, snaps)
         return h
 
 
