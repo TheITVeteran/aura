@@ -9,12 +9,14 @@ import math
 import os
 import random
 import time
-from collections.abc import Awaitable, Callable
+from collections import deque
+from collections.abc import Awaitable, Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, cast
 
 from core.container import ServiceContainer
+from core.memory.retention_policy import working_history_retention_policy
 from core.runtime.errors import Severity, record_degradation
 from core.runtime.flags import FlagKind, declare
 from core.runtime.receipts import WorkspaceGateReceipt, get_receipt_store
@@ -111,6 +113,41 @@ class WorkItem:
     source: str = field(compare=False)
     payload: dict[str, Any] = field(compare=False)
     reason: str | None = field(compare=False)
+
+
+class HistoryBuffer:
+    """Fixed-size history with deque performance and list-like slices.
+
+    Ported from the retired core/global_workspace.py, whose design was better
+    than the canonical's here: the canonical kept a plain list and truncated it
+    inside ``publish``, so the bound held only for the one path that remembered
+    to enforce it. A buffer that cannot exceed its own limit is the difference
+    between a bound and a convention — and an unbounded workspace history on a
+    long autonomous run is a slow leak, which is the failure mode Aura is least
+    able to notice about itself.
+    """
+
+    def __init__(self, maxlen: int, items: Iterable[Any] | None = None):
+        self.maxlen = maxlen
+        self._items: deque[Any] = deque(items or [], maxlen=maxlen)
+
+    def append(self, item: Any) -> None:
+        self._items.append(item)
+
+    def clear(self) -> None:
+        self._items.clear()
+
+    def __len__(self) -> int:
+        return len(self._items)
+
+    def __iter__(self) -> Iterator[Any]:
+        return iter(self._items)
+
+    def __getitem__(self, index):
+        return list(self._items)[index]
+
+    def __bool__(self) -> bool:
+        return bool(self._items)
 
 
 @dataclass
@@ -335,7 +372,14 @@ class GlobalWorkspace:
         self._candidates: list[CognitiveCandidate] = []
         self._inhibited: dict[str, int] = {}   # source -> ticks_remaining
         self._processors: list[ProcessorFn] = []
-        self._history: list[BroadcastRecord] = []
+        # Retention comes from the shared working-history policy rather than a
+        # hardcoded 100, and lives in a self-bounding buffer. Both were the
+        # superseded core/global_workspace.py's design; absorbing them here is
+        # what makes retiring that module a merge rather than a loss.
+        self.max_history: int = working_history_retention_policy(
+            "AURA_GLOBAL_WORKSPACE_HISTORY_MAX",
+        ).max_items
+        self._history: HistoryBuffer = HistoryBuffer(self.max_history)
         self._tick: int = 0
         self.attention_schema: Any = attention_schema
         self.last_winner: CognitiveCandidate | None = None
@@ -382,13 +426,22 @@ class GlobalWorkspace:
         _record_workspace_degradation(error, phase=phase, action=action, severity=severity)
 
     @property
-    def history(self) -> list[BroadcastRecord]:
-        """Backward compatibility for AttentionSummarizer."""
+    def history(self) -> HistoryBuffer:
+        """Broadcast history. Bounded by construction — see HistoryBuffer.
+
+        Iterable, sliceable and len()-able like the list it replaced, so
+        AttentionSummarizer and other readers are unaffected.
+        """
         return self._history
 
     @history.setter
-    def history(self, value: list[BroadcastRecord]) -> None:
-        self._history = value
+    def history(self, value: Iterable[Any]) -> None:
+        # Assigning a plain list must not silently unbound the buffer.
+        self._history = (
+            value
+            if isinstance(value, HistoryBuffer)
+            else HistoryBuffer(self.max_history, value)
+        )
 
     # ------------------------------------------------------------------
     # Submission API — called by subsystems every heartbeat tick
@@ -784,9 +837,8 @@ class GlobalWorkspace:
         try:
             mycelium = ServiceContainer.get("mycelial_network", default=None)
             if mycelium:
-                h = mycelium.get_hypha("consciousness", "workspace")
-                if h:
-                    h.strength = 10.0  # Thicken the visual noise — the system *feels* flooded.
+                # Thicken the visual noise while preserving network ownership.
+                mycelium.set_hypha_strength("consciousness", "workspace", 10.0)
                 get_task_tracker().create_task(
                     mycelium.emit_reflex("NEURAL_FLOOD", {"source": dropped_source})
                 )
@@ -828,9 +880,7 @@ class GlobalWorkspace:
         try:
             mycelium = ServiceContainer.get("mycelial_network", default=None)
             if mycelium:
-                hypha = mycelium.get_hypha("consciousness", "workspace")
-                if hypha:
-                    hypha.pulse(success=True)
+                mycelium.pulse_hypha("consciousness", "workspace", success=True)
         except _WORKSPACE_RECOVERABLE_ERRORS as _e:
             self._record_degradation(
                 _e,
@@ -906,9 +956,10 @@ class GlobalWorkspace:
                 winner=winner,
                 losers=[loser.source for loser in losers]
             )
+            # No manual truncation: the buffer enforces its own bound, so it
+            # holds for every writer rather than only for the ones that
+            # remember to check.
             self._history.append(record)
-            if len(self._history) > 100:
-                self._history = self._history[-100:]
 
             self.last_winner = winner
 
