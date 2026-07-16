@@ -1245,6 +1245,15 @@ def test_read_only_checkout_never_chmods_an_external_symlink_target(tmp_path: Pa
     assert external.stat().st_mode & 0o777 == 0o600
 
 
+def test_read_only_checkout_rejects_a_broken_symlink_explicitly(tmp_path: Path) -> None:
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    (checkout / "missing-link").symlink_to("not-present")
+
+    with pytest.raises(RuntimeError, match="broken symlink"):
+        _make_tree_read_only(checkout)
+
+
 def test_read_only_checkout_allows_internal_symlink_without_following_it(
     tmp_path: Path,
 ) -> None:

@@ -112,7 +112,12 @@ def _make_tree_read_only(root: Path) -> None:
             continue
         mode = path.lstat().st_mode
         if stat.S_ISLNK(mode):
-            resolved = path.resolve(strict=True)
+            try:
+                resolved = path.resolve(strict=True)
+            except (FileNotFoundError, RuntimeError) as exc:
+                raise RuntimeError(
+                    f"source checkout contains a broken symlink: {path}"
+                ) from exc
             if not resolved.is_relative_to(root) or ".git" in resolved.relative_to(root).parts:
                 raise RuntimeError(f"source checkout contains an unsafe symlink: {path}")
             continue
