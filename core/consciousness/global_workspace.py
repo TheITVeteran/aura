@@ -837,8 +837,9 @@ class GlobalWorkspace:
         try:
             mycelium = ServiceContainer.get("mycelial_network", default=None)
             if mycelium:
-                # Thicken the visual noise while preserving network ownership.
-                mycelium.set_hypha_strength("consciousness", "workspace", 10.0)
+                h = mycelium.get_hypha("consciousness", "workspace")
+                if h:
+                    h.strength = 10.0  # Thicken the visual noise — the system *feels* flooded.
                 get_task_tracker().create_task(
                     mycelium.emit_reflex("NEURAL_FLOOD", {"source": dropped_source})
                 )
@@ -880,7 +881,9 @@ class GlobalWorkspace:
         try:
             mycelium = ServiceContainer.get("mycelial_network", default=None)
             if mycelium:
-                mycelium.pulse_hypha("consciousness", "workspace", success=True)
+                hypha = mycelium.get_hypha("consciousness", "workspace")
+                if hypha:
+                    hypha.pulse(success=True)
         except _WORKSPACE_RECOVERABLE_ERRORS as _e:
             self._record_degradation(
                 _e,
