@@ -1,4 +1,5 @@
 """Effect-ownership lint and baseline-ratchet invariants."""
+
 from __future__ import annotations
 
 import ast
@@ -42,14 +43,17 @@ def test_lint_passes_on_repo():
 def test_lint_detects_forbidden_call() -> None:
     bad = REPO / "core" / "_governance_lint_test_violator.py"
     try:
-        bad.write_text(textwrap.dedent('''
+        bad.write_text(
+            textwrap.dedent('''
             """ephemeral test file: must trigger governance lint"""
 
             import subprocess
 
             def use_unsafe() -> None:
                 subprocess.run(["echo", "unsafe"], check=False)
-        '''), encoding="utf-8")
+        '''),
+            encoding="utf-8",
+        )
         rc = _run_lint()
         assert rc == 1
     finally:
@@ -198,6 +202,10 @@ def test_scanner_separates_desktop_observation_from_mutation() -> None:
 def test_flight_recorder_uses_the_canonical_file_gateway_escape_hatch() -> None:
     assert _canonical_owner("raw_file_mutation", "core/runtime/flight_recorder.py") is False
     assert _canonical_owner("file_write_gateway", "core/runtime/flight_recorder.py") is True
+
+
+def test_stable_file_reader_is_a_canonical_primitive_owner() -> None:
+    assert _canonical_owner("raw_file_mutation", "core/runtime/file_read_gateway.py") is True
 
 
 def test_storage_migrations_are_canonical_file_gateway_owners() -> None:

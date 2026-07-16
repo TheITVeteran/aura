@@ -1,4 +1,5 @@
 """Canonical persistence owner for latent-cortex runtime artifacts."""
+
 from __future__ import annotations
 
 import hashlib
@@ -22,9 +23,7 @@ class LatentCortexPersistence:
     """Publish latent artifacts through one governed transactional boundary."""
 
     @staticmethod
-    def _commit(
-        entries: tuple[FileWriteBatchEntry, ...], *, source: str
-    ) -> FileWriteBatchReceipt:
+    def _commit(entries: tuple[FileWriteBatchEntry, ...], *, source: str) -> FileWriteBatchReceipt:
         with local_internal_governed_scope(source):
             receipt = get_file_write_gateway().write_bytes_batch(
                 entries,
@@ -113,6 +112,18 @@ class LatentCortexPersistence:
         return self._commit(
             (FileWriteBatchEntry(path, payload),),
             source="latent_cortex_lab_report",
+        )
+
+    def save_frontier_verification(
+        self,
+        path: Path,
+        payload: bytes,
+    ) -> FileWriteBatchReceipt:
+        """Publish a standalone verification certificate or signing request."""
+
+        return self._commit(
+            (FileWriteBatchEntry(path, payload),),
+            source="latent_cortex_frontier_verification",
         )
 
 

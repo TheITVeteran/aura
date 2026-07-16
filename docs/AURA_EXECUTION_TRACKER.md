@@ -16,9 +16,9 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **Checkpoint 95 is the current
-  source candidate in the `main` worktree; Checkpoint 94 is pushed at
-  `d51dcf0d`, and exact rebuilt-app proof remains open after CP95**. Checkpoint 80
+- Current bounded implementation milestone: **Checkpoint 96 is the current
+  source candidate in the `main` worktree; Checkpoint 95 is pushed at
+  `240b5b95`, and exact rebuilt-app proof remains open after CP96**. Checkpoint 80
   made cached
   readiness truthful and fast,
   removed synchronous Phi/Eternal maintenance from the foreground cycle, and
@@ -148,7 +148,7 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   release, and causal-proof obligations remain open unless their rows
   explicitly close.
 - Overall completion percentage: **27% evidence-weighted planning estimate at
-  Checkpoint 95**. The exact
+  Checkpoint 96**. The exact
   Checkpoint 80 app earns bounded live credit for readiness, health, base boot,
   and one-attempt chat latency, but not output quality, sustained load, GUI
   frame SLO, portability, semantic review, release, or soak. The newly
@@ -160,16 +160,16 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   `PROGRESS-CONTROL-001` and `SCOPE-001` must replace the manual estimate with a
   generated denominator; new obligations increase it, regressions reopen it,
   and source-green/live-open work never receives full closure credit.
-  CP92-95 close bounded evidence-integrity, runtime-convergence, and initial
+  CP92-96 close bounded evidence-integrity, runtime-convergence, and initial
   latent ownership/lifecycle work already present in the denominator. The full
   Anima Rationis program adds causal ingress, consolidation, anti-interference,
   equal-compute science, live 32B, and independent certification obligations;
-  source mechanics do not receive capability credit. CP95 has no
+  source mechanics do not receive capability credit. CP96 has no
   exact rebuilt-app, portability,
   release, or soak credit yet and therefore does not move the rounded
   percentage.
 - Total checkpoint forecast: **approximately 292-399 total checkpoints for the
-  expanded program, with 95 checkpoints and approximately 197-304 remaining before
+  expanded program, with 96 checkpoints and approximately 196-303 remaining before
   final soak/release closure**. The Recursive Latent Cortex / Anima Rationis
   requirement adds **40-56 total checkpoints** for independent foundation
   review; seven-mechanism hardening; exact compute and lifecycle accounting;
@@ -266,10 +266,10 @@ Status rules:
 | `RLC-EXPERIMENTS-001` | `IN PROGRESS (ALPHA-BOUND PAIRED GATE + COUNTERBALANCED CONTROL SOURCE GREEN; REAL RUNS OPEN) 2026-07-16` | Execute recurrence sweeps, depth extrapolation, slot ablation plus same-episode restoration, virtual width, gradient-vs-random optimization, fast-weight sham, schedule lesions, mechanism factorial ablations, scaling, null/common-driver controls, and restoration on frozen fresh tasks. CP95 derives family and pooled effect bounds from the configured alpha, applies simultaneous family bounds, and records deterministic counterbalanced arm order. Use repeated seeds, preregistered metrics, multiplicity correction, effect floors, exact receipts, and null-result-driven redesign. | `RLC-FRONTIER-001`, `TEST-DEPTH-001`; CP95 |
 | `RLC-BASELINES-001` | `OPEN 2026-07-15` | Implement canonical vanilla resident-32B, longer-token CoT, best-of-N, self-consistency, verifier-search, equivalent-forward-pass, equal-FLOP, equal-latency, and feature-ablation controls with identical prompt information, tools, verifier, cache state, checkpoint, task order, and output limits. No capability claim may use a straw baseline. | `RLC-COMPUTE-001`, `RLC-EXPERIMENTS-001` |
 | `RLC-FRESH-TASKS-001` | `IN PROGRESS (SIGNED TWO-PHASE COMMITMENT CONTRACT SOURCE GREEN; GENERATORS/CAMPAIGNS OPEN) 2026-07-16` | Build post-freeze task commitments and blinded generators across novel algorithms, mathematics, coding, scientific inference, long-horizon planning, calibration, misleading-premise robustness, and real Aura workflows. CP95 enforces architecture freeze before generation, a distinct externally pinned issuer's signed manifest commitment after generation, arm execution only after commitment, and final verification after execution. Add deduplication against training/eval/history, contamination scans, encrypted precommitments, difficulty calibration, immutable task lineage, and real campaigns. | `RLC-EXPERIMENTS-001`, `CAPABILITY-CERT-001`; CP95 |
-| `RLC-FRONTIER-001` | `IN PROGRESS (CRYPTOGRAPHIC MACHINE CERTIFICATE CONTRACT SOURCE GREEN; EVIDENCE BUNDLE OPEN) 2026-07-16` | Prove statistically significant, practically meaningful, compute-matched gains of the full integrated resident 32B over vanilla/equal-compute controls, then run contemporaneous external-frontier comparisons under equal information/tools and separately reported compute and latency budgets. CP95 binds producer identity into the evidence hash and requires externally supplied Ed25519 trust pins for distinct task-issuer and verifier roles, including implementation/release identities and signed chronology. Require broad replicated gains, no material domain regression, exact checkpoint/build identity, and a machine-accepted certificate. | `RLC-BASELINES-001`, `RLC-FRESH-TASKS-001`, `RLC-LIVE32B-001`; CP95 |
+| `RLC-FRONTIER-001` | `IN PROGRESS (PRIMARY RAW PACKAGE VERIFICATION SOURCE GREEN; REAL EVIDENCE + RELEASE GATES OPEN) 2026-07-16` | Prove statistically significant, practically meaningful, compute-matched gains of the full integrated resident 32B over vanilla/equal-compute controls, then run contemporaneous external-frontier comparisons under equal information/tools and separately reported compute and latency budgets. CP95 binds producer identity into the evidence hash and requires externally supplied Ed25519 trust pins for distinct task-issuer and verifier roles. CP96 reopens every raw task/output/scorer/verifier/compute/runtime record, rejects unmanifested or linked files, pins the exact local verification kernel separately from the external signer implementation, and separates primary-comparison acceptance from release acceptance. External-model certification now fails closed until comparable provider telemetry exists. Require broad replicated gains, no material domain regression, exact checkpoint/build identity, operation-level compute recomputation, scorer replay, factorial ablations, and a machine-accepted release certificate. | `RLC-BASELINES-001`, `RLC-FRESH-TASKS-001`, `RLC-LIVE32B-001`; CP95-96 |
 | `RLC-LIVE32B-001` | `OPEN 2026-07-15` | Rebuild and launch the installed Aura.app from the exact pushed commit, prove the resident checkpoint is the intended 32B artifact, run every mechanism and full composition through worker/service/CognitiveEngine paths, verify visible answer causality and latency/resource SLOs, inspect Neural and terminal streams, survive cancellation/restart/pressure, and publish immutable live receipts. Tiny/1.5B/7B evidence is engineering/scaling evidence only. | `RLC-RUNTIME-001`, `GUI-001`, `VALIDATE-001` |
 | `RLC-SCALING-001` | `OPEN 2026-07-15` | Run frozen 1.5B/7B/32B scaling curves to distinguish architecture mechanics from capability effects, establish recurrence/slot/branch/optimizer scaling laws and resource envelopes, and detect gains that disappear or reverse at resident scale. Never substitute smaller-model success for the 32B release claim. | `RLC-EXPERIMENTS-001`, `RLC-LIVE32B-001` |
-| `RLC-INDEPENDENT-001` | `IN PROGRESS (TRUST-PINNED ATTESTATION CONTRACT SOURCE GREEN; STANDALONE RECOMPUTATION OPEN) 2026-07-16` | Produce a standalone verifier implementation and reproducible evidence bundle; have an independent process/reviewer recompute hashes, task lineage, compute matching, statistics, ablations, and claim tier from raw outputs. CP95 rejects missing trust roots, wrong keys, signature tampering, producer/verifier or issuer/producer role collision, unbound producer identity, stale chronology, and divergent signed evidence. The separate executable, external custody, raw-artifact recomputation, and live verdict remain open. | `RLC-FRONTIER-001`, `RELEASE-CONTRACT-001`; CP95 |
+| `RLC-INDEPENDENT-001` | `IN PROGRESS (RAW ARTIFACT RECOMPUTATION + EXTERNAL SIGNING REQUEST SOURCE GREEN; INDEPENDENT SCORE/STATS REIMPLEMENTATION OPEN) 2026-07-16` | Produce a standalone verifier implementation and reproducible evidence bundle; have an independent process/reviewer recompute hashes, task lineage, compute matching, statistics, ablations, and claim tier from raw outputs. CP95 rejects missing trust roots, wrong keys, signature tampering, producer/verifier or issuer/producer role collision, unbound producer identity, stale chronology, and divergent signed evidence. CP96 adds a model-free CLI, strict duplicate-key/non-finite JSON decoding, externally supplied role/key pins, a separately pinned local verification-kernel digest, six bounded canonical JSONL stores, exact raw-byte and structured-receipt rebinding, no-follow stable reads, complete raw-directory membership, deterministic certificates, and an unsigned-bundle preverification request for an externally held Ed25519 key. It does not yet independently reimplement statistics/scorers, reconstruct operation-level compute, verify signed worker-origin receipts, certify ablations, hold real external keys, or accept a live 32B result. | `RLC-FRONTIER-001`, `RELEASE-CONTRACT-001`; CP95-96 |
 | `RLC-CLAIMS-001` | `OPEN 2026-07-15` | Publish exact conclusions for mechanics, trained-checkpoint dynamics, resident-32B capability, broad/frontier gains, limitations, nulls, and non-claims. Documentation, UI, health, Foundry, and release manifests must derive from accepted artifacts and automatically demote stale, mismatched, or superseded evidence. | `RLC-INDEPENDENT-001`, `CLAIMS-001`, `RELEASE-CONTRACT-001` |
 | `RELEASE-CONTRACT-001` | `OPEN 2026-07-13` | Define the Aura 1.0 product contract as a versioned machine-readable manifest: every supported capability, platform/hardware/account/permission mode, SLO, data guarantee, security/privacy boundary, operator control, degradation behavior, claim limit, and explicit non-goal must have an owner and acceptance evidence. Release tooling must reject an undocumented feature, unsupported claim, open severity-1/2 defect, waived mandatory gate, or proof artifact from a different commit/build. | `SCOPE-001`, `CAPABILITY-CERT-001`, `VALIDATE-001`, `OPERATIONS-001`; Aura 1.0 closure question 2026-07-13 |
 | `EXPECT-001` | `IN PROGRESS (NON-EXECUTION AMPLIFICATION SOURCE GREEN; LIVE OPEN) 2026-07-13` | Complete Fable's Aura Expectation Engine so natural-language intent becomes causal acceptance criteria, observed-effect verdicts, repair, persistence, and follow-through across every action path. Checkpoint 71 adds one structured result-disposition boundary: deferral, denial, admission failure, scheduler busy, refusal, cancellation, timeout, and explicit failed execution cannot trigger surprise, LLM belief extraction, rethink, or recursive redispatch. Deterministic observed facts remain eligible, while successful unknown results use a bounded direct generation lane with tools disabled instead of becoming an executable cognitive objective. General acceptance-criteria compilation, effect verification, repair convergence, and exact-main live proof remain open. | Pass F 1 and 14; Matrix 9; `ACTION-SPINE-001`, `FOREGROUND-LATENCY-001`; Checkpoint 71 |
@@ -17205,3 +17205,109 @@ Verification and next boundary:
   Multi-hour and 24-72 hour soaks remain deferred until every shorter gate is
   green. No trained 32B experiment has run in CP95, so no capability or frontier
   conclusion is recorded.
+
+## Checkpoint 2026-07-16-96: Raw Frontier Evidence Reverification
+
+Checkpoint 96 is the current source candidate in the `main` worktree. It
+advances `RLC-FRONTIER-001`, `RLC-INDEPENDENT-001`, `RLC-CLAIMS-001`,
+`EFFECT-001`, `FAULT-001`, `SECURITY-001`, and `TEST-DEPTH-001`. It closes the
+specific CP95 gap where the frontier gate validated supplied SHA-256 strings,
+embedded outcomes, and signed envelope relationships without reopening the raw
+files those values purported to identify. It does not award resident-32B,
+reasoning-gain, external-frontier, ablation, release, or soak credit.
+
+Implemented raw evidence boundary:
+
+- A versioned raw-artifact manifest binds the producer, preregistration, task
+  commitment, and exactly six canonical bounded JSONL stores: task payloads,
+  treatment outputs, control outputs, scorer configurations, blinded verifier
+  receipts, and structured treatment/control compute plus runtime receipts.
+  Every store has one immutable path, exact byte hash, size, and record count;
+  every trial must occur exactly once in every store.
+- Verification decodes arbitrary raw records from canonical base64, recomputes
+  their SHA-256 digests, and compares them to task/output/scorer/verifier
+  lineage in the evidence bundle. Structured compute and runtime receipts must
+  equal their embedded counterparts exactly. Blinded verifier receipts bind
+  task, scorer, both outputs, both outcomes, scorer implementation, and
+  chronology before their own raw bytes are accepted.
+- The artifact root is a closed set. Absolute, parent-relative, noncanonical,
+  linked, special, missing, duplicate, extra, oversized, unterminated,
+  non-UTF-8, duplicate-key, non-finite, and concurrently changing evidence is
+  rejected. The manifest hash is over its exact bytes, not a normalized
+  reconstruction.
+- `FileReadGateway` is the canonical no-follow descriptor boundary for stable
+  proof/state reads. It opens nonblocking so a FIFO or device cannot stall
+  validation before the type check, proves regular-file type, enforces the byte
+  bound before reading, and compares device, inode, size, nanosecond mtime, and
+  nanosecond ctime after a successful read. `O_NOFOLLOW` races are translated to
+  a stable typed rejection and descriptor cleanup is exception-safe. The
+  verifier therefore adds no distributed raw-file debt.
+
+Independent custody and claim honesty:
+
+- `tools/verify_latent_cortex_frontier.py` runs without a model and exposes
+  deterministic `verify` and `prepare-attestation` commands. The latter accepts
+  only an unsigned bundle whose raw package, task-issuer signature, chronology,
+  and primary paired statistics pass except for the deliberately absent final
+  verifier envelope. It emits the exact canonical payload for an externally
+  held Ed25519 key without importing or minting that private key.
+- Trust configuration is supplied outside the producer package. It pins task
+  issuer and verifier public keys plus implementation/release hashes, rejects
+  duplicate identities, and rejects the same public key hidden behind different
+  role IDs. It separately pins the local verification source kernel over the
+  stable bytes of the CLI, raw-artifact, certificate, statistics, experiment,
+  and file-read implementations, so changed local verifier code cannot silently
+  reuse an old trust file. The model-free `fingerprint` command emits that exact
+  identity for external trust-file preparation; executable, dependency, and
+  container release provenance remain separate release obligations.
+- A positive primary comparison is reported separately from release truth.
+  `accepted` and `statistical_tier` describe the bounded same-checkpoint
+  comparison; `release_accepted` remains false and `ablation_status` remains
+  `NOT_VERIFIED` until independent scorer/statistics reimplementation,
+  operation-ledger compute reconstruction, worker-origin signatures,
+  preregistered factorial ablations, and real external custody are complete.
+  External-model comparison fails closed until comparable provider telemetry
+  and a defensible cross-architecture compute metric exist.
+
+Verification and next boundary:
+
+- The nine latent-cortex suites pass 208/208. Seventeen non-overlapping
+  governance and stable file-reader cases also pass, for 225 bounded CP96
+  invocations. Adversarial
+  coverage includes raw-byte mutation, manifest rebinding, missing trials,
+  structured-receipt divergence, traversal, symlinks, unmanifested files,
+  duplicate JSON keys, cross-role key reuse, local verification-kernel mismatch,
+  FIFO input, symlink-open races, invalid and stale direct-call timestamps,
+  unsigned preverification, externally signed completion, deterministic replay,
+  and truthful CLI exits.
+- Ruff, configured lint, enterprise static ratchet, source hygiene, compile,
+  cognitive candidate-gate audit (13 declared / 13 discovered), local security
+  scan (2,626 files / zero findings), production contract (37/37), closeout
+  rubric (20/20), model-load ownership (28 paths / 40 references / zero
+  findings), resource-observation ownership (2,736 Python files / zero
+  findings), and governance ownership are green. Governance now reports 1,842
+  recognized calls in 1,730 buckets while migration debt remains exactly 1,692;
+  the sole new primitive call belongs to the canonical stable-read gateway.
+- Architecture quality remains an explicit red project gate and its baseline
+  was not refreshed: current score 42.35 versus baseline 46.38, 8,664 dependency
+  edges versus 7,528, nine cycles versus six, and 54 oversized modules versus
+  37. CP96 introduces no baseline forgiveness; repository-wide cycle,
+  dependency, and module-size reduction remains required before release.
+- CP95's clean-tree mechanical closeout audit passed at exact pushed commit
+  `240b5b95`, but semantic closeout remains red: only 90,738 of 1,219,820 code
+  lines (7.44%) are current, with 3,770 code files unreviewed, 888 stale reviews,
+  and 26 orphan reviews. Mechanical audit success is not whole-project closure.
+- Evidence-weighted completion remains `27%`. This is total checkpoint `96` of
+  the expanded `292-399` faithful total-checkpoint forecast, leaving
+  approximately `196-303` implementation, cleanup, integration, verification,
+  live, portability, release, and soak checkpoints.
+- Before any intelligence claim, close the exact live blockers: rebuild the
+  installed app from the pushed candidate; route depth-worthy desktop
+  CognitiveEngine turns through `latent_reason`; bind worker boot, full 32B
+  checkpoint, parameter count, app build/provenance, and source commit into
+  episode receipts; propagate those receipts to the chat proof contract; add
+  operation-level compute and verifier-owned scorer replay; preregister fresh
+  broad tasks and factorial ablations; then execute matched vanilla/full-stack
+  resident-32B campaigns. A null or regressed result reopens mechanism design.
+  Multi-hour and 24-72 hour soaks remain deferred until all shorter proof and
+  release gates are green.

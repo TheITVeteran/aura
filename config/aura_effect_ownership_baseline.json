@@ -10305,6 +10305,14 @@
       "scope": "<module>.WorkflowStore.__init__"
     },
     {
+      "callee": "os.open",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/runtime/file_read_gateway.py",
+      "scope": "<module>.open_stable_readonly_binary"
+    },
+    {
       "callee": "os.replace",
       "canonical_owner": true,
       "category": "raw_file_mutation",
@@ -13834,6 +13842,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "8a2640e7027031b946b0d65ebb1046c5d4e611d36b921be36fdd926b64d57aff",
+  "inventory_sha256": "bb6b9bd3ec3a308bab0b5f10dc81203f337aa5f713d1d3cfd82cf80bd6e49402",
   "schema_version": 1
 }

@@ -114,6 +114,7 @@ CANONICAL_PRIMITIVE_OWNERS: dict[str, frozenset[str]] = {
     "raw_file_mutation": frozenset(
         {
             "core/runtime/atomic_writer.py",
+            "core/runtime/file_read_gateway.py",
             "core/runtime/file_write_gateway.py",
             "core/runtime/shutdown_artifact_store.py",
         }
@@ -517,14 +518,15 @@ class EffectVisitor(ast.NodeVisitor):
             return "raw_network"
         stripped_callee = _strip_project_prefix(callee)
         if (
-            stripped_callee.startswith("pyautogui.")
-            and method in _DESKTOP_MUTATION_METHODS
-        ) or (
-            stripped_callee.startswith(
-                ("pynput.keyboard.Controller().", "pynput.mouse.Controller().")
+            (stripped_callee.startswith("pyautogui.") and method in _DESKTOP_MUTATION_METHODS)
+            or (
+                stripped_callee.startswith(
+                    ("pynput.keyboard.Controller().", "pynput.mouse.Controller().")
+                )
+                and method in _DESKTOP_MUTATION_METHODS
             )
-            and method in _DESKTOP_MUTATION_METHODS
-        ) or stripped_callee.startswith("Quartz.CGEventPost"):
+            or stripped_callee.startswith("Quartz.CGEventPost")
+        ):
             return "raw_desktop"
         if _matches_exact(callee, _BROWSER_EXACT_CALLS) or (
             method in _BROWSER_ACTION_METHODS and _looks_browser_receiver(callee)
@@ -837,13 +839,9 @@ def compare_inventory(
                     f"DECREASED {label} baseline={expected.count} current={observed.count}"
                 )
             if expected.canonical_owner and not observed.canonical_owner:
-                regressions.append(
-                    f"OWNER_DEMOTED {label} baseline=True current=False"
-                )
+                regressions.append(f"OWNER_DEMOTED {label} baseline=True current=False")
             elif observed.canonical_owner and not expected.canonical_owner:
-                stale.append(
-                    f"OWNER_PROMOTED {label} baseline=False current=True"
-                )
+                stale.append(f"OWNER_PROMOTED {label} baseline=False current=True")
     return regressions, stale
 
 
@@ -901,9 +899,7 @@ def main(argv: Iterable[str] = ()) -> int:
         report["ok"] = True
         report["baseline_written"] = True
         _write_report(args.json_out, report)
-        debt_calls = sum(
-            bucket.count for bucket in buckets if not bucket.canonical_owner
-        )
+        debt_calls = sum(bucket.count for bucket in buckets if not bucket.canonical_owner)
         print(
             "governance effect ownership baseline written: "
             f"{len(buckets)} buckets, {debt_calls} migration-debt calls"
