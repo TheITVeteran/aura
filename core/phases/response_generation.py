@@ -689,6 +689,72 @@ class ResponseGenerationPhase(BasePhase):
             return {}
         return dict(metadata) if isinstance(metadata, dict) else {}
 
+    @staticmethod
+    def _latent_cortex_surface_receipt(
+        receipt: dict[str, Any],
+        *,
+        controls_bound: bool,
+        generation_controls: dict[str, Any],
+        token_budget: int,
+        requested_output_contract: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Translate a validated latent receipt into the live surface contract."""
+
+        expected_alpha = generation_controls.get("clean_user_surface_steering_alpha")
+        expected_loops = generation_controls.get("clean_user_surface_recurrent_loops")
+        observed_alpha = receipt.get("episode_affective_steering_alpha")
+        observed_steps = receipt.get("steps_taken")
+        alpha_applied_ok = bool(
+            isinstance(expected_alpha, (int, float))
+            and not isinstance(expected_alpha, bool)
+            and isinstance(observed_alpha, (int, float))
+            and not isinstance(observed_alpha, bool)
+            and abs(float(expected_alpha) - float(observed_alpha)) <= 1e-6
+        )
+        recurrence_applied_ok = bool(
+            type(expected_loops) is int
+            and expected_loops > 0
+            and type(observed_steps) is int
+            and observed_steps >= expected_loops
+        )
+        controls_applied = bool(
+            controls_bound
+            and receipt.get("episode_affective_steering_applied") is True
+            and alpha_applied_ok
+            and recurrence_applied_ok
+        )
+        return {
+            "enabled": True,
+            "applied": controls_applied,
+            "generation_required": True,
+            "application_status": (
+                "latent_cortex_controls_applied"
+                if controls_applied
+                else "latent_cortex_controls_unbound"
+            ),
+            "live_mind_controls_bound": bool(controls_bound),
+            "clean_user_surface_contract": True,
+            "surface_validation_prompt_present": True,
+            "surface_alpha_applied": observed_alpha,
+            "surface_alpha_applied_ok": alpha_applied_ok,
+            "recurrent_runtime_loops_applied": observed_steps,
+            "recurrent_runtime_loops_applied_ok": recurrence_applied_ok,
+            "surface_quality_gate_enabled": False,
+            "surface_quality_gate_passed": True,
+            "surface_quality_gate_attempts": 0,
+            "surface_quality_gate_reasons": [],
+            "generation_max_tokens": int(token_budget),
+            "generated_tokens": int(receipt.get("decode_generated_tokens") or 0),
+            "decode_temperature_applied": receipt.get("decode_temperature"),
+            "decode_top_p_applied": receipt.get("decode_top_p"),
+            "requested_output_contract": (
+                dict(requested_output_contract)
+                if isinstance(requested_output_contract, dict)
+                else None
+            ),
+            "source": "recursive_latent_cortex",
+        }
+
     async def _maybe_amplify_response(
         self,
         *,
@@ -1394,12 +1460,154 @@ class ResponseGenerationPhase(BasePhase):
             )
 
             response_text: Any = None
+            latent_trace: dict[str, Any] = {
+                "latent_cortex_selected": False,
+                "latent_cortex_attempted": False,
+                "latent_cortex_succeeded": False,
+                "latent_cortex_fallback_used": False,
+                "latent_cortex_failure_reason": "",
+                "latent_cortex_identity_bound": False,
+                "latent_cortex_receipt": {},
+            }
             try:
                 request_timeout = self._request_timeout(
                     is_background=is_background,
                     deep_handoff=deep_handoff,
                 )
-                think_coro = router.think(
+                from core.brain.latent_cortex_service import LatentCortexService
+
+                selection = LatentCortexService.select_foreground_episode(
+                    foreground=not is_background,
+                    desktop_required=desktop_cognitive_engine_required,
+                    cognitive_mode=str(state.cognition.current_mode.value),
+                    prompt_shape=runtime_context.get("prompt_shape"),
+                    compact_contract=bool(
+                        runtime_context.get("compact_desktop_chat_contract", False)
+                    ),
+                    strict_output_contract=visible_output_contract_payload is not None,
+                    incompatible_contract=bool(
+                        runtime_context.get("desktop_execution_contract", False)
+                        or runtime_context.get("capability_inventory_contract", False)
+                        or runtime_fact_status_contract
+                        or runtime_context.get("memory_state_contract", False)
+                        or runtime_context.get("self_condition_contract", False)
+                    ),
+                    proof_or_benchmark=proof_answer_run,
+                    explicitly_required=bool(
+                        runtime_context.get("latent_cortex_required", False)
+                    ),
+                )
+                latent_trace.update(
+                    {
+                        key: value
+                        for key, value in selection.items()
+                        if key.startswith("latent_cortex_")
+                    }
+                )
+                if selection.get("latent_cortex_selected") is True:
+                    latent_trace["latent_cortex_attempted"] = True
+                    service = self.container.get("latent_cortex", default=None)
+                    if service is None:
+                        try:
+                            from core.runtime.service_registry import get_runtime_service
+
+                            service = get_runtime_service("latent_cortex", default=None)
+                        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+                            service = None
+                    if service is None:
+                        latent_result = {
+                            "ok": False,
+                            "reason": "latent_service_not_registered",
+                        }
+                    else:
+                        latent_timeout = min(
+                            120.0,
+                            max(15.0, request_timeout * 0.65),
+                        )
+                        latent_result = await service.deep_reason(
+                            messages=messages,
+                            stakes=float(selection.get("stakes") or 0.75),
+                            uncertainty=float(selection.get("uncertainty") or 0.80),
+                            domain=str(
+                                runtime_context.get("latent_cortex_domain")
+                                or "desktop_conversation"
+                            ),
+                            config_overrides={
+                                "decode_max_tokens": int(token_budget),
+                                "decode_temperature": float(generation_temperature),
+                                "decode_top_p": float(generation_top_p),
+                            },
+                            runtime_controls={
+                                "clean_user_surface_recurrent_loops": int(
+                                    live_mind_generation_controls.get(
+                                        "clean_user_surface_recurrent_loops", 1
+                                    )
+                                ),
+                                "clean_user_surface_steering_alpha": self._safe_bias_float(
+                                    live_mind_generation_controls.get(
+                                        "clean_user_surface_steering_alpha"
+                                    ),
+                                    0.25,
+                                ),
+                            },
+                            timeout_s=latent_timeout,
+                            require_full_stack=True,
+                            foreground_request=True,
+                        )
+                    if (
+                        isinstance(latent_result, dict)
+                        and latent_result.get("ok") is True
+                        and str(latent_result.get("text") or "").strip()
+                    ):
+                        latent_receipt = latent_result.get("receipt")
+                        latent_receipt = (
+                            dict(latent_receipt)
+                            if isinstance(latent_receipt, dict)
+                            else {}
+                        )
+                        runtime_identity = latent_receipt.get("runtime_identity")
+                        identity_bound = bool(
+                            isinstance(runtime_identity, dict)
+                            and runtime_identity.get("identity_bound") is True
+                        )
+                        latent_trace.update(
+                            {
+                                "latent_cortex_succeeded": True,
+                                "latent_cortex_identity_bound": identity_bound,
+                                "latent_cortex_receipt": latent_receipt,
+                                "response_path": "cognitive_engine_latent_cortex",
+                            }
+                        )
+                        response_text = str(latent_result.get("text") or "")
+                        generation_metadata = {
+                            **latent_trace,
+                            "surface_control_receipt": self._latent_cortex_surface_receipt(
+                                latent_receipt,
+                                controls_bound=live_mind_controls_bound,
+                                generation_controls=live_mind_generation_controls,
+                                token_budget=token_budget,
+                                requested_output_contract=visible_output_contract_payload,
+                            ),
+                        }
+                    else:
+                        failure_reason = (
+                            str(latent_result.get("reason") or "latent_episode_failed")
+                            if isinstance(latent_result, dict)
+                            else "invalid_latent_service_response"
+                        )
+                        latent_trace.update(
+                            {
+                                "latent_cortex_fallback_used": True,
+                                "latent_cortex_failure_reason": failure_reason,
+                            }
+                        )
+                        logger.warning(
+                            "Recursive Latent Cortex declined the selected foreground turn (%s); using one ordinary resident generation.",
+                            failure_reason,
+                        )
+
+                if response_text is None:
+                    think_coro = router.think(
                         messages=messages,
                         priority=1.0 if not is_background else 0.5,
                         origin=f"response_generation_{origin}",
@@ -1485,9 +1693,15 @@ class ResponseGenerationPhase(BasePhase):
                         semantic_output_token_cap=visible_output_contract.semantic_token_cap,
                         hard_output_token_ceiling=visible_output_contract.hard_token_ceiling,
                         timeout=request_timeout,
-                )
-                response_text = await asyncio.wait_for(think_coro, timeout=request_timeout + 4.0)
-                generation_metadata = self._generation_metadata_snapshot(router)
+                    )
+                    response_text = await asyncio.wait_for(
+                        think_coro,
+                        timeout=request_timeout + 4.0,
+                    )
+                    generation_metadata = {
+                        **self._generation_metadata_snapshot(router),
+                        **latent_trace,
+                    }
 
                 shape_repaired = False
                 if not is_background and not is_test_run:
@@ -1513,19 +1727,20 @@ class ResponseGenerationPhase(BasePhase):
                         )
 
                 pre_amplifier_text = response_text
-                response_text = await self._maybe_amplify_response(
-                    objective=objective,
-                    draft=response_text,
-                    router=router,
-                    state=state,
-                    request_timeout=request_timeout,
-                    origin=origin,
-                    tier=tier,
-                    runtime_context=runtime_context,
-                    is_user_facing=not is_background and not is_test_run,
-                    is_background=is_background,
-                    proof_or_benchmark=proof_answer_run,
-                )
+                if latent_trace.get("latent_cortex_selected") is not True:
+                    response_text = await self._maybe_amplify_response(
+                        objective=objective,
+                        draft=response_text,
+                        router=router,
+                        state=state,
+                        request_timeout=request_timeout,
+                        origin=origin,
+                        tier=tier,
+                        runtime_context=runtime_context,
+                        is_user_facing=not is_background and not is_test_run,
+                        is_background=is_background,
+                        proof_or_benchmark=proof_answer_run,
+                    )
                 amplifier_generation_metadata = generation_metadata_of(response_text)
                 amplifier_source_answer = str(
                     getattr(response_text, "reasoning_source_answer", response_text)
@@ -1561,7 +1776,10 @@ class ResponseGenerationPhase(BasePhase):
                         for item in merged_amplifier_mutations
                     )
                 if response_text != pre_amplifier_text:
-                    generation_metadata = amplifier_generation_metadata
+                    generation_metadata = {
+                        **amplifier_generation_metadata,
+                        **latent_trace,
+                    }
 
                 # System 2 internal critique layer to verify logical correctness
                 try:
@@ -1613,12 +1831,19 @@ class ResponseGenerationPhase(BasePhase):
                                 deterministic=False,
                             )
                             response_text = critique_response
-                            generation_metadata = self._generation_metadata_snapshot(router)
+                            generation_metadata = {
+                                **self._generation_metadata_snapshot(router),
+                                **latent_trace,
+                            }
                 except (ImportError, AttributeError, TypeError, ValueError, LookupError, RuntimeError, NameError, SyntaxError, TimeoutError) as critique_exc:
                     logger.warning("Failed to run System 2 self-critique: %s", critique_exc)
 
                 # ComposerNode: Structural Refinement
-                composer = self.container.get("composer_node", default=None)
+                composer = (
+                    None
+                    if latent_trace.get("latent_cortex_selected") is True
+                    else self.container.get("composer_node", default=None)
+                )
                 if composer and hasattr(composer, "refine"):
                     logger.debug("🎨 [Composer] Refining response structure...")
                     pre_composer_text = response_text
@@ -2056,7 +2281,15 @@ class ResponseGenerationPhase(BasePhase):
             ) = await enforce_dialogue_contract(
                 cleaned_response,
                 contract,
-                retry_generate=_retry_dialogue if not is_background and not is_test_run else None,
+                retry_generate=(
+                    _retry_dialogue
+                    if (
+                        not is_background
+                        and not is_test_run
+                        and latent_trace.get("latent_cortex_selected") is not True
+                    )
+                    else None
+                ),
                 state=state,
             )
             state.response_modifiers["dialogue_validation"] = dialogue_validation.to_dict()
@@ -2078,7 +2311,10 @@ class ResponseGenerationPhase(BasePhase):
                 deterministic=not dialogue_retried,
             )
             if dialogue_retried:
-                generation_metadata = self._generation_metadata_snapshot(router)
+                generation_metadata = {
+                    **self._generation_metadata_snapshot(router),
+                    **latent_trace,
+                }
                 logger.info("🗣️ ResponseGeneration: retried draft to satisfy dialogue contract.")
 
             pre_tool_repair = cleaned_response
@@ -2221,6 +2457,11 @@ class ResponseGenerationPhase(BasePhase):
                 surface_control_receipt.get("live_mind_controls_bound")
                 and surface_control_receipt.get("applied")
             )
+            latent_trace["latent_cortex_final_text_transformed"] = bool(
+                response_mutation_receipt.get("text_mutations")
+            )
+            for key, value in latent_trace.items():
+                state.response_modifiers[key] = value
 
             # 7. Derive new state with the response
             new_state = state.derive("response_generation")

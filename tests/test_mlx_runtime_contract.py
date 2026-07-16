@@ -791,7 +791,12 @@ def test_worker_blocks_generation_when_steering_liveness_drops(monkeypatch):
     queue_factory = _install_worker_fakes(
         monkeypatch,
         mlx_worker,
-        load_impl=lambda *_args, **_kwargs: (object(), object()),
+        load_impl=lambda *_args, **_kwargs: (
+            types.SimpleNamespace(
+                parameters=lambda: {"weight": types.SimpleNamespace(size=1)}
+            ),
+            object(),
+        ),
         steering_engine=steering_engine,
     )
     requests = queue_factory([{"id": "g1", "action": "generate", "prompt": "hello"}, None])
@@ -908,6 +913,25 @@ def test_stream_path_uses_surface_generation_controls():
         "Stream path must apply surface controls before token generation and "
         "restore them after generation exits."
     )
+
+
+def test_latent_reason_path_applies_and_restores_surface_controls():
+    import inspect
+
+    from core.brain.llm.mlx_worker import _mlx_worker_loop
+
+    source = inspect.getsource(_mlx_worker_loop)
+    latent_start = source.find('elif action == "latent_reason":')
+    assert latent_start > 0, "Could not find latent_reason action handler"
+    latent_section = source[latent_start:]
+    apply_idx = latent_section.find("_apply_surface_generation_controls")
+    reason_idx = latent_section.find("handle_latent_reason(")
+    restore_idx = latent_section.find("_restore_surface_generation_controls")
+
+    assert apply_idx > 0
+    assert reason_idx > 0
+    assert restore_idx > 0
+    assert apply_idx < reason_idx < restore_idx
 
 
 @pytest.mark.asyncio

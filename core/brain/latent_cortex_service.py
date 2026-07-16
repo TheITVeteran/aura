@@ -124,7 +124,9 @@ class LatentCortexService:
 
     @staticmethod
     def _receipt_contract_errors(
-        receipt: Any, config: dict[str, Any]
+        receipt: Any,
+        config: dict[str, Any],
+        runtime_controls: dict[str, Any] | None = None,
     ) -> list[str]:
         if not isinstance(receipt, dict):
             return ["receipt_not_mapping"]
@@ -143,6 +145,13 @@ class LatentCortexService:
                 and all(character in "0123456789abcdef" for character in value)
             )
 
+        def git_oid(value: Any) -> bool:
+            return (
+                isinstance(value, str)
+                and len(value) in {40, 64}
+                and all(character in "0123456789abcdef" for character in value)
+            )
+
         if not str(receipt.get("episode_id") or ""):
             errors.append("missing_episode_id")
         if receipt.get("params_unchanged") is not True:
@@ -153,6 +162,62 @@ class LatentCortexService:
             or not positive_int(receipt, "checkpoint_file_count")
         ):
             errors.append("exact_checkpoint_identity_unproven")
+        from core.brain.llm.latent_cortex.runtime_identity import worker_identity_errors
+
+        errors.extend(worker_identity_errors(receipt))
+        controls = dict(runtime_controls or {})
+        if controls:
+            expected_alpha = controls.get("clean_user_surface_steering_alpha")
+            expected_loops = controls.get("clean_user_surface_recurrent_loops")
+            if receipt.get("worker_affective_steering_active") is not True:
+                errors.append("affective_steering_inactive")
+            if receipt.get("episode_affective_steering_applied") is not True:
+                errors.append("episode_affective_steering_unapplied")
+            if (
+                isinstance(expected_alpha, bool)
+                or not isinstance(expected_alpha, (int, float))
+                or isinstance(receipt.get("episode_affective_steering_alpha"), bool)
+                or not isinstance(
+                    receipt.get("episode_affective_steering_alpha"), (int, float)
+                )
+                or not math.isclose(
+                    float(receipt["episode_affective_steering_alpha"]),
+                    float(expected_alpha),
+                    rel_tol=0.0,
+                    abs_tol=1e-6,
+                )
+            ):
+                errors.append("affective_steering_alpha_mismatch")
+            if (
+                type(expected_loops) is not int
+                or expected_loops <= 0
+                or not positive_int(receipt, "steps_taken")
+                or receipt["steps_taken"] < expected_loops
+            ):
+                errors.append("live_recurrence_depth_unproven")
+        if not sha256(receipt.get("request_payload_sha256")):
+            errors.append("request_payload_identity_unproven")
+        if not sha256(receipt.get("input_tokens_sha256")) or not positive_int(
+            receipt, "input_token_count"
+        ):
+            errors.append("tokenized_input_identity_unproven")
+        runtime_identity = receipt.get("runtime_identity")
+        if not isinstance(runtime_identity, dict):
+            errors.append("runtime_identity_missing")
+        else:
+            if runtime_identity.get("identity_bound") is not True:
+                errors.append("runtime_identity_unbound")
+            if not git_oid(runtime_identity.get("source_commit")):
+                errors.append("runtime_source_commit_unproven")
+            if not sha256(runtime_identity.get("workspace_state_sha256")):
+                errors.append("runtime_workspace_identity_unproven")
+            if not sha256(runtime_identity.get("shell_assets_sha256")):
+                errors.append("runtime_shell_identity_unproven")
+            if (
+                runtime_identity.get("installed_app_required") is True
+                and runtime_identity.get("installed_app_verified") is not True
+            ):
+                errors.append("installed_app_identity_unproven")
         if not sha256(receipt.get("schedule_hash")):
             errors.append("invalid_schedule_hash")
         if not positive_int(receipt, "steps_taken"):
@@ -182,6 +247,34 @@ class LatentCortexService:
             errors.append("decode_output_empty")
         if receipt.get("decode_termination") not in {"eos", "token_limit"}:
             errors.append("decode_incomplete")
+        configured_temperature = config.get("decode_temperature", 0.0)
+        configured_top_p = config.get("decode_top_p", 1.0)
+        if (
+            isinstance(configured_temperature, bool)
+            or not isinstance(configured_temperature, (int, float))
+            or isinstance(receipt.get("decode_temperature"), bool)
+            or not isinstance(receipt.get("decode_temperature"), (int, float))
+            or not math.isclose(
+                float(receipt["decode_temperature"]),
+                float(configured_temperature),
+                rel_tol=0.0,
+                abs_tol=1e-9,
+            )
+        ):
+            errors.append("decode_temperature_mismatch")
+        if (
+            isinstance(configured_top_p, bool)
+            or not isinstance(configured_top_p, (int, float))
+            or isinstance(receipt.get("decode_top_p"), bool)
+            or not isinstance(receipt.get("decode_top_p"), (int, float))
+            or not math.isclose(
+                float(receipt["decode_top_p"]),
+                float(configured_top_p),
+                rel_tol=0.0,
+                abs_tol=1e-9,
+            )
+        ):
+            errors.append("decode_top_p_mismatch")
         raw_flags = receipt.get("honest_flags")
         if not isinstance(raw_flags, list) or any(
             not isinstance(flag, str) for flag in raw_flags
@@ -241,6 +334,73 @@ class LatentCortexService:
                 errors.append("fast_weight_optimization_budget_exhausted")
         return errors
 
+    @staticmethod
+    def select_foreground_episode(
+        *,
+        foreground: bool,
+        desktop_required: bool,
+        cognitive_mode: str,
+        prompt_shape: dict[str, Any] | None,
+        compact_contract: bool,
+        strict_output_contract: bool,
+        incompatible_contract: bool,
+        proof_or_benchmark: bool,
+        explicitly_required: bool = False,
+    ) -> dict[str, Any]:
+        """Return a deterministic, auditable decision for live latent routing."""
+
+        shape = dict(prompt_shape or {})
+        question_parts = shape.get("question_parts", 0)
+        question_parts = question_parts if type(question_parts) is int else 0
+        extended = bool(shape.get("prefers_extended_answer"))
+        single_reply_coverage = bool(shape.get("requires_single_reply_coverage"))
+        mode = str(cognitive_mode or "").strip().lower()
+
+        exclusion = ""
+        if not foreground:
+            exclusion = "not_foreground"
+        elif not desktop_required:
+            exclusion = "desktop_cognitive_engine_not_required"
+        elif compact_contract:
+            exclusion = "compact_contract"
+        elif strict_output_contract:
+            exclusion = "strict_output_contract"
+        elif incompatible_contract:
+            exclusion = "incompatible_contract"
+        elif proof_or_benchmark and not explicitly_required:
+            exclusion = "proof_lane_not_explicitly_opted_in"
+        depth_worthy = bool(
+            explicitly_required
+            or mode == "deliberate"
+            or extended
+            or single_reply_coverage
+            or question_parts > 1
+        )
+        selected = bool(not exclusion and depth_worthy)
+        reason = (
+            "explicit_requirement"
+            if selected and explicitly_required
+            else "deliberate_cognitive_mode"
+            if selected and mode == "deliberate"
+            else "multipart_or_extended_prompt"
+            if selected
+            else exclusion or "depth_threshold_not_met"
+        )
+        depth_signal = min(1.0, 0.55 + 0.10 * min(3, question_parts))
+        if extended or single_reply_coverage:
+            depth_signal = max(depth_signal, 0.75)
+        if mode == "deliberate":
+            depth_signal = max(depth_signal, 0.80)
+        if explicitly_required:
+            depth_signal = max(depth_signal, 0.90)
+        return {
+            "latent_cortex_selected": selected,
+            "latent_cortex_selection_reason": reason,
+            "latent_cortex_depth_worthy": depth_worthy,
+            "stakes": round(max(0.55, depth_signal - 0.05), 3),
+            "uncertainty": round(depth_signal, 3),
+        }
+
     def _record_failure(self, reason: str) -> dict[str, Any]:
         self._failure_streak += 1
         self._last_refusal = str(reason or "unknown")
@@ -256,6 +416,7 @@ class LatentCortexService:
         uncertainty: float = 0.5,
         domain: str = "general",
         config_overrides: dict[str, Any] | None = None,
+        runtime_controls: dict[str, Any] | None = None,
         timeout_s: float = 300.0,
         require_full_stack: bool = True,
         foreground_request: bool = True,
@@ -271,6 +432,29 @@ class LatentCortexService:
             return self._record_failure("empty_question")
         if config_overrides is not None and not isinstance(config_overrides, dict):
             return self._record_failure("invalid_config_overrides")
+        if runtime_controls is not None and not isinstance(runtime_controls, dict):
+            return self._record_failure("invalid_runtime_controls")
+        if runtime_controls is not None:
+            expected_control_keys = {
+                "clean_user_surface_recurrent_loops",
+                "clean_user_surface_steering_alpha",
+            }
+            recurrent_loops = runtime_controls.get(
+                "clean_user_surface_recurrent_loops"
+            )
+            steering_alpha = runtime_controls.get(
+                "clean_user_surface_steering_alpha"
+            )
+            if (
+                set(runtime_controls) != expected_control_keys
+                or type(recurrent_loops) is not int
+                or not 1 <= recurrent_loops <= 2
+                or isinstance(steering_alpha, bool)
+                or not isinstance(steering_alpha, (int, float))
+                or not math.isfinite(float(steering_alpha))
+                or not 0.01 <= float(steering_alpha) <= 1.0
+            ):
+                return self._record_failure("invalid_runtime_controls")
         if type(require_full_stack) is not bool:
             return self._record_failure("invalid_require_full_stack")
         if type(foreground_request) is not bool:
@@ -316,6 +500,7 @@ class LatentCortexService:
                 config=config,
                 budget=budget,
                 domain=domain,
+                runtime_controls=runtime_controls,
                 timeout_s=timeout_s,
                 foreground_request=foreground_request,
             )
@@ -337,7 +522,11 @@ class LatentCortexService:
         if result.get("ok"):
             raw_receipt = result.get("receipt")
             receipt = dict(raw_receipt) if isinstance(raw_receipt, dict) else {}
-            contract_errors = self._receipt_contract_errors(raw_receipt, config)
+            contract_errors = self._receipt_contract_errors(
+                raw_receipt,
+                config,
+                runtime_controls,
+            )
             if contract_errors:
                 reason = "receipt_contract_failed:" + ",".join(contract_errors)
                 record_degradation(
@@ -401,6 +590,19 @@ class LatentCortexService:
                     "checkpoint_fingerprint",
                     "checkpoint_fingerprint_method",
                     "checkpoint_file_count",
+                    "worker_boot_id",
+                    "worker_pid",
+                    "worker_model_path",
+                    "worker_model_parameter_count",
+                    "worker_source_sha256",
+                    "worker_affective_steering_active",
+                    "worker_affective_steering_alpha",
+                    "episode_affective_steering_applied",
+                    "episode_affective_steering_alpha",
+                    "request_payload_sha256",
+                    "input_tokens_sha256",
+                    "input_token_count",
+                    "runtime_identity",
                     "params_unchanged",
                     "latent_opt_applied",
                     "latent_opt_attempts",
@@ -415,7 +617,7 @@ class LatentCortexService:
                 )
                 if k in self._last_receipt
             },
-            "healthy": enabled and self._failure_streak < 3,
+            "healthy": state == "operational",
         }
 
 

@@ -14,6 +14,8 @@ reporting live in core/brain/latent_cortex_service.py.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import uuid
 from collections.abc import Callable
@@ -158,11 +160,25 @@ class LatentCortexEngine:
         mx.eval(logits)
         return embeddings, logits
 
-    def _sample(self, logits, temperature: float) -> int:
+    def _sample(self, logits, temperature: float, top_p: float = 1.0) -> int:
         import mlx.core as mx
 
         if temperature and temperature > 0:
-            return int(mx.random.categorical(logits / temperature))
+            scaled = logits / temperature
+            if top_p < 1.0:
+                probabilities = mx.softmax(scaled)
+                sorted_indices = mx.argsort(-probabilities)
+                sorted_probabilities = probabilities[sorted_indices]
+                cumulative = mx.cumsum(sorted_probabilities)
+                keep = (cumulative - sorted_probabilities) < top_p
+                filtered_logits = mx.where(
+                    keep,
+                    mx.log(sorted_probabilities),
+                    mx.full(sorted_probabilities.shape, -1e9),
+                )
+                selected = int(mx.random.categorical(filtered_logits))
+                return int(sorted_indices[selected])
+            return int(mx.random.categorical(scaled))
         return int(mx.argmax(logits))
 
     def _decode(
@@ -173,6 +189,7 @@ class LatentCortexEngine:
         *,
         max_tokens: int | None = None,
         temperature: float | None = None,
+        top_p: float | None = None,
     ) -> tuple[list[int], str]:
         """Minimal sampler: first token from ``initial_logits`` (the logits of
         the last persisted position — prompt tail or final thought slot), then
@@ -184,11 +201,12 @@ class LatentCortexEngine:
         eos = self._eos_ids()
         limit = max_tokens if max_tokens is not None else self.config.decode_max_tokens
         temp = temperature if temperature is not None else self.config.decode_temperature
+        nucleus = top_p if top_p is not None else self.config.decode_top_p
 
         out: list[int] = []
         if budget.exhausted:
             return out, "budget_exhausted"
-        token = self._sample(initial_logits, temp)
+        token = self._sample(initial_logits, temp, nucleus)
         termination = "token_limit"
         for index in range(max(1, int(limit))):
             if token in eos:
@@ -210,7 +228,7 @@ class LatentCortexEngine:
             for i, layer in enumerate(inner.layers):
                 h = layer(h, mask, cache[i])
             logits = self._logits(h)[0, -1]
-            token = self._sample(logits, temp)
+            token = self._sample(logits, temp, nucleus)
         return out, termination
 
     # ── Probe decoding for branch selection / verifier loops ────────────
@@ -304,6 +322,13 @@ class LatentCortexEngine:
             if not 1 <= decode_max_tokens <= 8192:
                 raise ValueError("decode_max_tokens override outside [1, 8192]")
         tokens = self._encode(prompt, messages, token_ids)
+        encoded_tokens = json.dumps(tokens, separators=(",", ":"), allow_nan=False).encode(
+            "ascii"
+        )
+        receipt.input_tokens_sha256 = hashlib.sha256(encoded_tokens).hexdigest()
+        receipt.input_token_count = len(tokens)
+        receipt.decode_temperature = float(self.config.decode_temperature)
+        receipt.decode_top_p = float(self.config.decode_top_p)
 
         self.invariant.pre_episode()
         receipt.checkpoint_fingerprint = self.invariant.file_receipt.get("fingerprint", "")

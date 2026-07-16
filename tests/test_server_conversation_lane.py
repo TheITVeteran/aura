@@ -75,6 +75,55 @@ def _bound_live_mind_controls_metadata():
     }
 
 
+def _proven_latent_cortex_trace():
+    return {
+        "latent_cortex_selected": True,
+        "latent_cortex_selection_reason": "deliberate_cognitive_mode",
+        "latent_cortex_depth_worthy": True,
+        "latent_cortex_attempted": True,
+        "latent_cortex_succeeded": True,
+        "latent_cortex_fallback_used": False,
+        "latent_cortex_identity_bound": True,
+        "latent_cortex_receipt": {
+            "episode_id": "live-episode",
+            "checkpoint_fingerprint": "a" * 64,
+            "checkpoint_fingerprint_method": "sha256",
+            "checkpoint_file_count": 32,
+            "worker_boot_id": "b" * 32,
+            "worker_pid": 4242,
+            "worker_model_path": "/models/Aura-32B",
+            "worker_model_parameter_count": 32_000_000_000,
+            "worker_source_sha256": "c" * 64,
+            "worker_affective_steering_active": True,
+            "worker_affective_steering_alpha": 0.30,
+            "episode_affective_steering_applied": True,
+            "episode_affective_steering_alpha": 0.30,
+            "request_payload_sha256": "d" * 64,
+            "input_tokens_sha256": "e" * 64,
+            "input_token_count": 128,
+            "params_unchanged": True,
+            "decode_requested_tokens": 512,
+            "decode_generated_tokens": 64,
+            "decode_termination": "eos",
+            "runtime_identity": {
+                "schema": "aura.latent_cortex.runtime_identity.v1",
+                "identity_bound": True,
+                "launch_mode": "signed_app",
+                "installed_app_required": True,
+                "installed_app_verified": True,
+                "source_verified": True,
+                "source_commit": "f" * 40,
+                "workspace_state_sha256": "1" * 64,
+                "shell_assets_sha256": "2" * 64,
+                "bundle_identifier": "com.aura.desktop",
+                "app_executable_sha256": "3" * 64,
+                "launch_manifest_sha256": "4" * 64,
+                "issues": [],
+            },
+        },
+    }
+
+
 class AsyncCallFixture:
     def __init__(self, return_value=None, side_effect=None):
         self.return_value = return_value
@@ -430,6 +479,129 @@ def test_structured_governance_refusal_can_prove_live_full_mind_path(monkeypatch
     assert payload["live_mind_controls_application_satisfied"] is True
     assert payload["live_mind_surface_quality_gate_passed"] is True
     assert payload["full_mind_path"] is True
+
+
+def test_full_mind_contract_accepts_identity_bound_latent_cortex_path(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    _force_full_mind_runtime(monkeypatch, chat_routes)
+    payload = chat_routes._build_live_turn_contract_payload(
+        desktop_required=True,
+        request_surface="desktop-ui",
+        lane_status={
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "foreground_endpoint": "Cortex",
+        },
+        response_confidence="high",
+        status="cognitive_engine",
+        reply_source="cognitive_engine",
+        turn_trace={
+            "engine_think_invoked": True,
+            "cognitive_engine_reply_accepted": True,
+            "bounded_contract_used": False,
+            "legacy_fallback_used": False,
+            "live_mind_context_present": True,
+            "live_mind_snapshot_present": True,
+            "live_mind_snapshot_ready": True,
+            "live_mind_required_subsystems_ok": True,
+            "response_path": "cognitive_engine_latent_cortex",
+            **_bound_live_mind_controls_trace(),
+            **_proven_latent_cortex_trace(),
+        },
+    )
+
+    assert payload["latent_cortex_path_proven"] is True
+    assert payload["latent_cortex_identity_bound"] is True
+    assert payload["authentic_cognitive_reply"] is True
+    assert payload["full_mind_path"] is True
+    assert "source_root" not in payload["latent_cortex_receipt"]["runtime_identity"]
+
+
+def test_full_mind_contract_rejects_tampered_latent_cortex_identity(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    _force_full_mind_runtime(monkeypatch, chat_routes)
+    latent = _proven_latent_cortex_trace()
+    latent["latent_cortex_receipt"] = dict(latent["latent_cortex_receipt"])
+    latent["latent_cortex_receipt"]["runtime_identity"] = dict(
+        latent["latent_cortex_receipt"]["runtime_identity"]
+    )
+    latent["latent_cortex_receipt"]["runtime_identity"][
+        "app_executable_sha256"
+    ] = "tampered"
+    payload = chat_routes._build_live_turn_contract_payload(
+        desktop_required=True,
+        request_surface="desktop-ui",
+        lane_status={
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "foreground_endpoint": "Cortex",
+        },
+        response_confidence="high",
+        status="cognitive_engine",
+        reply_source="cognitive_engine",
+        turn_trace={
+            "engine_think_invoked": True,
+            "cognitive_engine_reply_accepted": True,
+            "bounded_contract_used": False,
+            "legacy_fallback_used": False,
+            "live_mind_context_present": True,
+            "live_mind_snapshot_present": True,
+            "live_mind_snapshot_ready": True,
+            "live_mind_required_subsystems_ok": True,
+            "response_path": "cognitive_engine_latent_cortex",
+            **_bound_live_mind_controls_trace(),
+            **latent,
+        },
+    )
+
+    assert payload["latent_cortex_identity_bound"] is False
+    assert payload["latent_cortex_path_proven"] is False
+    assert payload["authentic_cognitive_reply"] is False
+    assert payload["full_mind_path"] is False
+    assert "latent_cortex_path_unproven" in payload["full_mind_missing_proofs"]
+
+
+def test_full_mind_contract_rejects_unapplied_latent_episode_steering(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    _force_full_mind_runtime(monkeypatch, chat_routes)
+    latent = _proven_latent_cortex_trace()
+    latent["latent_cortex_receipt"] = dict(latent["latent_cortex_receipt"])
+    latent["latent_cortex_receipt"]["episode_affective_steering_applied"] = False
+    payload = chat_routes._build_live_turn_contract_payload(
+        desktop_required=True,
+        request_surface="desktop-ui",
+        lane_status={
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "foreground_endpoint": "Cortex",
+        },
+        response_confidence="high",
+        status="cognitive_engine",
+        reply_source="cognitive_engine",
+        turn_trace={
+            "engine_think_invoked": True,
+            "cognitive_engine_reply_accepted": True,
+            "bounded_contract_used": False,
+            "legacy_fallback_used": False,
+            "live_mind_context_present": True,
+            "live_mind_snapshot_present": True,
+            "live_mind_snapshot_ready": True,
+            "live_mind_required_subsystems_ok": True,
+            "response_path": "cognitive_engine_latent_cortex",
+            **_bound_live_mind_controls_trace(),
+            **latent,
+        },
+    )
+
+    assert payload["latent_cortex_identity_bound"] is False
+    assert payload["latent_cortex_path_proven"] is False
+    assert payload["full_mind_path"] is False
 
 
 def test_full_mind_contract_preserves_proven_generation_when_lane_flips_failed(monkeypatch):
@@ -10534,10 +10706,12 @@ def test_desktop_static_chat_requests_require_cognitive_engine():
     source = (root / "interface/static/aura.js").read_text(encoding="utf-8")
     assert "CHAT_REQUEST_TIMEOUT_READY_MS = 335000" in source
     assert "CHAT_REQUEST_TIMEOUT_RECOVERING_MS = 395000" in source
-    assert "const CHAT_SEND_QUEUE_MAX = 4;" in source
-    assert "function enqueueChatMessage(message)" in source
+    assert "const CHAT_SEND_QUEUE_MAX = 32;" in source
+    assert "function enqueueChatMessage(value)" in source
+    assert "normalizeChatQueueItem(value, { rendered: true })" in source
     assert "function drainQueuedChatMessages()" in source
-    assert "if (state.isSubmitting) {\n        enqueueChatMessage(msg);" in source
+    assert "if (state.isSubmitting || state.activeChatRequest) {" in source
+    assert "enqueueChatMessage(item);" in source
 
 
 def test_launcher_local_requests_require_cognitive_engine_without_headers(monkeypatch):

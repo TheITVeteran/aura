@@ -13,6 +13,9 @@ from types import SimpleNamespace
 import pytest
 
 from core.brain.latent_cortex_service import LatentCortexService
+from core.brain.llm.latent_cortex.runtime_identity import (
+    latent_request_payload_sha256,
+)
 from core.brain.llm.latent_cortex.worker_handler import (
     budget_from_job,
     config_from_job,
@@ -23,8 +26,82 @@ from core.brain.llm.mlx_client import MLXLocalClient
 
 
 class _ResidentProcess:
+    def __init__(self) -> None:
+        self.alive = True
+
     def is_alive(self) -> bool:
-        return True
+        return self.alive
+
+    def kill(self) -> None:
+        self.alive = False
+
+    def join(self, timeout=None) -> None:
+        self.alive = False
+
+
+_WORKER_IDENTITY = {
+    "schema": "aura.latent_cortex.worker_identity.v1",
+    "worker_boot_id": "1" * 32,
+    "worker_pid": 4242,
+    "worker_model_path": "/models/test-32b",
+    "worker_model_parameter_count": 32_000_000_000,
+    "worker_source_sha256": "2" * 64,
+    "worker_affective_steering_active": True,
+    "worker_affective_steering_alpha": 0.30,
+}
+
+_RUNTIME_IDENTITY = {
+    "schema": "aura.latent_cortex.runtime_identity.v1",
+    "identity_bound": True,
+    "launch_mode": "direct",
+    "installed_app_required": False,
+    "installed_app_verified": False,
+    "source_verified": True,
+    "source_commit": "3" * 40,
+    "workspace_state_sha256": "4" * 64,
+    "shell_assets_sha256": "5" * 64,
+    "issues": [],
+}
+
+
+def _identity_receipt(**overrides):
+    receipt = {
+        **_WORKER_IDENTITY,
+        "request_payload_sha256": "6" * 64,
+        "input_tokens_sha256": "7" * 64,
+        "input_token_count": 64,
+        "episode_affective_steering_applied": True,
+        "episode_affective_steering_alpha": 0.30,
+        "runtime_identity": dict(_RUNTIME_IDENTITY),
+    }
+    receipt.update(overrides)
+    return receipt
+
+
+def _identity_receipt_for_request(request, **overrides):
+    receipt = _identity_receipt(
+        request_payload_sha256=latent_request_payload_sha256(
+            prompt=request.get("prompt"),
+            messages=request.get("messages"),
+            domain=request.get("domain", "general"),
+            config=request.get("config"),
+            budget=request.get("budget"),
+            runtime_controls=request.get("runtime_controls"),
+        )
+    )
+    receipt.update(overrides)
+    return receipt
+
+
+def _bind_test_client_identity(monkeypatch, client):
+    from core.brain.llm.latent_cortex import runtime_identity
+
+    client._worker_identity = dict(_WORKER_IDENTITY)
+    monkeypatch.setattr(
+        runtime_identity,
+        "collect_latent_runtime_identity",
+        lambda *_args, **_kwargs: dict(_RUNTIME_IDENTITY),
+    )
 
 # ── Worker handler ──────────────────────────────────────────────────────
 
@@ -66,6 +143,7 @@ def test_config_from_job_maps_every_advanced_mechanism():
             "fast_weights_max_layers": 4,
             "exchange_gamma": 0.2,
             "convergence_eps": 0.01,
+            "decode_top_p": 0.82,
         }
     )
     assert cfg.latent_opt.enabled is True and cfg.latent_opt.steps == 6
@@ -74,6 +152,7 @@ def test_config_from_job_maps_every_advanced_mechanism():
     assert cfg.fast_weights.lr == 0.005 and cfg.fast_weights.max_wrapped_layers == 4
     assert cfg.branches.exchange_gamma == 0.2
     assert cfg.recurrence.convergence_eps == 0.01
+    assert cfg.decode_top_p == 0.82
 
 
 def test_budget_from_job_caps_apply():
@@ -164,6 +243,7 @@ async def test_client_latent_reason_owns_and_releases_resident_lane(monkeypatch)
     client._process = _ResidentProcess()
     client._init_done = True
     client._req_q = queue.Queue()
+    _bind_test_client_identity(monkeypatch, client)
     monkeypatch.setattr(
         mlx_client,
         "get_memory_pressure_snapshot",
@@ -174,6 +254,10 @@ async def test_client_latent_reason_owns_and_releases_resident_lane(monkeypatch)
         client.latent_reason_async(
             prompt="reason deeply",
             config={"decode_max_tokens": 16},
+            runtime_controls={
+                "clean_user_surface_recurrent_loops": 2,
+                "clean_user_surface_steering_alpha": 0.30,
+            },
             timeout_s=5.0,
             foreground_request=False,
         )
@@ -188,13 +272,23 @@ async def test_client_latent_reason_owns_and_releases_resident_lane(monkeypatch)
             "id": request["id"],
             "status": "ok",
             "text": "answer",
-            "receipt": {"episode_id": "ep-live"},
+            "receipt": _identity_receipt_for_request(
+                request,
+                episode_id="ep-live",
+            ),
         },
     )
 
     result = await task
     assert request["action"] == "latent_reason"
     assert request["seq"] > 0
+    assert request["clean_user_surface_contract"] is True
+    assert request["clean_user_surface_recurrent_loops"] == 2
+    assert request["clean_user_surface_steering_alpha"] == 0.30
+    assert request["runtime_controls"] == {
+        "clean_user_surface_recurrent_loops": 2,
+        "clean_user_surface_steering_alpha": 0.30,
+    }
     assert result["ok"] is True and result["text"] == "answer"
     assert client._active_generations == 0
     assert client._current_request_id == ""
@@ -209,6 +303,7 @@ async def test_client_latent_reason_serializes_concurrent_requests(monkeypatch):
     client._process = _ResidentProcess()
     client._init_done = True
     client._req_q = queue.Queue()
+    _bind_test_client_identity(monkeypatch, client)
     monkeypatch.setattr(
         mlx_client,
         "get_memory_pressure_snapshot",
@@ -231,13 +326,29 @@ async def test_client_latent_reason_serializes_concurrent_requests(monkeypatch):
 
     mlx_client._set_shared_future_result(
         client._pending_generations[first_request["id"]],
-        {"id": first_request["id"], "status": "ok", "text": "one", "receipt": {}},
+        {
+            "id": first_request["id"],
+            "status": "ok",
+            "text": "one",
+            "receipt": _identity_receipt_for_request(
+                first_request,
+                episode_id="first",
+            ),
+        },
     )
     assert (await first)["ok"] is True
     second_request = await asyncio.to_thread(client._req_q.get, True, 2.0)
     mlx_client._set_shared_future_result(
         client._pending_generations[second_request["id"]],
-        {"id": second_request["id"], "status": "ok", "text": "two", "receipt": {}},
+        {
+            "id": second_request["id"],
+            "status": "ok",
+            "text": "two",
+            "receipt": _identity_receipt_for_request(
+                second_request,
+                episode_id="second",
+            ),
+        },
     )
     assert (await second)["ok"] is True
     assert client._request_lock.locked() is False
@@ -446,6 +557,13 @@ async def test_client_latent_reason_rejects_invalid_inputs_before_lane_fence(mon
     )["reason"] == "invalid_budget"
     assert (
         await client.latent_reason_async(
+            prompt="q",
+            runtime_controls={"clean_user_surface_steering_alpha": 0.3},
+            foreground_request=False,
+        )
+    )["reason"] == "invalid_runtime_controls"
+    assert (
+        await client.latent_reason_async(
             prompt="q", foreground_request="false"
         )
     )["reason"] == "invalid_foreground_request"
@@ -486,6 +604,106 @@ async def test_client_latent_reason_contains_malformed_worker_receipt(monkeypatc
     assert client._request_lock.locked() is False
 
 
+@pytest.mark.asyncio
+async def test_client_recycles_worker_on_identity_receipt_mismatch(monkeypatch):
+    from core.brain.llm import mlx_client
+
+    client = MLXLocalClient(model_path="/models/test-32b")
+    client._process = _ResidentProcess()
+    client._init_done = True
+    client._req_q = queue.Queue()
+    _bind_test_client_identity(monkeypatch, client)
+    reboot_reasons = []
+    monkeypatch.setattr(
+        mlx_client,
+        "get_memory_pressure_snapshot",
+        lambda: SimpleNamespace(refuse_heavy_local_generation=False),
+    )
+
+    async def record_reboot(reason, mark_failed=False):
+        reboot_reasons.append(reason)
+
+    monkeypatch.setattr(client, "reboot_worker", record_reboot)
+    task = asyncio.create_task(
+        client.latent_reason_async(
+            prompt="bind this episode",
+            timeout_s=5.0,
+            foreground_request=False,
+        )
+    )
+    request = await asyncio.to_thread(client._req_q.get, True, 2.0)
+    mlx_client._set_shared_future_result(
+        client._pending_generations[request["id"]],
+        {
+            "id": request["id"],
+            "status": "ok",
+            "text": "untrusted",
+            "receipt": _identity_receipt_for_request(
+                request,
+                worker_boot_id="9" * 32,
+            ),
+        },
+    )
+
+    result = await task
+
+    assert result["ok"] is False
+    assert "worker_boot_id_mismatch" in result["reason"]
+    assert reboot_reasons == ["latent_integrity:worker_identity_mismatch"]
+
+
+@pytest.mark.asyncio
+async def test_client_recycles_worker_on_request_digest_mismatch(monkeypatch):
+    from core.brain.llm import mlx_client
+
+    client = MLXLocalClient(model_path="/models/test-32b")
+    client._process = _ResidentProcess()
+    client._init_done = True
+    client._req_q = queue.Queue()
+    _bind_test_client_identity(monkeypatch, client)
+    reboot_reasons = []
+    monkeypatch.setattr(
+        mlx_client,
+        "get_memory_pressure_snapshot",
+        lambda: SimpleNamespace(refuse_heavy_local_generation=False),
+    )
+
+    async def record_reboot(reason, mark_failed=False):
+        reboot_reasons.append(reason)
+
+    monkeypatch.setattr(client, "reboot_worker", record_reboot)
+    task = asyncio.create_task(
+        client.latent_reason_async(
+            prompt="bind the exact request",
+            runtime_controls={
+                "clean_user_surface_recurrent_loops": 2,
+                "clean_user_surface_steering_alpha": 0.30,
+            },
+            timeout_s=5.0,
+            foreground_request=False,
+        )
+    )
+    request = await asyncio.to_thread(client._req_q.get, True, 2.0)
+    mlx_client._set_shared_future_result(
+        client._pending_generations[request["id"]],
+        {
+            "id": request["id"],
+            "status": "ok",
+            "text": "tampered",
+            "receipt": _identity_receipt_for_request(
+                request,
+                request_payload_sha256="0" * 64,
+            ),
+        },
+    )
+
+    result = await task
+
+    assert result["ok"] is False
+    assert "request_payload_sha256_mismatch" in result["reason"]
+    assert reboot_reasons == ["latent_integrity:worker_identity_mismatch"]
+
+
 # ── Service economy ─────────────────────────────────────────────────────
 
 
@@ -524,6 +742,96 @@ def test_service_kill_switch_and_status(monkeypatch):
     assert status["state"] == "disabled"
 
 
+def test_service_idle_state_is_explicitly_unproven_not_healthy(monkeypatch):
+    monkeypatch.delenv("AURA_LATENT_CORTEX", raising=False)
+    status = LatentCortexService().get_status()
+    assert status["state"] == "idle_unproven"
+    assert status["healthy"] is False
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "selected", "reason"),
+    [
+        (
+            {
+                "foreground": True,
+                "desktop_required": True,
+                "cognitive_mode": "deliberate",
+                "prompt_shape": {},
+                "compact_contract": False,
+                "strict_output_contract": False,
+                "incompatible_contract": False,
+                "proof_or_benchmark": False,
+            },
+            True,
+            "deliberate_cognitive_mode",
+        ),
+        (
+            {
+                "foreground": True,
+                "desktop_required": True,
+                "cognitive_mode": "reactive",
+                "prompt_shape": {"question_parts": 3},
+                "compact_contract": False,
+                "strict_output_contract": False,
+                "incompatible_contract": False,
+                "proof_or_benchmark": False,
+            },
+            True,
+            "multipart_or_extended_prompt",
+        ),
+        (
+            {
+                "foreground": True,
+                "desktop_required": True,
+                "cognitive_mode": "deliberate",
+                "prompt_shape": {},
+                "compact_contract": False,
+                "strict_output_contract": True,
+                "incompatible_contract": False,
+                "proof_or_benchmark": False,
+            },
+            False,
+            "strict_output_contract",
+        ),
+        (
+            {
+                "foreground": True,
+                "desktop_required": True,
+                "cognitive_mode": "deliberate",
+                "prompt_shape": {},
+                "compact_contract": False,
+                "strict_output_contract": False,
+                "incompatible_contract": False,
+                "proof_or_benchmark": True,
+            },
+            False,
+            "proof_lane_not_explicitly_opted_in",
+        ),
+    ],
+)
+def test_foreground_selection_is_bounded_and_auditable(kwargs, selected, reason):
+    decision = LatentCortexService.select_foreground_episode(**kwargs)
+    assert decision["latent_cortex_selected"] is selected
+    assert decision["latent_cortex_selection_reason"] == reason
+
+
+def test_explicit_proof_lane_requirement_selects_latent_episode():
+    decision = LatentCortexService.select_foreground_episode(
+        foreground=True,
+        desktop_required=True,
+        cognitive_mode="reactive",
+        prompt_shape={},
+        compact_contract=False,
+        strict_output_contract=False,
+        incompatible_contract=False,
+        proof_or_benchmark=True,
+        explicitly_required=True,
+    )
+    assert decision["latent_cortex_selected"] is True
+    assert decision["latent_cortex_selection_reason"] == "explicit_requirement"
+
+
 def test_service_routes_through_client_and_records_receipt(monkeypatch):
     monkeypatch.delenv("AURA_LATENT_CORTEX", raising=False)
     svc = LatentCortexService()
@@ -535,6 +843,7 @@ def test_service_routes_through_client_and_records_receipt(monkeypatch):
             captured["prompt"] = prompt
             captured["config"] = kwargs.get("config")
             captured["budget"] = kwargs.get("budget")
+            captured["runtime_controls"] = kwargs.get("runtime_controls")
             return {
                 "ok": True,
                 "text": "the deep answer",
@@ -548,6 +857,7 @@ def test_service_routes_through_client_and_records_receipt(monkeypatch):
                     "checkpoint_fingerprint": "a" * 64,
                     "checkpoint_fingerprint_method": "sha256",
                     "checkpoint_file_count": 8,
+                    **_identity_receipt(),
                     "params_unchanged": True,
                     "budget": {
                         "max_layer_apps": 1_000,
@@ -557,6 +867,10 @@ def test_service_routes_through_client_and_records_receipt(monkeypatch):
                     "decode_requested_tokens": kwargs["config"]["decode_max_tokens"],
                     "decode_generated_tokens": 12,
                     "decode_termination": "eos",
+                    "decode_temperature": kwargs["config"].get(
+                        "decode_temperature", 0.0
+                    ),
+                    "decode_top_p": kwargs["config"].get("decode_top_p", 1.0),
                     "latent_opt_applied": True,
                     "latent_opt_mode": "gradient",
                     "latent_opt_attempts": 2,
@@ -578,13 +892,27 @@ def test_service_routes_through_client_and_records_receipt(monkeypatch):
     import core.brain.llm.mlx_client as mlx_client_mod
 
     monkeypatch.setattr(mlx_client_mod, "get_mlx_client", lambda *a, **k: StubClient())
-    result = asyncio.run(svc.deep_reason("hard question", stakes=0.9, uncertainty=0.9))
+    result = asyncio.run(
+        svc.deep_reason(
+            "hard question",
+            stakes=0.9,
+            uncertainty=0.9,
+            runtime_controls={
+                "clean_user_surface_recurrent_loops": 2,
+                "clean_user_surface_steering_alpha": 0.30,
+            },
+        )
+    )
     assert result["ok"] and result["text"] == "the deep answer"
     assert captured["prompt"] == "hard question"
     assert captured["config"]["n_branches"] >= 2
     assert captured["config"]["latent_opt"] is True
     assert captured["config"]["fast_weights"] is True
     assert captured["budget"]["max_layer_apps"] > 0
+    assert captured["runtime_controls"] == {
+        "clean_user_surface_recurrent_loops": 2,
+        "clean_user_surface_steering_alpha": 0.30,
+    }
     assert svc.get_status()["last_receipt"]["halting_reason"] == "converged"
 
 
@@ -699,6 +1027,17 @@ def test_service_reports_refusals_honestly(monkeypatch):
         ({"stakes": float("nan")}, "invalid_cognitive_economy"),
         ({"uncertainty": "high"}, "invalid_cognitive_economy"),
         ({"config_overrides": []}, "invalid_config_overrides"),
+        ({"runtime_controls": []}, "invalid_runtime_controls"),
+        ({"runtime_controls": {}}, "invalid_runtime_controls"),
+        (
+            {
+                "runtime_controls": {
+                    "clean_user_surface_recurrent_loops": 3,
+                    "clean_user_surface_steering_alpha": 0.30,
+                }
+            },
+            "invalid_runtime_controls",
+        ),
         ({"require_full_stack": "yes"}, "invalid_require_full_stack"),
         ({"foreground_request": "yes"}, "invalid_foreground_request"),
         ({"question": 7}, "invalid_question"),

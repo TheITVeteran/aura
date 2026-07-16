@@ -1739,6 +1739,22 @@ class CognitiveEngine:
                     generation_controls=generation_controls,
                     source="cognitive_engine_full_phase_controls",
                 )
+                latent_metadata = {
+                    key: state.response_modifiers.get(key)
+                    for key in (
+                        "latent_cortex_selected",
+                        "latent_cortex_selection_reason",
+                        "latent_cortex_depth_worthy",
+                        "latent_cortex_attempted",
+                        "latent_cortex_succeeded",
+                        "latent_cortex_fallback_used",
+                        "latent_cortex_failure_reason",
+                        "latent_cortex_identity_bound",
+                        "latent_cortex_final_text_transformed",
+                        "latent_cortex_receipt",
+                    )
+                    if key in state.response_modifiers
+                }
                 thought = Thought(
                     id=str(uuid.uuid4()),
                     content=last_msg["content"],
@@ -1775,6 +1791,18 @@ class CognitiveEngine:
                         "live_mind_controls_worker_applied": bool(
                             surface_control_receipt.get("live_mind_controls_bound")
                             and surface_control_receipt.get("applied")
+                        ),
+                        **latent_metadata,
+                        "response_path": str(
+                            state.response_modifiers.get("response_path")
+                            or (
+                                "cognitive_engine_latent_cortex"
+                                if state.response_modifiers.get(
+                                    "latent_cortex_succeeded"
+                                )
+                                is True
+                                else "cognitive_engine"
+                            )
                         ),
                     },
                 )

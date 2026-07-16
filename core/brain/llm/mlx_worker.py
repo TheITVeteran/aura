@@ -9,6 +9,7 @@ import signal
 import sys
 import threading
 import time
+import uuid
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
@@ -2639,6 +2640,7 @@ def _mlx_worker_loop(
         stream=sys.stderr
     )
     logger = logging.getLogger("MLXWorker")
+    worker_boot_id = uuid.uuid4().hex
     try:
         signal.signal(signal.SIGINT, signal.SIG_IGN)
     except (OSError, ValueError) as exc:
@@ -2747,6 +2749,14 @@ def _mlx_worker_loop(
             model, tokenizer = load(model_path)
             logger.info("Model loaded (no compatible LoRA adapter).")
 
+        from core.brain.llm.latent_cortex.runtime_identity import build_worker_identity
+
+        worker_identity = build_worker_identity(
+            model,
+            model_path=model_path,
+            worker_boot_id=worker_boot_id,
+            worker_source_path=Path(__file__),
+        )
         draft_model = _load_speculative_draft(model_path, tokenizer)
 
         # Attach Affective Steering
@@ -2784,6 +2794,15 @@ def _mlx_worker_loop(
             )
             logger.error("FATAL: Affective steering failed to attach. Cannot run sovereign inference unsteered. %s", se)
             raise RuntimeError(f"Steering liveness gate failed: {se}") from se
+
+        worker_identity.update(
+            {
+                "worker_affective_steering_active": bool(_steering_active),
+                "worker_affective_steering_alpha": float(
+                    getattr(engine, "_alpha", 0.0) or 0.0
+                ),
+            }
+        )
 
         # Write steering liveness to shared state so parent can query it
         if substrate_mem is not None:
@@ -2858,9 +2877,10 @@ def _mlx_worker_loop(
                 "device": device,
                 "steering_active": bool(_steering_active),
                 "recurrent_depth": recurrent_depth_status,
+                "worker_identity": dict(worker_identity),
             }
         )
-    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as e:
+    except (ImportError, OSError, AttributeError, RuntimeError, TypeError, ValueError) as e:
         _record_mlx_degradation(
             e,
             action="reported initialization error and exited worker loop before accepting jobs",
@@ -4584,9 +4604,37 @@ def _mlx_worker_loop(
                     )
 
                     with metal_semaphore:
-                        body = handle_latent_reason(
-                            job, model=model, tokenizer=tokenizer, model_path=model_path
+                        surface_control_state = _apply_surface_generation_controls(
+                            engine,
+                            model,
+                            job,
                         )
+                        try:
+                            applied_alpha = surface_control_state.get(
+                                "surface_alpha_applied"
+                            )
+                            if job.get("runtime_controls") is not None and (
+                                not _steering_active
+                                or isinstance(applied_alpha, bool)
+                                or not isinstance(applied_alpha, (int, float))
+                            ):
+                                body = {
+                                    "status": "error",
+                                    "message": "latent_runtime_controls_unapplied",
+                                }
+                            else:
+                                body = handle_latent_reason(
+                                    job,
+                                    model=model,
+                                    tokenizer=tokenizer,
+                                    model_path=model_path,
+                                    worker_identity=worker_identity,
+                                    surface_control_state=surface_control_state,
+                                )
+                        finally:
+                            _restore_surface_generation_controls(
+                                surface_control_state
+                            )
                         recycle_after_response = body.pop("requires_worker_recycle", False)
                         if body.pop("requires_cache_clear", False):
                             # Fast-weight erase unproven ⇒ pre-episode prompt

@@ -4983,6 +4983,149 @@ def _build_live_turn_contract_payload(
     engine_reply_accepted = bool(trace.get("cognitive_engine_reply_accepted")) and not engine_reply_failed
     bounded_contract_used = bool(trace.get("bounded_contract_used"))
     legacy_fallback_used = bool(trace.get("legacy_fallback_used"))
+    latent_cortex_selected = bool(trace.get("latent_cortex_selected"))
+    latent_cortex_attempted = bool(trace.get("latent_cortex_attempted"))
+    latent_cortex_succeeded = bool(trace.get("latent_cortex_succeeded"))
+    latent_cortex_fallback_used = bool(trace.get("latent_cortex_fallback_used"))
+    latent_cortex_failure_reason = str(
+        trace.get("latent_cortex_failure_reason") or ""
+    )[:500]
+    raw_latent_receipt = trace.get("latent_cortex_receipt")
+    raw_latent_receipt = (
+        dict(raw_latent_receipt) if isinstance(raw_latent_receipt, dict) else {}
+    )
+    raw_runtime_identity = raw_latent_receipt.get("runtime_identity")
+    raw_runtime_identity = (
+        dict(raw_runtime_identity)
+        if isinstance(raw_runtime_identity, dict)
+        else {}
+    )
+
+    def _sha256(value: Any) -> bool:
+        return bool(
+            isinstance(value, str)
+            and len(value) == 64
+            and all(character in "0123456789abcdef" for character in value)
+        )
+
+    def _git_oid(value: Any) -> bool:
+        return bool(
+            isinstance(value, str)
+            and len(value) in {40, 64}
+            and all(character in "0123456789abcdef" for character in value)
+        )
+
+    installed_app_required = raw_runtime_identity.get("installed_app_required") is True
+    runtime_identity_valid = bool(
+        raw_runtime_identity.get("identity_bound") is True
+        and raw_runtime_identity.get("source_verified") is True
+        and _git_oid(raw_runtime_identity.get("source_commit"))
+        and _sha256(raw_runtime_identity.get("workspace_state_sha256"))
+        and _sha256(raw_runtime_identity.get("shell_assets_sha256"))
+        and (
+            not installed_app_required
+            or (
+                raw_runtime_identity.get("installed_app_verified") is True
+                and bool(
+                    str(raw_runtime_identity.get("bundle_identifier") or "").strip()
+                )
+                and _sha256(raw_runtime_identity.get("app_executable_sha256"))
+                and _sha256(raw_runtime_identity.get("launch_manifest_sha256"))
+            )
+        )
+    )
+
+    latent_cortex_identity_bound = bool(
+        trace.get("latent_cortex_identity_bound")
+        and runtime_identity_valid
+        and _sha256(raw_latent_receipt.get("checkpoint_fingerprint"))
+        and _sha256(raw_latent_receipt.get("worker_source_sha256"))
+        and _sha256(raw_latent_receipt.get("request_payload_sha256"))
+        and _sha256(raw_latent_receipt.get("input_tokens_sha256"))
+        and isinstance(raw_latent_receipt.get("worker_boot_id"), str)
+        and len(raw_latent_receipt.get("worker_boot_id")) == 32
+        and all(
+            character in "0123456789abcdef"
+            for character in raw_latent_receipt.get("worker_boot_id")
+        )
+        and type(raw_latent_receipt.get("worker_pid")) is int
+        and raw_latent_receipt.get("worker_pid", 0) > 0
+        and bool(str(raw_latent_receipt.get("worker_model_path") or "").strip())
+        and type(raw_latent_receipt.get("worker_model_parameter_count")) is int
+        and raw_latent_receipt.get("worker_model_parameter_count", 0) > 0
+        and raw_latent_receipt.get("worker_affective_steering_active") is True
+        and raw_latent_receipt.get("episode_affective_steering_applied") is True
+        and isinstance(
+            raw_latent_receipt.get("episode_affective_steering_alpha"),
+            (int, float),
+        )
+        and not isinstance(
+            raw_latent_receipt.get("episode_affective_steering_alpha"), bool
+        )
+        and 0.0
+        <= float(raw_latent_receipt.get("episode_affective_steering_alpha"))
+        <= 1.0
+    )
+    latent_cortex_receipt = {
+        key: raw_latent_receipt.get(key)
+        for key in (
+            "episode_id",
+            "checkpoint_fingerprint",
+            "checkpoint_fingerprint_method",
+            "checkpoint_file_count",
+            "worker_boot_id",
+            "worker_pid",
+            "worker_model_path",
+            "worker_model_parameter_count",
+            "worker_source_sha256",
+            "worker_affective_steering_active",
+            "worker_affective_steering_alpha",
+            "episode_affective_steering_applied",
+            "episode_affective_steering_alpha",
+            "request_payload_sha256",
+            "input_tokens_sha256",
+            "input_token_count",
+            "params_unchanged",
+            "schedule_hash",
+            "n_slots",
+            "n_branches",
+            "steps_taken",
+            "halting_reason",
+            "decode_requested_tokens",
+            "decode_generated_tokens",
+            "decode_termination",
+            "decode_temperature",
+            "decode_top_p",
+            "latent_opt_applied",
+            "latent_opt_steps",
+            "fast_weights_applied",
+            "fast_weights_erased",
+            "honest_flags",
+        )
+        if key in raw_latent_receipt
+    }
+    latent_cortex_receipt["runtime_identity"] = {
+        key: raw_runtime_identity.get(key)
+        for key in (
+            "schema",
+            "identity_bound",
+            "launch_mode",
+            "installed_app_required",
+            "installed_app_verified",
+            "source_verified",
+            "source_commit",
+            "source_branch",
+            "workspace_state_sha256",
+            "source_dirty",
+            "source_change_count",
+            "shell_assets_sha256",
+            "bundle_identifier",
+            "app_executable_sha256",
+            "launch_manifest_sha256",
+            "issues",
+        )
+        if key in raw_runtime_identity
+    }
     live_mind_context_required = bool(desktop_required)
     live_mind_context_present = bool(trace.get("live_mind_context_present"))
     live_mind_snapshot_present = bool(trace.get("live_mind_snapshot_present"))
@@ -5177,7 +5320,19 @@ def _build_live_turn_contract_payload(
         "cognitive_engine_self_process_grounding",
         "cognitive_engine_self_condition_grounding",
         "cognitive_engine_bounded_planning",
+        "cognitive_engine_latent_cortex",
     }
+    latent_cortex_response_path = response_path == "cognitive_engine_latent_cortex"
+    latent_cortex_path_proven = bool(
+        not latent_cortex_response_path
+        or (
+            latent_cortex_selected
+            and latent_cortex_attempted
+            and latent_cortex_succeeded
+            and not latent_cortex_fallback_used
+            and latent_cortex_identity_bound
+        )
+    )
     # SPEAKER-IDENTITY proofs: did Aura's real cognitive engine author this
     # text (vs repair machinery / legacy fallback speaking in her voice)?
     # These are never waived — theater must never serve as Aura speech.
@@ -5189,6 +5344,7 @@ def _build_live_turn_contract_payload(
         and not legacy_fallback_used
         and confidence == "high"
         and response_path in accepted_full_mind_response_paths
+        and latent_cortex_path_proven
     )
     accepted_cognitive_path = bool(
         authentic_cognitive_reply
@@ -5227,6 +5383,8 @@ def _build_live_turn_contract_payload(
         missing_proofs.append(f"confidence:{confidence or 'unset'}")
     if response_path not in accepted_full_mind_response_paths:
         missing_proofs.append(f"response_path:{response_path or 'unset'}")
+    if latent_cortex_response_path and not latent_cortex_path_proven:
+        missing_proofs.append("latent_cortex_path_unproven")
     if not architecture_context_bound:
         missing_proofs.append("architecture_context_unbound")
     if not live_mind_snapshot_bound:
@@ -5256,6 +5414,23 @@ def _build_live_turn_contract_payload(
         "cognitive_engine_reply_failed": engine_reply_failed,
         "bounded_contract_used": bounded_contract_used,
         "legacy_fallback_used": legacy_fallback_used,
+        "latent_cortex_selected": latent_cortex_selected,
+        "latent_cortex_selection_reason": str(
+            trace.get("latent_cortex_selection_reason") or ""
+        ),
+        "latent_cortex_depth_worthy": bool(
+            trace.get("latent_cortex_depth_worthy")
+        ),
+        "latent_cortex_attempted": latent_cortex_attempted,
+        "latent_cortex_succeeded": latent_cortex_succeeded,
+        "latent_cortex_fallback_used": latent_cortex_fallback_used,
+        "latent_cortex_failure_reason": latent_cortex_failure_reason,
+        "latent_cortex_identity_bound": latent_cortex_identity_bound,
+        "latent_cortex_path_proven": latent_cortex_path_proven,
+        "latent_cortex_final_text_transformed": bool(
+            trace.get("latent_cortex_final_text_transformed")
+        ),
+        "latent_cortex_receipt": latent_cortex_receipt,
         "live_mind_context_required": live_mind_context_required,
         "live_mind_context_present": live_mind_context_present,
         "live_mind_snapshot_present": live_mind_snapshot_present,
@@ -6338,6 +6513,43 @@ async def _run_cognitive_engine_chat_turn(
                 "text_mutation_count": len(receipt_mutations),
             }
         )
+        raw_latent_receipt = metadata.get("latent_cortex_receipt")
+        turn_trace.update(
+            {
+                "latent_cortex_selected": bool(
+                    metadata.get("latent_cortex_selected", False)
+                ),
+                "latent_cortex_selection_reason": str(
+                    metadata.get("latent_cortex_selection_reason") or ""
+                ),
+                "latent_cortex_depth_worthy": bool(
+                    metadata.get("latent_cortex_depth_worthy", False)
+                ),
+                "latent_cortex_attempted": bool(
+                    metadata.get("latent_cortex_attempted", False)
+                ),
+                "latent_cortex_succeeded": bool(
+                    metadata.get("latent_cortex_succeeded", False)
+                ),
+                "latent_cortex_fallback_used": bool(
+                    metadata.get("latent_cortex_fallback_used", False)
+                ),
+                "latent_cortex_failure_reason": str(
+                    metadata.get("latent_cortex_failure_reason") or ""
+                )[:500],
+                "latent_cortex_identity_bound": bool(
+                    metadata.get("latent_cortex_identity_bound", False)
+                ),
+                "latent_cortex_final_text_transformed": bool(
+                    metadata.get("latent_cortex_final_text_transformed", False)
+                ),
+                "latent_cortex_receipt": (
+                    dict(raw_latent_receipt)
+                    if isinstance(raw_latent_receipt, dict)
+                    else {}
+                ),
+            }
+        )
         metadata_response_path = str(metadata.get("response_path") or "").strip()
         if adopt_response_path and metadata_response_path:
             turn_trace["response_path"] = metadata_response_path
@@ -6607,6 +6819,8 @@ async def _run_cognitive_engine_chat_turn(
         "live_mind_required_subsystems": dict(live_mind_context.get("required_subsystems") or {}),
         "live_mind_required_subsystems_ok": bool(live_mind_context.get("required_subsystems_ok")),
         "cognitive_engine_required": bool(require_engine),
+        "compact_desktop_chat_contract": compact_desktop_chat_contract,
+        "capability_inventory_contract": capability_inventory_contract,
         "conversation_only_surface": bool(conversation_only_surface),
         "tool_execution_policy": (
             "deny" if conversation_only_surface else "governed"

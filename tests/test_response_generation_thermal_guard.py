@@ -134,6 +134,164 @@ class _ConcurrentAmplifierRouter(_Router):
         return dict(self._metadata.get() or {})
 
 
+class _LatentService:
+    def __init__(self, result):
+        self.result = result
+        self.calls = []
+
+    async def deep_reason(self, **kwargs):
+        self.calls.append(kwargs)
+        return self.result
+
+
+def _live_latent_receipt():
+    return {
+        "episode_id": "episode-live-32b",
+        "checkpoint_fingerprint": "a" * 64,
+        "checkpoint_fingerprint_method": "sha256",
+        "checkpoint_file_count": 32,
+        "worker_boot_id": "b" * 32,
+        "worker_pid": 4200,
+        "worker_model_path": "/models/Aura-32B",
+        "worker_model_parameter_count": 32_000_000_000,
+        "worker_source_sha256": "c" * 64,
+        "worker_affective_steering_active": True,
+        "worker_affective_steering_alpha": 0.30,
+        "episode_affective_steering_applied": True,
+        "episode_affective_steering_alpha": 0.30,
+        "request_payload_sha256": "d" * 64,
+        "input_tokens_sha256": "e" * 64,
+        "input_token_count": 128,
+        "steps_taken": 5,
+        "decode_requested_tokens": 512,
+        "decode_generated_tokens": 37,
+        "decode_termination": "eos",
+        "decode_temperature": 0.61,
+        "decode_top_p": 0.87,
+        "runtime_identity": {
+            "identity_bound": True,
+            "launch_mode": "signed_app",
+            "installed_app_required": True,
+            "installed_app_verified": True,
+            "source_verified": True,
+            "source_commit": "f" * 40,
+            "workspace_state_sha256": "1" * 64,
+            "shell_assets_sha256": "2" * 64,
+        },
+    }
+
+
+def _latent_context(objective):
+    return {
+        "desktop_cognitive_engine_required": True,
+        "cognitive_engine_required": True,
+        "visible_user_message": objective,
+        "compact_desktop_chat_contract": False,
+        "prompt_shape": {
+            "question_parts": 2,
+            "prefers_extended_answer": True,
+            "requires_single_reply_coverage": True,
+        },
+        "max_tokens": 512,
+        "live_mind_controls_bound": True,
+        "live_mind_generation_controls": {
+            "temperature": 0.61,
+            "top_p": 0.87,
+            "clean_user_surface_recurrent_loops": 2,
+            "clean_user_surface_steering_alpha": 0.30,
+        },
+        "live_mind_snapshot_ready": True,
+        "live_mind_required_subsystems_ok": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_depth_worthy_desktop_turn_uses_one_latent_generation(monkeypatch):
+    objective = (
+        "Compare both failure modes, explain the causal tradeoff, and give one "
+        "coherent implementation decision with its verification plan."
+    )
+    state = AuraState()
+    state.cognition.current_objective = objective
+    state.cognition.current_origin = "desktop_ui"
+    state.cognition.current_mode = CognitiveMode.DELIBERATE
+    router = _Router()
+    latent = _LatentService(
+        {
+            "ok": True,
+            "text": (
+                "The first failure mode loses identity evidence, while the second "
+                "duplicates generation. I would bind one episode receipt at the phase "
+                "boundary and verify both single invocation and exact runtime identity."
+            ),
+            "receipt": _live_latent_receipt(),
+        }
+    )
+    phase = ResponseGenerationPhase(
+        _Container({"llm_router": router, "latent_cortex": latent})
+    )
+    monkeypatch.setattr(
+        "core.phases.response_generation.ContextAssembler.build_messages",
+        lambda *_args, **_kwargs: [
+            {"role": "system", "content": "full live context"},
+            {"role": "user", "content": objective},
+        ],
+    )
+    monkeypatch.setattr(
+        "core.phases.response_generation.get_executive_guard",
+        lambda: SimpleNamespace(align=lambda text: (text, False, [])),
+    )
+
+    result = await phase.execute(state, context=_latent_context(objective))
+
+    assert len(latent.calls) == 1
+    assert router.calls == []
+    assert latent.calls[0]["messages"][-1]["content"] == objective
+    assert latent.calls[0]["config_overrides"] == {
+        "decode_max_tokens": 512,
+        "decode_temperature": 0.61,
+        "decode_top_p": 0.87,
+    }
+    assert latent.calls[0]["runtime_controls"] == {
+        "clean_user_surface_recurrent_loops": 2,
+        "clean_user_surface_steering_alpha": 0.30,
+    }
+    assert result.response_modifiers["latent_cortex_succeeded"] is True
+    assert result.response_modifiers["latent_cortex_fallback_used"] is False
+    assert result.response_modifiers["latent_cortex_identity_bound"] is True
+    assert result.response_modifiers["live_mind_controls_worker_applied"] is True
+
+
+@pytest.mark.asyncio
+async def test_selected_latent_refusal_falls_back_to_exactly_one_generation(monkeypatch):
+    objective = "Analyze both branches and recommend the safer architecture."
+    state = AuraState()
+    state.cognition.current_objective = objective
+    state.cognition.current_origin = "desktop_ui"
+    state.cognition.current_mode = CognitiveMode.DELIBERATE
+    router = _Router()
+    latent = _LatentService({"ok": False, "reason": "worker_not_ready"})
+    phase = ResponseGenerationPhase(
+        _Container({"llm_router": router, "latent_cortex": latent})
+    )
+    monkeypatch.setattr(
+        "core.phases.response_generation.ContextAssembler.build_messages",
+        lambda *_args, **_kwargs: [{"role": "user", "content": objective}],
+    )
+    monkeypatch.setattr(
+        "core.phases.response_generation.get_executive_guard",
+        lambda: SimpleNamespace(align=lambda text: (text, False, [])),
+    )
+
+    result = await phase.execute(state, context=_latent_context(objective))
+
+    assert len(latent.calls) == 1
+    assert len(router.calls) == 1
+    assert result.response_modifiers["latent_cortex_succeeded"] is False
+    assert result.response_modifiers["latent_cortex_fallback_used"] is True
+    assert result.response_modifiers["latent_cortex_failure_reason"] == "worker_not_ready"
+
+
 @pytest.mark.asyncio
 async def test_response_generation_downshifts_on_thermal_pressure(monkeypatch):
     state = AuraState()

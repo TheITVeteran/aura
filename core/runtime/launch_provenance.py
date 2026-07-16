@@ -341,6 +341,36 @@ def _workspace_state(root: Path, *, commit_sha: str) -> dict[str, Any]:
     return result
 
 
+def collect_source_identity(root: str | Path) -> dict[str, Any]:
+    """Capture a stable, exact identity for a direct source runtime.
+
+    Installed-app launches already carry a signed manifest. Direct developer
+    launches still need an exact commit/workspace/shell identity when a proof
+    artifact claims which source produced a result.
+    """
+
+    canonical_input = Path(root).expanduser().resolve()
+    identity_before = _git_identity(canonical_input)
+    canonical_root = Path(identity_before["source_root"])
+    workspace_before = _workspace_state_uncached(canonical_root)
+    shell_before = runtime_shell_assets_sha256(canonical_root)
+    identity_after = _git_identity(canonical_root)
+    workspace_after = _workspace_state_uncached(canonical_root)
+    shell_after = runtime_shell_assets_sha256(canonical_root)
+    if (
+        identity_before != identity_after
+        or workspace_before["workspace_state_sha256"]
+        != workspace_after["workspace_state_sha256"]
+        or shell_before != shell_after
+    ):
+        raise RuntimeError("Aura source changed while runtime identity was captured")
+    return {
+        **identity_after,
+        **workspace_after,
+        "shell_assets_sha256": shell_after,
+    }
+
+
 def build_launch_manifest(
     root: str | Path,
     *,
@@ -672,6 +702,7 @@ __all__ = [
     "RUNTIME_SHELL_ASSETS",
     "build_launch_manifest",
     "capture_runtime_shell_assets",
+    "collect_source_identity",
     "collect_runtime_launch_provenance",
     "runtime_shell_assets_digest",
     "runtime_shell_assets_sha256",

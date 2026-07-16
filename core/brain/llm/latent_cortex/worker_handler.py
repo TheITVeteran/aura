@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import logging
 import os
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -56,6 +57,7 @@ _CONFIG_KEYS = {
     "convergence_eps",
     "decode_max_tokens",
     "decode_temperature",
+    "decode_top_p",
     "divergence_ratio",
     "exchange_gamma",
     "exchange_interval",
@@ -190,6 +192,7 @@ def config_from_job(job_config: dict[str, Any] | None) -> CortexConfig:
         schedule=raw.get("schedule"),
         decode_max_tokens=_typed_value(raw, "decode_max_tokens", 512, int),
         decode_temperature=_typed_value(raw, "decode_temperature", 0.0, float),
+        decode_top_p=_typed_value(raw, "decode_top_p", 1.0, float),
     )
     problems = cfg.validate()
     if problems:
@@ -218,6 +221,8 @@ def handle_latent_reason(
     model: Any,
     tokenizer: Any,
     model_path: str,
+    worker_identity: dict[str, Any] | None = None,
+    surface_control_state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run one latent-reasoning episode on the resident model.
 
@@ -249,6 +254,53 @@ def handle_latent_reason(
         messages=messages if isinstance(messages, list) else None,
         budget=budget,
         domain=str(job.get("domain", "general")),
+    )
+    if worker_identity is None:
+        from core.brain.llm.latent_cortex.runtime_identity import build_worker_identity
+
+        worker_identity = build_worker_identity(
+            model,
+            model_path=model_path,
+            worker_boot_id=uuid.uuid4().hex,
+            worker_source_path=Path(__file__).resolve().parents[1] / "mlx_worker.py",
+        )
+    receipt = result.receipt
+    receipt.worker_boot_id = str(worker_identity.get("worker_boot_id") or "")
+    receipt.worker_pid = int(worker_identity.get("worker_pid") or 0)
+    receipt.worker_model_path = str(worker_identity.get("worker_model_path") or "")
+    receipt.worker_model_parameter_count = int(
+        worker_identity.get("worker_model_parameter_count") or 0
+    )
+    receipt.worker_source_sha256 = str(worker_identity.get("worker_source_sha256") or "")
+    receipt.worker_affective_steering_active = bool(
+        worker_identity.get("worker_affective_steering_active", False)
+    )
+    receipt.worker_affective_steering_alpha = float(
+        worker_identity.get("worker_affective_steering_alpha") or 0.0
+    )
+    control_state = dict(surface_control_state or {})
+    applied_alpha = control_state.get("surface_alpha_applied")
+    receipt.episode_affective_steering_applied = bool(
+        receipt.worker_affective_steering_active
+        and isinstance(applied_alpha, (int, float))
+        and not isinstance(applied_alpha, bool)
+    )
+    receipt.episode_affective_steering_alpha = (
+        float(applied_alpha)
+        if receipt.episode_affective_steering_applied
+        else 0.0
+    )
+    from core.brain.llm.latent_cortex.runtime_identity import (
+        latent_request_payload_sha256,
+    )
+
+    receipt.request_payload_sha256 = latent_request_payload_sha256(
+        prompt=prompt,
+        messages=messages,
+        domain=str(job.get("domain", "general")),
+        config=job.get("config"),
+        budget=job.get("budget"),
+        runtime_controls=job.get("runtime_controls"),
     )
     body = result.to_dict()
     body["status"] = "ok" if result.ok else "error"

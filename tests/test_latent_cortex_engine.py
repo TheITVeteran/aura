@@ -96,6 +96,18 @@ def test_episodes_are_deterministic(tiny_model):
     assert a.receipt.schedule_hash == b.receipt.schedule_hash
 
 
+def test_nucleus_sampling_excludes_tokens_outside_probability_mass():
+    engine = LatentCortexEngine.__new__(LatentCortexEngine)
+    logits = mx.array([12.0, 2.0, 1.0, 0.0])
+
+    sampled = {
+        engine._sample(logits, temperature=0.7, top_p=0.01)
+        for _ in range(32)
+    }
+
+    assert sampled == {0}
+
+
 def test_latent_computation_is_causal_on_answer(tiny_model):
     """More recurrence ⇒ different refined thoughts ⇒ different answer tokens.
 

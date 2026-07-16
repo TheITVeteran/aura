@@ -2011,6 +2011,7 @@ class MLXLocalClient:
         self._current_first_token_hard_ceiling_s = 0.0
         self._foreground_generation_watchdog: _threading.Timer | None = None
         self._recurrent_depth_status: dict[str, Any] = {"active": False, "config": None}
+        self._worker_identity: dict[str, Any] = {}
         self._last_surface_control_receipt: dict[str, Any] = {}
         self._surface_control_receipt_context: ContextVar[dict[str, Any] | None] = (
             ContextVar(
@@ -3766,6 +3767,7 @@ class MLXLocalClient:
         messages: list | None = None,
         config: dict[str, Any] | None = None,
         budget: dict[str, Any] | None = None,
+        runtime_controls: dict[str, Any] | None = None,
         domain: str = "general",
         timeout_s: float = 300.0,
         foreground_request: bool = True,
@@ -3791,8 +3793,50 @@ class MLXLocalClient:
             return {**base, "reason": "invalid_config"}
         if budget is not None and not isinstance(budget, dict):
             return {**base, "reason": "invalid_budget"}
+        if runtime_controls is not None and not isinstance(runtime_controls, dict):
+            return {**base, "reason": "invalid_runtime_controls"}
         wire_config = dict(config or {})
         wire_budget = dict(budget or {})
+        wire_runtime_controls = dict(runtime_controls or {})
+        if runtime_controls is not None:
+            required_controls = {
+                "clean_user_surface_recurrent_loops",
+                "clean_user_surface_steering_alpha",
+            }
+            if set(wire_runtime_controls) != required_controls:
+                return {**base, "reason": "invalid_runtime_controls"}
+            recurrent_loops = wire_runtime_controls.get(
+                "clean_user_surface_recurrent_loops"
+            )
+            steering_alpha = wire_runtime_controls.get(
+                "clean_user_surface_steering_alpha"
+            )
+            if (
+                type(recurrent_loops) is not int
+                or not 1 <= recurrent_loops <= 2
+                or isinstance(steering_alpha, bool)
+                or not isinstance(steering_alpha, (int, float))
+                or not math.isfinite(float(steering_alpha))
+                or not 0.01 <= float(steering_alpha) <= 1.0
+            ):
+                return {**base, "reason": "invalid_runtime_controls"}
+        try:
+            from core.brain.llm.latent_cortex.runtime_identity import (
+                latent_request_payload_sha256,
+            )
+
+            expected_request_sha256 = latent_request_payload_sha256(
+                prompt=str(prompt) if prompt is not None else None,
+                messages=list(messages) if messages is not None else None,
+                domain=str(domain or "general"),
+                config=wire_config if config is not None else None,
+                budget=wire_budget if budget is not None else None,
+                runtime_controls=(
+                    wire_runtime_controls if runtime_controls is not None else None
+                ),
+            )
+        except (TypeError, ValueError, OverflowError):
+            return {**base, "reason": "invalid_request_payload"}
         try:
             bounded_timeout_s = float(timeout_s)
         except (TypeError, ValueError, OverflowError):
@@ -3874,6 +3918,11 @@ class MLXLocalClient:
                 job["config"] = wire_config
             if budget is not None:
                 job["budget"] = wire_budget
+            if runtime_controls is not None:
+                job["runtime_controls"] = wire_runtime_controls
+                job["clean_user_surface_contract"] = True
+                job["live_mind_controls_bound"] = True
+                job.update(wire_runtime_controls)
 
             fut = _new_shared_future()
             self._pending_generations[req_id] = fut
@@ -3923,6 +3972,61 @@ class MLXLocalClient:
             }:
                 deferred_reboot = f"latent_integrity:{reason}"
             if res.get("status") == "ok":
+                from core.brain.llm.latent_cortex.runtime_identity import (
+                    collect_latent_runtime_identity,
+                    worker_identity_errors,
+                )
+
+                identity_errors = worker_identity_errors(
+                    receipt,
+                    expected=getattr(self, "_worker_identity", {}),
+                )
+                if receipt.get("request_payload_sha256") != expected_request_sha256:
+                    identity_errors.append("request_payload_sha256_mismatch")
+                if identity_errors:
+                    deferred_reboot = "latent_integrity:worker_identity_mismatch"
+                    return {
+                        **base,
+                        "receipt": receipt,
+                        "reason": "worker_identity_failed:" + ",".join(identity_errors),
+                    }
+                try:
+                    identity_remaining = deadline.remaining
+                    if identity_remaining is not None and identity_remaining <= 0.0:
+                        return {
+                            **base,
+                            "receipt": receipt,
+                            "reason": "runtime_identity_deadline_exhausted",
+                        }
+                    identity_timeout = min(
+                        15.0,
+                        max(0.1, float(identity_remaining or 15.0)),
+                    )
+                    runtime_identity = await asyncio.wait_for(
+                        run_io_bound(
+                            collect_latent_runtime_identity,
+                            Path(__file__).resolve().parents[3],
+                        ),
+                        timeout=identity_timeout,
+                    )
+                except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                    _record_mlx_degradation(
+                        exc,
+                        action="refused latent success whose runtime identity could not be captured",
+                        severity="degraded",
+                    )
+                    return {
+                        **base,
+                        "receipt": receipt,
+                        "reason": f"runtime_identity_failed:{type(exc).__name__}",
+                    }
+                receipt["runtime_identity"] = dict(runtime_identity)
+                if runtime_identity.get("identity_bound") is not True:
+                    return {
+                        **base,
+                        "receipt": receipt,
+                        "reason": "runtime_identity_unbound",
+                    }
                 self._mark_progress()
                 return {
                     "ok": True,
@@ -5103,6 +5207,7 @@ class MLXLocalClient:
                 await self._ensure_listener_task()
                 should_wait_init = True
                 self._init_done = False
+                self._worker_identity = {}
                 self._set_lane_state("handshaking")
         finally:
             self._lock.release()
@@ -5127,6 +5232,12 @@ class MLXLocalClient:
                         recurrent_status = res.get("recurrent_depth")
                         if isinstance(recurrent_status, dict):
                             self._recurrent_depth_status = recurrent_status
+                        worker_identity = res.get("worker_identity")
+                        self._worker_identity = (
+                            dict(worker_identity)
+                            if isinstance(worker_identity, dict)
+                            else {}
+                        )
                         if "steering_active" in res:
                             try:
                                 steering_active = bool(res.get("steering_active"))
