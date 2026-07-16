@@ -7,6 +7,7 @@ import time
 from typing import Any
 
 from core.memory.physics import hawking_decay
+from core.resilience.runaway_budget import RunawayPolicy, get_runaway_budget
 from core.runtime import resource_psutil as psutil
 from core.runtime.errors import record_degradation
 from core.utils.exceptions import capture_and_log
@@ -91,8 +92,16 @@ class MemoryGovernor:
         self._last_prune_rss_mb = 0.0
         self._last_unload_rss_mb = 0.0
         self._loop_failure_count = 0
-        self._last_policy_sample: dict[str, float] = {}
+        self._last_policy_sample: dict[str, Any] = {}
         self._cleanup_events: list[dict[str, Any]] = []
+
+        # Watches the RSS *trend* and whether our own cleanup is achieving
+        # anything. The thresholds above answer "how bad is it now"; this
+        # answers "is it getting worse and is anything I do about it helping" —
+        # the judgement a receipt-only system structurally cannot make.
+        self._runaway = get_runaway_budget().detector(
+            "managed_rss_mb", RunawayPolicy.for_memory_mb()
+        )
 
     def health_snapshot(self) -> dict[str, Any]:
         """Return a compact operational view for health probes and dashboards."""
@@ -125,6 +134,13 @@ class MemoryGovernor:
         )
         if len(self._cleanup_events) > 40:
             self._cleanup_events = self._cleanup_events[-40:]
+
+        # Every mitigation this governor performs passes through here, which
+        # makes it the honest place to tell the runaway detector "I tried
+        # something". Repeated attempts with RSS still climbing is precisely the
+        # evidence that our cleanup does not address this particular growth —
+        # and that is a hard failure, not another receipt.
+        self._runaway.record_mitigation()
 
     def _record_degradation(
         self,
@@ -290,6 +306,17 @@ class MemoryGovernor:
             "system_percent": float(sys_percent),
             "sampled_at": time.time(),
         }
+
+        # Trend, not just level. The thresholds below are level-triggered: at
+        # the ~242MB/h growth the 4h soak measured, the 28GB prune trigger is
+        # DAYS away — the trend is unmistakable the whole time and nothing looks
+        # at it. Worse, when pruning fires and RSS keeps climbing, this loop
+        # just prunes again forever, emitting a receipt each time saying it
+        # handled things. This is what turns "the mitigation is not working"
+        # into an actual hard failure instead of a nicer log line.
+        self._runaway.observe(managed_rss_mb)
+        verdict = self._runaway.assess()
+        self._last_policy_sample["runaway"] = verdict.to_dict()
 
         if sys_percent > 98.0 or managed_rss_mb > self.threshold_critical:
             # The managed-RSS condition must live at this level: the old
