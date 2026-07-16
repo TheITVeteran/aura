@@ -1830,7 +1830,7 @@ def test_runtime_registry_batch_five_safety_memory_morality_seams():
             assert "core.runtime.service_registry" in source
 
 
-def test_runtime_registry_batch_six_large_scc_service_seams(monkeypatch):
+def test_runtime_registry_batch_six_large_scc_service_seams(monkeypatch, tmp_path):
     import asyncio
     import inspect
     from types import SimpleNamespace
@@ -1995,9 +1995,23 @@ def test_runtime_registry_batch_six_large_scc_service_seams(monkeypatch):
         scheduler.Scheduler()
         assert any(item[0] == "scheduler" for item in registered)
 
+        # BlackHole without Horcrux must come up ENCRYPTING, not disabled.
+        # This previously asserted `_aesgcm is None` — i.e. it pinned the defect:
+        # "Horcrux unavailable" meant encryption silently off, and every memory
+        # written on that boot went to disk in the clear. on_start() now
+        # provisions a local key instead (weaker than Horcrux and reported as
+        # such via key_provenance, but never plaintext).
+        #
+        # The key dir is redirected because on_start() genuinely writes one, and
+        # a service-seam test must not leave key material in the live ~/.aura.
+        monkeypatch.setenv(
+            "AURA_BLACK_HOLE_KEY_DIR", str(tmp_path / "black_hole_keys")
+        )
         black = black_hole.BlackHole()
         black.on_start()
-        assert black._aesgcm is None
+        assert black._aesgcm is not None
+        assert black.key_provenance == "local"
+        assert black.encrypt(b"probe") != b"probe"
 
         assert goal_planner.GoalPlanner().classify("explain this") == "reasoning"
         assert asyncio.run(goal_planner.GoalPlanner()._default_generate("question", 0.2)).startswith("generated:")
