@@ -228,11 +228,18 @@ def _feed_ring(service: WholeSystemPhiService, T: int, n: int = 6,
 def test_service_estimates_after_window_fills(monkeypatch):
     monkeypatch.setenv("AURA_WSPHI_MIN_SAMPLES", "300")
     monkeypatch.setenv("AURA_WSPHI_ESTIMATE_EVERY", "300")
+    # A claim needs a null that can resolve it. At the service's cheap default
+    # the p-floor is 1/(N+1) ≈ 0.048 — too coarse to establish anything, which
+    # is now enforced rather than assumed. This test asserts a POSITIVE verdict
+    # on a genuinely coupled ring, so it must pay for the resolution to make one.
+    monkeypatch.setenv("AURA_WSPHI_SURROGATES", "120")
+    monkeypatch.setenv("AURA_WSPHI_BOOTSTRAPS", "120")
     service = WholeSystemPhiService()
     _feed_ring(service, 320)
     assert service.ready()
     est = service.maybe_estimate()
     assert est is not None
+    assert est.surrogate_resolution_sufficient()
     assert est.integration_established()
     status = service.status()
     assert status["estimates_done"] == 1

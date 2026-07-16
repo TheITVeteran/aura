@@ -22,6 +22,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict
 
 from core.brain.llm.model_registry import (
+    DEEP_ENDPOINT,
     audit_lane_assignments,
     guard_solver_request,
     normalize_endpoint_name,
@@ -1432,6 +1433,33 @@ class IntelligentLLMRouter:
                 for name in by_tier.get(tier, []):
                     if name not in ordered:
                         ordered.append(name)
+
+        # The deep Solver must be UNREACHABLE without an explicit handoff — not
+        # merely un-preferred.
+        #
+        # The bug this closes: DEEP_ENDPOINT ("Solver", the 72B) is registered on
+        # LLMTier.SECONDARY, deliberately, "to prevent accidental promotion". But
+        # the Gemini cloud endpoints live on SECONDARY too, and SECONDARY is
+        # included in PRIMARY's failover chain on purpose (see above: so the 32B
+        # degrades to Gemini rather than dropping to the 7B brainstem). Including
+        # the tier therefore re-admitted the Solver through the back door: the
+        # chain came out as [Cortex, Solver, Brainstem] and any Cortex failure
+        # invoked the 72B — exactly the thing the tier move meant to prevent.
+        #
+        # `allow_secondary` was supposed to control this and did nothing at all:
+        # the `prefer_tier == PRIMARY and not allow_secondary` and
+        # `prefer_tier == PRIMARY and allow_secondary` branches produced
+        # identical tier lists. A flag that is read and then ignored is worse
+        # than no flag, because callers believe they disabled something.
+        #
+        # Filtering the endpoint (not the tier) enforces the disable while
+        # keeping the cloud fallback the failover chain was designed around.
+        if not allow_secondary and DEEP_ENDPOINT in ordered:
+            ordered = [name for name in ordered if name != DEEP_ENDPOINT]
+            logger.debug(
+                "🛡️ Router: Solver excluded from the failover chain "
+                "(no explicit deep handoff)."
+            )
         return ordered
     
     def _emergency_fallback(self, prompt: str, last_error: str | None) -> str:

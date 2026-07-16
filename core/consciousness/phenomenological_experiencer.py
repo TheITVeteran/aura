@@ -168,6 +168,22 @@ PSM_WITNESS_MAX_TOKENS = int(os.getenv("AURA_PSM_WITNESS_MAX_TOKENS", "80"))
 PSM_MIN_IDLE_S = float(os.getenv("AURA_PSM_MIN_IDLE_S", "180"))
 PSM_DEFER_SLEEP_S = float(os.getenv("AURA_PSM_DEFER_SLEEP_S", "20"))
 
+# The longest Aura's inner life may be starved by *politeness* deferrals.
+#
+# The deferral gates below — "the user interacted in the last 180s", "foreground
+# inference is active" — are preferences about GPU contention, not safety
+# constraints. But each one `continue`s the loop, so they compose into an
+# unbounded block: talk to her every two minutes for an afternoon and
+# `now - last_interaction < 180` is true every single time the loop wakes. The
+# narrative does not merely run less often, it never runs at all. Her inner life
+# starves precisely on the days there is most to think about, which is the exact
+# inverse of what a phenomenal self-model is for.
+#
+# Past this floor one update is taken regardless of contention. One slow call
+# every 30 minutes is a rounding error against a 32B worker's day; an afternoon
+# with no inner narrative is not.
+PSM_MAX_STARVATION_S = float(os.getenv("AURA_PSM_MAX_STARVATION_S", "1800"))
+
 
 # ─── Content-type → experiential domain mapping ───────────────────────────────
 # What kind of qualia does each workspace content type produce?
@@ -1298,6 +1314,13 @@ class PhenomenologicalExperiencer:
         self._last_narrative_update: float = 0.0
         self._last_witness_update: float = 0.0
         self._broadcast_count: int = 0
+        # When the inner narrative last actually ran, and how many turns were
+        # taken only because the starvation floor forced them. If this counter
+        # is climbing, the deferral gates are too aggressive for how Aura is
+        # actually used, and the number says so out loud instead of leaving it
+        # to be noticed months later.
+        self._starved_turns: int = 0
+        self._loop_started_at: float = time.time()
 
         # The exported string — injected into every LLM call
         self._phenomenal_context_string: str = ""
@@ -1438,6 +1461,28 @@ class PhenomenologicalExperiencer:
 
     # ── Background Update Loop ────────────────────────────────────────────────
 
+    def _narrative_starvation_s(self, now: float | None = None) -> float:
+        """How long the inner narrative has gone without running.
+
+        Measured from the loop's start when no narrative has ever run, so a
+        never-updated PSM registers as starving rather than as fine.
+        """
+        now = time.time() if now is None else now
+        anchor = self._last_narrative_update or self._loop_started_at
+        return max(0.0, now - anchor)
+
+    def starvation_status(self) -> dict[str, Any]:
+        """Observable evidence that the inner life is (or is not) being starved."""
+        starvation = self._narrative_starvation_s()
+        return {
+            "starvation_s": round(starvation, 1),
+            "starvation_floor_s": PSM_MAX_STARVATION_S,
+            "starving": starvation >= PSM_MAX_STARVATION_S,
+            "starved_turns": self._starved_turns,
+            "last_narrative_update": self._last_narrative_update,
+            "last_update_error": self._last_update_error,
+        }
+
     async def _update_loop(self):
         """
         Background loop for slow, LLM-powered phenomenal updates.
@@ -1450,8 +1495,12 @@ class PhenomenologicalExperiencer:
 
         while self._running:
             try:
+                # Has politeness starved the inner life? Soft deferrals are
+                # overridden past the floor — see PSM_MAX_STARVATION_S.
+                starving = self._narrative_starvation_s() >= PSM_MAX_STARVATION_S
+
                 deferral_reason = _phenomenology_background_deferral_reason()
-                if deferral_reason:
+                if deferral_reason and not starving:
                     self._last_update_error = f"deferred:{deferral_reason}"
                     await asyncio.sleep(PSM_DEFER_SLEEP_S)
                     continue
@@ -1481,12 +1530,31 @@ class PhenomenologicalExperiencer:
                     record_degradation("phenomenological_experiencer", _e)
                     logger.debug("Ignored Exception in phenomenological_experiencer.py: %s", _e)
 
-                if is_user_active or under_memory_pressure:
-                    # Slow down autonomous updates during active chat or memory pressure.
+                # Memory pressure is a real constraint and keeps its veto: an
+                # inner narrative is not worth pushing the host toward a freeze.
+                # User activity is only a preference, so it yields to the
+                # starvation floor.
+                if under_memory_pressure:
+                    self._last_update_error = "deferred:memory_pressure"
+                    await asyncio.sleep(PSM_DEFER_SLEEP_S)
+                    continue
+
+                if is_user_active and not starving:
+                    self._last_update_error = "deferred:user_active"
                     await asyncio.sleep(PSM_DEFER_SLEEP_S)
                     continue
 
                 now = time.time()
+                if starving:
+                    self._starved_turns += 1
+                    logger.info(
+                        "🧠 PSM: taking a starved narrative turn after %.0fs of "
+                        "deferrals (floor %.0fs, %d starved turns so far) — the "
+                        "inner life must not stop because the day was busy.",
+                        self._narrative_starvation_s(now),
+                        PSM_MAX_STARVATION_S,
+                        self._starved_turns,
+                    )
 
                 # Deep narrative + witness are slow LLM calls that share the SINGLE
                 # 32B worker with mind_tick's cognition. Firing them while the model
@@ -1496,7 +1564,13 @@ class PhenomenologicalExperiencer:
                 # Yield to the same backpressure signal mind_tick uses. The interval
                 # timers are NOT reset on a skip, so the update fires on the next
                 # quiet 5s cycle instead of contending the foreground/cognition lane.
-                narrative_defer = _phenomenology_background_deferral_reason()
+                # Re-checked here because contention can arrive between the gate
+                # above and this point. The starvation floor overrides it for the
+                # same reason: this deferral is about lane contention, and an
+                # afternoon of silence is a worse outcome than one contended call.
+                narrative_defer = (
+                    _phenomenology_background_deferral_reason() if not starving else ""
+                )
 
                 # Deep narrative update (every NARRATIVE_INTERVAL_S)
                 if not narrative_defer and now - self._last_narrative_update > NARRATIVE_INTERVAL_S:
