@@ -8081,6 +8081,70 @@
       "scope": "<module>.TaskLifecycleManager.__init__"
     },
     {
+      "callee": "open",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/governance/capability_chain.py",
+      "scope": "<module>.NonceLedger.flush"
+    },
+    {
+      "callee": "os.replace",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/governance/capability_chain.py",
+      "scope": "<module>.NonceLedger.flush"
+    },
+    {
+      "callee": "self._path.parent.mkdir",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/governance/capability_chain.py",
+      "scope": "<module>.NonceLedger.flush"
+    },
+    {
+      "callee": "d.mkdir",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/governance/capability_chain.py",
+      "scope": "<module>._KeyMaterial._ensure_dir"
+    },
+    {
+      "callee": "os.chmod",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/governance/capability_chain.py",
+      "scope": "<module>._KeyMaterial._ensure_dir"
+    },
+    {
+      "callee": "os.open",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/governance/capability_chain.py",
+      "scope": "<module>._KeyMaterial._load_or_create_ed25519"
+    },
+    {
+      "callee": "os.open",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/governance/capability_chain.py",
+      "scope": "<module>._KeyMaterial._load_or_create_hmac"
+    },
+    {
+      "callee": "os.open",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/governance/capability_chain.py",
+      "scope": "<module>._KeyMaterial._write_public"
+    },
+    {
       "callee": "self.LEDGER.parent.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -8727,6 +8791,22 @@
       "count": 1,
       "path": "core/memory/aura_self_profile.py",
       "scope": "<module>.AuraSelfProfile._save_to_disk"
+    },
+    {
+      "callee": "os.open",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/memory/black_hole.py",
+      "scope": "<module>._provision_local_key"
+    },
+    {
+      "callee": "path.parent.mkdir",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/memory/black_hole.py",
+      "scope": "<module>._provision_local_key"
     },
     {
       "callee": "os.makedirs",
@@ -13706,6 +13786,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "cbd32a42d91cc66ce19fc6ed388c4a3400d00e2171baa3f868e4c8b0a531da10",
+  "inventory_sha256": "5d67729507e7a61a877723848c71f90e10a5dc15e46cfc2817d4c434ab6417e8",
   "schema_version": 1
 }
