@@ -61,8 +61,9 @@ This module deliberately does not import ``core.governance.will`` (the Will
 issues capabilities, so that would be circular) and does not route its nonce
 ledger through ``core/runtime/file_write_gateway.py`` (the gateway is itself a
 consequential sink and will be capability-gated; routing the ledger through it
-would make the authority system depend on the thing it authorizes). The ledger
-uses a direct atomic tmp+rename with fsync kept off the caller's path.
+would make the authority system depend on the thing it authorizes). Key and
+nonce state use the lower-level canonical atomic writer with interprocess
+serialization so authority durability does not depend on its own sink.
 """
 from __future__ import annotations
 
@@ -70,7 +71,9 @@ import hashlib
 import hmac
 import json
 import logging
+import math
 import os
+import stat
 import threading
 import time
 import uuid
@@ -78,6 +81,13 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
+
+from core.runtime.atomic_writer import (
+    atomic_write_bytes,
+    atomic_write_bytes_if_absent,
+    ensure_private_directory,
+    interprocess_file_lock,
+)
 
 logger = logging.getLogger("Aura.Governance.CapabilityChain")
 
@@ -112,6 +122,9 @@ MAX_TTL_S = 3600.0
 _CLOCK_SKEW_TOLERANCE_S = 2.0
 
 _NONCE_LEDGER_CAP = 20_000
+_NONCE_LEDGER_SCHEMA = "aura.governance.capability_nonce_ledger"
+_NONCE_LEDGER_VERSION = 1
+_NONCE_LEDGER_MAX_BYTES = 4 * 1024 * 1024
 
 
 class CapabilityDenial(StrEnum):
@@ -129,6 +142,7 @@ class CapabilityDenial(StrEnum):
     REVOKED = "revoked"
     DOMAIN_MISMATCH = "domain_mismatch"
     ACTION_MISMATCH = "action_mismatch"
+    LEDGER_UNAVAILABLE = "ledger_unavailable"
 
 
 class CapabilityViolation(Exception):
@@ -351,6 +365,60 @@ def _key_id_for(material: bytes, kind: str) -> str:
     return f"{kind}-{hashlib.sha256(material).hexdigest()[:16]}"
 
 
+def _read_private_material(path: Path, *, max_bytes: int = 64 * 1024) -> bytes:
+    """Read one owner-private regular file without following a symlink."""
+
+    before = path.lstat()
+    if not stat.S_ISREG(before.st_mode):
+        raise ValueError(f"private material is not a regular file: {path}")
+    if before.st_mode & 0o077:
+        raise PermissionError(f"private material is not owner-only: {path}")
+    if before.st_size > max_bytes:
+        raise ValueError(f"private material exceeds {max_bytes} bytes: {path}")
+    flags = os.O_RDONLY
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    fd = os.open(str(path), flags)
+    try:
+        opened = os.fstat(fd)
+        if not stat.S_ISREG(opened.st_mode):
+            raise ValueError(f"private material is not a regular file: {path}")
+        if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+            raise RuntimeError(f"private material changed while opening: {path}")
+        chunks: list[bytes] = []
+        total = 0
+        remaining = opened.st_size
+        while remaining > 0:
+            chunk = os.read(fd, min(64 * 1024, remaining))
+            if not chunk:
+                raise RuntimeError(f"private material truncated while reading: {path}")
+            chunks.append(chunk)
+            total += len(chunk)
+            remaining -= len(chunk)
+            if total > max_bytes:
+                raise ValueError(f"private material exceeds {max_bytes} bytes: {path}")
+        after = os.fstat(fd)
+        if (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        ) != (
+            opened.st_dev,
+            opened.st_ino,
+            opened.st_size,
+            opened.st_mtime_ns,
+            opened.st_ctime_ns,
+        ):
+            raise RuntimeError(f"private material changed while reading: {path}")
+        return b"".join(chunks)
+    finally:
+        os.close(fd)
+
+
 class _KeyMaterial:
     """Loads/creates the Will's capability keys.
 
@@ -372,10 +440,7 @@ class _KeyMaterial:
     @classmethod
     def _ensure_dir(cls) -> bool:
         try:
-            d = _key_dir()
-            d.mkdir(parents=True, exist_ok=True, mode=0o700)
-            if os.name != "nt":
-                os.chmod(d, 0o700)
+            ensure_private_directory(_key_dir())
             return True
         except OSError as exc:
             logger.warning(
@@ -405,13 +470,13 @@ class _KeyMaterial:
 
         if _ED25519_AVAILABLE and not forced_hmac:
             try:
-                priv, created = cls._load_or_create_ed25519(storage)
+                priv, persisted = cls._load_or_create_ed25519(storage)
                 pub = priv.public_key()
                 pub_raw = pub.public_bytes(
                     encoding=serialization.Encoding.Raw,
                     format=serialization.PublicFormat.Raw,
                 )
-                if created and storage:
+                if storage:
                     cls._write_public(pub)
                 return {
                     "algorithm": "ed25519",
@@ -419,47 +484,67 @@ class _KeyMaterial:
                     "public": pub,
                     "key_id": _key_id_for(pub_raw, "ed25519"),
                     "asymmetric": True,
-                    "persisted": storage,
+                    "persisted": persisted,
                 }
             except (OSError, ValueError, TypeError) as exc:
                 logger.error(
-                    "Ed25519 capability key unusable (%s) — falling back to HMAC. "
-                    "Sinks can now mint; this is a DEGRADED authority mode.",
+                    "Ed25519 capability key unusable (%s) — using an ephemeral "
+                    "asymmetric key for this process without replacing persisted material.",
                     exc,
                 )
+                priv = Ed25519PrivateKey.generate()
+                pub = priv.public_key()
+                pub_raw = pub.public_bytes(
+                    encoding=serialization.Encoding.Raw,
+                    format=serialization.PublicFormat.Raw,
+                )
+                return {
+                    "algorithm": "ed25519",
+                    "private": priv,
+                    "public": pub,
+                    "key_id": _key_id_for(pub_raw, "ed25519-ephemeral"),
+                    "asymmetric": True,
+                    "persisted": False,
+                }
 
-        secret = cls._load_or_create_hmac(storage)
+        secret, persisted = cls._load_or_create_hmac(storage)
         return {
             "algorithm": "hmac-sha256",
             "private": secret,
             "public": secret,
             "key_id": _key_id_for(secret, "hmac"),
             "asymmetric": False,
-            "persisted": storage,
+            "persisted": persisted,
         }
 
     @classmethod
     def _load_or_create_ed25519(cls, storage: bool) -> tuple[Any, bool]:
         path = _priv_path()
-        if storage and path.exists():
-            with open(path, "rb") as fh:
-                loaded = serialization.load_pem_private_key(fh.read(), password=None)
+        if storage and os.path.lexists(path):
+            loaded = serialization.load_pem_private_key(
+                _read_private_material(path), password=None
+            )
             if not isinstance(loaded, Ed25519PrivateKey):
                 raise ValueError(f"{path} is not an Ed25519 private key")
-            return loaded, False
+            return loaded, True
 
         priv = Ed25519PrivateKey.generate()
-        if storage:
-            data = priv.private_bytes(
-                encoding=serialization.Encoding.PEM,
-                format=serialization.PrivateFormat.PKCS8,
-                encryption_algorithm=serialization.NoEncryption(),
-            )
-            fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            with os.fdopen(fd, "wb") as fh:
-                fh.write(data)
+        if not storage:
+            return priv, False
+        data = priv.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+        if atomic_write_bytes_if_absent(path, data, mode=0o600):
             logger.info("Minted a new Will capability signing key at %s", path)
-        return priv, True
+            return priv, True
+        loaded = serialization.load_pem_private_key(
+            _read_private_material(path), password=None
+        )
+        if not isinstance(loaded, Ed25519PrivateKey):
+            raise ValueError(f"{path} is not an Ed25519 private key")
+        return loaded, True
 
     @classmethod
     def _write_public(cls, pub: Any) -> None:
@@ -468,34 +553,39 @@ class _KeyMaterial:
                 encoding=serialization.Encoding.PEM,
                 format=serialization.PublicFormat.SubjectPublicKeyInfo,
             )
-            fd = os.open(str(_pub_path()), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
-            with os.fdopen(fd, "wb") as fh:
-                fh.write(data)
+            atomic_write_bytes(_pub_path(), data, mode=0o644)
         except OSError as exc:
             logger.warning("Could not publish capability public key: %s", exc)
 
     @classmethod
-    def _load_or_create_hmac(cls, storage: bool) -> bytes:
+    def _load_or_create_hmac(cls, storage: bool) -> tuple[bytes, bool]:
         path = _hmac_path()
-        if storage and path.exists():
+        if storage and os.path.lexists(path):
             try:
-                with open(path, "rb") as fh:
-                    secret = fh.read()
-                if len(secret) >= 32:
-                    return secret
-                logger.warning("Capability HMAC key at %s is too short — regenerating", path)
+                secret = _read_private_material(path, max_bytes=4096)
+                if 32 <= len(secret) <= 4096:
+                    return secret, True
+                logger.error(
+                    "Capability HMAC key at %s is too short; refusing to replace it",
+                    path,
+                )
             except OSError as exc:
-                logger.warning("Capability HMAC key unreadable (%s) — regenerating", exc)
+                logger.error("Capability HMAC key unreadable (%s)", exc)
+            return os.urandom(32), False
 
         secret = os.urandom(32)
-        if storage:
-            try:
-                fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-                with os.fdopen(fd, "wb") as fh:
-                    fh.write(secret)
-            except OSError as exc:
-                logger.warning("Could not persist capability HMAC key: %s", exc)
-        return secret
+        if not storage:
+            return secret, False
+        try:
+            if atomic_write_bytes_if_absent(path, secret, mode=0o600):
+                return secret, True
+            winner = _read_private_material(path, max_bytes=4096)
+            if not 32 <= len(winner) <= 4096:
+                raise ValueError("persisted capability HMAC key has an invalid length")
+            return winner, True
+        except (OSError, ValueError) as exc:
+            logger.error("Could not persist capability HMAC key: %s", exc)
+            return secret, False
 
 
 def issuer_is_asymmetric() -> bool:
@@ -510,17 +600,33 @@ def issuer_is_asymmetric() -> bool:
 def capability_chain_status() -> dict[str, Any]:
     """Operator-facing truth about the authority chain's current strength."""
     keys = _KeyMaterial.load()
+    ledger = get_nonce_ledger()
+    ledger_status = ledger.status()
+    asymmetric = bool(keys["asymmetric"])
+    persisted = bool(keys["persisted"])
+    durable = asymmetric and persisted and ledger_status["healthy"]
     return {
         "algorithm": keys["algorithm"],
         "key_id": keys["key_id"],
-        "asymmetric": bool(keys["asymmetric"]),
-        "keys_persisted": bool(keys["persisted"]),
-        "degraded": not bool(keys["asymmetric"]),
-        "nonce_ledger_size": get_nonce_ledger().size(),
+        "asymmetric": asymmetric,
+        "keys_persisted": persisted,
+        "nonce_ledger_size": ledger_status["size"],
+        "nonce_ledger_healthy": ledger_status["healthy"],
+        "nonce_ledger_error": ledger_status["error"],
+        "authority_durable": durable,
+        "degraded": not durable,
         "note": (
-            "Sinks verify with a public key and cannot mint."
-            if keys["asymmetric"]
-            else "DEGRADED: symmetric HMAC — any holder of the key can mint."
+            "Sinks verify with a persisted public key and accepted nonces are durable."
+            if durable
+            else (
+                "DEGRADED: symmetric HMAC — any holder of the key can mint."
+                if not asymmetric
+                else (
+                    "DEGRADED: signing identity is ephemeral and changes on restart."
+                    if not persisted
+                    else "DEGRADED: durable nonce replay protection is unavailable."
+                )
+            )
         ),
     }
 
@@ -591,85 +697,256 @@ class NonceLedger:
         self._lock = threading.RLock()
         self._seen: dict[str, float] = {}
         self._path = path or (_key_dir().parent / "governance" / "capability_nonces.json")
-        self._dirty = False
+        self._lock_path = self._path.with_name(f".{self._path.name}.lock")
+        self._healthy = True
+        self._error = ""
         self._load()
 
     def _load(self) -> None:
         try:
-            if not self._path.exists():
-                return
-            with open(self._path, encoding="utf-8") as fh:
-                data = json.load(fh)
-            now = time.time()
-            if isinstance(data, dict):
-                self._seen = {
-                    str(k): float(v)
-                    for k, v in data.get("nonces", {}).items()
-                    if float(v) > now
-                }
-        except (OSError, ValueError, TypeError) as exc:
-            # A corrupt ledger must not open a replay window. Start empty and
-            # say so loudly rather than silently accepting everything.
-            logger.error(
-                "Capability nonce ledger at %s unreadable (%s) — starting empty. "
-                "Replay protection covers only this process until it repopulates.",
-                self._path,
-                exc,
+            with self._lock, interprocess_file_lock(self._lock_path):
+                self._seen = self._read_disk_locked(time.time())
+                self._mark_healthy_locked()
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            with self._lock:
+                self._mark_unhealthy_locked(exc)
+
+    @staticmethod
+    def _json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"duplicate JSON key {key!r}")
+            result[key] = value
+        return result
+
+    def _read_bytes_locked(self) -> bytes | None:
+        try:
+            before = self._path.lstat()
+        except FileNotFoundError:
+            return None
+        if not stat.S_ISREG(before.st_mode):
+            raise ValueError(f"nonce ledger is not a regular file: {self._path}")
+        if before.st_size > _NONCE_LEDGER_MAX_BYTES:
+            raise ValueError(
+                f"nonce ledger exceeds {_NONCE_LEDGER_MAX_BYTES} bytes: {self._path}"
             )
-            self._seen = {}
+        flags = os.O_RDONLY
+        if hasattr(os, "O_CLOEXEC"):
+            flags |= os.O_CLOEXEC
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        fd = os.open(str(self._path), flags)
+        try:
+            opened = os.fstat(fd)
+            if not stat.S_ISREG(opened.st_mode):
+                raise ValueError(f"nonce ledger is not a regular file: {self._path}")
+            if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+                raise RuntimeError("nonce ledger changed while opening")
+            if hasattr(os, "getuid") and opened.st_uid != os.getuid():
+                raise PermissionError("nonce ledger is not owned by the current user")
+            if opened.st_mode & 0o077:
+                os.fchmod(fd, 0o600)
+                logger.warning("Restricted nonce ledger permissions to 0600 at %s", self._path)
+                opened = os.fstat(fd)
+            chunks: list[bytes] = []
+            total = 0
+            remaining = opened.st_size
+            while remaining > 0:
+                chunk = os.read(fd, min(64 * 1024, remaining))
+                if not chunk:
+                    raise RuntimeError("nonce ledger truncated while reading")
+                chunks.append(chunk)
+                total += len(chunk)
+                remaining -= len(chunk)
+                if total > _NONCE_LEDGER_MAX_BYTES:
+                    raise ValueError("nonce ledger grew beyond its maximum while reading")
+            after = os.fstat(fd)
+            if (
+                after.st_dev,
+                after.st_ino,
+                after.st_size,
+                after.st_mtime_ns,
+                after.st_ctime_ns,
+            ) != (
+                opened.st_dev,
+                opened.st_ino,
+                opened.st_size,
+                opened.st_mtime_ns,
+                opened.st_ctime_ns,
+            ):
+                raise RuntimeError("nonce ledger changed while reading")
+            return b"".join(chunks)
+        finally:
+            os.close(fd)
+
+    def _read_disk_locked(self, now: float) -> dict[str, float]:
+        encoded = self._read_bytes_locked()
+        if encoded is None:
+            return {}
+        try:
+            data = json.loads(encoded, object_pairs_hook=self._json_object)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError(f"nonce ledger is not valid UTF-8 JSON: {exc}") from exc
+        if not isinstance(data, dict):
+            raise ValueError("nonce ledger root must be an object")
+
+        schema = data.get("schema")
+        version = data.get("version")
+        if schema is not None or version is not None:
+            if schema != _NONCE_LEDGER_SCHEMA or version != _NONCE_LEDGER_VERSION:
+                raise ValueError(f"unsupported nonce ledger schema/version: {schema!r}/{version!r}")
+        saved_at = data.get("saved_at")
+        if saved_at is not None and (
+            isinstance(saved_at, bool)
+            or not isinstance(saved_at, (int, float))
+            or not math.isfinite(float(saved_at))
+        ):
+            raise ValueError("nonce ledger saved_at must be finite")
+        raw_nonces = data.get("nonces")
+        if not isinstance(raw_nonces, dict):
+            raise ValueError("nonce ledger nonces must be an object")
+
+        retained: dict[str, float] = {}
+        for nonce, raw_expiry in raw_nonces.items():
+            if not isinstance(nonce, str) or not nonce or len(nonce) > 512:
+                raise ValueError("nonce ledger contains an invalid nonce")
+            if (
+                isinstance(raw_expiry, bool)
+                or not isinstance(raw_expiry, (int, float))
+                or not math.isfinite(float(raw_expiry))
+            ):
+                raise ValueError(f"nonce {nonce[:12]!r} has an invalid expiry")
+            expiry = float(raw_expiry)
+            if expiry > now:
+                retained[nonce] = expiry
+        if len(retained) > _NONCE_LEDGER_CAP:
+            raise ValueError(
+                f"nonce ledger has {len(retained)} live entries; cap is {_NONCE_LEDGER_CAP}"
+            )
+        return retained
+
+    def _persist_locked(self, nonces: dict[str, float]) -> None:
+        payload = json.dumps(
+            {
+                "schema": _NONCE_LEDGER_SCHEMA,
+                "version": _NONCE_LEDGER_VERSION,
+                "nonces": nonces,
+                "saved_at": time.time(),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("ascii")
+        if len(payload) > _NONCE_LEDGER_MAX_BYTES:
+            raise ValueError("serialized nonce ledger exceeds its maximum size")
+        atomic_write_bytes(self._path, payload, durable=True, mode=0o600)
+
+    def _mark_healthy_locked(self) -> None:
+        self._healthy = True
+        self._error = ""
+
+    def _mark_unhealthy_locked(self, exc: BaseException | str) -> str:
+        detail = str(exc) or type(exc).__name__
+        if self._healthy or detail != self._error:
+            logger.error(
+                "Capability nonce ledger at %s unavailable (%s); refusing all "
+                "capability consumption until durable replay protection recovers.",
+                self._path,
+                detail,
+            )
+        self._healthy = False
+        self._error = detail
+        return detail
 
     def _prune(self, now: float) -> None:
-        if len(self._seen) <= _NONCE_LEDGER_CAP:
-            expired = [k for k, exp in self._seen.items() if exp <= now]
-            for k in expired:
-                self._seen.pop(k, None)
-            return
-        # Over cap even after expiry pruning: drop the soonest-to-expire.
-        for k, _exp in sorted(self._seen.items(), key=lambda kv: kv[1])[
-            : len(self._seen) - _NONCE_LEDGER_CAP
-        ]:
+        for k in [nonce for nonce, expiry in self._seen.items() if expiry <= now]:
             self._seen.pop(k, None)
 
     def consume(self, nonce: str, expires_at: float) -> bool:
         """Claim a nonce. False if it was already claimed (a replay)."""
+        accepted, _error = self.consume_with_reason(nonce, expires_at)
+        return accepted
+
+    def consume_with_reason(self, nonce: str, expires_at: float) -> tuple[bool, str | None]:
+        """Durably claim ``nonce`` before returning success.
+
+        ``(False, None)`` means a genuine replay. A non-empty reason means the
+        ledger could not establish durable single use and execution must fail
+        closed as an infrastructure denial.
+        """
+
         now = time.time()
-        with self._lock:
-            self._prune(now)
-            if nonce in self._seen:
-                return False
-            self._seen[nonce] = float(expires_at)
-            self._dirty = True
-        return True
+        if not isinstance(nonce, str) or not nonce or len(nonce) > 512:
+            return False, "nonce is empty or exceeds 512 characters"
+        if (
+            isinstance(expires_at, bool)
+            or not isinstance(expires_at, (int, float))
+            or not math.isfinite(float(expires_at))
+            or float(expires_at) <= now
+        ):
+            return False, "nonce expiry is invalid or not in the future"
+        try:
+            with self._lock, interprocess_file_lock(self._lock_path):
+                self._seen = self._read_disk_locked(now)
+                self._prune(now)
+                if nonce in self._seen:
+                    self._mark_healthy_locked()
+                    return False, None
+                if len(self._seen) >= _NONCE_LEDGER_CAP:
+                    return False, self._mark_unhealthy_locked(
+                        f"live nonce capacity {_NONCE_LEDGER_CAP} reached"
+                    )
+                candidate = dict(self._seen)
+                candidate[nonce] = float(expires_at)
+                self._persist_locked(candidate)
+                self._seen = candidate
+                self._mark_healthy_locked()
+                return True, None
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            with self._lock:
+                return False, self._mark_unhealthy_locked(exc)
 
     def seen(self, nonce: str) -> bool:
-        with self._lock:
-            return nonce in self._seen
+        try:
+            with self._lock, interprocess_file_lock(self._lock_path):
+                self._seen = self._read_disk_locked(time.time())
+                self._mark_healthy_locked()
+                return nonce in self._seen
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            with self._lock:
+                self._mark_unhealthy_locked(exc)
+                return True
 
     def size(self) -> int:
-        with self._lock:
-            return len(self._seen)
+        return int(self.status()["size"])
+
+    def status(self) -> dict[str, Any]:
+        try:
+            with self._lock, interprocess_file_lock(self._lock_path):
+                self._seen = self._read_disk_locked(time.time())
+                self._mark_healthy_locked()
+                return {"healthy": True, "error": "", "size": len(self._seen)}
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            with self._lock:
+                self._mark_unhealthy_locked(exc)
+                return {
+                    "healthy": False,
+                    "error": self._error,
+                    "size": len(self._seen),
+                }
 
     def flush(self) -> None:
-        """Persist. Direct atomic write — see the module docstring on why this
-        does not go through the file write gateway."""
-        with self._lock:
-            if not self._dirty:
-                return
-            snapshot = dict(self._seen)
-            self._dirty = False
-        try:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self._path.with_suffix(f".{os.getpid()}.tmp")
-            with open(tmp, "w", encoding="utf-8") as fh:
-                json.dump({"nonces": snapshot, "saved_at": time.time()}, fh)
-            os.replace(tmp, self._path)
-        except (OSError, ValueError) as exc:
-            logger.warning("Could not persist capability nonce ledger: %s", exc)
+        """Compatibility no-op: every successful consumption is already durable."""
+        self.status()
 
     def reset(self) -> None:
+        """Clear only this object's cache; never erase persisted replay history."""
         with self._lock:
             self._seen.clear()
-            self._dirty = False
+            self._healthy = True
+            self._error = ""
 
 
 _ledger: NonceLedger | None = None
@@ -912,7 +1189,16 @@ class CapabilityVerifier:
         # Last, so a capability is not burned by a request that fails an
         # earlier check — otherwise a domain typo would consume real authority.
         if consume:
-            if not get_nonce_ledger().consume(cap.nonce, cap.expires_at):
+            consumed, ledger_error = get_nonce_ledger().consume_with_reason(
+                cap.nonce, cap.expires_at
+            )
+            if not consumed and ledger_error:
+                return VerificationResult(
+                    False,
+                    CapabilityDenial.LEDGER_UNAVAILABLE,
+                    f"durable replay protection unavailable: {ledger_error}",
+                )
+            if not consumed:
                 return VerificationResult(
                     False, CapabilityDenial.REPLAYED, f"nonce already used ({cap.capability_id})"
                 )

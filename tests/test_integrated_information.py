@@ -131,11 +131,17 @@ def test_independent_channels_do_not_beat_the_null():
 
 
 def test_ring_system_is_detected_as_integrated():
+    # 16 surrogates put the family-wise p-floor at 1/17 ≈ 0.059 — coarser than
+    # the 0.10 threshold it would be judged against, so the grain-selection
+    # verdict could only ever be "significant because nothing finer was
+    # measurable". A positive claim now requires a null that can resolve it, so
+    # this pays for the resolution rather than the rule bending for the test.
     X = var1(ring_A(6), 1500, seed=9)
-    est = estimate_whole_system_phi(X, n_surrogates=16, n_boot=12, seed=5)
+    est = estimate_whole_system_phi(X, n_surrogates=120, n_boot=120, seed=5)
     assert est.phi_raw > 0.05
     assert est.z >= 3.0
     assert est.ci_5 > 0.0
+    assert est.surrogate_resolution_sufficient()
     assert est.integration_established()
 
 

@@ -303,9 +303,7 @@ class AgentDelegator(AuraBaseModule):
             mycelium = ServiceContainer.get("mycelial_network", default=None)
             if not mycelium:
                 return
-            hypha = mycelium.get_hypha("collective", "cognition")
-            if hypha:
-                hypha.pulse(success=success)
+            mycelium.pulse_hypha("collective", "cognition", success=success)
         except DELEGATOR_RECOVERABLE_ERRORS as exc:
             self._emit_delegator_fault(
                 exc,

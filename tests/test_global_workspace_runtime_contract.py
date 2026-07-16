@@ -158,7 +158,7 @@ async def test_workspace_records_auxiliary_failures_without_losing_winner(monkey
     from core.consciousness.global_workspace import CognitiveCandidate, GlobalWorkspace
 
     class BrokenMycelium:
-        def get_hypha(self, source, target):
+        def pulse_hypha(self, source, target, *, success=True):
             reason = f"{source}:{target}:mycelium offline"
             raise RuntimeError(reason)
 
@@ -221,7 +221,7 @@ async def test_workspace_flood_guard_drops_bid_and_records_reflex_failure(monkey
     from core.consciousness.global_workspace import CognitiveCandidate, GlobalWorkspace
 
     class BrokenMycelium:
-        def get_hypha(self, source, target):
+        def set_hypha_strength(self, source, target, strength):
             reason = f"{source}:{target}:flood reflex offline"
             raise RuntimeError(reason)
 

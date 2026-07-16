@@ -45,21 +45,14 @@ class RecordingBeliefs:
         self.claims.append(kwargs)
 
 
-class RecordingHypha:
+class RecordingMycelium:
     def __init__(self):
         self.pulses = []
 
-    def pulse(self, **kwargs):
-        self.pulses.append(kwargs)
-
-
-class RecordingMycelium:
-    def __init__(self):
-        self.hypha = RecordingHypha()
-
-    def get_hypha(self, source, target):
+    def pulse_hypha(self, source, target, *, success=True):
         assert (source, target) == ("adaptation", "cognition")
-        return self.hypha
+        self.pulses.append({"success": success})
+        return True
 
 
 class ScriptedEngine:
@@ -102,7 +95,7 @@ async def test_crucible_commits_synthesis_and_pulses_success(monkeypatch):
     assert beliefs.claims[0]["claim"].startswith("Synthesis:")
     assert beliefs.claims[0]["source"] == "dialectical_crucible"
     assert len(engine.calls) == 3
-    assert mycelium.hypha.pulses == [{"success": True}]
+    assert mycelium.pulses == [{"success": True}]
 
 
 @pytest.mark.asyncio

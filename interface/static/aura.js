@@ -35,7 +35,13 @@ const state = {
     lastToolEvent: null,
     isSubmitting: false,
     activeChatRequestId: null,
+    activeChatRequest: null,
     chatSendQueue: [],
+    chatDrainTimer: null,
+    chatHandoffPending: false,
+    chatHandoffRestored: false,
+    deferredShellReload: null,
+    waitingServiceWorker: null,
     surfaceSuspended: false,
     resumeInProgress: false,
     lastSurfaceHiddenAt: 0,
@@ -54,6 +60,20 @@ const state = {
     conversationLane: null,
     runtimeHealthy: false,
     runtimeHealthBlockers: [],
+    runtimeRevision: null,
+    runtimeRevisionGeneration: 0,
+    runtimeRevisionCapturedAtUnix: 0,
+    runtimeRevisionReloadAttempts: {},
+    runtimeRevisionReloading: false,
+    runtimeRevisionTrust: 'unknown',
+    runtimeShellRetirementPromise: null,
+    serviceWorkerRevision: null,
+    serviceWorkerRegistrationTarget: null,
+    serviceWorkerRegistrationPromise: null,
+    serviceWorkerRegistrationEpoch: 0,
+    serviceWorkerRegistrationFailures: 0,
+    serviceWorkerRegistrationRetryAt: 0,
+    serviceWorkerInstallers: new WeakMap(),
     version: 'Aura Luna (live runtime)',
     interactionSignals: null,
     typingSignalSession: null,
@@ -74,7 +94,18 @@ console.log(`%c AURA %c ${state.version} `, "color:white; background:#8a2be2; pa
 
 const CHAT_REQUEST_TIMEOUT_READY_MS = 335000;
 const CHAT_REQUEST_TIMEOUT_RECOVERING_MS = 395000;
-const CHAT_SEND_QUEUE_MAX = 4;
+const CHAT_SEND_QUEUE_MAX = 32;
+const CHAT_HANDOFF_ACTIVE_REPLAY_MAX_WAIT_MS = CHAT_REQUEST_TIMEOUT_RECOVERING_MS + 15000;
+const CHAT_HANDOFF_MAX_AGE_MS = 10 * 60 * 1000;
+const CHAT_DELIVERY_STATUS_TIMEOUT_MS = 8000;
+const CHAT_DELIVERY_POLL_BASE_MS = 400;
+const CHAT_DELIVERY_POLL_MAX_MS = 5000;
+const CHAT_DELIVERY_TERMINAL_STATES = new Set([
+    'awaiting_approval',
+    'completed',
+    'failed',
+    'ambiguous',
+]);
 const THOUGHT_QUEUE_MAX = 160;
 const THOUGHT_COALESCE_WINDOW_MS = 12000;
 const THOUGHT_COALESCE_LOOKBACK = 18;
@@ -87,6 +118,14 @@ const HEALTH_POLL_MAX_MS = 60000;
 const HEALTH_POLL_TIMEOUT_MS = 6000;
 const HEALTH_POLL_REMINDER_MS = 5 * 60 * 1000;
 const HEALTH_POLL_JITTER_RATIO = 0.15;
+const RUNTIME_REVISION_STORAGE_KEY = 'aura.runtime_revision';
+const RUNTIME_REVISION_RELOAD_STORAGE_KEY = 'aura.runtime_revision_reload';
+const RUNTIME_REVISION_RECORD_SCHEMA = 'aura.runtime_revision.client.v2';
+const RUNTIME_REVISION_RELOAD_LIMIT = 2;
+const CHAT_HANDOFF_STORAGE_KEY = 'aura.chat_handoff';
+const CHAT_HANDOFF_SCHEMA = 'aura.chat_handoff.v3';
+const CHAT_HANDOFF_ACCEPTED_SCHEMAS = new Set([CHAT_HANDOFF_SCHEMA]);
+const SERVICE_WORKER_REGISTRATION_RETRY_MAX_MS = 30000;
 const TYPING_SIGNAL_DEBOUNCE_MS = 850;
 const VOICE_SIGNAL_FLUSH_MS = 900;
 const CAMERA_SIGNAL_INTERVAL_MS = 2200;
@@ -107,6 +146,7 @@ function accessCapabilityAllowed(name) {
 
 function conversationSurfaceRequestAllowed(path, method) {
     if (path === '/api/chat') return method === 'POST';
+    if (path.startsWith('/api/chat/delivery/')) return method === 'GET';
     if (CONVERSATION_SURFACE_GET_PATHS.has(path)) return ['GET', 'HEAD'].includes(method);
     if (path === '/api/worlds' || path.startsWith('/api/worlds/')) {
         return ['GET', 'HEAD'].includes(method);
@@ -141,6 +181,7 @@ window.fetch = function auraSurfaceFetch(input, init = {}) {
 };
 
 function applyAccessProfile(profile) {
+    const previousScope = chatHandoffScope();
     const normalized = profile && typeof profile === 'object' ? profile : {};
     state.accessProfile = normalized;
     state.accessResolved = true;
@@ -148,6 +189,18 @@ function applyAccessProfile(profile) {
     const surface = String(normalized.surface || 'unknown');
     window.__auraControlSurfaceAllowed = !state.conversationOnly;
     document.body.dataset.auraSurface = surface;
+    const nextScope = chatHandoffScope();
+    if (previousScope && nextScope && previousScope !== nextScope) {
+        try { sessionStorage.removeItem(CHAT_HANDOFF_STORAGE_KEY); } catch (_err) {}
+        state.chatSendQueue = [];
+        state.activeChatRequest = null;
+    }
+    if (!state.chatHandoffRestored && nextScope) {
+        state.chatHandoffRestored = true;
+        if (restoreChatHandoff($('chat-input'))) {
+            window.setTimeout(() => drainQueuedChatMessages(), 0);
+        }
+    }
     window.dispatchEvent(new CustomEvent('aura:access-profile', { detail: normalized }));
     if (state.conversationOnly) {
         setRuntimeSettingsAvailability(false, 'Runtime settings require the paired desktop control surface.');
@@ -3100,69 +3153,566 @@ function sendMessage(message) {
 window.sendMessage = sendMessage;
 
 // ── Chat ─────────────────────────────────────────────────
-function enqueueChatMessage(message) {
-    const msg = String(message || '').trim();
-    if (!msg) return false;
-    if (state.chatSendQueue.length >= CHAT_SEND_QUEUE_MAX) {
-        state.chatSendQueue.shift();
-        appendMsg(
-            'aura',
-            'I am keeping the live chat lane bounded, so I dropped the oldest queued unsent message and kept the newest ones.'
+function createChatIdempotencyKey() {
+    const uuid = window.crypto && typeof window.crypto.randomUUID === 'function'
+        ? window.crypto.randomUUID()
+        : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 14)}`;
+    return `aura-chat-${uuid}`;
+}
+
+function chatHandoffScope() {
+    const profile = state.accessProfile && typeof state.accessProfile === 'object'
+        ? state.accessProfile
+        : {};
+    const surface = String(profile.surface || '').trim().toLowerCase();
+    const scope = String(profile.handoff_scope || '').trim().toLowerCase();
+    if (!surface || !/^[0-9a-f]{64}$/.test(scope)) return '';
+    return `${surface}:${scope}`;
+}
+
+function normalizeChatQueueItem(value, { rendered = null } = {}) {
+    const source = value && typeof value === 'object' ? value : { message: value };
+    const message = String(source.message || '').trim();
+    if (!message) return null;
+    const suppliedKey = String(source.idempotencyKey || '');
+    const idempotencyKey = /^[A-Za-z0-9._:-]{16,240}$/.test(suppliedKey)
+        ? suppliedKey
+        : createChatIdempotencyKey();
+    const suppliedQueuedAt = Number(source.queuedAt);
+    const suppliedResumeDeadline = Number(source.resumeDeadline);
+    const suppliedTurnId = String(source.turnId || '');
+    const suppliedApprovalToken = String(source.approvalResumeToken || '');
+    const suppliedDeliveryState = String(source.deliveryState || 'queued').toLowerCase();
+    const suppliedHandoffScope = String(source.handoffScope || chatHandoffScope());
+    return {
+        message,
+        idempotencyKey,
+        rendered: rendered == null ? source.rendered === true : rendered === true,
+        queuedAt: Number.isFinite(suppliedQueuedAt) ? suppliedQueuedAt : Date.now(),
+        resumePending: source.resumePending === true,
+        resumeDeadline: Number.isFinite(suppliedResumeDeadline) ? suppliedResumeDeadline : 0,
+        turnId: /^[0-9a-f]{32}$/.test(suppliedTurnId) ? suppliedTurnId : '',
+        approvalResumeToken: /^[0-9a-f]{32}$/.test(suppliedApprovalToken)
+            ? suppliedApprovalToken
+            : '',
+        handoffScope: suppliedHandoffScope === chatHandoffScope()
+            ? suppliedHandoffScope
+            : '',
+        deliveryState: [
+            'queued',
+            'submitting',
+            'pending',
+            'awaiting_approval',
+            'completed',
+            'failed',
+            'ambiguous',
+        ].includes(suppliedDeliveryState) ? suppliedDeliveryState : 'queued',
+    };
+}
+
+function chatQueueItemSnapshot(value) {
+    const item = normalizeChatQueueItem(value);
+    if (!item) return null;
+    return {
+        message: item.message,
+        idempotencyKey: item.idempotencyKey,
+        rendered: item.rendered,
+        queuedAt: item.queuedAt,
+        resumePending: item.resumePending,
+        resumeDeadline: item.resumeDeadline,
+        turnId: item.turnId,
+        deliveryState: item.deliveryState,
+        handoffScope: item.handoffScope,
+    };
+}
+
+function chatHandoffSnapshot() {
+    const textarea = $('chat-input');
+    const active = chatQueueItemSnapshot(state.activeChatRequest);
+    if (active) {
+        active.resumePending = true;
+        active.resumeDeadline = active.resumeDeadline || (
+            Date.now() + CHAT_HANDOFF_ACTIVE_REPLAY_MAX_WAIT_MS
         );
     }
-    state.chatSendQueue.push({ message: msg, rendered: true, queuedAt: Date.now() });
+    return {
+        schema: CHAT_HANDOFF_SCHEMA,
+        savedAt: Date.now(),
+        scope: chatHandoffScope(),
+        draft: textarea ? String(textarea.value || '') : '',
+        active,
+        queue: state.chatSendQueue.map(chatQueueItemSnapshot).filter(Boolean),
+    };
+}
+
+function chatHandoffHasContent(snapshot = chatHandoffSnapshot()) {
+    return Boolean(snapshot.draft || snapshot.active || snapshot.queue.length);
+}
+
+function persistChatHandoff({ force = false } = {}) {
+    const snapshot = chatHandoffSnapshot();
+    try {
+        if (!force && !chatHandoffHasContent(snapshot)) {
+            sessionStorage.removeItem(CHAT_HANDOFF_STORAGE_KEY);
+        } else if (!snapshot.scope) {
+            return false;
+        } else {
+            sessionStorage.setItem(CHAT_HANDOFF_STORAGE_KEY, JSON.stringify(snapshot));
+        }
+        return true;
+    } catch (_err) {
+        return false;
+    }
+}
+
+function restoreChatHandoff(textarea) {
+    let payload;
+    try {
+        const raw = sessionStorage.getItem(CHAT_HANDOFF_STORAGE_KEY);
+        if (!raw) return false;
+        payload = JSON.parse(raw);
+        const savedAt = Number(payload?.savedAt || 0);
+        const ageMs = Date.now() - savedAt;
+        if (
+            !payload
+            || !CHAT_HANDOFF_ACCEPTED_SCHEMAS.has(payload.schema)
+            || payload.scope !== chatHandoffScope()
+            || !Number.isFinite(savedAt)
+            || savedAt <= 0
+            || ageMs < 0
+            || ageMs > CHAT_HANDOFF_MAX_AGE_MS
+        ) {
+            sessionStorage.removeItem(CHAT_HANDOFF_STORAGE_KEY);
+            return false;
+        }
+    } catch (_err) {
+        try { sessionStorage.removeItem(CHAT_HANDOFF_STORAGE_KEY); } catch (_ignored) {}
+        return false;
+    }
+
+    const draft = String(payload.draft || '');
+    if (textarea && draft && !textarea.value) {
+        textarea.value = draft;
+        textarea.style.height = 'auto';
+        textarea.style.height = Math.min(textarea.scrollHeight, 150) + 'px';
+    }
+
+    const seen = new Set();
+    const restored = [];
+    const candidates = [payload.active].concat(Array.isArray(payload.queue) ? payload.queue : []);
+    for (const [index, candidate] of candidates.entries()) {
+        const item = normalizeChatQueueItem(candidate, { rendered: false });
+        if (!item || !item.handoffScope || seen.has(item.idempotencyKey)) continue;
+        if (index === 0 && payload.active) {
+            item.resumePending = true;
+            item.deliveryState = item.deliveryState === 'queued'
+                ? 'pending'
+                : item.deliveryState;
+            item.resumeDeadline = item.resumeDeadline || (
+                Number(payload.savedAt || Date.now()) + CHAT_HANDOFF_ACTIVE_REPLAY_MAX_WAIT_MS
+            );
+        }
+        seen.add(item.idempotencyKey);
+        restored.push(item);
+    }
+    state.chatSendQueue = restored.concat(
+        state.chatSendQueue.filter(item => !seen.has(String(item.idempotencyKey || '')))
+    );
+    persistChatHandoff({ force: true });
+    return Boolean(draft || restored.length);
+}
+
+function requestGuardedShellReload({
+    revision = '',
+    generation = 0,
+    capturedAtUnix = 0,
+    replaceUrl = '',
+} = {}) {
+    if (state.runtimeRevisionReloading) return false;
+    const snapshot = chatHandoffSnapshot();
+    const needsHandoff = chatHandoffHasContent(snapshot);
+    if (!persistChatHandoff({ force: needsHandoff }) && needsHandoff) {
+        state.deferredShellReload = { revision, replaceUrl };
+        return false;
+    }
+    if (revision && !persistRuntimeRevision(revision, { generation, capturedAtUnix })) {
+        // The URL marker plus in-memory reload guard still bind this navigation.
+        // Storage denial must not pin a tab to stale executable bytes when no
+        // conversation handoff is at risk.
+        console.warn('[RuntimeRevision] session storage unavailable; proceeding with guarded in-memory reload');
+    }
+    if (revision && !reserveRuntimeRevisionReload(revision)) {
+        state.deferredShellReload = null;
+        return false;
+    }
+
+    state.deferredShellReload = null;
+    state.chatHandoffPending = true;
+    state.runtimeRevisionReloading = true;
+    if (replaceUrl) window.location.replace(replaceUrl);
+    else window.location.reload();
+    return true;
+}
+
+function requestServiceWorkerActivation(
+    worker,
+    revision = state.runtimeRevision || storedRuntimeRevision(),
+) {
+    if (!worker || typeof worker.postMessage !== 'function') return false;
+    if (!revision || serviceWorkerRevision(worker) !== revision) return false;
+    if (!serviceWorkerRegistrationIsCurrent(revision)) return false;
+    const snapshot = chatHandoffSnapshot();
+    const needsHandoff = chatHandoffHasContent(snapshot);
+    if (!persistChatHandoff({ force: needsHandoff }) && needsHandoff) {
+        state.waitingServiceWorker = worker;
+        return false;
+    }
+    try {
+        worker.postMessage({ type: 'SKIP_WAITING', revision });
+        state.waitingServiceWorker = null;
+        return true;
+    } catch (err) {
+        state.waitingServiceWorker = null;
+        console.warn('[SW] waiting worker activation failed:', err);
+        return false;
+    }
+}
+
+function retryDeferredShellTransition() {
+    if (state.waitingServiceWorker) {
+        requestServiceWorkerActivation(state.waitingServiceWorker);
+    }
+    if (state.deferredShellReload && !state.runtimeRevisionReloading) {
+        const pending = state.deferredShellReload;
+        requestGuardedShellReload(pending);
+    }
+}
+
+function enqueueChatMessage(value) {
+    const item = normalizeChatQueueItem(value, { rendered: true });
+    if (!item) return false;
+    if (state.chatSendQueue.length >= CHAT_SEND_QUEUE_MAX) {
+        return false;
+    }
+    state.chatSendQueue.push(item);
+    persistChatHandoff({ force: true });
     updateTypingLabel(`Aura is finishing the current turn… ${state.chatSendQueue.length} queued`);
     return true;
 }
 
 function drainQueuedChatMessages() {
-    if (state.isSubmitting || !state.chatSendQueue.length) return;
+    if (
+        state.isSubmitting
+        || state.activeChatRequest
+        || state.chatHandoffPending
+        || !state.chatSendQueue.length
+    ) return;
+    if (state.chatDrainTimer) {
+        window.clearTimeout(state.chatDrainTimer);
+        state.chatDrainTimer = null;
+    }
     const next = state.chatSendQueue.shift();
-    if (!next || !next.message) return;
-    window.setTimeout(() => {
-        if (state.isSubmitting) {
-            state.chatSendQueue.unshift(next);
-            return;
-        }
-        runChatRequest(next.message, { messageAlreadyRendered: !!next.rendered });
-    }, 0);
+    if (!next || !next.message) {
+        persistChatHandoff();
+        return;
+    }
+    void runChatRequest(next, { messageAlreadyRendered: !!next.rendered });
 }
 
-async function runChatRequest(msg, { messageAlreadyRendered = false } = {}) {
+function visibleUserMessageMatches(message) {
+    const container = DOM.messages || $('messages');
+    if (!container || typeof container.querySelectorAll !== 'function') return false;
+    const expected = String(message || '').trim();
+    if (!expected) return false;
+    const visible = Array.from(container.querySelectorAll('.msg.user')).slice(-12);
+    return visible.some(node => String(node.textContent || '').trim() === expected);
+}
+
+function chatDeliveryEnvelope(httpStatus, payload, { source = 'post' } = {}) {
+    const outer = payload && typeof payload === 'object' ? payload : {};
+    const wrappedTerminal = (
+        outer.delivery_status === 'terminal'
+        && outer.result
+        && typeof outer.result === 'object'
+    );
+    const data = wrappedTerminal ? { ...outer.result } : { ...outer };
+    const embeddedStatus = Number(outer.http_status);
+    const effectiveStatus = wrappedTerminal
+        && Number.isInteger(embeddedStatus)
+        && embeddedStatus >= 100
+        && embeddedStatus <= 599
+        ? embeddedStatus
+        : Number(httpStatus || 0);
+    const deliveryState = String(
+        data.delivery_state || outer.state || outer.delivery_state || ''
+    ).toLowerCase();
+    const turnId = String(data.turn_id || outer.turn_id || '');
+    const terminal = (
+        outer.delivery_status === 'terminal'
+        || CHAT_DELIVERY_TERMINAL_STATES.has(deliveryState)
+        || (
+            source === 'post'
+            && outer.delivery_status == null
+            && !deliveryState
+            && effectiveStatus !== 202
+        )
+    );
+    if (turnId && !data.turn_id) data.turn_id = turnId;
+    if (outer.idempotency_key && !data.idempotency_key) {
+        data.idempotency_key = outer.idempotency_key;
+    }
+    if (deliveryState && !data.delivery_state) data.delivery_state = deliveryState;
+    if (wrappedTerminal) data.delivery_replayed = true;
+    return {
+        data,
+        deliveryState,
+        effectiveStatus,
+        ok: (
+            effectiveStatus >= 200
+            && effectiveStatus < 300
+            && deliveryState !== 'failed'
+            && deliveryState !== 'ambiguous'
+        ),
+        terminal,
+        turnId,
+    };
+}
+
+function chatDeliveryDecision(source, httpStatus, payload) {
+    const envelope = chatDeliveryEnvelope(httpStatus, payload, { source });
+    const status = Number(httpStatus || 0);
+    const namedStatus = String(envelope.data.status || '').toLowerCase();
+    if (source === 'status') {
+        if (status === 404) return { action: 'retry_post', envelope };
+        if (status === 401 || status === 403 || status === 400) {
+            return { action: 'terminal', envelope };
+        }
+        if (status === 429 || status >= 500 || !payload) {
+            return { action: 'retry_status', envelope };
+        }
+        return {
+            action: envelope.terminal ? 'terminal' : 'retry_status',
+            envelope,
+        };
+    }
+    if (envelope.terminal && envelope.turnId) {
+        return { action: 'terminal', envelope };
+    }
+    if (status === 401 || status === 403 || status === 400) {
+        return { action: 'terminal', envelope };
+    }
+    if (
+        status === 202
+        || status === 429
+        || status >= 500
+        || namedStatus === 'chat_delivery_journal_unavailable'
+        || !payload
+    ) {
+        return { action: 'retry_status', envelope };
+    }
+    return { action: 'terminal', envelope };
+}
+
+async function readChatDeliveryResponse(response) {
+    const payload = await response.json();
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+        throw new TypeError('chat delivery response must be a JSON object');
+    }
+    return { httpStatus: response.status, payload, response };
+}
+
+async function postChatDelivery(item, message) {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(
+        () => controller.abort(),
+        conversationLaneRequestTimeoutMs(state.conversationLane)
+    );
+    const headers = {
+        ...auraDesktopHeaders({ 'Content-Type': 'application/json' }),
+        'X-Aura-Require-CognitiveEngine': 'true',
+        'X-Idempotency-Key': item.idempotencyKey,
+    };
+    if (item.approvalResumeToken) {
+        headers['X-Aura-Approval-Resume'] = item.approvalResumeToken;
+    }
+    try {
+        const response = await fetch('/api/chat', {
+            method: 'POST',
+            cache: 'no-store',
+            credentials: 'same-origin',
+            headers,
+            body: JSON.stringify({ message }),
+            signal: controller.signal,
+        });
+        return await readChatDeliveryResponse(response);
+    } finally {
+        window.clearTimeout(timeoutId);
+    }
+}
+
+async function fetchChatDeliveryStatus(item) {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(
+        () => controller.abort(),
+        CHAT_DELIVERY_STATUS_TIMEOUT_MS
+    );
+    try {
+        const response = await fetch(
+            `/api/chat/delivery/${encodeURIComponent(item.idempotencyKey)}`,
+            {
+                method: 'GET',
+                cache: 'no-store',
+                credentials: 'same-origin',
+                headers: auraDesktopHeaders(),
+                signal: controller.signal,
+            }
+        );
+        return await readChatDeliveryResponse(response);
+    } finally {
+        window.clearTimeout(timeoutId);
+    }
+}
+
+function waitForChatDelivery(delayMs) {
+    return new Promise(resolve => window.setTimeout(resolve, delayMs));
+}
+
+async function resolveChatDelivery(
+    item,
+    message,
+    {
+        resumeFirst = false,
+        post = postChatDelivery,
+        status = fetchChatDeliveryStatus,
+        wait = waitForChatDelivery,
+        shouldDefer = () => state.chatHandoffPending,
+        onPending = () => {},
+    } = {}
+) {
+    let source = resumeFirst ? 'status' : 'post';
+    let retryDelay = CHAT_DELIVERY_POLL_BASE_MS;
+    let lastError = null;
+    while (true) {
+        if (shouldDefer()) return { deferred: true, lastError };
+        let packet = null;
+        try {
+            packet = source === 'post'
+                ? await post(item, message)
+                : await status(item);
+        } catch (error) {
+            lastError = error;
+            source = 'status';
+            onPending({ error, source, envelope: null });
+            await wait(retryDelay);
+            retryDelay = Math.min(CHAT_DELIVERY_POLL_MAX_MS, retryDelay * 1.7);
+            continue;
+        }
+
+        const decision = chatDeliveryDecision(
+            source,
+            packet.httpStatus,
+            packet.payload
+        );
+        const { envelope } = decision;
+        if (envelope.turnId) item.turnId = envelope.turnId;
+        if (decision.action === 'terminal') {
+            item.deliveryState = envelope.deliveryState || (
+                envelope.ok ? 'completed' : 'failed'
+            );
+            item.resumePending = false;
+            item.resumeDeadline = 0;
+            return { ...envelope, deferred: false, response: packet.response };
+        }
+
+        item.deliveryState = 'pending';
+        item.resumePending = true;
+        source = decision.action === 'retry_post' ? 'post' : 'status';
+        onPending({ error: null, source, envelope });
+        await wait(retryDelay);
+        retryDelay = Math.min(CHAT_DELIVERY_POLL_MAX_MS, retryDelay * 1.7);
+    }
+}
+
+async function runChatRequest(value, { messageAlreadyRendered = false } = {}) {
+    const item = normalizeChatQueueItem(value, { rendered: messageAlreadyRendered });
+    if (!item) return;
+    if (!item.handoffScope || item.handoffScope !== chatHandoffScope()) return;
+    if (state.chatHandoffPending) {
+        state.chatSendQueue.unshift(item);
+        persistChatHandoff({ force: true });
+        return;
+    }
+    const msg = item.message;
+    const resumeFirst = (
+        !item.approvalResumeToken
+        && (
+            item.resumePending
+            || item.deliveryState === 'pending'
+            || item.deliveryState === 'awaiting_approval'
+        )
+    );
+    item.deliveryState = resumeFirst ? 'pending' : 'submitting';
+
     // Track last user message for regeneration
     state.lastUserMessage = msg;
     const regenBtn = $('regen-btn');
     if (regenBtn) regenBtn.style.display = 'inline-flex';
 
     state.userScrolledUp = false;
-    if (!messageAlreadyRendered) appendMsg('user', msg);
+    if (!messageAlreadyRendered && !visibleUserMessageMatches(msg)) {
+        appendMsg('user', msg);
+        item.rendered = true;
+    }
     const typingInd = $('typing-ind');
     if (typingInd) typingInd.classList.add('show');
     state.isSubmitting = true;
+    state.activeChatRequest = item;
+    persistChatHandoff({ force: true });
 
-    const controller = new AbortController();
-    const requestTimeoutMs = conversationLaneRequestTimeoutMs(state.conversationLane);
-    const timeoutId = window.setTimeout(() => controller.abort(), requestTimeoutMs);
-    const requestId = `chat_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const requestId = item.idempotencyKey;
     const requestStartedAt = performance.now();
     state.activeChatRequestId = requestId;
     setLatencyStatus('running', 'running');
+    let deliverySettled = false;
+    let approvalPending = false;
+    let recoveryScheduled = false;
+    let recoveryNotified = false;
 
     try {
-        const res = await fetch('/api/chat', {
-            method: 'POST',
-            headers: {
-                ...auraDesktopHeaders({ 'Content-Type': 'application/json' }),
-                'X-Aura-Require-CognitiveEngine': 'true',
+        const outcome = await resolveChatDelivery(item, msg, {
+            resumeFirst,
+            shouldDefer: () => (
+                state.chatHandoffPending
+                || item.handoffScope !== chatHandoffScope()
+            ),
+            onPending: ({ error }) => {
+                item.deliveryState = 'pending';
+                item.resumePending = true;
+                persistChatHandoff({ force: true });
+                updateTypingLabel('Aura is reconciling the current turn…');
+                if (error && !recoveryNotified) {
+                    recoveryNotified = true;
+                    const recoveringLane = Object.assign({}, state.conversationLane || {}, {
+                        state: 'recovering',
+                        conversation_ready: false,
+                        last_failure_reason: error.name === 'AbortError'
+                            ? 'foreground_http_timeout'
+                            : 'foreground_transport_recovery',
+                    });
+                    applyConversationLane(recoveringLane, 'degraded');
+                }
             },
-            body: JSON.stringify({ message: msg }),
-            signal: controller.signal,
         });
-        const latencyMs = performance.now() - requestStartedAt;
-        recordChatLatency(requestId, latencyMs, res.ok);
-        const data = await res.json();
+        if (outcome.deferred) return;
+        deliverySettled = true;
+        const data = outcome.data;
+        recordChatLatency(
+            requestId,
+            performance.now() - requestStartedAt,
+            outcome.ok
+        );
         if (data && data.conversation_lane) {
-            applyConversationLane(data.conversation_lane, res.ok ? 'ok' : 'degraded');
+            applyConversationLane(data.conversation_lane, outcome.ok ? 'ok' : 'degraded');
         }
 
         const desktopResult = data && data.data && data.data.desktop_result;
@@ -3179,11 +3729,35 @@ async function runChatRequest(msg, { messageAlreadyRendered = false } = {}) {
         if (approvalStatus === 'approval_required' || approvalStatus === 'require_fresh_user_auth') {
             markLiveSurfaceResponsive('chat_confirmation_required');
             const challengeId = String((approval && approval.challenge_id) || '');
+            const turnId = String(data.turn_id || item.turnId || '');
+            item.turnId = /^[0-9a-f]{32}$/.test(turnId) ? turnId : item.turnId;
+            item.deliveryState = 'awaiting_approval';
+            item.resumePending = true;
+            item.approvalResumeToken = '';
+            approvalPending = true;
+            persistChatHandoff({ force: true });
             const opened = challengeId
                 ? openApprovalModal(
                     data.response || 'This action needs a fresh confirmation.',
                     challengeId,
-                    () => runChatRequest(msg, { messageAlreadyRendered: true })
+                    () => {
+                        item.approvalResumeToken = item.turnId;
+                        item.resumePending = false;
+                        item.deliveryState = 'submitting';
+                        void runChatRequest(item, { messageAlreadyRendered: true });
+                    },
+                    () => {
+                        item.deliveryState = 'failed';
+                        item.resumePending = false;
+                        if (
+                            state.activeChatRequest
+                            && state.activeChatRequest.idempotencyKey === item.idempotencyKey
+                        ) {
+                            state.activeChatRequest = null;
+                        }
+                        persistChatHandoff();
+                        drainQueuedChatMessages();
+                    }
                 )
                 : false;
             if (!opened) {
@@ -3196,8 +3770,9 @@ async function runChatRequest(msg, { messageAlreadyRendered = false } = {}) {
             }
             return;
         }
+        item.approvalResumeToken = '';
 
-        if (!res.ok) {
+        if (!outcome.ok) {
             const failureText = data.response || '⚠ Communication error. Check connection.';
             appendMsg('system', failureText, false, { system: true, diagnostic: true });
             return;
@@ -3220,37 +3795,49 @@ async function runChatRequest(msg, { messageAlreadyRendered = false } = {}) {
             }
         }
     } catch (err) {
-        console.error('[CHAT] Error sending message:', err);
+        console.error('[CHAT] Delivery state machine failed:', err);
         recordChatLatency(requestId, performance.now() - requestStartedAt, false);
-        if (err && err.name === 'AbortError') {
-            const timedOutLane = Object.assign({}, state.conversationLane || {}, {
-                state: 'recovering',
-                conversation_ready: false,
-                last_failure_reason: 'foreground_http_timeout',
-            });
-            applyConversationLane(timedOutLane, 'degraded');
-            const streamedReplyInFlight = !!(activeStreamDiv || (activeStreamContentRaw && activeStreamContentRaw.trim()));
-            // Deduplicate: don't spam the same "recovering" message on every timeout.
-            // Check if the last Aura message already says the lane is recovering.
-            const msgs = (DOM.messages || $('messages'));
-            const lastAuraMsg = msgs ? msgs.querySelector('.msg.aura:last-of-type') : null;
-            const lastAuraText = lastAuraMsg ? (lastAuraMsg.textContent || '').trim() : '';
-            const alreadyShowingRecovery = lastAuraText.includes('timeout') || lastAuraText.includes('degraded');
-            if (!streamedReplyInFlight && !alreadyShowingRecovery) {
-                appendMsg('system', 'The live reply timed out before a coherent answer reached the UI. The degraded turn is recorded.', false, { system: true, diagnostic: true });
+        item.deliveryState = 'pending';
+        item.resumePending = true;
+        if (!state.chatHandoffPending) {
+            state.activeChatRequest = null;
+            if (!state.chatSendQueue.some(
+                queued => queued.idempotencyKey === item.idempotencyKey
+            )) {
+                state.chatSendQueue.unshift(item);
             }
-        } else {
-            appendMsg('system', '⚠ Communication error. Check connection.', false, { system: true, diagnostic: true });
+            recoveryScheduled = true;
+            if (!state.chatDrainTimer) {
+                state.chatDrainTimer = window.setTimeout(() => {
+                    state.chatDrainTimer = null;
+                    drainQueuedChatMessages();
+                }, CHAT_DELIVERY_POLL_BASE_MS);
+            }
         }
+        persistChatHandoff({ force: true });
     } finally {
-        window.clearTimeout(timeoutId);
         state.isSubmitting = false;
         if (state.activeChatRequestId === requestId) {
             state.activeChatRequestId = null;
         }
+        if (
+            !state.chatHandoffPending
+            && deliverySettled
+            && !approvalPending
+            && state.activeChatRequest
+            && state.activeChatRequest.idempotencyKey === item.idempotencyKey
+        ) {
+            state.activeChatRequest = null;
+        }
         // Note: Typing indicator is usually cleared when the WS 'aura_message' arrives.
         if (typingInd) typingInd.classList.remove('show');
-        drainQueuedChatMessages();
+        persistChatHandoff({
+            force: state.chatHandoffPending || approvalPending || recoveryScheduled,
+        });
+        if (!state.chatHandoffPending && !approvalPending && !recoveryScheduled) {
+            retryDeferredShellTransition();
+            drainQueuedChatMessages();
+        }
     }
 };
 
@@ -3261,19 +3848,38 @@ $('chat-form').onsubmit = async e => {
 
     if (!msg) return;
 
-    flushTypingSignal({ submitted: true, messageCharsOverride: msg.length });
-    appendMsg('user', msg);
-    msgInput.value = '';
-    msgInput.style.height = 'auto';
-    msgInput.focus();
-    setChatPanelState('thinking');
-
-    if (state.isSubmitting) {
-        enqueueChatMessage(msg);
+    if (
+        (state.isSubmitting || state.activeChatRequest)
+        && state.chatSendQueue.length >= CHAT_SEND_QUEUE_MAX
+    ) {
+        appendMsg(
+            'system',
+            'The send queue is full. This draft is still in the composer and no queued message was discarded.',
+            false,
+            { system: true, diagnostic: true }
+        );
+        msgInput.focus();
         return;
     }
 
-    await runChatRequest(msg, { messageAlreadyRendered: true });
+    const item = normalizeChatQueueItem({ message: msg, rendered: true });
+    if (!item) return;
+    flushTypingSignal({ submitted: true, messageCharsOverride: msg.length });
+    appendMsg('user', msg);
+    setChatPanelState('thinking');
+
+    let requestPromise = null;
+    if (state.isSubmitting || state.activeChatRequest) {
+        enqueueChatMessage(item);
+    } else {
+        requestPromise = runChatRequest(item, { messageAlreadyRendered: true });
+    }
+
+    msgInput.value = '';
+    msgInput.style.height = 'auto';
+    msgInput.focus();
+    persistChatHandoff({ force: state.isSubmitting || state.chatSendQueue.length > 0 });
+    if (requestPromise) await requestPromise;
 };
 
 async function appendMsg(role, text, isHtml = false, metadata = {}) {
@@ -3763,6 +4369,7 @@ function bootSnapshotFromPayload(payload) {
 
 function payloadShellLaunchable(payload) {
     if (!payload || typeof payload !== 'object') return false;
+    if (!runtimeRevisionPolicySatisfied(payload)) return false;
     if (payload.transport_only === true) return false;
     if (payload.runtime_probe_healthy === false) return false;
 
@@ -3787,6 +4394,7 @@ function payloadShellLaunchable(payload) {
 
 function payloadRuntimeHealthy(payload) {
     if (!payload || typeof payload !== 'object') return false;
+    if (!runtimeRevisionPolicySatisfied(payload)) return false;
     if (state.accessResolved && state.conversationOnly) {
         const lane = payload.conversation && payload.conversation.lane
             ? payload.conversation.lane
@@ -3860,11 +4468,12 @@ function conversationPayloadBusy(payload, blockers = []) {
 
 function runtimeHealthBlockers(payload) {
     if (!payload || typeof payload !== 'object') return ['runtime_health_unavailable'];
+    const revisionBlocker = runtimeRevisionPolicyBlocker(payload);
     if (state.accessResolved && state.conversationOnly) {
         const lane = payload.conversation && payload.conversation.lane
             ? payload.conversation.lane
             : {};
-        const blockers = [];
+        const blockers = revisionBlocker ? [revisionBlocker] : [];
         if (!(payload.session && payload.session.connected)) blockers.push('conversation_transport');
         if (
             lane.conversation_ready !== true
@@ -3876,6 +4485,7 @@ function runtimeHealthBlockers(payload) {
         return blockers;
     }
     const blockers = Array.isArray(payload.blockers) ? payload.blockers.slice() : [];
+    if (revisionBlocker) blockers.push(revisionBlocker);
     if (payload.transport_only === true) blockers.push('runtime_transport_only');
     if (payload.runtime_probe_healthy === false) blockers.push('runtime_required_probes');
     const boot = bootSnapshotFromPayload(payload);
@@ -3988,6 +4598,7 @@ function applyConversationLane(lane, healthStatus = '') {
         if (hasOnlyInitializingPlaceholder) {
             messages.innerHTML = '';
         }
+        if (state.chatSendQueue.length) drainQueuedChatMessages();
     } else {
         updateTypingLabel(
             state.conversationReady || activeGeneration
@@ -4099,6 +4710,514 @@ function recordHealthPollSuccess(payload) {
     return true;
 }
 
+function verifiedRuntimeRevision(payload) {
+    const revision = payload?.runtime_revision;
+    if (
+        !revision
+        || revision.schema !== 'aura.runtime_revision.v2'
+        || revision.required !== true
+        || revision.verified !== true
+    ) {
+        return '';
+    }
+    const token = String(revision.revision_token || '').toLowerCase();
+    return /^[0-9a-f]{64}$/.test(token) ? token : '';
+}
+
+function runtimeRevisionPolicySatisfied(payload) {
+    return runtimeRevisionPolicyBlocker(payload) === '';
+}
+
+function runtimeRevisionPolicyBlocker(payload) {
+    const revision = payload?.runtime_revision;
+    if (!Object.prototype.hasOwnProperty.call(payload || {}, 'runtime_revision')) {
+        return state.runtimeRevisionTrust === 'untrusted'
+            ? 'runtime_revision_unverified'
+            : '';
+    }
+    if (!revision || revision.schema !== 'aura.runtime_revision.v2') {
+        return 'runtime_revision_contract_missing';
+    }
+    if (revision.required === false) return '';
+    if (revision.required !== true || !verifiedRuntimeRevision(payload)) {
+        return 'runtime_revision_unverified';
+    }
+    return '';
+}
+
+function storedRuntimeRevisionRecord() {
+    try {
+        const raw = String(sessionStorage.getItem(RUNTIME_REVISION_STORAGE_KEY) || '');
+        if (/^[0-9a-f]{64}$/i.test(raw)) {
+            return {
+                schema: RUNTIME_REVISION_RECORD_SCHEMA,
+                revision: raw.toLowerCase(),
+                generation: 0,
+                capturedAtUnix: 0,
+            };
+        }
+        const parsed = JSON.parse(raw);
+        const revision = String(parsed?.revision || '').toLowerCase();
+        const generation = Number(parsed?.generation || 0);
+        const capturedAtUnix = Number(parsed?.captured_at_unix || 0);
+        if (
+            parsed?.schema !== RUNTIME_REVISION_RECORD_SCHEMA
+            || !/^[0-9a-f]{64}$/.test(revision)
+            || !Number.isInteger(generation)
+            || generation < 0
+            || !Number.isFinite(capturedAtUnix)
+            || capturedAtUnix < 0
+        ) {
+            return null;
+        }
+        return { schema: parsed.schema, revision, generation, capturedAtUnix };
+    } catch (_err) {
+        return null;
+    }
+}
+
+function storedRuntimeRevision() {
+    return storedRuntimeRevisionRecord()?.revision || '';
+}
+
+function persistRuntimeRevision(revision, { generation = 0, capturedAtUnix = 0 } = {}) {
+    const normalized = String(revision || '').toLowerCase();
+    const normalizedGeneration = Number(generation || 0);
+    const normalizedCapturedAt = Number(capturedAtUnix || 0);
+    if (
+        !/^[0-9a-f]{64}$/.test(normalized)
+        || !Number.isInteger(normalizedGeneration)
+        || normalizedGeneration < 0
+        || !Number.isFinite(normalizedCapturedAt)
+        || normalizedCapturedAt < 0
+    ) {
+        return false;
+    }
+    const record = {
+        schema: RUNTIME_REVISION_RECORD_SCHEMA,
+        revision: normalized,
+        generation: normalizedGeneration,
+        captured_at_unix: normalizedCapturedAt,
+    };
+    try {
+        sessionStorage.setItem(RUNTIME_REVISION_STORAGE_KEY, JSON.stringify(record));
+        const observed = storedRuntimeRevisionRecord();
+        return Boolean(
+            observed
+            && observed.revision === normalized
+            && observed.generation === normalizedGeneration
+            && observed.capturedAtUnix === normalizedCapturedAt
+        );
+    } catch (_err) {
+        return false;
+    }
+}
+
+function reserveRuntimeRevisionReload(revision) {
+    const normalized = String(revision || '').toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(normalized)) return false;
+    const inMemory = state.runtimeRevisionReloadAttempts || {};
+    const memoryCount = Number(inMemory[normalized] || 0);
+    try {
+        const parsed = JSON.parse(
+            String(sessionStorage.getItem(RUNTIME_REVISION_RELOAD_STORAGE_KEY) || '{}')
+        );
+        const priorCount = parsed?.revision === normalized
+            ? Number(parsed?.count || 0)
+            : 0;
+        const count = Math.max(memoryCount, priorCount);
+        if (count >= RUNTIME_REVISION_RELOAD_LIMIT) return false;
+        const record = { revision: normalized, count: count + 1 };
+        sessionStorage.setItem(
+            RUNTIME_REVISION_RELOAD_STORAGE_KEY,
+            JSON.stringify(record),
+        );
+        const observed = JSON.parse(
+            String(sessionStorage.getItem(RUNTIME_REVISION_RELOAD_STORAGE_KEY) || '{}')
+        );
+        if (observed.revision !== normalized || Number(observed.count) !== record.count) {
+            return false;
+        }
+        inMemory[normalized] = record.count;
+        state.runtimeRevisionReloadAttempts = inMemory;
+        return true;
+    } catch (_err) {
+        if (memoryCount >= RUNTIME_REVISION_RELOAD_LIMIT) return false;
+        inMemory[normalized] = memoryCount + 1;
+        state.runtimeRevisionReloadAttempts = inMemory;
+        return true;
+    }
+}
+
+function runtimeRevisionMarkerFromLocation() {
+    try {
+        const marker = new URL(window.location.href).searchParams.get('_aura_runtime') || '';
+        return /^[0-9a-f]{64}$/.test(marker) ? marker : '';
+    } catch (_err) {
+        return '';
+    }
+}
+
+function healthSnapshotRevisionEvidence(payload) {
+    const metadata = payload?.health_read_model;
+    const revision = verifiedRuntimeRevision(payload);
+    const generation = Number(metadata?.snapshot_generation || 0);
+    const capturedAtUnix = Number(metadata?.captured_at_unix || 0);
+    if (
+        !revision
+        || !metadata
+        || metadata.fresh !== true
+        || metadata.expired === true
+        || !Number.isInteger(generation)
+        || generation <= 0
+        || !Number.isFinite(capturedAtUnix)
+        || capturedAtUnix <= 0
+    ) {
+        return null;
+    }
+    return { revision, generation, capturedAtUnix };
+}
+
+function healthSnapshotRevisionIsAuthoritative(payload) {
+    const metadata = payload?.health_read_model;
+    const generation = Number(metadata?.snapshot_generation || 0);
+    const capturedAtUnix = Number(metadata?.captured_at_unix || 0);
+    return Boolean(
+        metadata
+        && metadata.fresh === true
+        && metadata.expired !== true
+        && Number.isInteger(generation)
+        && generation > 0
+        && Number.isFinite(capturedAtUnix)
+        && capturedAtUnix > 0
+    );
+}
+
+function auraServiceWorkerRegistration(registration) {
+    try {
+        const scope = new URL(String(registration?.scope || ''));
+        const workers = [registration?.active, registration?.waiting, registration?.installing];
+        return scope.origin === window.location.origin
+            && ['/', '/static/'].includes(scope.pathname)
+            && workers.some((worker) => {
+                const script = new URL(String(worker?.scriptURL || ''));
+                return script.origin === window.location.origin
+                    && script.pathname === '/static/service-worker.js';
+            });
+    } catch (_err) {
+        return false;
+    }
+}
+
+function retireRuntimeShellTrust(reason = 'runtime_revision_unverified') {
+    if (state.runtimeShellRetirementPromise) return state.runtimeShellRetirementPromise;
+    state.runtimeRevisionTrust = 'untrusted';
+    state.runtimeRevision = null;
+    state.runtimeRevisionGeneration = 0;
+    state.runtimeRevisionCapturedAtUnix = 0;
+    state.serviceWorkerRevision = null;
+    state.serviceWorkerRegistrationTarget = null;
+    state.serviceWorkerRegistrationPromise = null;
+    state.serviceWorkerRegistrationEpoch = Number(state.serviceWorkerRegistrationEpoch || 0) + 1;
+    try {
+        sessionStorage.removeItem(RUNTIME_REVISION_STORAGE_KEY);
+        sessionStorage.removeItem(RUNTIME_REVISION_RELOAD_STORAGE_KEY);
+    } catch (_err) {}
+
+    const retirement = (async () => {
+        if ('serviceWorker' in navigator && typeof navigator.serviceWorker.getRegistrations === 'function') {
+            let registrations = [];
+            try {
+                registrations = await navigator.serviceWorker.getRegistrations();
+            } catch (err) {
+                console.warn('[SW] unable to inventory registrations during trust retirement:', err);
+            }
+            await Promise.all((registrations || []).filter(auraServiceWorkerRegistration).map(async (registration) => {
+                for (const worker of [registration.active, registration.waiting, registration.installing]) {
+                    try {
+                        worker?.postMessage?.({ type: 'AURA_RETIRE_RUNTIME_SHELL', reason });
+                    } catch (_err) {}
+                }
+                try { await registration.unregister(); } catch (_err) {}
+            }));
+        }
+        if (typeof caches !== 'undefined' && typeof caches.keys === 'function') {
+            try {
+                const keys = await caches.keys();
+                await Promise.all(
+                    keys
+                        .filter(key => String(key).startsWith('aura-runtime-shell-'))
+                        .map(key => caches.delete(key))
+                );
+            } catch (err) {
+                console.warn('[SW] unable to purge retired runtime caches:', err);
+            }
+        }
+        if (runtimeRevisionMarkerFromLocation()) {
+            const nextUrl = new URL(window.location.href);
+            nextUrl.searchParams.delete('_aura_runtime');
+            requestGuardedShellReload({ replaceUrl: nextUrl.toString() });
+        }
+        return true;
+    })().finally(() => {
+        if (state.runtimeShellRetirementPromise === retirement) {
+            state.runtimeShellRetirementPromise = null;
+        }
+    });
+    state.runtimeShellRetirementPromise = retirement;
+    return retirement;
+}
+
+function runtimeRevisionEvidenceIsMonotonic(evidence, previous) {
+    if (!evidence || !previous) return Boolean(evidence);
+    const previousCapturedAt = Number(previous.capturedAtUnix || 0);
+    const previousGeneration = Number(previous.generation || 0);
+    if (previousCapturedAt <= 0) return true;
+    if (evidence.capturedAtUnix < previousCapturedAt) return false;
+    if (evidence.capturedAtUnix > previousCapturedAt) return true;
+    if (evidence.revision !== previous.revision) {
+        return false;
+    }
+    return evidence.generation >= previousGeneration;
+}
+
+function serviceWorkerRegistrationIsCurrent(revision, epoch = null) {
+    const target = String(state.serviceWorkerRegistrationTarget || '');
+    if (target !== revision) return false;
+    return epoch == null || Number(state.serviceWorkerRegistrationEpoch || 0) === epoch;
+}
+
+function serviceWorkerRevision(worker) {
+    try {
+        const revision = new URL(String(worker?.scriptURL || '')).searchParams.get('_aura_runtime') || '';
+        return /^[0-9a-f]{64}$/.test(revision) ? revision : '';
+    } catch (_err) {
+        return '';
+    }
+}
+
+function observeInstallingServiceWorker(worker, revision) {
+    if (!worker || serviceWorkerRevision(worker) !== revision) return false;
+    let observed = state.serviceWorkerInstallers;
+    if (!observed || typeof observed.get !== 'function') {
+        observed = new WeakMap();
+        state.serviceWorkerInstallers = observed;
+    }
+    if (observed.get(worker) === revision) return true;
+    observed.set(worker, revision);
+    const activateIfInstalled = () => {
+        if (
+            worker.state === 'installed'
+            && navigator.serviceWorker.controller
+        ) {
+            requestServiceWorkerActivation(worker, revision);
+        }
+    };
+    activateIfInstalled();
+    if (typeof worker.addEventListener === 'function') {
+        worker.addEventListener('statechange', activateIfInstalled);
+    }
+    return true;
+}
+
+async function refreshServiceWorkerRegistration(registration, revision, epoch = null) {
+    if (!registration || !revision) return null;
+    const observeCurrentInstaller = () => {
+        if (!serviceWorkerRegistrationIsCurrent(revision, epoch)) return;
+        observeInstallingServiceWorker(registration.installing, revision);
+    };
+    if (typeof registration.addEventListener === 'function') {
+        registration.addEventListener('updatefound', observeCurrentInstaller);
+    }
+    observeCurrentInstaller();
+    if (registration.waiting && serviceWorkerRegistrationIsCurrent(revision, epoch)) {
+        requestServiceWorkerActivation(registration.waiting, revision);
+    }
+    try {
+        await registration.update();
+    } catch (err) {
+        console.warn('[SW] update() failed:', err);
+    }
+    observeCurrentInstaller();
+    if (registration.waiting && serviceWorkerRegistrationIsCurrent(revision, epoch)) {
+        requestServiceWorkerActivation(registration.waiting, revision);
+    }
+    return registration;
+}
+
+async function retireLegacyStaticServiceWorkers() {
+    if (
+        typeof navigator === 'undefined'
+        || !('serviceWorker' in navigator)
+        || typeof navigator.serviceWorker.getRegistrations !== 'function'
+    ) {
+        return 0;
+    }
+    let registrations;
+    try {
+        registrations = await navigator.serviceWorker.getRegistrations();
+    } catch (err) {
+        console.warn('[SW] registration inventory failed:', err);
+        return 0;
+    }
+    let retired = 0;
+    await Promise.all((registrations || []).map(async (registration) => {
+        try {
+            const scope = new URL(String(registration?.scope || ''));
+            const script = new URL(String(
+                registration?.active?.scriptURL
+                || registration?.waiting?.scriptURL
+                || registration?.installing?.scriptURL
+                || '',
+            ));
+            if (
+                scope.origin === window.location.origin
+                && scope.pathname === '/static/'
+                && script.origin === window.location.origin
+                && script.pathname === '/static/service-worker.js'
+                && typeof registration.unregister === 'function'
+                && await registration.unregister()
+            ) {
+                retired += 1;
+            }
+        } catch (_err) {
+            // Ignore malformed or cross-origin registrations; they are not Aura's.
+        }
+    }));
+    return retired;
+}
+
+function registerRevisionServiceWorker(revision) {
+    const normalized = String(revision || '').toLowerCase();
+    if (
+        !/^[0-9a-f]{64}$/.test(normalized)
+        || typeof navigator === 'undefined'
+        || !('serviceWorker' in navigator)
+    ) {
+        return Promise.resolve(null);
+    }
+    if (
+        state.serviceWorkerRegistrationTarget === normalized
+        && state.serviceWorkerRegistrationPromise
+    ) {
+        return state.serviceWorkerRegistrationPromise;
+    }
+    const now = Date.now();
+    if (
+        state.serviceWorkerRegistrationTarget === normalized
+        && now < Number(state.serviceWorkerRegistrationRetryAt || 0)
+    ) {
+        return Promise.resolve(null);
+    }
+    if (state.serviceWorkerRegistrationTarget !== normalized) {
+        state.serviceWorkerRegistrationFailures = 0;
+        state.serviceWorkerRegistrationRetryAt = 0;
+    }
+    state.serviceWorkerRegistrationTarget = normalized;
+    const epoch = Number(state.serviceWorkerRegistrationEpoch || 0) + 1;
+    state.serviceWorkerRegistrationEpoch = epoch;
+    const scriptUrl = `/static/service-worker.js?_aura_runtime=${normalized}`;
+    const registrationPromise = retireLegacyStaticServiceWorkers().then(() => {
+        if (!serviceWorkerRegistrationIsCurrent(normalized, epoch)) return null;
+        return navigator.serviceWorker.register(
+            scriptUrl,
+            { scope: '/', updateViaCache: 'none' },
+        );
+    }).then((registration) => {
+        if (!registration || !serviceWorkerRegistrationIsCurrent(normalized, epoch)) {
+            return null;
+        }
+        return refreshServiceWorkerRegistration(registration, normalized, epoch);
+    }).then((registration) => {
+        if (registration && serviceWorkerRegistrationIsCurrent(normalized, epoch)) {
+            state.serviceWorkerRevision = normalized;
+            state.serviceWorkerRegistrationFailures = 0;
+            state.serviceWorkerRegistrationRetryAt = 0;
+        }
+        return registration;
+    }).catch((err) => {
+        console.error('Service Worker failure:', err);
+        if (serviceWorkerRegistrationIsCurrent(normalized, epoch)) {
+            const failures = Number(state.serviceWorkerRegistrationFailures || 0) + 1;
+            state.serviceWorkerRegistrationFailures = failures;
+            state.serviceWorkerRegistrationRetryAt = Date.now() + Math.min(
+                SERVICE_WORKER_REGISTRATION_RETRY_MAX_MS,
+                500 * (2 ** Math.min(failures - 1, 6))
+            );
+            state.serviceWorkerRegistrationPromise = null;
+        }
+        return null;
+    });
+    state.serviceWorkerRegistrationPromise = registrationPromise;
+    return registrationPromise;
+}
+
+function reconcileRuntimeShellRevision(payload) {
+    const evidence = healthSnapshotRevisionEvidence(payload);
+    if (state.runtimeRevisionReloading) return false;
+    if (!evidence) {
+        if (healthSnapshotRevisionIsAuthoritative(payload)) {
+            const hadTrustedShell = Boolean(
+                state.runtimeRevisionTrust === 'trusted'
+                || state.runtimeRevision
+                || storedRuntimeRevision()
+                || runtimeRevisionMarkerFromLocation()
+                || state.serviceWorkerRegistrationTarget
+            );
+            state.runtimeRevisionTrust = 'untrusted';
+            if (hadTrustedShell) {
+                void retireRuntimeShellTrust(runtimeRevisionPolicyBlocker(payload));
+            }
+        }
+        return false;
+    }
+
+    const stored = storedRuntimeRevisionRecord();
+    const prior = state.runtimeRevision
+        ? {
+            revision: state.runtimeRevision,
+            generation: Number(state.runtimeRevisionGeneration || 0),
+            capturedAtUnix: Number(state.runtimeRevisionCapturedAtUnix || 0),
+        }
+        : stored;
+    if (!runtimeRevisionEvidenceIsMonotonic(evidence, prior)) return false;
+
+    const { revision, generation, capturedAtUnix } = evidence;
+    state.runtimeRevisionTrust = 'trusted';
+    const previous = state.runtimeRevision || stored?.revision || '';
+    state.runtimeRevisionGeneration = generation;
+    state.runtimeRevisionCapturedAtUnix = capturedAtUnix;
+
+    if (runtimeRevisionMarkerFromLocation() === revision) {
+        state.runtimeRevision = revision;
+        persistRuntimeRevision(revision, { generation, capturedAtUnix });
+        registerRevisionServiceWorker(revision);
+        return false;
+    }
+
+    if (!previous) {
+        state.runtimeRevision = revision;
+        persistRuntimeRevision(revision, { generation, capturedAtUnix });
+        registerRevisionServiceWorker(revision);
+        return false;
+    }
+    if (previous === revision) {
+        state.runtimeRevision = revision;
+        persistRuntimeRevision(revision, { generation, capturedAtUnix });
+        registerRevisionServiceWorker(revision);
+        return false;
+    }
+
+    const nextUrl = new URL(window.location.href);
+    nextUrl.searchParams.set('_aura_runtime', revision);
+    return requestGuardedShellReload({
+        revision,
+        generation,
+        capturedAtUnix,
+        replaceUrl: nextUrl.toString(),
+    });
+}
+
 async function pollHealth() {
     if (state.healthPollInFlight) return;
     state.healthPollInFlight = true;
@@ -4115,6 +5234,7 @@ async function pollHealth() {
         }
         const d = await res.json();
         if (!d || typeof d !== 'object') throw new Error('invalid health payload');
+        if (reconcileRuntimeShellRevision(d)) return;
         const recovered = recordHealthPollSuccess(d);
         state.runtimeHealthy = payloadRuntimeHealthy(d);
         state.runtimeHealthBlockers = runtimeHealthBlockers(d);
@@ -4141,11 +5261,7 @@ async function pollHealth() {
             applyConversationLane(d.conversation_lane, d.status || '');
         }
         if (d.boot || d.conversation_lane) {
-            syncSplashState({
-                telemetry: { boot: d.boot || {} },
-                conversation: { lane: d.conversation_lane || null },
-                session: { connected: state.runtimeHealthy }
-            });
+            syncSplashState(d);
         }
         if (!recovered) publishHealthNeuralPulse(d, 'health_poll');
 
@@ -5438,37 +6554,27 @@ if (micBtn) micBtn.addEventListener('click', (e) => {
 // ── Service Worker (PWA Support) ─────────────────────────
 if ('serviceWorker' in navigator) {
     let swReloadTriggered = false;
+    let swHadController = Boolean(navigator.serviceWorker.controller);
     navigator.serviceWorker.addEventListener('controllerchange', () => {
+        const expectedRevision = state.runtimeRevision || storedRuntimeRevision();
+        const activeRevision = serviceWorkerRevision(navigator.serviceWorker.controller);
+        if (!expectedRevision || activeRevision !== expectedRevision) return;
+        if (!swHadController) {
+            swHadController = true;
+        }
         if (swReloadTriggered) return;
-        swReloadTriggered = true;
-        window.location.reload();
+        const nextUrl = new URL(window.location.href);
+        nextUrl.searchParams.set('_aura_runtime', expectedRevision);
+        swReloadTriggered = requestGuardedShellReload({
+            revision: expectedRevision,
+            generation: Number(state.runtimeRevisionGeneration || 0),
+            capturedAtUnix: Number(state.runtimeRevisionCapturedAtUnix || 0),
+            replaceUrl: nextUrl.toString(),
+        });
     });
 
     window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/static/service-worker.js', { updateViaCache: 'none' })
-            .then(async (reg) => {
-                // Service Worker registered
-                try {
-                    await reg.update();
-                } catch (err) {
-                    console.warn('[SW] update() failed:', err);
-                }
-
-                if (reg.waiting) {
-                    reg.waiting.postMessage({ type: 'SKIP_WAITING' });
-                }
-
-                reg.addEventListener('updatefound', () => {
-                    const installing = reg.installing;
-                    if (!installing) return;
-                    installing.addEventListener('statechange', () => {
-                        if (installing.state === 'installed' && navigator.serviceWorker.controller) {
-                            installing.postMessage({ type: 'SKIP_WAITING' });
-                        }
-                    });
-                });
-            })
-            .catch(err => console.error('Service Worker failure:', err));
+        void retireLegacyStaticServiceWorkers();
     });
 }
 
@@ -5920,6 +7026,7 @@ async function cancelRuntimeActionConfirmation(challengeId) {
 }
 
 let pendingApprovalRetry = null;
+let pendingApprovalCancel = null;
 let pendingApprovalChallengeId = null;
 let approvalModalReturnFocus = null;
 let approvalConfirmationInFlight = false;
@@ -5929,7 +7036,9 @@ function closeApprovalModal({ restoreFocus = true, cancelChallenge = true } = {}
     const modal = $('approval-modal');
     if (modal) modal.style.display = 'none';
     const abandonedChallengeId = pendingApprovalChallengeId;
+    const cancel = pendingApprovalCancel;
     pendingApprovalRetry = null;
+    pendingApprovalCancel = null;
     pendingApprovalChallengeId = null;
     const confirmButton = $('approval-modal-confirm');
     const cancelButton = $('approval-modal-cancel');
@@ -5945,10 +7054,11 @@ function closeApprovalModal({ restoreFocus = true, cancelChallenge = true } = {}
     if (cancelChallenge && abandonedChallengeId) {
         void cancelRuntimeActionConfirmation(abandonedChallengeId);
     }
+    if (cancelChallenge && cancel) cancel();
     return true;
 }
 
-function openApprovalModal(message, challengeId, retry) {
+function openApprovalModal(message, challengeId, retry, cancel = null) {
     const modal = $('approval-modal');
     const body = $('approval-modal-message');
     if (!modal || !body) return false;
@@ -5956,6 +7066,7 @@ function openApprovalModal(message, challengeId, retry) {
     if (!normalizedChallengeId) return false;
     body.textContent = String(message || 'This action needs a fresh confirmation.');
     pendingApprovalRetry = typeof retry === 'function' ? retry : null;
+    pendingApprovalCancel = typeof cancel === 'function' ? cancel : null;
     pendingApprovalChallengeId = normalizedChallengeId;
     approvalModalReturnFocus = document.activeElement;
     approvalConfirmationInFlight = false;
@@ -5989,8 +7100,6 @@ if (approvalConfirmButton) {
         approvalConfirmButton.removeAttribute('aria-busy');
         if (approvalCancelButton) approvalCancelButton.disabled = false;
         if (!confirmed) {
-            pendingApprovalRetry = null;
-            pendingApprovalChallengeId = null;
             approvalConfirmButton.disabled = true;
             if (approvalCancelButton) approvalCancelButton.focus();
             return;
@@ -6327,6 +7436,9 @@ window.addEventListener('offline', () => {
     setConnectionVisual('reconnecting', 'network paused');
     showConnToast('paused');
 });
+window.addEventListener('pagehide', () => {
+    persistChatHandoff({ force: chatHandoffHasContent() });
+});
 
 // ══════════════════════════════════════════════════════════
 //  MAGNUM OPUS — Textarea Auto-Resize & Keyboard Shortcuts
@@ -6354,6 +7466,7 @@ window.addEventListener('offline', () => {
         textarea.style.height = 'auto';
         textarea.style.height = Math.min(textarea.scrollHeight, 150) + 'px';
         noteTypingSignalInput(textarea);
+        if (!textarea.value) retryDeferredShellTransition();
     });
 
     // Keyboard handling for textarea
@@ -6378,6 +7491,8 @@ window.addEventListener('offline', () => {
             textarea.value = '';
             textarea.style.height = 'auto';
             flushTypingSignal({ submitted: false, forceInactive: true, messageCharsOverride: 0 });
+            persistChatHandoff();
+            retryDeferredShellTransition();
         }
     });
 

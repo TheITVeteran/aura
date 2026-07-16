@@ -501,6 +501,87 @@ def test_aegis_pulse_marks_integrity_failure_when_lock_restore_fails(monkeypatch
     assert recent[-1].severity == "critical"
 
 
+@pytest.mark.parametrize("receipt", (False, None))
+def test_aegis_pulse_reports_failed_vault_sync_and_keeps_retry_eligible(
+    monkeypatch, receipt
+):
+    from core.orchestrator.handlers import aegis
+
+    class _Mycelium:
+        _aegis_locked = True
+
+        @staticmethod
+        async def vault_sync():
+            return receipt
+
+    ServiceContainer.register_instance("mycelial_network", _Mycelium())
+    orchestrator = SimpleNamespace(_last_vault_sync=0.0)
+
+    status = asyncio.run(
+        aegis._aegis_pulse(orchestrator, vault_sync_interval_s=1.0)
+    )
+
+    assert status["state"] == "degraded"
+    assert status["reason"] == "root_vault_sync_failed"
+    assert status["vault_synced"] is False
+    assert status["vault_sync_retry_eligible"] is True
+    assert orchestrator._last_vault_sync == 0.0
+
+
+def test_aegis_pulse_advances_sync_clock_only_after_truthy_receipt(monkeypatch):
+    from core.orchestrator.handlers import aegis
+
+    class _Mycelium:
+        _aegis_locked = True
+
+        @staticmethod
+        async def vault_sync():
+            return True
+
+    ServiceContainer.register_instance("mycelial_network", _Mycelium())
+    orchestrator = SimpleNamespace(_last_vault_sync=0.0)
+
+    status = asyncio.run(
+        aegis._aegis_pulse(orchestrator, vault_sync_interval_s=1.0)
+    )
+
+    assert status["state"] == "healthy"
+    assert status["vault_synced"] is True
+    assert orchestrator._last_vault_sync > 0.0
+
+
+@pytest.mark.parametrize(
+    "invalid_clock",
+    (float("nan"), float("inf"), -1.0, "not-a-clock"),
+)
+def test_aegis_pulse_invalid_sync_clock_cannot_suppress_immediate_retry(
+    monkeypatch, invalid_clock
+):
+    from core.orchestrator.handlers import aegis
+
+    calls = []
+
+    class _Mycelium:
+        _aegis_locked = True
+
+        @staticmethod
+        async def vault_sync():
+            calls.append("sync")
+            return True
+
+    ServiceContainer.register_instance("mycelial_network", _Mycelium())
+    orchestrator = SimpleNamespace(_last_vault_sync=invalid_clock)
+
+    status = asyncio.run(
+        aegis._aegis_pulse(orchestrator, vault_sync_interval_s=60.0)
+    )
+
+    assert calls == ["sync"]
+    assert status["state"] == "healthy"
+    assert status["vault_synced"] is True
+    assert orchestrator._last_vault_sync > 0.0
+
+
 def test_aegis_loop_records_degraded_pulse_and_exits_on_stop(monkeypatch):
     from core.orchestrator.handlers import aegis
 

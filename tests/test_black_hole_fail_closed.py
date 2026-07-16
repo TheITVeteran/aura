@@ -11,12 +11,15 @@ and there is normally a key at all (first boot provisions one).
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+
 import pytest
 
 from core.memory.black_hole import (
     BlackHole,
     BlackHoleEncryptionUnavailable,
     _local_key_path,
+    _provision_local_key,
 )
 
 
@@ -109,6 +112,55 @@ def test_local_key_file_is_not_world_readable(monkeypatch):
     mode = os.stat(_local_key_path()).st_mode
     assert not (mode & stat.S_IRGRP), "key is group-readable"
     assert not (mode & stat.S_IROTH), "key is world-readable"
+
+
+def test_concurrent_first_boot_converges_on_one_local_key():
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        keys = list(pool.map(lambda _index: _provision_local_key(), range(8)))
+
+    assert all(key is not None for key in keys)
+    assert len(set(keys)) == 1
+    assert _local_key_path().read_bytes() == keys[0]
+
+
+def test_malformed_local_key_is_preserved_and_encryption_fails_closed(monkeypatch):
+    monkeypatch.setattr(
+        "core.memory.black_hole.get_runtime_service",
+        lambda _name, default=None: None,
+    )
+    path = _local_key_path()
+    path.parent.mkdir(parents=True, mode=0o700)
+    path.write_bytes(b"truncated")
+    path.chmod(0o600)
+    before = path.read_bytes()
+
+    bh = BlackHole()
+    bh.on_start()
+
+    assert bh.encryption_active is False
+    assert bh.key_provenance == "none"
+    with pytest.raises(BlackHoleEncryptionUnavailable):
+        bh.encrypt(b"must not leak")
+    assert path.read_bytes() == before
+
+
+def test_local_key_symlink_is_rejected_without_touching_target(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        "core.memory.black_hole.get_runtime_service",
+        lambda _name, default=None: None,
+    )
+    outside = tmp_path / "outside.key"
+    outside.write_bytes(b"x" * 32)
+    path = _local_key_path()
+    path.parent.mkdir(parents=True, mode=0o700)
+    path.symlink_to(outside)
+
+    bh = BlackHole()
+    bh.on_start()
+
+    assert bh.encryption_active is False
+    assert outside.read_bytes() == b"x" * 32
+    assert path.is_symlink()
 
 
 def test_horcrux_key_is_preferred_when_available(monkeypatch):

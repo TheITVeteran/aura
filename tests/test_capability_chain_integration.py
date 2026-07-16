@@ -40,8 +40,10 @@ def test_a_real_will_decision_produces_a_verifiable_capability():
         domain=ActionDomain.TOOL_EXECUTION,
         priority=0.4,
     )
-    if not decision.is_approved():
-        pytest.skip(f"Will did not approve in this environment: {decision.reason}")
+    assert decision.is_approved(), (
+        "the real Will must approve this bounded read-only action for the joined-chain "
+        f"contract to hold: {decision.reason}"
+    )
 
     payload = {"path": "README.md"}
     cap = get_capability_issuer().issue_from_decision(

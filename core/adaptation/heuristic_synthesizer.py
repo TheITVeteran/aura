@@ -9,15 +9,16 @@ Example synthesized heuristics:
   - "SQLite operations frequently fail under concurrent load; serialize writes."
   - "Web search results older than 7 days should be re-verified."
 """
-from core.runtime.errors import record_degradation
-from core.runtime.service_registry import get_runtime_service
-from core.runtime.file_write_gateway import get_file_write_gateway
-from core.utils.exceptions import capture_and_log
 import json
 import logging
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from core.runtime.errors import record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.service_registry import get_runtime_service
+from core.utils.exceptions import capture_and_log
 
 logger = logging.getLogger("Aura.HeuristicSynthesizer")
 
@@ -165,8 +166,7 @@ class HeuristicSynthesizer:
                     try:
                         mycelium = get_runtime_service("mycelial_network", default=None)
                         if mycelium:
-                            h = mycelium.get_hypha("adaptation", "cognition")
-                            if h: h.pulse(success=True)
+                            mycelium.pulse_hypha("adaptation", "cognition", success=True)
                     except (ImportError, AttributeError, RuntimeError) as e:
                         record_degradation('heuristic_synthesizer', e)
                         capture_and_log(e, {'module': __name__})

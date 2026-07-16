@@ -42,6 +42,17 @@ PathLike = str | Path
 DEFAULT_TEMP_PREFIX = ".aura_atomic_"
 _append_locks: dict[Path, threading.Lock] = {}
 _append_locks_guard = threading.Lock()
+_interprocess_locks: dict[Path, _ReentrantFileLockState] = {}
+_interprocess_locks_guard = threading.Lock()
+
+
+class _ReentrantFileLockState:
+    """One process-local owner for a path-backed advisory lock."""
+
+    def __init__(self) -> None:
+        self.thread_lock = threading.RLock()
+        self.depth = 0
+        self.fd: int | None = None
 
 
 class AtomicWriteError(RuntimeError):
@@ -87,25 +98,49 @@ async def async_ensure_private_directory(path: PathLike) -> Path:
 
 @contextmanager
 def interprocess_file_lock(path: PathLike) -> Iterator[None]:
-    """Serialize a multi-file transaction across threads and processes."""
+    """Serialize a multi-file transaction across threads and processes.
 
-    target = Path(path)
-    ensure_private_directory(target.parent)
-    flags = os.O_RDWR | os.O_CREAT
-    if hasattr(os, "O_CLOEXEC"):
-        flags |= os.O_CLOEXEC
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-    fd = os.open(str(target), flags, 0o600)
+    ``flock`` semantics for separately opened descriptors vary by platform and
+    are not a substitute for a process-local mutex. The registry closes that
+    gap while preserving re-entrant use by the same thread.
+    """
+
+    requested = Path(path).expanduser()
+    target = requested.parent.resolve(strict=False) / requested.name
+    with _interprocess_locks_guard:
+        state = _interprocess_locks.setdefault(target, _ReentrantFileLockState())
+    state.thread_lock.acquire()
     try:
-        os.fchmod(fd, 0o600)
-        fcntl.flock(fd, fcntl.LOCK_EX)
-        yield
-    finally:
+        if state.depth == 0:
+            ensure_private_directory(target.parent)
+            flags = os.O_RDWR | os.O_CREAT
+            if hasattr(os, "O_CLOEXEC"):
+                flags |= os.O_CLOEXEC
+            if hasattr(os, "O_NOFOLLOW"):
+                flags |= os.O_NOFOLLOW
+            fd = os.open(str(target), flags, 0o600)
+            try:
+                os.fchmod(fd, 0o600)
+                fcntl.flock(fd, fcntl.LOCK_EX)
+            except BaseException:  # noqa: BLE001 - never leak fd on interruption
+                os.close(fd)
+                raise
+            state.fd = fd
+        state.depth += 1
         try:
-            fcntl.flock(fd, fcntl.LOCK_UN)
+            yield
         finally:
-            os.close(fd)
+            state.depth -= 1
+            if state.depth == 0:
+                fd = state.fd
+                state.fd = None
+                if fd is not None:
+                    try:
+                        fcntl.flock(fd, fcntl.LOCK_UN)
+                    finally:
+                        os.close(fd)
+    finally:
+        state.thread_lock.release()
 
 
 def _validated_file_mode(mode: int) -> int:
@@ -156,6 +191,49 @@ def atomic_write_bytes(
         raise
 
 
+def atomic_write_bytes_if_absent(
+    path: PathLike,
+    payload: bytes,
+    *,
+    durable: bool = True,
+    mode: int = 0o600,
+) -> bool:
+    """Publish complete bytes exactly once without replacing an existing path.
+
+    A fully written temporary file is hard-linked into place. ``link(2)`` is
+    atomic and fails with ``EEXIST``, so concurrent publishers can verify the
+    winning content without any reader observing a partial file.
+    """
+
+    target = Path(path)
+    file_mode = _validated_file_mode(mode)
+    parent = target.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_path_str = tempfile.mkstemp(prefix=DEFAULT_TEMP_PREFIX, dir=str(parent))
+    tmp_path = Path(tmp_path_str)
+    published = False
+    try:
+        os.fchmod(fd, file_mode)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(payload)
+            fh.flush()
+            if durable:
+                _fsync_file(fh.fileno())
+        try:
+            os.link(tmp_path, target, follow_symlinks=False)
+            published = True
+        except FileExistsError:
+            published = False
+        if durable:
+            _fsync_dir(parent)
+        return published
+    finally:
+        try:
+            tmp_path.unlink()
+        except FileNotFoundError:
+            pass
+
+
 def atomic_write_text(
     path: PathLike,
     text: str,
@@ -184,6 +262,24 @@ async def async_atomic_write_bytes(
 
     await asyncio.to_thread(
         atomic_write_bytes,
+        path,
+        payload,
+        durable=durable,
+        mode=mode,
+    )
+
+
+async def async_atomic_write_bytes_if_absent(
+    path: PathLike,
+    payload: bytes,
+    *,
+    durable: bool = True,
+    mode: int = 0o600,
+) -> bool:
+    import asyncio
+
+    return await asyncio.to_thread(
+        atomic_write_bytes_if_absent,
         path,
         payload,
         durable=durable,

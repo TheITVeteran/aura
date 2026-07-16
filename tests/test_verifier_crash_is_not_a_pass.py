@@ -148,16 +148,16 @@ async def test_verifier_with_a_bad_return_shape_is_unknown_not_pass():
 
 
 class _Verdict:
-    """Stub verifier verdict: `ok` = did not object, `checked` = actually evaluated."""
+    """Synthetic verdict: `ok` = did not object, `checked` = actually evaluated."""
 
-    def __init__(self, ok: bool, checked: bool, engine: str = "stub"):
+    def __init__(self, ok: bool, checked: bool, engine: str = "synthetic"):
         self.ok = ok
         self.checked = checked
         self.engine = engine
         self.issues: list[str] = []
 
 
-class _StubVerifier:
+class _ScriptedVerifier:
     """Returns a checked failure first, then a *vacuous* pass on escalation.
 
     This is the exact shape of the defect: the escalated verdict passes
@@ -197,7 +197,7 @@ async def test_v2_escalation_does_not_inherit_stale_checked_state():
 
     amp = ReasoningAmplifierV2(
         _generate,
-        verifier=_StubVerifier(),
+        verifier=_ScriptedVerifier(),
         escalate_generate=_escalate,
     )
 

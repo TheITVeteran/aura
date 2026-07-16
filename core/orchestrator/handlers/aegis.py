@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import math
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -151,15 +152,49 @@ async def _aegis_pulse(
             locked=False,
         )
 
-    last_sync = float(getattr(orch, "_last_vault_sync", 0.0) or 0.0)
     now = time.monotonic()
+    raw_last_sync = getattr(orch, "_last_vault_sync", 0.0)
+    try:
+        last_sync = float(raw_last_sync or 0.0)
+    except (TypeError, ValueError) as exc:
+        _record_aegis_degradation(
+            exc,
+            action="reset malformed root-vault sync clock for immediate retry",
+        )
+        last_sync = 0.0
+    if not math.isfinite(last_sync) or last_sync < 0.0 or last_sync > now:
+        clock_error = ValueError(
+            "root-vault sync clock is non-finite or outside this process epoch"
+        )
+        _record_aegis_degradation(
+            clock_error,
+            action="reset invalid root-vault sync clock for immediate retry",
+        )
+        last_sync = 0.0
     synced = False
     if now - last_sync >= max(1.0, vault_sync_interval_s):
         vault_sync = getattr(mycelium, "vault_sync", None)
         if callable(vault_sync):
-            await _maybe_await(vault_sync())
-            orch._last_vault_sync = now
-            synced = True
+            synced = bool(await _maybe_await(vault_sync()))
+            if not synced:
+                error = RuntimeError("root-vault sync returned an unsuccessful receipt")
+                _record_aegis_degradation(
+                    error,
+                    action=(
+                        "retained immediate root-vault retry eligibility after "
+                        "persistence failed"
+                    ),
+                    severity="degraded",
+                )
+                return _set_aegis_status(
+                    orch,
+                    state="degraded",
+                    reason="root_vault_sync_failed",
+                    locked=True,
+                    vault_synced=False,
+                    vault_sync_retry_eligible=True,
+                )
+            orch._last_vault_sync = time.monotonic()
 
     return _set_aegis_status(
         orch,

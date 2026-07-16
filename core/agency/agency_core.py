@@ -595,9 +595,7 @@ CRITICAL: You MUST respond with a valid JSON object matching the following struc
 
             mycelium = ServiceContainer.get("mycelial_network", default=None)
             if mycelium:
-                h = mycelium.get_hypha("collective", "distributed_agency")
-                if h:
-                    h.pulse(success=True)
+                mycelium.pulse_hypha("collective", "distributed_agency", success=True)
 
         except _AGENCY_BOUNDARY_ERRORS as e:
             _record_agency_degradation(e, action=f"shard {shard_id} execution isolated")
@@ -2279,9 +2277,7 @@ class AgencyCore:
         try:
             mycelium = ServiceContainer.get("mycelial_network", default=None)
             if mycelium:
-                hypha = mycelium.get_hypha("agency", "internet")
-                if hypha:
-                    hypha.pulse(success=True)
+                mycelium.pulse_hypha("agency", "internet", success=True)
         except _AGENCY_BOUNDARY_ERRORS as e:
             _record_agency_degradation(e, action="world-monitor mycelial pulse skipped")
             capture_and_log(e, {'module': __name__})

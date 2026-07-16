@@ -298,6 +298,8 @@ async def test_foreign_origin_still_treated_as_csrf(paired_token):
 def test_device_path_allowlist_is_deny_by_default():
     assert auth.device_path_allowed("/api/chat", "POST")
     assert not auth.device_path_allowed("/api/chat", "GET")
+    assert auth.device_path_allowed("/api/chat/delivery/turn-123", "GET")
+    assert not auth.device_path_allowed("/api/chat/delivery/turn-123", "POST")
     assert not auth.device_path_allowed("/api/chat/regenerate", "POST")
     assert auth.device_path_allowed("/static/aura.css", "GET")
     assert not auth.device_path_allowed("/static/aura.css", "POST")
@@ -318,6 +320,8 @@ async def test_access_profile_advertises_paired_capability_boundary(paired_token
 
     assert profile["surface"] == "paired_device"
     assert profile["conversation_only"] is True
+    assert len(profile["handoff_scope"]) == 64
+    assert set(profile["handoff_scope"]) <= set("0123456789abcdef")
     assert profile["capabilities"]["chat"] is True
     assert profile["capabilities"]["world_read"] is True
     assert profile["capabilities"]["performance_telemetry"] is False
@@ -429,14 +433,21 @@ def test_paired_chat_wire_projection_is_allowlist_based():
 
 
 def test_chat_idempotency_keys_are_namespaced_by_authenticated_session():
-    from interface.routes import chat
+    from core.runtime.chat_delivery_journal import DeliveryIdentity
 
-    owner = chat._chat_idempotency_cache_key("owner", "same-wire-key")
-    phone = chat._chat_idempotency_cache_key(
-        "paired-device:phone",
-        "same-wire-key",
+    owner = DeliveryIdentity.create(
+        principal="owner:bryan",
+        session_id="owner",
+        idempotency_key="same-wire-key",
+    )
+    phone = DeliveryIdentity.create(
+        principal="paired-device:phone",
+        session_id="paired-device:phone",
+        idempotency_key="same-wire-key",
     )
 
     assert owner != phone
-    assert owner == ("owner", "same-wire-key")
-    assert phone == ("paired-device:phone", "same-wire-key")
+    assert owner.session_id == "owner"
+    assert phone.session_id == "paired-device:phone"
+    assert owner.idempotency_key == phone.idempotency_key == "same-wire-key"
+    assert owner.principal_digest != phone.principal_digest

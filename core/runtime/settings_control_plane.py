@@ -159,7 +159,8 @@ def _sha256(value: Any) -> str:
 
 def _strict_json_loads(raw: str) -> Any:
     def _reject_constant(value: str) -> None:
-        raise ValueError(f"non-finite JSON number:{value}")
+        message = f"non-finite JSON number:{value}"
+        raise ValueError(message)
 
     def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
         result: dict[str, Any] = {}

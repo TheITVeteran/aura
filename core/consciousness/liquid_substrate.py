@@ -257,9 +257,7 @@ class LiquidSubstrate:
 
             mycelium = ServiceContainer.get("mycelial_network", default=None)
             if mycelium:
-                hypha = mycelium.get_hypha("consciousness", "substrate")
-                if hypha:
-                    hypha.pulse(success=success)
+                mycelium.pulse_hypha("consciousness", "substrate", success=success)
         except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation("liquid_substrate", e)
             logger.debug("Substrate pulse failed: %s", e)

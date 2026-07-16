@@ -396,5 +396,18 @@ def register_core_pathways(mycelium: Any):
         metadata={"description": "Background evolution timer at 10K cycles"}
     )
 
-    logger.info("🍄 [MYCELIUM] registered %d pathways and %d hyphae via extracted initializer.", 
-                len(mycelium.pathways), len(mycelium.hyphae))
+    counter = getattr(mycelium, "get_topology_counts", None)
+    if callable(counter):
+        counts = counter()
+    else:
+        topology_reader = getattr(mycelium, "get_network_topology", None)
+        topology = topology_reader() if callable(topology_reader) else {}
+        counts = {
+            "pathways": int(topology.get("pathway_count", 0) or 0),
+            "hyphae": len(topology.get("hyphae") or {}),
+        }
+    logger.info(
+        "🍄 [MYCELIUM] registered %d pathways and %d hyphae via extracted initializer.",
+        counts["pathways"],
+        counts["hyphae"],
+    )

@@ -18,11 +18,13 @@ Theory:
     Higher Φ → more integrated system → partitions lose more information.
 """
 
-from core.runtime.errors import record_degradation
-import numpy as np
-import time
 import logging
+import time
+
+import numpy as np
+
 from core.container import get_container
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Consciousness.RIIU")
 
@@ -121,9 +123,7 @@ class RIIU:
             mycelium = container.get("mycelial_network", default=None)
             if mycelium:
                 # Source=consciousness, target=iit_phi
-                hypha = mycelium.get_hypha("consciousness", "iit_phi")
-                if hypha:
-                    hypha.pulse(success=True)
+                mycelium.pulse_hypha("consciousness", "iit_phi", success=True)
         except (OSError, ConnectionError, TimeoutError) as _e:
             record_degradation('iit_surrogate', _e)
             logger.debug('Ignored Exception in iit_surrogate.py: %s', _e)
@@ -150,9 +150,14 @@ class RIIU:
             # 2. Mycelial hyphae state (strengths & pulse recency)
             hyphae_vec = []
             now = time.monotonic()
-            for h in list(mycelium.hyphae.values())[:self.network_dim // 2]:
-                hyphae_vec.append(h.strength / 10.0) # Normalized 0-1
-                recency = max(0.0, 1.0 - (now - h.last_pulse) / 10.0)
+            snapshotter = getattr(mycelium, "get_hypha_signal_snapshot", None)
+            if callable(snapshotter):
+                hyphae_signals = snapshotter(limit=self.network_dim // 2)
+            else:
+                hyphae_signals = []
+            for strength, last_pulse in hyphae_signals:
+                hyphae_vec.append(strength / 10.0) # Normalized 0-1
+                recency = max(0.0, 1.0 - (now - last_pulse) / 10.0)
                 hyphae_vec.append(recency)
                 
             # Pad or truncate hyphae_vec to match network_dim

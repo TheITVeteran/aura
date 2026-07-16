@@ -9,16 +9,16 @@ Usage:
     writer.execute("INSERT INTO knowledge ...", (val1, val2))
     rows = writer.fetchall("SELECT * FROM knowledge WHERE ...", (val,))
 """
-from core.runtime.errors import record_degradation
-from core.utils.exceptions import capture_and_log
 import asyncio
 import logging
 import queue
 import sqlite3
 import threading
 import time
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+from core.runtime.errors import record_degradation
+from core.utils.exceptions import capture_and_log
 
 logger = logging.getLogger("Aura.DBWriter")
 
@@ -231,9 +231,7 @@ class SerializedDBWriter:
 
                         mycelium = ServiceContainer.get("mycelial_network", default=None)
                         if mycelium:
-                            h = mycelium.get_hypha("core", "memory")
-                            if h:
-                                h.pulse(success=True)
+                            mycelium.pulse_hypha("core", "memory", success=True)
                     except (ImportError, AttributeError, RuntimeError) as e:
                         record_degradation('db_writer_queue', e)
                         capture_and_log(e, {'module': __name__})

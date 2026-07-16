@@ -21,6 +21,14 @@ def _record_learning_degradation(
     record_degradation("learning_evolution", error, severity=severity, action=action)
 
 
+def _require_successful_meta_evolution(result):
+    """Reject result-level failures before a rooted flow records success."""
+    if not isinstance(result, dict) or result.get("ok") is not True:
+        detail = result.get("error") if isinstance(result, dict) else repr(result)
+        raise RuntimeError(f"meta-evolution returned an unsuccessful result: {detail}")
+    return result
+
+
 class LearningEvolutionMixin:
     """Handles learning from exchanges, self-update, meta-evolution, and sovereign self-modification."""
 
@@ -248,15 +256,39 @@ class LearningEvolutionMixin:
             meta_evo = ServiceContainer.get("meta_evolution", default=None)
 
             if mycelium and meta_evo:
-                hypha = mycelium.get_hypha("meta_evolution", "cognition")
-                if hypha:
-                    result = await hypha.rooted_flow(meta_evo.run_optimization_cycle())
-                    logger.info("🌀 META-EVOLUTION result: %s", str(result)[:200])
+                result = None
+                async with mycelium.rooted_flow(
+                    "meta_evolution",
+                    "cognition",
+                    activity="meta-evolution optimization cycle",
+                ) as flow:
+                    result = _require_successful_meta_evolution(
+                        await meta_evo.run_optimization_cycle()
+                    )
+                if getattr(flow, "failed", False):
+                    flow_error = getattr(flow, "error", None)
+                    if isinstance(flow_error, BaseException):
+                        _record_learning_degradation(
+                            flow_error,
+                            action=(
+                                "ended meta-evolution cycle without applying "
+                                "optimization"
+                            ),
+                            severity="error",
+                        )
+                    logger.error(
+                        "Meta-Evolution cycle failed inside rooted flow: %s",
+                        flow_error or "unknown failure",
+                    )
                     return
+                logger.info("🌀 META-EVOLUTION result: %s", str(result)[:200])
+                return
 
             # Direct fallback
             if meta_evo:
-                result = await meta_evo.run_optimization_cycle()
+                result = _require_successful_meta_evolution(
+                    await meta_evo.run_optimization_cycle()
+                )
                 logger.info("🌀 META-EVOLUTION (direct) result: %s", str(result)[:200])
             else:
                 logger.debug("Meta-Evolution engine not available in container.")

@@ -46,10 +46,25 @@ ways, and she already owns the seeds of each:
 "Frontier-general" := parity with a named frontier model on a broad,
 contamination-resistant, regularly refreshed benchmark battery (reasoning,
 knowledge, coding, agency, writing, calibration) at matched per-task budget.
-Tracked as a checked-in **gap-to-frontier trend artifact** (the Φ-report
-pattern: `artifacts/frontier_gap/latest.json`, pinned by a test that fails
-if evidence goes missing or regresses). The claim is won task-class by
-task-class on a monotone measured trend, or it is not claimed.
+Tracked through a checked-in **gap-to-frontier evidence index** (the Φ-report
+pattern: `artifacts/frontier_gap/latest.json`). V5 stores complete outputs and
+receipts in atomically publish-once, content-addressed local blobs and keeps a
+bounded hash-chained index. This is local tamper evidence, not an externally
+witnessed append-only transparency log. Endpoint movement is reported
+separately from a trend claim. A closing
+trend additionally requires at least five matched independently challenged
+runs, unique held-out challenges, a minimum effect, a confidence interval
+excluding zero, a significance threshold, and consecutive non-worsening
+results.
+
+This is the program target, not the scope of the current battery. The current
+v5 instrument covers four deterministic classes only: integer arithmetic,
+short-chain ordering, restricted single-function Python, and fixed
+short-answer facts. It is a diagnostic of those classes and of the evidence
+pipeline. It cannot establish broad reasoning, knowledge, coding, agency,
+writing, calibration, or general frontier parity. Expanding to the operational
+definition requires fresh held-out suites across all six named domains,
+contamination controls, repeated matched-budget runs, and independent review.
 
 ## Build phases (each: functional, live, governed, tested, pushed)
 
@@ -72,10 +87,13 @@ injected into the amplifier's problem-model stage; periodic batch
 distillation of the best playbooks into LoRA via the CRSM loop.
 Compounding without collapse.
 
-**P3 — Gap-to-Frontier telemetry**: extend `core/evals/eval_arena.py` from
-drift-tracking to a versioned battery with fresh-generation templates
-(anti-contamination), frontier-reference scoring hooks (governed cloud lane,
-env-gated), per-class gap trend artifact + pinning test.
+**P3 — Gap-to-Frontier telemetry**: build a versioned measurement system with
+fresh-generation templates, sealed evaluation, independently trusted signed
+reference evidence, content-addressed candidate model and source windows,
+full per-item receipts, typed ledgers, and artifact pinning. The current v5
+four-class diagnostic implements these admission mechanics only. P3 remains open
+until the battery covers the six-domain operational definition and repeated
+independently verified live runs establish a trend.
 
 **P4 — Curriculum fusion**: FDE + curiosity engine propose edge-of-
 competence tasks; foundry-admitted verifiers resolve them; verified
@@ -117,3 +135,94 @@ formulation, and unlike the slogan, it can actually be won.
   correct, zero false passes (was the 0.879 poison case). The
   measure→catch→fix→remeasure loop worked end-to-end on its first cycle —
   the foundry is functioning as the arc's immune system.
+- 2026-07-15: P3 evidence semantics first corrected before accepting its first
+  capability result. A deterministic pipeline control had been recorded in
+  the same shape as an Aura-model score and its runs were eligible to enter
+  the capability trend. The intermediate v2 artifact used neutral candidate fields,
+  isolates synthetic controls in a claim-ineligible ledger, keeps the real
+  Aura capability ledger separate, records per-run execution failures, and
+  can fail closed with `--require-capability-evidence`. Running the tool while
+  the desktop owns the model lane remains control-only until an authenticated
+  resident-amplifier proof channel exists; no desktop-resident capability
+  result is claimed yet. The measurement call is also read-only through the
+  amplifier and verifier registry: it cannot update exact-answer caches,
+  playbooks, preference pairs, reasoning episodes, self-improvement captures,
+  or Foundry weights while later battery items are still being scored.
+- 2026-07-15 (v3 closeout): independent review found a second scientific
+  defect in v2: substring graders and unnamed hard-coded "reference anchors"
+  could manufacture both correctness and a frontier gap. V3 removes embedded
+  references completely. Math, short-answer reasoning, and facts use exact
+  normalized truth; code is parsed through a restricted AST and executed over
+  hidden cases without disclosing expected outputs. A frontier gap is `null`
+  until a named model/source/date artifact matches the exact battery seed,
+  class coverage, budget, and per-class run receipts. Capability eligibility
+  is decided only after every item completes with a non-empty answer and an
+  amplifier verifier receipt, and only on a clean full-commit/full-tree source
+  identity. Failed real-model runs are retained in a rejected-attempt ledger;
+  they can never enter either the capability or control trend. Historical v2
+  anchor gaps are quarantined to `null` during migration.
+- 2026-07-15 (v4 trust-chain closeout): a second independent review found
+  that v3 references were still self-attested, candidate evidence was not
+  bound to exact model material, procedural-memory retrieval could leak prior
+  answers, stored capability summaries could be fabricated, and the tiny
+  battery was described too broadly. V4 requires an explicit Ed25519 trust
+  root and verifies a signed battery manifest, model identity, per-item answer
+  and execution receipts, exact budget, unique response IDs, and reproducible
+  grader outcomes. Candidate admission now requires unchanged clean source
+  before and after the run, a commit-to-tree check, unchanged full-file model
+  manifests before and after inference, complete verified item receipts, and
+  sealed evaluation with cache and playbook retrieval disabled. Capability
+  ledgers retain the complete evidence snapshot and revalidate it on restore;
+  summary-only or altered history is rejected. The checked-in artifact pins
+  every execution component to its current content. No Aura-model run has yet
+  passed this v4 contract, and the instrument is explicitly only a four-class
+  deterministic diagnostic. Broad frontier-general capability remains open.
+- 2026-07-15 (v5 protocol remediation, source candidate): adversarial review
+  established that v4 still let the coordinator manufacture generation
+  metadata, did not pin hidden truth or grader implementations, declared
+  matched budgets rather than measuring them, imported measurement code before
+  source capture, conflated generic verifier prose with correctness, normalized
+  signed payloads, silently replaced corrupt ledgers, overstated endpoint
+  movement as a trend, repeated effective samples, and embedded unbounded
+  evidence snapshots. V5 moves capability admission behind separately pinned
+  Ed25519 actors: challenge issuer/reference evaluator, generation worker,
+  correctness verifier, run coordinator, and repository release authority.
+  The exact externally supplied pin set is itself hashed into the reference and
+  candidate run envelopes. Reusing a signer identity or public key across any
+  trust role is rejected even when every individual signature is valid.
+  A commit/reveal challenge
+  is issued only after candidate source/runtime and reference runtime identities
+  freeze. Every generation receipt binds the unpredictable run nonce, unique
+  item, prompt/output hashes, exact commit-bound source identity, effective
+  runtime, stable candidate-model window, exact decoding parameters,
+  tokenizer-measured token use, candidate count, generation calls, worker wall
+  time, and zero tool/network/cache use. A separate coordinator observation
+  records the actual worker process and IPC wall time under the hard deadline;
+  the run signer binds every worker receipt and every supervisor observation.
+  The signed task
+  specification commits to hidden answers/cases and grader source digests and
+  names a verifier whose key, implementation, and release are independently
+  pinned. Correctness receipts are separate from execution receipts, so exact
+  short answers do not need generic long-form verifier prose.
+
+  The CLI is now a standard-library-only launcher until it verifies a clean
+  commit and creates a fresh permission-hardened clone; measurement imports
+  occur only in that child, internal symlinks must remain inside the checkout,
+  and source identity is revalidated before and after the run. Trusted source
+  identity additionally requires a signed repository release attestation and
+  ancestry proof. The effective runtime records exact worker/Python executable,
+  library-lock, platform, model, tokenizer, adapter, steering, and prompt-template
+  identities. Reference evidence now carries its complete stable model window,
+  not only a claimed runtime digest. Challenges have bounded lifetimes and must
+  be fresh at candidate admission. In-process MLX execution remains an explicitly
+  unattested diagnostic. Claim-bearing execution requires a fresh signed worker
+  plus independent verifier and run-signer commands. Malformed or unknown-schema
+  ledgers fail closed and are preserved to a quarantine file instead of
+  overwritten. V5 evidence is stored in bounded hash-chained indexes over
+  atomically published content-addressed blobs, including full rejected outputs.
+  Artifact updates use an interprocess lock and exact-head compare-and-swap so
+  concurrent valid runs cannot erase one another. This does not replace future
+  external transparency witnessing or independent replication. The
+  checked-in `latest.json` remains historical v4 until a clean post-commit v5
+  control run regenerates it. No v5 Aura-model result or frontier trend is
+  claimed by this source change.

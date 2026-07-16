@@ -1,7 +1,7 @@
-from core.runtime.errors import record_degradation
 import logging
 from typing import Any, Dict, Optional
 
+from core.runtime.errors import record_degradation
 from core.runtime.service_registry import get_runtime_service
 
 logger = logging.getLogger("Brain.Composer")
@@ -76,8 +76,7 @@ class ComposerNode:
             # Evolution 8: Pulse Mycelium
             mycelium = get_runtime_service("mycelium", default=None)
             if mycelium:
-                hypha = mycelium.get_hypha("vision", "composer")
-                if hypha: hypha.pulse(success=True)
+                mycelium.pulse_hypha("vision", "composer", success=True)
 
             return {
                 "ok": True,

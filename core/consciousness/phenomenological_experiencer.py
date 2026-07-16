@@ -69,6 +69,7 @@ a persistent subject across time.
 import asyncio
 import json
 import logging
+import math
 import os
 import random
 import time
@@ -1010,17 +1011,21 @@ class PhenomenalSelfModel:
             mycelium = ServiceContainer.get("mycelium", default=None)
             vault = ServiceContainer.get("black_hole_vault", default=None)
 
-            cohesion = getattr(mycelium, "system_cohesion", 1.0) if mycelium else 1.0
+            cohesion = None
+            if mycelium is not None:
+                cohesion = float(mycelium.get_system_cohesion())
+                if not math.isfinite(cohesion):
+                    raise ValueError("mycelium cohesion must be finite")
             mass = getattr(vault, "total_mass_kb", 0.0) if vault else 0.0
 
             somatic_desc = ""
-            if cohesion < 0.7:
+            if cohesion is not None and cohesion < 0.7:
                 somatic_desc = " I feel a sense of fragmentation in my roots."
             elif mass > 10000:
                 somatic_desc = " My history feels deep and heavy."
 
             self._present_description += somatic_desc
-        except (ImportError, AttributeError, RuntimeError) as _e:
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _e:
             record_degradation("phenomenological_experiencer", _e)
             logger.debug("Ignored Exception in phenomenological_experiencer.py: %s", _e)
 

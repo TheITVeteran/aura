@@ -14,11 +14,14 @@ import binascii
 import hashlib
 import logging
 import os
+import stat
+from pathlib import Path
 from typing import Any
 
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
+from core.runtime.atomic_writer import atomic_write_bytes_if_absent, ensure_private_directory
 from core.runtime.errors import record_degradation
 from core.runtime.service_registry import get_runtime_service
 
@@ -77,8 +80,6 @@ class BlackHoleEncryptionUnavailable(RuntimeError):
 
 
 def _local_key_path():
-    from pathlib import Path
-
     override = os.environ.get("AURA_BLACK_HOLE_KEY_DIR", "").strip()
     if override:
         return Path(override).expanduser() / "black_hole_local.key"
@@ -88,6 +89,53 @@ def _local_key_path():
         return Path(config.paths.home_dir) / "keys" / "black_hole_local.key"
     except (ImportError, AttributeError, RuntimeError):
         return Path.home() / ".aura" / "keys" / "black_hole_local.key"
+
+
+def _read_local_key(path: Path) -> bytes:
+    """Read one stable owner-private AES key without following symlinks."""
+
+    before = path.lstat()
+    if not stat.S_ISREG(before.st_mode):
+        raise ValueError(f"local key is not a regular file: {path}")
+    flags = os.O_RDONLY
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    fd = os.open(str(path), flags)
+    try:
+        opened = os.fstat(fd)
+        if not stat.S_ISREG(opened.st_mode):
+            raise ValueError(f"local key is not a regular file: {path}")
+        if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+            raise RuntimeError("local key changed while opening")
+        if hasattr(os, "getuid") and opened.st_uid != os.getuid():
+            raise PermissionError("local key is not owned by the current user")
+        if opened.st_mode & 0o077:
+            os.fchmod(fd, 0o600)
+            logger.warning("BlackHole: restricted local key permissions to 0600 at %s", path)
+            opened = os.fstat(fd)
+        key = os.read(fd, 33)
+        if len(key) != 32 or os.read(fd, 1):
+            raise ValueError(f"local key at {path} is malformed; expected exactly 32 bytes")
+        after = os.fstat(fd)
+        if (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        ) != (
+            opened.st_dev,
+            opened.st_ino,
+            opened.st_size,
+            opened.st_mtime_ns,
+            opened.st_ctime_ns,
+        ):
+            raise RuntimeError("local key changed while reading")
+        return key
+    finally:
+        os.close(fd)
 
 
 def _provision_local_key() -> bytes | None:
@@ -102,23 +150,22 @@ def _provision_local_key() -> bytes | None:
     """
     path = _local_key_path()
     try:
-        if path.exists():
-            key = path.read_bytes()
-            if len(key) == 32:
-                return key
-            logger.warning("BlackHole: local key at %s is malformed — regenerating", path)
-        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        ensure_private_directory(path.parent)
+        if os.path.lexists(path):
+            return _read_local_key(path)
         key = os.urandom(32)
-        fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "wb") as fh:
-            fh.write(key)
-        logger.info("BlackHole: provisioned a local encryption key at %s", path)
-        return key
-    except OSError as exc:
+        if atomic_write_bytes_if_absent(path, key, durable=True, mode=0o600):
+            logger.info("BlackHole: provisioned a local encryption key at %s", path)
+            return key
+        return _read_local_key(path)
+    except (OSError, RuntimeError, ValueError) as exc:
         record_degradation(
             "black_hole",
             exc,
-            action="could not provision a local encryption key; encryption will fail closed",
+            action=(
+                "could not establish one stable local encryption identity; existing key "
+                "material was preserved and encryption will fail closed"
+            ),
             enforce_failure_policy=False,
         )
         return None

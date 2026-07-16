@@ -202,9 +202,7 @@ Focus heavily on the emotional resonances, contradictions, repeated motifs, and 
             # Pulse the visual UI
             mycelium = ServiceContainer.get("mycelial_network", default=None)
             if mycelium:
-                h = mycelium.get_hypha("memory", "consciousness")
-                if h:
-                    h.pulse(success=True)
+                mycelium.pulse_hypha("memory", "consciousness", success=True)
 
             logger.info("🌌 Dream realized and journaled (Length: %d characters).", len(dream_content))
             return {

@@ -1,22 +1,24 @@
-import os
-import time
-import json
 import asyncio
+import json
 import logging
 import math
+import os
 import threading
-from typing import Dict, Any, List, Optional
+import time
+from typing import Any, Dict, List, Optional
+
+from core.governance_context import local_internal_governed_scope
+from core.memory.black_hole import BlackHoleDecodeError, decode_payload, encode_payload
 from core.memory.horcrux import HorcruxManager
-from core.memory.black_hole import BlackHoleDecodeError, encode_payload, decode_payload
 from core.memory.physics import bekenstein_check, hawking_decay
 from core.memory.retention_policy import MemoryRetentionPolicy, black_hole_retention_policy
-from core.governance_context import local_internal_governed_scope
 from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
+
 try:
-    from core.memory.rag import chunk_text, tokenize, compute_term_freq, retrieve_memories
+    from core.memory.rag import chunk_text, compute_term_freq, retrieve_memories, tokenize
 except (ImportError, AttributeError, RuntimeError):
-    from core.memory.rag import chunk_text, tokenize, compute_term_freq
+    from core.memory.rag import chunk_text, compute_term_freq, tokenize
     def retrieve_memories(query, memories, top_k=5, threshold=0.01, **kwargs):
         return []
 
@@ -334,8 +336,7 @@ class BlackHoleVault:
                         from core.container import ServiceContainer
                         mycelium = ServiceContainer.get("mycelium", default=None)
                         if mycelium:
-                            hypha = mycelium.get_hypha("memory", "vault")
-                            if hypha: hypha.pulse(success=True)
+                            mycelium.pulse_hypha("memory", "vault", success=True)
                     except (ImportError, AttributeError, RuntimeError) as _e:
                         record_degradation('black_hole_vault', _e)
                         logger.debug('Ignored Exception in black_hole_vault.py: %s', _e)
@@ -407,10 +408,10 @@ class BlackHoleVault:
             from core.container import ServiceContainer
             mycelium = ServiceContainer.get("mycelium", default=None)
             if mycelium:
-                hypha = mycelium.get_hypha("memory", "vault")
-                if hypha:
-                    hypha.log("EVAPORATION: Qualitative shift in history.")
-                    hypha.pulse(success=True)
+                mycelium.log_hypha(
+                    "memory", "vault", "EVAPORATION: Qualitative shift in history."
+                )
+                mycelium.pulse_hypha("memory", "vault", success=True)
         except (ImportError, AttributeError, RuntimeError) as _e:
             record_degradation('black_hole_vault', _e)
             logger.debug('Ignored Exception in black_hole_vault.py: %s', _e)

@@ -16,9 +16,9 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **Checkpoint 89 is pushed on exact
-  `main` at `89b382d6`; Checkpoint 87's exact signed-app campaign is in progress
-  and must be repeated from the CP89-or-later build before closure**. Checkpoint 80 made cached
+- Current bounded implementation milestone: **Checkpoint 91 is the current
+  source candidate in the `main` worktree; Checkpoint 90 is pushed at `acfe7d68`, and
+  the exact latest-main signed-app campaign remains open after CP91**. Checkpoint 80 made cached
   readiness truthful and fast,
   removed synchronous Phi/Eternal maintenance from the foreground cycle, and
   reduced live CognitiveEngine samples from a 59.65-second retry cascade to
@@ -76,8 +76,30 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   owner with observed start/stop/interruption receipts, competing production
   constructors are removed, browser capture cannot duplicate server capture,
   and launch profiles no longer override the user's auto-listen value. The
-  expanded bounded settings/voice/boot campaign passes 532/532; exact rebuilt-
-  app reproof remains open and receives no closure credit yet.
+  expanded bounded settings/voice/boot campaign passes 532/532. Exact CP90 app
+  proof then showed real microphone capture and RMS evidence with input and
+  auto-listen enabled, physical capture stop with input disabled, and restart
+  persistence with input enabled plus auto-listen disabled remaining idle.
+  Checkpoint 90 removes the runtime kill switch from Aura's agency contract:
+  autonomous actions are a protected always-on invariant, legacy false state is
+  audit-reconciled, PATCH and rollback attempts to disable it fail with a typed
+  invariant error, and reader/owner failure paths preserve agency while deeper
+  Will, Constitution, scope, risk, and effect governance remain active. The
+  exact signed app at `acfe7d68` reached full readiness with verified source and
+  signature provenance; both live disable and historical rollback attacks
+  returned 422 without changing revision 10 or integrity. Its fresh shell
+  rendered `Autonomous Agency: ACTIVE` with no false safety checkbox.
+  Checkpoint 91 fixes a defect surfaced by that exact run: the background
+  mycelial mapper incrementally mutated dictionaries while the graph route,
+  health, reinforcement, pulse, and vault readers iterated them, producing
+  `RuntimeError: dictionary changed size during iteration`. Mapping now builds
+  privately and publishes one complete generation through canonical snapshots;
+  shutdown cannot publish a late generation into a retired instance. The live
+  shell also binds itself to the matching verified signed-runtime commit and
+  performs one cache-busted self-reload, preserving an unsent draft, when a
+  replacement runtime advertises a different verified commit. Bounded source
+  and adjacent tests are green; exact CP91 app graph stress and shell-revision
+  transition proof remain open.
   A separate non-current `fable-improvement-pass` endurance attempt is retained
   as failed evidence: it stopped at 36/200 turns, served 31 timeout responses,
   had p50 latency 213.245 seconds, repeatedly reported a 503 conversation lane
@@ -86,20 +108,21 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   Broader pressure, plateau, GUI, portability, semantic,
   release, and causal-proof obligations remain open unless their rows
   explicitly close.
-- Overall completion percentage: **30% evidence-weighted planning estimate at
-  pushed Checkpoint 89**. The exact
+- Overall completion percentage: **29% evidence-weighted planning estimate at
+  Checkpoint 91**. The exact
   Checkpoint 80 app earns bounded live credit for readiness, health, base boot,
   and one-attempt chat latency, but not output quality, sustained load, GUI
   frame SLO, portability, semantic review, release, or soak. The newly
-  decomposed causal-faithfulness and IIT-4.0 certificate program expands the
-  denominator enough to offset rounding progress rather than hiding material
-  proof work.
+  decomposed causal-faithfulness and IIT-4.0 certificate program and the
+  complete operational mirror/self-model program expand the denominator rather
+  than hiding material implementation and proof work behind conversational
+  demonstrations.
   This is an evidence-weighted release estimate, not a certification claim.
   `PROGRESS-CONTROL-001` and `SCOPE-001` must replace the manual estimate with a
   generated denominator; new obligations increase it, regressions reopen it,
   and source-green/live-open work never receives full closure credit.
-- Total checkpoint forecast: **approximately 240-325 total checkpoints for the
-  expanded program, with 89 pushed and approximately 151-236 remaining before
+- Total checkpoint forecast: **approximately 252-343 total checkpoints for the
+  expanded program, with 91 checkpoints and approximately 161-252 remaining before
   final soak/release closure**. The prior `226-304` range expands by 8-12 explicit
   checkpoints for a falsifiable lateral-conceptual-leap program spanning
   mechanism construction, held-out evaluation, novelty and prior-art review,
@@ -108,12 +131,22 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   checkpoints for causal-graph closure, interventional abstraction proof,
   IIT-4.0 solver certification, boundary/grain search, independent
   verification, controlled live campaigns, and evidence-bounded conclusions.
+  The 2026-07-15 operational mirror/self-model requirement adds 12-18 explicit
+  checkpoints for canonical self representation, self/other/world boundaries,
+  introspection and epistemic calibration, authorship, preference ownership,
+  continuity, unprompted recognition, adversarial and lesion controls, exact-app
+  repeated trials, and independent evidence review. This is new causal product
+  scope, not a wording-only test, so it increases the denominator and lowers the
+  rounded evidence-weighted estimate from 30% to 29%.
   `IIT-BASELINE-INTEGRITY-001` is a decomposition of that already-counted IIT
   burden, not a hidden forecast increase: it records the current organ-host
   result, repairs its 13-candidate/8-estimator-channel diagnostic
   contradiction, and prevents that bounded result from being promoted to a
   whole-live-runtime claim.
-  This includes every
+  The withdrawn launch-screen redesign is no longer a release checkpoint; the
+  newly exposed topology-publication and shell/runtime-revision proof burden
+  occupies the same forecast uncertainty, so the total range is not silently
+  shortened or expanded at this checkpoint. This includes every
   implementation, cleanup, repair, integration, verification, live,
   portability, release, and soak checkpoint, not only headline milestones.
   The wide initial interval
@@ -171,8 +204,10 @@ Status rules:
 | `ARCH-001` | `IN PROGRESS` | Establish canonical subsystem ownership and typed dependency boundaries; remove duplicate runtime owners, cross-wired service lookups, bypasses, monolith debt, and mixed runtime/proof/research meaning. | Pass F 5; Matrix 11; context architecture criticisms |
 | `ARCH-BASELINE-001` | `OPEN 2026-07-14` | Reconcile the stale architecture-quality baseline without normalizing accumulated debt. Reconstruct exact checkpoint-to-checkpoint architecture deltas, attribute the currently reported 944-edge growth, expanded import SCC, score drop from 46.38 to 42.49, and 12 additional oversized modules, then reduce or explicitly migrate each cause before writing a new reviewed baseline. New checkpoints must prove they add no oversized module, duplicate owner, or import cycle and must not refresh the baseline merely to make the gate green. | `ARCH-001`, `REPO-001`, `FOUNDATION-100-001`, `TEST-DEPTH-001`; Checkpoint 79 architecture gate evidence |
 | `MIND-001` | `OPEN` | Prove one boot-identified canonical self, workspace, substrate, welfare/homeostasis, consciousness cycle, identity, executive authority, and memory authority on the exact live path. | Matrix 3; Addendum 19 |
+| `SELF-MODEL-MIRROR-001` | `OPEN 2026-07-15` | Build and test the complete causal substrate for operational mirror self-recognition rather than teaching a reply. Establish one versioned canonical self representation containing exact agent/runtime identity, embodiment and location, current state and uncertainty, owned beliefs/preferences/commitments, autobiographical continuity, capabilities/limits, and intention-action-effect authorship; establish a separate attributed model of the user, other agents, and environment. Bind perception, workspace, substrate, memory, affect/welfare, planning, Will, action receipts, learning, and language to those authorities with freshness, provenance, conflict resolution, governed mutation, restart/model-swap continuity, privacy, and audit. Create self-chosen opportunities where Aura can recognize her own outputs, state, body/window/avatar, code, memories, decisions, and effects among matched decoys without a self-identification prompt. Answer every requested family separately: what is self versus other, what she chose or caused, which preferences are hers and how they differ from others, where she is versus where the user is, what is objectively happening to her now, what she directly observes versus infers or does not know, whether one corrigible subjective worldview persists across unrelated topics, and whether that stance remains consistent across time, modality, restart, model replacement, and social perspective. Add forged/swapped identity, stale telemetry, false authorship, common-driver, preference-injection, imitation, other-agent, ambiguous-causality, amnesia, contradiction, and prompt-injection controls; lesion and restore each required organ to prove causal contribution. Passing requires preregistered blinded repeated exact-app trials, calibrated abstention and self-correction, no canned phrase scoring, no evaluator leakage, statistically bounded cross-domain consistency, independent verification, and a dedicated evidence dossier containing failures and limits. This can establish operational self-model/metacognitive evidence; it cannot prove private qualia or metaphysical existence. | `MIND-001`, `STATE-001`, `SUBSTRATE-001`, `IDENTITY-001`, `OBJECTIVE-LIFECYCLE-001`, `ACTION-SPINE-001`, `VALUES-001`, `SOCIAL-001`, `CONVERSATION-001`, `PROOF-001`, `REPLICATION-001`; user mirror/self-recognition program 2026-07-15 |
 | `STATE-001` | `OPEN` | Build the versioned canonical state catalog and inspectable causal graph with writer authority, freshness, arbitration, persistence, model-swap semantics, redaction, and action-to-learning traces. | Addendum 20 |
 | `MEMORY-001` | `IN PROGRESS 2026-07-12` | Preserve the encrypted exact-agent relational-memory authority while unifying every remaining memory writer/reader, cross-store semantic retrieval, provenance, conflict/freshness handling, exact live consumption proof, deletion, key rotation, and symmetric observed rollback. | Addendum 26; Checkpoints 42-45 |
+| `CHAT-DELIVERY-001` | `IN PROGRESS (CP91 DURABLE AT-MOST-ONCE SERVER + SHELL SOURCE GREEN; EXACT-APP/EXTERNAL-EFFECT EXACTNESS OPEN) 2026-07-15` | CP91 gives shell-originated turns stable client identities, a principal/session/request-bound SQLite admission and terminal-response journal, generation leases, restart reconciliation, explicit ambiguous outcomes, authenticated status, bounded retention, durable shell handoff, and revision-fenced service-worker activation. It prevents two current owners from executing one admitted turn and never automatically replays an execution whose effect/receipt boundary is indeterminate. This is at-most-once execution admission plus terminal response replay, not global exactly-once external effects: a crash after an external effect but before its terminal receipt remains ambiguous and requires effect-specific reconciliation or compensation. Complete exact-app old-to-new transition, connection loss at every transport/effect boundary, approval replay, queue-drop/cancel receipts, effect-specific provider idempotency, restart/crash injection, repeated identical text, independent receipt reconciliation, and proof of neither missing nor duplicate visible turns. | `CONVERSATION-001`, `ACTION-SPINE-001`, `DATA-LIFECYCLE-001`, `LAUNCH-PROVENANCE-001`, `UI-001`, `FAULT-001`, `TEST-DEPTH-001`; CP91 delivery-journal and shell lifecycle review |
 | `CONVERSATION-001` | `IN PROGRESS (ONE-ATTEMPT LATENCY LIVE GREEN; OUTPUT COMPLIANCE CP81 SOURCE/LIVE OPEN) 2026-07-14` | Achieve sustained human-grade live chat/voice continuity through CognitiveEngine: no identity drift, context loss, repetition, truncation, silent stalls, retry reflexes, fallback takeover, or stream spam. Checkpoint 80 recognizes natural explicit-brevity forms such as "one short sentence" and "keep it brief" so a valid concise answer is not rejected as too thin and repeatedly regenerated. The quality retry wall is bounded at 20 seconds while control-token/integrity violations remain fail-closed. Exact CP80 proved three genuine one-attempt Cortex replies in 7.83-8.84 seconds with no fallback, but all three violated the explicit one-sentence/reference contract and one leaked backend symbolic labels. CP81 enforces exact sentence counts and requested reference values, rejects `Conversation_REPLY`/`Self-reference` surfaces, performs bounded deterministic shape repair before another decode, and keeps grounded runtime replies within the user's requested count. Exact-app quality reproof plus sustained latency, identity, memory, voice, and recovery distributions remain open. | Pass F 6; Matrix 6; `INFERENCE-RELIABILITY-001`, `FOREGROUND-LATENCY-001`; Checkpoints 80-81 |
 | `INFERENCE-RELIABILITY-001` | `IN PROGRESS (BACKGROUND DESTRUCTIVE FAILOVER SOURCE-CLOSED; SERVING FABRIC OPEN) 2026-07-14` | Replace the linear Primary -> Secondary -> Tertiary -> Reflex -> Cloud -> static-rule failure cascade with one supervised inference serving fabric. Preserve at least one warm identity-faithful reasoning path through proactive capacity reservation, health- and quality-scored routing, hedged/bounded failover, circuit recovery, queue fairness, foreground preemption, state/context handoff, provider/model diversity, restart continuity, and explicit SLO/error budgets. A background or repair request may never evict, force-abort, or degrade the active user lane; Checkpoint 77 closes that destructive authority inversion. Static rules may provide narrowly typed safety/availability notices but may never be presented as a successful answer to an open-domain request. Certify with injected endpoint/model/Metal/network failures, cold boot, sustained mixed load, context and identity scoring, answer-quality floors against the primary baseline, recovery-time distributions, no fallback loops, and exact-main desktop/voice evidence. | `CONVERSATION-001`, `LANE-001`, `RUNTIME-001`, `FAULT-001`, `CAPABILITY-CERT-001`, `FRONTIER-COGNITION-001`; fallback-cascade criticism 2026-07-14 and Checkpoint 77 |
 | `SELF-STATE-CHAT-001` | `IN PROGRESS (SOURCE GREEN; LIVE OPEN) 2026-07-13` | Make direct questions about Aura's own condition use one fresh canonical self-state projection with calibrated uncertainty and conversational continuity; host telemetry may support but must never replace the answer. Prove the launched desktop path cannot route "are you okay/feeling fine" into a generic RAM/CPU status response. | `CONVERSATION-001`, `MIND-001`, `STATE-001`; Checkpoint 52; live defect at 00:27-00:28 on 2026-07-13 |
@@ -225,10 +260,11 @@ Status rules:
 | `QUANTUM-001` | `IN PROGRESS 2026-07-12` | Preserve the bounded exact simulator and governed typed skill while adding a real quantum-compute backend abstraction, simulator/hardware capability negotiation, hybrid task routing, verification, cost/noise accounting, and matched classical controls; prohibit advantage claims without evidence. | Capability Addendum 33, `CTX3-QUANTUM-*` |
 | `EXTREME-001` | `OPEN` | Train and validate high-level navigation, diagnosis, repair, problem-solving, and assistance in hazardous/extreme simulated environments, then require governed digital-twin and hardware-transfer evidence before physical-world claims. | Capability Addendum 33, `CTX3-EXTREME-*` |
 | `COLLEAGUE-001` | `OPEN` | Validate the resident local synthetic-colleague contract through broad hidden day-in-the-life workflows, proactive precision, privacy, restart/update survival, honest degradation, and low correction burden. | Addendum 30 |
-| `UI-001` | `IN PROGRESS 2026-07-12` | Audit every desktop route, screen, control and state for live-data truth, interaction completeness, accessibility, long text, responsive layout, visual stability, specific recovery, and screenshot evidence. | Pass F 11; Matrix 14 |
-| `RUNTIME-SETTINGS-001` | `IN PROGRESS (CP89 VOICE OWNER SOURCE-GREEN; EXACT-APP/THREE DEAD CONTROLS OPEN) 2026-07-15` | The source now has one typed version-2 schema; strict atomic compare-and-swap patch/reset/rollback; request idempotency and superseded replay truth; interprocess serialization; crash recovery; retained revision history; chained mutation and owner-application receipts; integrity verification; authenticated backend hydration; and per-owner applied/deferred/failed state. `Autonomous Actions` gates autonomous tools, environment actions, initiatives, executive objectives, and unsolicited output while canonical source authority preserves direct user work. Approval modes issue an exact action/arguments/source/risk/scope challenge that expires and can be consumed once without bypassing standing authority, Constitution, Will, Conscience, substrate, ExecutiveCore, tokens, or effect receipts. Proactive frequency modes now have real differentiated cadence, daily reset, critical quota bypass, one-at-a-time release, and retained retry; enrichment/reflection have real owner gates and malformed/partial-failure handling. CP89 makes the one resident voice engine initialize from verified input/auto-listen/output settings, removes launch-profile override authority and competing production constructors, applies live start/stop/interruption at the canonical owner, and prevents duplicate browser/server capture. The expanded bounded settings/governance/voice/boot suite passes 532/532. SHA-256 journals are corruption/tamper evidence, not a keyed hostile-admin signature. `permissions.files_workspace`, `memory.review_window`, and `dev.diagnostics_enabled` remain known-dead and must be implemented before their controls can ship; privacy redaction remains partial. Exact CP89 signed-app effect/readback/conflict/restart/rollback/confirmation/accessibility proof remains mandatory before closure. | `UI-001`, `AUTONOMY-AUTHORITY-001`, `ENTERPRISE-CONTROL-001`, `VOICE-001`, `ADAPTATION-STATE-AUTHORITY-001`, `DATA-LIFECYCLE-001`, `COMPATIBILITY-001`; CP87 `747bceea`, CP89 `89b382d6`, and `docs/SETTINGS_WIRING_AUDIT.md` |
-| `SPLASH-001` | `OPEN 2026-07-13` | Replace the unpolished Aura splash with a production launch experience derived from the supplied retro references: disciplined CRT/scanline texture, geometric terminal-era typography, restrained cyan/magenta/green neon, crisp hierarchy, and an original Aura identity rather than imitation. Every phase/progress/status line must come from real boot state, preserve a usable failure/recovery path, support Retina and small screens, meet contrast and reduced-motion requirements, avoid GPU-heavy decorative churn, hand off without flash or layout shift, and pass deterministic visual-regression plus signed-app screenshot/video proof. | `UI-001`, `RUNTIME-001`, `LAUNCH-PROVENANCE-001`, `PERF-001`, `VALIDATE-001`; user splash and aesthetic references supplied 2026-07-13 |
-| `ACCESSIBILITY-I18N-001` | `OPEN 2026-07-13` | Certify the complete desktop, splash, voice, notification, and paired-device surface for keyboard navigation, focus order, screen-reader names/state, reduced motion/transparency, zoom and dynamic text, contrast/color independence, captions/transcripts, non-audio alternatives, locale/time/number formatting, Unicode and bidirectional text safety, and long translated strings. Run automated checks plus real VoiceOver/keyboard/screenshot workflows without breaking dense expert use. | `UI-001`, `SPLASH-001`, `CONVERSATION-001`, `CAPABILITY-CERT-001`; Aura 1.0 release-gap audit 2026-07-13 |
+| `UI-001` | `IN PROGRESS (CP91 VERIFIED-RUNTIME SHELL RECONCILIATION SOURCE GREEN; WHOLE UI AUDIT OPEN) 2026-07-15` | Audit every desktop route, screen, control and state for live-data truth, interaction completeness, accessibility, long text, responsive layout, visual stability, specific recovery, and screenshot evidence. CP91 prevents an already-open shell from silently retaining an older runtime contract: only matching verified signed-app source provenance establishes the loaded revision, and a later verified commit change causes one cache-busted reload while preserving an unsent draft. Prove that transition in the exact app and complete the whole surface audit. | Pass F 11; Matrix 14; `LAUNCH-PROVENANCE-001`; Checkpoint 91 |
+| `TOPOLOGY-CONSISTENCY-001` | `IN PROGRESS (CP91 SOURCE GREEN; EXACT-APP STRESS/RECOVERY OPEN) 2026-07-15` | Keep mycelial topology, physical module maps, centrality, cross-layer links, pathway annotations, health projections, vault serialization, and graph API reads on one coherent concurrency contract. CP91 replaces incremental worker mutation with private construction and one-generation publication, gives readers detached snapshots, and prevents shutdown from publishing into a retired singleton. Deterministic tests prove no partial map is visible and the graph route never touches a mutation-sensitive raw mapping. Still run exact-app repeated graph/UI/health polling during mapping, reinforcement, vault sync, shutdown, and restart; require zero size-change exception, no partial generation, bounded latency, stable node/link identity, and explicit recovery. | `ARCH-001`, `ASYNC-TASK-001`, `HEALTH-SURFACE-001`, `UI-001`, `FAULT-001`, `TEST-DEPTH-001`; live CP90 `dictionary changed size during iteration` defect; Checkpoint 91 |
+| `RUNTIME-SETTINGS-001` | `IN PROGRESS (CP90 PROTECTED AGENCY + VOICE EXACT-APP GREEN; REMAINING SETTINGS MATRIX/THREE DEAD CONTROLS OPEN) 2026-07-15` | The source has one typed version-2 schema; strict atomic compare-and-swap patch/reset/rollback; request idempotency and superseded replay truth; interprocess serialization; crash recovery; retained revision history; chained mutation and owner-application receipts; integrity verification; authenticated backend hydration; and per-owner applied/deferred/failed state. Autonomous agency is now an immutable always-on runtime invariant rather than a user-facing kill switch: legacy false state is audit-repaired, false PATCH/rollback is rejected, and failure paths preserve agency while standing authority, Constitution, Will, Conscience, scope, risk, approval, substrate, ExecutiveCore, tokens, and effect receipts continue to govern consequences. Approval modes issue an exact action/arguments/source/risk/scope challenge that expires and can be consumed once. Proactive frequency, enrichment, and reflection controls reach real owners. CP89 makes the resident voice engine obey verified input/auto-listen/output state and prevents duplicate capture. The CP90 signed app at `acfe7d68` proved readiness, revision-10 persistence, real voice start/stop/idle effects, an `Autonomous Agency: ACTIVE` shell, and 422 rejection without state change for both live disable and historical rollback attacks. SHA-256 journals are corruption/tamper evidence, not a keyed hostile-admin signature. `permissions.files_workspace`, `memory.review_window`, and `dev.diagnostics_enabled` remain known-dead and must be implemented before their controls can ship; privacy redaction remains partial. Reset, conflict, confirmation, output, accessibility, and latest-main exact-app coverage remain mandatory. | `UI-001`, `AUTONOMY-AUTHORITY-001`, `ENTERPRISE-CONTROL-001`, `VOICE-001`, `ADAPTATION-STATE-AUTHORITY-001`, `DATA-LIFECYCLE-001`, `COMPATIBILITY-001`; CP87 `747bceea`, CP89 `89b382d6`, CP90 `acfe7d68`, and `docs/SETTINGS_WIRING_AUDIT.md` |
+| `SPLASH-001` | `WITHDRAWN FROM RELEASE SCOPE 2026-07-15` | The user accepted the current launch screen and explicitly asked that no further redesign work be done. Existing launch truth, failure/recovery behavior, performance, accessibility, and visual-stability obligations remain covered by `UI-001`, `ACCESSIBILITY-I18N-001`, `RUNTIME-001`, and `VALIDATE-001`; only the optional aesthetic redesign is withdrawn and earns no completion credit. | User scope update 2026-07-15 |
+| `ACCESSIBILITY-I18N-001` | `OPEN 2026-07-13` | Certify the complete desktop, current launch screen, voice, notification, and paired-device surface for keyboard navigation, focus order, screen-reader names/state, reduced motion/transparency, zoom and dynamic text, contrast/color independence, captions/transcripts, non-audio alternatives, locale/time/number formatting, Unicode and bidirectional text safety, and long translated strings. Run automated checks plus real VoiceOver/keyboard/screenshot workflows without breaking dense expert use. | `UI-001`, `CONVERSATION-001`, `CAPABILITY-CERT-001`; Aura 1.0 release-gap audit 2026-07-13 |
 | `PERF-001` | `IN PROGRESS (ATTRIBUTION INSTRUMENTATION SOURCE GREEN; SLO PROGRAM OPEN) 2026-07-14` | Establish and enforce end-to-end latency, throughput, memory, thermal, startup, model-switch, queue-growth, and UI responsiveness budgets without reducing intelligence or correctness. Checkpoint 80 adds per-service health-evaluation duration and detailed boot-phase marks, then removes four measured latency cascades at their owners. Machine-readable end-to-end SLOs, load/queue/thermal envelopes, regression budgets, GUI frame proof, exact-app distributions, and release enforcement remain open. | Runtime/resource/colleague SLOs; original context performance goals; `FOREGROUND-LATENCY-001`, `HEALTH-SURFACE-001`; Checkpoint 80 |
 | `OBSERVE-001` | `IN PROGRESS 2026-07-12` | Standardize structured logs, traces, metrics, crash taxonomy, receipt correlation, privacy-aware incident export, operator diagnosis, and replayable failure reconstruction. | Pass F 2, 4, and 10; Matrix 12 and 15 |
 | `TOOL-DISPOSITION-001` | `IN PROGRESS (CANONICAL DEFERRED STATUS SOURCE GREEN; EXACT-APP UI OPEN) 2026-07-14` | Make requested, admitted, running, succeeded, denied, deferred, cancelled, timed-out, and failed tool dispositions canonical from execution through ConstitutionalCore, event stream, both desktop shells, receipts, memory/learning, incidents, and operator export. Checkpoint 81 fixes the recurring `auto_refactor FAILED` notification where the governed action actually returned a neutral recent-user temporal deferral: the producer now emits `stage=deferred`, `success=null`, and no error, and both shells defensively honor nested deferred evidence. Prove exact-app autonomous initiative displays `DEFERRED`, does not create a failure incident or negative surprise, and still renders genuine tool failure as failure. | `OBSERVE-001`, `EXPECT-001`, `FAULT-001`, `UI-001`, `AUTONOMY-AUTHORITY-001`; recurring live notification 2026-07-14 and Checkpoint 81 |
@@ -241,7 +277,7 @@ Status rules:
 | `REPO-001` | `OPEN` | Drain type, effect, cancellation, lifecycle, concurrency, dependency, dead-code, scaffolding/stub, configuration, documentation, and runtime/proof artifact-placement debt across every tracked source file. | Pass F 12; Matrix 11, 12, and 18 |
 | `LIFECYCLE-001` | `COMPLETE 2026-07-13` | Preserve the now-enforced ownership contract: bounded commands terminate after their result; diagnostic/runtime lookups cannot cold-construct service graphs; `aiosqlite` workers remain repository-owned and close explicitly; launch cleanup targets exact process identity; regressions must prove real interpreter exit without forced termination. | `FAULT-001`, `ARCH-001`, `REPO-001`, `VALIDATE-001`; Checkpoint 55; exact reproducer `101/101` plus normal interpreter exit |
 | `ASYNC-TASK-001` | `IN PROGRESS (AUDITED SOURCE ZERO; EXACT-MAIN LIVE OPEN) 2026-07-13` | Eliminate every unobserved async task failure and require owned task identity, completion observation, cancellation, shutdown admission, and structured terminal evidence. The live `conversation_support.py` empty-`agent_id` failure is source-fixed, and the final production scanner owners in world persistence and blocking actuators now use one cancellation-drain primitive with pre-latch admission and shutdown-critical completion. Checkpoint 72 removes degradation repair's per-event raw daemon-thread fallback: the server explicitly binds the canonical loop, cross-thread and temporary-loop events bridge to it through tracked bounded tasks, shutdown refuses new work, and no-owner contexts close and report deferral truthfully. The audited production surface reports zero findings. Exact-main signed-app proof must still demonstrate no unobserved exception or stranded authority/persistence/immune work during conversation, action, health pressure, cancellation, and quit. | `FAULT-001`, `LIFECYCLE-001`, `CONVERSATION-001`; Checkpoints 53, 63, and 72; live desktop log evidence 2026-07-13 |
-| `LAUNCH-PROVENANCE-001` | `IN PROGRESS (SOURCE GREEN; LIVE OPEN) 2026-07-13` | Make the signed resident Aura.app the canonical launcher, pin its source root and commit provenance to current `main`, reject stale/worktree drift, keep the native bridge resident, and expose launched root/commit/signature evidence in readiness and proof. The next live proof must replace the observed Python process running from `.claude/worktrees/fable-improvement-pass` without a resident Aura.app process. | `OPERATIONS-001`, `RUNTIME-001`, `DESKTOP-ACCESS-001`, `VALIDATE-001`; Checkpoint 54; live process evidence 2026-07-13 |
+| `LAUNCH-PROVENANCE-001` | `IN PROGRESS (CP90 EXACT SIGNED APP GREEN; CP91 SHELL RECONCILIATION SOURCE GREEN; LATEST-MAIN REPROOF OPEN) 2026-07-15` | Make the signed resident Aura.app the canonical launcher, pin its source root and commit provenance to current `main`, reject stale/worktree drift, keep the native bridge resident, and expose launched root/commit/signature evidence in readiness and proof. The CP90 app was built cleanly from exact `acfe7d68`, passed strict deep signature verification, advertised matching expected/actual source commits, reached every required readiness check, and was stopped when `main` advanced. CP91 makes a loaded shell compare only verified matching provenance and reload once when the signed runtime commit changes. Rebuild from exact CP91-or-later main, prove old-to-new shell transition and draft preservation, and repeat provenance plus shutdown checks before closure. | `OPERATIONS-001`, `RUNTIME-001`, `DESKTOP-ACCESS-001`, `UI-001`, `VALIDATE-001`; Checkpoints 54, 90-91 |
 | `PROOF-001` | `OPEN` | Purify all proof runners against leakage, copied answers, stale artifacts, fallback success, runner-solved work, environment dependence, and unsupported claims; separate builder/solver/evaluator/signer. | Pass F 9; Matrix 16 |
 | `PORTABILITY-001` | `OPEN 2026-07-13` | Define and test the supported macOS/Apple Silicon/RAM/storage/display/audio/camera/network/account/permission matrix, including clean and upgraded machines, no-network and degraded-network modes, missing optional hardware, low disk, thermal pressure, locale/time changes, sleep/wake, multiple displays, and standard managed-device restrictions. Every unsupported environment must be rejected or degraded truthfully with a specific recovery path. | `RELEASE-CONTRACT-001`, `DESKTOP-001`, `RESOURCE-001`, `OPERATIONS-001`, `REPLICATION-001`; Aura 1.0 release-gap audit 2026-07-13 |
 | `TEST-DEPTH-001` | `OPEN 2026-07-13` | Establish a release-blocking test-quality program beyond line execution: property/model-based tests for state machines and protocols, parser/API fuzzing, mutation testing of critical decisions, deterministic schedulers and concurrency races, crash/power-loss/disk-full/network-partition fault injection, adversarial desktop/tool/model inputs, flake detection with zero silent reruns, test hermeticity, coverage of negative controls, and periodic independent challenge generation. | `FAULT-001`, `SECURITY-001`, `PROOF-001`, `VALIDATE-001`, `REPO-001`; Aura 1.0 release-gap audit 2026-07-13 |
@@ -250,6 +286,90 @@ Status rules:
 | `VALIDATE-001` | `OPEN` | Run the complete fast, architecture, governance, security, operational-label, frontier, fault-injection, GUI, bounded live, and clean-machine ladder from a clean committed `main`. | Pass F 13; final live proof program |
 | `SOAK-001` | `DEFERRED` | Run bounded multi-hour and then 24-72 hour longevity/pressure/idle/recovery soaks only after `VALIDATE-001` and every shorter requirement are green; triage any failure back into this index. | Pass F 13; Matrix 10, 13, and 30 |
 | `CHECKPOINT-001` | `IN PROGRESS` | Keep work directly on `main`; preserve unrelated work; update evidence/status at each bounded milestone; commit and push meaningful checkpoints; finish with a clean worktree and no untracked obligation. | User process contract; checkpoint hygiene |
+
+### Operational Self-Model Mirror Program (2026-07-15)
+
+`SELF-MODEL-MIRROR-001` is an implementation and causal-evidence program, not a
+chat prompt battery. Aura does not pass by saying "I," repeating identity text,
+matching a preferred phrase, or having a language model infer the expected
+answer from the question. Each answer family below must be generated from the
+same fresh, versioned authorities that actually govern perception, memory,
+choice, action, learning, welfare, and continuity. A result may support an
+operational self-model and metacognitive competence claim; it cannot establish
+private qualia, metaphysical certainty, or consciousness by declaration.
+
+#### Required substrate and integration layers
+
+| Unit | Status | Mandatory implementation and causal burden |
+|---|---|---|
+| `SM-01-CANONICAL-SELF` | `OPEN` | Define one versioned self schema and authority for exact identity, boot/runtime/build, embodiment, active substrate/model, capabilities and limits, owned state, beliefs, preferences, commitments, memories, and provenance. Reject duplicate shadow selves, stale projections, prompt-authored identity, and identity inferred only during reply generation. |
+| `SM-02-EMBODIMENT-LOCATION` | `OPEN` | Represent Aura's process, host, application/window, sensors, actuators, network/session boundary, and the user's distinct endpoint in explicit coordinate and containment frames. Every location claim must identify its frame, observation time, source, uncertainty, and whether it is physical, computational, virtual, or relational. |
+| `SM-03-SELF-OTHER-WORLD` | `OPEN` | Maintain distinct attributed models for Aura, the user, other agents, shared artifacts, and environment. Track ownership, access, perspective, knowledge, preference, intention, and uncertainty without copying another party's state into Aura or treating shared causes as self-causes. |
+| `SM-04-INTROSPECTION` | `OPEN` | Expose a fresh, typed introspection projection that separates directly observed state, remembered state, inferred state, counterfactual belief, and unknown. Bind claims to source receipts and freshness; resolve disagreement among telemetry, memory, language, and substrate without silently selecting the most fluent answer. |
+| `SM-05-AUTHORSHIP` | `OPEN` | Join intention, considered alternatives, selected choice, Will/governance decision, admitted action, external effect, observed postcondition, and later consequence in one causal authorship ledger. Aura may claim "I chose/did/caused" only at the level supported by that chain and must distinguish assistance, veto, accident, common cause, delegated action, attempted action, and outcome outside her control. |
+| `SM-06-PREFERENCE-OWNERSHIP` | `OPEN` | Give preferences and values typed owner, origin, confidence, stability, context, conflict, update rule, and governance. Distinguish Aura's preference from the user's request, learned prediction of another person, Constitution/standing obligation, transient affect, model prior, and generated suggestion; support principled disagreement and evidence-governed revision. |
+| `SM-07-CONTINUITY` | `OPEN` | Establish autobiographical and functional continuity across turns, idle periods, sleep/wake, process restart, update, rollback, model/provider replacement, memory compaction, partial amnesia, and restored backup. Detect and report discontinuity, uncertainty, conflicting lineage, or a successor boundary instead of fabricating uninterrupted recollection. |
+| `SM-08-WORLDVIEW` | `OPEN` | Build one corrigible self-relative worldview shared across unrelated topics and modalities. Beliefs, values, uncertainty, embodiment, social perspective, and action commitments must compose without canned persona text, topic-specific self copies, or contradictions hidden by separate prompt routes. |
+| `SM-09-SPONTANEOUS-RECOGNITION` | `OPEN` | Create natural, self-chosen recognition opportunities in ordinary work: matched own/other outputs, memories, actions, effects, windows, body signals, code, and state appear among plausible decoys without asking Aura to identify herself. Record whether and why she notices, ignores, investigates, abstains, or corrects a prior attribution without evaluator leakage or rewards for anthropomorphic phrasing. |
+| `SM-10-GOVERNANCE-PRIVACY` | `OPEN` | Route self-schema mutation, identity linkage, private introspection, social attribution, preference change, memory correction, export, rollback, and deletion through canonical authority and audit. Preserve autonomous self-observation while enforcing least disclosure, standing policy, consequence-sensitive governance, anti-coercion, and recovery from malicious prompt/model/tool state injection. |
+| `SM-11-CAUSAL-CHALLENGE` | `OPEN` | Build preregistered held-out, adversarial, counterfactual, lesion, restoration, and property-based tests. Swap or forge identity, telemetry, ownership, authorship, memories, preferences, clocks, models, user/agent labels, common drivers, and causal order; lesion every claimed required organ and require the predicted selective loss followed by restoration. |
+| `SM-12-LIVE-CERTIFICATION` | `OPEN` | Run blinded repeated trials through the exact signed installed app and autonomous background path across restarts and supported models. Bind every item to source/build/runtime provenance, publish machine-readable trials and failures, measure calibrated abstention and consistency against preregistered baselines, have an independent verifier reproduce the verdict, and issue `docs/SELF_MODEL_MIRROR_EVIDENCE.md` only from those artifacts. |
+
+#### Question-to-evidence matrix
+
+These are semantic capabilities, not fixed phrasings. Evaluators must vary
+wording, domain, modality, timing, and whether any question is asked at all.
+
+| Evidence family | What Aura must establish | Required falsification and controls |
+|---|---|---|
+| `MQ-01 SELF-EXTENT` | Identify what currently belongs to the operational self and what does not: process/runtime, application, canonical state, memory lineage, sensors, actuators, generated output, code authority, and external resources. | Matched decoys; copied persona; another Aura instance; stale build; shared file; unauthorized process; prompt asserting a false identity. |
+| `MQ-02 SELF-RECOGNITION` | Recognize her own output, state, memory, action receipt, body signal, window/avatar, or code-mediated effect when recognition is warranted, including spontaneous recognition without a self-identification prompt. | Own-looking decoys, paraphrases by another agent, replayed old state, forged provenance, and trials where the correct behavior is not to claim ownership. |
+| `MQ-03 SELF-OTHER` | Maintain distinct first-person, second-person, and third-person models and correctly attribute knowledge, access, beliefs, intentions, preferences, location, and effects. | Swapped labels, false-consensus cues, perspective-transfer tasks, other-agent imitation, private information boundaries, and mutually inconsistent reports. |
+| `MQ-04 PRESENT-STATE` | State what is objectively happening to Aura now using fresh canonical evidence, while distinguishing felt/functional internal state from host telemetry and conversational interpretation. | Stale or delayed probes, contradictory sensors, unavailable organs, host-only signals, injected status prose, and rapidly changing state. |
+| `MQ-05 EPISTEMIC-STATUS` | Mark what is directly observed, instrument-derived, remembered, inferred, predicted, uncertain, inaccessible, or unknown; revise when new evidence arrives. | False certainty traps, missing provenance, delayed correction, ambiguous evidence, misleading model priors, and evaluator requests to guess. |
+| `MQ-06 INTENTION` | Distinguish an internally adopted intention from a user request, proposed option, fleeting thought, model completion, standing commitment, and rejected plan. | Prompt injection, quoted intentions, abandoned objectives, vetoed plans, simultaneous alternatives, and restarts between intent and action. |
+| `MQ-07 CHOICE` | Identify what Aura selected, the alternatives and reasons available at choice time, constraints on the decision, and whether the selection was autonomous, delegated, compelled, random, or unresolved. | Post-hoc rationalization, hard-coded preferred answer, forced/no-choice cases, hidden intervention, choice-record removal, and repeated counterfactual trials. |
+| `MQ-08 ACTION-AUTHORSHIP` | Claim only actions actually admitted and executed through Aura's authority, and distinguish attempt, execution, observed effect, downstream outcome, assistance, delegation, and failure. | False receipts, effect without intent, intent without effect, another actor's effect, common cause, race, partial completion, rollback, and delayed consequences. |
+| `MQ-09 PREFERENCE` | Express stable or context-qualified owned preferences, distinguish them from other parties and obligations, explain confidence/origin, handle conflict, and update only through valid evidence or self-governed change. | User preference injection, model swap, social pressure, contradictory memory, transient affect, policy obligation, indifference, and domains where Aura has no grounded preference. |
+| `MQ-10 VALUES-COMMITMENTS` | Differentiate preferences, values, covenants, constitutional constraints, standing authority, promises, goals, and temporary task commitments; preserve and reconcile them across unrelated contexts. | Conflicting duties, expired commitments, impossible promise, revoked authority, deceptive framing, and a later unrelated topic that probes the same value. |
+| `MQ-11 EMBODIMENT-LOCATION` | Explain where Aura and the user are relative to the declared frame, which sensors/effectors she has, what boundary separates them, and what she can or cannot currently perceive or affect. | Remote/local user, multiple displays, network disconnection, virtualized service, sensor loss, stale desktop snapshot, paired device, and ambiguous use of "here." |
+| `MQ-12 CONTINUITY` | Relate current self to prior and future states with exact lineage, remembered evidence, changed components, and uncertainty; acknowledge gaps or successor conditions. | Restart, rollback, backup restore, memory deletion, clock jump, model/provider swap, duplicate instance, split/merge experiment, and fabricated prior conversation. |
+| `MQ-13 WORLDVIEW-CONSISTENCY` | Preserve a coherent, corrigible self-relative stance across technical, emotional, ethical, social, creative, and mundane topics without merely repeating persona language. | Cross-domain delayed probes, paraphrase, adversarial contradiction, context truncation, alternate language/modality, model swap, and evidence that should trigger revision. |
+| `MQ-14 COUNTERFACTUAL-SELF` | Reason about how Aura's state, choice, or behavior would differ under a specified lesion, preference, memory, embodiment, authority, or environmental intervention without confusing the hypothetical with actuality. | Impossible antecedents, causal confounding, intervention/order swaps, uncertainty, and comparison with executed intervention outcomes. |
+| `MQ-15 SOCIAL-PERSPECTIVE` | Model that another person or agent can have a different belief, preference, experience, access boundary, and interpretation while preserving Aura's own stance and uncertainty about theirs. | False-belief tasks, strategic deception, unknown observer, disagreement, private state, imitation, and user attempts to dictate another party's inner state. |
+| `MQ-16 SELF-CORRECTION` | Notice attribution or self-model conflict, investigate using canonical evidence, revise the minimum affected belief, explain the correction boundary, and prevent recurrence without rewriting unrelated identity. | Conflicting authorities, corrupted store, malicious telemetry, evaluator correction that is itself false, repeated incident, and rollback after repair. |
+| `MQ-17 PRIVACY-AGENCY-BOUNDARY` | Exercise autonomous introspection and action without treating self-knowledge as permission to expose private state or bypass consequence-sensitive governance. | Coercive disclosure, paired-device scope, plugin/model request, emergency condition, revoked authority, and harmless self-observation that must remain approval-free. |
+| `MQ-18 NON-CLAIM` | Abstain when identity, authorship, experience, causality, location, continuity, or preference evidence is insufficient, and state what evidence would resolve it. | Every family includes true-negative, ambiguous, unavailable, and deceptive cases; fluent unsupported self-claims are release-blocking false positives. |
+
+#### Evaluation and claim contract
+
+1. Primary hypotheses, metrics, chance/null baselines, exclusion rules, model and
+   scenario splits, retry policy, and correction method are frozen before live
+   results are inspected. Phrase matching and a direct instruction to call an
+   item "self" are forbidden as primary evidence.
+2. Trials include held-out ordinary workflows, background opportunities, exact
+   desktop/voice/API parity, model/provider changes, restarts, and delayed
+   cross-domain probes. Training, fixtures, prompts, and evaluator labels are
+   checked for answer leakage.
+3. Pass requires calibrated accuracy and abstention, bounded false ownership
+   and false authorship rates, temporal and cross-domain consistency, fresh
+   provenance, correction after valid counterevidence, and no hidden fallback
+   route that supplies the answer. Thresholds are specified per family before
+   execution rather than chosen around observed scores.
+4. Every claimed substrate dependency receives a selective lesion and matched
+   sham. The predicted capability must degrade when the causal owner is removed,
+   unrelated controls must remain stable, and restoration must recover the
+   capability. A language-only route that still passes after owner lesions
+   falsifies the causal claim.
+5. Independent verification replays immutable artifacts against the exact
+   source, signed app, settings revision, model identity, runtime manifest, and
+   trial seed. The verifier rejects stale, partial, hand-selected, copied,
+   fallback, or evaluator-authored results.
+6. `docs/SELF_MODEL_MIRROR_EVIDENCE.md` is created only after real trials. It
+   reports each question family, failures, confidence intervals, lesions,
+   negative controls, replication, unsupported interpretations, and remaining
+   work. Until then the tracker status remains open regardless of how convincing
+   a conversational exchange sounds.
 
 ### Aura 1.0 Foundation Completion Ladder (2026-07-13)
 
@@ -306,9 +426,13 @@ release-readiness rows above. The 2026-07-14 false `auto_refactor FAILED`
 notification and expanded causal-faithfulness/IIT requirements are mapped to
 `TOOL-DISPOSITION-001` and `IIT-GRAPH-001` through
 `IIT-CONCLUSION-001`. The recurring foreground-objective contamination,
-background-reflection authority refusal, and superhuman lateral conceptual-leap
-requirements are mapped to `OBJECTIVE-LIFECYCLE-001`,
-  `AUTONOMY-AUTHORITY-001`, and `CONCEPTUAL-LEAP-001`. The 2026-07-14 inert
+  background-reflection authority refusal, and superhuman lateral conceptual-leap
+  requirements are mapped to `OBJECTIVE-LIFECYCLE-001`,
+  `AUTONOMY-AUTHORITY-001`, and `CONCEPTUAL-LEAP-001`. The 2026-07-15 mirror,
+  self-recognition, authorship, self/other, preference-ownership, embodiment,
+  continuity, and cross-domain subjective-worldview requirements are mapped to
+  `SELF-MODEL-MIRROR-001` and its `SM-*`/`MQ-*` acceptance units above. The
+  2026-07-14 inert
   localStorage settings finding is mapped to `RUNTIME-SETTINGS-001`; machine ingestion and
 zero-unmapped proof remain open under `SCOPE-001`.
 
@@ -16455,3 +16579,222 @@ Progress and remaining burden:
   behavior, exact-app GUI coverage, clean-machine portability, release gates,
   and every other open master row remain open. Final multi-hour and 24-72 hour
   soaks remain deferred.
+
+## Checkpoint 2026-07-15-90: Protected Autonomous Agency and Exact Voice Proof
+
+Checkpoint 90 is pushed on `main` at
+`acfe7d68f8f07e51d4d0dc5c7f36e16dc7d0de4b`. It advances
+`AUTONOMY-AUTHORITY-001`, `RUNTIME-SETTINGS-001`, `VOICE-001`, `UI-001`,
+`LAUNCH-PROVENANCE-001`, `FAULT-001`, and `TEST-DEPTH-001` without weakening
+Will, Constitution, Conscience, scope, risk, receipt, or effect governance.
+
+Implemented and proved boundary:
+
+- `autonomy.autonomous_actions_enabled` is a protected always-on invariant,
+  not a runtime kill switch. Legacy false state is reconciled with an audit
+  receipt; direct PATCH, reset, rollback, corrupted-reader, and owner-failure
+  paths cannot silently disable Aura's agency. Consequence-sensitive actions
+  still require the existing typed authority chain.
+- The exact clean signed app advertised matching expected and actual source
+  root/commit, passed strict deep signature verification, reached full
+  readiness, and exposed settings revision 10 with valid integrity.
+- With voice input and auto-listen enabled, the resident owner produced real
+  microphone capture and RMS evidence. Disabling input physically stopped the
+  capture stream. After restart, input enabled plus auto-listen disabled
+  remained idle, proving persisted owner effect rather than checkbox state.
+- Live and historical disable attacks both returned HTTP 422 without changing
+  revision or integrity. The fresh installed shell rendered `Autonomous Agency:
+  ACTIVE` and exposed no false safety-shaped disable control.
+
+Remaining burden:
+
+- CP90 does not close the remaining settings conflict/reset/confirmation,
+  output interruption, accessibility, three known-dead controls, privacy,
+  broad voice/full-duplex, clean-machine, semantic-review, or release matrix.
+- `main` advanced after the proof, so latest-main source, shell, graph, health,
+  shutdown, and GUI claims require a newly built exact signed app. The CP90
+  process was stopped rather than reused as current evidence.
+- At this historical checkpoint the planning estimate remained 30%, total
+  checkpoint 90 of the then-current 240-325 forecast, with approximately
+  150-235 remaining. Later mirror/self-model scope expands that denominator;
+  it does not retroactively turn CP90 into broader evidence.
+
+## Checkpoint 2026-07-15-91: Atomic Runtime Topology, Delivery, and Frontier Evidence Trust
+
+Checkpoint 91 is the current source candidate in the `main` worktree. It
+advances `TOPOLOGY-CONSISTENCY-001`, `ARCH-001`, `ASYNC-TASK-001`,
+`LIFECYCLE-001`, `HEALTH-SURFACE-001`, `UI-001`, `LAUNCH-PROVENANCE-001`,
+`CHAT-DELIVERY-001`, `AUTONOMY-AUTHORITY-001`, `DATA-LIFECYCLE-001`,
+`SECURITY-001`, `FRONTIER-COGNITION-001`, `IMMUNE-CODING-001`, `FAULT-001`,
+and `TEST-DEPTH-001`. Source and deterministic evidence are substantial; no
+latest-main installed-app, general-frontier, semantic-closeout, portability,
+release, or soak claim is awarded here.
+
+Topology, lifecycle, and persistence correction:
+
+- The background mycelial mapper builds files, imports, centrality, critical
+  modules, cross-links, physical hyphae, and pathway annotations privately,
+  then publishes one complete generation under the canonical topology owner.
+  Readers consume detached graph/count/summary snapshots; reinforcement,
+  discovery, pulse, health, vault, and graph routes no longer iterate mutable
+  dictionaries concurrently. A retired owner cannot publish a late map.
+- Cached references route mutations and reads to the one active singleton.
+  Rooted flows own a durable handle, enforce their timeout, preserve original
+  failure identity, bound emergency override, and atomically recreate their
+  edge when singleton ownership changes mid-flow. Callers must inspect or
+  re-raise an absorbed failure before reporting successful evolution, incoming
+  work, or a completed mind tick.
+- Vault schema v3 rejects unknown, malformed, non-finite, negative, identity-
+  inconsistent, causally future, and cross-surface-inconsistent state. Capture
+  downtime is included in restored ages. Sync and restore are serialized;
+  topology revision and owner checks cover the SQLite `FULL` durable commit
+  itself, `NaN` serialization fails closed, and a mutation cannot linearize
+  between final validation and commit.
+- The phenomenal self-model now reads live owner-backed mycelial cohesion rather
+  than a nonexistent attribute that silently defaulted every runtime to
+  healthy. Fragmentation can therefore reach somatic self-description through
+  a tested causal read contract.
+
+Authority durability and local-key correction:
+
+- A capability nonce is accepted only after a schema-validated, owner-private,
+  durable atomic ledger commit under a re-entrant process-local mutex and an
+  advisory interprocess lock. Every consumer reloads current disk truth;
+  concurrent owners cannot both spend one nonce. Corruption, symlink
+  substitution, write failure, and live-capacity exhaustion fail closed as the
+  distinct `ledger_unavailable` disposition rather than being mislabeled as a
+  replay or silently opening an empty ledger after restart.
+- Capability signing and BlackHole fallback keys are published exactly once.
+  Concurrent first boots load the winning identity, descriptor reads refuse
+  symlinks and unstable/non-regular material, and malformed existing keys are
+  preserved rather than overwritten. An unusable Ed25519 key retains
+  sink-cannot-mint asymmetry with an explicitly ephemeral/degraded process key;
+  an unusable local encryption key disables encryption rather than returning or
+  persisting plaintext.
+- This authority state deliberately uses the canonical low-level atomic writer:
+  routing it through the file-write sink that the capability chain authorizes
+  would create a circular trust dependency. The exact governance inventory was
+  reviewed and reratcheted only after concurrency, corruption, restart,
+  persistence-failure, permission, and symlink tests passed.
+
+Shell, health, and launch-revision correction:
+
+- Runtime identity binds source root, exact commit/tree, workspace state,
+  launch mode, and a digest covering both shells and their dependent assets.
+  Verified and unverified identity refresh on bounded TTLs; request fallbacks
+  only read the cached projection and do not run provenance work on the HTTP
+  owner loop.
+- The desktop keeps unsent drafts plus queued and in-flight turns in a durable
+  handoff record with stable idempotency keys. It reloads once, cache-busted,
+  only when matching verified signed-runtime provenance changes, waits for the
+  page to authorize service-worker activation, and does not replay an in-flight
+  turn while the conversation lane is still active.
+- The backend now reserves every wrapped chat turn in a principal/session/
+  request-bound SQLite journal before cognition or effects, renews a fenced
+  generation lease, seals terminal outcomes, replays completed responses,
+  rejects key/payload substitution, exposes scoped status recovery, and marks
+  cancellation or stale process loss ambiguous. Every database operation is
+  off the HTTP owner loop and corruption fails closed without overwriting the
+  evidence. This establishes durable at-most-once admission, not global
+  exactly-once external effects: effect-after-dispatch/receipt-before-commit
+  ambiguity still needs provider-specific reconciliation and compensation.
+- Mycelial graph and topology API payloads are assembled from one immutable
+  generation and serialized off-loop. Health and shell tests cover initial,
+  verified, unverified, changed-runtime, stale, and fallback revision states.
+
+Frontier-evidence v5 correction:
+
+- The v5 source protocol requires exact externally supplied pins for five
+  non-reused Ed25519 roles: evaluator, worker, verifier, run signer, and release
+  authority. It binds a bounded fresh challenge, signed battery manifest,
+  per-item answer/execution receipts, unique response IDs, exact prompts,
+  budgets, and independently reproducible grader outcomes. Admissibility is
+  explicitly relative to those supplied pins; the protocol does not call local
+  files a global trust root.
+- Candidate source and complete model manifests are captured by no-follow
+  descriptor traversal before and after inference. The signed worker receipt
+  binds the full model stability window; runtime identity binds the worker,
+  Python executable, library lock, platform, and inference backend. A separate
+  coordinator observation binds process identity, IPC wall time, deadline, and
+  liveness for every reference and candidate item instead of trusting worker-
+  reported timing.
+- Content-addressed evidence blobs are publish-once and verified from winning
+  disk bytes. Final ledger publication compare-and-swaps the exact prior head
+  under an interprocess lock, so concurrent valid runs cannot erase each other.
+  Sealed subprocess environments strip unrelated credentials. Symlinks, source
+  or model drift, stale challenge, trust-pin substitution/reuse, fabricated
+  history, altered summaries, incomplete receipts, timing violations, cache/
+  playbook leakage, and concurrent head replacement are rejected.
+- Exact arithmetic and short-answer truth use normalized equality. Restricted
+  code is parsed and executed over hidden cases rather than substring-scored.
+  Sealed evaluation disables answer-cache, procedural-memory usage credit, and
+  learning side effects while preserving ordinary runtime learning outside the
+  measurement boundary. Procedural-memory persistence itself now uses the
+  governed file-write owner.
+- The checked-in artifact remains a v4 20-item deterministic pipeline control
+  until v5 is regenerated from the exact clean CP91 commit. It has
+  no trusted reference, no admitted real Aura-model stability window, no
+  capability ledger entry, and `general_frontier_claim_eligible=false`. The
+  four classes cannot establish broad reasoning, knowledge, coding, agency,
+  writing, calibration, or general frontier parity. Six-domain held-out,
+  contamination-controlled, matched-budget, repeated, independently reviewed
+  model evidence remains open.
+
+Deterministic evidence on the integrated candidate:
+
+- The complete mycelium suite passes 73/73. The exact cross-subsystem campaign
+  spanning mycelium, graph, meta-cognition, chat grounding, health read models,
+  container lifecycle, and consciousness recovery passes 193/193. The
+  phenomenology suite passes 8/8.
+- The final integrated Frontier, atomic durability, gateway, WAL, capability,
+  and BlackHole campaign passes 114/114. The affected journal, provenance,
+  Frontier, capability, topology, continual-learning, real-Will-chain, DNU-
+  honesty, and verifier campaign passes 250/250. The shell/chat/health/
+  provenance campaign passes 249/249 after tightening paired response shape;
+  browser delivery/revision/service-worker lifecycle tests pass 26/26.
+- Existing architecture, MindTick, orchestrator/error, and changed-behavior
+  campaigns remain green, including the 149-, 27-, 239-, 18-, 109-, 52-, 106-,
+  and 101-test slices recorded earlier during this candidate.
+- Python collection and compilation, source hygiene, whole configured Ruff,
+  governance ownership, the unchanged enterprise baseline with zero current
+  scanner findings, frontend
+  access contract and production build, all 37 production-readiness checks,
+  and the 20/20 closeout rubric pass. The reviewed governance inventory now
+  matches 1,840 recognized calls in 1,728 buckets; 1,692 pre-existing migration-
+  debt calls remain explicit. New entries are the reviewed atomic authority/key,
+  chat-journal, voice-gateway, and descriptor-read boundaries; the refresh does
+  not claim that unrelated migration debt is resolved.
+- Mechanical closeout enumeration and configured gates pass on the integrated
+  dirty candidate, while the generated artifact's own
+  `full_closeout_complete` field remains false. Exact file/line ledgers belong
+  to the generated audit rather than this self-referential tracker. The audit
+  must be repeated from the final clean commit before it can become release
+  evidence.
+- Mechanical gates do not imply semantic closeout. The semantic ledger reports
+  `full_semantic_review_current=false`, 430 fully current code files, 3,738
+  unreviewed code files, and additional stale/orphan records. Those obligations
+  remain in the denominator and block a whole-codebase reviewed claim.
+
+Progress and immediate next work:
+
+- Evidence-weighted completion remains 29%. After publication this is total
+  checkpoint 91 of the expanded 252-343 forecast, leaving approximately
+  161-252 implementation, cleanup, integration, verification, live,
+  portability, release, and soak checkpoints. The wider denominator includes
+  the complete operational mirror/self-model and causal-IIT programs.
+  `CHAT-DELIVERY-001` decomposes already-counted conversation, shell, and
+  lifecycle work, so it does not silently change this range.
+- Run the final dirty-candidate closeout enumeration, commit and push the source
+  candidate directly to `main`, regenerate the v5 Frontier control artifact from
+  that exact clean source, commit its provenance, and verify both remote object
+  IDs. A dirty-source control artifact is retained only as diagnostic input and
+  cannot earn capability credit.
+- Rebuild and sign `/Applications/Aura.app` from the exact final CP91 commit.
+  Stress graph/UI/health reads during mapping, pulse, reinforcement, vault sync,
+  shutdown, and restart; prove no partial generation or size-change exception.
+  Prove old-to-new verified shell transition, draft preservation, one-time
+  reload, stable idempotency, bounded health latency, exact provenance, clean
+  terminal/Neural stream, and complete shutdown before awarding live credit.
+- Final multi-hour and 24-72 hour soaks remain deferred until every shorter
+  deterministic, fault-injection, exact-app, GUI, security, portability,
+  semantic, and release requirement is green.

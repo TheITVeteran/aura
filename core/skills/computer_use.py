@@ -1667,9 +1667,7 @@ end tell
 
             mycelium = ServiceContainer.get("mycelial_network", default=None)
             if mycelium:
-                hypha = mycelium.get_hypha("skill", "os")
-                if hypha:
-                    hypha.pulse(success=True)
+                mycelium.pulse_hypha("skill", "os", success=True)
         except _COMPUTER_USE_RECOVERABLE_ERRORS as e:
             _record_computer_use_degradation(
                 e,

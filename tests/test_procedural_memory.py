@@ -51,6 +51,29 @@ def test_recall_matches_by_shape_and_injects_text(memory):
     assert "csv" not in text                     # shape-matched, not dumped
 
 
+def test_read_only_recall_does_not_change_usage_or_transfer_credit(memory):
+    pid = _win(memory)
+    before = memory.recall(
+        "binary search in a sorted array",
+        task_type="code",
+        record_usage=False,
+    )[0]
+    assert before.playbook_id == pid
+    assert before.reuses == 0
+
+    text = memory.as_playbook_text(
+        "binary search in a sorted array",
+        task_type="code",
+        problem_key="evaluation",
+        record_usage=False,
+    )
+    assert "Proven approaches" in text
+    with memory._lock:
+        book = memory._books[pid]
+        assert book.reuses == 0
+        assert "evaluation" not in memory._retrieved_for
+
+
 def test_recall_respects_task_type(memory):
     _win(memory)
     assert memory.recall("binary search a sorted list", task_type="math") == []

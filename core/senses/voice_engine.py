@@ -23,6 +23,7 @@ import importlib
 import importlib.util
 import inspect
 import io
+import json
 import logging
 import os
 import queue
@@ -38,7 +39,7 @@ from typing import Any
 import numpy as np
 
 from core.runtime.errors import record_degradation
-from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.file_write_gateway import FileWriteBatchEntry, get_file_write_gateway
 from core.runtime.network_gateway import get_network_gateway
 from core.runtime.runtime_settings import get_runtime_setting
 from core.runtime.subprocess_gateway import get_subprocess_gateway
@@ -431,12 +432,10 @@ class SovereignVoiceEngine:
         mycelium = self._get_mycelium()
         if mycelium:
             try:
-                hypha = mycelium.get_hypha(source, target)
-                if hypha:
-                    hypha.pulse(success=success)
-                else:
+                if not mycelium.pulse_hypha(source, target, success=success):
                     # Auto-establish if missing
                     mycelium.establish_connection(source, target, priority=1.0)
+                    mycelium.pulse_hypha(source, target, success=success)
             except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('voice_engine', e)
                 capture_and_log(e, {'module': __name__})
@@ -1107,7 +1106,16 @@ class SovereignVoiceEngine:
             lane_lease = None
             try:
                 model_dir = self.data_dir / "piper_voices"
-                model_dir.mkdir(parents=True, exist_ok=True)
+                from core.governance_context import local_internal_governed_scope
+
+                with local_internal_governed_scope(
+                    "voice_engine.piper_model_directory",
+                    domain="file_write",
+                ):
+                    get_file_write_gateway().ensure_directory(
+                        model_dir,
+                        source="core.senses.voice_engine.piper_model_directory",
+                    )
                 model_path = model_dir / f"{self.piper_voice_name}.onnx"
                 config_path = model_dir / f"{self.piper_voice_name}.onnx.json"
                 
@@ -1153,16 +1161,23 @@ class SovereignVoiceEngine:
             self._pulse_hypha("cognition", "voice_engine", success=False)
 
     def _download_piper_voice(self, model_dir: Path):
+        from core.governance_context import local_internal_governed_scope
+
+        if model_dir.is_symlink():
+            raise RuntimeError("refusing Piper model installation through a symlink")
         base_url = "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0"
         parts = self.piper_voice_name.split("-")
         lang_code = parts[0]
         lang = lang_code.split("_")[0]
         speaker = parts[1] if len(parts) > 1 else "default"
         quality = parts[2] if len(parts) > 2 else "medium"
-        
+
         vpath = f"{lang}/{lang_code}/{speaker}/{quality}"
+        pending: list[FileWriteBatchEntry] = []
         for fname in [f"{self.piper_voice_name}.onnx", f"{self.piper_voice_name}.onnx.json"]:
             dest = model_dir / fname
+            if dest.is_symlink():
+                raise RuntimeError(f"refusing Piper model asset symlink: {dest.name}")
             if not dest.exists():
                 url = f"{base_url}/{vpath}/{fname}"
                 logger.info("Downloading %s...", fname)
@@ -1171,11 +1186,42 @@ class SovereignVoiceEngine:
                     fallback_url=f"https://huggingface.co/rhasspy/piper-voices/resolve/main/{vpath}/{fname}",
                     fname=fname,
                 )
-                get_file_write_gateway().write_bytes(
-                    dest,
-                    payload,
+                self._validate_piper_asset(fname, payload)
+                pending.append(FileWriteBatchEntry(path=dest, payload=payload))
+
+        if pending:
+            # Download the complete missing set before any replacement, then
+            # commit it as one rollback-capable governed batch. A failed config
+            # fetch can no longer leave a model-only half-installation.
+            with local_internal_governed_scope(
+                "voice_engine.download_piper_voice",
+                domain="file_write",
+            ):
+                gateway = get_file_write_gateway()
+                gateway.ensure_directory(
+                    model_dir,
                     source="core.senses.voice_engine.download_piper_voice",
                 )
+                gateway.write_bytes_batch(
+                    pending,
+                    source="core.senses.voice_engine.download_piper_voice",
+                )
+
+    @staticmethod
+    def _validate_piper_asset(fname: str, payload: bytes) -> None:
+        if not isinstance(payload, bytes) or not payload:
+            raise RuntimeError(f"Piper asset is empty or not bytes: {fname}")
+        if payload.lstrip().lower().startswith((b"<html", b"<!doctype")):
+            raise RuntimeError(f"Piper asset response is HTML, not a model asset: {fname}")
+        if fname.endswith(".json"):
+            try:
+                parsed = json.loads(payload.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise RuntimeError(f"Piper config is not valid JSON: {fname}") from exc
+            if not isinstance(parsed, dict) or not parsed:
+                raise RuntimeError(f"Piper config must be a non-empty object: {fname}")
+        elif len(payload) < 1024:
+            raise RuntimeError(f"Piper model payload is implausibly small: {fname}")
 
     @staticmethod
     def _download_piper_asset(url: str, *, fallback_url: str, fname: str) -> bytes:

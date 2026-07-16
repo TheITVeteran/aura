@@ -259,11 +259,7 @@ Return ONLY the final synthesized belief.
             mycelium = ServiceContainer.get("mycelial_network", default=None)
             if not mycelium:
                 return False
-            hypha = mycelium.get_hypha("adaptation", "cognition")
-            if not hypha:
-                return False
-            hypha.pulse(success=True)
-            return True
+            return mycelium.pulse_hypha("adaptation", "cognition", success=True)
         except _CRUCIBLE_RECOVERABLE_ERRORS as exc:
             _record_crucible_degradation(
                 "dialectical_crucible",

@@ -49,6 +49,12 @@ def _record_incoming_degradation(
     )
 
 
+def _current_task_cancellation_pending() -> bool:
+    """Distinguish parent cancellation from an awaited child's cancellation."""
+    task = asyncio.current_task()
+    return bool(task is not None and task.cancelling())
+
+
 class IncomingLogicMixin:
     """Handles incoming message routing, pipeline dispatch, and the core logic handler."""
 
@@ -892,6 +898,8 @@ class IncomingLogicMixin:
                     try:
                         await task
                     except asyncio.CancelledError:
+                        if _current_task_cancellation_pending():
+                            raise
                         logger.debug("Autonomous task cancelled successfully.")
                 elif is_user_origin and not current_is_replaceable:
                     in_flight_age_s = max(
@@ -910,17 +918,21 @@ class IncomingLogicMixin:
                         )
                         try:
                             await asyncio.wait_for(asyncio.shield(task), timeout=grace_wait_s)
-                        except (
-                            TimeoutError,
-                            asyncio.CancelledError,
-                            asyncio.exceptions.TimeoutError,
-                        ):
+                        except asyncio.CancelledError:
+                            if _current_task_cancellation_pending():
+                                raise
+                            logger.debug(
+                                "Previous user response was cancelled during grace wait."
+                            )
+                        except (TimeoutError, asyncio.exceptions.TimeoutError):
                             logger.debug("Previous user response did not finish during grace wait.")
 
                     if task.done():
                         try:
                             await task
                         except asyncio.CancelledError:
+                            if _current_task_cancellation_pending():
+                                raise
                             logger.debug(
                                 "Previous user task finished via cancellation before supersede."
                             )
@@ -936,11 +948,13 @@ class IncomingLogicMixin:
                         task.cancel()
                         try:
                             await asyncio.wait_for(task, timeout=2.0)
-                        except (
-                            TimeoutError,
-                            asyncio.CancelledError,
-                            asyncio.exceptions.TimeoutError,
-                        ):
+                        except asyncio.CancelledError:
+                            if _current_task_cancellation_pending():
+                                raise
+                            logger.debug(
+                                "Previous user task acknowledged supersede cancellation."
+                            )
+                        except (TimeoutError, asyncio.exceptions.TimeoutError):
                             logger.debug(
                                 "Previous user task did not finish cleanly after supersede cancel."
                             )
@@ -951,7 +965,13 @@ class IncomingLogicMixin:
                     try:
                         # Increase to 60s for background tasks
                         await asyncio.wait_for(task, timeout=60.0)
-                    except (TimeoutError, asyncio.CancelledError, asyncio.exceptions.TimeoutError):
+                    except asyncio.CancelledError:
+                        if _current_task_cancellation_pending():
+                            raise
+                        logger.warning(
+                            "🛡️ Guardian: Previous background task was cancelled; proceeding"
+                        )
+                    except (TimeoutError, asyncio.exceptions.TimeoutError):
                         logger.warning(
                             "🛡️ Guardian: Previous task timed out (60s), proceeding anyway"
                         )
@@ -1101,7 +1121,7 @@ class IncomingLogicMixin:
                     else AsyncNullContext()
                 )
 
-                async with flow_ctx:
+                async with flow_ctx as flow:
                     try:
                         # ══════════════════════════════════════════════════════
                         # MYCELIAL HARDWIRED PATHWAY BYPASS (Enterprise v3.0)
@@ -1533,9 +1553,10 @@ class IncomingLogicMixin:
                                         except asyncio.CancelledError:
                                             logger.debug("Direct match result handled.")
 
+                                except asyncio.CancelledError:
+                                    raise
                                 except (
                                     RuntimeError,
-                                    asyncio.CancelledError,
                                     TimeoutError,
                                     AttributeError,
                                 ) as e:
@@ -1623,11 +1644,12 @@ class IncomingLogicMixin:
                                         successful_tools = []
                                     else:
                                         final_response = None  # Fall through to direct LLM
+                                except asyncio.CancelledError:
+                                    raise
                                 except (
                                     RuntimeError,
                                     AttributeError,
                                     TypeError,
-                                    asyncio.CancelledError,
                                 ) as e:
                                     _record_incoming_degradation(
                                         e,
@@ -1676,11 +1698,12 @@ class IncomingLogicMixin:
                                         if isinstance(res, (tuple, list)) and len(res) > 1
                                         else []
                                     )
+                                except asyncio.CancelledError:
+                                    raise
                                 except (
                                     RuntimeError,
                                     AttributeError,
                                     TypeError,
-                                    asyncio.CancelledError,
                                 ) as e:
                                     _record_incoming_degradation(
                                         e,
@@ -1778,9 +1801,10 @@ class IncomingLogicMixin:
                                         )
                                 except TimeoutError:
                                     logger.warning("🔍 [KNOWLEDGE GAP] Web search timed out (25s).")
+                                except asyncio.CancelledError:
+                                    raise
                                 except (
                                     RuntimeError,
-                                    asyncio.CancelledError,
                                     AttributeError,
                                 ) as _gap_err:
                                     _record_incoming_degradation(
@@ -1816,7 +1840,9 @@ class IncomingLogicMixin:
                         self.status.is_processing = False
 
                         return final_response
-                    except (RuntimeError, asyncio.CancelledError, AttributeError, TypeError) as e:
+                    except asyncio.CancelledError:
+                        raise
+                    except (RuntimeError, AttributeError, TypeError) as e:
                         _record_incoming_degradation(
                             e,
                             action="escalated state-machine execution failure to watchdog after delivery guard notification",
@@ -1832,6 +1858,11 @@ class IncomingLogicMixin:
                         raise  # Mycelium will catch this and trigger bypass if critical
                     finally:
                         self.status.is_processing = False
+                if getattr(flow, "failed", False):
+                    flow_error = getattr(flow, "error", None)
+                    if isinstance(flow_error, BaseException):
+                        raise flow_error
+                    raise RuntimeError("rooted cognition flow failed without an error receipt")
 
             self._current_task_is_autonomous = origin not in ("user", "voice", "admin")  # v47
 
@@ -1850,7 +1881,9 @@ class IncomingLogicMixin:
                     )
                     await self._handle_thinking_timeout(origin)
                     return "Cognitive process timed out."
-                except (RuntimeError, asyncio.CancelledError, AttributeError, TypeError) as e:
+                except asyncio.CancelledError:
+                    raise
+                except (RuntimeError, AttributeError, TypeError) as e:
                     _record_incoming_degradation(
                         e,
                         action="returned cognitive-failure message after thinking watchdog task failed",
@@ -1895,7 +1928,9 @@ class IncomingLogicMixin:
                     return None
                 raise
 
-        except (RuntimeError, asyncio.CancelledError, AttributeError, TypeError) as e:
+        except asyncio.CancelledError:
+            raise
+        except (RuntimeError, AttributeError, TypeError) as e:
             _record_incoming_degradation(
                 e,
                 action="stopped incoming-message processing and reset processing status after handler failure",

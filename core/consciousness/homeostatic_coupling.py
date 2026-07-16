@@ -139,11 +139,9 @@ class HomeostaticCoupling:
         mycelium = self._get_mycelium()
         if mycelium:
             try:
-                hypha = mycelium.get_hypha("homeostasis", target)
-                if hypha:
-                    hypha.pulse(success=success)
-                else:
+                if not mycelium.pulse_hypha("homeostasis", target, success=success):
                     mycelium.establish_connection("homeostasis", target, priority=1.0)
+                    mycelium.pulse_hypha("homeostasis", target, success=success)
             except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('homeostatic_coupling', e)
                 capture_and_log(e, {'module': __name__})

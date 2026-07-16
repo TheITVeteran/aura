@@ -1,76 +1,171 @@
-const CACHE_NAME = 'aura-runtime-v2026-03-31-2';
-const ASSETS_TO_CACHE = [
+const RUNTIME_REVISION_PATTERN = /^[0-9a-f]{64}$/;
+const requestedRevision = new URL(self.location.href).searchParams.get('_aura_runtime') || '';
+const SHELL_REVISION = RUNTIME_REVISION_PATTERN.test(requestedRevision)
+  ? requestedRevision
+  : '';
+const CACHE_NAMESPACE = 'aura-runtime-shell-';
+const CACHE_NAME = `${CACHE_NAMESPACE}${SHELL_REVISION || 'unverified'}`;
+let runtimeTrustActive = Boolean(SHELL_REVISION);
+const REVISION_ADDRESSED_ASSETS = [
   '/static/icon.svg',
   '/static/icon-192.png',
   '/static/icon-512.png'
 ];
+const REVISION_ADDRESSED_PATHS = new Set(REVISION_ADDRESSED_ASSETS);
+const RUNTIME_CACHE_RETENTION = 4;
+const revisionAddressedUrl = (path) => {
+  if (!SHELL_REVISION) return path;
+  const url = new URL(path, self.location.origin);
+  url.searchParams.set('_aura_runtime', SHELL_REVISION);
+  return `${url.pathname}${url.search}`;
+};
 const LIVE_SHELL_PATHS = new Set([
   '/',
+  '/static/index.html',
+  '/static/design_tokens.css',
+  '/static/motion_design.css',
+  '/static/error_banner.css',
   '/static/aura.css',
+  '/static/presence_design.css',
+  '/static/vendor/vis-network.min.js',
+  '/static/error_banner.js',
+  '/static/sound_design.js',
+  '/static/perf_collector.js',
   '/static/aura.js',
   '/static/manifest.json',
-  '/static/service-worker.js'
+  '/static/service-worker.js',
+  '/static/aura_avatar.svg',
+  '/static/vendor/fonts/fredoka-variable-latin.woff2',
+  '/static/vendor/fonts/ibm-plex-mono-400-latin.woff2',
+  '/static/vendor/fonts/ibm-plex-mono-500-latin.woff2',
+  '/static/vendor/fonts/ibm-plex-mono-600-latin.woff2',
+  '/static/voice-processor.js'
 ]);
+const ASSETS_TO_CACHE = SHELL_REVISION
+  ? [...new Set([
+      ...[...LIVE_SHELL_PATHS].filter((path) => (
+        path !== '/' && path !== '/static/service-worker.js'
+      )),
+      ...REVISION_ADDRESSED_ASSETS,
+    ])].map(revisionAddressedUrl)
+  : [];
 
 // ── Install: Cache core assets ──
 self.addEventListener('install', (event) => {
-  self.skipWaiting();
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      // Caching app shell
-      return cache.addAll(ASSETS_TO_CACHE);
-    })
+    SHELL_REVISION
+      ? caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS_TO_CACHE))
+      : Promise.resolve()
   );
 });
 
-// ── Activate: Clean old caches, claim clients ──
+// ── Activate: preserve live prior revisions and only claim compatible tabs ──
 self.addEventListener('activate', (event) => {
-  event.waitUntil(
-    caches.keys().then((keyList) => {
-      return Promise.all(keyList.map((key) => {
-        if (key !== CACHE_NAME) {
-          // Removing old cache
-          return caches.delete(key);
+  if (!SHELL_REVISION) {
+    event.waitUntil(self.registration.unregister());
+    return;
+  }
+  event.waitUntil((async () => {
+    const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    const liveRevisions = new Set();
+    let unmarkedClient = false;
+    let conflictingClient = false;
+    clients.forEach((client) => {
+      try {
+        const marker = new URL(client.url).searchParams.get('_aura_runtime') || '';
+        if (!RUNTIME_REVISION_PATTERN.test(marker)) {
+          unmarkedClient = true;
+          return;
         }
-      }));
-    }).then(() => self.clients.claim())
-  );
+        liveRevisions.add(marker);
+        if (marker !== SHELL_REVISION) conflictingClient = true;
+      } catch (_err) {
+        unmarkedClient = true;
+        conflictingClient = true;
+      }
+    });
+    if (!unmarkedClient) {
+      const keys = await caches.keys();
+      const revisionCaches = keys.filter((key) => (
+        key.startsWith(CACHE_NAMESPACE)
+        && RUNTIME_REVISION_PATTERN.test(key.slice(CACHE_NAMESPACE.length))
+      ));
+      const retained = new Set(revisionCaches.slice(-RUNTIME_CACHE_RETENTION));
+      retained.add(CACHE_NAME);
+      liveRevisions.forEach((marker) => retained.add(`${CACHE_NAMESPACE}${marker}`));
+      await Promise.all(
+        revisionCaches
+          .filter((key) => !retained.has(key))
+          .map((key) => caches.delete(key))
+      );
+    }
+    if (!conflictingClient) await self.clients.claim();
+  })());
 });
 
 // ── Fetch: Network-first with cache fallback ──
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
   if (event.request.method !== 'GET') return;
+  if (url.origin !== self.location.origin) return;
   if (url.pathname.startsWith('/ws/')) return;
   if (url.pathname.startsWith('/api/')) return;
-  if (LIVE_SHELL_PATHS.has(url.pathname)) return;
-  if (event.request.mode === 'navigate') return;
-  if (['document', 'script', 'style', 'manifest'].includes(event.request.destination)) return;
-
-  event.respondWith(
-    fetch(event.request)
-      .then((response) => {
-        if (response.ok) {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-        }
-        return response;
-      })
-      .catch(() => {
-        return caches.match(event.request).then(cachedResponse => {
-           if (cachedResponse) return cachedResponse;
-           if (event.request.mode === 'navigate') {
-             return caches.match('/');
-           }
-        });
-      })
+  if (!SHELL_REVISION || !runtimeTrustActive) return;
+  const requestRevision = url.searchParams.get('_aura_runtime') || '';
+  if (requestRevision && requestRevision !== SHELL_REVISION) return;
+  try {
+    const referrer = event.request.referrer ? new URL(event.request.referrer) : null;
+    const referrerRevision = referrer?.origin === self.location.origin
+      ? referrer.searchParams.get('_aura_runtime') || ''
+      : '';
+    if (referrerRevision && referrerRevision !== SHELL_REVISION) return;
+  } catch (_err) {
+    return;
+  }
+  const revisionRoot = Boolean(
+    url.pathname === '/'
+    && event.request.mode === 'navigate'
+    && requestRevision === SHELL_REVISION
   );
+  const revisionBound = revisionRoot || Boolean(
+    url.pathname !== '/'
+    &&
+    url.pathname !== '/static/service-worker.js'
+    && (LIVE_SHELL_PATHS.has(url.pathname) || REVISION_ADDRESSED_PATHS.has(url.pathname))
+  );
+  if (revisionBound) {
+    const revisionUrl = revisionAddressedUrl(
+      revisionRoot ? '/static/index.html' : url.pathname
+    );
+    event.respondWith((async () => {
+      const cache = await caches.open(CACHE_NAME);
+      const cachedResponse = await cache.match(revisionUrl);
+      if (cachedResponse) return cachedResponse;
+      const response = await fetch(revisionUrl, { cache: 'reload', credentials: 'same-origin' });
+      if (response.ok) await cache.put(revisionUrl, response.clone());
+      return response;
+    })());
+    return;
+  }
 });
 
 // ── Push Notifications (from page via postMessage) ──
 self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'AURA_RETIRE_RUNTIME_SHELL') {
+    runtimeTrustActive = false;
+    event.waitUntil(
+      caches.keys()
+        .then((keys) => Promise.all(
+          keys.filter((key) => key.startsWith(CACHE_NAMESPACE)).map((key) => caches.delete(key))
+        ))
+        .then(() => self.registration.unregister())
+    );
+    return;
+  }
   if (event.data && event.data.type === 'SKIP_WAITING') {
-    self.skipWaiting();
+    if (SHELL_REVISION && event.data.revision === SHELL_REVISION) {
+      self.skipWaiting();
+    }
     return;
   }
 
@@ -82,8 +177,8 @@ self.addEventListener('message', (event) => {
       if (!anyFocused) {
         self.registration.showNotification(title || 'Aura', {
           body: body || 'New message',
-          icon: '/icon-192.png',
-          badge: '/icon-192.png',
+          icon: revisionAddressedUrl('/static/icon-192.png'),
+          badge: revisionAddressedUrl('/static/icon-192.png'),
           tag: tag || 'aura-reply',
           renotify: true,
           vibrate: [100, 50, 100],
@@ -103,8 +198,8 @@ self.addEventListener('message', (event) => {
     if (enabled) {
       self.registration.showNotification('Aura is running', {
         body: 'Aura is active in the background. Tap to open.',
-        icon: '/icon-192.png',
-        badge: '/icon-192.png',
+        icon: revisionAddressedUrl('/static/icon-192.png'),
+        badge: revisionAddressedUrl('/static/icon-192.png'),
         tag: 'aura-background',
         silent: true,
         requireInteraction: true,

@@ -135,16 +135,17 @@ class ProceduralMemory:
         self._dirty = 0
         try:
             from core.governance_context import local_internal_governed_scope
-            from core.runtime.atomic_writer import atomic_write_json
+            from core.runtime.file_write_gateway import get_file_write_gateway
 
             with local_internal_governed_scope("procedural_memory",
                                                domain="state_mutation"):
-                atomic_write_json(
+                get_file_write_gateway().write_json(
                     self._path,
                     {"schema_version": SCHEMA_VERSION,
                      "playbooks": [b.to_dict() for b in self._books.values()]},
                     schema_version=SCHEMA_VERSION,
                     schema_name="procedural_playbooks",
+                    source="brain.procedural_memory.persist",
                 )
         except (ImportError, RuntimeError, *self._ERRORS) as exc:
             record_degradation("procedural_memory", exc, severity="warning",
@@ -211,7 +212,8 @@ class ProceduralMemory:
 
     # ── retrieval / injection ────────────────────────────────────────────
     def recall(self, objective: str, *, task_type: str | None = None,
-               limit: int = 2, problem_key: str = "") -> list[Playbook]:
+               limit: int = 2, problem_key: str = "",
+               record_usage: bool = True) -> list[Playbook]:
         tokens = _signature_tokens(objective)
         if not tokens:
             return []
@@ -227,7 +229,7 @@ class ProceduralMemory:
                     scored.append((overlap + quality, book))
             scored.sort(key=lambda t: -t[0])
             top = [b for _, b in scored[:limit]]
-            if top:
+            if top and record_usage:
                 for book in top:
                     book.reuses += 1
                 self._retrieved_for[problem_key or objective[:80]] = [
@@ -238,9 +240,11 @@ class ProceduralMemory:
         return top
 
     def as_playbook_text(self, objective: str, *, task_type: str | None = None,
-                         limit: int = 2, problem_key: str = "") -> str:
+                         limit: int = 2, problem_key: str = "",
+                         record_usage: bool = True) -> str:
         books = self.recall(objective, task_type=task_type, limit=limit,
-                            problem_key=problem_key)
+                            problem_key=problem_key,
+                            record_usage=record_usage)
         if not books:
             return ""
         lines = ["Proven approaches from similar solved problems:"]

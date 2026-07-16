@@ -10,7 +10,9 @@ tries to get a sink to execute without legitimate authority.
 """
 from __future__ import annotations
 
+import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 
 import pytest
@@ -324,7 +326,6 @@ def test_nonce_ledger_survives_restart(tmp_path):
     path = tmp_path / "nonces.json"
     ledger = NonceLedger(path=path)
     assert ledger.consume("nonce-abc", time.time() + 300)
-    ledger.flush()
 
     reborn = NonceLedger(path=path)
     assert reborn.seen("nonce-abc")
@@ -342,6 +343,66 @@ def test_nonce_ledger_forgets_expired_nonces(tmp_path):
 
     reborn = NonceLedger(path=path)
     assert not reborn.seen("old")
+
+
+def test_two_ledger_instances_cannot_both_consume_one_nonce(tmp_path):
+    """The process-local mutex and file lock close the cross-instance race."""
+    from core.governance.capability_chain import NonceLedger
+
+    path = tmp_path / "nonces.json"
+    ledgers = (NonceLedger(path=path), NonceLedger(path=path))
+    expires_at = time.time() + 300
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda ledger: ledger.consume("one-use", expires_at), ledgers))
+
+    assert sorted(results) == [False, True]
+    assert NonceLedger(path=path).seen("one-use")
+
+
+def test_corrupt_nonce_ledger_fails_closed_without_overwrite(tmp_path):
+    from core.governance.capability_chain import NonceLedger
+
+    path = tmp_path / "nonces.json"
+    path.write_bytes(b'{"nonces":{"prior":')
+    before = path.read_bytes()
+
+    ledger = NonceLedger(path=path)
+    accepted, reason = ledger.consume_with_reason("new", time.time() + 300)
+
+    assert accepted is False
+    assert reason
+    assert ledger.status()["healthy"] is False
+    assert path.read_bytes() == before
+
+
+def test_nonce_ledger_rejects_duplicate_json_keys(tmp_path):
+    from core.governance.capability_chain import NonceLedger
+
+    path = tmp_path / "nonces.json"
+    path.write_text(
+        '{"nonces":{"same":19999999999},"nonces":{"other":19999999999}}',
+        encoding="utf-8",
+    )
+    accepted, reason = NonceLedger(path=path).consume_with_reason(
+        "fresh", time.time() + 300
+    )
+    assert accepted is False
+    assert "duplicate JSON key" in str(reason)
+
+
+def test_nonce_persistence_failure_is_not_mislabeled_as_replay(monkeypatch):
+    import core.governance.capability_chain as chain
+
+    cap = _issue()
+    monkeypatch.setattr(
+        chain,
+        "atomic_write_bytes",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("disk unavailable")),
+    )
+    result = get_capability_verifier().verify(cap)
+    assert result.ok is False
+    assert result.denial is CapabilityDenial.LEDGER_UNAVAILABLE
+    assert "disk unavailable" in result.detail
 
 
 # ---------------------------------------------------------------------------
@@ -488,6 +549,44 @@ def test_default_key_is_asymmetric():
         "capability chain fell back to HMAC — sinks can mint; "
         f"status={capability_chain_status()}"
     )
+
+
+def test_concurrent_key_initializers_converge_on_one_identity(tmp_path):
+    from cryptography.hazmat.primitives import serialization
+
+    from core.governance.capability_chain import _KeyMaterial
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        materials = list(pool.map(lambda _index: _KeyMaterial._load_or_create_ed25519(True), range(4)))
+
+    public_keys = {
+        private.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
+        for private, persisted in materials
+        if persisted
+    }
+    assert len(public_keys) == 1
+    assert os.stat(tmp_path / "keys" / "will_capability_ed25519_priv.pem").st_mode & 0o077 == 0
+
+
+def test_malformed_private_key_is_preserved_and_reported_as_ephemeral(tmp_path):
+    key_dir = tmp_path / "keys"
+    key_dir.mkdir(mode=0o700)
+    key_path = key_dir / "will_capability_ed25519_priv.pem"
+    key_path.write_bytes(b"not a private key")
+    key_path.chmod(0o600)
+    before = key_path.read_bytes()
+
+    status = capability_chain_status()
+
+    assert status["asymmetric"] is True
+    assert status["keys_persisted"] is False
+    assert status["authority_durable"] is False
+    assert status["degraded"] is True
+    assert "ephemeral" in status["note"].lower()
+    assert key_path.read_bytes() == before
 
 
 def test_status_reports_degradation_honestly(monkeypatch):

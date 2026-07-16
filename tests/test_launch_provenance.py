@@ -3,7 +3,124 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from core.runtime import launch_provenance
+
+
+def test_runtime_shell_digest_is_path_bound_and_content_sensitive(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    first = tmp_path / "interface" / "static" / "aura.js"
+    second = tmp_path / "interface" / "static" / "aura.css"
+    first.parent.mkdir(parents=True)
+    first.write_text("one", encoding="utf-8")
+    second.write_text("two", encoding="utf-8")
+    monkeypatch.setattr(
+        launch_provenance,
+        "RUNTIME_SHELL_ASSETS",
+        ("interface/static/aura.js", "interface/static/aura.css"),
+    )
+
+    before = launch_provenance.runtime_shell_assets_sha256(tmp_path)
+    second.write_text("changed", encoding="utf-8")
+    after = launch_provenance.runtime_shell_assets_sha256(tmp_path)
+
+    assert before != after
+
+
+def test_runtime_shell_digest_rejects_symlink_assets(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "target.js"
+    target.write_text("payload", encoding="utf-8")
+    link = tmp_path / "interface" / "static" / "aura.js"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(target)
+    monkeypatch.setattr(
+        launch_provenance,
+        "RUNTIME_SHELL_ASSETS",
+        ("interface/static/aura.js",),
+    )
+
+    with pytest.raises(RuntimeError, match="symlink"):
+        launch_provenance.runtime_shell_assets_sha256(tmp_path)
+
+
+def test_build_manifest_signs_stable_runtime_shell(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    launcher = tmp_path / "scripts" / "AuraLauncher.swift"
+    launcher.parent.mkdir()
+    launcher.write_text("launcher", encoding="utf-8")
+    identity = {
+        "source_root": str(tmp_path.resolve()),
+        "commit_sha": "a" * 40,
+        "branch": "main",
+    }
+    workspace = {
+        "workspace_state_sha256": "b" * 64,
+        "source_dirty": False,
+        "source_change_count": 0,
+        "source_changed_paths": [],
+        "source_changed_paths_truncated": False,
+    }
+    monkeypatch.setattr(launch_provenance, "_git_identity", lambda _root: dict(identity))
+    monkeypatch.setattr(
+        launch_provenance,
+        "_workspace_state_uncached",
+        lambda _root: dict(workspace),
+    )
+    monkeypatch.setattr(
+        launch_provenance,
+        "runtime_shell_assets_sha256",
+        lambda _root: "c" * 64,
+    )
+
+    manifest = launch_provenance.build_launch_manifest(
+        tmp_path,
+        version="Aura test",
+        launcher_source=launcher,
+    )
+
+    assert manifest["shell_assets_sha256"] == "c" * 64
+    assert manifest["workspace_state_sha256"] == "b" * 64
+
+
+def test_build_manifest_rejects_workspace_change_during_capture(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    launcher = tmp_path / "scripts" / "AuraLauncher.swift"
+    launcher.parent.mkdir()
+    launcher.write_text("launcher", encoding="utf-8")
+    identity = {
+        "source_root": str(tmp_path.resolve()),
+        "commit_sha": "a" * 40,
+        "branch": "main",
+    }
+    workspace_digests = iter(("b" * 64, "d" * 64))
+    monkeypatch.setattr(launch_provenance, "_git_identity", lambda _root: dict(identity))
+    monkeypatch.setattr(
+        launch_provenance,
+        "_workspace_state_uncached",
+        lambda _root: {"workspace_state_sha256": next(workspace_digests)},
+    )
+    monkeypatch.setattr(
+        launch_provenance,
+        "runtime_shell_assets_sha256",
+        lambda _root: "c" * 64,
+    )
+
+    with pytest.raises(RuntimeError, match="changed while"):
+        launch_provenance.build_launch_manifest(
+            tmp_path,
+            version="Aura test",
+            launcher_source=launcher,
+        )
 
 
 def _app_contract(tmp_path: Path) -> tuple[Path, Path, dict[str, str], dict[str, object]]:
@@ -194,6 +311,9 @@ def test_boot_health_fails_closed_on_required_launch_provenance(monkeypatch):
             "blockers": [],
         },
         200,
+        runtime_revision=system_routes._runtime_revision_unavailable(
+            "", required=False
+        ),
     )
 
     assert status == 503
@@ -214,6 +334,9 @@ def test_boot_health_keeps_direct_runtime_semantics(monkeypatch):
     payload, status = system_routes._attach_launch_provenance_contract(
         {"ready": True, "checks": {}, "blockers": []},
         200,
+        runtime_revision=system_routes._runtime_revision_unavailable(
+            "", required=False
+        ),
     )
 
     assert status == 200

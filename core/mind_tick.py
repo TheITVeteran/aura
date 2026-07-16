@@ -1210,8 +1210,13 @@ class MindTick:
                     return current_state
 
                 if mycelium:
-                    async with mycelium.rooted_flow(source="mind_tick", target="cognitive_phases", activity="cognitive_cycle"):
+                    async with mycelium.rooted_flow(
+                        source="mind_tick",
+                        target="cognitive_phases",
+                        activity="cognitive_cycle",
+                    ) as flow:
                         current_state = await execute_tick()
+                    flow.raise_for_status()
                 else:
                     current_state = await execute_tick()
                 

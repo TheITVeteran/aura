@@ -19,6 +19,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable, Sequence
+from contextvars import ContextVar
 from datetime import UTC, datetime
 from functools import wraps
 from pathlib import Path
@@ -38,6 +39,19 @@ from core.brain.llm.cloud_errors import cloud_call_error_types
 from core.container import ServiceContainer
 from core.reasoning.artifact_synthesis import response_satisfies_artifact_contract
 from core.runtime import resource_psutil as psutil
+from core.runtime.chat_delivery_journal import (
+    AdmissionKind,
+    ChatDeliveryFenceLost,
+    ChatDeliveryJournalCorruption,
+    ChatDeliveryJournalError,
+    ChatDeliveryJournalUnavailable,
+    DeliveryAdmission,
+    DeliveryIdentity,
+    DeliveryRecord,
+    DeliveryState,
+    canonical_request_hash,
+    get_chat_delivery_journal,
+)
 from core.runtime.desktop_objective_intent import (
     looks_like_desktop_objective as _shared_looks_like_desktop_objective,
 )
@@ -76,6 +90,15 @@ from interface.helpers import _notify_user_spoke
 logger = logging.getLogger("Aura.Server.Chat")
 
 router = APIRouter()
+
+_CHAT_DELIVERY_TURN_ID: ContextVar[str] = ContextVar(
+    "aura_chat_delivery_turn_id",
+    default="",
+)
+_CHAT_DELIVERY_IDEMPOTENCY_KEY: ContextVar[str] = ContextVar(
+    "aura_chat_delivery_idempotency_key",
+    default="",
+)
 
 
 # ── Request Models ────────────────────────────────────────────
@@ -137,15 +160,6 @@ def _paired_chat_response_payload(value: Any) -> dict[str, Any]:
     return projected
 
 
-def _chat_idempotency_cache_key(
-    session_id: str,
-    raw_key: str | None,
-) -> tuple[str, str] | None:
-    if not raw_key:
-        return None
-    return str(session_id or "default"), str(raw_key)
-
-
 def _authenticated_chat_principal(request: Request | None) -> str:
     if request is None:
         return ""
@@ -165,11 +179,277 @@ def _chat_turn_session_key(request: Request | None, body: Any) -> str:
         paired = None
     supplied = str(getattr(body, "session_id", "") or "").strip()
     if paired:
-        return paired[:240]
+        return paired
     if supplied:
-        return supplied[:240]
+        return supplied
     client = getattr(request, "client", None) if request is not None else None
-    return str(getattr(client, "host", "default") or "default")[:240]
+    return str(getattr(client, "host", "default") or "default")
+
+
+def _chat_delivery_wait_timeout_s() -> float:
+    try:
+        configured = float(os.environ.get("AURA_CHAT_DELIVERY_WAIT_TIMEOUT_S", "180"))
+    except (TypeError, ValueError):
+        configured = 180.0
+    return max(1.0, min(configured, 600.0))
+
+
+def _chat_delivery_principal(
+    request: Request | None,
+    exact_principal: str,
+    session_key: str,
+) -> str:
+    normalized = " ".join(str(exact_principal or "").strip().split())
+    if normalized:
+        return normalized
+    profile = request_access_profile(request)
+    surface = str(profile.get("surface") or "internal").strip().casefold()
+    if surface == "owner":
+        return "authenticated-local-owner"
+    if surface == "paired_device":
+        return f"authenticated-{session_key}"
+    client = getattr(request, "client", None) if request is not None else None
+    host = str(getattr(client, "host", "internal") or "internal").strip().casefold()
+    return f"authenticated-{surface}:{host}"
+
+
+def _chat_delivery_request_contract(
+    request: Request | None,
+    body: Any,
+    *,
+    exact_principal: str,
+) -> tuple[DeliveryIdentity, str, str]:
+    session_key = _chat_turn_session_key(request, body)
+    raw_key = (
+        str(request.headers.get("X-Idempotency-Key") or "").strip()
+        if request is not None
+        else ""
+    )
+    idempotency_key = raw_key or f"server-{uuid.uuid4().hex}"
+    principal = _chat_delivery_principal(request, exact_principal, session_key)
+    identity = DeliveryIdentity.create(
+        principal=principal,
+        session_id=session_key,
+        idempotency_key=idempotency_key,
+    )
+    profile = request_access_profile(request)
+    headers = getattr(request, "headers", {}) if request is not None else {}
+    request_hash = canonical_request_hash(
+        {
+            "schema": "aura.chat.delivery.request.v1",
+            "method": str(getattr(request, "method", "POST") or "POST").upper(),
+            "path": str(
+                getattr(getattr(request, "url", None), "path", "/api/chat")
+                or "/api/chat"
+            ),
+            "message": str(getattr(body, "message", "") or ""),
+            "session_id": session_key,
+            "surface": str(profile.get("surface") or "internal"),
+            "conversation_only": bool(profile.get("conversation_only", False)),
+            "behavior_headers": {
+                "benchmark": str(headers.get("X-Aura-Benchmark") or "").casefold()
+                == "true",
+                "require_cognitive_engine": str(
+                    headers.get("X-Aura-Require-CognitiveEngine") or ""
+                ).casefold()
+                == "true",
+                "allow_legacy_orchestrator": str(
+                    headers.get("X-Aura-Allow-Legacy-Orchestrator") or ""
+                ).casefold()
+                == "true",
+                "desktop_request": str(
+                    headers.get("X-Aura-Desktop-Request") or ""
+                ).casefold(),
+                "surface": str(headers.get("X-Aura-Surface") or "").casefold(),
+            },
+        }
+    )
+    approval_resume_token = (
+        str(headers.get("X-Aura-Approval-Resume") or "").strip().casefold()
+    )
+    if approval_resume_token and not re.fullmatch(
+        r"[0-9a-f]{32}",
+        approval_resume_token,
+    ):
+        raise ValueError("invalid approval-resume token")
+    return identity, request_hash, approval_resume_token
+
+
+def _chat_delivery_state_for_response(
+    payload: dict[str, Any],
+    status_code: int,
+) -> DeliveryState:
+    status = str(payload.get("status") or "").strip().casefold()
+    confidence = str(payload.get("response_confidence") or "").strip().casefold()
+    if status in {"approval_required", "require_fresh_user_auth"}:
+        return DeliveryState.AWAITING_APPROVAL
+    if "cancel" in status or status == "delivery_ambiguous":
+        return DeliveryState.AMBIGUOUS
+    failure_markers = (
+        "blocked",
+        "denied",
+        "error",
+        "failed",
+        "guard",
+        "refused",
+        "rejected",
+        "timeout",
+        "unavailable",
+    )
+    if (
+        int(status_code) >= 400
+        or confidence == "failed"
+        or any(marker in status for marker in failure_markers)
+    ):
+        return DeliveryState.FAILED
+    return DeliveryState.COMPLETED
+
+
+def _chat_delivery_payload(
+    payload: dict[str, Any],
+    admission: DeliveryAdmission,
+    *,
+    state: DeliveryState,
+    replayed: bool = False,
+) -> dict[str, Any]:
+    result = dict(payload)
+    result.update(
+        {
+            "turn_id": admission.record.turn_id,
+            "idempotency_key": admission.record.identity.idempotency_key,
+            "delivery_state": state.value,
+            "delivery_generation": admission.record.generation,
+            "delivery_replayed": bool(replayed),
+        }
+    )
+    return result
+
+
+def _chat_delivery_json_response(
+    payload: dict[str, Any],
+    *,
+    status_code: int,
+    turn_id: str = "",
+    idempotency_key: str = "",
+    replayed: bool = False,
+    headers: dict[str, str] | None = None,
+) -> JSONResponse:
+    response_headers = dict(headers or {})
+    response_headers["Cache-Control"] = "no-store"
+    if turn_id:
+        response_headers["X-Aura-Turn-ID"] = turn_id
+    if idempotency_key:
+        response_headers["X-Aura-Idempotency-Key"] = idempotency_key
+    if replayed:
+        response_headers["X-Aura-Delivery-Replayed"] = "true"
+    return JSONResponse(
+        payload,
+        status_code=int(status_code),
+        headers=response_headers,
+    )
+
+
+def _chat_delivery_replay_response(record: DeliveryRecord) -> JSONResponse:
+    if not record.terminal or record.response is None or record.http_status is None:
+        raise ChatDeliveryJournalCorruption(
+            "chat delivery replay requested without a terminal receipt"
+        )
+    payload = dict(record.response)
+    payload["delivery_replayed"] = True
+    return _chat_delivery_json_response(
+        payload,
+        status_code=record.http_status,
+        turn_id=record.turn_id,
+        idempotency_key=record.identity.idempotency_key,
+        replayed=True,
+    )
+
+
+async def _chat_delivery_heartbeat(
+    journal: Any,
+    admission: DeliveryAdmission,
+    fence_lost: asyncio.Event,
+) -> None:
+    interval_s = max(0.02, min(5.0, float(journal.stale_after_s) / 3.0))
+    try:
+        while not fence_lost.is_set():
+            await asyncio.sleep(interval_s)
+            if not await journal.renew(admission):
+                fence_lost.set()
+                return
+    except asyncio.CancelledError:
+        raise
+    except ChatDeliveryJournalError as exc:
+        fence_lost.set()
+        logger.error("Chat delivery lease renewal failed closed: %s", exc)
+
+
+async def _stop_chat_delivery_heartbeat(task: asyncio.Task[Any] | None) -> None:
+    if task is None:
+        return
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+
+async def _finalize_chat_delivery(
+    journal: Any,
+    admission: DeliveryAdmission,
+    *,
+    state: DeliveryState,
+    status_code: int,
+    payload: dict[str, Any],
+) -> DeliveryRecord:
+    operation = asyncio.create_task(
+        journal.finalize(
+            admission,
+            state=state,
+            http_status=status_code,
+            response=payload,
+        ),
+        name=f"ChatDeliveryFinalize:{admission.record.turn_id}",
+    )
+    try:
+        return await asyncio.shield(operation)
+    except asyncio.CancelledError:
+        try:
+            await operation
+        except ChatDeliveryJournalError as exc:
+            logger.error(
+                "Chat delivery terminal receipt failed during cancellation: %s",
+                exc,
+            )
+        raise
+
+
+async def _chat_delivery_fence_response(
+    journal: Any,
+    admission: DeliveryAdmission,
+) -> JSONResponse:
+    current = await journal.get(admission.record.identity)
+    if current is not None and current.terminal:
+        return _chat_delivery_replay_response(current)
+    record = current or admission.record
+    return _chat_delivery_json_response(
+        {
+            "response": (
+                "This chat execution was superseded by the current fenced owner. "
+                "Use the delivery status contract instead of replaying it."
+            ),
+            "status": "delivery_pending",
+            "delivery_state": "running",
+            "turn_id": record.turn_id,
+            "idempotency_key": record.identity.idempotency_key,
+            "delivery_generation": record.generation,
+            "delivery_replayed": False,
+        },
+        status_code=202,
+        turn_id=record.turn_id,
+        idempotency_key=record.identity.idempotency_key,
+        headers={"Retry-After": "1"},
+    )
 
 
 def _observe_authenticated_chat_turn(
@@ -277,6 +557,8 @@ async def _record_http_chat_delivery(
     session_key: str,
     status_code: int,
     status: str,
+    turn_id: str,
+    terminal_at: float,
 ) -> None:
     """Emit and consume a principal-bound receipt after the HTTP body is sent."""
     if not response_text or not principal:
@@ -288,7 +570,9 @@ async def _record_http_chat_delivery(
         principal_digest = digest_principal_binding(principal)
         receipt = get_receipt_store().emit(
             OutputReceipt(
+                receipt_id=f"output-chat-http-{turn_id}",
                 cause="chat_http_response",
+                created_at=terminal_at,
                 origin="api",
                 target="primary",
                 digest=digest_output_content(response_text),
@@ -301,6 +585,7 @@ async def _record_http_chat_delivery(
                     ).hexdigest(),
                     "status": status[:120],
                     "status_code": int(status_code),
+                    "turn_id": turn_id,
                 },
             )
         )
@@ -328,6 +613,7 @@ def _attach_http_chat_delivery_receipt(
     request: Request | None,
     body: Any,
     payload: dict[str, Any],
+    record: DeliveryRecord,
 ) -> None:
     response_text = str(payload.get("response") or "").strip()
     principal = _authenticated_chat_principal(request)
@@ -348,13 +634,15 @@ def _attach_http_chat_delivery_receipt(
                 session_key=session_key,
                 status_code=response.status_code,
                 status=status,
+                turn_id=record.turn_id,
+                terminal_at=float(record.terminal_at or record.updated_at),
             )
 
     response.background = BackgroundTask(_after_send)
 
 
 def _paired_chat_response_boundary(handler: Callable[..., Any]) -> Callable[..., Any]:
-    """Fail closed on response metadata even when the route returns early."""
+    """Fence every chat turn before side effects and durably seal its outcome."""
 
     @wraps(handler)
     async def _wrapped(*args: Any, **kwargs: Any) -> Any:
@@ -367,59 +655,274 @@ def _paired_chat_response_boundary(handler: Callable[..., Any]) -> Callable[...,
         if isinstance(body, Request):
             request = body
             body = None
-        exact_principal = _observe_authenticated_chat_turn(request, body)
+        exact_principal = _authenticated_chat_principal(request)
         conversation_only = bool(
             request_access_profile(request).get("conversation_only", True)
         )
+
+        identity: DeliveryIdentity | None = None
         try:
-            with relational_principal_scope(exact_principal):
-                response = await handler(*args, **kwargs)
-        except HTTPException as exc:
-            if not conversation_only:
+            identity, request_hash, approval_resume_token = (
+                _chat_delivery_request_contract(
+                    request,
+                    body,
+                    exact_principal=exact_principal,
+                )
+            )
+            journal = await asyncio.to_thread(get_chat_delivery_journal)
+            admission = await journal.reserve(
+                identity,
+                request_hash,
+                wait_timeout_s=_chat_delivery_wait_timeout_s(),
+                approval_resume_token=approval_resume_token,
+            )
+        except ValueError as exc:
+            return _chat_delivery_json_response(
+                {
+                    "response": "The chat delivery identity or request contract was invalid.",
+                    "status": "invalid_chat_delivery_contract",
+                    "detail": str(exc),
+                    "delivery_state": "failed",
+                },
+                status_code=400,
+                idempotency_key=(identity.idempotency_key if identity else ""),
+            )
+        except (ChatDeliveryJournalCorruption, ChatDeliveryJournalUnavailable) as exc:
+            logger.error("Chat delivery journal admission failed closed: %s", exc)
+            return _chat_delivery_json_response(
+                {
+                    "response": (
+                        "The durable chat delivery authority is unavailable. I did not "
+                        "start this turn or any of its side effects."
+                    ),
+                    "status": "chat_delivery_journal_unavailable",
+                    "delivery_state": "failed",
+                    "response_confidence": "failed",
+                },
+                status_code=503,
+                idempotency_key=(identity.idempotency_key if identity else ""),
+                headers={"Retry-After": "1"},
+            )
+
+        if admission.kind is AdmissionKind.MISMATCH:
+            return _chat_delivery_json_response(
+                {
+                    "response": (
+                        "That idempotency key is already bound to a different chat "
+                        "request. The original turn was not changed."
+                    ),
+                    "status": "idempotency_payload_mismatch",
+                    "delivery_state": "mismatch",
+                    "turn_id": admission.record.turn_id,
+                    "idempotency_key": admission.record.identity.idempotency_key,
+                    "response_confidence": "failed",
+                },
+                status_code=409,
+                turn_id=admission.record.turn_id,
+                idempotency_key=admission.record.identity.idempotency_key,
+            )
+
+        if admission.kind is AdmissionKind.REPLAY:
+            try:
+                response = _chat_delivery_replay_response(admission.record)
+                replay_payload = dict(admission.record.response or {})
+                replay_payload["delivery_replayed"] = True
+                _attach_http_chat_delivery_receipt(
+                    response,
+                    request=request,
+                    body=body,
+                    payload=replay_payload,
+                    record=admission.record,
+                )
+                return response
+            except ChatDeliveryJournalCorruption as exc:
+                logger.error("Chat delivery replay failed closed: %s", exc)
+                return _chat_delivery_json_response(
+                    {
+                        "response": "The stored chat delivery receipt failed validation.",
+                        "status": "chat_delivery_journal_corrupt",
+                        "delivery_state": "failed",
+                        "response_confidence": "failed",
+                    },
+                    status_code=503,
+                    turn_id=admission.record.turn_id,
+                    idempotency_key=admission.record.identity.idempotency_key,
+                )
+
+        if admission.kind is AdmissionKind.PENDING:
+            return _chat_delivery_json_response(
+                admission.record.public_status(include_result=False),
+                status_code=202,
+                turn_id=admission.record.turn_id,
+                idempotency_key=admission.record.identity.idempotency_key,
+                headers={"Retry-After": "1"},
+            )
+
+        turn_token = _CHAT_DELIVERY_TURN_ID.set(admission.record.turn_id)
+        key_token = _CHAT_DELIVERY_IDEMPOTENCY_KEY.set(
+            admission.record.identity.idempotency_key
+        )
+        fence_lost = asyncio.Event()
+        heartbeat_task = asyncio.create_task(
+            _chat_delivery_heartbeat(journal, admission, fence_lost),
+            name=f"ChatDeliveryHeartbeat:{admission.record.turn_id}",
+        )
+        try:
+            try:
+                observed_principal = _observe_authenticated_chat_turn(request, body)
+                with relational_principal_scope(observed_principal or exact_principal):
+                    response = await handler(*args, **kwargs)
+            except asyncio.CancelledError:
+                cancelled_payload = _chat_delivery_payload(
+                    {
+                        "response": (
+                            "The transport ended before this chat execution produced "
+                            "an authoritative terminal response. Automatic replay is fenced."
+                        ),
+                        "status": "delivery_ambiguous",
+                        "response_confidence": "failed",
+                    },
+                    admission,
+                    state=DeliveryState.AMBIGUOUS,
+                )
+                try:
+                    await _finalize_chat_delivery(
+                        journal,
+                        admission,
+                        state=DeliveryState.AMBIGUOUS,
+                        status_code=409,
+                        payload=cancelled_payload,
+                    )
+                except (ChatDeliveryFenceLost, ChatDeliveryJournalError) as exc:
+                    logger.error(
+                        "Chat cancellation could not seal its authoritative state: %s",
+                        exc,
+                    )
                 raise
-            response = JSONResponse(
-                {
-                    "response": "The paired conversation request was rejected.",
-                    "status": "paired_request_rejected",
-                    "response_confidence": "failed",
-                },
-                status_code=exc.status_code,
-            )
-        if conversation_only and not isinstance(response, JSONResponse):
-            response = JSONResponse(
-                {
-                    "response": "The paired conversation response used an unsupported format.",
-                    "status": "paired_response_format_rejected",
-                    "response_confidence": "failed",
-                },
-                status_code=500,
-            )
-        payload: dict[str, Any] = {}
-        if isinstance(response, JSONResponse):
+            except HTTPException as exc:
+                if conversation_only:
+                    response = JSONResponse(
+                        {
+                            "response": "The paired conversation request was rejected.",
+                            "status": "paired_request_rejected",
+                            "response_confidence": "failed",
+                        },
+                        status_code=exc.status_code,
+                        headers=exc.headers,
+                    )
+                else:
+                    response = JSONResponse(
+                        {
+                            "detail": exc.detail,
+                            "status": "request_rejected",
+                            "response_confidence": "failed",
+                        },
+                        status_code=exc.status_code,
+                        headers=exc.headers,
+                    )
+            except Exception as exc:  # noqa: BLE001 - terminal route boundary
+                record_degradation("chat.delivery_boundary", exc)
+                logger.error("Chat delivery boundary caught an uncaught failure", exc_info=True)
+                response = JSONResponse(
+                    {
+                        "response": (
+                            "The chat execution failed before an authoritative answer formed."
+                        ),
+                        "status": "chat_delivery_execution_failed",
+                        "error_type": type(exc).__name__,
+                        "response_confidence": "failed",
+                    },
+                    status_code=500,
+                )
+
+            if not isinstance(response, JSONResponse):
+                response = JSONResponse(
+                    {
+                        "response": "The chat route returned an unsupported response format.",
+                        "status": "chat_response_format_rejected",
+                        "response_confidence": "failed",
+                    },
+                    status_code=500,
+                )
+
+            payload: dict[str, Any]
             try:
                 decoded = json.loads(bytes(response.body))
-                payload = decoded if isinstance(decoded, dict) else {}
+                if not isinstance(decoded, dict):
+                    raise TypeError("chat response body must be a JSON object")
+                payload = decoded
                 if conversation_only:
                     payload = _paired_chat_response_payload(payload)
             except (TypeError, ValueError, json.JSONDecodeError) as exc:
                 record_degradation("chat.paired_response_projection", exc)
-                if conversation_only:
-                    payload = {
-                        "response": "The paired conversation response could not be projected safely.",
-                        "status": "paired_response_projection_failed",
+                payload = {
+                    "response": "The chat response could not be projected safely.",
+                    "status": "chat_response_projection_failed",
+                    "response_confidence": "failed",
+                }
+                response.status_code = 500
+
+            terminal_state = _chat_delivery_state_for_response(
+                payload,
+                response.status_code,
+            )
+            payload = _chat_delivery_payload(
+                payload,
+                admission,
+                state=terminal_state,
+            )
+
+            if fence_lost.is_set():
+                return await _chat_delivery_fence_response(journal, admission)
+
+            try:
+                terminal_record = await _finalize_chat_delivery(
+                    journal,
+                    admission,
+                    state=terminal_state,
+                    status_code=response.status_code,
+                    payload=payload,
+                )
+            except ChatDeliveryFenceLost:
+                return await _chat_delivery_fence_response(journal, admission)
+            except ChatDeliveryJournalError as exc:
+                logger.error("Chat terminal receipt failed closed: %s", exc)
+                return _chat_delivery_json_response(
+                    {
+                        "response": (
+                            "The turn ran, but its durable terminal receipt could not be "
+                            "sealed. The result is withheld to prevent unsafe replay."
+                        ),
+                        "status": "chat_delivery_terminal_unsealed",
+                        "delivery_state": "ambiguous",
+                        "turn_id": admission.record.turn_id,
+                        "idempotency_key": admission.record.identity.idempotency_key,
                         "response_confidence": "failed",
-                    }
-                    response.status_code = 500
-            if conversation_only:
-                response.body = response.render(payload)
-                response.headers["content-length"] = str(len(response.body))
+                    },
+                    status_code=503,
+                    turn_id=admission.record.turn_id,
+                    idempotency_key=admission.record.identity.idempotency_key,
+                )
+
+            response.body = response.render(payload)
+            response.headers["content-length"] = str(len(response.body))
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["X-Aura-Turn-ID"] = admission.record.turn_id
+            response.headers["X-Aura-Idempotency-Key"] = (
+                admission.record.identity.idempotency_key
+            )
             _attach_http_chat_delivery_receipt(
                 response,
                 request=request,
                 body=body,
                 payload=payload,
+                record=terminal_record,
             )
-        return response
+            return response
+        finally:
+            await _stop_chat_delivery_heartbeat(heartbeat_task)
+            _CHAT_DELIVERY_IDEMPOTENCY_KEY.reset(key_token)
+            _CHAT_DELIVERY_TURN_ID.reset(turn_token)
 
     return _wrapped
 
@@ -2170,11 +2673,6 @@ def _read_repo_probe_reply(user_message: str) -> dict[str, str] | None:
         "status": "repo_probe_error",
     }
 
-
-# ── Idempotency ───────────────────────────────────────────────
-
-_idempotency_cache: collections.OrderedDict = collections.OrderedDict()
-def _get_idemp_lock(): return _locks.setdefault("idemp", asyncio.Lock())
 
 # ── Stale Response Detection ─────────────────────────────────
 # Track the last N responses to detect when the cortex is stuck returning the
@@ -10644,8 +11142,16 @@ def _build_self_diagnostic_reply(user_message: str) -> str:
     try:
         mycelium = ServiceContainer.get("mycelial_network", default=None)
         if mycelium:
-            node_count = len(getattr(mycelium, "pathways", {}) or {})
-            edge_count = len(getattr(mycelium, "hyphae", []) or [])
+            counter = getattr(mycelium, "get_topology_counts", None)
+            if callable(counter):
+                counts = counter()
+                node_count = int(counts.get("pathways", 0))
+                edge_count = int(counts.get("hyphae", 0))
+            else:
+                topology_reader = getattr(mycelium, "get_network_topology", None)
+                topology = topology_reader() if callable(topology_reader) else {}
+                node_count = int(topology.get("pathway_count", 0) or 0)
+                edge_count = len(topology.get("hyphae") or {})
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation('chat', exc)
         logger.debug("Self-diagnostic mycelial read failed: %s", exc)
@@ -13183,41 +13689,19 @@ def _build_grounded_introspection_reply(
     if asks_topology:
         try:
             mycelium = ServiceContainer.get("mycelium", default=None) or ServiceContainer.get("mycelial_network", default=None)
-            if mycelium and hasattr(mycelium, "get_network_topology"):
-                topo = mycelium.get_network_topology() or {}
-                nodes_map: set[str] = set()
-                link_count = 0
-
-                for h_data in (topo.get("hyphae") or {}).values():
-                    src = str(h_data.get("source") or "").strip()
-                    tgt = str(h_data.get("target") or "").strip()
-                    if src:
-                        nodes_map.add(src)
-                    if tgt:
-                        nodes_map.add(tgt)
-                    if src and tgt:
-                        link_count += 1
-
-                for mapped in getattr(mycelium, "mapped_files", []) or []:
-                    mapped = str(mapped or "").strip()
-                    if mapped:
-                        nodes_map.add(mapped)
-
-                pathway_count = int(topo.get("pathway_count", 0) or 0)
-                pathway_links = 0
-                for pw_data in (topo.get("pathways") or {}).values():
-                    nodes_map.add(f"pw:{pw_data.get('pathway_id') or pw_data.get('skill_name') or pathway_links}")
-                    skill = str(pw_data.get("skill_name") or "").lower().replace("_", "")
-                    if not skill:
-                        continue
-                    for mapped in getattr(mycelium, "mapped_files", []) or []:
-                        mapped_norm = str(mapped or "").lower().replace("_", "")
-                        if skill in mapped_norm:
-                            pathway_links += 1
-                            break
-
-                total_nodes = len(nodes_map)
-                total_links = link_count + pathway_links
+            if mycelium:
+                summary_reader = getattr(mycelium, "get_topology_summary", None)
+                if callable(summary_reader):
+                    summary = summary_reader()
+                    total_nodes = int(summary.get("nodes", 0) or 0)
+                    total_links = int(summary.get("links", 0) or 0)
+                    pathway_count = int(summary.get("pathways", 0) or 0)
+                else:
+                    counts_reader = getattr(mycelium, "get_topology_counts", None)
+                    counts = counts_reader() if callable(counts_reader) else {}
+                    total_nodes = int(counts.get("mapped_files", 0) or 0)
+                    total_links = int(counts.get("hyphae", 0) or 0)
+                    pathway_count = int(counts.get("pathways", 0) or 0)
                 return (
                     f"My live mycelial topology is {total_nodes} nodes, {total_links} links, "
                     f"and {pathway_count} pathways. Those counts are coming from the active "
@@ -15520,6 +16004,85 @@ async def api_activate_cheat_code(
     return response
 
 
+@router.get("/chat/delivery/{idempotency_key}")
+async def api_chat_delivery_status(
+    idempotency_key: str,
+    request: Request,
+    session_id: str | None = None,
+    _: None = Depends(_require_internal),
+    __: None = Depends(_check_rate_limit),
+):
+    """Return the authenticated caller's durable terminal chat state."""
+
+    body = ChatRequest(message="", session_id=session_id)
+    identity: DeliveryIdentity | None = None
+    try:
+        session_key = _chat_turn_session_key(request, body)
+        exact_principal = _authenticated_chat_principal(request)
+        identity = DeliveryIdentity.create(
+            principal=_chat_delivery_principal(
+                request,
+                exact_principal,
+                session_key,
+            ),
+            session_id=session_key,
+            idempotency_key=idempotency_key,
+        )
+        journal = await asyncio.to_thread(get_chat_delivery_journal)
+        record = await journal.get(identity)
+    except ValueError as exc:
+        return _chat_delivery_json_response(
+            {
+                "status": "invalid_chat_delivery_identity",
+                "delivery_status": "invalid",
+                "detail": str(exc),
+            },
+            status_code=400,
+            idempotency_key=(identity.idempotency_key if identity else ""),
+        )
+    except (ChatDeliveryJournalCorruption, ChatDeliveryJournalUnavailable) as exc:
+        logger.error("Chat delivery status failed closed: %s", exc)
+        return _chat_delivery_json_response(
+            {
+                "status": "chat_delivery_journal_unavailable",
+                "delivery_status": "unavailable",
+                "response_confidence": "failed",
+            },
+            status_code=503,
+            idempotency_key=(identity.idempotency_key if identity else ""),
+            headers={"Retry-After": "1"},
+        )
+
+    if record is None:
+        return _chat_delivery_json_response(
+            {
+                "status": "chat_delivery_not_found",
+                "delivery_status": "not_found",
+            },
+            status_code=404,
+            idempotency_key=idempotency_key,
+        )
+
+    payload = record.public_status(include_result=True)
+    response = _chat_delivery_json_response(
+        payload,
+        status_code=200 if record.terminal else 202,
+        turn_id=record.turn_id,
+        idempotency_key=record.identity.idempotency_key,
+        replayed=record.terminal,
+        headers=None if record.terminal else {"Retry-After": "1"},
+    )
+    if record.terminal and record.response is not None:
+        _attach_http_chat_delivery_receipt(
+            response,
+            request=request,
+            body=body,
+            payload=record.response,
+            record=record,
+        )
+    return response
+
+
 @router.post("/chat/regenerate")
 @_paired_chat_response_boundary
 async def api_chat_regenerate(
@@ -16335,17 +16898,6 @@ async def api_chat(
             record_degradation('chat', e)
             logger.debug("Memory check failed: %s", e)
 
-        # Idempotency check
-        raw_idem_key = request.headers.get("X-Idempotency-Key")
-        idem_key = _chat_idempotency_cache_key(
-            _chat_session_id,
-            raw_idem_key,
-        )
-        if idem_key:
-            async with _get_idemp_lock():
-                if idem_key in _idempotency_cache:
-                    return JSONResponse(_idempotency_cache[idem_key])
-
         if early_allow_chat_fastpaths and _is_explicit_capability_inventory_request(_semantic_user_message):
             reply_text = _build_grounded_capability_inventory_reply(_semantic_user_message)
             return JSONResponse(
@@ -17036,11 +17588,6 @@ async def api_chat(
                     final_text,
                     session_id=_chat_session_id,
                 )
-            if idem_key:
-                async with _get_idemp_lock():
-                    _idempotency_cache[idem_key] = response_data
-                    if len(_idempotency_cache) > 1000:
-                        _idempotency_cache.popitem(last=False)
             await _emit_chat_output_receipt(
                 final_text,
                 cause=f"chat_fastpath:{status}",
@@ -19346,13 +19893,6 @@ async def api_chat(
                 _final_reply or "…",
                 session_id=_chat_session_id,
             )
-
-        # Cache idempotent response
-        if idem_key:
-            async with _get_idemp_lock():
-                _idempotency_cache[idem_key] = response_data
-                if len(_idempotency_cache) > 1000:
-                    _idempotency_cache.popitem(last=False)
 
         await _emit_chat_output_receipt(
             _final_reply or "…",

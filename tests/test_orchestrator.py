@@ -1343,6 +1343,84 @@ async def test_handle_incoming_message_simple_v2(orchestrator):
         assert True
 
 
+def _approve_all_will_decisions():
+    return SimpleNamespace(
+        decide=lambda **_kwargs: SimpleNamespace(
+            is_approved=lambda: True,
+            receipt_id="test-will-receipt",
+            constraints=[],
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_foreground_cognition_cancellation_propagates_without_fallback_output(
+    orchestrator, monkeypatch
+):
+    entered = asyncio.Event()
+    never = asyncio.Event()
+
+    async def blocked_cognition(*_args, **_kwargs):
+        entered.set()
+        await never.wait()
+
+    monkeypatch.setattr("core.will.get_will", _approve_all_will_decisions)
+    orchestrator._current_thought_task = None
+    orchestrator.react_loop = None
+    orchestrator.mycelium.match_hardwired = _CallRecorder(return_value=None)
+    orchestrator.kernel_interface = SimpleNamespace(process=blocked_cognition)
+    orchestrator.output_gate.emit = _AsyncCallRecorder()
+
+    task = asyncio.create_task(
+        orchestrator._original_handle_incoming_logic("hello", origin="user")
+    )
+    await asyncio.wait_for(entered.wait(), timeout=2.0)
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert orchestrator.output_gate.emit.called is False
+
+
+@pytest.mark.asyncio
+async def test_knowledge_gap_search_cancellation_propagates_without_stale_response(
+    orchestrator, monkeypatch
+):
+    entered = asyncio.Event()
+    never = asyncio.Event()
+
+    async def blocked_search(*_args, **_kwargs):
+        entered.set()
+        await never.wait()
+
+    async def completed_cognition(*_args, **_kwargs):
+        return "I don't know the answer."
+
+    monkeypatch.setattr("core.will.get_will", _approve_all_will_decisions)
+    orchestrator._current_thought_task = None
+    orchestrator.react_loop = None
+    orchestrator.agency = object()
+    orchestrator.mycelium.match_hardwired = _CallRecorder(return_value=None)
+    orchestrator.kernel_interface = SimpleNamespace(process=completed_cognition)
+    orchestrator._finalize_response = _AsyncCallRecorder(
+        return_value="I don't know the answer."
+    )
+    orchestrator.execute_tool = blocked_search
+    orchestrator.output_gate.emit = _AsyncCallRecorder()
+
+    task = asyncio.create_task(
+        orchestrator._original_handle_incoming_logic(
+            "A factual question", origin="user"
+        )
+    )
+    await asyncio.wait_for(entered.wait(), timeout=2.0)
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert orchestrator.output_gate.emit.called is False
+
+
 @pytest.mark.asyncio
 async def test_perform_autonomous_thought_reflective_lite(orchestrator):
     orchestrator.status.cycle_count = 100

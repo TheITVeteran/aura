@@ -308,6 +308,33 @@ class FileWriteGateway:
 
         await async_atomic_write_bytes(target, bytes(payload), durable=durable)
 
+    async def write_bytes_if_absent_async(
+        self,
+        path: PathLike,
+        payload: bytes,
+        *,
+        source: str = "unknown",
+        durable: bool = True,
+    ) -> bool:
+        """Atomically publish bytes without replacing an existing target."""
+
+        target = _coerce_target(path)
+        if not isinstance(payload, (bytes, bytearray, memoryview)):
+            raise TypeError("payload must be bytes-like")
+        if governance_runtime_active():
+            require_governance(
+                f"file_write_gateway.write_bytes_if_absent:{source}",
+                strict=True,
+                allowed_domains=self._allowed_domains,
+            )
+        from core.runtime.atomic_writer import async_atomic_write_bytes_if_absent
+
+        return await async_atomic_write_bytes_if_absent(
+            target,
+            bytes(payload),
+            durable=durable,
+        )
+
     def open_owned_binary(
         self,
         path: PathLike,

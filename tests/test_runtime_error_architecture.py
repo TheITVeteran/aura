@@ -1264,8 +1264,9 @@ def test_runtime_registry_batch_three_live_path_service_seams():
         def __init__(self):
             self.pulsed = False
 
-        def get_hypha(self, *_args):
-            return SimpleNamespace(pulse=lambda success: setattr(self, "pulsed", bool(success)))
+        def pulse_hypha(self, *_args, success=True):
+            self.pulsed = bool(success)
+            return True
 
     sync = Sync()
     affect = Affect()
@@ -1913,8 +1914,9 @@ def test_runtime_registry_batch_six_large_scc_service_seams(monkeypatch):
         def __init__(self):
             self.pulsed = []
 
-        def get_hypha(self, source, target):
-            return SimpleNamespace(pulse=lambda success=True: self.pulsed.append((source, target, success)))
+        def pulse_hypha(self, source, target, *, success=True):
+            self.pulsed.append((source, target, success))
+            return True
 
     class TTS:
         def __init__(self):

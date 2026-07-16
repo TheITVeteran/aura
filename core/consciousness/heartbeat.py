@@ -373,19 +373,13 @@ class CognitiveHeartbeat:
             mycelium = self._mycelium
             if mycelium:
                 # 1. Main Consciousness Heartbeat
-                h_con = mycelium.get_hypha("consciousness", "consciousness")
-                if h_con:
-                    h_con.pulse(success=True)
+                mycelium.pulse_hypha("consciousness", "consciousness", success=True)
 
                 # 2. Workspace Proof of Life
-                h_ws = mycelium.get_hypha("consciousness", "workspace")
-                if h_ws:
-                    h_ws.pulse(success=True)
+                mycelium.pulse_hypha("consciousness", "workspace", success=True)
 
                 # 3. Attention Schema Proof of Life
-                h_att = mycelium.get_hypha("consciousness", "attention")
-                if h_att:
-                    h_att.pulse(success=True)
+                mycelium.pulse_hypha("consciousness", "attention", success=True)
         except (RuntimeError, AttributeError, TypeError, ValueError) as _e:
             _record_heartbeat_degradation(
                 _e,
@@ -1064,8 +1058,18 @@ class CognitiveHeartbeat:
             mycelium = ServiceContainer.get("mycelial_network", default=None)
             if mycelium:
                 mycelial_data["health"] = "online"
-                mycelial_data["nodes"] = len(getattr(mycelium, "pathways", {}))
-                mycelial_data["edges"] = len(getattr(mycelium, "hyphae", []))
+                counter = getattr(mycelium, "get_topology_counts", None)
+                if callable(counter):
+                    counts = counter()
+                    mycelial_data["nodes"] = int(counts.get("pathways", 0))
+                    mycelial_data["edges"] = int(counts.get("hyphae", 0))
+                else:
+                    topology_reader = getattr(mycelium, "get_network_topology", None)
+                    topology = topology_reader() if callable(topology_reader) else {}
+                    mycelial_data["nodes"] = int(
+                        topology.get("pathway_count", 0) or 0
+                    )
+                    mycelial_data["edges"] = len(topology.get("hyphae") or {})
 
             payload = TelemetryPayload(
                 energy=round(_percent(energy, 0.8), 1),

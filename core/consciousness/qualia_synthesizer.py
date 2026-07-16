@@ -150,7 +150,8 @@ class QualiaSynthesizer:
             myc = ServiceContainer.get("mycelium", default=None)
             if myc is not None:
                 # Tension = density of active hyphae normalized
-                tension = min(1.0, len(getattr(myc, "hyphae", ())) / 100.0)
+                topology_counts = myc.get_topology_counts()
+                tension = min(1.0, max(0, int(topology_counts.get("hyphae", 0))) / 100.0)
         except (ImportError, AttributeError, RuntimeError) as _e:
             record_degradation('qualia_synthesizer', _e)
             logger.debug('Ignored Exception in qualia_synthesizer.py: %s', _e)

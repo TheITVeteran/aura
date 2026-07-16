@@ -917,27 +917,42 @@ class PhiEstimate:
         return 1.0 / (n + 1) if n > 0 else 1.0
 
     def surrogate_resolution_sufficient(self) -> bool:
-        """Can this null distribution resolve a claim at ``PHI_ALPHA``?
+        """Can the family-wise null resolve a claim at ``PHI_ALPHA``?
 
         A significance claim made at the resolution limit of its own test is not
         a claim. We require the floor to sit an order of magnitude below the
         threshold, so a p that clears alpha does so with room to spare rather
         than because it could not have been any smaller.
+
+        Scoped to the grain-selection test on purpose. This asks about
+        ``grain_selection_p``; an estimate that never selected a grain does not
+        use that p as a criterion, so the question does not apply to it — see
+        :meth:`integration_established`.
         """
+        if not self.emergent_grain_k:
+            return True
         return self.p_floor() <= PHI_ALPHA / PHI_RESOLUTION_MARGIN
 
     def integration_established(self) -> bool:
         """Family-wise evidence at the selected grain, not a raw maximum.
 
-        Requires enough surrogates to resolve the threshold: the checked-in
-        campaign reported family-wise p = 0.047619 from 20 surrogates, which is
-        exactly 1/(20+1) — the floor. It cleared p ≤ 0.10 only because the test
-        had no finer resolution to offer.
+        Two different criteria, and the resolution gate belongs to only one of
+        them:
+
+        No grain selected — the criterion is the z-score and CI against the main
+        circular-shift null. No p-value is consulted, so the grain-selection
+        p-floor is not a question that can be asked about this estimate.
+
+        Grain selected — the criterion includes ``grain_selection_p``, and that
+        is where the floor bites: the checked-in campaign reported family-wise
+        p = 0.047619 from 20 surrogates, which is exactly 1/(20+1). It cleared
+        p ≤ 0.10 only because the test had no finer resolution to offer, so the
+        null must be able to resolve the threshold before the verdict counts.
         """
-        if not self.surrogate_resolution_sufficient():
-            return False
         if not self.emergent_grain_k:
             return self.z >= 3.0 and self.ci_5 > 0.0
+        if not self.surrogate_resolution_sufficient():
+            return False
         return (
             self.emergent_z >= 3.0
             and self.emergent_ci_5 > 0.0

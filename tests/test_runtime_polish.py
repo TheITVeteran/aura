@@ -67,7 +67,11 @@ def test_cache_policy_keeps_live_shell_uncached():
     assert _cache_policy_for_path("/")["Cache-Control"].startswith("no-store")
     assert _cache_policy_for_path("/static/aura.js")["Cache-Control"].startswith("no-store")
     assert _cache_policy_for_path("/static/aura.css")["Cache-Control"].startswith("no-store")
-    assert _cache_policy_for_path("/static/icon-192.png")["Cache-Control"] == "public, max-age=31536000, immutable"
+    assert _cache_policy_for_path("/static/icon-192.png")["Cache-Control"].startswith("no-store")
+    assert _cache_policy_for_path(
+        "/static/icon-192.png",
+        revision_addressed=True,
+    )["Cache-Control"] == "public, max-age=31536000, immutable"
 
 
 def test_cache_policy_middleware_dependencies_are_imported():
@@ -481,9 +485,21 @@ def isolated_health_probe_state():
 
     system_routes._reset_health_probe_state_for_test()
     system_routes._reset_boot_health_cache_for_test()
-    yield
-    system_routes._reset_health_probe_state_for_test()
-    system_routes._reset_boot_health_cache_for_test()
+    with system_routes._RUNTIME_REVISION_LOCK:
+        previous_revision = system_routes._RUNTIME_REVISION_CACHE
+        previous_collected_at = system_routes._RUNTIME_REVISION_CACHE_COLLECTED_AT
+        system_routes._RUNTIME_REVISION_CACHE = system_routes._runtime_revision_unavailable(
+            "", required=False
+        )
+        system_routes._RUNTIME_REVISION_CACHE_COLLECTED_AT = time.monotonic()
+    try:
+        yield
+    finally:
+        with system_routes._RUNTIME_REVISION_LOCK:
+            system_routes._RUNTIME_REVISION_CACHE = previous_revision
+            system_routes._RUNTIME_REVISION_CACHE_COLLECTED_AT = previous_collected_at
+        system_routes._reset_health_probe_state_for_test()
+        system_routes._reset_boot_health_cache_for_test()
 
 
 @pytest.mark.asyncio
@@ -779,13 +795,16 @@ def test_desktop_shell_does_not_treat_socket_liveness_as_runtime_health():
     assert "const laneOperational = (state.conversationReady || activeGeneration) && healthy;" in aura_js
 
 
-def test_desktop_shell_surfaces_full_runtime_autonomy_status():
+def test_desktop_shell_surfaces_current_runtime_autonomy_status():
     aura_js = (PROJECT_ROOT / "interface" / "static" / "aura.js").read_text(encoding="utf-8")
     index_html = (PROJECT_ROOT / "interface" / "static" / "index.html").read_text(
         encoding="utf-8"
     )
 
-    assert "FULL RUNTIME" in index_html
+    assert '<div class="section-label">RUNTIME STATUS</div>' in index_html
+    assert 'id="fr-profile"' in index_html
+    assert 'id="fr-ready"' in index_html
+    assert 'id="fr-background"' in index_html
     assert 'id="fr-initiative"' in index_html
     assert 'id="fr-selfdev"' in index_html
     assert "d.full_runtime" in aura_js
@@ -901,7 +920,7 @@ def test_programmatic_chat_sends_use_real_submit_path():
     assert "input.dispatchEvent(new Event('input', { bubbles: true }))" in save_image_block
 
 
-def test_splash_title_sequence_uses_aura_neon_lockup():
+def test_splash_title_sequence_uses_current_aura_neon_lockup():
     index_html = (PROJECT_ROOT / "interface" / "static" / "index.html").read_text(encoding="utf-8")
     aura_css = (PROJECT_ROOT / "interface" / "static" / "aura.css").read_text(encoding="utf-8")
 
@@ -909,9 +928,13 @@ def test_splash_title_sequence_uses_aura_neon_lockup():
     assert 'class="splash-logo-word splash-logo-left"' in index_html
     assert 'class="splash-logo-word splash-logo-right"' in index_html
     assert 'class="splash-sigil"' in index_html
-    assert 'class="splash-sigil-orbit orbit-a"' in index_html
-    assert 'class="splash-sigil-orbit orbit-b"' in index_html
-    assert 'class="splash-sigil-orbit orbit-c"' in index_html
+    assert 'class="splash-sigil-svg"' in index_html
+    assert 'class="sigil-orbits"' in index_html
+    assert 'id="sigil-orbit-a"' in index_html
+    assert 'id="sigil-orbit-b"' in index_html
+    assert 'id="sigil-orbit-c"' in index_html
+    assert index_html.count("<animateMotion") == 3
+    assert index_html.count('<mpath href="#sigil-orbit-') == 3
     assert 'aria-label="Aura Luna"' in index_html
 
     assert "Retro Neon Title Sequence" in aura_css
@@ -919,9 +942,11 @@ def test_splash_title_sequence_uses_aura_neon_lockup():
     assert "repeating-linear-gradient" in aura_css
     assert ".splash-title-lockup" in aura_css
     assert ".splash-logo-word" in aura_css
-    assert ".splash-sigil-orbit" in aura_css
+    assert ".splash-sigil-svg" in aura_css
+    assert ".sigil-orbits" in aura_css
     assert "@keyframes neonTitleFlicker" in aura_css
-    assert "@keyframes sigilOrbitA" in aura_css
+    assert "@keyframes sigilCage" in aura_css
+    assert "@media (prefers-reduced-motion: reduce)" in aura_css
     assert "@media (max-width: 720px)" in aura_css
 
 

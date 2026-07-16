@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import threading
 from pathlib import Path
 from types import SimpleNamespace
@@ -102,6 +103,87 @@ def test_piper_model_holds_and_releases_lane(
 
     assert engine._piper_voice is None
     assert controller.snapshot()["owners"] == []
+
+
+def test_piper_download_commits_complete_asset_set_inside_strict_governance(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("AURA_GOVERNANCE_MODE", "strict")
+    engine = voice_engine.SovereignVoiceEngine(data_dir=str(tmp_path / "voice"))
+    model_dir = tmp_path / "voice" / "piper_voices"
+
+    def download(_url: str, *, fallback_url: str, fname: str) -> bytes:
+        assert fallback_url
+        if fname.endswith(".json"):
+            return b'{"audio": {"sample_rate": 22050}}'
+        return b"piper-model" + (b"x" * 2048)
+
+    monkeypatch.setattr(engine, "_download_piper_asset", download)
+
+    engine._download_piper_voice(model_dir)
+
+    assert (model_dir / "en_US-amy-medium.onnx").read_bytes().startswith(
+        b"piper-model"
+    )
+    assert json.loads(
+        (model_dir / "en_US-amy-medium.onnx.json").read_text(encoding="utf-8")
+    )["audio"]["sample_rate"] == 22050
+
+
+def test_piper_download_failure_leaves_no_partial_asset_set(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    engine = voice_engine.SovereignVoiceEngine(data_dir=str(tmp_path / "voice"))
+    model_dir = tmp_path / "voice" / "piper_voices"
+
+    def download(_url: str, *, fallback_url: str, fname: str) -> bytes:
+        assert fallback_url
+        if fname.endswith(".json"):
+            raise RuntimeError("config download failed")
+        return b"piper-model" + (b"x" * 2048)
+
+    monkeypatch.setattr(engine, "_download_piper_asset", download)
+
+    with pytest.raises(RuntimeError, match="config download failed"):
+        engine._download_piper_voice(model_dir)
+
+    assert not (model_dir / "en_US-amy-medium.onnx").exists()
+    assert not (model_dir / "en_US-amy-medium.onnx.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("fname_suffix", "payload", "message"),
+    (
+        (".onnx", b"<html>rate limited</html>", "HTML"),
+        (".onnx.json", b"not-json", "valid JSON"),
+    ),
+)
+def test_piper_download_rejects_invalid_remote_assets_before_persistence(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    fname_suffix: str,
+    payload: bytes,
+    message: str,
+) -> None:
+    engine = voice_engine.SovereignVoiceEngine(data_dir=str(tmp_path / "voice"))
+    model_dir = tmp_path / "voice" / "piper_voices"
+
+    def download(_url: str, *, fallback_url: str, fname: str) -> bytes:
+        assert fallback_url
+        if fname.endswith(fname_suffix):
+            return payload
+        if fname.endswith(".json"):
+            return b'{"audio": {"sample_rate": 22050}}'
+        return b"piper-model" + (b"x" * 2048)
+
+    monkeypatch.setattr(engine, "_download_piper_asset", download)
+
+    with pytest.raises(RuntimeError, match=message):
+        engine._download_piper_voice(model_dir)
+
+    assert not model_dir.exists()
 
 
 def test_stt_discards_loaded_model_when_lane_activation_is_lost(

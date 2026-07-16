@@ -12,6 +12,7 @@ import argparse
 import hashlib
 import json
 import os
+import stat
 import sys
 import threading
 import time
@@ -24,6 +25,30 @@ from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 LAUNCH_PROVENANCE_SCHEMA = "aura.launch_provenance.v1"
 EXPECTED_BUNDLE_ID = "com.aura.desktop"
+RUNTIME_SHELL_ASSETS = (
+    "interface/static/index.html",
+    "interface/static/design_tokens.css",
+    "interface/static/motion_design.css",
+    "interface/static/error_banner.css",
+    "interface/static/aura.css",
+    "interface/static/presence_design.css",
+    "interface/static/vendor/vis-network.min.js",
+    "interface/static/error_banner.js",
+    "interface/static/sound_design.js",
+    "interface/static/perf_collector.js",
+    "interface/static/aura.js",
+    "interface/static/manifest.json",
+    "interface/static/service-worker.js",
+    "interface/static/icon.svg",
+    "interface/static/icon-192.png",
+    "interface/static/icon-512.png",
+    "interface/static/aura_avatar.svg",
+    "interface/static/vendor/fonts/fredoka-variable-latin.woff2",
+    "interface/static/vendor/fonts/ibm-plex-mono-400-latin.woff2",
+    "interface/static/vendor/fonts/ibm-plex-mono-500-latin.woff2",
+    "interface/static/vendor/fonts/ibm-plex-mono-600-latin.woff2",
+    "interface/static/voice-processor.js",
+)
 
 _SOURCE_PATHS = (
     "aura_main.py",
@@ -92,10 +117,9 @@ def _run_git(root: Path, arguments: Sequence[str], *, timeout: float = 3.0) -> s
 
 
 def _git_identity(root: Path) -> dict[str, str]:
-    canonical_root = Path(
-        _run_git(root, ("rev-parse", "--show-toplevel"))
-        .strip()
-    ).expanduser().resolve()
+    canonical_root = (
+        Path(_run_git(root, ("rev-parse", "--show-toplevel")).strip()).expanduser().resolve()
+    )
     commit = _run_git(canonical_root, ("rev-parse", "HEAD")).strip()
     branch_result = get_subprocess_gateway().run(
         ["git", "-C", str(canonical_root), "symbolic-ref", "--quiet", "--short", "HEAD"],
@@ -104,7 +128,9 @@ def _git_identity(root: Path) -> dict[str, str]:
         capture_output=True,
         source="runtime_launch_provenance.git_branch",
     )
-    branch = str(branch_result.stdout or "").strip() if branch_result.returncode == 0 else "DETACHED"
+    branch = (
+        str(branch_result.stdout or "").strip() if branch_result.returncode == 0 else "DETACHED"
+    )
     if len(commit) != 40 or any(character not in "0123456789abcdefABCDEF" for character in commit):
         raise RuntimeError("git HEAD did not resolve to a full commit SHA")
     return {
@@ -172,6 +198,125 @@ def _hash_workspace_state(root: Path, status_output: str) -> dict[str, Any]:
     }
 
 
+def runtime_shell_assets_digest(asset_bytes: Mapping[str, bytes]) -> str:
+    """Hash a complete, already-captured browser shell snapshot."""
+
+    expected = set(RUNTIME_SHELL_ASSETS)
+    observed = set(asset_bytes)
+    if observed != expected:
+        missing = sorted(expected - observed)
+        extra = sorted(observed - expected)
+        raise RuntimeError(
+            f"runtime shell snapshot is incomplete (missing={missing}, extra={extra})"
+        )
+    digest = hashlib.sha256()
+    digest.update(b"aura-runtime-shell-assets-v1\0")
+    for relative in RUNTIME_SHELL_ASSETS:
+        content = asset_bytes[relative]
+        if not isinstance(content, bytes):
+            raise RuntimeError(f"runtime shell snapshot contains non-bytes: {relative}")
+        encoded_name = relative.encode("utf-8")
+        digest.update(len(encoded_name).to_bytes(8, "big"))
+        digest.update(encoded_name)
+        digest.update(hashlib.sha256(content).digest())
+    return digest.hexdigest()
+
+
+def capture_runtime_shell_assets(root: str | Path) -> tuple[str, dict[str, bytes]]:
+    """Capture the exact browser shell bytes without following filesystem links."""
+
+    canonical_root = Path(root).expanduser().resolve(strict=True)
+    captured: dict[str, bytes] = {}
+    root_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_DIRECTORY", 0)
+    root_descriptor = os.open(canonical_root, root_flags)
+    try:
+        for relative in RUNTIME_SHELL_ASSETS:
+            parts = Path(relative).parts
+            if not parts or any(part in {"", ".", ".."} for part in parts):
+                raise RuntimeError(f"runtime shell asset path is invalid: {relative}")
+            descriptor = os.dup(root_descriptor)
+            try:
+                for index, part in enumerate(parts):
+                    is_final = index == len(parts) - 1
+                    flags = (
+                        os.O_RDONLY
+                        | getattr(os, "O_CLOEXEC", 0)
+                        | getattr(os, "O_NOFOLLOW", 0)
+                    )
+                    if not is_final:
+                        flags |= getattr(os, "O_DIRECTORY", 0)
+                    try:
+                        next_descriptor = os.open(part, flags, dir_fd=descriptor)
+                    except OSError as exc:
+                        raise RuntimeError(
+                            f"runtime shell asset traverses a symlink or invalid path: {relative}"
+                        ) from exc
+                    os.close(descriptor)
+                    descriptor = next_descriptor
+                before = os.fstat(descriptor)
+                if not stat.S_ISREG(before.st_mode):
+                    raise RuntimeError(f"runtime shell asset is not a file: {relative}")
+                chunks: list[bytes] = []
+                remaining = before.st_size
+                while remaining > 0:
+                    chunk = os.read(descriptor, min(1024 * 1024, remaining))
+                    if not chunk:
+                        raise RuntimeError(
+                            f"runtime shell asset truncated while reading: {relative}"
+                        )
+                    chunks.append(chunk)
+                    remaining -= len(chunk)
+                after = os.fstat(descriptor)
+                identity_before = (
+                    before.st_dev,
+                    before.st_ino,
+                    before.st_size,
+                    before.st_mtime_ns,
+                    before.st_ctime_ns,
+                )
+                identity_after = (
+                    after.st_dev,
+                    after.st_ino,
+                    after.st_size,
+                    after.st_mtime_ns,
+                    after.st_ctime_ns,
+                )
+                if identity_before != identity_after:
+                    raise RuntimeError(f"runtime shell asset changed while read: {relative}")
+                content = b"".join(chunks)
+                if len(content) != after.st_size:
+                    raise RuntimeError(f"runtime shell asset read was incomplete: {relative}")
+                captured[relative] = content
+            finally:
+                os.close(descriptor)
+    finally:
+        os.close(root_descriptor)
+    return runtime_shell_assets_digest(captured), captured
+
+
+def runtime_shell_assets_sha256(root: str | Path) -> str:
+    """Hash the exact browser shell set pinned into a signed Aura.app."""
+
+    digest, _assets = capture_runtime_shell_assets(root)
+    return digest
+
+
+def _workspace_state_uncached(root: Path) -> dict[str, Any]:
+    output = _run_git(
+        root,
+        (
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=all",
+            "--",
+            *_SOURCE_PATHS,
+        ),
+        timeout=8.0,
+    )
+    return _hash_workspace_state(root, output)
+
+
 def _workspace_state(root: Path, *, commit_sha: str) -> dict[str, Any]:
     from core.runtime.flags import FlagKind, declare
 
@@ -190,19 +335,7 @@ def _workspace_state(root: Path, *, commit_sha: str) -> dict[str, Any]:
         cached = _SOURCE_CACHE.get(cache_key)
         if cached is not None and now - cached[0] < _SOURCE_CACHE_TTL_S:
             return dict(cached[1])
-    output = _run_git(
-        root,
-        (
-            "status",
-            "--porcelain=v1",
-            "-z",
-            "--untracked-files=all",
-            "--",
-            *_SOURCE_PATHS,
-        ),
-        timeout=8.0,
-    )
-    result = _hash_workspace_state(root, output)
+    result = _workspace_state_uncached(root)
     with _SOURCE_CACHE_LOCK:
         _SOURCE_CACHE[cache_key] = (time.monotonic(), dict(result))
     return result
@@ -215,17 +348,28 @@ def build_launch_manifest(
     launcher_source: str | Path,
 ) -> dict[str, Any]:
     canonical_input = Path(root).expanduser().resolve()
-    identity = _git_identity(canonical_input)
-    canonical_root = Path(identity["source_root"])
-    workspace = _workspace_state(canonical_root, commit_sha=identity["commit_sha"])
+    identity_before = _git_identity(canonical_input)
+    canonical_root = Path(identity_before["source_root"])
+    shell_before = runtime_shell_assets_sha256(canonical_root)
+    workspace_before = _workspace_state_uncached(canonical_root)
     launcher_path = Path(launcher_source).expanduser().resolve()
     launcher_bytes = launcher_path.read_bytes()
+    identity_after = _git_identity(canonical_root)
+    workspace_after = _workspace_state_uncached(canonical_root)
+    shell_after = runtime_shell_assets_sha256(canonical_root)
+    if (
+        identity_before != identity_after
+        or workspace_before["workspace_state_sha256"] != workspace_after["workspace_state_sha256"]
+        or shell_before != shell_after
+    ):
+        raise RuntimeError("Aura source changed while the signed launch manifest was captured")
     return {
         "schema": LAUNCH_PROVENANCE_SCHEMA,
         "generated_at_unix": time.time(),
         "version": str(version),
-        **identity,
-        **workspace,
+        **identity_after,
+        **workspace_after,
+        "shell_assets_sha256": shell_after,
         "launcher_source": str(launcher_path.relative_to(canonical_root)),
         "launcher_source_sha256": hashlib.sha256(launcher_bytes).hexdigest(),
         "bundle_identifier": EXPECTED_BUNDLE_ID,
@@ -295,9 +439,9 @@ def validate_launch_source(
     expected_root = str(environment.get("AURA_LAUNCH_EXPECTED_ROOT") or "").strip()
     expected_commit = str(environment.get("AURA_LAUNCH_EXPECTED_COMMIT") or "").strip().lower()
     expected_branch = str(environment.get("AURA_LAUNCH_EXPECTED_BRANCH") or "").strip()
-    expected_workspace = str(
-        environment.get("AURA_LAUNCH_EXPECTED_WORKSPACE_SHA256") or ""
-    ).strip().lower()
+    expected_workspace = (
+        str(environment.get("AURA_LAUNCH_EXPECTED_WORKSPACE_SHA256") or "").strip().lower()
+    )
     expected_bundle_id = str(environment.get("AURA_LAUNCH_BUNDLE_ID") or "").strip()
 
     required_values = {
@@ -333,12 +477,17 @@ def validate_launch_source(
     try:
         identity = _git_identity(canonical_input)
         actual.update(identity)
-        actual.update(_workspace_state(Path(identity["source_root"]), commit_sha=identity["commit_sha"]))
+        actual.update(
+            _workspace_state(Path(identity["source_root"]), commit_sha=identity["commit_sha"])
+        )
     except _RECOVERABLE_ERRORS as exc:
         issues.append(f"source_identity_unavailable:{type(exc).__name__}")
 
     comparisons = {
-        "source_root": (str(Path(expected_root).expanduser().resolve()) if expected_root else "", actual.get("source_root")),
+        "source_root": (
+            str(Path(expected_root).expanduser().resolve()) if expected_root else "",
+            actual.get("source_root"),
+        ),
         "commit_sha": (expected_commit, actual.get("commit_sha")),
         "branch": (expected_branch, actual.get("branch")),
         "workspace_state_sha256": (expected_workspace, actual.get("workspace_state_sha256")),
@@ -430,7 +579,9 @@ def collect_runtime_launch_provenance(
         return source
 
     executable_text = str(source.get("app_executable") or "").strip()
-    executable = Path(executable_text).expanduser() if executable_text else Path("/__aura_missing_app__")
+    executable = (
+        Path(executable_text).expanduser() if executable_text else Path("/__aura_missing_app__")
+    )
     try:
         from core.security.native_desktop_bridge import native_desktop_bridge_identity
 
@@ -518,8 +669,12 @@ if __name__ == "__main__":
 __all__ = [
     "EXPECTED_BUNDLE_ID",
     "LAUNCH_PROVENANCE_SCHEMA",
+    "RUNTIME_SHELL_ASSETS",
     "build_launch_manifest",
+    "capture_runtime_shell_assets",
     "collect_runtime_launch_provenance",
+    "runtime_shell_assets_digest",
+    "runtime_shell_assets_sha256",
     "validate_launch_source",
     "write_launch_manifest",
 ]

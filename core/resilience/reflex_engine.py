@@ -1,10 +1,10 @@
-from core.runtime.errors import record_degradation
 import logging
 import random
 import re
-from typing import List, Dict, Tuple, Optional
 import time
+from typing import Dict, List, Optional, Tuple
 
+from core.runtime.errors import record_degradation
 from core.runtime.service_registry import get_runtime_service
 
 logger = logging.getLogger("Aura.ReflexEngine")
@@ -155,8 +155,7 @@ class ReflexEngine:
                     agency._action_queue.clear()
                     logger.info("⚡ [SPINAL CORD] Agency action queue flushed.")
                 if mycelium:
-                    h = mycelium.get_hypha("guardian", "skills")
-                    if h: h.pulse(success=True)
+                    mycelium.pulse_hypha("guardian", "skills", success=True)
                 return True
                 
             elif signal == "SAFEMODE_ENGAGE":

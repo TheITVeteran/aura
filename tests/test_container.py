@@ -6,7 +6,9 @@ Unit tests for core.container.ServiceContainer.
 import asyncio
 
 import pytest
+
 from core.container import ServiceContainer, ServiceLifetime
+
 
 @pytest.fixture
 def clean_container():
@@ -132,6 +134,28 @@ class TestValidation:
         await clean_container.shutdown()
 
         assert order == ["owned", "runtime_hygiene"]
+
+    @pytest.mark.asyncio
+    async def test_shutdown_owns_mycelium_lifecycle_once_across_aliases(
+        self, clean_container
+    ):
+        from core.mycelium import MycelialNetwork
+
+        MycelialNetwork._instance = None
+        MycelialNetwork._initialized = False
+        network = MycelialNetwork()
+        clean_container.register_instance("mycelial_network", network)
+        clean_container.register_instance("mycelium", network)
+
+        report = await clean_container.shutdown()
+
+        assert MycelialNetwork._instance is None
+        assert MycelialNetwork._initialized is False
+        assert network._stop_event.is_set() is True
+        assert report["coalesced_aliases"] in (
+            {"mycelial_network": "mycelium"},
+            {"mycelium": "mycelial_network"},
+        )
 
 
 ##

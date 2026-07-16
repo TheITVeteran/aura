@@ -5,14 +5,15 @@ system integration and correlation, respects warmup periods, and
 uses balanced partitions.
 """
 
-import sys
 import os
+import sys
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 import pytest
 
-from core.consciousness.iit_surrogate import RIIU, _MIN_SAMPLES
+from core.consciousness.iit_surrogate import _MIN_SAMPLES, RIIU
 
 
 @pytest.fixture
@@ -138,3 +139,46 @@ class TestDegenerateStates:
             phi = riiu.compute_phi(state)
             
         assert np.isfinite(phi)
+
+
+def test_network_update_consumes_bounded_hypha_snapshot(monkeypatch):
+    import core.consciousness.iit_surrogate as iit_module
+
+    now = iit_module.time.monotonic()
+    calls = []
+
+    class MutationSensitiveHyphae(dict):
+        def values(self):
+            raise RuntimeError("raw hypha iteration is unsafe")
+
+    class Mycelium:
+        hyphae = MutationSensitiveHyphae()
+
+        def get_hypha_signal_snapshot(self, *, limit):
+            calls.append(limit)
+            return [(5.0, now), (2.5, now - 5.0)]
+
+    class Container:
+        @staticmethod
+        def get(name, default=None):
+            if name == "mycelial_network":
+                return Mycelium()
+            return default
+
+    monkeypatch.setattr(iit_module, "get_container", lambda: Container())
+    unit = RIIU(neuron_count=16, buffer_size=32)
+    captured = []
+    monkeypatch.setattr(
+        unit,
+        "compute_phi",
+        lambda state: captured.append(np.array(state, copy=True)) or 0.25,
+    )
+
+    assert unit.update_from_network() == 0.25
+    assert calls == [unit.network_dim // 2]
+    assert len(captured) == 1
+    network_state = captured[0][unit.neuron_count :]
+    assert network_state[0] == pytest.approx(0.5)
+    assert network_state[1] == pytest.approx(1.0, abs=0.05)
+    assert network_state[2] == pytest.approx(0.25)
+    assert network_state[3] == pytest.approx(0.5, abs=0.05)

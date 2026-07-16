@@ -35,8 +35,7 @@ ARTIFACT = ROOT / "artifacts" / "agi_live" / "DNU_AGI_PROOF.json"
 
 @pytest.fixture(scope="module")
 def proof() -> dict:
-    if not ARTIFACT.is_file():
-        pytest.skip("no DNU artifact checked in")
+    assert ARTIFACT.is_file(), "the checked-in DNU proof artifact is required"
     return json.loads(ARTIFACT.read_text(encoding="utf-8"))
 
 

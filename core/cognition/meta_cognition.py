@@ -167,6 +167,13 @@ class MetaEvolutionEngine(AuraBaseModule):
                 self.logger.info("No valid optimizations found. Cycle took %.2fs.", elapsed)
                 return {"ok": True, "applied": False, "reason": "No valid optimization proposals generated.", "latency": elapsed}
 
+            if getattr(hypha, "failed", False):
+                flow_error = getattr(hypha, "error", None)
+                return {
+                    "ok": False,
+                    "error": str(flow_error or "rooted optimization flow failed"),
+                }
+
             # If we exit the context manager without returning, return a success result
             return {"ok": True, "applied": False, "message": "Cycle complete."}
 

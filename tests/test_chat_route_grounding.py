@@ -110,3 +110,36 @@ def test_numeric_state_request_reply_contains_parseable_numbers(monkeypatch, ser
     assert match_v and match_a, f"reply lacks parseable numbers: {reply[:200]}"
     assert abs(float(match_v.group(1)) - 0.62) < 1e-6
     assert abs(float(match_a.group(1)) - 0.41) < 1e-6
+
+
+def test_grounded_topology_reply_uses_lock_free_summary_read_model(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    class Mycelium:
+        @staticmethod
+        def get_topology_summary():
+            return {"nodes": 4, "links": 2, "pathways": 1, "mapping_generation": 4}
+
+        @staticmethod
+        def get_graph_snapshot():
+            raise AssertionError("chat must not deep-copy the graph")
+
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: Mycelium()
+            if name in {"mycelium", "mycelial_network"}
+            else default
+        ),
+    )
+    monkeypatch.setattr(
+        chat_routes, "_resolve_live_voice_state", lambda *_args, **_kwargs: {}
+    )
+
+    reply = chat_routes._build_grounded_introspection_reply(
+        "How many nodes and links are in your live mycelial topology right now?"
+    )
+
+    assert reply is not None
+    assert "4 nodes, 2 links, and 1 pathways" in reply

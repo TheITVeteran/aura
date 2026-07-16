@@ -1405,6 +1405,14 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
                 NSLocalizedDescriptionKey: "Aura launch provenance uses an unsupported schema.",
             ])
         }
+        let shellAssetsSHA256 = try requiredProvenanceString("shell_assets_sha256")
+        let lowercaseHex = CharacterSet(charactersIn: "0123456789abcdef")
+        guard shellAssetsSHA256.count == 64,
+              shellAssetsSHA256.unicodeScalars.allSatisfy({ lowercaseHex.contains($0) }) else {
+            throw NSError(domain: "AuraLauncher", code: 4, userInfo: [
+                NSLocalizedDescriptionKey: "Aura launch provenance has an invalid runtime shell digest.",
+            ])
+        }
         let manifestRoot = URL(
             fileURLWithPath: try requiredProvenanceString("source_root"),
             isDirectory: true

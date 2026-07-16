@@ -30,7 +30,7 @@ import re
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from core.brain.generation_provenance import attributed_text, generation_metadata_of
@@ -42,7 +42,7 @@ logger = logging.getLogger("Aura.ReasoningAmplifierV2")
 GenerateFn = Callable[[str, float], Awaitable[Any]]
 
 
-class ReasoningMode(str, Enum):
+class ReasoningMode(StrEnum):
     FAST = "fast"        # 1 candidate + calibration (casual / low-stakes)
     NORMAL = "normal"    # 3 candidates + verifier + self-consistency
     DEEP = "deep"        # up to 9 candidates + verifier + courtroom judge
@@ -497,6 +497,8 @@ class ReasoningAmplifierV2:
         start = time.monotonic()
         deadline = start + max(2.0, float(request.time_budget_s))
         fallbacks: list[str] = []
+        read_only_evaluation = bool(request.context.get("read_only_evaluation"))
+        sealed_evaluation = bool(request.context.get("sealed_evaluation"))
 
         # 1. normalize the problem into a structured task model.
         problem = normalize_problem(
@@ -509,7 +511,11 @@ class ReasoningAmplifierV2:
         # O(1) lookup instead of a full amplifier run. The lawful free lunch: amortize
         # search cost across re-encounters. Only source-independent task types are
         # cached, so a stale answer can never be served as current truth.
-        if _flag_on("AURA_REASONING_CACHE") and not request.context.get("skip_cache"):
+        if (
+            _flag_on("AURA_REASONING_CACHE")
+            and not request.context.get("skip_cache")
+            and not read_only_evaluation
+        ):
             try:
                 from core.brain.reasoning_solved_cache import get_reasoning_solved_cache
 
@@ -579,27 +585,33 @@ class ReasoningAmplifierV2:
         # 2. retrieve failure-mode guards from prior reasoning.
         guard_text = ""
         guards: list[str] = []
-        try:
-            guard_text = self._ensure_memory().as_guard_text(problem.objective, task_type=problem.task_type)
-            if guard_text:
-                guards = [ln[2:] for ln in guard_text.splitlines() if ln.startswith("- ")]
-        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-            record_degradation("amplifier_v2_recall", exc)
+        if not sealed_evaluation:
+            try:
+                guard_text = self._ensure_memory().as_guard_text(
+                    problem.objective, task_type=problem.task_type
+                )
+                if guard_text:
+                    guards = [ln[2:] for ln in guard_text.splitlines() if ln.startswith("- ")]
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                record_degradation("amplifier_v2_recall", exc)
 
         # 2a. procedural memory: condition on PROVEN approaches from similar
         # solved problems (frontier-general P2 — inference-time compounding).
-        try:
-            from core.brain.procedural_memory import get_procedural_memory
+        if not sealed_evaluation:
+            try:
+                from core.brain.procedural_memory import get_procedural_memory
 
-            playbook_text = get_procedural_memory().as_playbook_text(
-                problem.objective, task_type=problem.task_type,
-                problem_key=problem.objective[:80],
-            )
-            if playbook_text:
-                guard_text = f"{playbook_text}\n{guard_text}" if guard_text else playbook_text
-                fallbacks.append("playbooks_injected")
-        except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
-            record_degradation("amplifier_v2_playbooks", exc)
+                playbook_text = get_procedural_memory().as_playbook_text(
+                    problem.objective,
+                    task_type=problem.task_type,
+                    problem_key=problem.objective[:80],
+                    record_usage=not read_only_evaluation,
+                )
+                if playbook_text:
+                    guard_text = f"{playbook_text}\n{guard_text}" if guard_text else playbook_text
+                    fallbacks.append("playbooks_injected")
+            except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                record_degradation("amplifier_v2_playbooks", exc)
 
         # 2b. ReAct grounding — gather REAL evidence (read repo source spans / recall
         # memory) so generation is conditioned on fact and the verifier has something
@@ -615,7 +627,7 @@ class ReasoningAmplifierV2:
                 for span in gathered or []:
                     if span and span not in problem.required_evidence:
                         problem.required_evidence.append(span)
-            except (RuntimeError, AttributeError, TypeError, ValueError, asyncio.TimeoutError) as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError, TimeoutError) as exc:
                 record_degradation("amplifier_v2_evidence", exc)
 
         # 3-8. produce a synthesized, verified answer per mode.
@@ -668,7 +680,7 @@ class ReasoningAmplifierV2:
                 esc_candidates = await self._with_deadline(
                     asyncio.gather(_escalate_one(0.2), _escalate_one(0.5)), deadline
                 )
-            except (RuntimeError, AttributeError, TypeError, ValueError, asyncio.TimeoutError) as exc:
+            except (RuntimeError, AttributeError, TypeError, ValueError, TimeoutError) as exc:
                 record_degradation("amplifier_v2_escalate", exc)
                 esc_candidates = []
             for cand in [c for c in (esc_candidates or []) if c]:
@@ -764,7 +776,7 @@ class ReasoningAmplifierV2:
         # (verdict.checked). A vacuous pass (ok=True, checked=False — e.g. prose with no
         # arithmetic to evaluate) must never be cached, or a wrong answer gets served as
         # truth forever. The hard bench caught exactly this poisoning.
-        if "solved_cache_hit" not in fallbacks:
+        if "solved_cache_hit" not in fallbacks and not read_only_evaluation:
             if verifier_ok and verifier_checked:
                 # Memoize verifier-clean source-independent derivations for instant re-use.
                 if _flag_on("AURA_REASONING_CACHE") and not request.context.get("skip_cache"):
@@ -824,15 +836,16 @@ class ReasoningAmplifierV2:
                     record_degradation("amplifier_v2_precompute_enqueue", exc)
 
         # 10. record the episode so the next one is wiser.
-        try:
-            self._ensure_memory().record(
-                task_type=problem.task_type,
-                objective=problem.objective,
-                passed=verifier_ok,
-                verifier_issues=verifier_issues,
-            )
-        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-            record_degradation("amplifier_v2_record", exc)
+        if not read_only_evaluation:
+            try:
+                self._ensure_memory().record(
+                    task_type=problem.task_type,
+                    objective=problem.objective,
+                    passed=verifier_ok,
+                    verifier_issues=verifier_issues,
+                )
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                record_degradation("amplifier_v2_record", exc)
 
         receipt = ReasoningReceipt(
             mode=mode.value,
@@ -903,27 +916,32 @@ class ReasoningAmplifierV2:
         # Harvest the NEGATIVE signal the SFT-only path discards: verified-correct vs
         # verified-wrong candidates for the SAME problem become sound DPO preference pairs
         # (RLVR data, the verifier is the reward). Best-effort; never affects this turn's answer.
-        try:
-            from core.learning.verifiable_preference_harness import (
-                Attempt,
-                get_verifiable_preference_harness,
-            )
+        if not context.get("read_only_evaluation"):
+            try:
+                from core.learning.verifiable_preference_harness import (
+                    Attempt,
+                    get_verifiable_preference_harness,
+                )
 
-            get_verifiable_preference_harness().ingest(
-                problem.objective,
-                [
-                    Attempt(
-                        candidate=c,
-                        verified=bool(getattr(v, "ok", False)),
-                        checked=bool(getattr(v, "checked", False)),
-                        confidence=float(getattr(v, "score", 0.0) or 0.0),
-                    )
-                    for c, v in zip(candidates, verdicts, strict=True)
-                ],
-                domain=problem.task_type,
-            )
-        except (RuntimeError, AttributeError, TypeError, ValueError, ImportError) as exc:
-            record_degradation("amplifier_v2_preference_harvest", exc, severity="debug")
+                get_verifiable_preference_harness().ingest(
+                    problem.objective,
+                    [
+                        Attempt(
+                            candidate=c,
+                            verified=bool(getattr(v, "ok", False)),
+                            checked=bool(getattr(v, "checked", False)),
+                            confidence=float(getattr(v, "score", 0.0) or 0.0),
+                        )
+                        for c, v in zip(candidates, verdicts, strict=True)
+                    ],
+                    domain=problem.task_type,
+                )
+            except (RuntimeError, AttributeError, TypeError, ValueError, ImportError) as exc:
+                record_degradation(
+                    "amplifier_v2_preference_harvest",
+                    exc,
+                    severity="debug",
+                )
         pool = clean or candidates
         result = await amplify(pool)
         winner = result.answer or pool[0]
@@ -958,7 +976,7 @@ class ReasoningAmplifierV2:
                 court.deliberate(problem.objective, evidence=evidence, task_type=problem.task_type, n_candidates=n_cand),
                 deadline,
             )
-        except (RuntimeError, AttributeError, TypeError, ValueError, asyncio.TimeoutError) as exc:
+        except (RuntimeError, AttributeError, TypeError, ValueError, TimeoutError) as exc:
             record_degradation("amplifier_v2_courtroom", exc)
             verdict_court = None
 
@@ -1187,8 +1205,11 @@ async def amplify_turn(
 
     Builds an amplifier wired to the real organs (verifiers, sandbox, calibration,
     memory, evidence provider, substrate) and runs the full pipeline for a turn.
-    ``extra_context`` is merged into the request context (e.g. ``skip_cache`` or
-    ``skip_precompute_enqueue`` for the idle pre-compute path). ``escalate_generate``
+    ``extra_context`` is merged into the request context. Evaluation callers can
+    use ``read_only_evaluation`` to retain retrieval while suppressing caches,
+    training captures, preference pairs, and episode writes. A contamination-
+    sensitive benchmark must additionally set ``sealed_evaluation`` to disable
+    reasoning-memory, playbook, cache, and evidence retrieval. ``escalate_generate``
     may be passed through ``**kw`` to enable the deep-tier verifier-of-last-resort.
     """
     tt = task_type or classify_task_type(objective)

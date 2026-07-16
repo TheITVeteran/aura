@@ -54,9 +54,7 @@ class MemoryManager:
         mycelium = self._get_mycelium()
         if mycelium:
             try:
-                hypha = mycelium.get_hypha(source, target)
-                if hypha:
-                    hypha.pulse(success=success)
+                mycelium.pulse_hypha(source, target, success=success)
             except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('memory_manager', e)
                 capture_and_log(e, {'module': __name__})

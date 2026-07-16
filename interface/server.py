@@ -23,6 +23,7 @@ import contextvars
 import hmac
 import json
 import logging
+import mimetypes
 import os
 import sys
 import time
@@ -30,6 +31,7 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import parse_qs, urlsplit
 
 # ── Third-party ───────────────────────────────────────────────
 import uvicorn
@@ -303,10 +305,13 @@ async def lifespan(app: FastAPI):
     if not mycelial:
         mycelial = MycelialNetwork()
         ServiceContainer.register_instance("mycelial_network", mycelial)
-        _spawn_server_bounded_task(
-            asyncio.to_thread(mycelial.map_infrastructure, base_dir=str(config.paths.project_root)),
-            name="server.mycelium.map_infrastructure",
-        )
+    mapping_scheduled = mycelial.setup()
+    logger.info(
+        "📡 Mycelial infrastructure map: %s.",
+        "scheduled"
+        if mapping_scheduled
+        else mycelial.get_infrastructure_report()["mapping_state"],
+    )
 
     ServiceContainer.register_instance("mycelium", mycelial)
 
@@ -496,22 +501,126 @@ NO_CACHE_HEADERS = {
     "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
     "Pragma": "no-cache",
 }
-
-
-def _cache_policy_for_path(path: str) -> dict[str, str] | None:
-    normalized = str(path or "")
-    live_shell_paths = {
+_RUNTIME_REVISION_NO_STORE_PATHS = frozenset(
+    {
         "/",
+        "/static/index.html",
+        "/static/design_tokens.css",
+        "/static/motion_design.css",
+        "/static/error_banner.css",
         "/static/aura.css",
+        "/static/presence_design.css",
+        "/static/vendor/vis-network.min.js",
+        "/static/error_banner.js",
+        "/static/sound_design.js",
+        "/static/perf_collector.js",
         "/static/aura.js",
         "/static/manifest.json",
         "/static/service-worker.js",
+        "/static/aura_avatar.svg",
+        "/static/vendor/fonts/fredoka-variable-latin.woff2",
+        "/static/vendor/fonts/ibm-plex-mono-400-latin.woff2",
+        "/static/vendor/fonts/ibm-plex-mono-500-latin.woff2",
+        "/static/vendor/fonts/ibm-plex-mono-600-latin.woff2",
+        "/static/voice-processor.js",
     }
-    if normalized in live_shell_paths or normalized.endswith("/index.html"):
+)
+_RUNTIME_REVISION_ADDRESSED_PATHS = frozenset(
+    {
+        "/static/icon.svg",
+        "/static/icon-192.png",
+        "/static/icon-512.png",
+    }
+)
+def _cache_policy_for_path(
+    path: str,
+    *,
+    revision_addressed: bool = False,
+) -> dict[str, str] | None:
+    normalized = str(path or "")
+    if (
+        normalized in _RUNTIME_REVISION_NO_STORE_PATHS
+        or normalized.endswith("/index.html")
+    ):
+        if revision_addressed and normalized in _RUNTIME_REVISION_NO_STORE_PATHS:
+            return {"Cache-Control": "private, max-age=31536000, immutable"}
         return dict(NO_CACHE_HEADERS)
-    if normalized.startswith(("/static", "/data")):
-        return {"Cache-Control": "public, max-age=31536000, immutable"}
+    if normalized in _RUNTIME_REVISION_ADDRESSED_PATHS:
+        if revision_addressed:
+            return {"Cache-Control": "public, max-age=31536000, immutable"}
+        return dict(NO_CACHE_HEADERS)
+    if normalized.startswith("/static/"):
+        return dict(NO_CACHE_HEADERS)
+    if normalized.startswith("/data"):
+        return dict(NO_CACHE_HEADERS)
     return None
+
+
+@app.middleware("http")
+async def serve_immutable_runtime_shell(request: Request, call_next):
+    """Serve revision-addressed shell requests from verified frozen bytes only."""
+
+    from core.runtime.runtime_shell_snapshot import (
+        runtime_shell_request_path,
+        runtime_shell_snapshot_asset,
+    )
+
+    path = str(request.url.path or "")
+    if not runtime_shell_request_path(path):
+        return await call_next(request)
+    directly_addressed = "_aura_runtime" in request.query_params
+    revision = str(request.query_params.get("_aura_runtime") or "").strip().lower()
+    if not revision:
+        referer = str(request.headers.get("referer") or "")
+        try:
+            referer_url = urlsplit(referer)
+        except ValueError:
+            referer_url = None
+        if (
+            referer_url is not None
+            and referer_url.scheme.lower() == request.url.scheme.lower()
+            and referer_url.netloc.lower() == request.url.netloc.lower()
+        ):
+            revision = str(
+                (parse_qs(referer_url.query).get("_aura_runtime") or [""])[0]
+            ).strip().lower()
+    if not revision:
+        return await call_next(request)
+    try:
+        validate_runtime_security_request(request)
+    except HTTPException as exc:
+        return Response(
+            status_code=exc.status_code,
+            content=str(exc.detail),
+            headers=NO_CACHE_HEADERS,
+        )
+    if len(revision) != 64 or any(character not in "0123456789abcdef" for character in revision):
+        return Response(
+            status_code=400,
+            content="invalid runtime revision",
+            headers=NO_CACHE_HEADERS,
+        )
+    content = runtime_shell_snapshot_asset(revision, path)
+    if content is None:
+        return Response(
+            status_code=409,
+            content="runtime revision is not available from verified immutable storage",
+            headers=NO_CACHE_HEADERS,
+        )
+    media_path = "/static/index.html" if path == "/" else path
+    media_type = mimetypes.guess_type(media_path)[0] or "application/octet-stream"
+    headers = {
+        "Cache-Control": (
+            "private, max-age=31536000, immutable"
+            if directly_addressed
+            else "no-store, no-cache, must-revalidate, max-age=0"
+        ),
+        "X-Aura-Runtime-Revision": revision,
+        "X-Content-Type-Options": "nosniff",
+    }
+    if path == "/static/service-worker.js":
+        headers["Service-Worker-Allowed"] = "/"
+    return Response(content=content, media_type=media_type, headers=headers)
 
 
 # Mount static files for uploads and generated media
@@ -522,10 +631,31 @@ app.mount("/data/generated_images", StaticFiles(directory=GEN_IMAGES_DIR, html=F
 @app.middleware("http")
 async def add_cache_headers(request: Request, call_next):
     response = await call_next(request)
-    policy = _cache_policy_for_path(request.url.path)
+    query_params = getattr(request, "query_params", {})
+    try:
+        revision = str(query_params.get("_aura_runtime") or "")
+    except (AttributeError, TypeError, ValueError):
+        revision = ""
+    response_revision = str(
+        getattr(response, "headers", {}).get("X-Aura-Runtime-Revision", "")
+    )
+    revision_addressed = bool(
+        len(revision) == 64
+        and all(character in "0123456789abcdef" for character in revision)
+        and int(getattr(response, "status_code", 0) or 0) == 200
+        and hmac.compare_digest(response_revision, revision)
+    )
+    policy = _cache_policy_for_path(
+        request.url.path,
+        revision_addressed=revision_addressed,
+    )
     if policy and hasattr(response, "headers"):
         for key, value in policy.items():
             cast(Response, response).headers[key] = value
+        if request.url.path == "/static/service-worker.js" and int(
+            getattr(response, "status_code", 0) or 0
+        ) == 200:
+            cast(Response, response).headers["Service-Worker-Allowed"] = "/"
     return response
 
 app.add_middleware(

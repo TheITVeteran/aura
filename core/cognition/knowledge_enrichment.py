@@ -181,7 +181,7 @@ class KnowledgeEnricher:
                                         "associated_with",
                                         strength=1.0,
                                     )
-                                except Exception as exc:
+                                except Exception as exc:  # noqa: BLE001 - pluggable storage boundary
                                     storage_errors.append(
                                         (item_index, "entity_relationship", exc)
                                     )
@@ -205,7 +205,7 @@ class KnowledgeEnricher:
                                         category="preference",
                                     )
                                     result["beliefs"] += 1
-                                except Exception as exc:
+                                except Exception as exc:  # noqa: BLE001 - pluggable belief boundary
                                     storage_errors.append(
                                         (item_index, "preference_belief", exc)
                                     )
@@ -218,7 +218,7 @@ class KnowledgeEnricher:
                                 weight=float(item.get("strength", 1.0)),
                             )
                             result["facts"] += 1
-                    except Exception as exc:
+                    except Exception as exc:  # noqa: BLE001 - isolate independent external writes
                         # This background isolation boundary deliberately does
                         # not catch CancelledError, which derives BaseException.
                         storage_errors.append((item_index, item_type, exc))

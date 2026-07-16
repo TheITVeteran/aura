@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+import textwrap
 import threading
 import time
 from types import SimpleNamespace
@@ -8,6 +10,7 @@ from types import SimpleNamespace
 import pytest
 
 from core.health.read_model import HealthReadModelConfig, HealthSnapshotReadModel
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 
 def _wait_until(predicate, *, timeout_s: float = 1.0) -> None:
@@ -166,6 +169,12 @@ def test_read_model_marks_old_success_expired_during_singleflight_refresh():
             "conversation_ready": True,
             "runtime_probe_healthy": True,
             "certification_ready": True,
+            "runtime_revision": {
+                "schema": "aura.runtime_revision.v2",
+                "required": True,
+                "verified": True,
+                "revision_token": "a" * 64,
+            },
             "required_probes": {"all_passed": True},
             "blockers": [],
             "readiness_contract": {
@@ -222,6 +231,10 @@ def test_read_model_marks_old_success_expired_during_singleflight_refresh():
     assert truthful["readiness_contract"]["healthy"] is False
     assert truthful["boot"]["ready"] is False
     assert truthful["blockers"][0] == "health_snapshot_expired"
+    assert truthful["runtime_revision"]["verified"] is False
+    assert truthful["runtime_revision"]["revision_token"] == ""
+    assert truthful["runtime_revision"]["required"] is True
+    assert truthful["runtime_revision"]["issues"] == ["health_snapshot_expired"]
 
     block_refresh.set()
 
@@ -333,6 +346,8 @@ async def test_readyz_uses_cached_canonical_readiness_without_inline_probe(monke
     payload = {
         "status": "ok",
         "healthy": True,
+        "ready": True,
+        "connected": True,
         "uptime": 321.5,
         "blockers": [],
         "required_probes": required_probes,
@@ -349,6 +364,13 @@ async def test_readyz_uses_cached_canonical_readiness_without_inline_probe(monke
             "snapshot_generation": 9,
             "age_s": 1.25,
             "serving": "fresh",
+        },
+        "runtime_revision": {
+            "schema": "aura.runtime_revision.v2",
+            "required": False,
+            "verified": False,
+            "source_verified": False,
+            "revision_token": "",
         },
     }
 
@@ -504,6 +526,25 @@ async def test_snapshot_collector_observes_without_constructing_services(monkeyp
         "disk_usage",
         lambda _path: SimpleNamespace(percent=0.0),
     )
+    revision = {
+        "schema": "aura.runtime_revision.v2",
+        "required": True,
+        "verified": True,
+        "source_verified": True,
+        "revision_token": "f" * 64,
+        "expected_source_root_sha256": "b" * 64,
+        "actual_source_root_sha256": "b" * 64,
+        "expected_commit_sha": "a" * 40,
+        "actual_commit_sha": "a" * 40,
+        "expected_workspace_state_sha256": "c" * 64,
+        "actual_workspace_state_sha256": "c" * 64,
+        "expected_shell_assets_sha256": "d" * 64,
+        "actual_shell_assets_sha256": "d" * 64,
+        "capture_stable": True,
+        "launch_mode": "signed_app",
+        "issues": [],
+    }
+    monkeypatch.setattr(system_routes, "_runtime_revision_contract", lambda: revision)
 
     payload = await system_routes._collect_api_health_payload(
         allow_owner_loop_reads=False
@@ -513,6 +554,901 @@ async def test_snapshot_collector_observes_without_constructing_services(monkeyp
     assert isinstance(payload["healthy"], bool)
     assert isinstance(payload["conversation_ready"], bool)
     assert isinstance(payload["readiness_contract"], dict)
+    assert payload["runtime_revision"] == revision
+
+
+def test_runtime_revision_contract_covers_exact_source_workspace_and_shell_identity(
+    monkeypatch,
+    tmp_path,
+):
+    from interface.routes import system as system_routes
+
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    workspace = "b" * 64
+    provenance = {
+        "required": True,
+        "verified": True,
+        "source_verified": True,
+        "launch_mode": "signed_app",
+        "expected": {
+            "source_root": str(source_root),
+            "commit_sha": "a" * 40,
+            "workspace_state_sha256": workspace,
+        },
+        "actual": {
+            "source_root": str(source_root),
+            "commit_sha": "a" * 40,
+            "workspace_state_sha256": workspace,
+        },
+        "manifest": {"shell_assets_sha256": "c" * 64},
+        "issues": [],
+    }
+    exact = system_routes._runtime_revision_from_provenance(
+        provenance,
+        shell_assets_sha256="c" * 64,
+    )
+    changed_shell = system_routes._runtime_revision_from_provenance(
+        provenance,
+        shell_assets_sha256="d" * 64,
+    )
+    missing_signed_shell = json.loads(json.dumps(provenance))
+    missing_signed_shell["manifest"].pop("shell_assets_sha256")
+    unsigned_shell = system_routes._runtime_revision_from_provenance(
+        missing_signed_shell,
+        shell_assets_sha256="c" * 64,
+    )
+    unstable_capture = system_routes._runtime_revision_from_provenance(
+        provenance,
+        shell_assets_sha256="c" * 64,
+        capture_stable=False,
+    )
+    mismatched_workspace = json.loads(json.dumps(provenance))
+    mismatched_workspace["actual"]["workspace_state_sha256"] = "e" * 64
+    workspace_mismatch = system_routes._runtime_revision_from_provenance(
+        mismatched_workspace,
+        shell_assets_sha256="c" * 64,
+    )
+    mismatched_root = json.loads(json.dumps(provenance))
+    mismatched_root["actual"]["source_root"] = str(tmp_path / "other-source")
+    root_mismatch = system_routes._runtime_revision_from_provenance(
+        mismatched_root,
+        shell_assets_sha256="c" * 64,
+    )
+    mismatched_commit = json.loads(json.dumps(provenance))
+    mismatched_commit["actual"]["commit_sha"] = "f" * 40
+    commit_mismatch = system_routes._runtime_revision_from_provenance(
+        mismatched_commit,
+        shell_assets_sha256="c" * 64,
+    )
+    monkeypatch.setattr(system_routes, "_RUNTIME_REVISION_CACHE", None)
+    monkeypatch.setattr(system_routes, "_RUNTIME_REVISION_CACHE_COLLECTED_AT", 0.0)
+
+    fallback = system_routes._runtime_revision_fallback_contract()
+
+    assert exact["verified"] is True
+    assert exact["schema"] == "aura.runtime_revision.v2"
+    assert len(exact["revision_token"]) == 64
+    assert exact["expected_source_root_sha256"] == exact["actual_source_root_sha256"]
+    assert exact["expected_workspace_state_sha256"] == workspace
+    assert exact["actual_workspace_state_sha256"] == workspace
+    assert exact["expected_shell_assets_sha256"] == "c" * 64
+    assert exact["actual_shell_assets_sha256"] == "c" * 64
+    assert changed_shell["verified"] is False
+    assert changed_shell["revision_token"] == ""
+    assert "shell_asset_identity_unverified" in changed_shell["issues"]
+    assert unsigned_shell["verified"] is False
+    assert "shell_asset_identity_unverified" in unsigned_shell["issues"]
+    assert unstable_capture["verified"] is False
+    assert "workspace_changed_during_revision_capture" in unstable_capture["issues"]
+    assert workspace_mismatch["verified"] is False
+    assert workspace_mismatch["revision_token"] == ""
+    assert "workspace_identity_unverified" in workspace_mismatch["issues"]
+    assert root_mismatch["verified"] is False
+    assert "source_root_identity_unverified" in root_mismatch["issues"]
+    assert commit_mismatch["verified"] is False
+    assert "commit_identity_unverified" in commit_mismatch["issues"]
+    assert fallback == {
+        "schema": "aura.runtime_revision.v2",
+        "required": False,
+        "verified": False,
+        "source_verified": False,
+        "revision_token": "",
+        "expected_source_root_sha256": "",
+        "actual_source_root_sha256": "",
+        "expected_commit_sha": "",
+        "actual_commit_sha": "",
+        "expected_workspace_state_sha256": "",
+        "actual_workspace_state_sha256": "",
+        "expected_shell_assets_sha256": "",
+        "actual_shell_assets_sha256": "",
+        "capture_stable": False,
+        "launch_mode": "unknown",
+        "issues": ["runtime_revision_initializing"],
+    }
+
+
+def test_runtime_shell_asset_identity_changes_with_live_shell_bytes(tmp_path):
+    from interface.routes import system as system_routes
+
+    for relative in system_routes._RUNTIME_REVISION_SHELL_ASSETS:
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"asset:{relative}\n", encoding="utf-8")
+
+    before = system_routes._runtime_shell_assets_sha256(tmp_path)
+    (tmp_path / "interface/static/aura.js").write_text(
+        "asset:interface/static/aura.js\nchanged\n",
+        encoding="utf-8",
+    )
+    after = system_routes._runtime_shell_assets_sha256(tmp_path)
+
+    assert len(before) == 64
+    assert len(after) == 64
+    assert after != before
+
+
+def test_runtime_revision_collection_rejects_workspace_change_during_capture(
+    monkeypatch,
+    tmp_path,
+):
+    from core.runtime import launch_provenance
+    from interface.routes import system as system_routes
+
+    root = tmp_path / "source"
+    root.mkdir()
+    expected_shell = "c" * 64
+
+    def provenance(workspace: str) -> dict[str, object]:
+        return {
+            "required": True,
+            "verified": True,
+            "source_verified": True,
+            "launch_mode": "signed_app",
+            "expected": {
+                "source_root": str(root),
+                "commit_sha": "a" * 40,
+                "workspace_state_sha256": "b" * 64,
+            },
+            "actual": {
+                "source_root": str(root),
+                "commit_sha": "a" * 40,
+                "workspace_state_sha256": workspace,
+            },
+            "manifest": {"shell_assets_sha256": expected_shell},
+            "issues": [],
+        }
+
+    observations = iter((provenance("b" * 64), provenance("d" * 64)))
+    monkeypatch.setattr(
+        launch_provenance,
+        "collect_runtime_launch_provenance",
+        lambda _root: next(observations),
+    )
+    monkeypatch.setattr(
+        system_routes,
+        "_runtime_shell_assets_sha256",
+        lambda _root: expected_shell,
+    )
+    monkeypatch.setattr(
+        system_routes,
+        "_invalidate_launch_provenance_source_observation_cache",
+        lambda: None,
+    )
+
+    result = system_routes._collect_runtime_revision_uncached()
+
+    assert result["verified"] is False
+    assert result["capture_stable"] is False
+    assert result["revision_token"] == ""
+    assert "workspace_changed_during_revision_capture" in result["issues"]
+    assert "workspace_identity_unverified" in result["issues"]
+
+
+def test_runtime_revision_collection_rejects_shell_change_during_capture(
+    monkeypatch,
+    tmp_path,
+):
+    from core.runtime import launch_provenance
+    from interface.routes import system as system_routes
+
+    root = tmp_path / "source"
+    root.mkdir()
+    workspace = "b" * 64
+    final_shell = "d" * 64
+    provenance = {
+        "required": True,
+        "verified": True,
+        "source_verified": True,
+        "launch_mode": "signed_app",
+        "expected": {
+            "source_root": str(root),
+            "commit_sha": "a" * 40,
+            "workspace_state_sha256": workspace,
+        },
+        "actual": {
+            "source_root": str(root),
+            "commit_sha": "a" * 40,
+            "workspace_state_sha256": workspace,
+        },
+        "manifest": {"shell_assets_sha256": final_shell},
+        "issues": [],
+    }
+    shell_observations = iter(("c" * 64, final_shell))
+    monkeypatch.setattr(
+        launch_provenance,
+        "collect_runtime_launch_provenance",
+        lambda _root: provenance,
+    )
+    monkeypatch.setattr(
+        system_routes,
+        "_runtime_shell_assets_sha256",
+        lambda _root: next(shell_observations),
+    )
+    monkeypatch.setattr(
+        system_routes,
+        "_invalidate_launch_provenance_source_observation_cache",
+        lambda: None,
+    )
+
+    result = system_routes._collect_runtime_revision_uncached()
+
+    assert result["expected_shell_assets_sha256"] == final_shell
+    assert result["actual_shell_assets_sha256"] == final_shell
+    assert result["capture_stable"] is False
+    assert result["verified"] is False
+    assert result["revision_token"] == ""
+    assert "shell_assets_changed_during_revision_capture" in result["issues"]
+
+
+def test_required_runtime_revision_failure_withholds_all_readiness_claims():
+    from interface.routes import system as system_routes
+
+    payload = {
+        "status": "ok",
+        "healthy": True,
+        "ready": True,
+        "connected": True,
+        "system_ready": True,
+        "launcher_ready": True,
+        "proof_readiness_healthy": True,
+        "certification_ready": True,
+        "blockers": [],
+        "runtime_revision": {
+            "schema": "aura.runtime_revision.v2",
+            "required": True,
+            "verified": False,
+            "revision_token": "",
+        },
+        "readiness_contract": {
+            "healthy": True,
+            "system_ready": True,
+            "proof_readiness_healthy": True,
+            "certification_ready": True,
+            "blockers": [],
+        },
+        "boot": {
+            "status": "ready",
+            "ready": True,
+            "system_ready": True,
+            "launcher_ready": True,
+            "proof_readiness_healthy": True,
+            "certification_ready": True,
+            "blockers": [],
+        },
+    }
+
+    result = system_routes._apply_runtime_revision_truth(payload)
+
+    assert result["healthy"] is False
+    assert result["ready"] is False
+    assert result["connected"] is False
+    assert result["system_ready"] is False
+    assert result["launcher_ready"] is False
+    assert result["proof_readiness_healthy"] is False
+    assert result["certification_ready"] is False
+    assert result["blockers"][0] == "runtime_revision_unverified"
+    assert result["readiness_contract"]["healthy"] is False
+    assert result["readiness_contract"]["system_ready"] is False
+    assert result["readiness_contract"]["proof_readiness_healthy"] is False
+    assert result["readiness_contract"]["certification_ready"] is False
+    assert result["boot"]["ready"] is False
+    assert result["boot"]["system_ready"] is False
+    assert result["boot"]["launcher_ready"] is False
+    assert result["boot"]["proof_readiness_healthy"] is False
+    assert result["boot"]["certification_ready"] is False
+
+    payload["runtime_revision"] = {
+        "schema": "aura.runtime_revision.v2",
+        "required": False,
+        "verified": False,
+        "source_verified": False,
+        "revision_token": "",
+    }
+    assert system_routes._apply_runtime_revision_truth(payload) is payload
+
+
+def test_runtime_revision_blocker_rejects_malformed_verified_contracts(monkeypatch):
+    from interface.routes import system as system_routes
+
+    malformed = {
+        "schema": "aura.runtime_revision.v2",
+        "required": True,
+        "verified": True,
+        "source_verified": True,
+        "capture_stable": True,
+        "launch_mode": "signed_app",
+        "revision_token": "a" * 64,
+    }
+    assert system_routes._runtime_revision_blocker(malformed) == (
+        "runtime_revision_identity_invalid"
+    )
+    assert system_routes._runtime_revision_blocker(
+        {**malformed, "schema": "aura.runtime_revision.v1"}
+    ) == "runtime_revision_contract_invalid"
+    assert system_routes._runtime_revision_blocker(None) == (
+        "runtime_revision_contract_missing"
+    )
+
+    monkeypatch.setenv("AURA_LAUNCHED_FROM_APP", "1")
+    direct = system_routes._runtime_revision_unavailable("", required=False)
+    assert system_routes._runtime_revision_blocker(direct) == (
+        "runtime_revision_required_contract_missing"
+    )
+
+
+def test_runtime_revision_blocker_recomputes_verified_identity_token(monkeypatch):
+    from interface.routes import system as system_routes
+
+    monkeypatch.delenv("AURA_LAUNCHED_FROM_APP", raising=False)
+    root = "a" * 64
+    commit = "b" * 40
+    workspace = "c" * 64
+    shell = "d" * 64
+    token = system_routes._runtime_revision_token(
+        source_root_sha256=root,
+        commit_sha=commit,
+        workspace_state_sha256=workspace,
+        shell_assets_sha256=shell,
+    )
+    contract = {
+        "schema": "aura.runtime_revision.v2",
+        "required": True,
+        "verified": True,
+        "source_verified": True,
+        "capture_stable": True,
+        "launch_mode": "signed_app",
+        "revision_token": token,
+        "expected_source_root_sha256": root,
+        "actual_source_root_sha256": root,
+        "expected_commit_sha": commit,
+        "actual_commit_sha": commit,
+        "expected_workspace_state_sha256": workspace,
+        "actual_workspace_state_sha256": workspace,
+        "expected_shell_assets_sha256": shell,
+        "actual_shell_assets_sha256": shell,
+    }
+    assert system_routes._runtime_revision_blocker(contract) == ""
+    assert system_routes._runtime_revision_blocker(
+        {**contract, "revision_token": "e" * 64}
+    ) == "runtime_revision_token_invalid"
+
+
+def test_boot_health_contract_withholds_readiness_for_required_unverified_shell():
+    from interface.routes import system as system_routes
+
+    launch = {
+        "schema": "aura.launch_provenance.v1",
+        "required": True,
+        "verified": True,
+        "source_verified": True,
+        "issues": [],
+    }
+    revision = {
+        "schema": "aura.runtime_revision.v2",
+        "required": True,
+        "verified": False,
+        "revision_token": "",
+        "issues": ["shell_asset_identity_unverified"],
+    }
+
+    result, status_code = system_routes._attach_launch_provenance_contract(
+        {
+            "ready": True,
+            "launcher_ready": True,
+            "system_ready": True,
+            "proof_readiness_healthy": True,
+            "certification_ready": True,
+            "checks": {},
+            "blockers": [],
+        },
+        200,
+        provenance=launch,
+        runtime_revision=revision,
+    )
+
+    assert status_code == 503
+    assert result["ready"] is False
+    assert result["launcher_ready"] is False
+    assert result["system_ready"] is False
+    assert result["proof_readiness_healthy"] is False
+    assert result["certification_ready"] is False
+    assert result["checks"]["launch_provenance"] is True
+    assert result["checks"]["runtime_revision"] is False
+    assert result["blockers"] == ["runtime_revision_unverified"]
+    assert result["boot_phase"] == "runtime_revision_failed"
+
+
+def test_runtime_revision_public_projection_is_coarse_but_owner_keeps_diagnostics():
+    from interface.routes import system as system_routes
+
+    payload = {
+        "launch_provenance": {
+            "schema": "aura.launch_provenance.v1",
+            "required": True,
+            "verified": True,
+            "actual": {"commit_sha": "c" * 40},
+        },
+        "boot": {
+            "launch_provenance": {
+                "schema": "aura.launch_provenance.v1",
+                "required": True,
+                "verified": True,
+                "expected": {"source_root": "/private/source"},
+            }
+        },
+        "runtime_revision": {
+            "schema": "aura.runtime_revision.v2",
+            "required": True,
+            "verified": True,
+            "revision_token": "a" * 64,
+            "expected_source_root_sha256": "b" * 64,
+            "actual_source_root_sha256": "b" * 64,
+            "expected_commit_sha": "c" * 40,
+            "actual_commit_sha": "c" * 40,
+            "expected_workspace_state_sha256": "d" * 64,
+            "actual_workspace_state_sha256": "d" * 64,
+            "expected_shell_assets_sha256": "e" * 64,
+            "actual_shell_assets_sha256": "e" * 64,
+            "issues": [],
+        }
+    }
+
+    public = system_routes._runtime_revision_response_projection(
+        payload,
+        include_diagnostics=False,
+    )
+    owner = system_routes._runtime_revision_response_projection(
+        payload,
+        include_diagnostics=True,
+    )
+
+    assert public["runtime_revision"] == {
+        "schema": "aura.runtime_revision.v2",
+        "required": True,
+        "verified": True,
+        "revision_token": "a" * 64,
+        "status": "verified",
+        "blocker": "",
+    }
+    assert "expected_commit_sha" not in public["runtime_revision"]
+    assert public["launch_provenance"] == {
+        "schema": "aura.launch_provenance.v1",
+        "required": True,
+        "verified": True,
+        "status": "verified",
+        "blocker": "",
+    }
+    assert "actual" not in public["launch_provenance"]
+    assert public["boot"]["launch_provenance"] == {
+        "schema": "aura.launch_provenance.v1",
+        "required": True,
+        "verified": True,
+        "status": "verified",
+        "blocker": "",
+    }
+    assert "expected" not in public["boot"]["launch_provenance"]
+    assert owner is payload
+    assert owner["runtime_revision"]["expected_commit_sha"] == "c" * 40
+
+    launch_only = system_routes._runtime_revision_response_projection(
+        {"launch_provenance": payload["launch_provenance"]},
+        include_diagnostics=False,
+    )
+    assert launch_only["launch_provenance"] == {
+        "schema": "aura.launch_provenance.v1",
+        "required": True,
+        "verified": True,
+        "status": "verified",
+        "blocker": "",
+    }
+
+
+@pytest.mark.asyncio
+async def test_api_health_applies_provenance_projection_by_authenticated_surface(
+    monkeypatch,
+):
+    from interface.routes import system as system_routes
+
+    payload = {
+        "status": "ok",
+        "healthy": True,
+        "blockers": [],
+        "runtime_revision": {
+            "schema": "aura.runtime_revision.v2",
+            "required": True,
+            "verified": True,
+            "revision_token": "a" * 64,
+            "expected_commit_sha": "b" * 40,
+            "actual_commit_sha": "b" * 40,
+            "issues": [],
+        },
+        "boot": {
+            "launch_provenance": {
+                "schema": "aura.launch_provenance.v1",
+                "required": True,
+                "verified": True,
+                "expected": {"source_root": "/private/source"},
+            }
+        },
+        "health_read_model": {
+            "fresh": True,
+            "expired": False,
+            "snapshot_generation": 7,
+            "captured_at_unix": 123.0,
+            "serving": "fresh",
+        },
+    }
+
+    class ReadModel:
+        def read(self):
+            return payload
+
+    monkeypatch.setattr(system_routes, "_HEALTH_READ_MODEL", ReadModel())
+    monkeypatch.setattr(system_routes, "_mark_runtime_service_progress", lambda _source: None)
+    monkeypatch.setattr(
+        system_routes,
+        "_restore_owner_session_from_request",
+        lambda _request: None,
+    )
+    monkeypatch.setattr(
+        system_routes,
+        "_shutdown_health_status",
+        lambda: {"running": False, "request": {"requested": False}},
+    )
+    surface = {"surface": "paired_device"}
+    monkeypatch.setattr(system_routes, "request_access_profile", lambda _request: surface)
+
+    public_response = await system_routes.api_health(SimpleNamespace(headers={}))
+    public = json.loads(public_response.body)
+
+    assert set(public["runtime_revision"]) == {
+        "schema",
+        "required",
+        "verified",
+        "revision_token",
+        "status",
+        "blocker",
+    }
+    assert "expected_commit_sha" not in public["runtime_revision"]
+    assert "expected" not in public["boot"]["launch_provenance"]
+
+    surface["surface"] = "owner"
+    owner_response = await system_routes.api_health(SimpleNamespace(headers={}))
+    owner = json.loads(owner_response.body)
+
+    assert owner["runtime_revision"]["expected_commit_sha"] == "b" * 40
+    assert owner["boot"]["launch_provenance"]["expected"] == {
+        "source_root": "/private/source"
+    }
+
+
+@pytest.mark.asyncio
+async def test_api_boot_health_applies_provenance_projection_by_authenticated_surface(
+    monkeypatch,
+):
+    from interface.routes import system as system_routes
+
+    payload = {
+        "status": "ready",
+        "ready": True,
+        "runtime_revision": {
+            "schema": "aura.runtime_revision.v2",
+            "required": True,
+            "verified": True,
+            "revision_token": "a" * 64,
+            "expected_commit_sha": "b" * 40,
+            "actual_commit_sha": "b" * 40,
+            "expected_source_root": "/private/source",
+            "actual_source_root": "/private/source",
+            "issues": [],
+        },
+        "launch_provenance": {
+            "schema": "aura.launch_provenance.v1",
+            "required": True,
+            "verified": True,
+            "expected": {
+                "commit_sha": "b" * 40,
+                "source_root": "/private/source",
+            },
+            "actual": {
+                "commit_sha": "b" * 40,
+                "source_root": "/private/source",
+            },
+            "issues": [],
+        },
+    }
+    surface = {"surface": "paired_device"}
+
+    async def build_boot_health_payload_bounded(*, is_gui_proxy):
+        assert is_gui_proxy is False
+        return payload, 200
+
+    monkeypatch.delenv("AURA_GUI_PROXY", raising=False)
+    monkeypatch.setattr(
+        system_routes,
+        "_build_boot_health_payload_bounded",
+        build_boot_health_payload_bounded,
+    )
+    monkeypatch.setattr(system_routes, "_mark_runtime_service_progress", lambda _source: None)
+    monkeypatch.setattr(system_routes, "request_access_profile", lambda _request: surface)
+
+    public_response = await system_routes.api_boot_health(SimpleNamespace(headers={}))
+    public = json.loads(public_response.body)
+
+    assert set(public["runtime_revision"]) == {
+        "schema",
+        "required",
+        "verified",
+        "revision_token",
+        "status",
+        "blocker",
+    }
+    assert "expected_commit_sha" not in public["runtime_revision"]
+    assert public["launch_provenance"] == {
+        "schema": "aura.launch_provenance.v1",
+        "required": True,
+        "verified": True,
+        "status": "verified",
+        "blocker": "",
+    }
+
+    surface["surface"] = "owner"
+    owner_response = await system_routes.api_boot_health(SimpleNamespace(headers={}))
+    owner = json.loads(owner_response.body)
+
+    assert owner["runtime_revision"]["expected_commit_sha"] == "b" * 40
+    assert owner["launch_provenance"]["expected"] == {
+        "commit_sha": "b" * 40,
+        "source_root": "/private/source",
+    }
+
+
+def test_runtime_revision_cache_has_short_negative_ttl_and_explicit_invalidation(
+    monkeypatch,
+):
+    from interface.routes import system as system_routes
+
+    assert (
+        system_routes._RUNTIME_REVISION_UNVERIFIED_TTL_S
+        < system_routes._RUNTIME_REVISION_VERIFIED_TTL_S
+    )
+    monkeypatch.setattr(
+        system_routes,
+        "_RUNTIME_REVISION_CACHE",
+        {"verified": True, "revision_token": "a" * 64},
+    )
+    monkeypatch.setattr(
+        system_routes,
+        "_RUNTIME_REVISION_CACHE_COLLECTED_AT",
+        123.0,
+    )
+
+    system_routes.invalidate_runtime_revision_cache()
+
+    assert system_routes._RUNTIME_REVISION_CACHE is None
+    assert system_routes._RUNTIME_REVISION_CACHE_COLLECTED_AT == 0.0
+
+    stale = {"verified": True, "revision_token": "b" * 64}
+    fresh = {"verified": True, "revision_token": "c" * 64, "issues": []}
+    monkeypatch.setattr(system_routes, "_RUNTIME_REVISION_CACHE", stale)
+    monkeypatch.setattr(system_routes, "_RUNTIME_REVISION_CACHE_COLLECTED_AT", 123.0)
+    monkeypatch.setattr(system_routes, "_RUNTIME_REVISION_INVALIDATION_PENDING", False)
+    monkeypatch.setattr(
+        system_routes,
+        "_collect_runtime_revision_uncached",
+        lambda: fresh,
+    )
+    assert system_routes._RUNTIME_REVISION_LOCK.acquire(timeout=1.0)
+    try:
+        started = time.monotonic()
+        system_routes.invalidate_runtime_revision_cache()
+        assert time.monotonic() - started < 0.05
+        assert system_routes._RUNTIME_REVISION_INVALIDATION_PENDING is True
+        assert system_routes._RUNTIME_REVISION_CACHE is stale
+    finally:
+        system_routes._RUNTIME_REVISION_LOCK.release()
+
+    assert system_routes._runtime_revision_contract()["revision_token"] == "c" * 64
+    assert system_routes._RUNTIME_REVISION_INVALIDATION_PENDING is False
+
+
+def test_every_runtime_revision_shell_asset_is_no_store_or_revision_addressed():
+    from interface import server
+    from interface.routes import system as system_routes
+
+    for relative in system_routes._RUNTIME_REVISION_SHELL_ASSETS:
+        path = "/" + relative.removeprefix("interface/")
+        policy = server._cache_policy_for_path(path)
+        assert policy is not None, path
+        assert policy["Cache-Control"].startswith("no-store"), path
+        addressed = server._cache_policy_for_path(
+            path,
+            revision_addressed=True,
+        )
+        assert addressed["Cache-Control"].endswith("immutable"), path
+
+    assert server._cache_policy_for_path("/")["Cache-Control"].startswith("no-store")
+    assert server._cache_policy_for_path("/data/uploads/private.png")[
+        "Cache-Control"
+    ].startswith("no-store")
+    for future_shell_path in (
+        "/static/mission_control.html",
+        "/static/future-shell-module.js",
+        "/static/future-shell-style.css",
+        "/static/vendor/fonts/future-shell-font.woff2",
+        "/static/future-shell-image.png",
+    ):
+        assert server._cache_policy_for_path(future_shell_path)[
+            "Cache-Control"
+        ].startswith("no-store")
+
+
+@pytest.mark.asyncio
+async def test_service_worker_response_grants_exact_root_scope():
+    from interface import server
+
+    response = SimpleNamespace(headers={}, status_code=200)
+
+    async def call_next(_request):
+        return response
+
+    result = await server.add_cache_headers(
+        SimpleNamespace(
+            url=SimpleNamespace(path="/static/service-worker.js"),
+            query_params={},
+        ),
+        call_next,
+    )
+
+    assert result is response
+    assert response.headers["Service-Worker-Allowed"] == "/"
+    assert response.headers["Cache-Control"].startswith("no-store")
+
+
+@pytest.mark.asyncio
+async def test_only_verified_snapshot_responses_receive_immutable_cache_policy():
+    from interface import server
+
+    revision = "a" * 64
+    request = SimpleNamespace(
+        url=SimpleNamespace(path="/static/aura.js"),
+        query_params={"_aura_runtime": revision},
+    )
+
+    rejected = SimpleNamespace(
+        headers=dict(server.NO_CACHE_HEADERS),
+        status_code=409,
+    )
+    async def reject_next(_request):
+        return rejected
+
+    result = await server.add_cache_headers(request, reject_next)
+    assert result.headers["Cache-Control"].startswith("no-store")
+
+    verified = SimpleNamespace(
+        headers={"X-Aura-Runtime-Revision": revision},
+        status_code=200,
+    )
+    async def verified_next(_request):
+        return verified
+
+    result = await server.add_cache_headers(request, verified_next)
+    assert result.headers["Cache-Control"].endswith("immutable")
+
+
+def test_runtime_revision_retries_unverified_collection_after_worker_ttl(monkeypatch):
+    from interface.routes import system as system_routes
+
+    attempts: list[int] = []
+    unverified = system_routes._runtime_revision_unavailable("resident_app_not_running")
+    verified = dict(unverified)
+    verified.update(
+        {
+            "verified": True,
+            "source_verified": True,
+            "revision_token": "a" * 64,
+            "issues": [],
+        }
+    )
+
+    def collect():
+        attempts.append(len(attempts) + 1)
+        return unverified if len(attempts) == 1 else verified
+
+    timestamps = iter((100.0, 101.0, 102.1))
+    monkeypatch.setattr(system_routes, "_RUNTIME_REVISION_CACHE", None)
+    monkeypatch.setattr(system_routes, "_RUNTIME_REVISION_CACHE_COLLECTED_AT", 0.0)
+    monkeypatch.setattr(system_routes, "_RUNTIME_REVISION_UNVERIFIED_TTL_S", 2.0)
+    monkeypatch.setattr(system_routes, "_collect_runtime_revision_uncached", collect)
+    monkeypatch.setattr(system_routes.time, "monotonic", lambda: next(timestamps))
+
+    first = system_routes._runtime_revision_contract()
+    before_ttl = system_routes._runtime_revision_contract()
+    after_ttl = system_routes._runtime_revision_contract()
+
+    assert first["verified"] is False
+    assert before_ttl["verified"] is False
+    assert after_ttl["verified"] is True
+    assert attempts == [1, 2]
+
+
+def test_runtime_revision_refreshes_verified_identity_after_ttl(monkeypatch):
+    from interface.routes import system as system_routes
+
+    attempts: list[int] = []
+
+    def collect():
+        attempts.append(len(attempts) + 1)
+        return {
+            **system_routes._runtime_revision_unavailable(""),
+            "verified": True,
+            "source_verified": True,
+            "revision_token": str(attempts[-1]) * 64,
+            "issues": [],
+        }
+
+    timestamps = iter((100.0, 110.0, 131.0))
+    monkeypatch.setattr(system_routes, "_RUNTIME_REVISION_CACHE", None)
+    monkeypatch.setattr(system_routes, "_RUNTIME_REVISION_CACHE_COLLECTED_AT", 0.0)
+    monkeypatch.setattr(system_routes, "_RUNTIME_REVISION_VERIFIED_TTL_S", 30.0)
+    monkeypatch.setattr(system_routes, "_collect_runtime_revision_uncached", collect)
+    monkeypatch.setattr(system_routes.time, "monotonic", lambda: next(timestamps))
+
+    first = system_routes._runtime_revision_contract()
+    before_ttl = system_routes._runtime_revision_contract()
+    after_ttl = system_routes._runtime_revision_contract()
+
+    assert first["revision_token"] == "1" * 64
+    assert before_ttl["revision_token"] == "1" * 64
+    assert after_ttl["revision_token"] == "2" * 64
+    assert attempts == [1, 2]
+
+
+def test_runtime_revision_fallback_never_waits_for_collection_lock(monkeypatch):
+    from interface.routes import system as system_routes
+
+    monkeypatch.setattr(system_routes, "_RUNTIME_REVISION_CACHE", None)
+    result: dict[str, object] = {}
+
+    def read_fallback() -> None:
+        result["fallback"] = system_routes._runtime_revision_fallback_contract()
+
+    assert system_routes._RUNTIME_REVISION_LOCK.acquire(timeout=1.0)
+    reader = threading.Thread(target=read_fallback)
+    try:
+        reader.start()
+        reader.join(timeout=0.5)
+        completed_without_lock = not reader.is_alive()
+    finally:
+        system_routes._RUNTIME_REVISION_LOCK.release()
+        reader.join(timeout=1.0)
+
+    assert completed_without_lock is True
+    fallback = result["fallback"]
+    assert isinstance(fallback, dict)
+    assert fallback["verified"] is False
+    assert fallback["issues"] == ["runtime_revision_collection_in_flight"]
 
 
 def test_legacy_shell_health_poll_is_single_scheduled_incident_loop():
@@ -534,3 +1470,336 @@ def test_legacy_shell_health_poll_is_single_scheduled_incident_loop():
     assert "endpoint recovered after" in source
     assert "fetch('/api/health')" not in service_worker
     assert service_worker.count("fetch('/api/health/heartbeat')") == 2
+    install_block = service_worker.split("self.addEventListener('install'", 1)[1].split(
+        "self.addEventListener('activate'", 1
+    )[0]
+    assert "self.skipWaiting()" not in install_block
+
+
+def test_legacy_shell_handoff_preserves_draft_active_and_queued_turns():
+    from pathlib import Path
+
+    project_root = Path(__file__).resolve().parents[1]
+    source = (project_root / "interface/static/aura.js").read_text(encoding="utf-8")
+
+    assert "function verifiedRuntimeRevision(payload)" in source
+    assert "revision.schema !== 'aura.runtime_revision.v2'" in source
+    assert "revision.verified !== true" in source
+    assert "revision.required !== true" in source
+    assert "function healthSnapshotRevisionEvidence(payload)" in source
+    assert "metadata.fresh !== true" in source
+    assert "function runtimeRevisionEvidenceIsMonotonic" in source
+    assert "function runtimeRevisionMarkerFromLocation" in source
+    assert "RUNTIME_REVISION_RELOAD_LIMIT" in source
+    assert "function reconcileRuntimeShellRevision(payload)" in source
+    assert "if (reconcileRuntimeShellRevision(d)) return;" in source
+    assert "'X-Idempotency-Key': item.idempotencyKey" in source
+    assert "!visibleUserMessageMatches(msg)" in source
+    assert "item.approvalResumeToken = item.turnId;" in source
+    assert "void runChatRequest(item, { messageAlreadyRendered: true });" in source
+    assert "function chatDeliveryDecision(" in source
+    assert "swReloadTriggered = requestGuardedShellReload({" in source
+    assert "nextUrl.searchParams.set('_aura_runtime', revision);" in source
+    assert "revision.slice(0, 12)" not in source
+    submit_block = source.split("$('chat-form').onsubmit", 1)[1].split(
+        "async function appendMsg", 1
+    )[0]
+    assert submit_block.index("enqueueChatMessage(item)") < submit_block.index(
+        "msgInput.value = '';"
+    )
+    assert submit_block.index("runChatRequest(item") < submit_block.index(
+        "msgInput.value = '';"
+    )
+
+    handoff_start = source.index("function createChatIdempotencyKey()")
+    handoff_end = source.index("function enqueueChatMessage", handoff_start)
+    drain_start = source.index("function drainQueuedChatMessages()", handoff_end)
+    drain_end = source.index("async function runChatRequest", drain_start)
+    revision_start = source.index("function verifiedRuntimeRevision(payload)")
+    revision_end = source.index("async function pollHealth()", revision_start)
+    production_functions = "\n\n".join(
+        (
+            source[handoff_start:handoff_end].strip(),
+            source[drain_start:drain_end].strip(),
+            source[revision_start:revision_end].strip(),
+        )
+    )
+    node = shutil.which("node")
+    assert node is not None, "Node.js is required to validate the production shell logic"
+    script = textwrap.dedent(
+        f"""
+        'use strict';
+        const assert = require('node:assert/strict');
+        const RUNTIME_REVISION_STORAGE_KEY = 'aura.runtime_revision';
+        const RUNTIME_REVISION_RELOAD_STORAGE_KEY = 'aura.runtime_revision_reload';
+        const RUNTIME_REVISION_RECORD_SCHEMA = 'aura.runtime_revision.client.v2';
+        const RUNTIME_REVISION_RELOAD_LIMIT = 2;
+        const CHAT_HANDOFF_STORAGE_KEY = 'aura.chat_handoff';
+            const CHAT_HANDOFF_SCHEMA = 'aura.chat_handoff.v3';
+            const CHAT_HANDOFF_ACCEPTED_SCHEMAS = new Set([CHAT_HANDOFF_SCHEMA]);
+            const CHAT_HANDOFF_ACTIVE_REPLAY_MAX_WAIT_MS = 410000;
+            const CHAT_HANDOFF_MAX_AGE_MS = 600000;
+            const SERVICE_WORKER_REGISTRATION_RETRY_MAX_MS = 30000;
+        const values = new Map();
+        const setStorageItem = (key, value) => values.set(key, String(value));
+        const sessionStorage = {{
+            getItem: (key) => values.has(key) ? values.get(key) : null,
+            setItem: setStorageItem,
+            removeItem: (key) => values.delete(key),
+        }};
+        const composer = {{ value: '', style: {{}}, scrollHeight: 42 }};
+        const $ = (id) => id === 'chat-input' ? composer : null;
+        const replacements = [];
+        const reloads = [];
+        const timers = [];
+        const sent = [];
+        let uuidCounter = 0;
+        const window = {{
+            crypto: {{ randomUUID: () => `stable-${{++uuidCounter}}-0000-0000-000000000000` }},
+            setTimeout: (callback, delay) => {{ timers.push([callback, delay]); return timers.length; }},
+            clearTimeout: () => {{}},
+            location: {{
+                href: 'http://127.0.0.1:8000/?existing=1',
+                replace: (url) => replacements.push(url),
+                reload: () => reloads.push('reload'),
+            }},
+        }};
+        const navigator = {{}};
+        const console = {{ warn: () => {{}}, error: () => {{}} }};
+        const state = {{
+            activeChatRequest: null,
+            chatSendQueue: [],
+            chatDrainTimer: null,
+            chatHandoffPending: false,
+            deferredShellReload: null,
+            waitingServiceWorker: null,
+            runtimeRevision: null,
+            runtimeRevisionGeneration: 0,
+            runtimeRevisionCapturedAtUnix: 0,
+                runtimeRevisionReloadAttempts: {{}},
+                runtimeRevisionReloading: false,
+                runtimeRevisionTrust: 'unknown',
+                runtimeShellRetirementPromise: null,
+                serviceWorkerRevision: null,
+                serviceWorkerRegistrationTarget: null,
+                serviceWorkerRegistrationPromise: null,
+                serviceWorkerRegistrationEpoch: 0,
+                serviceWorkerRegistrationFailures: 0,
+                serviceWorkerRegistrationRetryAt: 0,
+                accessProfile: {{
+                    surface: 'owner',
+                    handoff_scope: 'e'.repeat(64),
+                }},
+                conversationLane: null,
+            isSubmitting: false,
+        }};
+        const laneHasActiveGeneration = (lane) => Boolean(lane && lane.active);
+        async function runChatRequest(item, options) {{ sent.push([item, options]); }}
+
+        {production_functions}
+
+        const revisionPayload = (token, {{
+            verified = true,
+            required = true,
+            fresh = true,
+            expired = false,
+            generation = 1,
+            capturedAtUnix = 100,
+        }} = {{}}) => ({{
+            runtime_revision: {{
+                schema: 'aura.runtime_revision.v2',
+                required,
+                verified,
+                revision_token: token,
+            }},
+            health_read_model: {{
+                fresh,
+                expired,
+                snapshot_generation: generation,
+                captured_at_unix: capturedAtUnix,
+            }},
+        }});
+        const revisionA = 'a'.repeat(64);
+        const revisionB = 'b'.repeat(64);
+        const activeKey = 'aura-chat-active-key-0001';
+        const queuedKey = 'aura-chat-queued-key-0002';
+
+        composer.value = 'complete draft\\nsecond line';
+            state.activeChatRequest = normalizeChatQueueItem({{
+                message: 'active turn', idempotencyKey: activeKey, rendered: true, queuedAt: 10,
+                approvalResumeToken: 'f'.repeat(32),
+            }});
+        state.chatSendQueue = [normalizeChatQueueItem({{
+            message: 'queued turn', idempotencyKey: queuedKey, rendered: true, queuedAt: 20,
+        }})];
+        assert.equal(persistChatHandoff({{ force: true }}), true);
+        let handoff = JSON.parse(values.get(CHAT_HANDOFF_STORAGE_KEY));
+        assert.equal(handoff.draft, composer.value);
+            assert.equal(handoff.active.idempotencyKey, activeKey);
+            assert.equal(handoff.queue[0].idempotencyKey, queuedKey);
+            assert.equal(handoff.scope, `owner:${{'e'.repeat(64)}}`);
+            assert.equal(Object.hasOwn(handoff.active, 'approvalResumeToken'), false);
+
+        assert.equal(reconcileRuntimeShellRevision(revisionPayload(revisionA, {{ verified: false }})), false);
+        assert.equal(reconcileRuntimeShellRevision(revisionPayload(revisionA, {{ fresh: false }})), false);
+        assert.equal(reconcileRuntimeShellRevision(revisionPayload(revisionA, {{ expired: true }})), false);
+        assert.equal(replacements.length, 0);
+
+        assert.equal(reconcileRuntimeShellRevision(revisionPayload(revisionA.toUpperCase())), false);
+        assert.equal(state.runtimeRevision, revisionA);
+        let revisionRecord = JSON.parse(values.get(RUNTIME_REVISION_STORAGE_KEY));
+        assert.equal(revisionRecord.revision, revisionA);
+        assert.equal(revisionRecord.generation, 1);
+        assert.equal(revisionRecord.captured_at_unix, 100);
+        assert.equal(replacements.length, 0);
+
+        assert.equal(reconcileRuntimeShellRevision(revisionPayload(revisionB, {{
+            generation: 2, capturedAtUnix: 100,
+        }})), false);
+        assert.equal(state.runtimeRevision, revisionA);
+        assert.equal(replacements.length, 0);
+
+        assert.equal(runtimeRevisionEvidenceIsMonotonic(
+            {{ revision: revisionA, generation: 1, capturedAtUnix: 200 }},
+            {{ revision: revisionA, generation: 99, capturedAtUnix: 100 }},
+        ), true);
+        assert.equal(runtimeRevisionEvidenceIsMonotonic(
+            {{ revision: revisionA, generation: 1, capturedAtUnix: 100 }},
+            {{ revision: revisionA, generation: 99, capturedAtUnix: 100 }},
+        ), false);
+
+        assert.equal(reconcileRuntimeShellRevision(revisionPayload(revisionB, {{
+            generation: 2, capturedAtUnix: 110,
+        }})), true);
+        revisionRecord = JSON.parse(values.get(RUNTIME_REVISION_STORAGE_KEY));
+        assert.equal(revisionRecord.revision, revisionB);
+        assert.equal(revisionRecord.generation, 2);
+        assert.equal(replacements.length, 1);
+        assert.match(replacements[0], new RegExp(`_aura_runtime=${{revisionB}}`));
+        handoff = JSON.parse(values.get(CHAT_HANDOFF_STORAGE_KEY));
+        assert.equal(handoff.draft, 'complete draft\\nsecond line');
+        assert.equal(handoff.active.idempotencyKey, activeKey);
+        assert.equal(handoff.queue[0].idempotencyKey, queuedKey);
+        assert.equal(reconcileRuntimeShellRevision(revisionPayload(revisionB, {{
+            generation: 2, capturedAtUnix: 110,
+        }})), false);
+        assert.equal(replacements.length, 1);
+
+        composer.value = '';
+        state.activeChatRequest = null;
+        state.chatSendQueue = [];
+        state.runtimeRevision = null;
+        state.runtimeRevisionReloading = false;
+        state.chatHandoffPending = false;
+        assert.equal(restoreChatHandoff(composer), true);
+        assert.equal(composer.value, 'complete draft\\nsecond line');
+        assert.equal(composer.style.height, '42px');
+        assert.deepEqual(
+            state.chatSendQueue.map(item => item.idempotencyKey),
+            [activeKey, queuedKey],
+        );
+            assert.ok(state.chatSendQueue.every(item => item.rendered === false));
+            assert.ok(state.chatSendQueue.every(item => item.approvalResumeToken === ''));
+        assert.equal(state.chatSendQueue[0].resumePending, true);
+        assert.equal(state.chatSendQueue[1].resumePending, false);
+
+        state.conversationLane = {{ active: true }};
+        drainQueuedChatMessages();
+        assert.equal(sent.length, 1);
+        assert.equal(sent[0][0].idempotencyKey, activeKey);
+        assert.equal(sent[0][1].messageAlreadyRendered, false);
+        assert.equal(state.chatSendQueue.length, 1);
+        assert.equal(timers.length, 0);
+
+        const activationMessages = [];
+            const revisionWorker = {{
+            scriptURL: `http://127.0.0.1:8000/static/service-worker.js?_aura_runtime=${{revisionB}}`,
+                postMessage: (message) => activationMessages.push(message),
+            }};
+            state.serviceWorkerRegistrationTarget = revisionB;
+            assert.equal(requestServiceWorkerActivation(revisionWorker, revisionB), true);
+        assert.equal(requestServiceWorkerActivation(revisionWorker, revisionA), false);
+        assert.deepEqual(activationMessages, [{{
+            type: 'SKIP_WAITING', revision: revisionB,
+        }}]);
+
+        const revisionC = 'c'.repeat(64);
+        composer.value = '';
+        state.activeChatRequest = null;
+        state.chatSendQueue = [];
+        state.runtimeRevisionReloading = false;
+        state.chatHandoffPending = false;
+        sessionStorage.setItem = () => {{ throw new Error('storage blocked'); }};
+            assert.equal(requestGuardedShellReload({{
+            revision: revisionC,
+            generation: 3,
+            capturedAtUnix: 120,
+            replaceUrl: `http://127.0.0.1:8000/?_aura_runtime=${{revisionC}}`,
+            }}), true);
+            assert.equal(reloads.length, 0);
+            assert.equal(replacements.length, 2);
+            assert.equal(state.deferredShellReload, null);
+
+            window.location.href = `http://127.0.0.1:8000/?_aura_runtime=${{revisionC}}`;
+            state.runtimeRevisionReloading = false;
+        state.runtimeRevision = null;
+        state.runtimeRevisionGeneration = 0;
+        state.runtimeRevisionCapturedAtUnix = 0;
+        assert.equal(reconcileRuntimeShellRevision(revisionPayload(revisionC, {{
+            generation: 3, capturedAtUnix: 120,
+        }})), false);
+            assert.equal(replacements.length, 2);
+        assert.equal(state.runtimeRevision, revisionC);
+        assert.equal(reconcileRuntimeShellRevision(revisionPayload(revisionC, {{
+            generation: 2, capturedAtUnix: 130,
+        }})), false);
+            assert.equal(state.runtimeRevisionGeneration, 2);
+
+        const revisionD = 'd'.repeat(64);
+        assert.equal(reconcileRuntimeShellRevision(revisionPayload(revisionD, {{
+            generation: 2, capturedAtUnix: 110,
+        }})), false);
+            assert.equal(replacements.length, 2);
+
+        sessionStorage.setItem = setStorageItem;
+        state.runtimeRevisionReloadAttempts = {{}};
+        values.delete(RUNTIME_REVISION_RELOAD_STORAGE_KEY);
+        state.runtimeRevisionReloading = false;
+        assert.equal(requestGuardedShellReload({{
+            revision: revisionD, generation: 4, capturedAtUnix: 130,
+        }}), true);
+        state.runtimeRevisionReloading = false;
+        assert.equal(requestGuardedShellReload({{
+            revision: revisionD, generation: 4, capturedAtUnix: 130,
+        }}), true);
+        state.runtimeRevisionReloading = false;
+        assert.equal(requestGuardedShellReload({{
+            revision: revisionD, generation: 4, capturedAtUnix: 130,
+        }}), false);
+            assert.equal(reloads.length, 2);
+
+            composer.value = 'must not cross principals';
+            state.activeChatRequest = null;
+            state.chatSendQueue = [];
+            assert.equal(persistChatHandoff({{ force: true }}), true);
+            state.accessProfile.handoff_scope = '9'.repeat(64);
+            assert.equal(restoreChatHandoff(composer), false);
+            assert.equal(values.has(CHAT_HANDOFF_STORAGE_KEY), false);
+
+            state.accessProfile.handoff_scope = 'e'.repeat(64);
+            composer.value = 'expired';
+            assert.equal(persistChatHandoff({{ force: true }}), true);
+            const expired = JSON.parse(values.get(CHAT_HANDOFF_STORAGE_KEY));
+            expired.savedAt = Date.now() - CHAT_HANDOFF_MAX_AGE_MS - 1;
+            values.set(CHAT_HANDOFF_STORAGE_KEY, JSON.stringify(expired));
+            assert.equal(restoreChatHandoff(composer), false);
+            assert.equal(values.has(CHAT_HANDOFF_STORAGE_KEY), false);
+            """
+    )
+    completed = get_subprocess_gateway().run(
+        [node, "-e", script],
+        timeout=10,
+        offline_tooling=True,
+        source="certification_tooling:test_runtime_shell_revision",
+    )
+    assert completed.returncode == 0, completed.stderr

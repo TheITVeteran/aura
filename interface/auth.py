@@ -406,6 +406,8 @@ def device_path_allowed(path: str, method: str = "GET") -> bool:
     normalized_method = str(method or "GET").upper()
     if normalized == "/api/chat":
         return normalized_method == "POST"
+    if _path_at_or_below(normalized, "/api/chat/delivery"):
+        return normalized_method in {"GET", "HEAD"}
     if normalized == "/api/devices/pair/complete":
         return normalized_method == "POST"
     if normalized_method not in {"GET", "HEAD"}:
@@ -517,6 +519,13 @@ def relational_principal_id_for_request(request: Request) -> str | None:
     return None
 
 
+def _handoff_scope(surface: str, identity: str) -> str:
+    material = f"aura-ui-handoff-v1\0{surface}\0{identity}".encode(
+        "utf-8", errors="surrogateescape"
+    )
+    return hashlib.sha256(material).hexdigest()
+
+
 def request_access_profile(request: Request | None) -> dict[str, Any]:
     """Describe the authenticated UI surface without exposing credentials."""
 
@@ -524,6 +533,7 @@ def request_access_profile(request: Request | None) -> dict[str, Any]:
         return {
             "surface": "internal",
             "conversation_only": False,
+            "handoff_scope": _handoff_scope("internal", "runtime"),
             "capabilities": {
                 "chat": True,
                 "sessions": True,
@@ -551,9 +561,16 @@ def request_access_profile(request: Request | None) -> dict[str, Any]:
     # proxy or local transport makes the peer address look like loopback. UI
     # capability advertising must agree with the later authorization decision.
     if paired_device is not None:
+        device_identity = "\0".join(
+            (
+                str(getattr(paired_device, "device_id", "") or "").strip(),
+                str(getattr(paired_device, "principal_id", "") or "").strip().casefold(),
+            )
+        )
         return {
             "surface": "paired_device",
             "conversation_only": True,
+            "handoff_scope": _handoff_scope("paired_device", device_identity),
             "capabilities": {
                 "chat": True,
                 "sessions": True,
@@ -580,9 +597,11 @@ def request_access_profile(request: Request | None) -> dict[str, Any]:
         and hmac.compare_digest(supplied, expected)
     ) or synthetic_internal_request
     if owner_authenticated:
+        owner_identity = local_owner_principal_id() or "configured-owner"
         return {
             "surface": "owner",
             "conversation_only": False,
+            "handoff_scope": _handoff_scope("owner", owner_identity),
             "capabilities": {
                 "chat": True,
                 "sessions": True,
@@ -600,6 +619,7 @@ def request_access_profile(request: Request | None) -> dict[str, Any]:
     return {
         "surface": "unknown",
         "conversation_only": True,
+        "handoff_scope": "",
         "capabilities": {},
     }
 

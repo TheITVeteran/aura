@@ -20,8 +20,8 @@ import pytest
 from starlette.testclient import TestClient
 
 
-class _StubAllostasis:
-    def __init__(self, anticipatory=0.5, defer=False, reason="stub"):
+class _DeterministicAllostasis:
+    def __init__(self, anticipatory=0.5, defer=False, reason="fixture"):
         self._anticipatory = anticipatory
         self._defer = defer
         self._reason = reason
@@ -44,7 +44,7 @@ class _StubAllostasis:
         return {
             "service": "allostasis_engine",
             "tier": "conserving",
-            "narrative": "stub narrative",
+            "narrative": "deterministic fixture narrative",
             "open_forecasts": [],
             "recently_resolved": [],
             "calibration": {},
@@ -60,7 +60,9 @@ class TestBodyStateSeam:
         from core.being.aura_now import BodyState
 
         service_container.register_instance(
-            "allostasis_engine", _StubAllostasis(anticipatory=0.5), required=False,
+            "allostasis_engine",
+            _DeterministicAllostasis(anticipatory=0.5),
+            required=False,
         )
         body = BodyState.from_aura_state(None)
         assert body.anticipatory_pressure == pytest.approx(0.5)
@@ -114,7 +116,8 @@ class TestMetabolicConsumers:
     def test_defer_gate_consulted(self, service_container):
         coordinator = self._bare_coordinator()
         service_container.register_instance(
-            "allostasis_engine", _StubAllostasis(defer=True, reason="crisis in 9min"),
+            "allostasis_engine",
+            _DeterministicAllostasis(defer=True, reason="crisis in 9min"),
             required=False,
         )
         assert coordinator._allostasis_defers() is True
@@ -122,7 +125,7 @@ class TestMetabolicConsumers:
     def test_no_defer_when_engine_calm(self, service_container):
         coordinator = self._bare_coordinator()
         service_container.register_instance(
-            "allostasis_engine", _StubAllostasis(defer=False), required=False,
+            "allostasis_engine", _DeterministicAllostasis(defer=False), required=False,
         )
         assert coordinator._allostasis_defers() is False
 
@@ -133,7 +136,7 @@ class TestMetabolicConsumers:
     def test_anticipatory_signal_counts_as_resource_constraint(self, service_container):
         coordinator = self._bare_coordinator()
         service_container.register_instance(
-            "allostasis_engine", _StubAllostasis(defer=True), required=False,
+            "allostasis_engine", _DeterministicAllostasis(defer=True), required=False,
         )
         assert coordinator._is_resource_constrained() is True
 

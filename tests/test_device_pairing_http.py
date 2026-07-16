@@ -8,6 +8,7 @@ host — exactly the phone's position on the LAN.
 from __future__ import annotations
 
 import asyncio
+import re
 import threading
 
 import pytest
@@ -213,6 +214,11 @@ def test_paired_chat_projects_owner_only_metadata_and_ignores_internal_headers(c
         "response_confidence",
         "status",
         "conversation_lane",
+        "turn_id",
+        "idempotency_key",
+        "delivery_state",
+        "delivery_generation",
+        "delivery_replayed",
     }
     assert set(payload.get("conversation_lane", {})) <= {
         "active_generation",
@@ -221,6 +227,11 @@ def test_paired_chat_projects_owner_only_metadata_and_ignores_internal_headers(c
         "state",
     }
     serialized = response.text.lower()
+    assert re.fullmatch(r"[0-9a-f]{32}", payload["turn_id"])
+    assert re.fullmatch(r"server-[0-9a-f]{32}", payload["idempotency_key"])
+    assert payload["delivery_state"] == "completed"
+    assert payload["delivery_generation"] == 1
+    assert payload["delivery_replayed"] is False
     assert "model_path" not in serialized
     assert "live_turn_contract" not in serialized
     assert "required_subsystems" not in serialized

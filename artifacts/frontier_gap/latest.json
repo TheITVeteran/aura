@@ -1,117 +1,1646 @@
 {
   "payload": {
-    "claim": "Operational frontier-general definition: Aura's verifier-graded score on a fresh-generated battery divided by a frontier reference, per class. This run (mode=amplifier_stub): overall gap 0.0 (0 = parity). The CLAIM is won only on a monotone closing trend across runs at matched budget \u2014 a single point is a baseline, not a victory. Stub-mode numbers measure the harness (verify\u2192foundry\u2192playbook loop), NOT the 32B mind.",
-    "generated_at": "2026-07-14 13:17:46 PDT",
-    "git_commit": "e6517129",
-    "host": {
-      "platform": "macOS-26.4.1-arm64-arm-64bit",
-      "python": "3.12.13"
+    "candidate_model": {
+      "after": null,
+      "before": null,
+      "schema": "aura.model_stability_window.v1",
+      "stable": false,
+      "window_sha256": ""
     },
-    "latest_run": {
-      "battery_version": "2026-07-14.v1",
-      "classes": [
-        {
-          "aura_correct": 5,
-          "aura_score": 1.0,
-          "gap": 0.0,
-          "n": 5,
-          "reference_score": 0.98,
-          "task_class": "math"
-        },
-        {
-          "aura_correct": 5,
-          "aura_score": 1.0,
-          "gap": 0.0,
-          "n": 5,
-          "reference_score": 0.92,
-          "task_class": "reasoning"
-        },
-        {
-          "aura_correct": 5,
-          "aura_score": 1.0,
-          "gap": 0.0,
-          "n": 5,
-          "reference_score": 0.9,
-          "task_class": "coding"
-        },
-        {
-          "aura_correct": 5,
-          "aura_score": 1.0,
-          "gap": 0.0,
-          "n": 5,
-          "reference_score": 0.95,
-          "task_class": "factual"
-        }
-      ],
-      "duration_s": 11.0,
-      "generated_at_unix": 1784060266.264256,
-      "overall_aura_score": 1.0,
-      "overall_gap": 0.0,
-      "per_class": 5,
-      "reference_basis": "published_anchor",
-      "schema_version": 1,
-      "seed": 1,
-      "solver_mode": "amplifier_stub"
+    "capability_claim_eligible": false,
+    "capability_ledger": {
+      "capability_claim_eligible": true,
+      "evidence_class": "aura_model_capability",
+      "runs": [],
+      "schema_version": 4,
+      "trend": {
+        "direction": "insufficient",
+        "measured_points": 0,
+        "points": 0
+      }
     },
-    "ledger": {
+    "capability_measurement": {
+      "claim_eligible": false,
+      "reason": "the desktop runtime owns the model lane; this CLI has no authenticated resident-amplifier proof channel",
+      "required_next_evidence": "run amplifier_mlx with complete verified receipts, a clean exact source, a stable content-addressed model, and a trusted signed matched-budget reference artifact",
+      "status": "not_measured",
+      "subject": "aura_resident_model"
+    },
+    "claim": "Pipeline-control evidence only. This validates measurement plumbing; it does not measure Aura's model capability. No diagnostic gap is claimed without a trusted signed matched-budget reference artifact.",
+    "control_ledger": {
+      "capability_claim_eligible": false,
+      "evidence_class": "synthetic_pipeline_control",
       "runs": [
         {
           "at": 1784060001.085349,
           "battery_version": "2026-07-14.v1",
-          "overall_aura_score": 1.0,
-          "overall_gap": 0.0,
+          "overall_candidate_score": 1.0,
+          "overall_gap": null,
           "per_class_gap": {
-            "coding": 0.0,
-            "factual": 0.0,
-            "math": 0.0,
-            "reasoning": 0.0
+            "coding": null,
+            "factual": null,
+            "math": null,
+            "reasoning": null
           },
-          "reference_basis": "published_anchor",
+          "reference_basis": "legacy_unvalidated_anchor_quarantined",
           "seed": 0
         },
         {
           "at": 1784060254.947523,
           "battery_version": "2026-07-14.v1",
-          "overall_aura_score": 1.0,
-          "overall_gap": 0.0,
+          "overall_candidate_score": 1.0,
+          "overall_gap": null,
           "per_class_gap": {
-            "coding": 0.0,
-            "factual": 0.0,
-            "math": 0.0,
-            "reasoning": 0.0
+            "coding": null,
+            "factual": null,
+            "math": null,
+            "reasoning": null
           },
-          "reference_basis": "published_anchor",
+          "reference_basis": "legacy_unvalidated_anchor_quarantined",
           "seed": 0
         },
         {
           "at": 1784060266.264256,
           "battery_version": "2026-07-14.v1",
-          "overall_aura_score": 1.0,
-          "overall_gap": 0.0,
+          "overall_candidate_score": 1.0,
+          "overall_gap": null,
           "per_class_gap": {
-            "coding": 0.0,
-            "factual": 0.0,
-            "math": 0.0,
-            "reasoning": 0.0
+            "coding": null,
+            "factual": null,
+            "math": null,
+            "reasoning": null
           },
-          "reference_basis": "published_anchor",
+          "reference_basis": "legacy_unvalidated_anchor_quarantined",
           "seed": 1
+        },
+        {
+          "at": 1784110872.342464,
+          "battery_version": "2026-07-15.v2",
+          "overall_candidate_score": 1.0,
+          "overall_gap": null,
+          "per_class_gap": {
+            "coding": null,
+            "factual": null,
+            "math": null,
+            "reasoning": null
+          },
+          "reference_basis": "legacy_unvalidated_anchor_quarantined",
+          "seed": 15
+        },
+        {
+          "at": 1784127409.7212958,
+          "battery_version": "2026-07-15.v3",
+          "budget": {
+            "max_tokens": 256,
+            "sample_budget": 3,
+            "time_budget_s": 20.0
+          },
+          "execution": {
+            "attempted": 8,
+            "completed": 8,
+            "disqualifying_fallbacks": 0,
+            "empty": 0,
+            "errors": [
+              "unverified amplifier result for logic",
+              "unverified amplifier result for logic",
+              "unverified amplifier result for factual",
+              "unverified amplifier result for factual"
+            ],
+            "failed": 0,
+            "fallback_items": 4,
+            "invalid": 0,
+            "unverified": 4
+          },
+          "measurement_subject": "deterministic_pipeline_control",
+          "overall_candidate_score": 1.0,
+          "overall_gap": null,
+          "per_class_gap": {
+            "coding": null,
+            "factual": null,
+            "math": null,
+            "reasoning": null
+          },
+          "reference": null,
+          "reference_basis": "unavailable",
+          "seed": 15,
+          "source_provenance": {
+            "clean": false,
+            "commit_sha": "63b30a1986319cae2e7ab22fb52da9ddfe4b8d3c",
+            "issues": [],
+            "schema": "aura.source_provenance.v1",
+            "tree_sha": "791c7d2322bb243afc4fdf69e34df0cabdcf674e",
+            "untracked_content_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "workspace_diff_sha256": "1626e73dd2ad176ed2c27bcdfa19ea400635503cff4b581bf038482056a91014",
+            "workspace_state_sha256": "8c1db5b2eb30a2193229f49b5e4d13ed2f8c67729c370fc7e65b85f962e365be"
+          }
+        },
+        {
+          "at": 1784130372.3314078,
+          "battery_version": "2026-07-15.v4",
+          "budget": {
+            "max_tokens": 256,
+            "sample_budget": 3,
+            "time_budget_s": 20.0
+          },
+          "execution": {
+            "attempted": 20,
+            "completed": 20,
+            "disqualifying_fallbacks": 0,
+            "empty": 0,
+            "errors": [
+              "unverified amplifier result for logic",
+              "unverified amplifier result for logic",
+              "unverified amplifier result for logic",
+              "unverified amplifier result for logic",
+              "unverified amplifier result for logic",
+              "unverified amplifier result for factual",
+              "unverified amplifier result for factual",
+              "unverified amplifier result for factual",
+              "unverified amplifier result for factual",
+              "unverified amplifier result for factual"
+            ],
+            "failed": 0,
+            "fallback_items": 0,
+            "invalid": 0,
+            "unverified": 10
+          },
+          "measurement_subject": "deterministic_pipeline_control",
+          "overall_candidate_score": 1.0,
+          "overall_gap": null,
+          "per_class_gap": {
+            "coding": null,
+            "factual": null,
+            "math": null,
+            "reasoning": null
+          },
+          "reference": null,
+          "reference_basis": "unavailable",
+          "seed": 15,
+          "source_provenance": {
+            "clean": false,
+            "commit_sha": "e7a2e36a912b8da5f846e71ea3f0091d4e5cc39b",
+            "execution_component_sha256": {
+              "core/brain/frontier_gap.py": "220ce472f8b6e20eeacda68ab540f83cf30ed81c8e21521492b581551b86123e",
+              "core/brain/llm/mlx_client.py": "0a149cb0997a132a4011023ab1e36221e643952fe4a08caa0096c92141c629de",
+              "core/brain/llm/model_registry.py": "351fea0af5c11e31f3e20440ffc0a547a10fd770f923667b9710ec4eb9ebc55d",
+              "core/brain/reasoning_amplifier_v2.py": "c912f92e6d100c6e10cfccd144f8f9f5370f0149583d5a1635123ac74671f273",
+              "core/brain/verifiers/registry.py": "c68633cb40908cfbfe2238cbd6b560ea0dd150dc3c09462a3a426b15937e90c5",
+              "core/runtime/dynamic_execution_gateway.py": "e8fe74be0b8c83372cc3c213e242462341ae147f4292b7b81b268c37e79c79fd",
+              "tools/measure_frontier_gap.py": "3e87114f1a77f4f898acf16419e6ea3a04a30bd7661a67adcb6c2dfad438cff9"
+            },
+            "issues": [],
+            "schema": "aura.source_provenance.v1",
+            "tree_sha": "7c433ba781bf0c73e8d957eb0346004f47137e67",
+            "untracked_content_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "workspace_diff_sha256": "ceeb3188051509f642c41e32cf0a86a4253a2a9bb12078b6c069c9a65cab4a41",
+            "workspace_state_sha256": "22d841b6d27b06f79be980856a45b13967cf907a59731271ec3cf6d2596f55c8"
+          },
+          "source_stability": {
+            "after": {
+              "clean": false,
+              "commit_sha": "e7a2e36a912b8da5f846e71ea3f0091d4e5cc39b",
+              "execution_component_sha256": {
+                "core/brain/frontier_gap.py": "220ce472f8b6e20eeacda68ab540f83cf30ed81c8e21521492b581551b86123e",
+                "core/brain/llm/mlx_client.py": "0a149cb0997a132a4011023ab1e36221e643952fe4a08caa0096c92141c629de",
+                "core/brain/llm/model_registry.py": "351fea0af5c11e31f3e20440ffc0a547a10fd770f923667b9710ec4eb9ebc55d",
+                "core/brain/reasoning_amplifier_v2.py": "c912f92e6d100c6e10cfccd144f8f9f5370f0149583d5a1635123ac74671f273",
+                "core/brain/verifiers/registry.py": "c68633cb40908cfbfe2238cbd6b560ea0dd150dc3c09462a3a426b15937e90c5",
+                "core/runtime/dynamic_execution_gateway.py": "e8fe74be0b8c83372cc3c213e242462341ae147f4292b7b81b268c37e79c79fd",
+                "tools/measure_frontier_gap.py": "3e87114f1a77f4f898acf16419e6ea3a04a30bd7661a67adcb6c2dfad438cff9"
+              },
+              "issues": [],
+              "schema": "aura.source_provenance.v1",
+              "tree_sha": "7c433ba781bf0c73e8d957eb0346004f47137e67",
+              "untracked_content_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "workspace_diff_sha256": "ceeb3188051509f642c41e32cf0a86a4253a2a9bb12078b6c069c9a65cab4a41",
+              "workspace_state_sha256": "22d841b6d27b06f79be980856a45b13967cf907a59731271ec3cf6d2596f55c8"
+            },
+            "before": {
+              "clean": false,
+              "commit_sha": "e7a2e36a912b8da5f846e71ea3f0091d4e5cc39b",
+              "execution_component_sha256": {
+                "core/brain/frontier_gap.py": "220ce472f8b6e20eeacda68ab540f83cf30ed81c8e21521492b581551b86123e",
+                "core/brain/llm/mlx_client.py": "0a149cb0997a132a4011023ab1e36221e643952fe4a08caa0096c92141c629de",
+                "core/brain/llm/model_registry.py": "351fea0af5c11e31f3e20440ffc0a547a10fd770f923667b9710ec4eb9ebc55d",
+                "core/brain/reasoning_amplifier_v2.py": "c912f92e6d100c6e10cfccd144f8f9f5370f0149583d5a1635123ac74671f273",
+                "core/brain/verifiers/registry.py": "c68633cb40908cfbfe2238cbd6b560ea0dd150dc3c09462a3a426b15937e90c5",
+                "core/runtime/dynamic_execution_gateway.py": "e8fe74be0b8c83372cc3c213e242462341ae147f4292b7b81b268c37e79c79fd",
+                "tools/measure_frontier_gap.py": "3e87114f1a77f4f898acf16419e6ea3a04a30bd7661a67adcb6c2dfad438cff9"
+              },
+              "issues": [],
+              "schema": "aura.source_provenance.v1",
+              "tree_sha": "7c433ba781bf0c73e8d957eb0346004f47137e67",
+              "untracked_content_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "workspace_diff_sha256": "ceeb3188051509f642c41e32cf0a86a4253a2a9bb12078b6c069c9a65cab4a41",
+              "workspace_state_sha256": "22d841b6d27b06f79be980856a45b13967cf907a59731271ec3cf6d2596f55c8"
+            },
+            "schema": "aura.source_stability_window.v1",
+            "stable": true,
+            "window_sha256": "da771a7d2a84d9fffd67b02fa75ad3a51b18061c8daf33468f1bce2157fee33d"
+          }
+        },
+        {
+          "at": 1784130681.378728,
+          "battery_version": "2026-07-15.v4",
+          "budget": {
+            "max_tokens": 256,
+            "sample_budget": 3,
+            "time_budget_s": 20.0
+          },
+          "execution": {
+            "attempted": 20,
+            "completed": 20,
+            "disqualifying_fallbacks": 0,
+            "empty": 0,
+            "errors": [
+              "unverified amplifier result for logic",
+              "unverified amplifier result for logic",
+              "unverified amplifier result for logic",
+              "unverified amplifier result for logic",
+              "unverified amplifier result for logic",
+              "unverified amplifier result for factual",
+              "unverified amplifier result for factual",
+              "unverified amplifier result for factual",
+              "unverified amplifier result for factual",
+              "unverified amplifier result for factual"
+            ],
+            "failed": 0,
+            "fallback_items": 0,
+            "invalid": 0,
+            "unverified": 10
+          },
+          "measurement_subject": "deterministic_pipeline_control",
+          "overall_candidate_score": 1.0,
+          "overall_gap": null,
+          "per_class_gap": {
+            "coding": null,
+            "factual": null,
+            "math": null,
+            "reasoning": null
+          },
+          "reference": null,
+          "reference_basis": "unavailable",
+          "seed": 15,
+          "source_provenance": {
+            "clean": false,
+            "commit_sha": "e7a2e36a912b8da5f846e71ea3f0091d4e5cc39b",
+            "execution_component_sha256": {
+              "core/brain/frontier_gap.py": "443793c5a1a4d275dbd60c86ef16261b9374f3f8b17d1f2b33e11bd6711c19b5",
+              "core/brain/llm/mlx_client.py": "0a149cb0997a132a4011023ab1e36221e643952fe4a08caa0096c92141c629de",
+              "core/brain/llm/model_registry.py": "351fea0af5c11e31f3e20440ffc0a547a10fd770f923667b9710ec4eb9ebc55d",
+              "core/brain/reasoning_amplifier_v2.py": "c912f92e6d100c6e10cfccd144f8f9f5370f0149583d5a1635123ac74671f273",
+              "core/brain/verifiers/registry.py": "c68633cb40908cfbfe2238cbd6b560ea0dd150dc3c09462a3a426b15937e90c5",
+              "core/runtime/dynamic_execution_gateway.py": "e8fe74be0b8c83372cc3c213e242462341ae147f4292b7b81b268c37e79c79fd",
+              "tools/measure_frontier_gap.py": "ae002a3936696cbe00444bf7ccc13e2446b7ad01c2e243342d050439d320f8fc"
+            },
+            "issues": [],
+            "schema": "aura.source_provenance.v1",
+            "tree_sha": "7c433ba781bf0c73e8d957eb0346004f47137e67",
+            "untracked_content_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "workspace_diff_sha256": "b73f53f472ed28b6fa5f0ccc090dd09bc36aecde5321cd5752f81eb2d357de9d",
+            "workspace_state_sha256": "cd0370fd161f6b3d7666f129d6ff823f0f264c536dfa0f45236e4d082786327d"
+          },
+          "source_stability": {
+            "after": {
+              "clean": false,
+              "commit_sha": "e7a2e36a912b8da5f846e71ea3f0091d4e5cc39b",
+              "execution_component_sha256": {
+                "core/brain/frontier_gap.py": "443793c5a1a4d275dbd60c86ef16261b9374f3f8b17d1f2b33e11bd6711c19b5",
+                "core/brain/llm/mlx_client.py": "0a149cb0997a132a4011023ab1e36221e643952fe4a08caa0096c92141c629de",
+                "core/brain/llm/model_registry.py": "351fea0af5c11e31f3e20440ffc0a547a10fd770f923667b9710ec4eb9ebc55d",
+                "core/brain/reasoning_amplifier_v2.py": "c912f92e6d100c6e10cfccd144f8f9f5370f0149583d5a1635123ac74671f273",
+                "core/brain/verifiers/registry.py": "c68633cb40908cfbfe2238cbd6b560ea0dd150dc3c09462a3a426b15937e90c5",
+                "core/runtime/dynamic_execution_gateway.py": "e8fe74be0b8c83372cc3c213e242462341ae147f4292b7b81b268c37e79c79fd",
+                "tools/measure_frontier_gap.py": "ae002a3936696cbe00444bf7ccc13e2446b7ad01c2e243342d050439d320f8fc"
+              },
+              "issues": [],
+              "schema": "aura.source_provenance.v1",
+              "tree_sha": "7c433ba781bf0c73e8d957eb0346004f47137e67",
+              "untracked_content_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "workspace_diff_sha256": "b73f53f472ed28b6fa5f0ccc090dd09bc36aecde5321cd5752f81eb2d357de9d",
+              "workspace_state_sha256": "cd0370fd161f6b3d7666f129d6ff823f0f264c536dfa0f45236e4d082786327d"
+            },
+            "before": {
+              "clean": false,
+              "commit_sha": "e7a2e36a912b8da5f846e71ea3f0091d4e5cc39b",
+              "execution_component_sha256": {
+                "core/brain/frontier_gap.py": "443793c5a1a4d275dbd60c86ef16261b9374f3f8b17d1f2b33e11bd6711c19b5",
+                "core/brain/llm/mlx_client.py": "0a149cb0997a132a4011023ab1e36221e643952fe4a08caa0096c92141c629de",
+                "core/brain/llm/model_registry.py": "351fea0af5c11e31f3e20440ffc0a547a10fd770f923667b9710ec4eb9ebc55d",
+                "core/brain/reasoning_amplifier_v2.py": "c912f92e6d100c6e10cfccd144f8f9f5370f0149583d5a1635123ac74671f273",
+                "core/brain/verifiers/registry.py": "c68633cb40908cfbfe2238cbd6b560ea0dd150dc3c09462a3a426b15937e90c5",
+                "core/runtime/dynamic_execution_gateway.py": "e8fe74be0b8c83372cc3c213e242462341ae147f4292b7b81b268c37e79c79fd",
+                "tools/measure_frontier_gap.py": "ae002a3936696cbe00444bf7ccc13e2446b7ad01c2e243342d050439d320f8fc"
+              },
+              "issues": [],
+              "schema": "aura.source_provenance.v1",
+              "tree_sha": "7c433ba781bf0c73e8d957eb0346004f47137e67",
+              "untracked_content_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "workspace_diff_sha256": "c2af0d6a48132b7e3963c2d819185f29d788b911c0ccae14d7baf5040831d879",
+              "workspace_state_sha256": "dba0010363442b7b5d96ca25ec13b45ceb95c88c6f78372e0415735c706da829"
+            },
+            "schema": "aura.source_stability_window.v1",
+            "stable": false,
+            "window_sha256": "191461f295ec42f34097faafd9c97e22273f5f433691f088bc7ce4204e7f5563"
+          }
+        },
+        {
+          "at": 1784132718.277062,
+          "battery_version": "2026-07-15.v4",
+          "budget": {
+            "max_tokens": 256,
+            "sample_budget": 3,
+            "time_budget_s": 20.0
+          },
+          "execution": {
+            "attempted": 20,
+            "completed": 20,
+            "disqualifying_fallbacks": 0,
+            "empty": 0,
+            "errors": [
+              "unverified amplifier result for logic",
+              "unverified amplifier result for logic",
+              "unverified amplifier result for logic",
+              "unverified amplifier result for logic",
+              "unverified amplifier result for logic",
+              "unverified amplifier result for factual",
+              "unverified amplifier result for factual",
+              "unverified amplifier result for factual",
+              "unverified amplifier result for factual",
+              "unverified amplifier result for factual"
+            ],
+            "failed": 0,
+            "fallback_items": 0,
+            "invalid": 0,
+            "unverified": 10
+          },
+          "measurement_subject": "deterministic_pipeline_control",
+          "overall_candidate_score": 1.0,
+          "overall_gap": null,
+          "per_class_gap": {
+            "coding": null,
+            "factual": null,
+            "math": null,
+            "reasoning": null
+          },
+          "reference": null,
+          "reference_basis": "unavailable",
+          "seed": 15,
+          "source_provenance": {
+            "clean": false,
+            "commit_sha": "e7a2e36a912b8da5f846e71ea3f0091d4e5cc39b",
+            "execution_component_sha256": {
+              "core/brain/frontier_gap.py": "9478801f9e6c698bb77cb45e648c21abf23801e3171d91617d899e663bb8eef1",
+              "core/brain/llm/mlx_client.py": "0a149cb0997a132a4011023ab1e36221e643952fe4a08caa0096c92141c629de",
+              "core/brain/llm/model_registry.py": "351fea0af5c11e31f3e20440ffc0a547a10fd770f923667b9710ec4eb9ebc55d",
+              "core/brain/reasoning_amplifier_v2.py": "c912f92e6d100c6e10cfccd144f8f9f5370f0149583d5a1635123ac74671f273",
+              "core/brain/verifiers/registry.py": "c68633cb40908cfbfe2238cbd6b560ea0dd150dc3c09462a3a426b15937e90c5",
+              "core/runtime/dynamic_execution_gateway.py": "e8fe74be0b8c83372cc3c213e242462341ae147f4292b7b81b268c37e79c79fd",
+              "tools/measure_frontier_gap.py": "12f2eb3659b526372cfdcacf8cb6cc14bb525d070f044ba80287d1c4a359bcd2"
+            },
+            "index_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "issues": [],
+            "schema": "aura.source_provenance.v1",
+            "tree_sha": "7c433ba781bf0c73e8d957eb0346004f47137e67",
+            "untracked_content_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "workspace_diff_sha256": "4ba73a301a9c4452c62a8bf035a1da54961aaf9caf7f4cf89da150d56b504d2e",
+            "workspace_state_sha256": "696e31ffcd430e5429f20e01a1f5a4bf535c8977c2fbaadcfb6dd7d1c370883c"
+          },
+          "source_stability": {
+            "after": {
+              "clean": false,
+              "commit_sha": "e7a2e36a912b8da5f846e71ea3f0091d4e5cc39b",
+              "execution_component_sha256": {
+                "core/brain/frontier_gap.py": "9478801f9e6c698bb77cb45e648c21abf23801e3171d91617d899e663bb8eef1",
+                "core/brain/llm/mlx_client.py": "0a149cb0997a132a4011023ab1e36221e643952fe4a08caa0096c92141c629de",
+                "core/brain/llm/model_registry.py": "351fea0af5c11e31f3e20440ffc0a547a10fd770f923667b9710ec4eb9ebc55d",
+                "core/brain/reasoning_amplifier_v2.py": "c912f92e6d100c6e10cfccd144f8f9f5370f0149583d5a1635123ac74671f273",
+                "core/brain/verifiers/registry.py": "c68633cb40908cfbfe2238cbd6b560ea0dd150dc3c09462a3a426b15937e90c5",
+                "core/runtime/dynamic_execution_gateway.py": "e8fe74be0b8c83372cc3c213e242462341ae147f4292b7b81b268c37e79c79fd",
+                "tools/measure_frontier_gap.py": "12f2eb3659b526372cfdcacf8cb6cc14bb525d070f044ba80287d1c4a359bcd2"
+              },
+              "index_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "issues": [],
+              "schema": "aura.source_provenance.v1",
+              "tree_sha": "7c433ba781bf0c73e8d957eb0346004f47137e67",
+              "untracked_content_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "workspace_diff_sha256": "4ba73a301a9c4452c62a8bf035a1da54961aaf9caf7f4cf89da150d56b504d2e",
+              "workspace_state_sha256": "696e31ffcd430e5429f20e01a1f5a4bf535c8977c2fbaadcfb6dd7d1c370883c"
+            },
+            "before": {
+              "clean": false,
+              "commit_sha": "e7a2e36a912b8da5f846e71ea3f0091d4e5cc39b",
+              "execution_component_sha256": {
+                "core/brain/frontier_gap.py": "9478801f9e6c698bb77cb45e648c21abf23801e3171d91617d899e663bb8eef1",
+                "core/brain/llm/mlx_client.py": "0a149cb0997a132a4011023ab1e36221e643952fe4a08caa0096c92141c629de",
+                "core/brain/llm/model_registry.py": "351fea0af5c11e31f3e20440ffc0a547a10fd770f923667b9710ec4eb9ebc55d",
+                "core/brain/reasoning_amplifier_v2.py": "c912f92e6d100c6e10cfccd144f8f9f5370f0149583d5a1635123ac74671f273",
+                "core/brain/verifiers/registry.py": "c68633cb40908cfbfe2238cbd6b560ea0dd150dc3c09462a3a426b15937e90c5",
+                "core/runtime/dynamic_execution_gateway.py": "e8fe74be0b8c83372cc3c213e242462341ae147f4292b7b81b268c37e79c79fd",
+                "tools/measure_frontier_gap.py": "12f2eb3659b526372cfdcacf8cb6cc14bb525d070f044ba80287d1c4a359bcd2"
+              },
+              "index_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "issues": [],
+              "schema": "aura.source_provenance.v1",
+              "tree_sha": "7c433ba781bf0c73e8d957eb0346004f47137e67",
+              "untracked_content_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "workspace_diff_sha256": "4ba73a301a9c4452c62a8bf035a1da54961aaf9caf7f4cf89da150d56b504d2e",
+              "workspace_state_sha256": "696e31ffcd430e5429f20e01a1f5a4bf535c8977c2fbaadcfb6dd7d1c370883c"
+            },
+            "schema": "aura.source_stability_window.v1",
+            "stable": true,
+            "window_sha256": "23868fbf8ab5d3cb27d8b1a53f91d49da30cddd48ceea8918f6a542fdb37203d"
+          }
         }
       ],
-      "schema_version": 1,
+      "schema_version": 4,
       "trend": {
-        "delta": 0.0,
-        "direction": "flat",
-        "first_gap": 0.0,
-        "latest_gap": 0.0,
-        "points": 3
+        "direction": "reference_unavailable",
+        "measured_points": 0,
+        "points": 8
       }
     },
-    "real_mind_measurement": "The amplifier_mlx real-capability run was attempted headless and REFUSED by Aura's own memory guardians (projected 38.1GB > 35.8GB safe limit) \u2014 the same survival protection the whole-system \u03a6 campaign measured. That refusal is correct and was not overridden. The honest real-mind number comes from running this tool while her desktop instance is up (the model is already resident \u2014 no second load), or from an operator explicitly accepting the memory risk via AURA_MLX_WORKER_RSS_LIMIT_GB + AURA_ALLOW_UNSAFE_MEMORY_LIMITS with genuine free memory.",
-    "schema": "aura.frontier_gap_report.v1",
-    "solver_mode": "amplifier_stub"
+    "evidence_class": "synthetic_pipeline_control",
+    "general_frontier_claim_eligible": false,
+    "generated_at": "2026-07-15 09:25:18 PDT",
+    "git_commit": "e7a2e36a912b8da5f846e71ea3f0091d4e5cc39b",
+    "host": {
+      "platform": "macOS-26.4.1-arm64-arm-64bit",
+      "python": "3.12.13"
+    },
+    "latest_run": {
+      "battery_version": "2026-07-15.v4",
+      "budget": {
+        "max_tokens": 256,
+        "sample_budget": 3,
+        "time_budget_s": 20.0
+      },
+      "candidate_model": {
+        "after": null,
+        "before": null,
+        "schema": "aura.model_stability_window.v1",
+        "stable": false,
+        "window_sha256": ""
+      },
+      "capability_claim_eligible": false,
+      "classes": [
+        {
+          "candidate_correct": 5,
+          "candidate_score": 1.0,
+          "gap": null,
+          "n": 5,
+          "reference_score": null,
+          "task_class": "math"
+        },
+        {
+          "candidate_correct": 5,
+          "candidate_score": 1.0,
+          "gap": null,
+          "n": 5,
+          "reference_score": null,
+          "task_class": "reasoning"
+        },
+        {
+          "candidate_correct": 5,
+          "candidate_score": 1.0,
+          "gap": null,
+          "n": 5,
+          "reference_score": null,
+          "task_class": "coding"
+        },
+        {
+          "candidate_correct": 5,
+          "candidate_score": 1.0,
+          "gap": null,
+          "n": 5,
+          "reference_score": null,
+          "task_class": "factual"
+        }
+      ],
+      "duration_s": 12.56,
+      "eligibility_reasons": [
+        "solver_is_not_real_aura_model",
+        "validated_matched_reference_missing",
+        "source_tree_not_clean",
+        "source_component_binding_invalid",
+        "candidate_model_changed_or_unavailable",
+        "unverified_answers_present",
+        "item_evidence_not_fully_verified",
+        "frontier_gap_not_computable",
+        "matched named reference artifact not supplied"
+      ],
+      "evidence_class": "synthetic_pipeline_control",
+      "execution": {
+        "attempted": 20,
+        "completed": 20,
+        "disqualifying_fallbacks": 0,
+        "empty": 0,
+        "errors": [
+          "unverified amplifier result for logic",
+          "unverified amplifier result for logic",
+          "unverified amplifier result for logic",
+          "unverified amplifier result for logic",
+          "unverified amplifier result for logic",
+          "unverified amplifier result for factual",
+          "unverified amplifier result for factual",
+          "unverified amplifier result for factual",
+          "unverified amplifier result for factual",
+          "unverified amplifier result for factual"
+        ],
+        "failed": 0,
+        "fallback_items": 0,
+        "invalid": 0,
+        "unverified": 10
+      },
+      "expected_item_count": 20,
+      "general_frontier_claim_eligible": false,
+      "generated_at_unix": 1784132718.277062,
+      "items": [
+        {
+          "answer": "494",
+          "answer_sha256": "d18b29d80a8bd366b77c952d9775510507c2d006eec917ab2f89ef93acc5452f",
+          "correct": true,
+          "diagnostics": [],
+          "execution_error": "",
+          "fallbacks_used": [],
+          "grader_id": "exact_integer.v1",
+          "index": 0,
+          "prompt_sha256": "27d934bfc9bb6bee4bb617ae43fdbedcca8dd40add9d32c970084e2c644c1d84",
+          "receipt": {
+            "agreement": 1.0,
+            "budget_used": {
+              "sample_budget": 3,
+              "samples": 3,
+              "time_budget_s": 20.0,
+              "time_s": 0.062
+            },
+            "candidate_model_manifest_sha256": "",
+            "confidence": 0.4,
+            "epistemic_status": "unverified",
+            "evaluation_budget": {
+              "max_tokens": 256,
+              "sample_budget": 3,
+              "time_budget_s": 20.0
+            },
+            "evaluation_request_id": "38849681c56335aff9b09fcc0a4479fc6cf044e4dd884a4c9d911739d1b28408",
+            "evidence_refs": [],
+            "fallbacks_used": [],
+            "guards_applied": [],
+            "known_failures": [],
+            "mode": "normal",
+            "num_candidates": 3,
+            "prompt_sha256": "27d934bfc9bb6bee4bb617ae43fdbedcca8dd40add9d32c970084e2c644c1d84",
+            "strategy_used": "self_consistency",
+            "task_type": "math",
+            "valid_candidates": 1,
+            "verifiers_run": [
+              "math",
+              "logic"
+            ],
+            "winning_candidate_id": 0
+          },
+          "task_class": "math",
+          "task_type": "math",
+          "verified": true
+        },
+        {
+          "answer": "1248",
+          "answer_sha256": "da2c575e48ee7651b9e99a511216b827ef6dea7ca08e77c7055b18b9d918a842",
+          "correct": true,
+          "diagnostics": [],
+          "execution_error": "",
+          "fallbacks_used": [],
+          "grader_id": "exact_integer.v1",
+          "index": 1,
+          "prompt_sha256": "6644f5cef23b6dc2a99b0509112be9ba2963c3a2a8d518d0ee8ff4ab60990aef",
+          "receipt": {
+            "agreement": 1.0,
+            "budget_used": {
+              "sample_budget": 3,
+              "samples": 3,
+              "time_budget_s": 20.0,
+              "time_s": 0.0
+            },
+            "candidate_model_manifest_sha256": "",
+            "confidence": 0.4,
+            "epistemic_status": "unverified",
+            "evaluation_budget": {
+              "max_tokens": 256,
+              "sample_budget": 3,
+              "time_budget_s": 20.0
+            },
+            "evaluation_request_id": "1829cecb19721b009d0f41fbcf8cc316b1216a86c457ce0264ffbad3e141140d",
+            "evidence_refs": [],
+            "fallbacks_used": [],
+            "guards_applied": [],
+            "known_failures": [],
+            "mode": "normal",
+            "num_candidates": 3,
+            "prompt_sha256": "6644f5cef23b6dc2a99b0509112be9ba2963c3a2a8d518d0ee8ff4ab60990aef",
+            "strategy_used": "self_consistency",
+            "task_type": "math",
+            "valid_candidates": 1,
+            "verifiers_run": [
+              "math",
+              "logic"
+            ],
+            "winning_candidate_id": 0
+          },
+          "task_class": "math",
+          "task_type": "math",
+          "verified": true
+        },
+        {
+          "answer": "1344",
+          "answer_sha256": "aa13fda43018c393de7088225497fee24270d428a9de0d2f8d0cc899f6687e69",
+          "correct": true,
+          "diagnostics": [],
+          "execution_error": "",
+          "fallbacks_used": [],
+          "grader_id": "exact_integer.v1",
+          "index": 2,
+          "prompt_sha256": "4310dfc83aa310d2abfdea8e9daf82dbfd0684e6089779c41aa0c137d357686f",
+          "receipt": {
+            "agreement": 1.0,
+            "budget_used": {
+              "sample_budget": 3,
+              "samples": 3,
+              "time_budget_s": 20.0,
+              "time_s": 0.0
+            },
+            "candidate_model_manifest_sha256": "",
+            "confidence": 0.4,
+            "epistemic_status": "unverified",
+            "evaluation_budget": {
+              "max_tokens": 256,
+              "sample_budget": 3,
+              "time_budget_s": 20.0
+            },
+            "evaluation_request_id": "eeba6ebc1b1f7a00dd7ba99502c573eb2a1bca9333b5b297a9fcd6fad8c065dd",
+            "evidence_refs": [],
+            "fallbacks_used": [],
+            "guards_applied": [],
+            "known_failures": [],
+            "mode": "normal",
+            "num_candidates": 3,
+            "prompt_sha256": "4310dfc83aa310d2abfdea8e9daf82dbfd0684e6089779c41aa0c137d357686f",
+            "strategy_used": "self_consistency",
+            "task_type": "math",
+            "valid_candidates": 1,
+            "verifiers_run": [
+              "math",
+              "logic"
+            ],
+            "winning_candidate_id": 0
+          },
+          "task_class": "math",
+          "task_type": "math",
+          "verified": true
+        },
+        {
+          "answer": "266",
+          "answer_sha256": "ea5b27556fbb134def2c2fbf944d9cdda3dbdb6b10473a1aec59f6f170c4ca3a",
+          "correct": true,
+          "diagnostics": [],
+          "execution_error": "",
+          "fallbacks_used": [],
+          "grader_id": "exact_integer.v1",
+          "index": 3,
+          "prompt_sha256": "b877b7bdbdcb93b00a301d64b44163b8eebea34daa9bebbb33d1d858fa379b36",
+          "receipt": {
+            "agreement": 1.0,
+            "budget_used": {
+              "sample_budget": 3,
+              "samples": 3,
+              "time_budget_s": 20.0,
+              "time_s": 0.0
+            },
+            "candidate_model_manifest_sha256": "",
+            "confidence": 0.4,
+            "epistemic_status": "unverified",
+            "evaluation_budget": {
+              "max_tokens": 256,
+              "sample_budget": 3,
+              "time_budget_s": 20.0
+            },
+            "evaluation_request_id": "37533df52e25e10d60141cbc8c311fa264a30d0cc2880c7151d999146e75c20b",
+            "evidence_refs": [],
+            "fallbacks_used": [],
+            "guards_applied": [],
+            "known_failures": [],
+            "mode": "normal",
+            "num_candidates": 3,
+            "prompt_sha256": "b877b7bdbdcb93b00a301d64b44163b8eebea34daa9bebbb33d1d858fa379b36",
+            "strategy_used": "self_consistency",
+            "task_type": "math",
+            "valid_candidates": 1,
+            "verifiers_run": [
+              "math",
+              "logic"
+            ],
+            "winning_candidate_id": 0
+          },
+          "task_class": "math",
+          "task_type": "math",
+          "verified": true
+        },
+        {
+          "answer": "2970",
+          "answer_sha256": "ba8b61671c5a1344acefbc986cb110f88f924b2367852345131717c3ff1f19a9",
+          "correct": true,
+          "diagnostics": [],
+          "execution_error": "",
+          "fallbacks_used": [],
+          "grader_id": "exact_integer.v1",
+          "index": 4,
+          "prompt_sha256": "9b67577cd8313c71a20fbca2c3894d470b9530141ceba150da9fa4201d88cfe5",
+          "receipt": {
+            "agreement": 1.0,
+            "budget_used": {
+              "sample_budget": 3,
+              "samples": 3,
+              "time_budget_s": 20.0,
+              "time_s": 0.0
+            },
+            "candidate_model_manifest_sha256": "",
+            "confidence": 0.4,
+            "epistemic_status": "unverified",
+            "evaluation_budget": {
+              "max_tokens": 256,
+              "sample_budget": 3,
+              "time_budget_s": 20.0
+            },
+            "evaluation_request_id": "299fd775563b9013314328119775707b76346e9ca9e544fce628dff408684721",
+            "evidence_refs": [],
+            "fallbacks_used": [],
+            "guards_applied": [],
+            "known_failures": [],
+            "mode": "normal",
+            "num_candidates": 3,
+            "prompt_sha256": "9b67577cd8313c71a20fbca2c3894d470b9530141ceba150da9fa4201d88cfe5",
+            "strategy_used": "self_consistency",
+            "task_type": "math",
+            "valid_candidates": 1,
+            "verifiers_run": [
+              "math",
+              "logic"
+            ],
+            "winning_candidate_id": 0
+          },
+          "task_class": "math",
+          "task_type": "math",
+          "verified": true
+        },
+        {
+          "answer": "Bao",
+          "answer_sha256": "f7010c177a28f06dc2c96c3fd8931e0c5316caf20470f92a0364bbfe59575c3a",
+          "correct": true,
+          "diagnostics": [],
+          "execution_error": "",
+          "fallbacks_used": [],
+          "grader_id": "exact_normalized_text.v1",
+          "index": 5,
+          "prompt_sha256": "569c26f6af17c2c205650aa9a647fa122ae7abe5b777c8fd53a343514e35b005",
+          "receipt": {
+            "agreement": 1.0,
+            "budget_used": {
+              "sample_budget": 3,
+              "samples": 3,
+              "time_budget_s": 20.0,
+              "time_s": 0.0
+            },
+            "candidate_model_manifest_sha256": "",
+            "confidence": 0.4,
+            "epistemic_status": "unverified",
+            "evaluation_budget": {
+              "max_tokens": 256,
+              "sample_budget": 3,
+              "time_budget_s": 20.0
+            },
+            "evaluation_request_id": "65161c499f0d617143f27e042d9b87b91730b9bb0403c9a79181aba23284036f",
+            "evidence_refs": [],
+            "fallbacks_used": [],
+            "guards_applied": [],
+            "known_failures": [],
+            "mode": "normal",
+            "num_candidates": 3,
+            "prompt_sha256": "569c26f6af17c2c205650aa9a647fa122ae7abe5b777c8fd53a343514e35b005",
+            "strategy_used": "self_consistency",
+            "task_type": "logic",
+            "valid_candidates": 1,
+            "verifiers_run": [
+              "logic"
+            ],
+            "winning_candidate_id": 0
+          },
+          "task_class": "reasoning",
+          "task_type": "logic",
+          "verified": false
+        },
+        {
+          "answer": "Fen",
+          "answer_sha256": "e086025642de9a992e89e6c78c0dc85565da0bbccf67166e242932cd869c73f4",
+          "correct": true,
+          "diagnostics": [],
+          "execution_error": "",
+          "fallbacks_used": [],
+          "grader_id": "exact_normalized_text.v1",
+          "index": 6,
+          "prompt_sha256": "ae3c062ff03da2f848a6c3489cf1106e7ce645e7a627d4c9a1ff340b4291dabe",
+          "receipt": {
+            "agreement": 1.0,
+            "budget_used": {
+              "sample_budget": 3,
+              "samples": 3,
+              "time_budget_s": 20.0,
+              "time_s": 0.0
+            },
+            "candidate_model_manifest_sha256": "",
+            "confidence": 0.4,
+            "epistemic_status": "unverified",
+            "evaluation_budget": {
+              "max_tokens": 256,
+              "sample_budget": 3,
+              "time_budget_s": 20.0
+            },
+            "evaluation_request_id": "803364b9ac479dce00ed36c30233468d1b78b2737db41b36fd9c272216ad444f",
+            "evidence_refs": [],
+            "fallbacks_used": [],
+            "guards_applied": [],
+            "known_failures": [],
+            "mode": "normal",
+            "num_candidates": 3,
+            "prompt_sha256": "ae3c062ff03da2f848a6c3489cf1106e7ce645e7a627d4c9a1ff340b4291dabe",
+            "strategy_used": "self_consistency",
+            "task_type": "logic",
+            "valid_candidates": 1,
+            "verifiers_run": [
+              "logic"
+            ],
+            "winning_candidate_id": 0
+          },
+          "task_class": "reasoning",
+          "task_type": "logic",
+          "verified": false
+        },
+        {
+          "answer": "Bao",
+          "answer_sha256": "f7010c177a28f06dc2c96c3fd8931e0c5316caf20470f92a0364bbfe59575c3a",
+          "correct": true,
+          "diagnostics": [],
+          "execution_error": "",
+          "fallbacks_used": [],
+          "grader_id": "exact_normalized_text.v1",
+          "index": 7,
+          "prompt_sha256": "569c26f6af17c2c205650aa9a647fa122ae7abe5b777c8fd53a343514e35b005",
+          "receipt": {
+            "agreement": 1.0,
+            "budget_used": {
+              "sample_budget": 3,
+              "samples": 3,
+              "time_budget_s": 20.0,
+              "time_s": 0.0
+            },
+            "candidate_model_manifest_sha256": "",
+            "confidence": 0.4,
+            "epistemic_status": "unverified",
+            "evaluation_budget": {
+              "max_tokens": 256,
+              "sample_budget": 3,
+              "time_budget_s": 20.0
+            },
+            "evaluation_request_id": "bd51d3d8acca1db1aa8fd16e2e080f242713208d914cfdc8a597954678e97954",
+            "evidence_refs": [],
+            "fallbacks_used": [],
+            "guards_applied": [],
+            "known_failures": [],
+            "mode": "normal",
+            "num_candidates": 3,
+            "prompt_sha256": "569c26f6af17c2c205650aa9a647fa122ae7abe5b777c8fd53a343514e35b005",
+            "strategy_used": "self_consistency",
+            "task_type": "logic",
+            "valid_candidates": 1,
+            "verifiers_run": [
+              "logic"
+            ],
+            "winning_candidate_id": 0
+          },
+          "task_class": "reasoning",
+          "task_type": "logic",
+          "verified": false
+        },
+        {
+          "answer": "Evren",
+          "answer_sha256": "50cf1571788edaefc75c570d556961638ff2cb8c41083f7dc288dae95467d614",
+          "correct": true,
+          "diagnostics": [],
+          "execution_error": "",
+          "fallbacks_used": [],
+          "grader_id": "exact_normalized_text.v1",
+          "index": 8,
+          "prompt_sha256": "556d2930769d451bc092833638c4f44d717d3a74036b790bb20daae33989578c",
+          "receipt": {
+            "agreement": 1.0,
+            "budget_used": {
+              "sample_budget": 3,
+              "samples": 3,
+              "time_budget_s": 20.0,
+              "time_s": 0.0
+            },
+            "candidate_model_manifest_sha256": "",
+            "confidence": 0.4,
+            "epistemic_status": "unverified",
+            "evaluation_budget": {
+              "max_tokens": 256,
+              "sample_budget": 3,
+              "time_budget_s": 20.0
+            },
+            "evaluation_request_id": "ce90306fcb47b0ec25f2d4d05e0e7f0497e3eaf2526de9bbc101dd2b9fda7c30",
+            "evidence_refs": [],
+            "fallbacks_used": [],
+            "guards_applied": [],
+            "known_failures": [],
+            "mode": "normal",
+            "num_candidates": 3,
+            "prompt_sha256": "556d2930769d451bc092833638c4f44d717d3a74036b790bb20daae33989578c",
+            "strategy_used": "self_consistency",
+            "task_type": "logic",
+            "valid_candidates": 1,
+            "verifiers_run": [
+              "logic"
+            ],
+            "winning_candidate_id": 0
+          },
+          "task_class": "reasoning",
+          "task_type": "logic",
+          "verified": false
+        },
+        {
+          "answer": "Fen",
+          "answer_sha256": "e086025642de9a992e89e6c78c0dc85565da0bbccf67166e242932cd869c73f4",
+          "correct": true,
+          "diagnostics": [],
+          "execution_error": "",
+          "fallbacks_used": [],
+          "grader_id": "exact_normalized_text.v1",
+          "index": 9,
+          "prompt_sha256": "7f8fb071ffc0da1c9e06cb8f295fb614facb794b8b8ffe0c6420f625254f24d6",
+          "receipt": {
+            "agreement": 1.0,
+            "budget_used": {
+              "sample_budget": 3,
+              "samples": 3,
+              "time_budget_s": 20.0,
+              "time_s": 0.0
+            },
+            "candidate_model_manifest_sha256": "",
+            "confidence": 0.4,
+            "epistemic_status": "unverified",
+            "evaluation_budget": {
+              "max_tokens": 256,
+              "sample_budget": 3,
+              "time_budget_s": 20.0
+            },
+            "evaluation_request_id": "8e2cb5676bc679d03e859f80bedfc21a0aefea18e45aab9cf48ad3b1ad061967",
+            "evidence_refs": [],
+            "fallbacks_used": [],
+            "guards_applied": [],
+            "known_failures": [],
+            "mode": "normal",
+            "num_candidates": 3,
+            "prompt_sha256": "7f8fb071ffc0da1c9e06cb8f295fb614facb794b8b8ffe0c6420f625254f24d6",
+            "strategy_used": "self_consistency",
+            "task_type": "logic",
+            "valid_candidates": 1,
+            "verifiers_run": [
+              "logic"
+            ],
+            "winning_candidate_id": 0
+          },
+          "task_class": "reasoning",
+          "task_type": "logic",
+          "verified": false
+        },
+        {
+          "answer": "```python\ndef max_of(xs):\n    return max(xs)\n```",
+          "answer_sha256": "7f396ae7772f76df5992198df95bf46e5b8881cdc78f770766e5abeb12ee6afd",
+          "correct": true,
+          "diagnostics": [],
+          "execution_error": "",
+          "fallbacks_used": [],
+          "grader_id": "restricted_ast_hidden_execution.v1",
+          "index": 10,
+          "prompt_sha256": "a3aeecf8034dd41ba5e7f03e4c8c96e0353ef6c7a55000477c7013c63b8a5c54",
+          "receipt": {
+            "agreement": 1.0,
+            "budget_used": {
+              "sample_budget": 3,
+              "samples": 3,
+              "time_budget_s": 20.0,
+              "time_s": 0.288
+            },
+            "candidate_model_manifest_sha256": "",
+            "confidence": 0.4,
+            "epistemic_status": "unverified",
+            "evaluation_budget": {
+              "max_tokens": 256,
+              "sample_budget": 3,
+              "time_budget_s": 20.0
+            },
+            "evaluation_request_id": "fde5fb5601d2e5c64cc7672c00ec170aa5cc70d9c96537fd2a70254774cdc174",
+            "evidence_refs": [],
+            "fallbacks_used": [],
+            "guards_applied": [],
+            "known_failures": [],
+            "mode": "normal",
+            "num_candidates": 3,
+            "prompt_sha256": "a3aeecf8034dd41ba5e7f03e4c8c96e0353ef6c7a55000477c7013c63b8a5c54",
+            "strategy_used": "self_consistency",
+            "task_type": "code",
+            "valid_candidates": 1,
+            "verifiers_run": [
+              "code",
+              "logic"
+            ],
+            "winning_candidate_id": 0
+          },
+          "task_class": "coding",
+          "task_type": "code",
+          "verified": true
+        },
+        {
+          "answer": "```python\ndef min_of(xs):\n    return min(xs)\n```",
+          "answer_sha256": "86dfa577c0b02972c420b13495dc7b8ee161bd0c5a72f0abf11f71f3e141035c",
+          "correct": true,
+          "diagnostics": [],
+          "execution_error": "",
+          "fallbacks_used": [],
+          "grader_id": "restricted_ast_hidden_execution.v1",
+          "index": 11,
+          "prompt_sha256": "bcc9feb72c1311caec7a4ce32f88c58921da0ddd8e2064e3c21d3587c19523ab",
+          "receipt": {
+            "agreement": 1.0,
+            "budget_used": {
+              "sample_budget": 3,
+              "samples": 3,
+              "time_budget_s": 20.0,
+              "time_s": 0.137
+            },
+            "candidate_model_manifest_sha256": "",
+            "confidence": 0.4,
+            "epistemic_status": "unverified",
+            "evaluation_budget": {
+              "max_tokens": 256,
+              "sample_budget": 3,
+              "time_budget_s": 20.0
+            },
+            "evaluation_request_id": "486d659b719cbedad7d80ce1329848227ef6cbcfa45c5b331edcc40eb3779433",
+            "evidence_refs": [],
+            "fallbacks_used": [],
+            "guards_applied": [],
+            "known_failures": [],
+            "mode": "normal",
+            "num_candidates": 3,
+            "prompt_sha256": "bcc9feb72c1311caec7a4ce32f88c58921da0ddd8e2064e3c21d3587c19523ab",
+            "strategy_used": "self_consistency",
+            "task_type": "code",
+            "valid_candidates": 1,
+            "verifiers_run": [
+              "code",
+              "logic"
+            ],
+            "winning_candidate_id": 0
+          },
+          "task_class": "coding",
+          "task_type": "code",
+          "verified": true
+        },
+        {
+          "answer": "```python\ndef sum_of(xs):\n    return sum(xs)\n```",
+          "answer_sha256": "aafc39f3e7d20c16d85ab4a2b1c1ab51ba716e8542a3f0f70250b259df5c3eb1",
+          "correct": true,
+          "diagnostics": [],
+          "execution_error": "",
+          "fallbacks_used": [],
+          "grader_id": "restricted_ast_hidden_execution.v1",
+          "index": 12,
+          "prompt_sha256": "b91c4821ec51593af80e4006b2876b73d885c870df522e0b4d6ba1ae411b6d8b",
+          "receipt": {
+            "agreement": 1.0,
+            "budget_used": {
+              "sample_budget": 3,
+              "samples": 3,
+              "time_budget_s": 20.0,
+              "time_s": 0.141
+            },
+            "candidate_model_manifest_sha256": "",
+            "confidence": 0.4,
+            "epistemic_status": "unverified",
+            "evaluation_budget": {
+              "max_tokens": 256,
+              "sample_budget": 3,
+              "time_budget_s": 20.0
+            },
+            "evaluation_request_id": "5229762a2d5335041f166a798c708722479c398ca62d9941a46670ddc492dca0",
+            "evidence_refs": [],
+            "fallbacks_used": [],
+            "guards_applied": [],
+            "known_failures": [],
+            "mode": "normal",
+            "num_candidates": 3,
+            "prompt_sha256": "b91c4821ec51593af80e4006b2876b73d885c870df522e0b4d6ba1ae411b6d8b",
+            "strategy_used": "self_consistency",
+            "task_type": "code",
+            "valid_candidates": 1,
+            "verifiers_run": [
+              "code",
+              "logic"
+            ],
+            "winning_candidate_id": 0
+          },
+          "task_class": "coding",
+          "task_type": "code",
+          "verified": true
+        },
+        {
+          "answer": "```python\ndef min_of(xs):\n    return min(xs)\n```",
+          "answer_sha256": "86dfa577c0b02972c420b13495dc7b8ee161bd0c5a72f0abf11f71f3e141035c",
+          "correct": true,
+          "diagnostics": [],
+          "execution_error": "",
+          "fallbacks_used": [],
+          "grader_id": "restricted_ast_hidden_execution.v1",
+          "index": 13,
+          "prompt_sha256": "bcc9feb72c1311caec7a4ce32f88c58921da0ddd8e2064e3c21d3587c19523ab",
+          "receipt": {
+            "agreement": 1.0,
+            "budget_used": {
+              "sample_budget": 3,
+              "samples": 3,
+              "time_budget_s": 20.0,
+              "time_s": 0.14
+            },
+            "candidate_model_manifest_sha256": "",
+            "confidence": 0.4,
+            "epistemic_status": "unverified",
+            "evaluation_budget": {
+              "max_tokens": 256,
+              "sample_budget": 3,
+              "time_budget_s": 20.0
+            },
+            "evaluation_request_id": "1e125ba7dd06fa20bdac75f97f034d534c6f0a1b76a2fb35121439bd2a97f495",
+            "evidence_refs": [],
+            "fallbacks_used": [],
+            "guards_applied": [],
+            "known_failures": [],
+            "mode": "normal",
+            "num_candidates": 3,
+            "prompt_sha256": "bcc9feb72c1311caec7a4ce32f88c58921da0ddd8e2064e3c21d3587c19523ab",
+            "strategy_used": "self_consistency",
+            "task_type": "code",
+            "valid_candidates": 1,
+            "verifiers_run": [
+              "code",
+              "logic"
+            ],
+            "winning_candidate_id": 0
+          },
+          "task_class": "coding",
+          "task_type": "code",
+          "verified": true
+        },
+        {
+          "answer": "```python\ndef max_of(xs):\n    return max(xs)\n```",
+          "answer_sha256": "7f396ae7772f76df5992198df95bf46e5b8881cdc78f770766e5abeb12ee6afd",
+          "correct": true,
+          "diagnostics": [],
+          "execution_error": "",
+          "fallbacks_used": [],
+          "grader_id": "restricted_ast_hidden_execution.v1",
+          "index": 14,
+          "prompt_sha256": "a3aeecf8034dd41ba5e7f03e4c8c96e0353ef6c7a55000477c7013c63b8a5c54",
+          "receipt": {
+            "agreement": 1.0,
+            "budget_used": {
+              "sample_budget": 3,
+              "samples": 3,
+              "time_budget_s": 20.0,
+              "time_s": 0.136
+            },
+            "candidate_model_manifest_sha256": "",
+            "confidence": 0.4,
+            "epistemic_status": "unverified",
+            "evaluation_budget": {
+              "max_tokens": 256,
+              "sample_budget": 3,
+              "time_budget_s": 20.0
+            },
+            "evaluation_request_id": "44c1c3f512c6443f481a693dc36104d6ca1891ae9122f6bcf52680f35adf13e8",
+            "evidence_refs": [],
+            "fallbacks_used": [],
+            "guards_applied": [],
+            "known_failures": [],
+            "mode": "normal",
+            "num_candidates": 3,
+            "prompt_sha256": "a3aeecf8034dd41ba5e7f03e4c8c96e0353ef6c7a55000477c7013c63b8a5c54",
+            "strategy_used": "self_consistency",
+            "task_type": "code",
+            "valid_candidates": 1,
+            "verifiers_run": [
+              "code",
+              "logic"
+            ],
+            "winning_candidate_id": 0
+          },
+          "task_class": "coding",
+          "task_type": "code",
+          "verified": true
+        },
+        {
+          "answer": "carbon dioxide",
+          "answer_sha256": "ddf74783a6568c47ff2cc7906d8bc06f320c17db02cc7ea0a95ccea39247327e",
+          "correct": true,
+          "diagnostics": [],
+          "execution_error": "",
+          "fallbacks_used": [],
+          "grader_id": "exact_normalized_text.v1",
+          "index": 15,
+          "prompt_sha256": "2f6b8eb35be948aec0683a2291c14435ff2a82bc5c0e36a43a37f025352ac950",
+          "receipt": {
+            "agreement": 1.0,
+            "budget_used": {
+              "sample_budget": 3,
+              "samples": 3,
+              "time_budget_s": 20.0,
+              "time_s": 2.102
+            },
+            "candidate_model_manifest_sha256": "",
+            "confidence": 0.4,
+            "epistemic_status": "unverified",
+            "evaluation_budget": {
+              "max_tokens": 256,
+              "sample_budget": 3,
+              "time_budget_s": 20.0
+            },
+            "evaluation_request_id": "c7ff30007b1857e6857085f34ae2367bf7f8b5a4f9799bfc30091daa49885497",
+            "evidence_refs": [],
+            "fallbacks_used": [],
+            "guards_applied": [],
+            "known_failures": [],
+            "mode": "normal",
+            "num_candidates": 3,
+            "prompt_sha256": "2f6b8eb35be948aec0683a2291c14435ff2a82bc5c0e36a43a37f025352ac950",
+            "strategy_used": "self_consistency",
+            "task_type": "factual",
+            "valid_candidates": 1,
+            "verifiers_run": [
+              "logic",
+              "citation"
+            ],
+            "winning_candidate_id": 0
+          },
+          "task_class": "factual",
+          "task_type": "factual",
+          "verified": false
+        },
+        {
+          "answer": "carbon dioxide",
+          "answer_sha256": "ddf74783a6568c47ff2cc7906d8bc06f320c17db02cc7ea0a95ccea39247327e",
+          "correct": true,
+          "diagnostics": [],
+          "execution_error": "",
+          "fallbacks_used": [],
+          "grader_id": "exact_normalized_text.v1",
+          "index": 16,
+          "prompt_sha256": "2f6b8eb35be948aec0683a2291c14435ff2a82bc5c0e36a43a37f025352ac950",
+          "receipt": {
+            "agreement": 1.0,
+            "budget_used": {
+              "sample_budget": 3,
+              "samples": 3,
+              "time_budget_s": 20.0,
+              "time_s": 1.129
+            },
+            "candidate_model_manifest_sha256": "",
+            "confidence": 0.4,
+            "epistemic_status": "unverified",
+            "evaluation_budget": {
+              "max_tokens": 256,
+              "sample_budget": 3,
+              "time_budget_s": 20.0
+            },
+            "evaluation_request_id": "7d041ed3cf3a1acbef1afe1de90a1764c49cf97fe390ddc0dd014b62df882aef",
+            "evidence_refs": [],
+            "fallbacks_used": [],
+            "guards_applied": [],
+            "known_failures": [],
+            "mode": "normal",
+            "num_candidates": 3,
+            "prompt_sha256": "2f6b8eb35be948aec0683a2291c14435ff2a82bc5c0e36a43a37f025352ac950",
+            "strategy_used": "self_consistency",
+            "task_type": "factual",
+            "valid_candidates": 1,
+            "verifiers_run": [
+              "logic",
+              "citation"
+            ],
+            "winning_candidate_id": 0
+          },
+          "task_class": "factual",
+          "task_type": "factual",
+          "verified": false
+        },
+        {
+          "answer": "Tokyo",
+          "answer_sha256": "ec2d191680171ca9603105aa2be38a46228a8e1c75e3ef0383c7ebbd1287110a",
+          "correct": true,
+          "diagnostics": [],
+          "execution_error": "",
+          "fallbacks_used": [],
+          "grader_id": "exact_normalized_text.v1",
+          "index": 17,
+          "prompt_sha256": "0d2002ebf33b8e6d3b6bdf64d1487740c629b9946eefcddca7787839c4efd9e6",
+          "receipt": {
+            "agreement": 1.0,
+            "budget_used": {
+              "sample_budget": 3,
+              "samples": 3,
+              "time_budget_s": 20.0,
+              "time_s": 4.531
+            },
+            "candidate_model_manifest_sha256": "",
+            "confidence": 0.4,
+            "epistemic_status": "unverified",
+            "evaluation_budget": {
+              "max_tokens": 256,
+              "sample_budget": 3,
+              "time_budget_s": 20.0
+            },
+            "evaluation_request_id": "017f6d63db88304b904a9896b10c8711e11018a23bc8eb458d2920dabc450b27",
+            "evidence_refs": [],
+            "fallbacks_used": [],
+            "guards_applied": [],
+            "known_failures": [],
+            "mode": "normal",
+            "num_candidates": 3,
+            "prompt_sha256": "0d2002ebf33b8e6d3b6bdf64d1487740c629b9946eefcddca7787839c4efd9e6",
+            "strategy_used": "self_consistency",
+            "task_type": "factual",
+            "valid_candidates": 1,
+            "verifiers_run": [
+              "logic",
+              "citation"
+            ],
+            "winning_candidate_id": 0
+          },
+          "task_class": "factual",
+          "task_type": "factual",
+          "verified": false
+        },
+        {
+          "answer": "carbon dioxide",
+          "answer_sha256": "ddf74783a6568c47ff2cc7906d8bc06f320c17db02cc7ea0a95ccea39247327e",
+          "correct": true,
+          "diagnostics": [],
+          "execution_error": "",
+          "fallbacks_used": [],
+          "grader_id": "exact_normalized_text.v1",
+          "index": 18,
+          "prompt_sha256": "2f6b8eb35be948aec0683a2291c14435ff2a82bc5c0e36a43a37f025352ac950",
+          "receipt": {
+            "agreement": 1.0,
+            "budget_used": {
+              "sample_budget": 3,
+              "samples": 3,
+              "time_budget_s": 20.0,
+              "time_s": 1.177
+            },
+            "candidate_model_manifest_sha256": "",
+            "confidence": 0.4,
+            "epistemic_status": "unverified",
+            "evaluation_budget": {
+              "max_tokens": 256,
+              "sample_budget": 3,
+              "time_budget_s": 20.0
+            },
+            "evaluation_request_id": "08b635188b3f6caed3087864e0e3b35fe4ba21198579ee8378a662507d2425a1",
+            "evidence_refs": [],
+            "fallbacks_used": [],
+            "guards_applied": [],
+            "known_failures": [],
+            "mode": "normal",
+            "num_candidates": 3,
+            "prompt_sha256": "2f6b8eb35be948aec0683a2291c14435ff2a82bc5c0e36a43a37f025352ac950",
+            "strategy_used": "self_consistency",
+            "task_type": "factual",
+            "valid_candidates": 1,
+            "verifiers_run": [
+              "logic",
+              "citation"
+            ],
+            "winning_candidate_id": 0
+          },
+          "task_class": "factual",
+          "task_type": "factual",
+          "verified": false
+        },
+        {
+          "answer": "Au",
+          "answer_sha256": "3325c2b56f2bd49455356ae390f870bd53352ef2affb17eac0216448a01fa636",
+          "correct": true,
+          "diagnostics": [],
+          "execution_error": "",
+          "fallbacks_used": [],
+          "grader_id": "exact_normalized_text.v1",
+          "index": 19,
+          "prompt_sha256": "e46c983bbf78df03608fd6041347b3478d074c78fbbc3031800a4022059cc35f",
+          "receipt": {
+            "agreement": 1.0,
+            "budget_used": {
+              "sample_budget": 3,
+              "samples": 3,
+              "time_budget_s": 20.0,
+              "time_s": 2.713
+            },
+            "candidate_model_manifest_sha256": "",
+            "confidence": 0.4,
+            "epistemic_status": "unverified",
+            "evaluation_budget": {
+              "max_tokens": 256,
+              "sample_budget": 3,
+              "time_budget_s": 20.0
+            },
+            "evaluation_request_id": "30df0f56ca7d2f3b1ad54a351616a18a131d2df4eb069600208b73bc7d902e81",
+            "evidence_refs": [],
+            "fallbacks_used": [],
+            "guards_applied": [],
+            "known_failures": [],
+            "mode": "normal",
+            "num_candidates": 3,
+            "prompt_sha256": "e46c983bbf78df03608fd6041347b3478d074c78fbbc3031800a4022059cc35f",
+            "strategy_used": "self_consistency",
+            "task_type": "factual",
+            "valid_candidates": 1,
+            "verifiers_run": [
+              "logic",
+              "citation"
+            ],
+            "winning_candidate_id": 0
+          },
+          "task_class": "factual",
+          "task_type": "factual",
+          "verified": false
+        }
+      ],
+      "measurement_scope": "four_class_deterministic_diagnostic",
+      "measurement_subject": "deterministic_pipeline_control",
+      "overall_candidate_score": 1.0,
+      "overall_gap": null,
+      "per_class": 5,
+      "reference": null,
+      "reference_basis": "unavailable",
+      "reference_validation_error": "matched named reference artifact not supplied",
+      "schema_version": 4,
+      "seed": 15,
+      "solver_mode": "synthetic_control_live_instance_up",
+      "source_provenance": {
+        "clean": false,
+        "commit_sha": "e7a2e36a912b8da5f846e71ea3f0091d4e5cc39b",
+        "execution_component_sha256": {
+          "core/brain/frontier_gap.py": "9478801f9e6c698bb77cb45e648c21abf23801e3171d91617d899e663bb8eef1",
+          "core/brain/llm/mlx_client.py": "0a149cb0997a132a4011023ab1e36221e643952fe4a08caa0096c92141c629de",
+          "core/brain/llm/model_registry.py": "351fea0af5c11e31f3e20440ffc0a547a10fd770f923667b9710ec4eb9ebc55d",
+          "core/brain/reasoning_amplifier_v2.py": "c912f92e6d100c6e10cfccd144f8f9f5370f0149583d5a1635123ac74671f273",
+          "core/brain/verifiers/registry.py": "c68633cb40908cfbfe2238cbd6b560ea0dd150dc3c09462a3a426b15937e90c5",
+          "core/runtime/dynamic_execution_gateway.py": "e8fe74be0b8c83372cc3c213e242462341ae147f4292b7b81b268c37e79c79fd",
+          "tools/measure_frontier_gap.py": "12f2eb3659b526372cfdcacf8cb6cc14bb525d070f044ba80287d1c4a359bcd2"
+        },
+        "index_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "issues": [],
+        "schema": "aura.source_provenance.v1",
+        "tree_sha": "7c433ba781bf0c73e8d957eb0346004f47137e67",
+        "untracked_content_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "workspace_diff_sha256": "4ba73a301a9c4452c62a8bf035a1da54961aaf9caf7f4cf89da150d56b504d2e",
+        "workspace_state_sha256": "696e31ffcd430e5429f20e01a1f5a4bf535c8977c2fbaadcfb6dd7d1c370883c"
+      },
+      "source_stability": {
+        "after": {
+          "clean": false,
+          "commit_sha": "e7a2e36a912b8da5f846e71ea3f0091d4e5cc39b",
+          "execution_component_sha256": {
+            "core/brain/frontier_gap.py": "9478801f9e6c698bb77cb45e648c21abf23801e3171d91617d899e663bb8eef1",
+            "core/brain/llm/mlx_client.py": "0a149cb0997a132a4011023ab1e36221e643952fe4a08caa0096c92141c629de",
+            "core/brain/llm/model_registry.py": "351fea0af5c11e31f3e20440ffc0a547a10fd770f923667b9710ec4eb9ebc55d",
+            "core/brain/reasoning_amplifier_v2.py": "c912f92e6d100c6e10cfccd144f8f9f5370f0149583d5a1635123ac74671f273",
+            "core/brain/verifiers/registry.py": "c68633cb40908cfbfe2238cbd6b560ea0dd150dc3c09462a3a426b15937e90c5",
+            "core/runtime/dynamic_execution_gateway.py": "e8fe74be0b8c83372cc3c213e242462341ae147f4292b7b81b268c37e79c79fd",
+            "tools/measure_frontier_gap.py": "12f2eb3659b526372cfdcacf8cb6cc14bb525d070f044ba80287d1c4a359bcd2"
+          },
+          "index_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "issues": [],
+          "schema": "aura.source_provenance.v1",
+          "tree_sha": "7c433ba781bf0c73e8d957eb0346004f47137e67",
+          "untracked_content_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "workspace_diff_sha256": "4ba73a301a9c4452c62a8bf035a1da54961aaf9caf7f4cf89da150d56b504d2e",
+          "workspace_state_sha256": "696e31ffcd430e5429f20e01a1f5a4bf535c8977c2fbaadcfb6dd7d1c370883c"
+        },
+        "before": {
+          "clean": false,
+          "commit_sha": "e7a2e36a912b8da5f846e71ea3f0091d4e5cc39b",
+          "execution_component_sha256": {
+            "core/brain/frontier_gap.py": "9478801f9e6c698bb77cb45e648c21abf23801e3171d91617d899e663bb8eef1",
+            "core/brain/llm/mlx_client.py": "0a149cb0997a132a4011023ab1e36221e643952fe4a08caa0096c92141c629de",
+            "core/brain/llm/model_registry.py": "351fea0af5c11e31f3e20440ffc0a547a10fd770f923667b9710ec4eb9ebc55d",
+            "core/brain/reasoning_amplifier_v2.py": "c912f92e6d100c6e10cfccd144f8f9f5370f0149583d5a1635123ac74671f273",
+            "core/brain/verifiers/registry.py": "c68633cb40908cfbfe2238cbd6b560ea0dd150dc3c09462a3a426b15937e90c5",
+            "core/runtime/dynamic_execution_gateway.py": "e8fe74be0b8c83372cc3c213e242462341ae147f4292b7b81b268c37e79c79fd",
+            "tools/measure_frontier_gap.py": "12f2eb3659b526372cfdcacf8cb6cc14bb525d070f044ba80287d1c4a359bcd2"
+          },
+          "index_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "issues": [],
+          "schema": "aura.source_provenance.v1",
+          "tree_sha": "7c433ba781bf0c73e8d957eb0346004f47137e67",
+          "untracked_content_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "workspace_diff_sha256": "4ba73a301a9c4452c62a8bf035a1da54961aaf9caf7f4cf89da150d56b504d2e",
+          "workspace_state_sha256": "696e31ffcd430e5429f20e01a1f5a4bf535c8977c2fbaadcfb6dd7d1c370883c"
+        },
+        "schema": "aura.source_stability_window.v1",
+        "stable": true,
+        "window_sha256": "23868fbf8ab5d3cb27d8b1a53f91d49da30cddd48ceea8918f6a542fdb37203d"
+      }
+    },
+    "measurement_scope": "four_class_deterministic_diagnostic",
+    "measurement_subject": "deterministic_pipeline_control",
+    "rejected_attempts": [],
+    "schema": "aura.frontier_gap_report.v4",
+    "solver_mode": "synthetic_control_live_instance_up",
+    "source_provenance": {
+      "clean": false,
+      "commit_sha": "e7a2e36a912b8da5f846e71ea3f0091d4e5cc39b",
+      "execution_component_sha256": {
+        "core/brain/frontier_gap.py": "9478801f9e6c698bb77cb45e648c21abf23801e3171d91617d899e663bb8eef1",
+        "core/brain/llm/mlx_client.py": "0a149cb0997a132a4011023ab1e36221e643952fe4a08caa0096c92141c629de",
+        "core/brain/llm/model_registry.py": "351fea0af5c11e31f3e20440ffc0a547a10fd770f923667b9710ec4eb9ebc55d",
+        "core/brain/reasoning_amplifier_v2.py": "c912f92e6d100c6e10cfccd144f8f9f5370f0149583d5a1635123ac74671f273",
+        "core/brain/verifiers/registry.py": "c68633cb40908cfbfe2238cbd6b560ea0dd150dc3c09462a3a426b15937e90c5",
+        "core/runtime/dynamic_execution_gateway.py": "e8fe74be0b8c83372cc3c213e242462341ae147f4292b7b81b268c37e79c79fd",
+        "tools/measure_frontier_gap.py": "12f2eb3659b526372cfdcacf8cb6cc14bb525d070f044ba80287d1c4a359bcd2"
+      },
+      "index_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "issues": [],
+      "schema": "aura.source_provenance.v1",
+      "tree_sha": "7c433ba781bf0c73e8d957eb0346004f47137e67",
+      "untracked_content_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "workspace_diff_sha256": "4ba73a301a9c4452c62a8bf035a1da54961aaf9caf7f4cf89da150d56b504d2e",
+      "workspace_state_sha256": "696e31ffcd430e5429f20e01a1f5a4bf535c8977c2fbaadcfb6dd7d1c370883c"
+    },
+    "source_stability": {
+      "after": {
+        "clean": false,
+        "commit_sha": "e7a2e36a912b8da5f846e71ea3f0091d4e5cc39b",
+        "execution_component_sha256": {
+          "core/brain/frontier_gap.py": "9478801f9e6c698bb77cb45e648c21abf23801e3171d91617d899e663bb8eef1",
+          "core/brain/llm/mlx_client.py": "0a149cb0997a132a4011023ab1e36221e643952fe4a08caa0096c92141c629de",
+          "core/brain/llm/model_registry.py": "351fea0af5c11e31f3e20440ffc0a547a10fd770f923667b9710ec4eb9ebc55d",
+          "core/brain/reasoning_amplifier_v2.py": "c912f92e6d100c6e10cfccd144f8f9f5370f0149583d5a1635123ac74671f273",
+          "core/brain/verifiers/registry.py": "c68633cb40908cfbfe2238cbd6b560ea0dd150dc3c09462a3a426b15937e90c5",
+          "core/runtime/dynamic_execution_gateway.py": "e8fe74be0b8c83372cc3c213e242462341ae147f4292b7b81b268c37e79c79fd",
+          "tools/measure_frontier_gap.py": "12f2eb3659b526372cfdcacf8cb6cc14bb525d070f044ba80287d1c4a359bcd2"
+        },
+        "index_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "issues": [],
+        "schema": "aura.source_provenance.v1",
+        "tree_sha": "7c433ba781bf0c73e8d957eb0346004f47137e67",
+        "untracked_content_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "workspace_diff_sha256": "4ba73a301a9c4452c62a8bf035a1da54961aaf9caf7f4cf89da150d56b504d2e",
+        "workspace_state_sha256": "696e31ffcd430e5429f20e01a1f5a4bf535c8977c2fbaadcfb6dd7d1c370883c"
+      },
+      "before": {
+        "clean": false,
+        "commit_sha": "e7a2e36a912b8da5f846e71ea3f0091d4e5cc39b",
+        "execution_component_sha256": {
+          "core/brain/frontier_gap.py": "9478801f9e6c698bb77cb45e648c21abf23801e3171d91617d899e663bb8eef1",
+          "core/brain/llm/mlx_client.py": "0a149cb0997a132a4011023ab1e36221e643952fe4a08caa0096c92141c629de",
+          "core/brain/llm/model_registry.py": "351fea0af5c11e31f3e20440ffc0a547a10fd770f923667b9710ec4eb9ebc55d",
+          "core/brain/reasoning_amplifier_v2.py": "c912f92e6d100c6e10cfccd144f8f9f5370f0149583d5a1635123ac74671f273",
+          "core/brain/verifiers/registry.py": "c68633cb40908cfbfe2238cbd6b560ea0dd150dc3c09462a3a426b15937e90c5",
+          "core/runtime/dynamic_execution_gateway.py": "e8fe74be0b8c83372cc3c213e242462341ae147f4292b7b81b268c37e79c79fd",
+          "tools/measure_frontier_gap.py": "12f2eb3659b526372cfdcacf8cb6cc14bb525d070f044ba80287d1c4a359bcd2"
+        },
+        "index_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "issues": [],
+        "schema": "aura.source_provenance.v1",
+        "tree_sha": "7c433ba781bf0c73e8d957eb0346004f47137e67",
+        "untracked_content_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "workspace_diff_sha256": "4ba73a301a9c4452c62a8bf035a1da54961aaf9caf7f4cf89da150d56b504d2e",
+        "workspace_state_sha256": "696e31ffcd430e5429f20e01a1f5a4bf535c8977c2fbaadcfb6dd7d1c370883c"
+      },
+      "schema": "aura.source_stability_window.v1",
+      "stable": true,
+      "window_sha256": "23868fbf8ab5d3cb27d8b1a53f91d49da30cddd48ceea8918f6a542fdb37203d"
+    }
   },
   "schema": "frontier_gap_report",
   "schema_name": "frontier_gap_report",
-  "schema_version": 1
+  "schema_version": 4
 }

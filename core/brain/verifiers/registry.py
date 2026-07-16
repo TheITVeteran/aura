@@ -97,7 +97,8 @@ class VerifierRegistry:
         # reliability. The hard gate is never weighted — a provable failure is
         # final regardless of the engine's track record.
         weights: dict[str, float] | None = None
-        foundry = self._foundry()
+        read_only_evaluation = bool((context or {}).get("read_only_evaluation"))
+        foundry = None if read_only_evaluation else self._foundry()
         if foundry is not None:
             try:
                 task_key = str((context or {}).get("task_key", ""))

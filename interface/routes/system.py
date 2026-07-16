@@ -6,6 +6,8 @@ and all collector/diagnostic helpers.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import inspect
 import json
 import logging
@@ -18,6 +20,7 @@ import time
 from collections import OrderedDict
 from concurrent.futures import CancelledError, Future, ThreadPoolExecutor
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, cast
 
 import fastapi.responses as fastapi_responses
@@ -35,6 +38,15 @@ from core.runtime.health_contract import (
     REQUIRED_HEALTH_PROBE_GROUPS,
     required_probe_blockers,
     required_probe_groups_pass,
+)
+from core.runtime.launch_provenance import (
+    RUNTIME_SHELL_ASSETS as _RUNTIME_REVISION_SHELL_ASSETS,
+    capture_runtime_shell_assets as _capture_runtime_shell_assets,
+    runtime_shell_assets_sha256 as _runtime_shell_assets_sha256,
+)
+from core.runtime.runtime_shell_snapshot import (
+    clear_runtime_shell_snapshots as _clear_runtime_shell_snapshots,
+    publish_runtime_shell_snapshot as _publish_runtime_shell_snapshot,
 )
 from core.runtime.service_access import optional_service
 from core.runtime.shutdown_coordinator import (
@@ -73,6 +85,12 @@ _SYSTEM_RECOVERABLE_ERRORS = (
 
 _TOOL_CATALOG_BOOTSTRAP_MAX_ITEMS = 256
 _TOOL_CATALOG_BOOTSTRAP_READ_BUDGET_S = 0.35
+_RUNTIME_REVISION_LOCK = threading.Lock()
+_RUNTIME_REVISION_CACHE: dict[str, Any] | None = None
+_RUNTIME_REVISION_CACHE_COLLECTED_AT = 0.0
+_RUNTIME_REVISION_INVALIDATION_PENDING = False
+_RUNTIME_REVISION_VERIFIED_TTL_S = 30.0
+_RUNTIME_REVISION_UNVERIFIED_TTL_S = 2.0
 
 
 def _shutdown_health_status() -> dict[str, object]:
@@ -918,14 +936,562 @@ _NATIVE_CONVERSATION_LANE_STANDBY_WRAPPER = _conversation_lane_is_standby
 _NATIVE_CONVERSATION_LANE_MESSAGE_WRAPPER = _conversation_lane_user_message
 
 
+def _runtime_revision_unavailable(
+    issue: str,
+    *,
+    required: bool = False,
+) -> dict[str, Any]:
+    return {
+        "schema": "aura.runtime_revision.v2",
+        "required": bool(required),
+        "verified": False,
+        "source_verified": False,
+        "revision_token": "",
+        "expected_source_root_sha256": "",
+        "actual_source_root_sha256": "",
+        "expected_commit_sha": "",
+        "actual_commit_sha": "",
+        "expected_workspace_state_sha256": "",
+        "actual_workspace_state_sha256": "",
+        "expected_shell_assets_sha256": "",
+        "actual_shell_assets_sha256": "",
+        "capture_stable": False,
+        "launch_mode": "unknown",
+        "issues": [issue] if issue else [],
+    }
+
+
+def _runtime_revision_copy(value: dict[str, Any]) -> dict[str, Any]:
+    result = dict(value)
+    result["issues"] = list(value.get("issues", []))
+    return result
+
+
+def _normalized_runtime_source_root(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        return str(Path(text).expanduser().resolve(strict=False))
+    except _SYSTEM_RECOVERABLE_ERRORS:
+        return ""
+
+
+def _runtime_identity_digest(value: str) -> str:
+    if not value:
+        return ""
+    return hashlib.sha256(value.encode("utf-8", errors="surrogateescape")).hexdigest()
+
+
+def _is_lower_hex_digest(value: str, length: int) -> bool:
+    return bool(
+        len(value) == length
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def _runtime_revision_token(
+    *,
+    source_root_sha256: str,
+    commit_sha: str,
+    workspace_state_sha256: str,
+    shell_assets_sha256: str,
+) -> str:
+    identity = {
+        "commit_sha": commit_sha,
+        "schema": "aura.runtime_revision.identity.v1",
+        "shell_assets_sha256": shell_assets_sha256,
+        "source_root_sha256": source_root_sha256,
+        "workspace_state_sha256": workspace_state_sha256,
+    }
+    encoded = json.dumps(identity, sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _runtime_revision_from_provenance(
+    provenance: Any,
+    *,
+    shell_assets_sha256: str = "",
+    capture_stable: bool = True,
+) -> dict[str, Any]:
+    source = dict(provenance) if isinstance(provenance, dict) else {}
+    required = source.get("required") is True
+    expected = source.get("expected")
+    actual = source.get("actual")
+    manifest = source.get("manifest")
+    expected = expected if isinstance(expected, dict) else {}
+    actual = actual if isinstance(actual, dict) else {}
+    manifest = manifest if isinstance(manifest, dict) else {}
+
+    expected_root = _normalized_runtime_source_root(expected.get("source_root"))
+    actual_root = _normalized_runtime_source_root(actual.get("source_root"))
+    expected_root_sha256 = _runtime_identity_digest(expected_root)
+    actual_root_sha256 = _runtime_identity_digest(actual_root)
+    root_exact = bool(expected_root and actual_root == expected_root)
+
+    expected_sha = str(expected.get("commit_sha") or "").strip().lower()
+    actual_sha = str(actual.get("commit_sha") or "").strip().lower()
+    commit_exact = bool(
+        _is_lower_hex_digest(expected_sha, 40) and actual_sha == expected_sha
+    )
+
+    expected_workspace = str(
+        expected.get("workspace_state_sha256") or ""
+    ).strip().lower()
+    actual_workspace = str(
+        actual.get("workspace_state_sha256") or ""
+    ).strip().lower()
+    workspace_exact = bool(
+        _is_lower_hex_digest(expected_workspace, 64)
+        and actual_workspace == expected_workspace
+    )
+    expected_shell_digest = str(
+        manifest.get("shell_assets_sha256") or ""
+    ).strip().lower()
+    actual_shell_digest = str(shell_assets_sha256 or "").strip().lower()
+    shell_exact = bool(
+        _is_lower_hex_digest(expected_shell_digest, 64)
+        and actual_shell_digest == expected_shell_digest
+    )
+
+    source_verified = source.get("source_verified") is True
+    identity_exact = bool(
+        root_exact
+        and commit_exact
+        and workspace_exact
+        and shell_exact
+        and capture_stable
+    )
+    verified = bool(
+        required
+        and source.get("verified") is True
+        and source_verified
+        and identity_exact
+    )
+    issues = [str(item) for item in source.get("issues", []) if str(item)]
+    if required:
+        for exact, issue in (
+            (root_exact, "source_root_identity_unverified"),
+            (commit_exact, "commit_identity_unverified"),
+            (workspace_exact, "workspace_identity_unverified"),
+            (shell_exact, "shell_asset_identity_unverified"),
+            (capture_stable, "workspace_changed_during_revision_capture"),
+        ):
+            if not exact and issue not in issues:
+                issues.append(issue)
+
+    revision_token = ""
+    if verified:
+        revision_token = _runtime_revision_token(
+            source_root_sha256=actual_root_sha256,
+            commit_sha=actual_sha,
+            workspace_state_sha256=actual_workspace,
+            shell_assets_sha256=actual_shell_digest,
+        )
+    return {
+        "schema": "aura.runtime_revision.v2",
+        "required": required,
+        "verified": verified,
+        "source_verified": source_verified,
+        "revision_token": revision_token,
+        "expected_source_root_sha256": expected_root_sha256,
+        "actual_source_root_sha256": actual_root_sha256,
+        "expected_commit_sha": expected_sha,
+        "actual_commit_sha": actual_sha,
+        "expected_workspace_state_sha256": expected_workspace,
+        "actual_workspace_state_sha256": actual_workspace,
+        "expected_shell_assets_sha256": expected_shell_digest,
+        "actual_shell_assets_sha256": actual_shell_digest,
+        "capture_stable": bool(capture_stable),
+        "launch_mode": str(source.get("launch_mode") or "unknown"),
+        "issues": sorted(set(issues)),
+    }
+
+
+def _runtime_provenance_observation(provenance: Any) -> str:
+    source = dict(provenance) if isinstance(provenance, dict) else {}
+    expected = source.get("expected")
+    actual = source.get("actual")
+    manifest = source.get("manifest")
+    expected = expected if isinstance(expected, dict) else {}
+    actual = actual if isinstance(actual, dict) else {}
+    manifest = manifest if isinstance(manifest, dict) else {}
+    material = {
+        "actual": {
+            "commit_sha": actual.get("commit_sha"),
+            "source_root": actual.get("source_root"),
+            "workspace_state_sha256": actual.get("workspace_state_sha256"),
+        },
+        "expected": {
+            "commit_sha": expected.get("commit_sha"),
+            "source_root": expected.get("source_root"),
+            "workspace_state_sha256": expected.get("workspace_state_sha256"),
+        },
+        "manifest_shell_assets_sha256": manifest.get("shell_assets_sha256"),
+        "required": source.get("required") is True,
+        "source_verified": source.get("source_verified") is True,
+        "verified": source.get("verified") is True,
+    }
+    return json.dumps(material, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _invalidate_launch_provenance_source_observation_cache() -> None:
+    """Force the second provenance read to observe the post-hash workspace."""
+
+    try:
+        from core.runtime import launch_provenance
+
+        lock = launch_provenance._SOURCE_CACHE_LOCK
+        cache = launch_provenance._SOURCE_CACHE
+        with lock:
+            cache.clear()
+    except (AttributeError, ImportError, RuntimeError, TypeError):
+        # Older launch-provenance implementations may not expose this cache.
+        # The independent shell digest still protects the executable UI bytes.
+        return
+
+
+def _collect_runtime_revision_uncached() -> dict[str, Any]:
+    from core.runtime.launch_provenance import collect_runtime_launch_provenance
+
+    _invalidate_launch_provenance_source_observation_cache()
+    before = collect_runtime_launch_provenance(config.paths.project_root)
+    actual = before.get("actual") if isinstance(before, dict) else None
+    actual = actual if isinstance(actual, dict) else {}
+    source_root = actual.get("source_root") or config.paths.project_root
+    shell_digest_before = _runtime_shell_assets_sha256(source_root)
+
+    _invalidate_launch_provenance_source_observation_cache()
+    after = collect_runtime_launch_provenance(config.paths.project_root)
+    after_actual = after.get("actual") if isinstance(after, dict) else None
+    after_actual = after_actual if isinstance(after_actual, dict) else {}
+    after_source_root = after_actual.get("source_root") or config.paths.project_root
+    shell_digest_after = _runtime_shell_assets_sha256(after_source_root)
+    capture_stable = (
+        _runtime_provenance_observation(before)
+        == _runtime_provenance_observation(after)
+        and shell_digest_before == shell_digest_after
+    )
+    result = _runtime_revision_from_provenance(
+        after,
+        shell_assets_sha256=shell_digest_after,
+        capture_stable=capture_stable,
+    )
+    if shell_digest_before != shell_digest_after:
+        result["issues"] = sorted(
+            set(result.get("issues", []))
+            | {"shell_assets_changed_during_revision_capture"}
+        )
+    if result.get("verified") is True:
+        try:
+            frozen_digest, frozen_assets = _capture_runtime_shell_assets(after_source_root)
+            if frozen_digest != shell_digest_after:
+                raise RuntimeError("shell assets changed before immutable publication")
+            _publish_runtime_shell_snapshot(
+                revision_token=str(result.get("revision_token") or ""),
+                shell_assets_sha256=frozen_digest,
+                assets=frozen_assets,
+            )
+        except _SYSTEM_RECOVERABLE_ERRORS as exc:
+            result["verified"] = False
+            result["capture_stable"] = False
+            result["revision_token"] = ""
+            result["issues"] = sorted(
+                set(result.get("issues", []))
+                | {f"shell_snapshot_publication_failed:{type(exc).__name__}"}
+            )
+            _clear_runtime_shell_snapshots()
+    elif result.get("required") is True:
+        _clear_runtime_shell_snapshots()
+    return result
+
+
+def invalidate_runtime_revision_cache() -> None:
+    """Invalidate revision evidence at app/runtime lifecycle boundaries."""
+
+    global _RUNTIME_REVISION_CACHE, _RUNTIME_REVISION_CACHE_COLLECTED_AT
+    global _RUNTIME_REVISION_INVALIDATION_PENDING
+    acquired = _RUNTIME_REVISION_LOCK.acquire(blocking=False)
+    if not acquired:
+        _RUNTIME_REVISION_INVALIDATION_PENDING = True
+        return
+    try:
+        _RUNTIME_REVISION_CACHE = None
+        _RUNTIME_REVISION_CACHE_COLLECTED_AT = 0.0
+        _RUNTIME_REVISION_INVALIDATION_PENDING = False
+    finally:
+        _RUNTIME_REVISION_LOCK.release()
+
+
+def _runtime_revision_contract() -> dict[str, Any]:
+    """Collect launch identity on the health worker with bounded cache TTLs."""
+    global _RUNTIME_REVISION_CACHE, _RUNTIME_REVISION_CACHE_COLLECTED_AT
+    global _RUNTIME_REVISION_INVALIDATION_PENDING
+
+    now = time.monotonic()
+    with _RUNTIME_REVISION_LOCK:
+        if _RUNTIME_REVISION_INVALIDATION_PENDING:
+            _RUNTIME_REVISION_CACHE = None
+            _RUNTIME_REVISION_CACHE_COLLECTED_AT = 0.0
+            _RUNTIME_REVISION_INVALIDATION_PENDING = False
+        cache_age = max(0.0, now - _RUNTIME_REVISION_CACHE_COLLECTED_AT)
+        cache_ttl = (
+            _RUNTIME_REVISION_VERIFIED_TTL_S
+            if _RUNTIME_REVISION_CACHE is not None
+            and _RUNTIME_REVISION_CACHE.get("verified") is True
+            else _RUNTIME_REVISION_UNVERIFIED_TTL_S
+        )
+        cache_expired = bool(
+            _RUNTIME_REVISION_CACHE is not None
+            and cache_age >= cache_ttl
+        )
+        if _RUNTIME_REVISION_CACHE is None or cache_expired:
+            try:
+                _RUNTIME_REVISION_CACHE = _collect_runtime_revision_uncached()
+            except _SYSTEM_RECOVERABLE_ERRORS as exc:
+                _RUNTIME_REVISION_CACHE = _runtime_revision_unavailable(
+                    f"revision_collection_failed:{type(exc).__name__}",
+                    required=_launched_from_app_flag(),
+                )
+            _RUNTIME_REVISION_CACHE_COLLECTED_AT = now
+        return _runtime_revision_copy(_RUNTIME_REVISION_CACHE)
+
+
+def _runtime_revision_fallback_contract() -> dict[str, Any]:
+    """Read cached identity only; never run provenance probes on an HTTP fallback."""
+    global _RUNTIME_REVISION_CACHE, _RUNTIME_REVISION_CACHE_COLLECTED_AT
+    global _RUNTIME_REVISION_INVALIDATION_PENDING
+    acquired = _RUNTIME_REVISION_LOCK.acquire(blocking=False)
+    if acquired:
+        try:
+            if _RUNTIME_REVISION_INVALIDATION_PENDING:
+                _RUNTIME_REVISION_CACHE = None
+                _RUNTIME_REVISION_CACHE_COLLECTED_AT = 0.0
+                _RUNTIME_REVISION_INVALIDATION_PENDING = False
+            elif _RUNTIME_REVISION_CACHE is not None:
+                return _runtime_revision_copy(_RUNTIME_REVISION_CACHE)
+        finally:
+            _RUNTIME_REVISION_LOCK.release()
+    issue = (
+        "runtime_revision_initializing"
+        if acquired
+        else "runtime_revision_collection_in_flight"
+    )
+    return _runtime_revision_unavailable(
+        issue,
+        required=_launched_from_app_flag(),
+    )
+
+
+def _runtime_revision_blocker(revision: Any) -> str:
+    if not isinstance(revision, dict):
+        return "runtime_revision_contract_missing"
+    contract = revision
+    if contract.get("schema") != "aura.runtime_revision.v2":
+        return "runtime_revision_contract_invalid"
+    required = contract.get("required")
+    if not isinstance(required, bool):
+        return "runtime_revision_contract_invalid"
+    if _launched_from_app_flag() and required is not True:
+        return "runtime_revision_required_contract_missing"
+    if required is False:
+        if (
+            contract.get("verified") is not False
+            or contract.get("source_verified") is not False
+            or str(contract.get("revision_token") or "")
+        ):
+            return "runtime_revision_contract_invalid"
+        return ""
+    if contract.get("verified") is not True:
+        return "runtime_revision_unverified"
+    if contract.get("source_verified") is not True or contract.get("capture_stable") is not True:
+        return "runtime_revision_identity_invalid"
+    if str(contract.get("launch_mode") or "") != "signed_app":
+        return "runtime_revision_identity_invalid"
+
+    token = str(contract.get("revision_token") or "")
+    expected_root = str(contract.get("expected_source_root_sha256") or "")
+    actual_root = str(contract.get("actual_source_root_sha256") or "")
+    expected_commit = str(contract.get("expected_commit_sha") or "")
+    actual_commit = str(contract.get("actual_commit_sha") or "")
+    expected_workspace = str(contract.get("expected_workspace_state_sha256") or "")
+    actual_workspace = str(contract.get("actual_workspace_state_sha256") or "")
+    expected_shell = str(contract.get("expected_shell_assets_sha256") or "")
+    actual_shell = str(contract.get("actual_shell_assets_sha256") or "")
+    if not (
+        _is_lower_hex_digest(token, 64)
+        and _is_lower_hex_digest(actual_root, 64)
+        and expected_root == actual_root
+        and _is_lower_hex_digest(actual_commit, 40)
+        and expected_commit == actual_commit
+        and _is_lower_hex_digest(actual_workspace, 64)
+        and expected_workspace == actual_workspace
+        and _is_lower_hex_digest(actual_shell, 64)
+        and expected_shell == actual_shell
+    ):
+        return "runtime_revision_identity_invalid"
+    expected_token = _runtime_revision_token(
+        source_root_sha256=actual_root,
+        commit_sha=actual_commit,
+        workspace_state_sha256=actual_workspace,
+        shell_assets_sha256=actual_shell,
+    )
+    if not hmac.compare_digest(token, expected_token):
+        return "runtime_revision_token_invalid"
+    return ""
+
+
+def _apply_runtime_revision_truth(payload: dict[str, Any]) -> dict[str, Any]:
+    """Make required signed-shell provenance part of every readiness verdict."""
+
+    blocker = _runtime_revision_blocker(payload.get("runtime_revision"))
+    if not blocker:
+        return payload
+
+    result = dict(payload)
+    blockers = list(
+        dict.fromkeys(
+            [blocker]
+            + [str(item) for item in result.get("blockers", []) if str(item)]
+        )
+    )
+    result.update(
+        status="degraded",
+        healthy=False,
+        ready=False,
+        connected=False,
+        system_ready=False,
+        launcher_ready=False,
+        proof_readiness_healthy=False,
+        certification_ready=False,
+        blockers=blockers,
+    )
+
+    readiness = dict(result.get("readiness_contract") or {})
+    readiness.update(
+        healthy=False,
+        ready=False,
+        connected=False,
+        system_ready=False,
+        proof_readiness_healthy=False,
+        certification_ready=False,
+        blockers=blockers,
+    )
+    result["readiness_contract"] = readiness
+
+    boot = dict(result.get("boot") or {})
+    boot_blockers = list(
+        dict.fromkeys(
+            [blocker]
+            + [str(item) for item in boot.get("blockers", []) if str(item)]
+        )
+    )
+    boot.update(
+        status="launch_provenance_failed",
+        ready=False,
+        system_ready=False,
+        launcher_ready=False,
+        proof_readiness_healthy=False,
+        certification_ready=False,
+        blockers=boot_blockers,
+    )
+    result["boot"] = boot
+    session = result.get("session")
+    if isinstance(session, dict):
+        session = dict(session)
+        session["connected"] = False
+        session["ready"] = False
+        result["session"] = session
+    return result
+
+
+def _runtime_revision_response_projection(
+    payload: dict[str, Any],
+    *,
+    include_diagnostics: bool,
+) -> dict[str, Any]:
+    """Keep exact source fingerprints owner-only on the public health route."""
+
+    revision = payload.get("runtime_revision")
+    if include_diagnostics:
+        return payload
+
+    result = dict(payload)
+    if isinstance(revision, dict):
+        required = revision.get("required") is True
+        verified = revision.get("verified") is True
+        result["runtime_revision"] = {
+            "schema": str(revision.get("schema") or "aura.runtime_revision.v2"),
+            "required": required,
+            "verified": verified,
+            "revision_token": (
+                str(revision.get("revision_token") or "") if verified else ""
+            ),
+            "status": (
+                "verified"
+                if verified
+                else "unverified"
+                if required
+                else "not_required"
+            ),
+            "blocker": (
+                "runtime_revision_unverified"
+                if required and not verified
+                else ""
+            ),
+        }
+    boot = result.get("boot")
+    if isinstance(boot, dict) and isinstance(boot.get("launch_provenance"), dict):
+        launch = boot["launch_provenance"]
+        launch_required = launch.get("required") is True
+        launch_verified = launch.get("verified") is True
+        boot = dict(boot)
+        boot["launch_provenance"] = {
+            "schema": str(launch.get("schema") or "aura.launch_provenance.v1"),
+            "required": launch_required,
+            "verified": launch_verified,
+            "status": (
+                "verified"
+                if launch_verified
+                else "unverified"
+                if launch_required
+                else "not_required"
+            ),
+            "blocker": "launch_provenance" if launch_required and not launch_verified else "",
+        }
+        result["boot"] = boot
+    launch = result.get("launch_provenance")
+    if isinstance(launch, dict):
+        launch_required = launch.get("required") is True
+        launch_verified = launch.get("verified") is True
+        result["launch_provenance"] = {
+            "schema": str(launch.get("schema") or "aura.launch_provenance.v1"),
+            "required": launch_required,
+            "verified": launch_verified,
+            "status": (
+                "verified"
+                if launch_verified
+                else "unverified"
+                if launch_required
+                else "not_required"
+            ),
+            "blocker": "launch_provenance" if launch_required and not launch_verified else "",
+        }
+    return result
+
+
 def _attach_launch_provenance_contract(
     payload: dict[str, Any],
     status_code: int,
     *,
     provenance: dict[str, Any] | None = None,
+    runtime_revision: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], int]:
     """Prevent an orphaned, stale, or incorrectly signed app runtime from looking ready."""
 
+    collect_live_revision = provenance is None
     if provenance is None:
         try:
             from core.runtime.launch_provenance import collect_runtime_launch_provenance
@@ -941,30 +1507,57 @@ def _attach_launch_provenance_contract(
                 "issues": [f"provenance_collection_failed:{type(exc).__name__}"],
             }
             logger.warning("Launch provenance collection failed: %s", exc)
+    if runtime_revision is None:
+        runtime_revision = (
+            _runtime_revision_contract()
+            if collect_live_revision
+            else _runtime_revision_fallback_contract()
+        )
 
     result = dict(payload)
     result["launch_provenance"] = provenance
+    result["runtime_revision"] = runtime_revision
     checks = dict(result.get("checks") or {})
     required = bool(provenance.get("required"))
     verified = bool(provenance.get("verified"))
+    revision_blocker = _runtime_revision_blocker(runtime_revision)
     checks["launch_provenance"] = verified if required else True
+    checks["runtime_revision"] = not revision_blocker
     result["checks"] = checks
-    if not required or verified:
+    launch_blocked = bool(required and not verified)
+    if not launch_blocked and not revision_blocker:
         return result, status_code
 
     blockers = [str(item) for item in result.get("blockers", []) if str(item)]
-    if "launch_provenance" not in blockers:
+    if launch_blocked and "launch_provenance" not in blockers:
         blockers.append("launch_provenance")
+    if revision_blocker and revision_blocker not in blockers:
+        blockers.append(revision_blocker)
+    if launch_blocked and revision_blocker:
+        status_message = (
+            "Aura's signed app/source and runtime shell provenance are not verified."
+        )
+        boot_phase = "launch_and_shell_provenance_failed"
+    elif launch_blocked:
+        status_message = (
+            "Aura's runtime is alive, but its signed app/source provenance is not verified."
+        )
+        boot_phase = "launch_provenance_failed"
+    else:
+        status_message = (
+            "Aura's runtime is alive, but its signed runtime shell provenance is not verified."
+        )
+        boot_phase = "runtime_revision_failed"
     result.update(
         {
             "ready": False,
             "launcher_ready": False,
             "system_ready": False,
+            "proof_readiness_healthy": False,
+            "certification_ready": False,
             "status": "degraded",
-            "status_message": (
-                "Aura's runtime is alive, but its signed app/source provenance is not verified."
-            ),
-            "boot_phase": "launch_provenance_failed",
+            "status_message": status_message,
+            "boot_phase": boot_phase,
             "blockers": blockers,
         }
     )
@@ -3289,6 +3882,7 @@ async def readyz(request: Request):
         from core.runtime.health_contract import required_probe_groups_pass
 
         snapshot = _apply_health_read_model_truth(_HEALTH_READ_MODEL.read())
+        snapshot = _apply_runtime_revision_truth(snapshot)
         snapshot = _apply_current_shutdown_truth(snapshot)
         readiness = dict(snapshot.get("readiness_contract") or {})
         required_probes = dict(
@@ -3751,9 +4345,16 @@ async def _collect_api_health_payload(
     try:
         mycelium = ServiceContainer.peek("mycelial_network", default=None)
         if mycelium:
-            if hasattr(mycelium, "pathways") and hasattr(mycelium, "hyphae"):
-                mycelial_data["nodes"] = len(mycelium.pathways)
-                mycelial_data["edges"] = len(mycelium.hyphae)
+            counter = getattr(mycelium, "get_topology_counts", None)
+            if callable(counter):
+                counts = counter()
+                mycelial_data["nodes"] = int(counts.get("pathways", 0))
+                mycelial_data["edges"] = int(counts.get("hyphae", 0))
+            else:
+                topology_reader = getattr(mycelium, "get_network_topology", None)
+                topology = topology_reader() if callable(topology_reader) else {}
+                mycelial_data["nodes"] = int(topology.get("pathway_count", 0) or 0)
+                mycelial_data["edges"] = len(topology.get("hyphae") or {})
             mycelial_data["health"] = "online"
     except _SYSTEM_RECOVERABLE_ERRORS as e:
         record_degradation('system', e)
@@ -4082,6 +4683,7 @@ async def _collect_api_health_payload(
             "executive_authority": executive_authority_data,
             "interaction_signals": interaction_signals_data,
             "integrity": integrity_payload,
+            "runtime_revision": _runtime_revision_contract(),
             "full_runtime": full_runtime,
             "full_runtime_ready": bool(full_runtime.get("ready")),
             "proof_readiness_healthy": proof_readiness_healthy,
@@ -4125,9 +4727,11 @@ async def _collect_api_health_payload(
             "cycle_count": 0,
             "cpu_usage": 0,
             "ram_usage": 0,
+            "runtime_revision": _runtime_revision_fallback_contract(),
             "timestamp": datetime.now(tz=UTC).isoformat()
         }
 
+    payload = _apply_runtime_revision_truth(payload)
     shutdown = _shutdown_health_status()
     shutdown_request = shutdown.get("request")
     if isinstance(shutdown_request, dict) and shutdown_request.get("requested") is True:
@@ -4195,6 +4799,7 @@ def _health_snapshot_fallback() -> dict[str, Any]:
         "certification_ready": False,
         "required_probes": required_probes,
         "blockers": blockers,
+        "runtime_revision": _runtime_revision_fallback_contract(),
         "readiness_contract": {
             "healthy": False,
             "system_ready": False,
@@ -4251,6 +4856,7 @@ def start_health_read_model() -> bool:
 
     from core.runtime.integrity_audit import start_integrity_read_model
 
+    invalidate_runtime_revision_cache()
     start_integrity_read_model()
     return _HEALTH_READ_MODEL.start()
 
@@ -4260,6 +4866,7 @@ def stop_health_read_model() -> None:
 
     _HEALTH_READ_MODEL.close()
     stop_integrity_read_model()
+    invalidate_runtime_revision_cache()
 
 
 def _reset_health_read_model_for_test() -> None:
@@ -4267,6 +4874,7 @@ def _reset_health_read_model_for_test() -> None:
 
     _HEALTH_READ_MODEL.reset_for_test()
     reset_integrity_read_model_for_test()
+    invalidate_runtime_revision_cache()
 
 
 def _force_unhealthy_snapshot(
@@ -4290,6 +4898,7 @@ def _force_unhealthy_snapshot(
         connected=False,
         conversation_ready=False,
         runtime_probe_healthy=False,
+        proof_readiness_healthy=False,
         certification_ready=False,
         blockers=blockers,
     )
@@ -4304,6 +4913,7 @@ def _force_unhealthy_snapshot(
         system_ready=False,
         conversation_ready=False,
         runtime_probe_healthy=False,
+        proof_readiness_healthy=False,
         certification_ready=False,
         required_probes=required_probes,
         blockers=blockers,
@@ -4334,7 +4944,7 @@ def _apply_health_read_model_truth(payload: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(metadata, dict) or not bool(metadata.get("expired")):
         return payload
     initializing = metadata.get("captured_at_unix") is None
-    return _force_unhealthy_snapshot(
+    result = _force_unhealthy_snapshot(
         payload,
         blocker=(
             "health_snapshot_initializing"
@@ -4343,6 +4953,13 @@ def _apply_health_read_model_truth(payload: dict[str, Any]) -> dict[str, Any]:
         ),
         status="booting" if initializing else "stale",
     )
+    revision = payload.get("runtime_revision")
+    if isinstance(revision, dict):
+        result["runtime_revision"] = _runtime_revision_unavailable(
+            "health_snapshot_expired",
+            required=revision.get("required") is True,
+        )
+    return result
 
 
 def _apply_current_shutdown_truth(payload: dict[str, Any]) -> dict[str, Any]:
@@ -4368,7 +4985,13 @@ async def api_health(request: Request):
     _mark_runtime_service_progress("api.health")
     _restore_owner_session_from_request(request)
     payload = _apply_health_read_model_truth(_HEALTH_READ_MODEL.read())
+    payload = _apply_runtime_revision_truth(payload)
     payload = _apply_current_shutdown_truth(payload)
+    access_profile = request_access_profile(request)
+    payload = _runtime_revision_response_projection(
+        payload,
+        include_diagnostics=access_profile.get("surface") == "owner",
+    )
     metadata = payload.get("health_read_model") or {}
     return JSONResponse(
         _json_safe(payload),
@@ -4526,6 +5149,7 @@ async def api_ui_bootstrap(request: Request = None):
             "is_gui_proxy": os.environ.get("AURA_GUI_PROXY") == "1",
         },
         "access": access_profile,
+        "runtime_revision": _runtime_revision_fallback_contract(),
         "constitutional": constitutional_status,
         "executive": executive_status,
         "state": state_summary,
@@ -4622,6 +5246,10 @@ async def api_ui_bootstrap(request: Request = None):
             "count": len(recent_conversation),
             "lane": public_lane,
         }
+    payload = _runtime_revision_response_projection(
+        payload,
+        include_diagnostics=access_profile.get("surface") == "owner",
+    )
     return JSONResponse(_json_safe(payload))
 
 
@@ -4650,10 +5278,15 @@ async def api_ui_shell_error(payload: dict[str, Any] | None = _UI_SHELL_ERROR_BO
 
 
 @router.get("/health/boot")
-async def api_boot_health():
+async def api_boot_health(request: Request = None):
     _mark_runtime_service_progress("api.health.boot")
     payload, status_code = await _build_boot_health_payload_bounded(
         is_gui_proxy=os.environ.get("AURA_GUI_PROXY") == "1",
+    )
+    access_profile = request_access_profile(request)
+    payload = _runtime_revision_response_projection(
+        payload,
+        include_diagnostics=access_profile.get("surface") == "owner",
     )
     return JSONResponse(payload, status_code=status_code)
 
@@ -4825,11 +5458,20 @@ async def api_heartbeat():
     conversation_busy = conversation_lane_is_busy(conversation_lane)
     required_probes = payload.get("required_probes", {})
     probe_blockers = _heartbeat_probe_blockers(required_probes)
+    runtime_revision = payload.get("runtime_revision")
+    if not isinstance(runtime_revision, dict):
+        runtime_revision = _runtime_revision_fallback_contract()
+    revision_blocker = _runtime_revision_blocker(runtime_revision)
     integrity_report = _collect_runtime_integrity_report()
     integrity_payload = _runtime_integrity_public_payload(integrity_report)
-    proof_readiness_healthy = bool(integrity_payload.get("proof_readiness", False))
+    proof_readiness_healthy = bool(
+        integrity_payload.get("proof_readiness", False)
+        and not revision_blocker
+    )
     blockers = _normalize_conversation_health_blockers(
-        list(payload.get("blockers", []) or []) + probe_blockers,
+        list(payload.get("blockers", []) or [])
+        + probe_blockers
+        + ([revision_blocker] if revision_blocker else []),
         conversation_ready=conversation_ready,
         conversation_busy=conversation_busy,
     )
@@ -4859,6 +5501,10 @@ async def api_heartbeat():
         "proof_readiness_healthy": proof_readiness_healthy,
         "certification_ready": bool(healthy and proof_readiness_healthy),
         "integrity_blockers": integrity_payload.get("proof_blockers", []),
+        "runtime_revision": _runtime_revision_response_projection(
+            {"runtime_revision": runtime_revision},
+            include_diagnostics=False,
+        ).get("runtime_revision"),
     }
     return JSONResponse(heartbeat_payload, status_code=status_code)
 

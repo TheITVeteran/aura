@@ -408,7 +408,7 @@ def test_capability_engine_edi_governance_requires_verified_capability_token(tmp
         constraints: list[str] = []
 
     cap = get_capability_issuer().issue_from_decision(
-        _Decision(), action="file_operation", payload={"path": "/tmp/x"}
+        _Decision(), action="file_operation", payload={"path": str(tmp_path / "x")}
     )
     assert CapabilityEngine._context_governed_execution(
         attach_capability({}, cap), "file_operation"

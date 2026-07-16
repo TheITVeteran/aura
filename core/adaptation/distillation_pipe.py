@@ -20,8 +20,8 @@ from typing import Any
 
 from core.config import config
 from core.health.degraded_events import record_degraded_event
-from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
 from core.utils.exceptions import capture_and_log
 
 logger = logging.getLogger("Aura.Distillation")
@@ -248,9 +248,7 @@ class DistillationPipe:
                     try:
                         mycelium = ServiceContainer.get("mycelial_network", default=None)
                         if mycelium:
-                            h = mycelium.get_hypha("adaptation", "memory")
-                            if h:
-                                h.pulse(success=True)
+                            mycelium.pulse_hypha("adaptation", "memory", success=True)
                     except (ImportError, AttributeError, RuntimeError) as e:
                         _record_distillation_degradation(
                             e,

@@ -15,10 +15,10 @@ from typing import Any
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from core.config import config
 from core.container import ServiceContainer
 from core.runtime.errors import record_degradation
 from core.runtime.service_access import optional_service
+from core.utils.concurrency import run_io_bound
 from interface.auth import _require_internal, _restore_owner_session_from_request, _verify_token
 from interface.routes.devices import _owner_authenticated
 
@@ -528,8 +528,19 @@ async def api_mycelium():
     mycelium = ServiceContainer.get("mycelium", default=None)
     if not mycelium:
         return JSONResponse({"error": "Mycelial Network offline"}, status_code=503)
-    topology = mycelium.get_network_topology()
-    topology["infrastructure"] = mycelium.get_infrastructure_report()
+    return await run_io_bound(_build_mycelium_response, mycelium)
+
+
+def _build_mycelium_response(mycelium: Any) -> JSONResponse:
+    """Snapshot and serialize the large topology response off the event loop."""
+    snapshotter = getattr(mycelium, "get_runtime_snapshot", None)
+    if callable(snapshotter):
+        snapshot = snapshotter()
+        topology = dict(snapshot.get("topology") or {})
+        topology["infrastructure"] = dict(snapshot.get("infrastructure") or {})
+    else:
+        topology = mycelium.get_network_topology()
+        topology["infrastructure"] = mycelium.get_infrastructure_report()
     return JSONResponse(topology)
 
 
@@ -539,7 +550,11 @@ async def api_mycelial_graph():
     mycelium = ServiceContainer.get("mycelium", default=None)
     if not mycelium:
         return JSONResponse({"nodes": [], "links": [], "cohesion": 0, "pathway_count": 0})
+    return await run_io_bound(_build_mycelial_graph_response, mycelium)
 
+
+def _build_mycelial_graph_response(mycelium: Any) -> JSONResponse:
+    """Build and serialize the complete graph response off the event loop."""
     cognitive_state_set = {
         "qualia",
         "affect",
@@ -575,10 +590,31 @@ async def api_mycelial_graph():
         "autonomy": "Self-Directed Agency. The drive to act independently toward defined objectives without user prompting."
     }
     try:
-        topo = mycelium.get_network_topology()
+        graph_snapshotter = getattr(mycelium, "get_graph_snapshot", None)
+        if callable(graph_snapshotter):
+            graph_snapshot = graph_snapshotter()
+            topo = dict(graph_snapshot.get("topology") or {})
+            mapped_files = dict(graph_snapshot.get("mapped_files") or {})
+            centrality_by_module = dict(graph_snapshot.get("centrality") or {})
+            critical_modules = list(
+                graph_snapshot.get("critical_modules")
+                or topo.get("critical_modules")
+                or []
+            )
+            mapping_generation = int(graph_snapshot.get("mapping_generation") or 0)
+            mapping_state = str(graph_snapshot.get("mapping_state") or "unknown")
+        else:
+            topo = mycelium.get_network_topology()
+            snapshotter = getattr(mycelium, "get_mapped_files_snapshot", None)
+            mapped_files = (
+                snapshotter() if callable(snapshotter) else {}
+            )
+            centrality_by_module = {}
+            critical_modules = list(topo.get("critical_modules") or [])
+            mapping_generation = 0
+            mapping_state = "legacy"
         nodes_map: dict[str, Any] = {}
         links: list[dict[str, Any]] = []
-        synthetic_links: list[dict[str, Any]] = []
 
         all_endpoints: set = set()
         for _name, h_data in topo.get("hyphae", {}).items():
@@ -588,72 +624,17 @@ async def api_mycelial_graph():
                 all_endpoints.add(src)
             if tgt:
                 all_endpoints.add(tgt)
-        for mk in mycelium.mapped_files:
+        for mk in mapped_files:
             all_endpoints.add(mk)
 
-        if len(all_endpoints) < 120:
-            project_root = config.paths.project_root
-            module_roots = (
-                "core",
-                "interface",
-                "skills",
-                "aura",
-                "llm",
-                "senses",
-                "autonomy_engine",
-                "cloud",
-                "infrastructure",
-                "integration",
-                "memory",
-                "orchestrator",
-                "proof_kernel",
-                "research",
-                "security",
-                "storage",
-                "training",
-                "utils",
-                "tests",
-                "tools",
-                "scripts",
-            )
-            seen_modules: set[str] = set()
-
-            for root_name in module_roots:
-                root = project_root / root_name
-                if not root.exists():
-                    continue
-                all_endpoints.add(root_name)
-                for path in sorted(root.rglob("*.py")):
-                    rel = path.relative_to(project_root).with_suffix("")
-                    if any(part.startswith(".") or part == "__pycache__" for part in rel.parts):
-                        continue
-                    if path.name.startswith("test_"):
-                        continue
-                    parts = rel.parts[:-1] if rel.name == "__init__" else rel.parts
-                    if not parts:
-                        continue
-                    module_id = ".".join(parts)
-                    if module_id in seen_modules:
-                        continue
-                    seen_modules.add(module_id)
-                    all_endpoints.add(module_id)
-                    parent = ".".join(module_id.split(".")[:-1]) or root_name
-                    all_endpoints.add(parent)
-                    if parent != module_id:
-                        synthetic_links.append({"source": parent, "target": module_id})
-                    if "." in parent:
-                        grandparent = ".".join(parent.split(".")[:-1]) or root_name
-                        all_endpoints.add(grandparent)
-                        synthetic_links.append({"source": grandparent, "target": parent})
-
-        critical_set = set(topo.get("critical_modules", []))
+        critical_set = set(critical_modules)
         for ep in all_endpoints:
             short_name = ep.split(".")[-1] if "." in ep else ep
             is_critical = ep in critical_set
             is_cognitive_state = any(cn in ep.lower() for cn in cognitive_state_set)
             is_skill = "skills" in ep.lower() or "skill" in ep.lower()
             is_interface = ep.startswith("interface")
-            centrality = mycelium._centrality.get(ep, 0)
+            centrality = centrality_by_module.get(ep, 0)
 
             if is_critical:
                 color, ntype, size = "#ff3e5e", "critical", 6 + centrality * 0.5
@@ -714,24 +695,11 @@ async def api_mycelial_graph():
             links.append({"source": src, "target": tgt, "color": color,
                           "width": round(float(width), 2), "particles": particles, "distance": distance})
 
-        synthetic_seen: set[tuple[str, str]] = set()
-        for link in synthetic_links:
-            src, tgt = link["source"], link["target"]
-            if src not in nodes_map or tgt not in nodes_map or src == tgt:
-                continue
-            key = (src, tgt)
-            if key in synthetic_seen:
-                continue
-            synthetic_seen.add(key)
-            links.append({
-                "source": src,
-                "target": tgt,
-                "color": "rgba(132,98,255,0.62)",
-                "width": 1.35,
-                "particles": 0,
-                "distance": 64,
-            })
-
+        module_by_path = {
+            module_data.get("path"): module_key
+            for module_key, module_data in mapped_files.items()
+            if isinstance(module_data, dict) and module_data.get("path")
+        }
         for pw_id, pw_data in topo.get("pathways", {}).items():
             pw_node_id = f"pw:{pw_id}"
             conf = pw_data.get("confidence", 1.0)
@@ -740,13 +708,11 @@ async def api_mycelial_graph():
                 "color": "#00ffa3", "size": 2 + conf * 2, "centrality": 0,
                 "description": f"Heuristic Learning Pathway: {pw_id}. Represents an emergent cognitive behavior."
             }
-            skill = pw_data.get("skill_name", "")
-            for mk in mycelium.mapped_files:
-                if skill.lower().replace("_", "") in mk.lower().replace("_", ""):
-                    links.append({"source": pw_node_id, "target": mk,
-                                  "color": "rgba(0,255,163,0.5)", "width": 1.0,
-                                  "particles": 1, "distance": 35})
-                    break
+            module_key = module_by_path.get(pw_data.get("source_file"))
+            if module_key is not None:
+                links.append({"source": pw_node_id, "target": module_key,
+                              "color": "rgba(0,255,163,0.5)", "width": 1.0,
+                              "particles": 1, "distance": 35})
 
         try:
             from core.runtime import resource_psutil as psutil
@@ -810,6 +776,8 @@ async def api_mycelial_graph():
             "links": links,
             "system_cohesion": topo.get("system_cohesion", 0) if nodes_map else 0.5,
             "pathway_count": topo.get("pathway_count", 0),
+            "mapping_generation": mapping_generation,
+            "mapping_state": mapping_state,
             "ram_usage": ram_usage,
             "cpu_usage": cpu_usage
         })

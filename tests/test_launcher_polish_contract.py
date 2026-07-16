@@ -84,6 +84,8 @@ def test_launcher_exposes_desktop_window_action_and_dock_presence():
     assert 'aura-launch-provenance.json' in swift
     assert 'AURA_LAUNCH_EXPECTED_COMMIT' in swift
     assert 'AURA_LAUNCH_EXPECTED_WORKSPACE_SHA256' in swift
+    assert 'requiredProvenanceString("shell_assets_sha256")' in swift
+    assert "shellAssetsSHA256.count == 64" in swift
     assert 'bundleIdentifier == "com.aura.desktop"' in swift
     assert '["-u", auraMainScript.path, "--desktop"]' in swift
     assert "requiresProtectedFolderFallback" in swift

@@ -100,9 +100,27 @@ function proveSourceContracts() {
   const serviceWorker = read('service-worker.js');
   assert.ok(!serviceWorker.includes("fetch('/api/state')"));
   assert.strictEqual(
-    serviceWorker.split("fetch('/api/health')").length - 1,
+    serviceWorker.split("fetch('/api/health/heartbeat')").length - 1,
     2,
   );
+  const installBlock = serviceWorker.slice(
+    serviceWorker.indexOf("self.addEventListener('install'"),
+    serviceWorker.indexOf("self.addEventListener('activate'"),
+  );
+  assert.ok(!installBlock.includes('self.skipWaiting()'));
+  assert.ok(serviceWorker.includes("event.data.type === 'SKIP_WAITING'"));
+  assert.ok(serviceWorker.includes("event.data.revision === SHELL_REVISION"));
+  assert.ok(serviceWorker.includes("const CACHE_NAMESPACE = 'aura-runtime-shell-'"));
+  assert.ok(serviceWorker.includes("url.searchParams.set('_aura_runtime', SHELL_REVISION)"));
+  assert.ok(!serviceWorker.includes("'/icon-192.png'"));
+
+  assert.ok(legacy.includes("'X-Idempotency-Key': item.idempotencyKey"));
+  assert.ok(legacy.includes('function persistChatHandoff'));
+  assert.ok(legacy.includes('function requestGuardedShellReload'));
+  assert.ok(legacy.includes('swReloadTriggered = requestGuardedShellReload({'));
+  assert.ok(legacy.includes('function refreshServiceWorkerRegistration'));
+  assert.ok(legacy.includes('function registerRevisionServiceWorker'));
+  assert.ok(legacy.includes("`/static/service-worker.js?_aura_runtime=${normalized}`"));
 }
 
 async function main() {

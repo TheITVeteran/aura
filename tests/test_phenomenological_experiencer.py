@@ -154,6 +154,37 @@ def test_psm_transparency():
     assert "i am clearly aware of the logic of the system" in ctx.lower()
     assert "quality of this moment: clear" in ctx
 
+
+def test_psm_reads_live_mycelium_cohesion_for_somatic_awareness(monkeypatch):
+    """Architectural fragmentation must reach the self-model through a live API."""
+    reads = []
+
+    def read_cohesion():
+        reads.append("cohesion")
+        return 0.42
+
+    mycelium = SimpleNamespace(get_system_cohesion=read_cohesion)
+
+    def service_lookup(name, default=None):
+        if name == "mycelium":
+            return mycelium
+        return default
+
+    monkeypatch.setattr("core.container.ServiceContainer.get", service_lookup)
+    psm = PhenomenalSelfModel(identity_name="Aura")
+    schema = AttentionSchema("this moment", "clear", "cognitive", 0.8)
+
+    psm.update_from_schema_and_qualia(
+        schema=schema,
+        qualia=[],
+        current_emotion="focused",
+        substrate_velocity=0.01,
+        dominant_motivation="at_rest",
+    )
+
+    assert reads == ["cohesion"]
+    assert "fragmentation in my roots" in psm.get_phenomenal_context_fragment()
+
 @pytest.mark.asyncio
 async def test_experiencer_integration_flow():
     """Test the full loop from broadcast to context string."""

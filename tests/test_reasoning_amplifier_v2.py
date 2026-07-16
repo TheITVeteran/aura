@@ -113,6 +113,185 @@ async def test_receipt_is_complete(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_read_only_evaluation_cannot_train_on_or_cache_its_items(
+    tmp_path,
+    monkeypatch,
+):
+    calls = {
+        "episode_record": 0,
+        "playbook_record": 0,
+        "self_improvement": 0,
+        "preference": 0,
+        "cache": 0,
+    }
+
+    class EvaluationMemory:
+        def as_guard_text(self, *_args, **_kwargs):
+            return ""
+
+        def record(self, **_kwargs):
+            calls["episode_record"] += 1
+
+    class EvaluationPlaybooks:
+        def as_playbook_text(self, *_args, **kwargs):
+            assert kwargs["record_usage"] is False
+            return ""
+
+        def record_win(self, **_kwargs):
+            calls["playbook_record"] += 1
+
+    class EvaluationSelfImprovement:
+        def record_win(self, *_args, **_kwargs):
+            calls["self_improvement"] += 1
+
+    class EvaluationPreferences:
+        def ingest(self, *_args, **_kwargs):
+            calls["preference"] += 1
+
+    class EvaluationCache:
+        def get(self, *_args, **_kwargs):
+            calls["cache"] += 1
+            return None
+
+        def put(self, *_args, **_kwargs):
+            calls["cache"] += 1
+
+    monkeypatch.setattr(
+        "core.brain.procedural_memory.get_procedural_memory",
+        lambda: EvaluationPlaybooks(),
+    )
+    monkeypatch.setattr(
+        "core.brain.reasoning_self_improvement.get_reasoning_self_improvement",
+        lambda: EvaluationSelfImprovement(),
+    )
+    monkeypatch.setattr(
+        "core.learning.verifiable_preference_harness.get_verifiable_preference_harness",
+        lambda: EvaluationPreferences(),
+    )
+    monkeypatch.setattr(
+        "core.brain.reasoning_solved_cache.get_reasoning_solved_cache",
+        lambda: EvaluationCache(),
+    )
+
+    amp = ReasoningAmplifierV2(
+        _gen("The answer is 4."),
+        verifier=_CheckedPassingVerifier(),
+        calibration=CalibrationGate(),
+        memory=EvaluationMemory(),
+    )
+    out = await amp.amplify(
+        AmplificationRequest(
+            objective="what is 2 + 2",
+            task_type="math",
+            mode=ReasoningMode.NORMAL,
+            sample_budget=3,
+            context={
+                "disable_batched_candidates": True,
+                "read_only_evaluation": True,
+            },
+        )
+    )
+
+    assert out.answer
+    assert calls == {
+        "episode_record": 0,
+        "playbook_record": 0,
+        "self_improvement": 0,
+        "preference": 0,
+        "cache": 0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_sealed_evaluation_cannot_retrieve_prior_answers(tmp_path, monkeypatch):
+    class ForbiddenMemory:
+        def as_guard_text(self, *_args, **_kwargs):
+            raise AssertionError("sealed evaluation retrieved reasoning memory")
+
+        def record(self, **_kwargs):
+            raise AssertionError("sealed evaluation wrote reasoning memory")
+
+    class ForbiddenPlaybooks:
+        def as_playbook_text(self, *_args, **_kwargs):
+            raise AssertionError("sealed evaluation retrieved procedural memory")
+
+        def record_win(self, **_kwargs):
+            raise AssertionError("sealed evaluation wrote procedural memory")
+
+    monkeypatch.setattr(
+        "core.brain.procedural_memory.get_procedural_memory",
+        lambda: ForbiddenPlaybooks(),
+    )
+    amp = ReasoningAmplifierV2(
+        _gen("The answer is 4."),
+        verifier=_CheckedPassingVerifier(),
+        calibration=CalibrationGate(),
+        memory=ForbiddenMemory(),
+    )
+
+    out = await amp.amplify(
+        AmplificationRequest(
+            objective="what is 2 + 2",
+            task_type="math",
+            mode=ReasoningMode.NORMAL,
+            sample_budget=3,
+            context={
+                "disable_batched_candidates": True,
+                "read_only_evaluation": True,
+                "sealed_evaluation": True,
+                "skip_evidence": True,
+            },
+        )
+    )
+
+    assert out.answer
+    assert "playbooks_injected" not in out.receipt.fallbacks_used
+
+
+@pytest.mark.asyncio
+async def test_read_only_evaluation_cannot_update_foundry_weights(monkeypatch):
+    from core.brain.verifiers.base import VerificationResult
+    from core.brain.verifiers.registry import VerifierRegistry
+
+    class EvaluationVerifier:
+        name = "evaluation"
+
+        @staticmethod
+        def handles(_task_type):
+            return True
+
+        async def verify(self, _candidate, *, context=None):
+            return VerificationResult(
+                domain="math",
+                ok=True,
+                checked=True,
+                engine=self.name,
+            )
+
+    class RefusingFoundry:
+        @staticmethod
+        def record_verdict(**_kwargs):
+            raise AssertionError("read-only evaluation reached Foundry mutation")
+
+    monkeypatch.setattr(
+        "core.runtime.service_access.optional_service",
+        lambda name, default=None: RefusingFoundry()
+        if name == "verifier_foundry"
+        else default,
+    )
+    registry = VerifierRegistry([EvaluationVerifier()])
+
+    result = await registry.verify(
+        "4",
+        task_type="math",
+        context={"read_only_evaluation": True},
+    )
+
+    assert result.ok is True
+    assert result.checked is True
+
+
+@pytest.mark.asyncio
 async def test_memory_guard_applied_second_time(tmp_path):
     # First episode fails verification → a failure-mode is recorded.
     mem = ReasoningMemory(path=tmp_path / "refl.jsonl")

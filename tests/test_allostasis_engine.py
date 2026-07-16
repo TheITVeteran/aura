@@ -18,7 +18,6 @@ Covers, in order:
 from __future__ import annotations
 
 import json
-import math
 import random
 
 import pytest
@@ -538,7 +537,7 @@ class TestTierPolicy:
             tiers.append(reading.tier)
         assert tiers[-1] == AllostasisTier.SETTLED
         # Never skips a tier on the way down.
-        for earlier, later in zip(tiers, tiers[1:]):
+        for earlier, later in zip(tiers, tiers[1:], strict=False):
             assert int(earlier) - int(later) <= 1
 
     def test_should_defer_heavy_work_by_tier(self, tmp_path):
@@ -672,7 +671,7 @@ class TestRobustness:
 # Persistence (governed writes) and restart behavior
 # ─────────────────────────────────────────────────────────────────────────────
 
-class _StubPressure:
+class _ScriptedPressure:
     def __init__(self, values, clock):
         self._values = list(values)
         self._clock = clock
@@ -686,9 +685,11 @@ class TestPersistence:
     async def test_sample_and_regulate_writes_governed_ledger(self, tmp_path, monkeypatch):
         clock = FakeClock()
         engine = make_engine(tmp_path, clock)
-        stub = _StubPressure(ramp(500.0, 5.0, 30), clock)
+        pressure_source = _ScriptedPressure(ramp(500.0, 5.0, 30), clock)
         import core.runtime.runtime_pressure as pressure_mod
-        monkeypatch.setattr(pressure_mod, "get_unified_runtime_pressure", lambda: stub)
+        monkeypatch.setattr(
+            pressure_mod, "get_unified_runtime_pressure", lambda: pressure_source
+        )
 
         for _ in range(30):
             reading = await engine.sample_and_regulate()
@@ -711,9 +712,11 @@ class TestPersistence:
     async def test_restart_supersedes_stale_forecasts(self, tmp_path, monkeypatch):
         clock = FakeClock()
         engine = make_engine(tmp_path, clock)
-        stub = _StubPressure(ramp(500.0, 5.0, 30), clock)
+        pressure_source = _ScriptedPressure(ramp(500.0, 5.0, 30), clock)
         import core.runtime.runtime_pressure as pressure_mod
-        monkeypatch.setattr(pressure_mod, "get_unified_runtime_pressure", lambda: stub)
+        monkeypatch.setattr(
+            pressure_mod, "get_unified_runtime_pressure", lambda: pressure_source
+        )
         for _ in range(30):
             await engine.sample_and_regulate()
             clock.advance(60.0)
@@ -746,7 +749,7 @@ class TestPersistence:
 # Event publication on escalation
 # ─────────────────────────────────────────────────────────────────────────────
 
-class _StubBus:
+class _RecordingBus:
     def __init__(self):
         self.published: list[tuple[str, dict]] = []
 
@@ -758,13 +761,15 @@ class TestEscalationSideEffects:
     async def test_protecting_publishes_existential_threat(self, tmp_path, monkeypatch):
         clock = FakeClock()
         engine = make_engine(tmp_path, clock)
-        bus = _StubBus()
+        bus = _RecordingBus()
         import core.event_bus as bus_mod
         monkeypatch.setattr(bus_mod, "get_event_bus", lambda: bus)
 
-        stub = _StubPressure(ramp(500.0, 12.0, 80), clock)
+        pressure_source = _ScriptedPressure(ramp(500.0, 12.0, 80), clock)
         import core.runtime.runtime_pressure as pressure_mod
-        monkeypatch.setattr(pressure_mod, "get_unified_runtime_pressure", lambda: stub)
+        monkeypatch.setattr(
+            pressure_mod, "get_unified_runtime_pressure", lambda: pressure_source
+        )
 
         for _ in range(80):
             await engine.sample_and_regulate()

@@ -231,6 +231,41 @@ async def test_enrichment_rejects_structures_that_only_stringify_cleanly():
 
 
 @pytest.mark.asyncio
+async def test_enrichment_rejects_null_item_fields_without_runtime_degradation(
+    monkeypatch,
+):
+    degradations = []
+    monkeypatch.setattr(
+        "core.cognition.knowledge_enrichment.record_degradation",
+        lambda *args, **kwargs: degradations.append((args, kwargs)),
+    )
+    brain = _Brain(
+        {
+            "items": [
+                {"type": "fact", "content": None},
+                {"type": "entity", "content": None, "related_to": [None]},
+                {
+                    "type": "relationship",
+                    "entity_a": None,
+                    "relation": "uses",
+                    "entity_b": "runtime",
+                },
+            ]
+        }
+    )
+    graph = _KnowledgeGraph()
+    enricher = KnowledgeEnricher(graph, brain)
+
+    result = await enricher.enrich_from_conversation(_messages(), force=True)
+
+    assert result == {"facts": 0, "entities": 0, "preferences": 0, "beliefs": 0}
+    assert graph.knowledge == []
+    assert graph.relationships == []
+    assert degradations == []
+    assert enricher.get_stats()["last_outcome"] == "invalid_extraction_items"
+
+
+@pytest.mark.asyncio
 async def test_conversation_reflection_setting_blocks_generation(
     _isolated_runtime_settings,
 ):

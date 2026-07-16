@@ -1153,6 +1153,30 @@
       "scope": "<module>.GoalEngine._save_subgoals_stack"
     },
     {
+      "callee": "core.runtime.atomic_writer.atomic_write_bytes",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/governance/capability_chain.py",
+      "scope": "<module>.NonceLedger._persist_locked"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.ensure_private_directory",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/governance/capability_chain.py",
+      "scope": "<module>._KeyMaterial._ensure_dir"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.atomic_write_bytes",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/governance/capability_chain.py",
+      "scope": "<module>._KeyMaterial._write_public"
+    },
+    {
       "callee": "core.runtime.atomic_writer.atomic_write_text",
       "canonical_owner": false,
       "category": "direct_atomic_file_write",
@@ -1431,6 +1455,14 @@
       "count": 1,
       "path": "core/memory/aura_self_profile.py",
       "scope": "<module>.AuraSelfProfile._save_to_disk"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.ensure_private_directory",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/memory/black_hole.py",
+      "scope": "<module>._provision_local_key"
     },
     {
       "callee": "core.runtime.atomic_writer.async_atomic_write_text",
@@ -2953,6 +2985,14 @@
       "scope": "<module>.PersonalityKernel._load_or_generate_key"
     },
     {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_json",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/brain/procedural_memory.py",
+      "scope": "<module>.ProceduralMemory._persist"
+    },
+    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().append_text",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -3769,6 +3809,22 @@
       "scope": "<module>.BootProfiler.write_artifact"
     },
     {
+      "callee": "<file_write_gateway>.ensure_directory",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/runtime/chat_delivery_journal.py",
+      "scope": "<module>.ChatDeliveryJournal._initialize"
+    },
+    {
+      "callee": "<file_write_gateway>.open_owned_binary",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/runtime/chat_delivery_journal.py",
+      "scope": "<module>.ChatDeliveryJournal._initialize"
+    },
+    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_bytes",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -4225,12 +4281,28 @@
       "scope": "<module>.StructuralImprover._append_ledger"
     },
     {
-      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_bytes",
+      "callee": "<file_write_gateway>.ensure_directory",
       "canonical_owner": false,
       "category": "file_write_gateway",
       "count": 1,
       "path": "core/senses/voice_engine.py",
       "scope": "<module>.SovereignVoiceEngine._download_piper_voice"
+    },
+    {
+      "callee": "<file_write_gateway>.write_bytes_batch",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/senses/voice_engine.py",
+      "scope": "<module>.SovereignVoiceEngine._download_piper_voice"
+    },
+    {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().ensure_directory",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/senses/voice_engine.py",
+      "scope": "<module>.SovereignVoiceEngine._init_tts"
     },
     {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_bytes",
@@ -8081,44 +8153,12 @@
       "scope": "<module>.TaskLifecycleManager.__init__"
     },
     {
-      "callee": "open",
+      "callee": "os.open",
       "canonical_owner": false,
       "category": "raw_file_mutation",
       "count": 1,
       "path": "core/governance/capability_chain.py",
-      "scope": "<module>.NonceLedger.flush"
-    },
-    {
-      "callee": "os.replace",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/governance/capability_chain.py",
-      "scope": "<module>.NonceLedger.flush"
-    },
-    {
-      "callee": "self._path.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/governance/capability_chain.py",
-      "scope": "<module>.NonceLedger.flush"
-    },
-    {
-      "callee": "d.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/governance/capability_chain.py",
-      "scope": "<module>._KeyMaterial._ensure_dir"
-    },
-    {
-      "callee": "os.chmod",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/governance/capability_chain.py",
-      "scope": "<module>._KeyMaterial._ensure_dir"
+      "scope": "<module>.NonceLedger._read_bytes_locked"
     },
     {
       "callee": "os.open",
@@ -8126,23 +8166,7 @@
       "category": "raw_file_mutation",
       "count": 1,
       "path": "core/governance/capability_chain.py",
-      "scope": "<module>._KeyMaterial._load_or_create_ed25519"
-    },
-    {
-      "callee": "os.open",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/governance/capability_chain.py",
-      "scope": "<module>._KeyMaterial._load_or_create_hmac"
-    },
-    {
-      "callee": "os.open",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/governance/capability_chain.py",
-      "scope": "<module>._KeyMaterial._write_public"
+      "scope": "<module>._read_private_material"
     },
     {
       "callee": "self.LEDGER.parent.mkdir",
@@ -8798,15 +8822,7 @@
       "category": "raw_file_mutation",
       "count": 1,
       "path": "core/memory/black_hole.py",
-      "scope": "<module>._provision_local_key"
-    },
-    {
-      "callee": "path.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/memory/black_hole.py",
-      "scope": "<module>._provision_local_key"
+      "scope": "<module>._read_local_key"
     },
     {
       "callee": "os.makedirs",
@@ -10009,6 +10025,30 @@
       "scope": "<module>.atomic_write_bytes"
     },
     {
+      "callee": "<pathlib.Path>.unlink",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/runtime/atomic_writer.py",
+      "scope": "<module>.atomic_write_bytes_if_absent"
+    },
+    {
+      "callee": "os.link",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/runtime/atomic_writer.py",
+      "scope": "<module>.atomic_write_bytes_if_absent"
+    },
+    {
+      "callee": "parent.mkdir",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/runtime/atomic_writer.py",
+      "scope": "<module>.atomic_write_bytes_if_absent"
+    },
+    {
       "callee": "child.unlink",
       "canonical_owner": true,
       "category": "raw_file_mutation",
@@ -10343,6 +10383,14 @@
       "count": 1,
       "path": "core/runtime/flagship_doctor.py",
       "scope": "<module>.main"
+    },
+    {
+      "callee": "os.open",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 2,
+      "path": "core/runtime/launch_provenance.py",
+      "scope": "<module>.capture_runtime_shell_assets"
     },
     {
       "callee": "self._db_path.parent.mkdir",
@@ -11527,14 +11575,6 @@
       "count": 1,
       "path": "core/senses/voice_engine.py",
       "scope": "<module>.SovereignVoiceEngine.__init__"
-    },
-    {
-      "callee": "model_dir.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/senses/voice_engine.py",
-      "scope": "<module>.SovereignVoiceEngine._init_tts"
     },
     {
       "callee": "wave.open",
@@ -13786,6 +13826,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "5d67729507e7a61a877723848c71f90e10a5dc15e46cfc2817d4c434ab6417e8",
+  "inventory_sha256": "c9b72ba12a8f37fda7deab4f1d025c538752dd75b6be831740274cc1d6f194c5",
   "schema_version": 1
 }
