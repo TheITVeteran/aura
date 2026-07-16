@@ -25,6 +25,8 @@ def _worker_identity():
         "worker_pid": 1234,
         "worker_model_path": "/models/Aura-32B",
         "worker_model_parameter_count": 32_000_000_000,
+        "worker_model_stored_parameter_element_count": 5_000_000_000,
+        "worker_model_parameter_count_basis": "architecture_config_logical",
         "worker_source_sha256": "e" * 64,
         "worker_affective_steering_active": True,
         "worker_affective_steering_alpha": 0.30,
@@ -56,6 +58,51 @@ def test_model_parameter_count_uses_native_nested_parameter_tree():
     )
 
     assert runtime_identity.model_parameter_count(model) == 45
+
+
+def test_logical_qwen_parameter_count_uses_architecture_not_packed_elements(tmp_path):
+    (tmp_path / "config.json").write_text(
+        """{
+          "model_type": "qwen2",
+          "hidden_size": 5120,
+          "intermediate_size": 27648,
+          "num_hidden_layers": 64,
+          "num_attention_heads": 40,
+          "num_key_value_heads": 8,
+          "vocab_size": 152064,
+          "tie_word_embeddings": false
+        }""",
+        encoding="utf-8",
+    )
+
+    count, basis = runtime_identity.logical_model_parameter_count(
+        tmp_path,
+        stored_element_count=5_120_300_032,
+    )
+
+    assert count == 32_763_876_352
+    assert basis == "architecture_config_logical"
+
+
+def test_worker_identity_accepts_production_steering_coefficient():
+    identity = _worker_identity()
+    identity["worker_affective_steering_alpha"] = 5.525
+
+    assert runtime_identity.worker_identity_errors(identity) == []
+
+
+def test_worker_identity_rejects_parameter_count_basis_contradictions():
+    architecture = _worker_identity()
+    architecture["worker_model_parameter_count"] = 4_000_000_000
+    stored = _worker_identity()
+    stored["worker_model_parameter_count_basis"] = "stored_tensor_elements"
+
+    assert "worker_model_parameter_count_basis_contradiction" in (
+        runtime_identity.worker_identity_errors(architecture)
+    )
+    assert "worker_model_parameter_count_basis_contradiction" in (
+        runtime_identity.worker_identity_errors(stored)
+    )
 
 
 def test_request_digest_binds_runtime_controls_and_is_order_stable():

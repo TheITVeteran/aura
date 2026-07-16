@@ -5000,21 +5000,18 @@ def _build_live_turn_contract_payload(
         if isinstance(raw_runtime_identity, dict)
         else {}
     )
-
     def _sha256(value: Any) -> bool:
         return bool(
             isinstance(value, str)
             and len(value) == 64
             and all(character in "0123456789abcdef" for character in value)
         )
-
     def _git_oid(value: Any) -> bool:
         return bool(
             isinstance(value, str)
             and len(value) in {40, 64}
             and all(character in "0123456789abcdef" for character in value)
         )
-
     installed_app_required = raw_runtime_identity.get("installed_app_required") is True
     runtime_identity_valid = bool(
         raw_runtime_identity.get("identity_bound") is True
@@ -5034,7 +5031,6 @@ def _build_live_turn_contract_payload(
             )
         )
     )
-
     latent_cortex_identity_bound = bool(
         trace.get("latent_cortex_identity_bound")
         and runtime_identity_valid
@@ -5052,7 +5048,11 @@ def _build_live_turn_contract_payload(
         and raw_latent_receipt.get("worker_pid", 0) > 0
         and bool(str(raw_latent_receipt.get("worker_model_path") or "").strip())
         and type(raw_latent_receipt.get("worker_model_parameter_count")) is int
-        and raw_latent_receipt.get("worker_model_parameter_count", 0) > 0
+        and raw_latent_receipt.get("worker_model_parameter_count", 0) >= 20_000_000_000
+        and raw_latent_receipt.get("worker_model_parameter_count_basis")
+        == "architecture_config_logical"
+        and type(raw_latent_receipt.get("worker_model_stored_parameter_element_count")) is int
+        and raw_latent_receipt.get("worker_model_stored_parameter_element_count", 0) > 0
         and raw_latent_receipt.get("worker_affective_steering_active") is True
         and raw_latent_receipt.get("episode_affective_steering_applied") is True
         and isinstance(
@@ -5075,8 +5075,8 @@ def _build_live_turn_contract_payload(
             "checkpoint_file_count",
             "worker_boot_id",
             "worker_pid",
-            "worker_model_path",
-            "worker_model_parameter_count",
+            "worker_model_path", "worker_model_parameter_count",
+            "worker_model_stored_parameter_element_count", "worker_model_parameter_count_basis",
             "worker_source_sha256",
             "worker_affective_steering_active",
             "worker_affective_steering_alpha",
@@ -5084,7 +5084,7 @@ def _build_live_turn_contract_payload(
             "episode_affective_steering_alpha",
             "request_payload_sha256",
             "input_tokens_sha256",
-            "input_token_count",
+            "input_token_count", "input_context_compaction",
             "params_unchanged",
             "schedule_hash",
             "n_slots",

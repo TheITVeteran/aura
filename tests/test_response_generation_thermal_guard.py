@@ -160,6 +160,8 @@ def _live_latent_receipt():
         "worker_pid": 4200,
         "worker_model_path": "/models/Aura-32B",
         "worker_model_parameter_count": 32_000_000_000,
+        "worker_model_stored_parameter_element_count": 5_000_000_000,
+        "worker_model_parameter_count_basis": "architecture_config_logical",
         "worker_source_sha256": "c" * 64,
         "worker_affective_steering_active": True,
         "worker_affective_steering_alpha": 0.30,

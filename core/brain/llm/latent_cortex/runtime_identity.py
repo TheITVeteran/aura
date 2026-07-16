@@ -13,6 +13,7 @@ from core.runtime.file_read_gateway import read_stable_bytes
 
 WORKER_IDENTITY_SCHEMA = "aura.latent_cortex.worker_identity.v1"
 RUNTIME_IDENTITY_SCHEMA = "aura.latent_cortex.runtime_identity.v1"
+MAX_AFFECTIVE_STEERING_ALPHA = 50.0
 
 
 def _sha256(value: Any) -> bool:
@@ -97,6 +98,78 @@ def model_parameter_count(model: Any) -> int:
     return total
 
 
+def logical_model_parameter_count(
+    model_path: str | Path,
+    *,
+    stored_element_count: int,
+) -> tuple[int, str]:
+    """Derive logical weights from architecture config for packed checkpoints."""
+
+    config_path = Path(canonical_model_path(model_path)) / "config.json"
+    try:
+        config = json.loads(
+            read_stable_bytes(config_path, max_bytes=2 * 1024 * 1024).decode(
+                "utf-8"
+            )
+        )
+    except (FileNotFoundError, OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return stored_element_count, "stored_tensor_elements"
+    if not isinstance(config, Mapping) or str(config.get("model_type") or "") != "qwen2":
+        return stored_element_count, "stored_tensor_elements"
+
+    names = (
+        "hidden_size",
+        "intermediate_size",
+        "num_hidden_layers",
+        "num_attention_heads",
+        "num_key_value_heads",
+        "vocab_size",
+    )
+    values: dict[str, int] = {}
+    for name in names:
+        value = config.get(name)
+        if type(value) is not int or value <= 0:
+            return stored_element_count, "stored_tensor_elements"
+        values[name] = value
+    hidden = values["hidden_size"]
+    attention_heads = values["num_attention_heads"]
+    head_dim = config.get("head_dim")
+    if head_dim is None:
+        if hidden % attention_heads:
+            return stored_element_count, "stored_tensor_elements"
+        head_dim = hidden // attention_heads
+    if type(head_dim) is not int or head_dim <= 0:
+        return stored_element_count, "stored_tensor_elements"
+
+    query_width = attention_heads * head_dim
+    kv_width = values["num_key_value_heads"] * head_dim
+    attention_weights = (
+        hidden * query_width
+        + 2 * hidden * kv_width
+        + query_width * hidden
+    )
+    # Qwen2 q/k/v projections carry bias; o_proj and the gated MLP do not.
+    attention_biases = query_width + 2 * kv_width
+    mlp_weights = 3 * hidden * values["intermediate_size"]
+    layer_norms = 2 * hidden
+    per_layer = attention_weights + attention_biases + mlp_weights + layer_norms
+    embeddings = values["vocab_size"] * hidden
+    output_head = (
+        0
+        if config.get("tie_word_embeddings") is True
+        else values["vocab_size"] * hidden
+    )
+    logical = (
+        embeddings
+        + values["num_hidden_layers"] * per_layer
+        + hidden
+        + output_head
+    )
+    if logical <= 0:
+        return stored_element_count, "stored_tensor_elements"
+    return logical, "architecture_config_logical"
+
+
 def build_worker_identity(
     model: Any,
     *,
@@ -109,12 +182,19 @@ def build_worker_identity(
     boot_id = str(worker_boot_id or "").strip().lower()
     if len(boot_id) != 32 or any(character not in "0123456789abcdef" for character in boot_id):
         raise ValueError("worker_boot_id must be a 128-bit lowercase hex identifier")
+    stored_element_count = model_parameter_count(model)
+    logical_count, count_basis = logical_model_parameter_count(
+        model_path,
+        stored_element_count=stored_element_count,
+    )
     return {
         "schema": WORKER_IDENTITY_SCHEMA,
         "worker_boot_id": boot_id,
         "worker_pid": os.getpid(),
         "worker_model_path": canonical_model_path(model_path),
-        "worker_model_parameter_count": model_parameter_count(model),
+        "worker_model_parameter_count": logical_count,
+        "worker_model_stored_parameter_element_count": stored_element_count,
+        "worker_model_parameter_count_basis": count_basis,
         "worker_source_sha256": _stable_sha256(worker_source_path, max_bytes=8 * 1024 * 1024),
         "worker_affective_steering_active": bool(affective_steering_active),
         "worker_affective_steering_alpha": float(affective_steering_alpha),
@@ -145,6 +225,28 @@ def worker_identity_errors(
         or receipt["worker_model_parameter_count"] <= 0
     ):
         errors.append("invalid_worker_model_parameter_count")
+    if (
+        type(receipt.get("worker_model_stored_parameter_element_count")) is not int
+        or receipt["worker_model_stored_parameter_element_count"] <= 0
+    ):
+        errors.append("invalid_worker_model_stored_parameter_element_count")
+    count_basis = receipt.get("worker_model_parameter_count_basis")
+    if count_basis not in {
+        "architecture_config_logical",
+        "stored_tensor_elements",
+    }:
+        errors.append("invalid_worker_model_parameter_count_basis")
+    logical_count = receipt.get("worker_model_parameter_count")
+    stored_count = receipt.get("worker_model_stored_parameter_element_count")
+    if (
+        type(logical_count) is int
+        and type(stored_count) is int
+        and (
+            (count_basis == "architecture_config_logical" and logical_count < stored_count)
+            or (count_basis == "stored_tensor_elements" and logical_count != stored_count)
+        )
+    ):
+        errors.append("worker_model_parameter_count_basis_contradiction")
     if not _sha256(receipt.get("worker_source_sha256")):
         errors.append("invalid_worker_source_sha256")
     if type(receipt.get("worker_affective_steering_active")) is not bool:
@@ -153,7 +255,7 @@ def worker_identity_errors(
     if (
         isinstance(steering_alpha, bool)
         or not isinstance(steering_alpha, (int, float))
-        or not 0.0 <= float(steering_alpha) <= 1.0
+        or not 0.0 <= float(steering_alpha) <= MAX_AFFECTIVE_STEERING_ALPHA
     ):
         errors.append("invalid_worker_affective_steering_alpha")
     if expected is not None:
@@ -162,6 +264,8 @@ def worker_identity_errors(
             "worker_pid",
             "worker_model_path",
             "worker_model_parameter_count",
+            "worker_model_stored_parameter_element_count",
+            "worker_model_parameter_count_basis",
             "worker_source_sha256",
             "worker_affective_steering_active",
             "worker_affective_steering_alpha",
@@ -257,12 +361,14 @@ def collect_latent_runtime_identity(
 
 
 __all__ = [
+    "MAX_AFFECTIVE_STEERING_ALPHA",
     "RUNTIME_IDENTITY_SCHEMA",
     "WORKER_IDENTITY_SCHEMA",
     "build_worker_identity",
     "canonical_model_path",
     "collect_latent_runtime_identity",
     "latent_request_payload_sha256",
+    "logical_model_parameter_count",
     "model_parameter_count",
     "worker_identity_errors",
 ]

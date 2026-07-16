@@ -45,6 +45,8 @@ _WORKER_IDENTITY = {
     "worker_pid": 4242,
     "worker_model_path": "/models/test-32b",
     "worker_model_parameter_count": 32_000_000_000,
+    "worker_model_stored_parameter_element_count": 5_000_000_000,
+    "worker_model_parameter_count_basis": "architecture_config_logical",
     "worker_source_sha256": "2" * 64,
     "worker_affective_steering_active": True,
     "worker_affective_steering_alpha": 0.30,
@@ -144,6 +146,8 @@ def test_config_from_job_maps_every_advanced_mechanism():
             "exchange_gamma": 0.2,
             "convergence_eps": 0.01,
             "decode_top_p": 0.82,
+            "input_context_max_chars": 4096,
+            "allow_vanilla_fallback": False,
         }
     )
     assert cfg.latent_opt.enabled is True and cfg.latent_opt.steps == 6
@@ -153,6 +157,8 @@ def test_config_from_job_maps_every_advanced_mechanism():
     assert cfg.branches.exchange_gamma == 0.2
     assert cfg.recurrence.convergence_eps == 0.01
     assert cfg.decode_top_p == 0.82
+    assert cfg.input_context_max_chars == 4096
+    assert cfg.allow_vanilla_fallback is False
 
 
 def test_budget_from_job_caps_apply():
@@ -192,6 +198,63 @@ def test_handler_requires_prompt(monkeypatch):
     body = handle_latent_reason({}, model=None, tokenizer=None, model_path="")
     assert body["status"] == "error"
     assert "requires prompt" in body["message"]
+
+
+def test_handler_compacts_messages_but_hashes_the_original_request(monkeypatch):
+    from core.brain.llm.latent_cortex.types import (
+        EpisodeReceipt,
+        LatentReasoningResult,
+    )
+
+    monkeypatch.delenv("AURA_LATENT_CORTEX", raising=False)
+    captured: dict = {}
+
+    class StubEngine:
+        def __init__(self, model, tokenizer, config, **kwargs):
+            captured["config"] = config
+
+        def reason(self, **kwargs):
+            captured.update(kwargs)
+            return LatentReasoningResult(
+                ok=True,
+                text="bounded",
+                receipt=EpisodeReceipt(),
+            )
+
+    import core.brain.llm.latent_cortex.worker_handler as handler_mod
+
+    monkeypatch.setattr(handler_mod, "LatentCortexEngine", StubEngine)
+    messages = [
+        {"role": "system", "content": "system " + "s" * 4000},
+        {"role": "user", "content": "question " + "u" * 4000},
+    ]
+    config = {"input_context_max_chars": 2048}
+    job = {
+        "messages": messages,
+        "config": config,
+        "domain": "unit",
+    }
+    body = handle_latent_reason(
+        job,
+        model=object(),
+        tokenizer=object(),
+        model_path="/models/test-32b",
+        worker_identity=dict(_WORKER_IDENTITY),
+    )
+
+    compacted = captured["messages"]
+    assert sum(len(item["content"]) for item in compacted) <= 2048
+    receipt = body["receipt"]
+    assert receipt["input_context_compaction"]["applied"] is True
+    assert receipt["input_context_compaction"]["compacted_char_count"] <= 2048
+    assert receipt["request_payload_sha256"] == latent_request_payload_sha256(
+        prompt=None,
+        messages=messages,
+        domain="unit",
+        config=config,
+        budget=None,
+        runtime_controls=None,
+    )
 
 
 def test_handler_runs_full_episode_on_tiny_model(monkeypatch, tmp_path):
@@ -806,7 +869,9 @@ def test_resident_32b_interactive_allocation_keeps_full_stack_inside_live_budget
     assert cfg["fast_weights"] is True
     assert cfg["fast_weights_opt_steps"] == 1
     assert cfg["fast_weights_max_layers"] == 2
-    assert cfg["decode_max_tokens"] == 288
+    assert cfg["decode_max_tokens"] == 160
+    assert cfg["input_context_max_chars"] == 9000
+    assert cfg["allow_vanilla_fallback"] is False
     assert budget["wall_clock_s"] <= 120.0
     assert (
         svc.get_status()["last_allocation"]["allocation_profile"]
@@ -846,7 +911,9 @@ def test_service_applies_resident_identity_profile_before_worker_ipc(monkeypatch
     )
 
     assert result == {"ok": False, "reason": "profile_observed"}
-    assert captured["config"]["decode_max_tokens"] == 288
+    assert captured["config"]["decode_max_tokens"] == 160
+    assert captured["config"]["input_context_max_chars"] == 9000
+    assert captured["config"]["allow_vanilla_fallback"] is False
     assert captured["config"]["max_steps"] == 2
     assert captured["config"]["exchange_interval"] == 1
     assert captured["budget"]["wall_clock_s"] <= 120.0

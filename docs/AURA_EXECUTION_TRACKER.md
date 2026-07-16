@@ -16,9 +16,9 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **Checkpoint 100 is the current
-  source candidate in the `main` worktree; Checkpoint 99 is pushed at
-  `370fe6dc`, and exact rebuilt-app proof remains open after CP100**. Checkpoint 80
+- Current bounded implementation milestone: **Checkpoint 101 is the current
+  source candidate in the `main` worktree; Checkpoint 100 is pushed at
+  `8007b98a`, and exact rebuilt-app proof remains open after CP101**. Checkpoint 80
   made cached
   readiness truthful and fast,
   removed synchronous Phi/Eternal maintenance from the foreground cycle, and
@@ -186,7 +186,15 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   reachable inside ResponseGeneration and the public failure contract again
   erased the latent receipt. Checkpoint 100 closes those returned-result owners
   and retains bounded parent progress while carrying worker stage evidence
-  through the public contract. Exact CP100 app proof is still open, so no live or
+  through the public contract. The exact CP100 app then preserved that evidence
+  but proved the next owners: it mislabeled 5.12 billion packed tensor elements
+  as the logical model size, selected the generic 16-slot profile for the actual
+  32B architecture, spent 99.48 seconds prefilling 11,045 tokens, and attempted
+  an unaffordable internal vanilla fallback after the latent allocation failed.
+  Checkpoint 101 derives the 32.76-billion logical count from the Qwen2
+  architecture, separately receipts packed storage, bounds and hash-receipts
+  the live latent context, and forbids that secondary decode in the production
+  full-stack profile. Exact CP101 app proof is still open, so no capability or
   intelligence-gain credit is awarded.
   A separate non-current `fable-improvement-pass` endurance attempt is retained
   as failed evidence: it stopped at 36/200 turns, served 31 timeout responses,
@@ -197,7 +205,7 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   release, and causal-proof obligations remain open unless their rows
   explicitly close.
 - Overall completion percentage: **27% evidence-weighted planning estimate at
-  Checkpoint 100**. The exact
+  Checkpoint 101**. The exact
   Checkpoint 80 app earns bounded live credit for readiness, health, base boot,
   and one-attempt chat latency, but not output quality, sustained load, GUI
   frame SLO, portability, semantic review, release, or soak. The newly
@@ -209,16 +217,16 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   `PROGRESS-CONTROL-001` and `SCOPE-001` must replace the manual estimate with a
   generated denominator; new obligations increase it, regressions reopen it,
   and source-green/live-open work never receives full closure credit.
-  CP92-100 close bounded evidence-integrity, runtime-convergence, and initial
+  CP92-101 close bounded evidence-integrity, runtime-convergence, and initial
   latent ownership/lifecycle work already present in the denominator. The full
   Anima Rationis program adds causal ingress, consolidation, anti-interference,
   equal-compute science, live 32B, and independent certification obligations;
-  source mechanics do not receive capability credit. CP100 has no
+  source mechanics do not receive capability credit. CP101 has no
   exact rebuilt-app, portability,
   release, or soak credit yet and therefore does not move the rounded
   percentage.
 - Total checkpoint forecast: **approximately 292-399 total checkpoints for the
-  expanded program, with 100 checkpoints and approximately 192-299 remaining before
+  expanded program, with 101 checkpoints and approximately 191-298 remaining before
   final soak/release closure**. The Recursive Latent Cortex / Anima Rationis
   requirement adds **40-56 total checkpoints** for independent foundation
   review; seven-mechanism hardening; exact compute and lifecycle accounting;
@@ -17719,12 +17727,94 @@ Bounded verification and next boundary:
   faithful `292-399` forecast, with approximately `192-299` implementation,
   cleanup, integration, verification, live, portability, release, and soak
   checkpoints remaining.
-- Next, commit and push CP100 to `main`, run the clean exact-head audit,
-  rebuild/sign the installed app, and
-  repeat the same resident-32B turn. The public failure receipt must now expose
-  exact input and stage cost if the episode misses its deadline. That measured
-  owner is then reduced without disabling recurrence, branch exchange, latent
-  optimization, fast weights, or latent-conditioned decode. Live credit still
-  requires a nonempty authentic answer, complete mechanism and identity receipt,
-  no second generation, no worker recycle, and clean runtime logs. Multi-hour
-  and 24-72 hour soaks remain deferred until every shorter gate is green.
+- CP100 was committed and pushed to `main` at `8007b98a`, passed the clean
+  exact-head audit, and was rebuilt and signed into the installed app. The same
+  compound turn reached the selected resident owner and preserved its public
+  receipt, but failed closed after 110.641 seconds. The receipt proves 11,045
+  input tokens, a 99.484-second prefill, zero recurrence steps, no decode, and
+  `last_stage=prefill`. The worker remained warm and no route-level second owner
+  ran. The worker identity reported 5,120,300,032 parameter elements because it
+  counted packed quantized storage rather than logical architecture weights;
+  that caused the service to miss its resident-32B profile. The generic profile
+  then allocated 16 slots and attempted an internal vanilla fallback after the
+  full-stack allocation became unaffordable. This is failed evidence retained at
+  `artifacts/current/cp100_live_latent_turn.json`, not capability credit.
+
+## Checkpoint 2026-07-16-101: Logical 32B Identity and Bounded Live Context
+
+Checkpoint 101 is the current source candidate in the `main` worktree. It
+advances `RLC-COMPUTE-001`, `RLC-LIFECYCLE-001`, `RLC-RUNTIME-001`,
+`RLC-LIVE32B-001`, `CHAT-001`, `OBSERVABILITY-001`, and `TEST-DEPTH-001`. It
+closes the exact identity, prompt-cost, and duplicate-work owners measured by
+the CP100 app. It does not claim a successful resident episode or any capability
+gain until the exact rebuilt app supplies that evidence.
+
+Resident identity and single-owner implementation:
+
+- Worker identity now distinguishes logical model parameters from packed tensor
+  elements. For Qwen2 checkpoints it derives the logical count from the frozen
+  architecture fields, including grouped-query attention widths, Q/K/V biases,
+  the gated MLP, norms, embeddings, and the optional untied output head. The
+  exact fused configuration deterministically yields 32,763,876,352 logical
+  parameters while preserving the separately observed 5,120,300,032 packed
+  elements. The receipt records its count basis, rejects contradictory basis and
+  value pairs, and compares both counts to the worker's immutable boot identity.
+- The boot-time affective-steering identity now accepts the subsystem's actual
+  production coefficient range, including the observed 5.525 coefficient,
+  rather than incorrectly applying the 0-1 per-turn surface-control range. The
+  episode-level surface control remains independently bounded to 0.01-1.0 and
+  must exactly match the requested live-mind control.
+- The resident interactive profile now activates from the architecture-derived
+  count and retains the complete causal stack with four thought slots, two
+  branches, two recurrent steps, branch exchange, one accepted latent optimizer
+  step, temporary fast weights with erase proof, and latent-conditioned decode.
+  Its answer ceiling is 160 tokens. Production full-stack failure cannot start
+  the engine's internal vanilla decode; the outer single-owner contract remains
+  solely responsible for an early, pre-consumption fallback.
+
+Bounded context and evidence implementation:
+
+- The worker applies deterministic `resident_latent_salience_v1` compaction only
+  to the resident latent episode, after independently hash-binding the original
+  IPC request. It preserves the first system contract and final user objective,
+  ranks intermediate context by explicit runtime/causal markers, objective-term
+  overlap, role, and recency, and fits retained message ends with a visible
+  omission marker. The live profile admits at most 9,000 content characters.
+- Every episode receipts the policy, applied state, configured budget, original
+  and compacted message/character counts, both canonical SHA-256 digests, and
+  exact omitted-character count. The service fails the success contract on a
+  malformed, oversized, internally contradictory, or hash-semantics-invalid
+  compaction receipt. The public contract carries this bounded evidence and only
+  marks resident identity bound when the logical count is at least 20 billion,
+  its basis is architecture-derived, and packed storage is separately present.
+
+Bounded verification and next boundary:
+
+- The focused engine, service, client, worker-handler, identity, compaction,
+  ResponseGeneration, and desktop-route campaign passes 401/401. It includes a
+  single-message compaction edge case, deterministic salience and hash receipts,
+  malformed input refusal, original-request binding, logical-count arithmetic,
+  basis contradictions, the production steering coefficient, resident-profile
+  pre-IPC selection, and explicit proof that production failures do not run a
+  secondary vanilla decode. Ruff/lint and whole-tree compile are green.
+- Enterprise static, production readiness (37/37), closeout rubric (20/20),
+  governance ownership, source hygiene, cognitive candidate coverage (13/13),
+  and local security (2,628 files / zero findings) are green. Governance remains
+  at 1,842 recognized calls in 1,730 buckets with 1,692 historical migration-
+  debt calls. The direct architecture-quality gate remains truthfully red and
+  unwaived: score 42.3 versus baseline 46.38, 2,440 modules, 8,676 dependency
+  edges versus 7,528, nine cycles, 54 oversized modules, and a 693-module
+  largest cycle. The new compactor adds one bounded module and one dependency
+  edge; the maximum file remains 20,513 lines and the baseline is not refreshed.
+- Evidence-weighted completion remains `27%`: total checkpoint `101` of the
+  faithful `292-399` forecast, with approximately `191-298` implementation,
+  cleanup, integration, verification, live, portability, release, and soak
+  checkpoints remaining.
+- Next, commit and push CP101 to `main`, run the clean exact-head audit,
+  rebuild/sign the installed app, and repeat the identical compound turn. Live
+  credit requires the architecture-derived 32B identity, bounded context
+  receipt, two recurrent steps, branch exchange, accepted latent optimization,
+  applied-and-erased fast weights, complete latent-conditioned decode, one
+  authentic answer, no second generation, no worker recycle, and clean Neural
+  and terminal logs. Multi-hour and 24-72 hour soaks remain deferred until every
+  shorter gate is green.

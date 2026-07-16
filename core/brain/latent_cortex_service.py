@@ -148,7 +148,9 @@ class LatentCortexService:
                     "latent_opt_steps": 1,
                     "fast_weights_opt_steps": 1,
                     "fast_weights_max_layers": 2,
-                    "decode_max_tokens": 288,
+                    "decode_max_tokens": 160,
+                    "input_context_max_chars": 9000,
+                    "allow_vanilla_fallback": False,
                 }
             )
             if timeout_s is not None:
@@ -253,6 +255,50 @@ class LatentCortexService:
             receipt, "input_token_count"
         ):
             errors.append("tokenized_input_identity_unproven")
+        input_context_max_chars = config.get("input_context_max_chars", 0)
+        if type(input_context_max_chars) is int and input_context_max_chars > 0:
+            compaction = receipt.get("input_context_compaction")
+            if not isinstance(compaction, dict):
+                errors.append("input_context_compaction_missing")
+            elif (
+                compaction.get("schema") != "aura.latent_context_compaction.v1"
+                or compaction.get("policy") != "resident_latent_salience_v1"
+                or compaction.get("max_chars") != input_context_max_chars
+                or not sha256(compaction.get("original_sha256"))
+                or not sha256(compaction.get("compacted_sha256"))
+                or not positive_int(compaction, "original_message_count")
+                or not positive_int(compaction, "compacted_message_count")
+                or not positive_int(compaction, "original_char_count")
+                or not positive_int(compaction, "compacted_char_count")
+                or compaction["compacted_char_count"] > input_context_max_chars
+                or compaction["original_char_count"]
+                < compaction["compacted_char_count"]
+                or compaction["compacted_message_count"]
+                > compaction["original_message_count"]
+                or type(compaction.get("applied")) is not bool
+                or type(compaction.get("omitted_char_count")) is not int
+                or compaction["omitted_char_count"] < 0
+                or compaction["omitted_char_count"]
+                != compaction["original_char_count"]
+                - compaction["compacted_char_count"]
+                or (
+                    compaction["applied"]
+                    and (
+                        compaction["original_sha256"]
+                        == compaction["compacted_sha256"]
+                        or compaction["omitted_char_count"] == 0
+                    )
+                )
+                or (
+                    not compaction["applied"]
+                    and (
+                        compaction["original_sha256"]
+                        != compaction["compacted_sha256"]
+                        or compaction["omitted_char_count"] != 0
+                    )
+                )
+            ):
+                errors.append("input_context_compaction_invalid")
         runtime_identity = receipt.get("runtime_identity")
         if not isinstance(runtime_identity, dict):
             errors.append("runtime_identity_missing")
@@ -578,12 +624,12 @@ class LatentCortexService:
             config.update(dict(config_overrides))
         if allocation_profile == "resident_32b_interactive_full_stack_v1":
             try:
-                requested_decode_tokens = int(config.get("decode_max_tokens") or 288)
+                requested_decode_tokens = int(config.get("decode_max_tokens") or 160)
             except (TypeError, ValueError, OverflowError):
                 return self._record_failure("invalid_decode_token_override")
             config["decode_max_tokens"] = max(
                 64,
-                min(288, requested_decode_tokens),
+                min(160, requested_decode_tokens),
             )
         if require_full_stack:
             config["latent_opt"] = True
@@ -768,6 +814,8 @@ class LatentCortexService:
                     "worker_pid",
                     "worker_model_path",
                     "worker_model_parameter_count",
+                    "worker_model_stored_parameter_element_count",
+                    "worker_model_parameter_count_basis",
                     "worker_source_sha256",
                     "worker_affective_steering_active",
                     "worker_affective_steering_alpha",
@@ -776,6 +824,7 @@ class LatentCortexService:
                     "request_payload_sha256",
                     "input_tokens_sha256",
                     "input_token_count",
+                    "input_context_compaction",
                     "runtime_identity",
                     "params_unchanged",
                     "latent_opt_applied",

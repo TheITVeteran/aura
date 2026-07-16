@@ -450,14 +450,21 @@ class LatentCortexEngine:
                 record_degradation(
                     "latent_cortex",
                     exc,
-                    action="served vanilla decode with honest fallback receipt",
+                    action=(
+                        "served vanilla decode with honest fallback receipt"
+                        if self.config.allow_vanilla_fallback
+                        else "failed the full-stack episode without replacing it with vanilla decode"
+                    ),
                 )
-                receipt.flag(f"fallback_vanilla:{type(exc).__name__}")
                 receipt.halting_reason = receipt.halting_reason or "latent_phase_error"
-                if receipt.fast_weights_applied and receipt.fast_weights_erased is not True:
+                if not self.config.allow_vanilla_fallback:
+                    receipt.flag("vanilla_fallback_disabled")
+                    failure_reason = f"latent_phase_failed:{type(exc).__name__}:{exc}"
+                elif receipt.fast_weights_applied and receipt.fast_weights_erased is not True:
                     receipt.flag("fallback_refused_unproven_model_state")
                     failure_reason = "fast_weight_cleanup_unproven"
                 else:
+                    receipt.flag(f"fallback_vanilla:{type(exc).__name__}")
                     try:
                         cache = self._fresh_cache()
                         _, tail_logits = self._prefill(tokens, cache, budget)

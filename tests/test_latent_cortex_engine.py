@@ -183,6 +183,28 @@ def test_invalid_schedule_falls_back_honestly(tiny_model):
     assert result.tokens, "vanilla fallback must decode"
 
 
+def test_production_episode_refuses_secondary_vanilla_decode(tiny_model):
+    bad = LayerSchedule(ops=(StageOp(0, 7, 2),))
+    engine = LatentCortexEngine(
+        tiny_model,
+        config=_config(
+            schedule=bad.to_dict(),
+            allow_vanilla_fallback=False,
+        ),
+    )
+
+    result = engine.reason(token_ids=PROMPT_TOKENS)
+
+    assert result.ok is False
+    assert result.tokens == []
+    assert result.receipt.decode_termination == "not_started"
+    assert "vanilla_fallback_disabled" in result.receipt.honest_flags
+    assert not any(
+        flag.startswith("fallback_vanilla")
+        for flag in result.receipt.honest_flags
+    )
+
+
 def test_budget_binds_and_is_reported(tiny_model):
     tight = ComputeBudget(max_layer_apps=PROMPT_TOKENS.__len__() * N_LAYERS + 200)
     engine = LatentCortexEngine(tiny_model, config=_config())

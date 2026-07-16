@@ -50,6 +50,7 @@ _schedule_library: ScheduleLibrary | None = None
 _CONFIG_KEYS = {
     "alpha",
     "alpha_schedule",
+    "allow_vanilla_fallback",
     "anchor_scale",
     "coda_frac",
     "collapse_cos_threshold",
@@ -69,6 +70,7 @@ _CONFIG_KEYS = {
     "fast_weights_scale",
     "fast_weights_target",
     "jitter_scale",
+    "input_context_max_chars",
     "latent_opt",
     "latent_opt_control",
     "latent_opt_lambda_manifold",
@@ -193,6 +195,12 @@ def config_from_job(job_config: dict[str, Any] | None) -> CortexConfig:
         decode_max_tokens=_typed_value(raw, "decode_max_tokens", 512, int),
         decode_temperature=_typed_value(raw, "decode_temperature", 0.0, float),
         decode_top_p=_typed_value(raw, "decode_top_p", 1.0, float),
+        input_context_max_chars=_typed_value(
+            raw, "input_context_max_chars", 0, int
+        ),
+        allow_vanilla_fallback=_typed_value(
+            raw, "allow_vanilla_fallback", True, bool
+        ),
     )
     problems = cfg.validate()
     if problems:
@@ -251,9 +259,20 @@ def handle_latent_reason(
         model_path=model_path,
         schedule_library=_library(),
     )
+    episode_messages = messages if isinstance(messages, list) else None
+    context_compaction: dict[str, Any] = {}
+    if episode_messages is not None and config.input_context_max_chars:
+        from core.brain.llm.latent_cortex.context_compaction import (
+            compact_latent_messages,
+        )
+
+        episode_messages, context_compaction = compact_latent_messages(
+            episode_messages,
+            max_chars=config.input_context_max_chars,
+        )
     result = engine.reason(
         prompt=prompt if isinstance(prompt, str) else None,
-        messages=messages if isinstance(messages, list) else None,
+        messages=episode_messages,
         budget=budget,
         domain=str(job.get("domain", "general")),
         cancel_check=cancel_check,
@@ -275,6 +294,12 @@ def handle_latent_reason(
     receipt.worker_model_parameter_count = int(
         worker_identity.get("worker_model_parameter_count") or 0
     )
+    receipt.worker_model_stored_parameter_element_count = int(
+        worker_identity.get("worker_model_stored_parameter_element_count") or 0
+    )
+    receipt.worker_model_parameter_count_basis = str(
+        worker_identity.get("worker_model_parameter_count_basis") or ""
+    )
     receipt.worker_source_sha256 = str(worker_identity.get("worker_source_sha256") or "")
     receipt.worker_affective_steering_active = bool(
         worker_identity.get("worker_affective_steering_active", False)
@@ -282,6 +307,7 @@ def handle_latent_reason(
     receipt.worker_affective_steering_alpha = float(
         worker_identity.get("worker_affective_steering_alpha") or 0.0
     )
+    receipt.input_context_compaction = dict(context_compaction)
     control_state = dict(surface_control_state or {})
     applied_alpha = control_state.get("surface_alpha_applied")
     receipt.episode_affective_steering_applied = bool(

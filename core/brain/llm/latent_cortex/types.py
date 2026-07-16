@@ -210,6 +210,8 @@ class CortexConfig:
     decode_max_tokens: int = 512
     decode_temperature: float = 0.0
     decode_top_p: float = 1.0
+    input_context_max_chars: int = 0
+    allow_vanilla_fallback: bool = True
 
     def validate(self) -> list[str]:
         """Return a list of human-readable violations (empty ⇒ valid)."""
@@ -310,6 +312,18 @@ class CortexConfig:
             problems.append("decode_temperature must be finite and inside [0, 2]")
         if not finite(self.decode_top_p) or not 0.0 < self.decode_top_p <= 1.0:
             problems.append("decode_top_p must be finite and inside (0, 1]")
+        if not (
+            type(self.input_context_max_chars) is int
+            and (
+                self.input_context_max_chars == 0
+                or 2048 <= self.input_context_max_chars <= 65536
+            )
+        ):
+            problems.append(
+                "input_context_max_chars must be 0 or inside [2048, 65536]"
+            )
+        if type(self.allow_vanilla_fallback) is not bool:
+            problems.append("allow_vanilla_fallback must be boolean")
         if type(self.fast_weights.enabled) is not bool:
             problems.append("fast_weights.enabled must be boolean")
         if not integer_in(self.fast_weights.rank, 1, 64):
@@ -350,6 +364,8 @@ class EpisodeReceipt:
     worker_pid: int = 0
     worker_model_path: str = ""
     worker_model_parameter_count: int = 0
+    worker_model_stored_parameter_element_count: int = 0
+    worker_model_parameter_count_basis: str = ""
     worker_source_sha256: str = ""
     worker_affective_steering_active: bool = False
     worker_affective_steering_alpha: float = 0.0
@@ -358,6 +374,7 @@ class EpisodeReceipt:
     request_payload_sha256: str = ""
     input_tokens_sha256: str = ""
     input_token_count: int = 0
+    input_context_compaction: dict[str, Any] = field(default_factory=dict)
     params_unchanged: bool | None = None
     fast_weights_erased: bool | None = None
     # Topology actually used.
@@ -428,6 +445,12 @@ class EpisodeReceipt:
             "worker_pid": self.worker_pid,
             "worker_model_path": self.worker_model_path,
             "worker_model_parameter_count": self.worker_model_parameter_count,
+            "worker_model_stored_parameter_element_count": (
+                self.worker_model_stored_parameter_element_count
+            ),
+            "worker_model_parameter_count_basis": (
+                self.worker_model_parameter_count_basis
+            ),
             "worker_source_sha256": self.worker_source_sha256,
             "worker_affective_steering_active": self.worker_affective_steering_active,
             "worker_affective_steering_alpha": self.worker_affective_steering_alpha,
@@ -436,6 +459,7 @@ class EpisodeReceipt:
             "request_payload_sha256": self.request_payload_sha256,
             "input_tokens_sha256": self.input_tokens_sha256,
             "input_token_count": self.input_token_count,
+            "input_context_compaction": dict(self.input_context_compaction),
             "params_unchanged": self.params_unchanged,
             "fast_weights_erased": self.fast_weights_erased,
             "n_layers": self.n_layers,
