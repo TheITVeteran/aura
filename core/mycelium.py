@@ -44,7 +44,9 @@ from typing import Any, Callable, ClassVar, Coroutine, Dict, List, Optional, Tup
 
 from pydantic import BaseModel, Field
 
+from core.runtime.background_policy import foreground_only_runtime
 from core.runtime.errors import record_degradation
+from core.runtime.flags import FlagKind, declare
 from core.utils.concurrency import run_io_bound
 from core.utils.exceptions import capture_and_log
 
@@ -73,6 +75,20 @@ _DEFAULT_INFRASTRUCTURE_SCAN_DIRS = (
     "utils",
 )
 _VAULT_CLOCK_SKEW_TOLERANCE_S = 1.0
+_ALLOW_FOREGROUND_MAPPING_FLAG = declare(
+    "AURA_ALLOW_FOREGROUND_INFRASTRUCTURE_MAPPING",
+    kind=FlagKind.BOOL,
+    default=False,
+    description="Allow mycelial infrastructure mapping in foreground-only mode",
+    owner="core.mycelium",
+)
+_FOREGROUND_MAPPING_QUIET_FLAG = declare(
+    "AURA_FOREGROUND_INFRASTRUCTURE_MAPPING_QUIET_S",
+    kind=FlagKind.FLOAT,
+    default=180.0,
+    description="Foreground-only startup quiet window before mycelial mapping",
+    owner="core.mycelium",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -1848,28 +1864,11 @@ class MycelialNetwork:
         return annotations
 
     def _foreground_mapping_deferred(self) -> bool:
-        foreground = os.getenv("AURA_FOREGROUND_ONLY", "0").strip().lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }
-        if not foreground:
+        if not foreground_only_runtime():
             return False
-        if os.getenv("AURA_ALLOW_FOREGROUND_INFRASTRUCTURE_MAPPING", "0").strip().lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }:
+        if bool(_ALLOW_FOREGROUND_MAPPING_FLAG.value()):
             return False
-        try:
-            quiet_s = float(
-                os.getenv("AURA_FOREGROUND_INFRASTRUCTURE_MAPPING_QUIET_S", "180")
-                or 180.0
-            )
-        except (TypeError, ValueError):
-            quiet_s = 180.0
+        quiet_s = float(_FOREGROUND_MAPPING_QUIET_FLAG.value())
         age_s = max(
             0.0,
             time.monotonic()

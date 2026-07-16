@@ -386,42 +386,6 @@ def _key_id_for(material: bytes, kind: str) -> str:
     return f"{kind}-{hashlib.sha256(material).hexdigest()[:16]}"
 
 
-def _read_settled_private_material(
-    path: Path, *, attempts: int = 5, max_bytes: int = 64 * 1024
-) -> bytes:
-    """Read private material, tolerating a concurrent *creation* landing.
-
-    The TOCTOU guard in :func:`_read_private_material` is right to refuse a file
-    that changes under it — but "a racing initializer just finished writing this
-    key" and "someone is tampering with my key" are different events, and only
-    the second deserves a hard failure.
-
-    The race is real and reachable on first boot: several threads call
-    ``_load_or_create_ed25519`` at once, exactly one wins
-    ``atomic_write_bytes_if_absent``, and the losers immediately read the
-    winner's file — while the winner's link/rename may still be settling. The
-    loser then sees st_dev/st_ino move and raises, so a cold start with any
-    concurrency could fail to obtain an identity at all.
-
-    Retries are bounded and only cover the transient window; a file that keeps
-    changing across every attempt still raises, because that is no longer a
-    race — it is something else.
-    """
-    last: Exception | None = None
-    for attempt in range(attempts):
-        try:
-            return _read_private_material(path, max_bytes=max_bytes)
-        except (RuntimeError, FileNotFoundError) as exc:
-            # RuntimeError here is the guard's "changed while opening/reading";
-            # FileNotFoundError is the rename window itself.
-            last = exc
-            if attempt == attempts - 1:
-                break
-            time.sleep(0.005 * (attempt + 1))
-    assert last is not None
-    raise last
-
-
 def _read_private_material(path: Path, *, max_bytes: int = 64 * 1024) -> bytes:
     """Read one owner-private regular file without following a symlink."""
 
@@ -430,6 +394,8 @@ def _read_private_material(path: Path, *, max_bytes: int = 64 * 1024) -> bytes:
         raise ValueError(f"private material is not a regular file: {path}")
     if before.st_mode & 0o077:
         raise PermissionError(f"private material is not owner-only: {path}")
+    if hasattr(os, "getuid") and before.st_uid != os.getuid():
+        raise PermissionError(f"private material is not owned by this user: {path}")
     if before.st_size > max_bytes:
         raise ValueError(f"private material exceeds {max_bytes} bytes: {path}")
     flags = os.O_RDONLY
@@ -444,6 +410,10 @@ def _read_private_material(path: Path, *, max_bytes: int = 64 * 1024) -> bytes:
             raise ValueError(f"private material is not a regular file: {path}")
         if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
             raise RuntimeError(f"private material changed while opening: {path}")
+        if opened.st_mode & 0o077:
+            raise PermissionError(f"private material is not owner-only: {path}")
+        if hasattr(os, "getuid") and opened.st_uid != os.getuid():
+            raise PermissionError(f"private material is not owned by this user: {path}")
         chunks: list[bytes] = []
         total = 0
         remaining = opened.st_size
@@ -457,20 +427,42 @@ def _read_private_material(path: Path, *, max_bytes: int = 64 * 1024) -> bytes:
             if total > max_bytes:
                 raise ValueError(f"private material exceeds {max_bytes} bytes: {path}")
         after = os.fstat(fd)
-        if (
+        stable_attributes = (
             after.st_dev,
             after.st_ino,
             after.st_size,
             after.st_mtime_ns,
-            after.st_ctime_ns,
-        ) != (
+            stat.S_IMODE(after.st_mode),
+            after.st_uid,
+            after.st_gid,
+        )
+        opened_attributes = (
             opened.st_dev,
             opened.st_ino,
             opened.st_size,
             opened.st_mtime_ns,
-            opened.st_ctime_ns,
-        ):
+            stat.S_IMODE(opened.st_mode),
+            opened.st_uid,
+            opened.st_gid,
+        )
+        if stable_attributes != opened_attributes:
             raise RuntimeError(f"private material changed while reading: {path}")
+        if after.st_ctime_ns != opened.st_ctime_ns and not (
+            opened.st_nlink == 2 and after.st_nlink == 1
+        ):
+            raise RuntimeError(f"private material metadata changed while reading: {path}")
+        current = path.lstat()
+        current_attributes = (
+            current.st_dev,
+            current.st_ino,
+            current.st_size,
+            current.st_mtime_ns,
+            stat.S_IMODE(current.st_mode),
+            current.st_uid,
+            current.st_gid,
+        )
+        if not stat.S_ISREG(current.st_mode) or current_attributes != stable_attributes:
+            raise RuntimeError(f"private material path changed while reading: {path}")
         return b"".join(chunks)
     finally:
         os.close(fd)
@@ -539,7 +531,7 @@ class _KeyMaterial:
                     "asymmetric": True,
                     "persisted": persisted,
                 }
-            except (OSError, ValueError, TypeError) as exc:
+            except (OSError, RuntimeError, ValueError, TypeError) as exc:
                 logger.error(
                     "Ed25519 capability key unusable (%s) — using an ephemeral "
                     "asymmetric key for this process without replacing persisted material.",
@@ -574,11 +566,8 @@ class _KeyMaterial:
     def _load_or_create_ed25519(cls, storage: bool) -> tuple[Any, bool]:
         path = _priv_path()
         if storage and os.path.lexists(path):
-            # lexists() goes true the instant a racing initializer links the
-            # file, so this read is in the same settling window as the
-            # lost-race read below — not only the obvious one.
             loaded = serialization.load_pem_private_key(
-                _read_settled_private_material(path), password=None
+                _read_private_material(path), password=None
             )
             if not isinstance(loaded, Ed25519PrivateKey):
                 raise ValueError(f"{path} is not an Ed25519 private key")
@@ -595,10 +584,8 @@ class _KeyMaterial:
         if atomic_write_bytes_if_absent(path, data, mode=0o600):
             logger.info("Minted a new Will capability signing key at %s", path)
             return priv, True
-        # We lost the create race: another initializer is mid-write. Its file is
-        # authoritative, but may still be settling, so tolerate that window.
         loaded = serialization.load_pem_private_key(
-            _read_settled_private_material(path), password=None
+            _read_private_material(path), password=None
         )
         if not isinstance(loaded, Ed25519PrivateKey):
             raise ValueError(f"{path} is not an Ed25519 private key")
@@ -620,15 +607,14 @@ class _KeyMaterial:
         path = _hmac_path()
         if storage and os.path.lexists(path):
             try:
-                # Same settling window as the Ed25519 path above.
-                secret = _read_settled_private_material(path, max_bytes=4096)
+                secret = _read_private_material(path, max_bytes=4096)
                 if 32 <= len(secret) <= 4096:
                     return secret, True
                 logger.error(
                     "Capability HMAC key at %s is too short; refusing to replace it",
                     path,
                 )
-            except OSError as exc:
+            except (OSError, RuntimeError) as exc:
                 logger.error("Capability HMAC key unreadable (%s)", exc)
             return os.urandom(32), False
 
@@ -638,12 +624,11 @@ class _KeyMaterial:
         try:
             if atomic_write_bytes_if_absent(path, secret, mode=0o600):
                 return secret, True
-            # Lost the create race — see _load_or_create_ed25519.
-            winner = _read_settled_private_material(path, max_bytes=4096)
+            winner = _read_private_material(path, max_bytes=4096)
             if not 32 <= len(winner) <= 4096:
                 raise ValueError("persisted capability HMAC key has an invalid length")
             return winner, True
-        except (OSError, ValueError) as exc:
+        except (OSError, RuntimeError, ValueError) as exc:
             logger.error("Could not persist capability HMAC key: %s", exc)
             return secret, False
 

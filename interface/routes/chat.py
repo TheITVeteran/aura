@@ -60,6 +60,7 @@ from core.runtime.desktop_task_contract import (
     desktop_task_planning_schema,
 )
 from core.runtime.errors import describe_error, record_degradation
+from core.runtime.flags import FlagKind, declare
 from core.runtime.principal_context import (
     relational_principal_scope,
 )
@@ -90,6 +91,42 @@ from interface.helpers import _notify_user_spoke
 logger = logging.getLogger("Aura.Server.Chat")
 
 router = APIRouter()
+
+_CHAT_DELIVERY_WAIT_TIMEOUT_FLAG = declare(
+    "AURA_CHAT_DELIVERY_WAIT_TIMEOUT_S",
+    kind=FlagKind.FLOAT,
+    default=180.0,
+    description="Maximum wait for another owner of an admitted chat turn",
+    owner="interface.routes.chat",
+)
+_FORCE_DISABLE_SECONDARY_REPAIR_FLAG = declare(
+    "AURA_DESKTOP_FORCE_DISABLE_SECONDARY_MODEL_REPAIR",
+    kind=FlagKind.STRING,
+    default="",
+    description="Diagnostic override that disables same-worker response repair",
+    owner="interface.routes.chat",
+)
+_ALLOW_SECONDARY_REPAIR_FLAG = declare(
+    "AURA_DESKTOP_ALLOW_SECONDARY_MODEL_REPAIR",
+    kind=FlagKind.STRING,
+    default="",
+    description="Explicit policy for same-worker desktop response repair",
+    owner="interface.routes.chat",
+)
+_ALLOW_TRANSIENT_ENGINE_RETRY_FLAG = declare(
+    "AURA_DESKTOP_ALLOW_TRANSIENT_ENGINE_RETRY",
+    kind=FlagKind.BOOL,
+    default=False,
+    description="Allow one desktop CognitiveEngine retry after a transient failure",
+    owner="interface.routes.chat",
+)
+_EXPRESSIVE_AFFORDANCES_FLAG = declare(
+    "AURA_EXPRESSIVE_AFFORDANCES",
+    kind=FlagKind.BOOL,
+    default=False,
+    description="Inject the expressive-affordance menu into eligible chat turns",
+    owner="interface.routes.chat",
+)
 
 _CHAT_DELIVERY_TURN_ID: ContextVar[str] = ContextVar(
     "aura_chat_delivery_turn_id",
@@ -188,7 +225,7 @@ def _chat_turn_session_key(request: Request | None, body: Any) -> str:
 
 def _chat_delivery_wait_timeout_s() -> float:
     try:
-        configured = float(os.environ.get("AURA_CHAT_DELIVERY_WAIT_TIMEOUT_S", "180"))
+        configured = float(_CHAT_DELIVERY_WAIT_TIMEOUT_FLAG.value())
     except (TypeError, ValueError):
         configured = 180.0
     return max(1.0, min(configured, 600.0))
@@ -11902,13 +11939,11 @@ def _desktop_secondary_model_repair_allowed(
     pressure. Operators can explicitly disable it for diagnostics.
     """
 
-    force_disabled = str(
-        os.environ.get("AURA_DESKTOP_FORCE_DISABLE_SECONDARY_MODEL_REPAIR", "")
-    ).strip().lower()
+    force_disabled = str(_FORCE_DISABLE_SECONDARY_REPAIR_FLAG.value() or "").strip().lower()
     if force_disabled in {"1", "true", "yes", "on", "disabled"}:
         return False, "secondary_desktop_model_repair_force_disabled"
 
-    enabled = str(os.environ.get("AURA_DESKTOP_ALLOW_SECONDARY_MODEL_REPAIR", "")).strip().lower()
+    enabled = str(_ALLOW_SECONDARY_REPAIR_FLAG.value() or "").strip().lower()
     explicit_enabled = enabled in {"1", "true", "yes", "on", "enabled"}
     explicit_disabled = enabled in {"0", "false", "no", "off", "disabled"}
     safe_same_worker_reasons = {
@@ -11976,8 +12011,7 @@ def _desktop_transient_engine_retry_allowed(*, reason: str) -> tuple[bool, str]:
     32B/72B pressure during a single chat turn.
     """
 
-    enabled = str(os.environ.get("AURA_DESKTOP_ALLOW_TRANSIENT_ENGINE_RETRY", "")).strip().lower()
-    if enabled not in {"1", "true", "yes", "on"}:
+    if not bool(_ALLOW_TRANSIENT_ENGINE_RETRY_FLAG.value()):
         return False, "transient_desktop_engine_retry_disabled"
 
     try:
@@ -16636,15 +16670,13 @@ async def api_chat(
             # Env-gated: the mechanism is always live, but folding the menu into
             # every turn's context is opt-in (AURA_EXPRESSIVE_AFFORDANCES=1).
             try:
-                import os as _os
-
                 # Desktop-objective and capability-inventory turns are already
                 # routed to the task engine (which fires demonstrate_artifact
                 # itself) and run at a tight token/time budget — injecting the
                 # menu there enlarged the prompt enough to time out the heavy
                 # 32B turn (observed live). Inject only on conversational turns,
                 # where the expressive CHOICE is what matters.
-                _affordances_on = str(_os.environ.get("AURA_EXPRESSIVE_AFFORDANCES", "0")).strip().lower() in {"1", "true", "yes", "on"}
+                _affordances_on = bool(_EXPRESSIVE_AFFORDANCES_FLAG.value())
                 if (
                     _affordances_on
                     and not is_benchmark

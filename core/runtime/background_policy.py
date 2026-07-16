@@ -8,10 +8,18 @@ from typing import Any
 
 from core.health.degraded_events import get_unified_failure_state
 from core.runtime.errors import record_degradation
+from core.runtime.flags import FlagKind, declare
 from core.runtime.resource_observation import get_resource_observer
 
 logger = logging.getLogger(__name__)
 _PROCESS_STARTED_AT = time.time()
+_FOREGROUND_ONLY_FLAG = declare(
+    "AURA_FOREGROUND_ONLY",
+    kind=FlagKind.BOOL,
+    default=False,
+    description="Run only user-facing foreground work",
+    owner="core.runtime.background_policy",
+)
 
 
 def _env_float(name: str, default: float) -> float:
@@ -35,7 +43,7 @@ def _env_flag(name: str, default: bool = False) -> bool:
 def foreground_only_runtime() -> bool:
     """Return True when Aura should boot only foreground/user-facing loops."""
 
-    return _env_flag("AURA_FOREGROUND_ONLY", False)
+    return bool(_FOREGROUND_ONLY_FLAG.value())
 
 
 def background_cognition_disabled_reason(*, allow_desktop_safe_boot: bool = False) -> str:

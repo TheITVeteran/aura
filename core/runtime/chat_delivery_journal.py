@@ -27,6 +27,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Never
 
+from core.runtime.flags import FlagKind, declare
+
 _SCHEMA_VERSION = 1
 _HEX_64_RE = re.compile(r"^[0-9a-f]{64}$")
 _IDEMPOTENCY_KEY_RE = re.compile(r"^[A-Za-z0-9._:-]{1,240}$")
@@ -35,6 +37,13 @@ _PENDING_STATES = frozenset({"queued", "running"})
 _ALL_STATES = _TERMINAL_STATES | _PENDING_STATES
 _MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 _CLOCK_SKEW_TOLERANCE_S = 1.0
+_DB_PATH_FLAG = declare(
+    "AURA_CHAT_DELIVERY_DB",
+    kind=FlagKind.STRING,
+    default="",
+    description="Override path for the durable chat delivery journal",
+    owner="core.runtime.chat_delivery_journal",
+)
 
 
 class ChatDeliveryJournalError(RuntimeError):
@@ -177,7 +186,7 @@ class DeliveryAdmission:
 
 
 def default_chat_delivery_db_path() -> Path:
-    override = str(os.environ.get("AURA_CHAT_DELIVERY_DB") or "").strip()
+    override = str(_DB_PATH_FLAG.value() or "").strip()
     if override:
         return Path(override).expanduser()
     test_root = str(os.environ.get("AURA_TEST_RUNTIME_ROOT") or "").strip()

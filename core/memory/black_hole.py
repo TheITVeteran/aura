@@ -127,20 +127,42 @@ def _read_local_key(path: Path) -> bytes:
         if len(key) != 32 or os.read(fd, 1):
             raise ValueError(f"local key at {path} is malformed; expected exactly 32 bytes")
         after = os.fstat(fd)
-        if (
+        stable_attributes = (
             after.st_dev,
             after.st_ino,
             after.st_size,
             after.st_mtime_ns,
-            after.st_ctime_ns,
-        ) != (
+            stat.S_IMODE(after.st_mode),
+            after.st_uid,
+            after.st_gid,
+        )
+        opened_attributes = (
             opened.st_dev,
             opened.st_ino,
             opened.st_size,
             opened.st_mtime_ns,
-            opened.st_ctime_ns,
-        ):
+            stat.S_IMODE(opened.st_mode),
+            opened.st_uid,
+            opened.st_gid,
+        )
+        if stable_attributes != opened_attributes:
             raise RuntimeError("local key changed while reading")
+        if after.st_ctime_ns != opened.st_ctime_ns and not (
+            opened.st_nlink == 2 and after.st_nlink == 1
+        ):
+            raise RuntimeError("local key metadata changed while reading")
+        current = path.lstat()
+        current_attributes = (
+            current.st_dev,
+            current.st_ino,
+            current.st_size,
+            current.st_mtime_ns,
+            stat.S_IMODE(current.st_mode),
+            current.st_uid,
+            current.st_gid,
+        )
+        if not stat.S_ISREG(current.st_mode) or current_attributes != stable_attributes:
+            raise RuntimeError("local key path changed while reading")
         return key
     finally:
         os.close(fd)

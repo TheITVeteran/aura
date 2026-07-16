@@ -11,6 +11,7 @@ and there is normally a key at all (first boot provisions one).
 """
 from __future__ import annotations
 
+import os
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -20,6 +21,7 @@ from core.memory.black_hole import (
     BlackHoleEncryptionUnavailable,
     _local_key_path,
     _provision_local_key,
+    _read_local_key,
 )
 
 
@@ -121,6 +123,56 @@ def test_concurrent_first_boot_converges_on_one_local_key():
     assert all(key is not None for key in keys)
     assert len(set(keys)) == 1
     assert _local_key_path().read_bytes() == keys[0]
+
+
+def test_local_key_read_accepts_publish_link_cleanup(tmp_path, monkeypatch):
+    import core.memory.black_hole as black_hole
+
+    payload = os.urandom(32)
+    staged = tmp_path / "publisher-temp"
+    path = tmp_path / "published.key"
+    staged.write_bytes(payload)
+    staged.chmod(0o600)
+    os.link(staged, path)
+
+    real_read = black_hole.os.read
+    cleaned = False
+
+    def _unlink_staging_during_read(fd, size):
+        nonlocal cleaned
+        if not cleaned:
+            staged.unlink()
+            cleaned = True
+        return real_read(fd, size)
+
+    monkeypatch.setattr(black_hole.os, "read", _unlink_staging_during_read)
+
+    assert _read_local_key(path) == payload
+    assert path.stat().st_nlink == 1
+
+
+def test_local_key_read_refuses_permission_change(tmp_path, monkeypatch):
+    import core.memory.black_hole as black_hole
+
+    path = tmp_path / "changing-mode.key"
+    path.write_bytes(os.urandom(32))
+    path.chmod(0o600)
+    real_read = black_hole.os.read
+    changed = False
+
+    def _change_mode_during_read(fd, size):
+        nonlocal changed
+        if not changed:
+            path.chmod(0o640)
+            changed = True
+        return real_read(fd, size)
+
+    monkeypatch.setattr(black_hole.os, "read", _change_mode_during_read)
+    try:
+        with pytest.raises(RuntimeError, match="changed while reading"):
+            _read_local_key(path)
+    finally:
+        path.chmod(0o600)
 
 
 def test_malformed_local_key_is_preserved_and_encryption_fails_closed(monkeypatch):
