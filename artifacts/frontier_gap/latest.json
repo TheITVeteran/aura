@@ -35,7 +35,7 @@
     "control_ledger": {
       "capability_claim_eligible": false,
       "evidence_class": "synthetic_pipeline_control",
-      "head_entry_sha256": "160b1afb1fd0f53da42f0c63c9a57bba89ac96a4dcc3ba948ea35a5a422d3343",
+      "head_entry_sha256": "5417a46bfefebbcbe02d79f3d1a77eb9793b00f5f0cd6d2c26c602fcd963fcfa",
       "retention": {
         "max_entries": 96,
         "pruned_count": 0,
@@ -56,6 +56,20 @@
           "overall_gap": null,
           "previous_entry_sha256": null,
           "schema": "aura.frontier_evidence_index_entry.v1"
+        },
+        {
+          "at": 1784169129.9111528,
+          "battery_version": "2026-07-15.v5",
+          "challenge_id": null,
+          "comparison_stratum_sha256": null,
+          "effective_n": 20,
+          "entry_sha256": "5417a46bfefebbcbe02d79f3d1a77eb9793b00f5f0cd6d2c26c602fcd963fcfa",
+          "evidence_class": "synthetic_pipeline_control",
+          "evidence_sha256": "692f1567df631d7d08fc4855d2b8ba55c31680e74f0c47fc1fe3fa6301d9e593",
+          "overall_candidate_score": 1.0,
+          "overall_gap": null,
+          "previous_entry_sha256": "160b1afb1fd0f53da42f0c63c9a57bba89ac96a4dcc3ba948ea35a5a422d3343",
+          "schema": "aura.frontier_evidence_index_entry.v1"
         }
       ],
       "schema_version": 5,
@@ -64,24 +78,24 @@
         "direction": "claim_ineligible_evidence_class",
         "endpoint_delta": null,
         "measured_points": 0,
-        "points": 1
+        "points": 2
       }
     },
     "evidence_class": "synthetic_pipeline_control",
     "general_frontier_claim_eligible": false,
-    "generated_at": "2026-07-15 19:07:25 PDT",
-    "git_commit": "c006e24f61bc6091889654c73c17b1abd4648ed2",
+    "generated_at": "2026-07-15 19:32:10 PDT",
+    "git_commit": "85691a6d12731d602608f2cfc6e291bb9b9a8534",
     "host": {
       "platform": "macOS-26.4.1-arm64-arm-64bit",
       "python": "3.12.13"
     },
     "latest_evidence": {
       "challenge_id": null,
-      "entry_sha256": "160b1afb1fd0f53da42f0c63c9a57bba89ac96a4dcc3ba948ea35a5a422d3343",
+      "entry_sha256": "5417a46bfefebbcbe02d79f3d1a77eb9793b00f5f0cd6d2c26c602fcd963fcfa",
       "evidence_class": "synthetic_pipeline_control",
-      "evidence_sha256": "26800f3c7473d45e4cc4f59a2b69a33737b54bd52ca04819c7421807eadfe222",
+      "evidence_sha256": "692f1567df631d7d08fc4855d2b8ba55c31680e74f0c47fc1fe3fa6301d9e593",
       "outputs_retained": true,
-      "overall_candidate_score": 0.55,
+      "overall_candidate_score": 1.0,
       "overall_gap": null
     },
     "legacy_artifact_sha256": "b3c298bd32ddc72ee8e1376f046269042c6f821cf36aef3ced95c34451ff1266",

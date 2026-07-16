@@ -7,6 +7,8 @@ import copy
 import hashlib
 import json
 import re
+import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -66,6 +68,7 @@ from tools.measure_frontier_gap import (
     _evidence_persistence_lock,
     _hash_regular_file_beneath,
     _immutable_child_env,
+    _legacy_artifact_sha256,
     _make_tree_read_only,
     _read_prior_snapshot,
     _read_prior_strict,
@@ -1232,6 +1235,78 @@ def test_frontier_artifact_compare_and_swap_detects_a_changed_head(
 
     with pytest.raises(ConcurrentEvidenceUpdateError, match="changed"):
         asyncio.run(commit_check())
+
+
+def test_evidence_persistence_lock_keeps_context_on_one_worker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import core.runtime.atomic_writer as atomic_writer
+
+    observed_threads: list[threading.Thread] = []
+
+    @contextmanager
+    def recording_lock(_path: Path):
+        observed_threads.append(threading.current_thread())
+        try:
+            yield
+        finally:
+            observed_threads.append(threading.current_thread())
+
+    async def fresh_thread(function, /, *args, **kwargs):
+        results: list[Any] = []
+        errors: list[BaseException] = []
+
+        def invoke() -> None:
+            try:
+                results.append(function(*args, **kwargs))
+            except BaseException as exc:  # noqa: BLE001 - preserve worker failure
+                errors.append(exc)
+
+        worker = threading.Thread(target=invoke)
+        worker.start()
+        worker.join()
+        if errors:
+            raise errors[0]
+        return results[0] if results else None
+
+    monkeypatch.setattr(atomic_writer, "interprocess_file_lock", recording_lock)
+    monkeypatch.setattr(asyncio, "to_thread", fresh_thread)
+
+    async def use_lock() -> None:
+        async with _evidence_persistence_lock(tmp_path / "latest.json"):
+            await asyncio.sleep(0)
+
+    asyncio.run(use_lock())
+
+    assert len(observed_threads) == 2
+    assert observed_threads[0] is observed_threads[1]
+
+
+def test_legacy_artifact_lineage_is_inherited_and_recovered(tmp_path: Path) -> None:
+    artifact = tmp_path / "latest.json"
+    digest = "a" * 64
+    inherited = {
+        "schema": "aura.frontier_gap_report.v5",
+        "legacy_artifact_sha256": digest,
+    }
+    assert _legacy_artifact_sha256(inherited, artifact) == digest
+
+    legacy_bytes = b'{"schema":"aura.frontier_gap_report.v4"}'
+    recovered_digest = hashlib.sha256(legacy_bytes).hexdigest()
+    preserved = artifact.with_name(
+        f"{artifact.name}.legacy.v4.{recovered_digest[:12]}"
+    )
+    preserved.write_bytes(legacy_bytes)
+    erased = {
+        "schema": "aura.frontier_gap_report.v5",
+        "legacy_artifact_sha256": None,
+    }
+    assert _legacy_artifact_sha256(erased, artifact) == recovered_digest
+
+    preserved.write_bytes(b"tampered")
+    with pytest.raises(ValueError, match="digest does not match"):
+        _legacy_artifact_sha256(erased, artifact)
 
 
 def test_read_only_checkout_never_chmods_an_external_symlink_target(tmp_path: Path) -> None:

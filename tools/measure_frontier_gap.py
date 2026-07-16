@@ -26,6 +26,7 @@ import sys
 import tempfile
 import time
 from collections.abc import Awaitable, Callable
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -1426,6 +1427,37 @@ def _artifact_state_sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _legacy_artifact_sha256(prior: dict[str, Any], path: Path) -> str | None:
+    if not prior:
+        return None
+    if prior.get("schema") != "aura.frontier_gap_report.v5":
+        if not path.exists():
+            return None
+        digest, _ = _hash_regular_file_beneath(path.parent, path.name)
+        return digest
+
+    inherited = prior.get("legacy_artifact_sha256")
+    if inherited:
+        return require_sha256(inherited, field_name="legacy frontier artifact")
+
+    prefix = f"{path.name}.legacy.v4."
+    recovered: set[str] = set()
+    if path.parent.exists():
+        for candidate in path.parent.iterdir():
+            if not candidate.name.startswith(prefix):
+                continue
+            suffix = candidate.name.removeprefix(prefix)
+            if not re.fullmatch(r"[0-9a-f]{12}", suffix):
+                raise ValueError("preserved legacy artifact name is malformed")
+            digest, _ = _hash_regular_file_beneath(path.parent, candidate.name)
+            if not digest.startswith(suffix):
+                raise ValueError("preserved legacy artifact digest does not match its name")
+            recovered.add(digest)
+    if len(recovered) > 1:
+        raise ValueError("legacy frontier artifact lineage is ambiguous")
+    return next(iter(recovered), None)
+
+
 def _read_prior_snapshot(path: Path) -> tuple[dict[str, Any], str]:
     from core.runtime.atomic_writer import interprocess_file_lock
 
@@ -1439,13 +1471,48 @@ async def _evidence_persistence_lock(path: Path):
     from core.runtime.atomic_writer import interprocess_file_lock
 
     manager = interprocess_file_lock(_evidence_lock_path(path))
-    await asyncio.to_thread(manager.__enter__)
+    loop = asyncio.get_running_loop()
+    executor = ThreadPoolExecutor(
+        max_workers=1,
+        thread_name_prefix="frontier-evidence-lock",
+    )
+    entered = False
+
+    async def await_worker(future: asyncio.Future[Any]) -> tuple[Any, bool]:
+        cancellation_requested = False
+        while True:
+            try:
+                return await asyncio.shield(future), cancellation_requested
+            except asyncio.CancelledError:
+                if future.cancelled():
+                    raise
+                cancellation_requested = True
+
     try:
+        _, cancelled_during_enter = await await_worker(
+            loop.run_in_executor(executor, manager.__enter__)
+        )
+        entered = True
+        if cancelled_during_enter:
+            raise asyncio.CancelledError
         yield
     finally:
-        await asyncio.shield(
-            asyncio.to_thread(manager.__exit__, None, None, None)
-        )
+        cancelled_during_exit = False
+        try:
+            if entered:
+                _, cancelled_during_exit = await await_worker(
+                    loop.run_in_executor(
+                        executor,
+                        manager.__exit__,
+                        None,
+                        None,
+                        None,
+                    )
+                )
+        finally:
+            executor.shutdown(wait=True, cancel_futures=True)
+        if cancelled_during_exit:
+            raise asyncio.CancelledError
 
 
 def _read_prior_strict(path: Path) -> dict[str, Any]:
@@ -2319,9 +2386,7 @@ async def main() -> int:
         if selection.capability_candidate
         else "Pipeline-control evidence only; no Aura capability claim."
     )
-    legacy_digest = None
-    if prior and prior.get("schema") != "aura.frontier_gap_report.v5" and out.exists():
-        legacy_digest = hashlib.sha256(out.read_bytes()).hexdigest()
+    legacy_digest = _legacy_artifact_sha256(prior, out)
     body = {
         "schema": "aura.frontier_gap_report.v5",
         "measurement_scope": "four_class_deterministic_diagnostic",
