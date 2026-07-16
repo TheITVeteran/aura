@@ -11,6 +11,7 @@ from core.runtime.flags import (
     Flag,
     FlagKind,
     FlagSpec,
+    aura_root_override,
     declare,
     declared_flags,
     flag_report,
@@ -45,6 +46,11 @@ class TestResolutionPrecedence:
         )
         value, source = flag.value_with_source()
         assert value == 9 and source == "settings"
+
+    def test_aura_root_override_is_typed_and_read_through(self, monkeypatch):
+        monkeypatch.setenv("AURA_ROOT", " /tmp/aura-runtime ")
+        assert aura_root_override() == "/tmp/aura-runtime"
+        assert get_flag("AURA_ROOT") is not None
 
 
 class TestCoercion:

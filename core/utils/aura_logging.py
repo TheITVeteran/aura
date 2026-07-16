@@ -1,18 +1,40 @@
-from core.runtime.errors import record_degradation
+from __future__ import annotations
+
+import json
 import logging
+import os
 import queue
 import sqlite3
-import json
-import os
 import threading
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
+from core.runtime.errors import record_degradation
+from core.runtime.flags import FlagKind, aura_root_override, declare
 from core.runtime.network_gateway import get_network_gateway
 
-# Configuration (Ideally these would come from core.config)
-DB_FILE = "data/aura_memory.db"
-WEBHOOK_URL = os.environ.get("AURA_ALERTS_WEBHOOK")
+_SQLITE_LOGGING_FLAG = declare(
+    "AURA_LOG_SQLITE_ENABLED",
+    kind=FlagKind.BOOL,
+    default=True,
+    description="Persist enhanced core logs through the asynchronous SQLite sink",
+    owner="core.utils.aura_logging",
+)
+_ALERTS_WEBHOOK_FLAG = declare(
+    "AURA_ALERTS_WEBHOOK",
+    kind=FlagKind.STRING,
+    default="",
+    description="Optional webhook URL for critical Aura log alerts",
+    owner="core.utils.aura_logging",
+)
+WEBHOOK_URL = str(_ALERTS_WEBHOOK_FLAG.value() or "").strip()
+
+
+def _default_db_file() -> Path:
+    override = aura_root_override()
+    root = Path(override).expanduser() if override else Path.home() / ".aura"
+    return root.resolve() / "data" / "aura_memory.db"
 
 
 def _proof_logging_active() -> bool:
@@ -31,35 +53,18 @@ class SQLiteMemoryHandler(logging.Handler):
     _QUEUE_CAPACITY = 5_000
     _BATCH_MAX = 200
 
-    def __init__(self, db_path: str = DB_FILE):
+    def __init__(self, db_path: str | Path | None = None):
         super().__init__()
-        self.db_path = db_path
+        self.db_path = (
+            Path(db_path).expanduser() if db_path is not None else _default_db_file()
+        )
         self.dropped = 0
         self._queue: queue.Queue = queue.Queue(maxsize=self._QUEUE_CAPACITY)
         self._stop = threading.Event()
-        self._initialize_db()
         self._writer = threading.Thread(
             target=self._drain_until_stopped, name="aura-log-sqlite-writer", daemon=True
         )
         self._writer.start()
-
-    def _initialize_db(self):
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-        conn = sqlite3.connect(self.db_path)
-        try:
-            cursor = conn.cursor()
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS system_logs (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    level TEXT,
-                    module TEXT,
-                    message TEXT
-                )
-            ''')
-            conn.commit()
-        finally:
-            conn.close()
 
     def emit(self, record):
         try:
@@ -77,9 +82,33 @@ class SQLiteMemoryHandler(logging.Handler):
             self.dropped += 1  # never block or recurse from a log call
 
     def _open_writer_connection(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
+        from core.governance_context import local_internal_governed_scope
+        from core.runtime.file_write_gateway import get_file_write_gateway
+
+        with local_internal_governed_scope("aura_logging", domain="state_mutation"):
+            gateway = get_file_write_gateway()
+            with gateway.open_owned_binary(
+                self.db_path,
+                mode="a+b",
+                permissions=0o600,
+                source="aura_logging.sqlite_database",
+            ):
+                pass
+        conn = sqlite3.connect(str(self.db_path))
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS system_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                level TEXT,
+                module TEXT,
+                message TEXT
+            )
+            """
+        )
+        conn.commit()
         return conn
 
     def _drain_until_stopped(self) -> None:
@@ -102,7 +131,7 @@ class SQLiteMemoryHandler(logging.Handler):
                     batch,
                 )
                 conn.commit()
-            except (sqlite3.Error, OSError) as e:
+            except (ImportError, RuntimeError, sqlite3.Error, OSError) as e:
                 if conn is not None:
                     try:
                         conn.close()
@@ -184,11 +213,12 @@ def setup_enhanced_logging(logger_name: str = "Aura"):
         console_handler.setFormatter(formatter)
         logger.addHandler(console_handler)
 
-    # 2. SQLite Handler (INFO+)
-    db_handler = SQLiteMemoryHandler()
-    db_handler.setLevel(logging.INFO)
-    # No formatter needed for DB as we store fields
-    logger.addHandler(db_handler)
+    # 2. SQLite Handler (INFO+). Initialization and all I/O stay on its writer
+    # thread; importing logging on an event loop must never open or fsync a DB.
+    if bool(_SQLITE_LOGGING_FLAG.value()):
+        db_handler = SQLiteMemoryHandler()
+        db_handler.setLevel(logging.INFO)
+        logger.addHandler(db_handler)
 
     # 3. Webhook Handler (ERROR+)
     if WEBHOOK_URL:

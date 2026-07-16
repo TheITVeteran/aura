@@ -1,11 +1,12 @@
 from __future__ import annotations
+
 import logging
-logger = logging.getLogger("core.utils.paths")
-
-
-import os
 from pathlib import Path
 from typing import Dict
+
+from core.runtime.flags import aura_root_override
+
+logger = logging.getLogger("core.utils.paths")
 
 CORE_DIR = Path(__file__).resolve().parent.parent
 PROJECT_ROOT = CORE_DIR.parent
@@ -44,7 +45,8 @@ def get_paths() -> Dict[str, Path]:
 
 def aura_root() -> Path:
     """Returns the root directory for Aura data/logs, defaulting to ~/.aura"""
-    return Path(os.getenv("AURA_ROOT", Path.home() / ".aura")).expanduser().resolve()
+    override = aura_root_override()
+    return Path(override or Path.home() / ".aura").expanduser().resolve()
 
 
 def aura_data_dir() -> Path:

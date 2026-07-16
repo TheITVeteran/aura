@@ -69,7 +69,9 @@ def test_queue_handler_overflow_drops_oldest_never_blocks():
 def test_sqlite_log_handler_emit_is_nonblocking(tmp_path):
     from core.utils.aura_logging import SQLiteMemoryHandler
 
-    handler = SQLiteMemoryHandler(db_path=str(tmp_path / "logs.db"))
+    db_path = tmp_path / "logs.db"
+    handler = SQLiteMemoryHandler(db_path=str(db_path))
+    assert not db_path.exists(), "constructor performed SQLite I/O on the caller thread"
     record = logging.LogRecord("t", logging.INFO, __file__, 1, "hello world", None, None)
 
     start = time.monotonic()
@@ -82,15 +84,32 @@ def test_sqlite_log_handler_emit_is_nonblocking(tmp_path):
     deadline = time.monotonic() + 5.0
     count = 0
     while time.monotonic() < deadline:
-        conn = sqlite3.connect(str(tmp_path / "logs.db"))
+        conn = sqlite3.connect(str(db_path))
         try:
-            count = conn.execute("SELECT COUNT(*) FROM system_logs").fetchone()[0]
+            try:
+                count = conn.execute("SELECT COUNT(*) FROM system_logs").fetchone()[0]
+            except sqlite3.OperationalError:
+                count = 0
         finally:
             conn.close()
         if count >= 500 - handler.dropped:
             break
         time.sleep(0.05)
     assert count > 0, "writer thread must persist queued log rows"
+    handler.close()
+
+
+def test_sqlite_log_handler_defaults_to_typed_aura_root(tmp_path, monkeypatch):
+    from core.utils.aura_logging import SQLiteMemoryHandler
+
+    runtime_root = tmp_path / "runtime"
+    monkeypatch.setenv("AURA_ROOT", str(runtime_root))
+    handler = SQLiteMemoryHandler()
+    try:
+        assert handler.db_path == runtime_root / "data" / "aura_memory.db"
+        assert not handler.db_path.exists()
+    finally:
+        handler.close()
 
 
 # ---------------------------------------------------------------------------

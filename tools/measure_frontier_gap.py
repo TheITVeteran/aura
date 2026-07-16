@@ -143,6 +143,55 @@ def _restore_tree_writable(root: Path) -> None:
             continue
 
 
+def _immutable_child_env(
+    *,
+    temporary: Path,
+    original_root: Path,
+    commit: str,
+    tree: str,
+    canonical_remote_sha256: str,
+) -> dict[str, str]:
+    """Build a hermetic child environment without ambient credentials or state."""
+
+    runtime = temporary / "runtime"
+    home = runtime / "home"
+    tmp = runtime / "tmp"
+    aura_root = runtime / "aura"
+    test_root = runtime / "test"
+    for directory in (home, tmp, aura_root, test_root):
+        directory.mkdir(parents=True, mode=0o700, exist_ok=True)
+
+    allowed_exact = {"LANG", "LC_ALL", "LC_CTYPE", "PATH", "TZ"}
+    role_prefixes = (
+        "AURA_FRONTIER_COMMON_",
+        "AURA_FRONTIER_WORKER_",
+        "AURA_FRONTIER_VERIFIER_",
+        "AURA_FRONTIER_RUN_SIGNER_",
+    )
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key in allowed_exact or key.startswith(role_prefixes)
+    }
+    env.update(
+        {
+            "HOME": str(home),
+            "TMPDIR": str(tmp),
+            "AURA_ROOT": str(aura_root),
+            "AURA_TEST_RUNTIME_ROOT": str(test_root),
+            "AURA_LOG_SQLITE_ENABLED": "0",
+            _IMMUTABLE_CHILD_ENV: "1",
+            _ORIGINAL_REPO_ENV: str(original_root),
+            "AURA_FRONTIER_BOOTSTRAP_COMMIT": commit,
+            "AURA_FRONTIER_BOOTSTRAP_TREE": tree,
+            "AURA_FRONTIER_CANONICAL_REMOTE_SHA256": canonical_remote_sha256,
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTHONNOUSERSITE": "1",
+        }
+    )
+    return env
+
+
 def _immutable_bootstrap() -> int:
     """Launch the measurement from a fresh verified checkout before imports."""
 
@@ -212,16 +261,12 @@ def _immutable_bootstrap() -> int:
         ).stdout:
             raise RuntimeError("fresh checkout does not reproduce the verified source tree")
         _make_tree_read_only(checkout)
-        env = dict(os.environ)
-        env.update(
-            {
-                _IMMUTABLE_CHILD_ENV: "1",
-                _ORIGINAL_REPO_ENV: str(original_root),
-                "AURA_FRONTIER_BOOTSTRAP_COMMIT": commit,
-                "AURA_FRONTIER_BOOTSTRAP_TREE": tree,
-                "AURA_FRONTIER_CANONICAL_REMOTE_SHA256": canonical_remote_sha256,
-                "PYTHONDONTWRITEBYTECODE": "1",
-            }
+        env = _immutable_child_env(
+            temporary=temporary,
+            original_root=original_root,
+            commit=commit,
+            tree=tree,
+            canonical_remote_sha256=canonical_remote_sha256,
         )
         completed = _stdlib_exec(
             [sys.executable, str(checkout / "tools" / original_script.name), *argv],
@@ -826,11 +871,22 @@ def _live_instance_up(port: int = 8000) -> bool:
 
 
 _CONTROL_FACTS = {
-    "gold": "Au",
-    "red planet": "Mars",
-    "hexagon": "6",
+    "chemical symbol for gold": "Au",
+    "known as the red planet": "Mars",
+    "sides does a hexagon": "6",
     "capital of japan": "Tokyo",
-    "photosynthesis": "carbon dioxide",
+    "absorb for photosynthesis": "carbon dioxide",
+    "chemical symbol for sodium": "Na",
+    "largest ocean on earth": "Pacific Ocean",
+    "degrees are in a right angle": "90",
+    "capital of kenya": "Nairobi",
+    "element has atomic number 8": "oxygen",
+    "instrument measures atmospheric pressure": "barometer",
+    "smallest prime number": "2",
+    "continent contains peru": "South America",
+    "si unit of electric current": "ampere",
+    "changes liquid water into vapor": "evaporation",
+    "capital of new zealand": "Wellington",
 }
 
 
@@ -846,10 +902,18 @@ async def _synthetic_control_generate(prompt: str, temperature: float = 0.0) -> 
     if "who is oldest" in lowered:
         names = re.findall(r"([A-Z][a-z]+) is older than", prompt)
         return names[0] if names else ""
-    function = re.search(r"`(sum|max|min)_of\(xs\)`", prompt)
+    function = re.search(
+        r"function `([A-Za-z_][A-Za-z0-9_]*)\(xs\)` returning the "
+        r"(sum|maximum|minimum) of",
+        prompt,
+        re.IGNORECASE,
+    )
     if function:
-        operation = function.group(1)
-        return f"```python\ndef {operation}_of(xs):\n    return {operation}(xs)\n```"
+        function_name = function.group(1)
+        operation = {"sum": "sum", "maximum": "max", "minimum": "min"}[
+            function.group(2).lower()
+        ]
+        return f"```python\ndef {function_name}(xs):\n    return {operation}(xs)\n```"
     return ""
 
 

@@ -65,11 +65,13 @@ from tools.measure_frontier_gap import (
     _artifact_state_sha256,
     _evidence_persistence_lock,
     _hash_regular_file_beneath,
+    _immutable_child_env,
     _make_tree_read_only,
     _read_prior_snapshot,
     _read_prior_strict,
     _restore_tree_writable,
     _sealed_command_env,
+    _synthetic_control_generate,
     collect_model_manifest,
 )
 
@@ -1309,6 +1311,52 @@ def test_signed_evidence_commands_receive_only_role_scoped_environment(
     assert "AURA_FRONTIER_VERIFIER_KEY" not in worker
     assert worker["AURA_FRONTIER_COMMON_RUN"] == "shared"
     assert worker["PYTHONNOUSERSITE"] == "1"
+
+
+def test_immutable_child_receives_isolated_state_and_no_ambient_credentials(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "must-not-leak")
+    monkeypatch.setenv("AURA_ALERTS_WEBHOOK", "https://secret.invalid")
+    monkeypatch.setenv("AURA_FRONTIER_WORKER_MODEL", "/models/aura")
+    monkeypatch.setenv("AURA_FRONTIER_VERIFIER_KEY", "verifier-secret")
+    monkeypatch.setenv("AURA_FRONTIER_COMMON_RUN", "shared")
+
+    temporary = tmp_path / "bootstrap"
+    env = _immutable_child_env(
+        temporary=temporary,
+        original_root=tmp_path / "source",
+        commit=TEST_COMMIT,
+        tree=TEST_TREE,
+        canonical_remote_sha256=EMPTY_SHA,
+    )
+
+    assert "OPENAI_API_KEY" not in env
+    assert "AURA_ALERTS_WEBHOOK" not in env
+    assert env["AURA_FRONTIER_WORKER_MODEL"] == "/models/aura"
+    assert env["AURA_FRONTIER_VERIFIER_KEY"] == "verifier-secret"
+    assert env["AURA_FRONTIER_COMMON_RUN"] == "shared"
+    assert env["AURA_LOG_SQLITE_ENABLED"] == "0"
+    assert Path(env["HOME"]).is_relative_to(temporary)
+    assert Path(env["TMPDIR"]).is_relative_to(temporary)
+    assert Path(env["AURA_ROOT"]).is_relative_to(temporary)
+    assert Path(env["AURA_TEST_RUNTIME_ROOT"]).is_relative_to(temporary)
+
+
+def test_synthetic_control_exercises_every_deterministic_grader() -> None:
+    items = build_battery(seed=15, per_class=16)
+
+    async def _generate_all() -> list[str]:
+        return [await _synthetic_control_generate(item.prompt) for item in items]
+
+    answers = asyncio.run(_generate_all())
+    failures = [
+        (item.task_class, item.prompt, answer)
+        for item, answer in zip(items, answers, strict=True)
+        if not answer or not item.grade(answer)
+    ]
+    assert failures == []
 
 
 def test_trend_requires_repeated_matched_unique_significant_monotonic_runs() -> None:

@@ -185,6 +185,21 @@ def flag_report() -> list[dict[str, Any]]:
     return report
 
 
+def aura_root_override() -> str:
+    """Return the canonical typed override for Aura's writable runtime root."""
+
+    return str(
+        declare(
+            "AURA_ROOT",
+            kind=FlagKind.STRING,
+            default="",
+            description="Override root for Aura runtime data, logs, and durable state",
+            owner="core.runtime.flags",
+        ).value()
+        or ""
+    ).strip()
+
+
 def reset_registry_for_test() -> None:
     with _REGISTRY_LOCK:
         _REGISTRY.clear()

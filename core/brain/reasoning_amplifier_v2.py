@@ -564,7 +564,11 @@ class ReasoningAmplifierV2:
         # Couple to the live mind: Φ-gated test-time compute. Demand (free energy,
         # uncertainty, stuck-valence) buys depth; Φ-capacity gates how much depth the
         # current integration level can spend. Explicit caller mode is never overridden.
-        affect = self._read_substrate()
+        # A sealed evaluation must be independent of the resident mind's
+        # momentary affect, Phi, free-energy, and service-container state. Apart
+        # from contaminating the comparison, those reads can initialize live
+        # services and persistence from inside an otherwise read-only checkout.
+        affect = {} if sealed_evaluation else self._read_substrate()
         sample_budget = request.sample_budget or _MODE_BUDGET[mode]
         if request.mode is None:
             if _flag_on("AURA_PHI_GATED_COMPUTE"):

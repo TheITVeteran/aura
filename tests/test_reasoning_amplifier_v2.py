@@ -229,6 +229,11 @@ async def test_sealed_evaluation_cannot_retrieve_prior_answers(tmp_path, monkeyp
         memory=ForbiddenMemory(),
     )
 
+    def _forbidden_live_substrate_read():
+        raise AssertionError("sealed evaluation read resident substrate state")
+
+    monkeypatch.setattr(amp, "_read_substrate", _forbidden_live_substrate_read)
+
     out = await amp.amplify(
         AmplificationRequest(
             objective="what is 2 + 2",

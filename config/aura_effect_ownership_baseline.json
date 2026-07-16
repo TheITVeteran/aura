@@ -4625,6 +4625,14 @@
       "scope": "<module>.write_unity_results_artifact"
     },
     {
+      "callee": "<file_write_gateway>.open_owned_binary",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/utils/aura_logging.py",
+      "scope": "<module>.SQLiteMemoryHandler._open_writer_connection"
+    },
+    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -12097,14 +12105,6 @@
       "scope": "<module>.write_unity_results_artifact"
     },
     {
-      "callee": "os.makedirs",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/utils/aura_logging.py",
-      "scope": "<module>.SQLiteMemoryHandler._initialize_db"
-    },
-    {
       "callee": "path.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -13826,6 +13826,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "c9b72ba12a8f37fda7deab4f1d025c538752dd75b6be831740274cc1d6f194c5",
+  "inventory_sha256": "14adba0cab580d3527315b8ac88d9f05afefcfda7ab017929d57e569109c96fd",
   "schema_version": 1
 }

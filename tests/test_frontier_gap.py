@@ -90,11 +90,23 @@ def test_unreferenced_run_is_diagnostic_only_even_when_perfect() -> None:
     assert report["battery_version"] == BATTERY_VERSION
 
 
-def test_checked_in_v4_artifact_is_historical_and_cannot_claim_v5_admission() -> None:
-    artifact = json.loads(ARTIFACT.read_text(encoding="utf-8"))
-    artifact = artifact.get("payload", artifact)
-    assert artifact["schema"] == "aura.frontier_gap_report.v4"
+def test_checked_in_v5_artifact_is_a_control_not_a_capability_claim() -> None:
+    envelope = json.loads(ARTIFACT.read_text(encoding="utf-8"))
+    artifact = envelope.get("payload", envelope)
+    assert artifact["schema"] == "aura.frontier_gap_report.v5"
     assert artifact["general_frontier_claim_eligible"] is False
     assert artifact["capability_claim_eligible"] is False
-    assert artifact["latest_run"]["schema_version"] == 4
-    assert artifact["latest_run"]["schema_version"] != SCHEMA_VERSION
+    assert artifact["evidence_class"] == "synthetic_pipeline_control"
+    assert artifact["capability_ledger"]["runs"] == []
+    assert artifact["rejected_ledger"]["runs"] == []
+    assert artifact["control_ledger"]["runs"]
+    assert artifact["legacy_artifact_sha256"]
+
+    latest = artifact["latest_evidence"]
+    digest = latest["evidence_sha256"]
+    evidence_path = ARTIFACT.parent / "evidence-v5" / f"{digest}.json"
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    assert evidence["evidence_sha256"] == digest
+    assert evidence["payload"]["evidence_class"] == "synthetic_pipeline_control"
+    assert evidence["payload"]["capability_claim_eligible"] is False
+    assert evidence["payload"]["general_frontier_claim_eligible"] is False
