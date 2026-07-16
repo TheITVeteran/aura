@@ -266,7 +266,6 @@ class EpisodicFastWeights:
             from core.runtime.file_write_gateway import get_file_write_gateway
 
             target_dir = Path(queue_dir) / episode_id
-            target_dir.mkdir(parents=True, exist_ok=True)
             arrays: dict[str, Any] = {}
             for h_idx, handle in enumerate(self._exported_handles):
                 arrays[f"layer{handle['layer_index']}_U"] = handle["U"]
@@ -284,6 +283,9 @@ class EpisodicFastWeights:
             }
             gateway = get_file_write_gateway()
             with local_internal_governed_scope("latent_cortex_consolidation"):
+                gateway.ensure_directory(
+                    target_dir, source="latent_cortex.fast_weights"
+                )
                 gateway.write_bytes(
                     target_dir / "delta_weights.npz",
                     buffer.getvalue(),

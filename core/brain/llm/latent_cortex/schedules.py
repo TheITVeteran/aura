@@ -204,9 +204,12 @@ class ScheduleLibrary:
             from core.governance_context import local_internal_governed_scope
             from core.runtime.file_write_gateway import get_file_write_gateway
 
-            self._path.parent.mkdir(parents=True, exist_ok=True)
+            gateway = get_file_write_gateway()
             with local_internal_governed_scope("latent_cortex_schedule_library"):
-                get_file_write_gateway().write_text(
+                gateway.ensure_directory(
+                    self._path.parent, source="latent_cortex.schedules"
+                )
+                gateway.write_text(
                     self._path, payload, source="latent_cortex.schedules"
                 )
             return True

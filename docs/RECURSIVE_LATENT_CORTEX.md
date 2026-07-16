@@ -146,13 +146,37 @@ launched, bounded).
 
 ## Honest claims ladder (current state)
 
-- **PROVEN (by the test suite, tiny real-architecture models):** mechanics —
-  KV rewind correctness, RMSMatch stability bounds, schedule validation,
-  identity-at-attach and proven-erase for fast weights, checkpoint invariant,
-  slot-ablation causal machinery, equal-FLOP accounting.
-- **CONJECTURE (until Experiments 1–5 run on the 32B):** capability gains.
-  Frozen-loop literature says expect small broad gains; the integrated
-  machine (workspace + schedules + width + optimization + fast weights) is
-  the untested combination the document argues could be qualitatively more.
+- **PROVEN (test suite, real mlx_lm Qwen2 architecture):** mechanics —
+  KV rewind correctness, RMSMatch stability bounds (anchored trust band; the
+  moving-reference ratchet failure is regression-tested), schedule
+  validation, identity-at-attach and proven-erase for fast weights,
+  checkpoint invariant, slot-ablation causality on the answer distribution,
+  matched-magnitude control arm, equal-FLOP accounting, grader
+  conservatism (underpowered ⇒ CONJECTURE, compute mismatch ⇒ voided).
+- **PROVEN (real trained checkpoint, Qwen2.5-1.5B-Instruct-4bit — the same
+  quantization format as the resident 32B):** the full episode pipeline runs
+  end to end in ~1.3s: contracting residuals (0.95 → 0.10, a genuine fixed
+  point on trained weights), branch exchange + selection, invariant clean,
+  coherent chain-of-thought text decoded through persisted thought slots —
+  with a visible qualitative effect (latent-conditioned decode skips
+  preamble and starts computing).
+- **CONJECTURE (until Experiments 1–5 run on the 32B via
+  tools/latent_cortex_lab.py):** capability gains. Frozen-loop literature
+  says expect small broad gains; the integrated machine (workspace +
+  schedules + width + optimization + fast weights) is the untested
+  combination the spec argues could be qualitatively more. The harness is
+  built so this question gets ANSWERED, not vibed.
 - **Not claimed:** new world knowledge from recurrence. That comes from the
-  memory/tool organs, per the document's own boundary.
+  memory/tool organs, per the spec's own boundary.
+
+## Operational notes
+
+- Live path: restart Aura ⇒ worker gains the `latent_reason` action; deep
+  deliberation routes DEEP passes through latent episodes automatically.
+  Kill switch `AURA_LATENT_CORTEX=0`. Budgets damped by body pressure.
+- Lab runs (operator-launched, bounded, memory-safe — 1.5B/7B only while
+  the live 32B is resident):
+  `caffeinate -dims .venv/bin/python tools/latent_cortex_lab.py --model <mlx-dir> --experiments 1,2,3,5 --max-minutes 30`
+- Consolidation candidates land in `data/latent_cortex/consolidation_queue/`
+  for the existing LoRA-compounding regression gates; nothing consolidates
+  from inside an episode.
