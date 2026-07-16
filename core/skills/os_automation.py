@@ -1333,7 +1333,12 @@ end tell
                 return False
             # Not consumed here: this is a delegation check, and the execution
             # sink is what spends the grant.
-            return get_capability_verifier().verify(cap, consume=False).ok
+            #
+            # bool() is not decoration: capability_chain is outside the strict
+            # mypy allowlist, so `.ok` resolves to Any here. An Any flowing into
+            # an authority decision is exactly where a truthy non-bool could
+            # quietly grant desktop control.
+            return bool(get_capability_verifier().verify(cap, consume=False).ok)
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
             record_degradation(
                 "os_automation",
