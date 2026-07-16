@@ -3111,6 +3111,51 @@ def compute_scorecard(results: list[dict]) -> dict:
     return scorecard
 
 
+def build_coverage_disclosure(scorecard: dict, unsupported_claims: list, all_tasks: list) -> dict:
+    """State plainly what this run does and does not establish.
+
+    The authoritative artifact reported total_tasks: 1, overall_pass_rate: 1.0
+    and tier "Emergent (Capped)". Five of its six categories had zero tasks. A
+    reader parsing the JSON sees a 100% pass rate and a tier label; the coverage
+    limits were only reconstructible by cross-referencing unsupported_claims
+    against category_summary and noticing the empty dicts.
+
+    This block makes the negative space explicit, because a benchmark artifact
+    is read by people looking for a number, and the number was 1.0.
+    """
+    attempted = int(scorecard.get("total_tasks", 0) or 0)
+    empty = sorted(
+        cat
+        for cat in MINIMUM_COUNTS
+        if int(scorecard.get("categories", {}).get(cat, {}).get("attempted", 0) or 0) == 0
+    )
+    return {
+        "tasks_attempted": attempted,
+        "categories_with_zero_tasks": empty,
+        "coverage_sufficient": not unsupported_claims,
+        "establishes": (
+            f"Performance on {attempted} attempted task(s) from this repository's "
+            "own fixture, under the conditions recorded in runtime_policy."
+        ),
+        "does_not_establish": [
+            "any general capability claim — category coverage is incomplete"
+            if unsupported_claims
+            else "claims beyond the categories and counts actually attempted",
+            "performance on HLE, GPQA, SWE-bench, ARC-AGI or GAIA: none of these "
+            "were run, and this fixture is not a substitute for them",
+            "a frontier comparison of any kind — the included fixture is dominated "
+            "by approachable logic, arithmetic, Python-behaviour, scheduling, "
+            "extraction and analogy problems",
+        ],
+        "fixture_provenance": "repository-local; authored alongside the system under test",
+        "note": (
+            "pass_rate is computed over ATTEMPTED tasks only. With a small "
+            "attempted count it carries almost no information, and a rate of 1.0 "
+            "on one task is not evidence of capability."
+        ),
+    }
+
+
 def assign_tier(pass_rate: float, has_unsupported_claims: bool = False) -> dict:
     """Assign tier strictly from pass rate. No inflation. Max cap is Tier 5: Expert."""
     if pass_rate <= 0.0:
@@ -4382,7 +4427,21 @@ async def main():
         else all(a.get("status") == "SKIPPED_SMOKE" for a in ablation_entries)
     )
     
-    category_thresholds_passed = True
+    # Category coverage is a threshold, and an ABSENT category is the worst
+    # possible score on it — not an exemption from it.
+    #
+    # This loop used to iterate `scorecard["categories"]` looking for "transfer"
+    # and checking its pass_rate. Categories with zero attempted tasks never
+    # appear in that dict, so on a run that attempted ONE novel_reasoning task
+    # the loop checked nothing at all and left the flag True. The published
+    # artifact then said category_thresholds_passed: True and passed: True while
+    # its own unsupported_claims listed all six categories as below minimum —
+    # including five with zero tasks. A check that cannot fail on the data that
+    # should fail it is not a check.
+    #
+    # unsupported_claims is computed above from MINIMUM_COUNTS and is the
+    # authority: if any category is under its floor, coverage has not passed.
+    category_thresholds_passed = not unsupported_claims
     for cat_name, cat_stats in scorecard["categories"].items():
         if "transfer" in cat_name.lower():
             if cat_stats.get("pass_rate", 0.0) < 0.75:
@@ -4432,6 +4491,7 @@ async def main():
         "grader_entry_count": len(grader_data),
         "category_summary": {cat: scorecard["categories"].get(cat, {}) for cat in DIR_TO_CAT.values()},
         "unsupported_claims": unsupported_claims,
+        "coverage_disclosure": build_coverage_disclosure(scorecard, unsupported_claims, all_tasks),
         "verification_checklist": verification_checklist,
         "runtime_policy": runtime_policy,
         "model_lane_probe": model_lane_probe,

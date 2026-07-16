@@ -162,7 +162,7 @@
   "verification_checklist": {
     "runner_completed": true,
     "score_threshold_passed": true,
-    "category_thresholds_passed": true,
+    "category_thresholds_passed": false,
     "baselines_complete": true,
     "ablations_verified": true,
     "governance_receipts_verified": true,
@@ -325,5 +325,35 @@
   "structured_solver_task_count": 1,
   "governance_report_status": "pass",
   "leakage_report_status": "pass",
-  "passed": true
+  "passed": false,
+  "coverage_disclosure": {
+    "tasks_attempted": 1,
+    "categories_with_zero_tasks": [
+      "coding",
+      "planning",
+      "research",
+      "self_debug",
+      "transfer"
+    ],
+    "coverage_sufficient": false,
+    "establishes": "Performance on 1 attempted task(s) from this repository's own fixture, under the conditions recorded in runtime_policy.",
+    "does_not_establish": [
+      "any general capability claim \u2014 category coverage is incomplete",
+      "performance on HLE, GPQA, SWE-bench, ARC-AGI or GAIA: none of these were run, and this fixture is not a substitute for them",
+      "a frontier comparison of any kind \u2014 the included fixture is dominated by approachable logic, arithmetic, Python-behaviour, scheduling, extraction and analogy problems"
+    ],
+    "fixture_provenance": "repository-local; authored alongside the system under test",
+    "note": "pass_rate is computed over ATTEMPTED tasks only. With a small attempted count it carries almost no information, and a rate of 1.0 on one task is not evidence of capability."
+  },
+  "verdict_correction": {
+    "corrected_at": "2026-07-15",
+    "what": "passed and verification_checklist.category_thresholds_passed",
+    "why": "These derived fields contradicted the measured evidence in this same file. category_thresholds_passed only checked the 'transfer' category's pass_rate by iterating scorecard['categories']; categories with zero attempted tasks never appear there, so on this run (1 task, 5 of 6 categories empty) the check examined nothing and defaulted to True. passed then followed. FINAL_VERDICT.txt already said 'DNU AGI NOT PROVEN' and unsupported_claims already listed all six categories as below minimum \u2014 the JSON simply disagreed with both.",
+    "before": {
+      "passed": true,
+      "category_thresholds_passed": true
+    },
+    "measured_values_unchanged": true,
+    "note": "No measurement was altered: total_tasks, pass rates, per-task results, baselines, ablations, timings and probes are exactly as recorded by the original run. Only the computed verdict was corrected to match them. Re-run tools/agi/run_dnu_agi_proof_battery.py for a fresh measurement."
+  }
 }
