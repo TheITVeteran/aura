@@ -19,6 +19,7 @@ import asyncio
 import inspect
 import json
 import logging
+import math
 import os
 import threading
 import time
@@ -98,6 +99,7 @@ _GENERATION_GATE = _threading.BoundedSemaphore(
 )
 _GENERATION_GATE_STATE_LOCK = _threading.Lock()
 _GENERATION_GATE_ACTIVE_LEASES: dict[int, tuple[float, str]] = {}
+_GENERATION_GATE_LEASE_DEADLINES: dict[int, float] = {}
 _GENERATION_GATE_FORCED_LEASES: set[int] = set()
 _GENERATION_GATE_NEXT_LEASE_ID = 0
 _GENERATION_GATE_LAST_ACQUIRED_AT = 0.0
@@ -172,6 +174,21 @@ def _oldest_generation_gate_lease() -> tuple[int, float, str] | None:
         return lease_id, float(acquired_at), str(owner or "unknown")
 
 
+def _generation_gate_lease_has_time(
+    lease_id: int,
+    *,
+    now: float | None = None,
+) -> bool | None:
+    """Return whether a lease is inside its owner budget, or None for legacy leases."""
+
+    with _GENERATION_GATE_STATE_LOCK:
+        deadline = _GENERATION_GATE_LEASE_DEADLINES.get(int(lease_id))
+    if deadline is None:
+        return None
+    current = time.time() if now is None else float(now)
+    return current < float(deadline)
+
+
 def _generation_gate_busy_result(owner: str) -> dict[str, Any]:
     result = dict(_GATE_SATURATION_RESULT)
     result["endpoint"] = "generation_gate_busy_foreground"
@@ -218,10 +235,20 @@ def generation_gate_snapshot() -> dict[str, Any]:
     """Return a read-only snapshot for schedulers and health probes."""
 
     with _GENERATION_GATE_STATE_LOCK:
+        now = time.time()
         active = {
             int(lease_id): {
-                "age_s": max(0.0, time.time() - float(acquired_at)),
+                "age_s": max(0.0, now - float(acquired_at)),
                 "owner": str(owner or "unknown"),
+                "deadline_at": _GENERATION_GATE_LEASE_DEADLINES.get(int(lease_id)),
+                "deadline_remaining_s": (
+                    max(
+                        0.0,
+                        float(_GENERATION_GATE_LEASE_DEADLINES[int(lease_id)]) - now,
+                    )
+                    if int(lease_id) in _GENERATION_GATE_LEASE_DEADLINES
+                    else None
+                ),
             }
             for lease_id, (acquired_at, owner) in _GENERATION_GATE_ACTIVE_LEASES.items()
         }
@@ -239,16 +266,75 @@ def generation_gate_snapshot() -> dict[str, Any]:
         }
 
 
-def _mark_generation_gate_acquired(owner: str) -> int:
+def _mark_generation_gate_acquired(
+    owner: str,
+    *,
+    timeout_s: float | None = None,
+) -> int:
     global _GENERATION_GATE_NEXT_LEASE_ID, _GENERATION_GATE_LAST_ACQUIRED_AT, _GENERATION_GATE_LAST_OWNER
     with _GENERATION_GATE_STATE_LOCK:
         _GENERATION_GATE_NEXT_LEASE_ID += 1
         lease_id = _GENERATION_GATE_NEXT_LEASE_ID
         acquired_at = time.time()
         _GENERATION_GATE_ACTIVE_LEASES[lease_id] = (acquired_at, str(owner or "unknown"))
+        if timeout_s is not None:
+            try:
+                bounded_timeout = float(timeout_s)
+            except (TypeError, ValueError, OverflowError):
+                bounded_timeout = 0.0
+            if math.isfinite(bounded_timeout) and bounded_timeout > 0.0:
+                _GENERATION_GATE_LEASE_DEADLINES[lease_id] = (
+                    acquired_at + bounded_timeout
+                )
         _GENERATION_GATE_LAST_ACQUIRED_AT = acquired_at
         _GENERATION_GATE_LAST_OWNER = str(owner or "unknown")
         return lease_id
+
+
+async def acquire_external_generation_gate_lease(
+    *,
+    owner: str,
+    timeout_s: float,
+    wait_s: float = 5.0,
+) -> int | None:
+    """Admit direct resident-model work into the process-wide generation lane.
+
+    Recursive latent episodes use the MLX client directly because the router's
+    ordinary text-generation API cannot express their worker action. They still
+    must own the same process-wide lease as every routed generation so health
+    probes, retries, and background work cannot overlap or misclassify them as
+    abandoned work.
+    """
+
+    try:
+        bounded_timeout = float(timeout_s)
+        bounded_wait = float(wait_s)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if (
+        not math.isfinite(bounded_timeout)
+        or bounded_timeout <= 0.0
+        or not math.isfinite(bounded_wait)
+        or bounded_wait < 0.0
+    ):
+        return None
+    acquired = await asyncio.to_thread(
+        _GENERATION_GATE.acquire,
+        True,
+        min(bounded_timeout, bounded_wait),
+    )
+    if not acquired:
+        return None
+    return _mark_generation_gate_acquired(
+        str(owner or "external_generation"),
+        timeout_s=bounded_timeout,
+    )
+
+
+def release_external_generation_gate_lease(lease_id: int) -> None:
+    """Release a lease returned by acquire_external_generation_gate_lease."""
+
+    _release_generation_gate_after_call(int(lease_id))
 
 
 def _release_generation_gate_after_call(lease_id: int) -> None:
@@ -261,6 +347,7 @@ def _release_generation_gate_after_call(lease_id: int) -> None:
             return
         if lease_id in _GENERATION_GATE_ACTIVE_LEASES:
             _GENERATION_GATE_ACTIVE_LEASES.pop(lease_id, None)
+            _GENERATION_GATE_LEASE_DEADLINES.pop(lease_id, None)
             should_release = True
     if not should_release:
         return
@@ -296,6 +383,7 @@ def force_release_generation_gate(
                 key=lambda item: item[1][0],
             )
             _GENERATION_GATE_ACTIVE_LEASES.pop(lease_id, None)
+            _GENERATION_GATE_LEASE_DEADLINES.pop(lease_id, None)
             _GENERATION_GATE_FORCED_LEASES.add(lease_id)
             age_s = max(0.0, time.time() - acquired_at)
         try:
@@ -1252,7 +1340,17 @@ class HealthAwareLLMRouter:
             if not acquired:
                 holder = _oldest_generation_gate_lease()
                 holder_owner = holder[2] if holder is not None else ""
-                if holder is not None and not _generation_owner_is_user_foreground(holder_owner):
+                if holder is not None and _generation_owner_is_user_foreground(
+                    holder_owner
+                ):
+                    holder_age_s = max(0.0, time.time() - float(holder[1]))
+                    holder_has_time = _generation_gate_lease_has_time(holder[0])
+                    if holder_has_time is True or (
+                        holder_has_time is None
+                        and holder_age_s < max(30.0, _GENERATION_GATE_WAIT_S)
+                    ):
+                        return _generation_gate_busy_result(holder_owner)
+                elif holder is not None:
                     if self._soft_cancel_local_generations(
                         reason=f"foreground_preempts_background:{holder_owner[:80]}"
                     ):
@@ -1278,7 +1376,19 @@ class HealthAwareLLMRouter:
 
             foreground_owner = _active_foreground_generation_owner()
             foreground_age_s = _oldest_generation_gate_lease_age_s() if foreground_owner else 0.0
-            if foreground_owner and foreground_age_s < max(30.0, _GENERATION_GATE_WAIT_S):
+            foreground_lease = _oldest_generation_gate_lease() if foreground_owner else None
+            foreground_has_time = (
+                _generation_gate_lease_has_time(foreground_lease[0])
+                if foreground_lease is not None
+                else None
+            )
+            if foreground_owner and (
+                foreground_has_time is True
+                or (
+                    foreground_has_time is None
+                    and foreground_age_s < max(30.0, _GENERATION_GATE_WAIT_S)
+                )
+            ):
                 return _generation_gate_busy_result(foreground_owner)
             # An over-age holder is ABANDONED: its route already gave up and
             # returned, the decode is orphaned. Cooperative cancel FIRST — the
@@ -1312,7 +1422,14 @@ class HealthAwareLLMRouter:
                 ),
             )
             return dict(_GATE_SATURATION_RESULT)
-        lease_id = _mark_generation_gate_acquired(_generation_gate_owner(origin, purpose))
+        try:
+            lease_timeout_s = max(5.0, float(timeout)) + 10.0
+        except (TypeError, ValueError, OverflowError):
+            lease_timeout_s = 190.0
+        lease_id = _mark_generation_gate_acquired(
+            _generation_gate_owner(origin, purpose),
+            timeout_s=lease_timeout_s,
+        )
         try:
             return await self._generate_with_metadata_gated(
                 prompt,

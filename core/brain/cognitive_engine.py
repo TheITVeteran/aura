@@ -1492,6 +1492,9 @@ class CognitiveEngine:
             else:
                 cycle_timeout = 240.0
         cycle_timeout = max(8.0, min(240.0, cycle_timeout))
+        context["cognitive_cycle_deadline_monotonic"] = (
+            time.monotonic() + cycle_timeout
+        )
 
         # 4. Phase Execution Loop with Watchdog
         import copy
@@ -2008,7 +2011,7 @@ class CognitiveEngine:
         if isinstance(surface_receipt, dict) and surface_receipt:
             metadata["live_mind_surface_control_receipt"] = dict(surface_receipt)
         generation_failure_class = str(
-            generation_metadata.get("error") or ""
+            generation_metadata.get("error") or reason or ""
         ).strip()
         if generation_failure_class:
             metadata["generation_failure_class"] = generation_failure_class[:120]

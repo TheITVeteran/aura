@@ -2165,6 +2165,7 @@ def test_generation_gate_force_release_is_lease_scoped(monkeypatch):
     gate = threading.BoundedSemaphore(1)
     monkeypatch.setattr(router_module, "_GENERATION_GATE", gate)
     monkeypatch.setattr(router_module, "_GENERATION_GATE_ACTIVE_LEASES", {})
+    monkeypatch.setattr(router_module, "_GENERATION_GATE_LEASE_DEADLINES", {})
     monkeypatch.setattr(router_module, "_GENERATION_GATE_FORCED_LEASES", set())
     monkeypatch.setattr(router_module, "_GENERATION_GATE_NEXT_LEASE_ID", 0)
 
@@ -2189,6 +2190,7 @@ def test_generation_gate_snapshot_is_read_only(monkeypatch):
     from core.brain import llm_health_router as router_module
 
     monkeypatch.setattr(router_module, "_GENERATION_GATE_ACTIVE_LEASES", {})
+    monkeypatch.setattr(router_module, "_GENERATION_GATE_LEASE_DEADLINES", {})
     monkeypatch.setattr(router_module, "_GENERATION_GATE_FORCED_LEASES", set())
     monkeypatch.setattr(router_module, "_GENERATION_GATE_NEXT_LEASE_ID", 0)
 
@@ -2212,6 +2214,7 @@ def test_generation_gate_saturation_aborts_stale_lease_and_retries(monkeypatch):
     monkeypatch.setattr(router_module, "_GENERATION_GATE", gate)
     monkeypatch.setattr(router_module, "_GENERATION_GATE_WAIT_S", 0.01)
     monkeypatch.setattr(router_module, "_GENERATION_GATE_ACTIVE_LEASES", {})
+    monkeypatch.setattr(router_module, "_GENERATION_GATE_LEASE_DEADLINES", {})
     monkeypatch.setattr(router_module, "_GENERATION_GATE_FORCED_LEASES", set())
     monkeypatch.setattr(router_module, "_GENERATION_GATE_NEXT_LEASE_ID", 0)
 
@@ -2259,6 +2262,7 @@ def test_generation_gate_does_not_abort_active_user_foreground_lease(monkeypatch
     monkeypatch.setattr(router_module, "_GENERATION_GATE", gate)
     monkeypatch.setattr(router_module, "_GENERATION_GATE_WAIT_S", 0.01)
     monkeypatch.setattr(router_module, "_GENERATION_GATE_ACTIVE_LEASES", {})
+    monkeypatch.setattr(router_module, "_GENERATION_GATE_LEASE_DEADLINES", {})
     monkeypatch.setattr(router_module, "_GENERATION_GATE_FORCED_LEASES", set())
     monkeypatch.setattr(router_module, "_GENERATION_GATE_NEXT_LEASE_ID", 0)
 
@@ -2304,6 +2308,7 @@ def test_generation_gate_aborts_stale_user_foreground_lease(monkeypatch):
     monkeypatch.setattr(router_module, "_GENERATION_GATE", gate)
     monkeypatch.setattr(router_module, "_GENERATION_GATE_WAIT_S", 0.01)
     monkeypatch.setattr(router_module, "_GENERATION_GATE_ACTIVE_LEASES", {})
+    monkeypatch.setattr(router_module, "_GENERATION_GATE_LEASE_DEADLINES", {})
     monkeypatch.setattr(router_module, "_GENERATION_GATE_FORCED_LEASES", set())
     monkeypatch.setattr(router_module, "_GENERATION_GATE_NEXT_LEASE_ID", 0)
 

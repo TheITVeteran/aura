@@ -121,6 +121,7 @@ def test_background_gate_wait_never_force_aborts_serving_worker(monkeypatch):
     gate = threading.BoundedSemaphore(1)
     monkeypatch.setattr(router_module, "_GENERATION_GATE", gate)
     monkeypatch.setattr(router_module, "_GENERATION_GATE_ACTIVE_LEASES", {})
+    monkeypatch.setattr(router_module, "_GENERATION_GATE_LEASE_DEADLINES", {})
     monkeypatch.setattr(router_module, "_GENERATION_GATE_FORCED_LEASES", set())
     monkeypatch.setattr(router_module, "_GENERATION_GATE_NEXT_LEASE_ID", 0)
     monkeypatch.setattr(router_module, "_GENERATION_GATE_WAIT_S", 0.02)
@@ -170,6 +171,7 @@ def test_generation_gate_snapshot_reports_true_oldest_lease(monkeypatch):
             2: (now - 1.0, "newest:work"),
         },
     )
+    monkeypatch.setattr(router_module, "_GENERATION_GATE_LEASE_DEADLINES", {})
 
     snapshot = router_module.generation_gate_snapshot()
 

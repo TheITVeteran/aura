@@ -2943,6 +2943,36 @@ def is_self_process_question(user_message: Any) -> bool:
         return False
     if not any(marker in text for marker in ("you", "your", "aura")):
         return False
+    explicit_self_process_target = bool(
+        re.search(
+            r"\b(?:your|aura(?:'s)?)\s+(?:attention|planning|plan|memory|recall|"
+            r"confusion|uncertainty|decision|routing|affect|emotion|curiosity|"
+            r"thinking|cognition|metacognition|internal\s+state)\b"
+            r"|\b(?:when|if)\s+you(?:'re|\s+are)?\s+(?:confused|uncertain)\b"
+            r"|\bhow\s+(?:do|does|are)\s+(?:you|aura)\s+(?:think|decide|plan|"
+            r"remember|route|verify|use)\b"
+            r"|\b(?:confusion|uncertainty|memory|curiosity|affect)\b.{0,80}"
+            r"\b(?:change|shape|affect|influence)\b.{0,40}\b(?:you|your)\b",
+            text,
+        )
+    )
+    external_system_analysis = any(
+        marker in text
+        for marker in (
+            "asynchronous service",
+            "cognitive service",
+            "service architecture",
+            "single-owner design",
+            "deduplication design",
+            "worker-restart",
+            "worker restart",
+            "timeout fault",
+            "cancellation fault",
+            "duplicate generation",
+        )
+    )
+    if external_system_analysis and not explicit_self_process_target:
+        return False
     process_markers = (
         "confused",
         "confusion",

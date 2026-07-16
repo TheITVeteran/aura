@@ -7769,11 +7769,23 @@ async def _run_cognitive_engine_chat_turn(
         generation_failure_class = str(
             thought_metadata.get("generation_failure_class") or ""
         ).strip()
+        model_retry_suppressed = bool(
+            thought_metadata.get("model_retry_suppressed", False)
+        )
         quality_retry_exhausted = generation_failure_class == "surface_quality_rejected"
-        if quality_retry_exhausted:
+        single_owner_exhausted = bool(
+            model_retry_suppressed or quality_retry_exhausted
+        )
+        if single_owner_exhausted:
             logger.warning(
-                "CognitiveEngine worker already exhausted its bounded semantic quality "
-                "retries; skipping a duplicate route-level model call."
+                "CognitiveEngine retained single ownership of the failed turn "
+                "(failure_class=%s); skipping a duplicate route-level model call.",
+                generation_failure_class or failure_reason,
+            )
+            _mark_turn_trace(
+                model_retry_suppressed=True,
+                single_owner_generation_exhausted=True,
+                generation_failure_class=generation_failure_class,
             )
             retry_reply = None
         else:
@@ -7790,7 +7802,7 @@ async def _run_cognitive_engine_chat_turn(
             return retry_reply
         _record_exhausted_cognitive_failure(
             failure_reason,
-            retry_attempted=not quality_retry_exhausted,
+            retry_attempted=not single_owner_exhausted,
         )
         return None
     if not text or text == "…" or text.startswith("background_thought_suppressed"):
@@ -8104,9 +8116,11 @@ async def _run_cognitive_engine_chat_turn(
                             "CognitiveEngine desktop chat bound self-process turn to canonical live-state grounding."
                         )
                         _mark_turn_trace(
-                            cognitive_engine_reply_accepted=True,
-                            cognitive_engine_reply_failed=False,
-                            bounded_contract_used=False,
+                            cognitive_engine_reply_accepted=False,
+                            cognitive_engine_reply_failed=True,
+                            bounded_contract_used=True,
+                            post_generation_repair_applied=True,
+                            deterministic_repair_applied=True,
                             response_path="cognitive_engine_self_process_grounding",
                         )
                         return grounded_self_process_reply
@@ -9021,7 +9035,10 @@ def _collect_governed_action_lane_status(status: str) -> dict[str, Any]:
     return lane
 
 
-def _foreground_timeout_for_lane(lane: dict[str, Any] | None) -> float:
+def _foreground_timeout_for_lane(
+    lane: dict[str, Any] | None,
+    user_message: str = "",
+) -> float:
     """Foreground timeout for the chat request.
 
     This is a wall-clock UI SLA, not a model-load wishlist. Cold 32B warmup
@@ -9039,6 +9056,17 @@ def _foreground_timeout_for_lane(lane: dict[str, Any] | None) -> float:
         ),
     )
     if bool(lane.get("conversation_ready", False)):
+        shape = analyze_prompt_shape(user_message)
+        if bool(
+            getattr(shape, "prefers_extended_answer", False)
+            or getattr(shape, "requires_single_reply_coverage", False)
+            or int(getattr(shape, "question_parts", 0) or 0) >= 2
+        ):
+            return max(
+                ready_timeout,
+                _DESKTOP_COGNITIVE_MAX_TURN_TIMEOUT_S
+                + _DESKTOP_COGNITIVE_RESPONSE_RESERVE_S,
+            )
         return ready_timeout
     if state in {"warming", "recovering", "cold", "spawning", "handshaking"}:
         return 210.0
@@ -16975,7 +17003,10 @@ async def api_chat(
 
     owner_session_restored = bool(_restore_owner_session_from_request(request))
     lane = _collect_conversation_lane_status()
-    foreground_timeout = _foreground_timeout_for_lane(lane)
+    foreground_timeout = _foreground_timeout_for_lane(
+        lane,
+        _semantic_user_message,
+    )
     request_started_at = time.monotonic()
     request_wall_started_at = time.time()
     early_allow_chat_fastpaths = not is_benchmark and not desktop_requires_cognitive_engine
@@ -17354,6 +17385,12 @@ async def api_chat(
             """
             nonlocal pending_exchange_id
             if not desktop_requires_cognitive_engine:
+                return None
+            if bool(_live_turn_trace.get("single_owner_generation_exhausted")):
+                logger.warning(
+                    "Skipping duplicate desktop recovery generation after the "
+                    "CognitiveEngine owner exhausted this turn."
+                )
                 return None
             if bool(_live_turn_trace.get("cognitive_engine_grounded_recovery_attempted")):
                 return None
@@ -18924,10 +18961,12 @@ async def api_chat(
             if bounded_repair:
                 _live_turn_trace.update(
                     {
-                        "cognitive_engine_reply_accepted": True,
-                        "cognitive_engine_reply_failed": False,
-                        "bounded_contract_used": False,
+                        "cognitive_engine_reply_accepted": False,
+                        "cognitive_engine_reply_failed": True,
+                        "bounded_contract_used": True,
                         "legacy_fallback_used": False,
+                        "post_generation_repair_applied": True,
+                        "deterministic_repair_applied": True,
                         "response_path": "cognitive_engine_self_process_grounding",
                         "canonical_grounding_used": True,
                     }
@@ -18952,7 +18991,7 @@ async def api_chat(
                     bounded_repair,
                     cause="chat_response",
                     metadata={
-                        "response_confidence": "high",
+                        "response_confidence": "bounded",
                         "path": "cognitive_engine_self_process_grounding",
                         "status": "cognitive_engine_self_process_grounding",
                         "reason": "desktop_cognitive_engine_required_no_reply",
@@ -18964,10 +19003,10 @@ async def api_chat(
                         "status": "cognitive_engine_self_process_grounding",
                         "reason": "desktop_cognitive_engine_required_no_reply",
                         "conversation_lane": lane,
-                        "response_confidence": "high",
+                        "response_confidence": "bounded",
                         "live_turn_contract": _live_turn_contract(
                             lane_status=lane,
-                            response_confidence="high",
+                            response_confidence="bounded",
                             status="cognitive_engine_self_process_grounding",
                             reply_source="cognitive_engine_self_process_grounding",
                         ),

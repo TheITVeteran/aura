@@ -490,31 +490,62 @@ class LatentCortexService:
         if client is None:
             return self._record_failure("no_resident_model")
 
+        try:
+            from core.brain.llm_health_router import (
+                acquire_external_generation_gate_lease,
+                release_external_generation_gate_lease,
+            )
+
+            generation_lease_id = await acquire_external_generation_gate_lease(
+                owner=(
+                    "latent_cortex_foreground:episode"
+                    if foreground_request
+                    else "latent_cortex_lab:episode"
+                ),
+                timeout_s=timeout_s + 10.0,
+                wait_s=min(5.0, timeout_s),
+            )
+        except (ImportError, RuntimeError, TypeError, ValueError, OverflowError) as exc:
+            record_degradation(
+                "latent_cortex",
+                exc,
+                action="refused latent episode whose process-wide generation lease was unavailable",
+                severity="warning",
+            )
+            return self._record_failure(
+                f"generation_lease_unavailable:{type(exc).__name__}"
+            )
+        if generation_lease_id is None:
+            return self._record_failure("generation_gate_busy")
+
         self._episodes += 1
         self._last_attempt_at = time.time()
         started = time.monotonic()
         try:
-            result = await client.latent_reason_async(
-                prompt=question,
-                messages=messages,
-                config=config,
-                budget=budget,
-                domain=domain,
-                runtime_controls=runtime_controls,
-                timeout_s=timeout_s,
-                foreground_request=foreground_request,
-            )
-        except asyncio.CancelledError:
-            raise
-        except (OSError, RuntimeError, AttributeError, TypeError, ValueError, TimeoutError) as exc:
-            record_degradation(
-                "latent_cortex",
-                exc,
-                action="contained resident latent episode failure and preserved caller fallback",
-                severity="warning",
-            )
-            self._last_latency_s = time.monotonic() - started
-            return self._record_failure(f"client_error:{type(exc).__name__}")
+            try:
+                result = await client.latent_reason_async(
+                    prompt=question,
+                    messages=messages,
+                    config=config,
+                    budget=budget,
+                    domain=domain,
+                    runtime_controls=runtime_controls,
+                    timeout_s=timeout_s,
+                    foreground_request=foreground_request,
+                )
+            except asyncio.CancelledError:
+                raise
+            except (OSError, RuntimeError, AttributeError, TypeError, ValueError, TimeoutError) as exc:
+                record_degradation(
+                    "latent_cortex",
+                    exc,
+                    action="contained resident latent episode failure and preserved caller fallback",
+                    severity="warning",
+                )
+                self._last_latency_s = time.monotonic() - started
+                return self._record_failure(f"client_error:{type(exc).__name__}")
+        finally:
+            release_external_generation_gate_lease(generation_lease_id)
         elapsed = time.monotonic() - started
         self._last_latency_s = elapsed
         if not isinstance(result, dict):

@@ -1124,3 +1124,22 @@ async def test_response_generation_ledgers_executive_guard_visible_replacement(m
         and item["deterministic"] is True
         for item in mutations
     )
+
+
+def test_response_generation_timeout_fits_owning_cognitive_deadline(monkeypatch):
+    monkeypatch.setattr("core.phases.response_generation.time.monotonic", lambda: 100.0)
+
+    timeout = ResponseGenerationPhase._bounded_request_timeout(
+        {"cognitive_cycle_deadline_monotonic": 130.0},
+        180.0,
+        reserve_s=8.0,
+    )
+
+    assert timeout == 22.0
+
+
+def test_response_generation_timeout_keeps_requested_budget_without_deadline():
+    assert (
+        ResponseGenerationPhase._bounded_request_timeout({}, 180.0, reserve_s=8.0)
+        == 180.0
+    )

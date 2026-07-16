@@ -32,12 +32,14 @@ _INTERROGATIVE_LINE_RE = re.compile(
 )
 
 _DIRECTIVE_LINE_RE = re.compile(
-    r"^\s*(?:then|and then|also|next|after that|give|tell|describe|name|answer|pick|recall)\b",
+    r"^\s*(?:then|and then|also|next|after that|give|tell|describe|name|answer|pick|"
+    r"recall|compare|contrast|choose|explain|verify|evaluate|trace|test)\b",
     re.IGNORECASE,
 )
 
 _CONNECTOR_RE = re.compile(
-    r"\b(?:then|and then|after that|also)\s+(?:give|tell|describe|name|answer|pick|recall|list|explain)\b",
+    r"\b(?:then|and then|after that|also)\s+(?:give|tell|describe|name|answer|pick|"
+    r"recall|list|compare|contrast|choose|explain|verify|evaluate|trace|test)\b",
     re.IGNORECASE,
 )
 

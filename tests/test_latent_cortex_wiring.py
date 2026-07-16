@@ -840,10 +840,13 @@ def test_service_routes_through_client_and_records_receipt(monkeypatch):
 
     class StubClient:
         async def latent_reason_async(self, prompt=None, **kwargs):
+            from core.brain.llm_health_router import generation_gate_snapshot
+
             captured["prompt"] = prompt
             captured["config"] = kwargs.get("config")
             captured["budget"] = kwargs.get("budget")
             captured["runtime_controls"] = kwargs.get("runtime_controls")
+            captured["gate_snapshot"] = generation_gate_snapshot()
             return {
                 "ok": True,
                 "text": "the deep answer",
@@ -912,6 +915,11 @@ def test_service_routes_through_client_and_records_receipt(monkeypatch):
     assert captured["runtime_controls"] == {
         "clean_user_surface_recurrent_loops": 2,
         "clean_user_surface_steering_alpha": 0.30,
+    }
+    assert captured["gate_snapshot"]["active_count"] >= 1
+    assert "latent_cortex_foreground:episode" in {
+        item["owner"]
+        for item in captured["gate_snapshot"]["active"].values()
     }
     assert svc.get_status()["last_receipt"]["halting_reason"] == "converged"
 

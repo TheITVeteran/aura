@@ -678,6 +678,26 @@ class ResponseGenerationPhase(BasePhase):
         return 180.0
 
     @staticmethod
+    def _bounded_request_timeout(
+        runtime_context: dict[str, Any],
+        requested_timeout_s: float,
+        *,
+        reserve_s: float = 0.0,
+    ) -> float:
+        """Fit a model operation inside the owning CognitiveEngine deadline."""
+
+        requested = max(0.0, float(requested_timeout_s))
+        raw_deadline = runtime_context.get("cognitive_cycle_deadline_monotonic")
+        try:
+            deadline = float(raw_deadline)
+        except (TypeError, ValueError, OverflowError):
+            return requested
+        if not deadline or not deadline < float("inf"):
+            return requested
+        available = deadline - time.monotonic() - max(0.0, float(reserve_s))
+        return max(0.0, min(requested, available))
+
+    @staticmethod
     def _generation_metadata_snapshot(router: Any) -> dict[str, Any]:
         getter = getattr(router, "get_last_generation_metadata", None)
         if not callable(getter):
@@ -1474,6 +1494,15 @@ class ResponseGenerationPhase(BasePhase):
                     is_background=is_background,
                     deep_handoff=deep_handoff,
                 )
+                request_timeout = self._bounded_request_timeout(
+                    runtime_context,
+                    request_timeout,
+                    reserve_s=4.0,
+                )
+                if request_timeout < 1.0:
+                    raise TimeoutError(
+                        "cognitive cycle budget exhausted before response generation"
+                    )
                 from core.brain.latent_cortex_service import LatentCortexService
 
                 selection = LatentCortexService.select_foreground_episode(
@@ -1520,40 +1549,47 @@ class ResponseGenerationPhase(BasePhase):
                             "reason": "latent_service_not_registered",
                         }
                     else:
-                        latent_timeout = min(
-                            120.0,
-                            max(15.0, request_timeout * 0.65),
+                        latent_timeout = self._bounded_request_timeout(
+                            runtime_context,
+                            min(120.0, request_timeout),
+                            reserve_s=8.0,
                         )
-                        latent_result = await service.deep_reason(
-                            messages=messages,
-                            stakes=float(selection.get("stakes") or 0.75),
-                            uncertainty=float(selection.get("uncertainty") or 0.80),
-                            domain=str(
-                                runtime_context.get("latent_cortex_domain")
-                                or "desktop_conversation"
-                            ),
-                            config_overrides={
-                                "decode_max_tokens": int(token_budget),
-                                "decode_temperature": float(generation_temperature),
-                                "decode_top_p": float(generation_top_p),
-                            },
-                            runtime_controls={
-                                "clean_user_surface_recurrent_loops": int(
-                                    live_mind_generation_controls.get(
-                                        "clean_user_surface_recurrent_loops", 1
-                                    )
+                        if latent_timeout < 15.0:
+                            latent_result = {
+                                "ok": False,
+                                "reason": "latent_cycle_budget_insufficient",
+                            }
+                        else:
+                            latent_result = await service.deep_reason(
+                                messages=messages,
+                                stakes=float(selection.get("stakes") or 0.75),
+                                uncertainty=float(selection.get("uncertainty") or 0.80),
+                                domain=str(
+                                    runtime_context.get("latent_cortex_domain")
+                                    or "desktop_conversation"
                                 ),
-                                "clean_user_surface_steering_alpha": self._safe_bias_float(
-                                    live_mind_generation_controls.get(
-                                        "clean_user_surface_steering_alpha"
+                                config_overrides={
+                                    "decode_max_tokens": int(token_budget),
+                                    "decode_temperature": float(generation_temperature),
+                                    "decode_top_p": float(generation_top_p),
+                                },
+                                runtime_controls={
+                                    "clean_user_surface_recurrent_loops": int(
+                                        live_mind_generation_controls.get(
+                                            "clean_user_surface_recurrent_loops", 1
+                                        )
                                     ),
-                                    0.25,
-                                ),
-                            },
-                            timeout_s=latent_timeout,
-                            require_full_stack=True,
-                            foreground_request=True,
-                        )
+                                    "clean_user_surface_steering_alpha": self._safe_bias_float(
+                                        live_mind_generation_controls.get(
+                                            "clean_user_surface_steering_alpha"
+                                        ),
+                                        0.25,
+                                    ),
+                                },
+                                timeout_s=latent_timeout,
+                                require_full_stack=True,
+                                foreground_request=True,
+                            )
                     if (
                         isinstance(latent_result, dict)
                         and latent_result.get("ok") is True
@@ -1607,6 +1643,15 @@ class ResponseGenerationPhase(BasePhase):
                         )
 
                 if response_text is None:
+                    ordinary_timeout = self._bounded_request_timeout(
+                        runtime_context,
+                        request_timeout,
+                        reserve_s=4.0,
+                    )
+                    if ordinary_timeout < 8.0:
+                        raise TimeoutError(
+                            "cognitive cycle budget exhausted before resident fallback"
+                        )
                     think_coro = router.think(
                         messages=messages,
                         priority=1.0 if not is_background else 0.5,
@@ -1692,11 +1737,11 @@ class ResponseGenerationPhase(BasePhase):
                         ),
                         semantic_output_token_cap=visible_output_contract.semantic_token_cap,
                         hard_output_token_ceiling=visible_output_contract.hard_token_ceiling,
-                        timeout=request_timeout,
+                        timeout=ordinary_timeout,
                     )
                     response_text = await asyncio.wait_for(
                         think_coro,
-                        timeout=request_timeout + 4.0,
+                        timeout=ordinary_timeout + 2.0,
                     )
                     generation_metadata = {
                         **self._generation_metadata_snapshot(router),

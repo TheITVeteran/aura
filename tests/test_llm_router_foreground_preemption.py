@@ -25,6 +25,7 @@ def gate_state(monkeypatch):
     gate = threading.BoundedSemaphore(1)
     monkeypatch.setattr(router_module, "_GENERATION_GATE", gate)
     monkeypatch.setattr(router_module, "_GENERATION_GATE_ACTIVE_LEASES", {})
+    monkeypatch.setattr(router_module, "_GENERATION_GATE_LEASE_DEADLINES", {})
     monkeypatch.setattr(router_module, "_GENERATION_GATE_FORCED_LEASES", set())
     monkeypatch.setattr(router_module, "_GENERATION_GATE_NEXT_LEASE_ID", 0)
     # Small budgets so tests run in milliseconds while preserving ordering.
@@ -114,6 +115,50 @@ def test_foreground_never_soft_cancels_foreground_holder(monkeypatch, gate_state
     assert result["endpoint"] == "generation_gate_busy_foreground"
 
 
+def test_foreground_deadline_prevents_age_only_preemption(monkeypatch, gate_state):
+    """A slow but in-budget foreground turn is never declared abandoned by age."""
+
+    router = _router(monkeypatch)
+    assert gate_state.acquire(False) is True
+    lease = router_module._mark_generation_gate_acquired(
+        "response_generation_user:reply",
+        timeout_s=5.0,
+    )
+    with router_module._GENERATION_GATE_STATE_LOCK:
+        acquired_at, owner = router_module._GENERATION_GATE_ACTIVE_LEASES[lease]
+        router_module._GENERATION_GATE_ACTIVE_LEASES[lease] = (
+            acquired_at - 200.0,
+            owner,
+        )
+
+    cancel_calls: list[str] = []
+    monkeypatch.setattr(
+        router,
+        "_soft_cancel_local_generations",
+        lambda *, reason: cancel_calls.append(reason) or True,
+    )
+    force_aborts: list[str] = []
+    monkeypatch.setattr(
+        router,
+        "force_abort_active_generation",
+        lambda reason="": force_aborts.append(reason) or 0,
+    )
+
+    result = asyncio.run(
+        router.generate_with_metadata(
+            "second request",
+            origin="user",
+            purpose="reply",
+            foreground_request=True,
+        )
+    )
+
+    assert result["endpoint"] == "generation_gate_busy_foreground"
+    assert cancel_calls == []
+    assert force_aborts == []
+    router_module._release_generation_gate_after_call(lease)
+
+
 def test_background_request_gets_no_preemption_ladder(monkeypatch, gate_state):
     """Background requests defer without soft-cancel or destructive escalation."""
     router = _router(monkeypatch)
@@ -188,6 +233,30 @@ def test_uncontended_foreground_takes_gate_without_cancel(monkeypatch, gate_stat
     assert result == GATED_OK
     assert cancel_calls == []
     assert router_module._GENERATION_GATE_ACTIVE_LEASES == {}
+
+
+def test_external_generation_lease_uses_same_gate_and_deadline(monkeypatch, gate_state):
+    async def scenario():
+        lease = await router_module.acquire_external_generation_gate_lease(
+            owner="latent_cortex_foreground:episode",
+            timeout_s=4.0,
+            wait_s=0.05,
+        )
+        assert lease is not None
+        snapshot = router_module.generation_gate_snapshot()
+        assert snapshot["active"][lease]["owner"] == "latent_cortex_foreground:episode"
+        assert snapshot["active"][lease]["deadline_remaining_s"] > 0.0
+        blocked = await router_module.acquire_external_generation_gate_lease(
+            owner="health_probe",
+            timeout_s=1.0,
+            wait_s=0.01,
+        )
+        assert blocked is None
+        router_module.release_external_generation_gate_lease(lease)
+
+    asyncio.run(scenario())
+    assert router_module._GENERATION_GATE_ACTIVE_LEASES == {}
+    assert router_module._GENERATION_GATE_LEASE_DEADLINES == {}
 
 
 def test_abandoned_foreground_holder_soft_cancelled_before_kill(monkeypatch, gate_state):

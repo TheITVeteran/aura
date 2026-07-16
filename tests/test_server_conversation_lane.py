@@ -1172,6 +1172,10 @@ def test_foreground_timeout_for_cold_or_recovering_lane():
     assert server_module._foreground_timeout_for_lane({"conversation_ready": False, "state": "cold"}) == 210.0
     assert server_module._foreground_timeout_for_lane({"conversation_ready": False, "state": "recovering"}) == 210.0
     assert server_module._foreground_timeout_for_lane({"conversation_ready": True, "state": "ready"}) == 112.0
+    assert server_module._foreground_timeout_for_lane(
+        {"conversation_ready": True, "state": "ready"},
+        "Compare both designs, then choose one and explain the verification plan.",
+    ) == 144.0
     assert server_module._desktop_required_cognitive_budget(foreground_timeout=66.0) == 62.0
     assert server_module._desktop_required_cognitive_budget(foreground_timeout=108.0) == 104.0
     assert server_module._desktop_required_cognitive_budget(
@@ -5332,9 +5336,11 @@ async def test_api_chat_desktop_self_process_no_reply_uses_grounded_repair(monke
     assert response.status_code == 200
     assert payload["status"] == "cognitive_engine_self_process_grounding"
     assert payload["reason"] == "desktop_cognitive_engine_required_no_reply"
-    assert payload["response_confidence"] == "high"
-    assert payload["live_turn_contract"]["full_mind_path"] is True
-    assert payload["live_turn_contract"]["bounded_contract_used"] is False
+    assert payload["response_confidence"] == "bounded"
+    assert payload["live_turn_contract"]["full_mind_path"] is False
+    assert payload["live_turn_contract"]["authentic_cognitive_reply"] is False
+    assert payload["live_turn_contract"]["bounded_contract_used"] is True
+    assert payload["live_turn_contract"]["model_native_output"] is False
     assert "failed closed instead of sending an ungrounded answer" not in lowered
     assert "planning" in lowered
     assert "memory" in lowered
@@ -5349,7 +5355,7 @@ async def test_api_chat_desktop_self_process_no_reply_uses_grounded_repair(monke
     assert len(completed_exchanges) == 1
     assert completed_exchanges[0][1]["record_experience"] is True
     assert output_receipts[0][1]["metadata"]["path"] == "cognitive_engine_self_process_grounding"
-    assert output_receipts[0][1]["metadata"]["response_confidence"] == "high"
+    assert output_receipts[0][1]["metadata"]["response_confidence"] == "bounded"
 
 
 @pytest.mark.asyncio
@@ -9294,6 +9300,72 @@ async def test_worker_exhausted_quality_rejection_skips_duplicate_route_retry(mo
     assert trace["live_mind_surface_control_receipt"][
         "surface_quality_gate_attempts"
     ] == 3
+
+
+@pytest.mark.asyncio
+async def test_cognitive_owner_suppression_blocks_duplicate_route_retry(monkeypatch):
+    from core.providers import engine_connection_pool as pool_module
+    from interface.routes import chat as chat_routes
+
+    metadata = _bound_live_mind_controls_metadata()
+    metadata.update(
+        {
+            "desktop_cognitive_engine_failure": True,
+            "failure_reason": "reactive_recovery:timeout",
+            "generation_failure_class": "reactive_recovery:timeout",
+            "model_retry_suppressed": True,
+        }
+    )
+
+    class _FakeCognitiveEngine:
+        def __init__(self):
+            self.calls = 0
+
+        async def think(self, *_args, **_kwargs):
+            self.calls += 1
+            if self.calls > 1:
+                raise AssertionError("a failed CognitiveEngine owner must not be duplicated")
+            return SimpleNamespace(
+                content="The single owner exhausted its bounded turn.",
+                metadata=metadata,
+            )
+
+    class _Pool:
+        async def acquire_engine_connection(self, *_args, **_kwargs):
+            return None
+
+    engine = _FakeCognitiveEngine()
+    monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _Pool())
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: engine
+            if name == "cognitive_engine"
+            else default
+        ),
+    )
+
+    trace = {}
+    reply = await chat_routes._run_cognitive_engine_chat_turn(
+        "Compare the two architectures and choose one.",
+        visible_user_message="Compare the two architectures and choose one.",
+        origin="user",
+        timeout_s=60.0,
+        lane={
+            "conversation_ready": True,
+            "state": "ready",
+            "foreground_endpoint": "Cortex",
+        },
+        source="desktop_ui",
+        require_engine=True,
+        turn_trace=trace,
+    )
+
+    assert reply is None
+    assert engine.calls == 1
+    assert trace["model_retry_suppressed"] is True
+    assert trace["single_owner_generation_exhausted"] is True
 
 
 @pytest.mark.asyncio
