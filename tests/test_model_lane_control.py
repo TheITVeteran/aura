@@ -16,6 +16,7 @@ from core.runtime.model_lane_control import (
     ModelLaneControlError,
     ModelLaneController,
     ProcessIdentity,
+    StandaloneModelLaneLease,
     acquire_in_process_model_lane,
     acquire_standalone_model_lane,
     acquire_synchronous_in_process_model_lane,
@@ -507,9 +508,24 @@ def test_standalone_spoofed_inheritance_falls_back_to_owned_reservation(
     )
 
     assert lease.inherited is False
+    assert lease.active is True
     assert controller.snapshot()["owners"][0]["owner_id"].startswith("standalone:")
     assert lease.release() is True
+    assert lease.active is False
     assert controller.snapshot()["owners"] == []
+
+
+def test_inherited_standalone_lease_closes_local_active_handle() -> None:
+    lease = StandaloneModelLaneLease(
+        controller=None,
+        decision=None,
+        inherited=True,
+    )
+
+    assert lease.active is True
+    assert lease.release() is False
+    assert lease.active is False
+    assert lease.release() is False
 
 
 def test_delegation_secret_is_hashed_and_wrong_token_is_rejected(tmp_path: Path) -> None:

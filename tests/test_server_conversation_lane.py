@@ -93,7 +93,9 @@ def _proven_latent_cortex_trace():
         "latent_cortex_fallback_used": False,
         "latent_cortex_identity_bound": True,
         "latent_cortex_final_output_quality": dict(quality),
+        "latent_cortex_public_output_quality": dict(quality),
         "latent_cortex_raw_final_quality_hash_match": True,
+        "latent_cortex_final_public_quality_hash_match": True,
         "latent_cortex_receipt": {
             "episode_id": "live-episode",
             "checkpoint_fingerprint": "a" * 64,
@@ -577,6 +579,185 @@ def test_full_mind_contract_rejects_unbound_final_latent_text(monkeypatch):
     assert "latent_cortex_output_quality_unproven" in payload[
         "full_mind_missing_proofs"
     ]
+
+
+def test_full_mind_contract_rejects_unrelated_middle_quality_receipt(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    _force_full_mind_runtime(monkeypatch, chat_routes)
+    latent = _proven_latent_cortex_trace()
+    latent["latent_cortex_final_output_quality"] = {
+        **latent["latent_cortex_final_output_quality"],
+        "text_sha256": "7" * 64,
+    }
+    payload = chat_routes._build_live_turn_contract_payload(
+        desktop_required=True,
+        request_surface="desktop-ui",
+        lane_status={
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "foreground_endpoint": "Cortex",
+        },
+        response_confidence="high",
+        status="cognitive_engine",
+        reply_source="cognitive_engine",
+        turn_trace={
+            "engine_think_invoked": True,
+            "cognitive_engine_reply_accepted": True,
+            "bounded_contract_used": False,
+            "legacy_fallback_used": False,
+            "live_mind_context_present": True,
+            "live_mind_snapshot_present": True,
+            "live_mind_snapshot_ready": True,
+            "live_mind_required_subsystems_ok": True,
+            "response_path": "cognitive_engine_latent_cortex",
+            **_bound_live_mind_controls_trace(),
+            **latent,
+        },
+    )
+
+    assert payload["latent_cortex_raw_output_quality_proven"] is True
+    assert payload["latent_cortex_final_output_quality_proven"] is True
+    assert payload["latent_cortex_public_output_quality_proven"] is True
+    assert payload["latent_cortex_raw_public_quality_hash_match"] is True
+    assert payload["latent_cortex_raw_final_mutation_chain"]["passed"] is False
+    assert payload["latent_cortex_final_public_mutation_chain"]["passed"] is False
+    assert payload["latent_cortex_output_quality_proven"] is False
+    assert payload["full_mind_path"] is False
+
+
+def test_full_mind_contract_rejects_missing_public_latent_quality(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    _force_full_mind_runtime(monkeypatch, chat_routes)
+    latent = _proven_latent_cortex_trace()
+    latent.pop("latent_cortex_public_output_quality")
+    payload = chat_routes._build_live_turn_contract_payload(
+        desktop_required=True,
+        request_surface="desktop-ui",
+        lane_status={
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "foreground_endpoint": "Cortex",
+        },
+        response_confidence="high",
+        status="cognitive_engine",
+        reply_source="cognitive_engine",
+        turn_trace={
+            "engine_think_invoked": True,
+            "cognitive_engine_reply_accepted": True,
+            "bounded_contract_used": False,
+            "legacy_fallback_used": False,
+            "live_mind_context_present": True,
+            "live_mind_snapshot_present": True,
+            "live_mind_snapshot_ready": True,
+            "live_mind_required_subsystems_ok": True,
+            "response_path": "cognitive_engine_latent_cortex",
+            **_bound_live_mind_controls_trace(),
+            **latent,
+        },
+    )
+
+    assert payload["latent_cortex_public_output_quality_proven"] is False
+    assert payload["latent_cortex_output_quality_proven"] is False
+    assert payload["full_mind_path"] is False
+
+
+def test_public_latent_quality_regrades_exact_api_text():
+    from interface.routes import chat as chat_routes
+
+    objective = (
+        "Compare early ownership with late deduplication, choose the stronger design, "
+        "and verify cancellation and timeout faults."
+    )
+    trace = _proven_latent_cortex_trace()
+    malformed = f"<request>{objective}</request> Both designs process work."
+
+    quality = chat_routes._bind_public_latent_output_quality(
+        trace,
+        user_message=objective,
+        reply_text=malformed,
+    )
+
+    assert quality["passed"] is False
+    assert "prompt_echo_contamination" in quality["reasons"]
+    assert "protocol_artifact_leakage" in quality["reasons"]
+    assert trace["latent_cortex_public_output_quality_failure"].startswith(
+        "public_output_quality_failed:"
+    )
+
+
+def test_full_mind_contract_rejects_tampered_public_text_mutation_chain(monkeypatch):
+    import hashlib
+
+    from core.brain.live_mind_contract import append_text_mutation
+    from interface.routes import chat as chat_routes
+
+    _force_full_mind_runtime(monkeypatch, chat_routes)
+    raw = "Early ownership is stronger. Verify cancellation and timeout faults."
+    public = raw + " Restart the worker and assert one publisher."
+    raw_hash = hashlib.sha256(raw.encode()).hexdigest()
+    public_hash = hashlib.sha256(public.encode()).hexdigest()
+    latent = _proven_latent_cortex_trace()
+    for quality_key, digest in (
+        ("latent_cortex_final_output_quality", raw_hash),
+        ("latent_cortex_public_output_quality", public_hash),
+    ):
+        latent[quality_key] = {
+            **latent[quality_key],
+            "text_sha256": digest,
+        }
+    latent["latent_cortex_receipt"] = dict(latent["latent_cortex_receipt"])
+    latent["latent_cortex_receipt"]["output_quality"] = {
+        **latent["latent_cortex_receipt"]["output_quality"],
+        "text_sha256": raw_hash,
+    }
+    controls = _bound_live_mind_controls_trace()
+    append_text_mutation(
+        controls["live_mind_surface_control_receipt"],
+        stage="chat.public_append",
+        method="append_verification",
+        reasons=["verification_detail"],
+        before=raw,
+        after=public,
+        deterministic=True,
+    )
+    controls["live_mind_surface_control_receipt"]["text_mutations"][0][
+        "after_sha256"
+    ] = "f" * 64
+
+    payload = chat_routes._build_live_turn_contract_payload(
+        desktop_required=True,
+        request_surface="desktop-ui",
+        lane_status={
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "foreground_endpoint": "Cortex",
+        },
+        response_confidence="high",
+        status="cognitive_engine",
+        reply_source="cognitive_engine",
+        turn_trace={
+            "engine_think_invoked": True,
+            "cognitive_engine_reply_accepted": True,
+            "bounded_contract_used": False,
+            "legacy_fallback_used": False,
+            "live_mind_context_present": True,
+            "live_mind_snapshot_present": True,
+            "live_mind_snapshot_ready": True,
+            "live_mind_required_subsystems_ok": True,
+            "response_path": "cognitive_engine_latent_cortex",
+            **controls,
+            **latent,
+        },
+    )
+
+    assert payload["latent_cortex_output_mutation_chain"]["passed"] is False
+    assert payload["latent_cortex_output_quality_proven"] is False
+    assert payload["full_mind_path"] is False
 
 
 def test_full_mind_contract_rejects_tampered_latent_cortex_identity(monkeypatch):

@@ -71,6 +71,7 @@ _CONFIG_KEYS = {
     "exchange_interval",
     "fast_weights",
     "fast_weights_canary",
+    "fast_weights_canary_max_delta_rms",
     "fast_weights_canary_max_drop",
     "fast_weights_canary_max_tokens",
     "fast_weights_canary_rescale_attempts",
@@ -207,6 +208,9 @@ def config_from_job(job_config: dict[str, Any] | None) -> CortexConfig:
             canary_enabled=_typed_value(raw, "fast_weights_canary", True, bool),
             canary_max_logprob_drop=_typed_value(
                 raw, "fast_weights_canary_max_drop", 0.5, float
+            ),
+            canary_max_effective_delta_rms=_typed_value(
+                raw, "fast_weights_canary_max_delta_rms", 0.05, float
             ),
             canary_rescale_attempts=_typed_value(
                 raw, "fast_weights_canary_rescale_attempts", 2, int

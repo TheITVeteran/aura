@@ -117,11 +117,18 @@ def _analysis_surface(text: str, objective: str) -> dict[str, Any]:
     answer_echo_ratio = copied_count / max(1, len(answer_tokens))
     echo_threshold = max(8, math.ceil(len(objective_tokens) * 0.25))
     prompt_echo_detected = bool(
-        longest_run >= echo_threshold or objective_echo_ratio >= 0.35
+        longest_run >= echo_threshold
+        or (copied_count >= 8 and objective_echo_ratio >= 0.35)
     )
-    novel_tokens = [
-        token for index, token in enumerate(answer_tokens) if index not in copied_indexes
-    ]
+    novel_tokens = (
+        [
+            token
+            for index, token in enumerate(answer_tokens)
+            if index not in copied_indexes
+        ]
+        if prompt_echo_detected
+        else list(answer_tokens)
+    )
     visible_without_code = _FENCED_BLOCK_RE.sub("", text)
     protocol_artifact_detected = bool(
         _PROTOCOL_ARTIFACT_RE.search(visible_without_code)
@@ -159,6 +166,15 @@ def evaluate_facet_coverage(text: Any, objective: Any) -> dict[str, Any]:
     }
     for name in requested:
         matched = bool(_ANSWER_FACETS[name].search(analysis_text))
+        if name == "verify" and not matched:
+            matched = bool(
+                re.search(
+                    r"(?:\brun\b.{0,50}\bverif\w*\b|"
+                    r"\bverif\w*\b.{0,35}\b(?:plan|procedure|turn|step|harness)\b)",
+                    analysis_text,
+                    re.I,
+                )
+            )
         if name == "compare" and not matched:
             matched = bool(
                 re.search(r"\bearly\b", analysis_text, re.I)
@@ -167,6 +183,15 @@ def evaluate_facet_coverage(text: Any, objective: Any) -> dict[str, Any]:
             )
         if name == "enumerate" and list_items >= 2:
             matched = True
+        minimum_facet_words = {
+            "compare": 10,
+            "select": 8,
+            "verify": 10,
+            "explain": 8,
+            "enumerate": 6,
+        }[name]
+        if len(surface["analysis_tokens"]) < minimum_facet_words:
+            matched = False
         if matched:
             satisfied.append(name)
             match = _ANSWER_FACETS[name].search(analysis_text)
@@ -285,7 +310,6 @@ def evaluate_latent_output(
     generated = generated_tokens if type(generated_tokens) is int else 0
     stop = termination if isinstance(termination, str) else ""
     surface = _analysis_surface(rendered, objective_text)
-    analysis_text = str(surface["analysis_text"])
     visible_words = _tokens(rendered)
     words = list(surface["analysis_tokens"])
     objective_words = _tokens(objective_text)

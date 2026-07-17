@@ -34,7 +34,9 @@ from core.brain.live_mind_contract import (
     append_text_mutation,
     merge_text_mutations,
     normalize_live_mind_surface_control_receipt,
+    verify_text_mutation_chain,
 )
+from core.brain.llm.latent_cortex.output_quality import evaluate_latent_output
 from core.brain.llm.cloud_errors import cloud_call_error_types
 from core.container import ServiceContainer
 from core.reasoning.artifact_synthesis import response_satisfies_artifact_contract
@@ -4964,6 +4966,46 @@ def _prime_requested_output_contract_trace(
     )
 
 
+def _bind_public_latent_output_quality(
+    trace: dict[str, Any],
+    *,
+    user_message: str,
+    reply_text: str,
+) -> dict[str, Any]:
+    """Grade and hash the exact latent text about to cross the API boundary."""
+
+    if trace.get("latent_cortex_succeeded") is not True:
+        return {}
+    raw_receipt = trace.get("latent_cortex_receipt")
+    raw_receipt = dict(raw_receipt) if isinstance(raw_receipt, dict) else {}
+    quality = evaluate_latent_output(
+        str(reply_text or ""),
+        generated_tokens=raw_receipt.get("decode_generated_tokens"),
+        termination=raw_receipt.get("decode_termination"),
+        objective=str(user_message or ""),
+    )
+    response_generation_quality = trace.get("latent_cortex_final_output_quality")
+    response_generation_quality = (
+        dict(response_generation_quality)
+        if isinstance(response_generation_quality, dict)
+        else {}
+    )
+    trace["latent_cortex_public_output_quality"] = dict(quality)
+    trace["latent_cortex_final_public_quality_hash_match"] = bool(
+        response_generation_quality.get("text_sha256")
+        and response_generation_quality.get("text_sha256")
+        == quality.get("text_sha256")
+    )
+    if quality.get("passed") is not True:
+        trace["latent_cortex_public_output_quality_failure"] = (
+            "public_output_quality_failed:"
+            + ",".join(str(reason) for reason in quality.get("reasons") or ["unknown"])
+        )[:500]
+    else:
+        trace.pop("latent_cortex_public_output_quality_failure", None)
+    return quality
+
+
 def _build_live_turn_contract_payload(
     *,
     desktop_required: bool,
@@ -5072,7 +5114,7 @@ def _build_live_turn_contract_payload(
         if isinstance(raw_latent_output_quality, dict)
         else {}
     )
-    latent_cortex_output_quality_proven = bool(
+    latent_cortex_raw_output_quality_proven = bool(
         raw_latent_output_quality.get("schema")
         == "aura.latent_output_quality.v1"
         and raw_latent_output_quality.get("policy")
@@ -5081,6 +5123,109 @@ def _build_live_turn_contract_payload(
         and _sha256(raw_latent_output_quality.get("text_sha256"))
         and _sha256(raw_latent_output_quality.get("objective_sha256"))
         and raw_latent_output_quality.get("reasons") == []
+    )
+    raw_final_output_quality = trace.get("latent_cortex_final_output_quality")
+    latent_cortex_final_output_quality = (
+        dict(raw_final_output_quality)
+        if isinstance(raw_final_output_quality, dict)
+        else {}
+    )
+    latent_cortex_final_output_quality_proven = bool(
+        latent_cortex_final_output_quality.get("schema")
+        == "aura.latent_output_quality.v1"
+        and latent_cortex_final_output_quality.get("policy")
+        == "resident_latent_product_quality_v1"
+        and latent_cortex_final_output_quality.get("passed") is True
+        and _sha256(latent_cortex_final_output_quality.get("text_sha256"))
+        and _sha256(latent_cortex_final_output_quality.get("objective_sha256"))
+        and latent_cortex_final_output_quality.get("objective_sha256")
+        == raw_latent_output_quality.get("objective_sha256")
+        and latent_cortex_final_output_quality.get("reasons") == []
+    )
+    raw_public_output_quality = trace.get("latent_cortex_public_output_quality")
+    latent_cortex_public_output_quality = (
+        dict(raw_public_output_quality)
+        if isinstance(raw_public_output_quality, dict)
+        else {}
+    )
+    latent_cortex_public_output_quality_proven = bool(
+        latent_cortex_public_output_quality.get("schema")
+        == "aura.latent_output_quality.v1"
+        and latent_cortex_public_output_quality.get("policy")
+        == "resident_latent_product_quality_v1"
+        and latent_cortex_public_output_quality.get("passed") is True
+        and _sha256(latent_cortex_public_output_quality.get("text_sha256"))
+        and _sha256(latent_cortex_public_output_quality.get("objective_sha256"))
+        and latent_cortex_public_output_quality.get("objective_sha256")
+        == raw_latent_output_quality.get("objective_sha256")
+        and latent_cortex_public_output_quality.get("reasons") == []
+    )
+    raw_surface_receipt_for_quality = trace.get(
+        "live_mind_surface_control_receipt"
+    )
+    raw_surface_receipt_for_quality = (
+        dict(raw_surface_receipt_for_quality)
+        if isinstance(raw_surface_receipt_for_quality, dict)
+        else {}
+    )
+    raw_final_quality_hash_match = bool(
+        trace.get("latent_cortex_raw_final_quality_hash_match")
+        and raw_latent_output_quality.get("text_sha256")
+        == latent_cortex_final_output_quality.get("text_sha256")
+    )
+    raw_public_quality_hash_match = bool(
+        raw_latent_output_quality.get("text_sha256")
+        and raw_latent_output_quality.get("text_sha256")
+        == latent_cortex_public_output_quality.get("text_sha256")
+    )
+    final_public_quality_hash_match = bool(
+        trace.get("latent_cortex_final_public_quality_hash_match")
+        and latent_cortex_final_output_quality.get("text_sha256")
+        == latent_cortex_public_output_quality.get("text_sha256")
+    )
+    quality_mutation_ledger = merge_text_mutations(
+        raw_surface_receipt_for_quality.get("text_mutations"),
+        trace.get("text_mutations"),
+    )
+    latent_cortex_raw_final_mutation_chain = verify_text_mutation_chain(
+        raw_surface_receipt_for_quality.get("text_mutations"),
+        before_sha256=raw_latent_output_quality.get("text_sha256"),
+        after_sha256=latent_cortex_final_output_quality.get("text_sha256"),
+    )
+    latent_cortex_final_public_mutation_chain = verify_text_mutation_chain(
+        quality_mutation_ledger,
+        before_sha256=latent_cortex_final_output_quality.get("text_sha256"),
+        after_sha256=latent_cortex_public_output_quality.get("text_sha256"),
+    )
+    latent_cortex_output_mutation_chain = verify_text_mutation_chain(
+        quality_mutation_ledger,
+        before_sha256=raw_latent_output_quality.get("text_sha256"),
+        after_sha256=latent_cortex_public_output_quality.get("text_sha256"),
+    )
+    raw_final_quality_transition_proven = bool(
+        raw_final_quality_hash_match
+        or (
+            latent_cortex_raw_final_mutation_chain.get("passed") is True
+            and latent_cortex_raw_final_mutation_chain.get("chain_length", 0) > 0
+        )
+    )
+    final_public_quality_transition_proven = bool(
+        final_public_quality_hash_match
+        or (
+            latent_cortex_final_public_mutation_chain.get("passed") is True
+            and latent_cortex_final_public_mutation_chain.get("chain_length", 0) > 0
+        )
+    )
+    latent_cortex_output_quality_proven = bool(
+        latent_cortex_raw_output_quality_proven
+        and latent_cortex_final_output_quality_proven
+        and latent_cortex_public_output_quality_proven
+        and raw_final_quality_transition_proven
+        and final_public_quality_transition_proven
+        and (
+            raw_public_quality_hash_match
+            or latent_cortex_output_mutation_chain.get("passed") is True
+        )
     )
     latent_cortex_receipt = {
         key: raw_latent_receipt.get(key)
@@ -5204,6 +5349,7 @@ def _build_live_turn_contract_payload(
                 "surface_quality_gate_attempts",
                 "surface_quality_gate_reasons",
                 "surface_quality_gate_error",
+                "latent_final_output_quality",
                 "generation_max_tokens",
                 "caller_requested_max_tokens",
                 "adaptive_suggested_max_tokens",
@@ -5452,6 +5598,33 @@ def _build_live_turn_contract_payload(
         "latent_cortex_failure_reason": latent_cortex_failure_reason,
         "latent_cortex_identity_bound": latent_cortex_identity_bound,
         "latent_cortex_output_quality_proven": latent_cortex_output_quality_proven,
+        "latent_cortex_raw_output_quality_proven": (
+            latent_cortex_raw_output_quality_proven
+        ),
+        "latent_cortex_final_output_quality_proven": (
+            latent_cortex_final_output_quality_proven
+        ),
+        "latent_cortex_public_output_quality_proven": (
+            latent_cortex_public_output_quality_proven
+        ),
+        "latent_cortex_raw_final_quality_hash_match": (
+            raw_final_quality_hash_match
+        ),
+        "latent_cortex_raw_public_quality_hash_match": (
+            raw_public_quality_hash_match
+        ),
+        "latent_cortex_final_public_quality_hash_match": (
+            final_public_quality_hash_match
+        ),
+        "latent_cortex_final_output_quality": latent_cortex_final_output_quality,
+        "latent_cortex_public_output_quality": latent_cortex_public_output_quality,
+        "latent_cortex_raw_final_mutation_chain": (
+            latent_cortex_raw_final_mutation_chain
+        ),
+        "latent_cortex_final_public_mutation_chain": (
+            latent_cortex_final_public_mutation_chain
+        ),
+        "latent_cortex_output_mutation_chain": latent_cortex_output_mutation_chain,
         "latent_cortex_path_proven": latent_cortex_path_proven,
         "latent_cortex_final_text_transformed": bool(
             trace.get("latent_cortex_final_text_transformed")
@@ -6573,6 +6746,16 @@ async def _run_cognitive_engine_chat_turn(
                 ),
                 "latent_cortex_final_text_transformed": bool(
                     metadata.get("latent_cortex_final_text_transformed", False)
+                ),
+                "latent_cortex_final_output_quality": (
+                    dict(metadata.get("latent_cortex_final_output_quality") or {})
+                    if isinstance(
+                        metadata.get("latent_cortex_final_output_quality"), dict
+                    )
+                    else {}
+                ),
+                "latent_cortex_raw_final_quality_hash_match": bool(
+                    metadata.get("latent_cortex_raw_final_quality_hash_match", False)
                 ),
                 "latent_cortex_receipt": (
                     dict(raw_latent_receipt)
@@ -16463,6 +16646,11 @@ async def api_chat_regenerate(
             if reply_text:
                 regen_lane = _collect_conversation_lane_status()
                 reply_source = str(_regen_turn_trace.get("response_path") or "cognitive_engine")
+                _bind_public_latent_output_quality(
+                    _regen_turn_trace,
+                    user_message=user_msg,
+                    reply_text=str(reply_text),
+                )
                 regen_contract = _regen_live_turn_contract(
                     lane_status=regen_lane,
                     response_confidence="high",
@@ -16559,19 +16747,63 @@ async def api_chat_regenerate(
                 )
             reply_text = await orch.process_user_input_priority(user_msg, origin="user", timeout_sec=foreground_timeout)
 
+        _pre_regen_stabilization_reply = str(reply_text or "")
         reply_text = await _stabilize_user_facing_reply(
             user_msg,
             reply_text,
             desktop_cognitive_engine_required=desktop_requires_cognitive_engine,
             protected_foreground_lane=desktop_requires_cognitive_engine,
         )
+        _append_turn_text_mutation(
+            _regen_turn_trace,
+            stage="chat.regenerate_stabilization",
+            method="stabilize_user_facing_reply",
+            reasons=["regenerate_final_stabilization"],
+            before=_pre_regen_stabilization_reply,
+            after=reply_text,
+            deterministic=False,
+        )
+        reply_text = _enforce_final_requested_output_contract(
+            _regen_turn_trace,
+            user_message=user_msg,
+            reply_text=str(reply_text or ""),
+        )
+        _bind_public_latent_output_quality(
+            _regen_turn_trace,
+            user_message=user_msg,
+            reply_text=str(reply_text or ""),
+        )
         response_data = {"response": reply_text or "…", "regenerated": True}
         if desktop_requires_cognitive_engine:
-            response_data["live_turn_contract"] = _regen_live_turn_contract(
+            final_regen_contract = _regen_live_turn_contract(
                 response_confidence="high",
                 status=str(_regen_turn_trace.get("response_path") or "cognitive_engine"),
                 reply_source=str(_regen_turn_trace.get("response_path") or "cognitive_engine"),
             )
+            if not bool(final_regen_contract.get("full_mind_path")):
+                logger.error(
+                    "Regenerated reply failed its final full-mind/public-text contract "
+                    "(missing=%s).",
+                    ",".join(
+                        final_regen_contract.get("full_mind_missing_proofs") or ()
+                    )
+                    or "unknown",
+                )
+                return JSONResponse(
+                    {
+                        "response": (
+                            "I could not verify the complete regenerated reply, so I "
+                            "failed closed instead of displaying partial text."
+                        ),
+                        "status": "regenerate_full_mind_contract_not_proven",
+                        "reason": "regenerate_full_mind_contract_not_proven",
+                        "response_confidence": "failed_closed",
+                        "live_turn_contract": final_regen_contract,
+                        "regenerated": False,
+                    },
+                    status_code=200,
+                )
+            response_data["live_turn_contract"] = final_regen_contract
 
         async with _get_convo_lock():
             if _conversation_log:
@@ -20058,6 +20290,11 @@ async def api_chat(
             )
 
         _final_reply = _enforce_final_requested_output_contract(
+            _live_turn_trace,
+            user_message=_semantic_user_message,
+            reply_text=_final_reply,
+        )
+        _bind_public_latent_output_quality(
             _live_turn_trace,
             user_message=_semantic_user_message,
             reply_text=_final_reply,

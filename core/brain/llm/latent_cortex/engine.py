@@ -1651,17 +1651,63 @@ class LatentCortexEngine:
         decision = "accepted"
         rescales = 0
         comparison: dict[str, Any] = {}
+        magnitude_history: list[dict[str, Any]] = []
+        behavioral_evaluated = False
         # Bounded by construction: one measurement per rescale attempt plus
         # the initial one; the final regressed pass erases ΔW and exits.
-        for _attempt in range(max_rescales + 1):
-            adapted = canaries.measure(
-                lambda probe_tokens: self._canary_logits(probe_tokens, budget)
+        for attempt in range(max_rescales + 1):
+            try:
+                magnitude = fast_weights.effective_delta_metrics()
+            except _LATENT_PHASE_ERRORS as exc:
+                magnitude = {
+                    "schema": "aura.fast_weight_delta_magnitude.v1",
+                    "finite": False,
+                    "layer_count": len(fast_weights.handles),
+                    "max_effective_delta_rms": None,
+                    "layers": [],
+                    "error_class": type(exc).__name__,
+                }
+            max_delta_rms = magnitude.get("max_effective_delta_rms")
+            structural_regression = bool(
+                magnitude.get("finite") is not True
+                or isinstance(max_delta_rms, bool)
+                or not isinstance(max_delta_rms, (int, float))
+                or float(max_delta_rms)
+                > float(cfg.canary_max_effective_delta_rms)
             )
-            comparison = compare_canaries(
-                baseline,
-                adapted,
-                max_logprob_drop=cfg.canary_max_logprob_drop,
+            magnitude_history.append(
+                {
+                    "attempt": attempt + 1,
+                    **magnitude,
+                    "threshold_effective_delta_rms": round(
+                        float(cfg.canary_max_effective_delta_rms), 12
+                    ),
+                    "structural_regression": structural_regression,
+                }
             )
+            if structural_regression:
+                comparison = {
+                    "items": [],
+                    "regressed": [
+                        "effective_delta_rms"
+                        if magnitude.get("finite") is True
+                        else "effective_delta_measurement"
+                    ],
+                    "max_drop": 0.0,
+                    "threshold_logprob_drop": float(
+                        cfg.canary_max_logprob_drop
+                    ),
+                }
+            else:
+                adapted = canaries.measure(
+                    lambda probe_tokens: self._canary_logits(probe_tokens, budget)
+                )
+                behavioral_evaluated = True
+                comparison = compare_canaries(
+                    baseline,
+                    adapted,
+                    max_logprob_drop=cfg.canary_max_logprob_drop,
+                )
             if not comparison["regressed"]:
                 break
             if rescales >= max_rescales:
@@ -1680,8 +1726,13 @@ class LatentCortexEngine:
             receipt.flag("fast_weight_canary_rescaled")
         receipt.fast_weight_canaries = {
             "evaluated": True,
+            "behavioral_evaluated": behavioral_evaluated,
             "decision": decision,
             "rescales": rescales,
+            "threshold_effective_delta_rms": round(
+                float(cfg.canary_max_effective_delta_rms), 12
+            ),
+            "delta_magnitude_history": magnitude_history,
             **comparison,
         }
         return decision

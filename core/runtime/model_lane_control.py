@@ -3138,10 +3138,18 @@ class StandaloneModelLaneLease:
         self.inherited = inherited
         self._released = False
 
+    @property
+    def active(self) -> bool:
+        """Whether this process still owns or validly inherits the load lease."""
+
+        return not self._released
+
     def release(self, *, reason: str = "standalone_model_tool_finished") -> bool:
-        if self._released or self.inherited or self.controller is None or self.decision is None:
+        if self._released:
             return False
         self._released = True
+        if self.inherited or self.controller is None or self.decision is None:
+            return False
         return self.controller.release_owner_sync(
             self.decision.owner_id,
             fencing_token=self.decision.fencing_token,

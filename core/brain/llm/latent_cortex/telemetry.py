@@ -148,10 +148,22 @@ class LatentTelemetry:
         """The functional delta the adapted weights produced on protected probes."""
         if not self.enabled or not canary_receipt:
             return
+        magnitude_history = canary_receipt.get("delta_magnitude_history")
+        final_magnitude = (
+            magnitude_history[-1]
+            if isinstance(magnitude_history, list) and magnitude_history
+            else {}
+        )
         self.fast_weight_functional_delta = {
             "decision": canary_receipt.get("decision"),
             "max_drop": canary_receipt.get("max_drop"),
             "rescales": canary_receipt.get("rescales"),
+            "max_effective_delta_rms": final_magnitude.get(
+                "max_effective_delta_rms"
+            ),
+            "threshold_effective_delta_rms": canary_receipt.get(
+                "threshold_effective_delta_rms"
+            ),
         }
 
     def _anomaly(self, **payload: Any) -> None:

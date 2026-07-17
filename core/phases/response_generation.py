@@ -14,6 +14,7 @@ from core.brain.live_mind_contract import (
     merge_text_mutations,
     normalize_live_mind_surface_control_receipt,
 )
+from core.brain.llm.latent_cortex.output_quality import evaluate_latent_output
 from core.brain.llm.context_assembler import ContextAssembler
 from core.container import ServiceContainer
 from core.conversation.response_reliability import (
@@ -2558,12 +2559,24 @@ class ResponseGenerationPhase(BasePhase):
                     pre_voice_shape = cleaned_response
                     shaped = _sve.shape_response(cleaned_response)
                     if isinstance(shaped, list):
-                        # Multi-message: use first as primary, queue rest as follow-ups
-                        cleaned_response = shaped[0]
-                        _shaped_messages = shaped[1:]
+                        # A request has one transactional response. Splitting that
+                        # response into delayed OutputGate emissions made the HTTP
+                        # payload contain only the first chunk, so complete answers
+                        # appeared visually clipped and later chunks could be lost on
+                        # navigation or shutdown. Preserve the voice-shaped chunks,
+                        # but deliver all of them in the primary response.
+                        shaped_parts = [
+                            str(part).strip() for part in shaped if str(part).strip()
+                        ]
+                        cleaned_response = (
+                            "\n\n".join(shaped_parts)
+                            if shaped_parts
+                            else pre_voice_shape
+                        )
+                        _shaped_messages = None
                         logger.debug(
-                            "🗣️ [SubstrateVoice] Shaped into %d messages",
-                            len(shaped),
+                            "🗣️ [SubstrateVoice] Rejoined %d shaped chunks into one complete response",
+                            len(shaped_parts),
                         )
                     else:
                         cleaned_response = shaped
@@ -2631,6 +2644,79 @@ class ResponseGenerationPhase(BasePhase):
             if is_background and not cleaned_response:
                 return state
 
+            final_latent_quality: dict[str, Any] = {}
+            if latent_trace.get("latent_cortex_succeeded") is True:
+                latent_receipt = latent_trace.get("latent_cortex_receipt")
+                latent_receipt = (
+                    dict(latent_receipt)
+                    if isinstance(latent_receipt, dict)
+                    else {}
+                )
+                final_latent_quality = evaluate_latent_output(
+                    cleaned_response,
+                    generated_tokens=latent_receipt.get(
+                        "decode_generated_tokens"
+                    ),
+                    termination=latent_receipt.get("decode_termination"),
+                    objective=(
+                        str(runtime_context.get("visible_user_message") or "").strip()
+                        or str(objective or "").strip()
+                    ),
+                )
+                raw_quality = latent_receipt.get("output_quality")
+                raw_quality = (
+                    dict(raw_quality) if isinstance(raw_quality, dict) else {}
+                )
+                latent_trace["latent_cortex_final_output_quality"] = dict(
+                    final_latent_quality
+                )
+                latent_trace[
+                    "latent_cortex_raw_final_quality_hash_match"
+                ] = bool(
+                    raw_quality.get("text_sha256")
+                    == final_latent_quality.get("text_sha256")
+                )
+                if final_latent_quality.get("passed") is not True:
+                    failure_reasons = list(
+                        final_latent_quality.get("reasons") or ["unknown"]
+                    )
+                    failure_reason = (
+                        "final_output_quality_failed:" + ",".join(
+                            str(reason) for reason in failure_reasons
+                        )
+                    )
+                    latent_trace.update(
+                        {
+                            "latent_cortex_succeeded": False,
+                            "latent_cortex_fallback_used": True,
+                            "latent_cortex_failure_reason": failure_reason,
+                        }
+                    )
+                    state.response_modifiers.update(latent_trace)
+                    state.response_modifiers.update(
+                        {
+                            "model_retry_suppressed": True,
+                            "generation_failure_class": failure_reason[:120],
+                            "response_path": (
+                                "cognitive_engine_latent_owner_exhausted"
+                            ),
+                        }
+                    )
+                    record_degradation(
+                        "latent_cortex.final_output_quality",
+                        RuntimeError(failure_reason),
+                        action=(
+                            "discarded transformed latent text and refused a second model owner"
+                        ),
+                        severity="degraded",
+                    )
+                    logger.error(
+                        "Recursive Latent Cortex final visible text failed its "
+                        "hash-bound quality contract (%s); no second generation.",
+                        ",".join(str(reason) for reason in failure_reasons),
+                    )
+                    return state
+
             surface_control_receipt: dict[str, Any] = {}
             candidate = generation_metadata.get("surface_control_receipt")
             if isinstance(candidate, dict):
@@ -2650,6 +2736,18 @@ class ResponseGenerationPhase(BasePhase):
             surface_control_receipt["deterministic_repair_applied"] = any(
                 bool(item.get("deterministic")) for item in merged_mutations
             )
+            if final_latent_quality:
+                surface_control_receipt["surface_quality_gate_enabled"] = True
+                surface_control_receipt["surface_quality_gate_passed"] = bool(
+                    final_latent_quality.get("passed") is True
+                )
+                surface_control_receipt["surface_quality_gate_attempts"] = 1
+                surface_control_receipt["surface_quality_gate_reasons"] = list(
+                    final_latent_quality.get("reasons") or []
+                )
+                surface_control_receipt[
+                    "latent_final_output_quality"
+                ] = dict(final_latent_quality)
             state.response_modifiers["live_mind_surface_control_receipt"] = dict(
                 surface_control_receipt
             )

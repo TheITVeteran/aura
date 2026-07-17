@@ -128,6 +128,10 @@ class FastWeightsConfig:
     # and re-measure (up to canary_rescale_attempts), then erase entirely.
     canary_enabled: bool = True
     canary_max_logprob_drop: float = 0.5
+    # Structural backstop for a canary battery's inevitable blind spots. The
+    # engine computes the exact RMS of s*U@V.T from rank-sized Gram matrices;
+    # an update above this ceiling is rescaled or erased before any decode.
+    canary_max_effective_delta_rms: float = 0.05
     canary_rescale_attempts: int = 2
     canary_max_tokens: int = 24
 
@@ -444,6 +448,15 @@ class CortexConfig:
         ):
             problems.append(
                 "fast_weights.canary_max_logprob_drop must be finite and inside (0, 10]"
+            )
+        if (
+            not finite(self.fast_weights.canary_max_effective_delta_rms)
+            or not 0.0
+            < self.fast_weights.canary_max_effective_delta_rms
+            <= 10.0
+        ):
+            problems.append(
+                "fast_weights.canary_max_effective_delta_rms must be finite and inside (0, 10]"
             )
         if not integer_in(self.fast_weights.canary_rescale_attempts, 0, 8):
             problems.append("fast_weights.canary_rescale_attempts outside [0, 8]")

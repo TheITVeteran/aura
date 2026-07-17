@@ -150,7 +150,16 @@ class _TimedOutLatentService(_LatentService):
         raise TimeoutError("resident latent deadline")
 
 
-def _live_latent_receipt():
+def _live_latent_receipt(text: str, objective: str):
+    from core.brain.llm.latent_cortex.output_quality import evaluate_latent_output
+
+    quality = evaluate_latent_output(
+        text,
+        generated_tokens=96,
+        termination="eos",
+        objective=objective,
+    )
+    assert quality["passed"] is True, quality["reasons"]
     return {
         "episode_id": "episode-live-32b",
         "checkpoint_fingerprint": "a" * 64,
@@ -172,18 +181,11 @@ def _live_latent_receipt():
         "input_token_count": 128,
         "steps_taken": 5,
         "decode_requested_tokens": 512,
-        "decode_generated_tokens": 37,
+        "decode_generated_tokens": 96,
         "decode_termination": "eos",
         "decode_temperature": 0.61,
         "decode_top_p": 0.87,
-        "output_quality": {
-            "schema": "aura.latent_output_quality.v1",
-            "policy": "resident_latent_product_quality_v1",
-            "passed": True,
-            "text_sha256": "3" * 64,
-            "objective_sha256": "4" * 64,
-            "reasons": [],
-        },
+        "output_quality": quality,
         "runtime_identity": {
             "identity_bound": True,
             "launch_mode": "signed_app",
@@ -232,19 +234,45 @@ async def test_depth_worthy_desktop_turn_uses_one_latent_generation(monkeypatch)
     state.cognition.current_origin = "desktop_ui"
     state.cognition.current_mode = CognitiveMode.DELIBERATE
     router = _Router()
+    latent_answer = (
+        "The first failure mode loses identity evidence, while the second duplicates "
+        "generation after admission. I recommend the single-owner boundary because it "
+        "prevents a late result from racing the proof ledger and makes every published "
+        "answer attributable to one process; verify it with fault injection by cancelling "
+        "an in-flight owner and asserting no successor publishes its stale result; force "
+        "a timeout and assert the lease is fenced; then restart the worker and confirm "
+        "exactly one new owner, one result, and one cleanup receipt before serving traffic."
+    )
     latent = _LatentService(
         {
             "ok": True,
-            "text": (
-                "The first failure mode loses identity evidence, while the second "
-                "duplicates generation. I would bind one episode receipt at the phase "
-                "boundary and verify both single invocation and exact runtime identity."
-            ),
-            "receipt": _live_latent_receipt(),
+            "text": latent_answer,
+            "receipt": _live_latent_receipt(latent_answer, objective),
         }
     )
     phase = ResponseGenerationPhase(
         _Container({"llm_router": router, "latent_cortex": latent})
+    )
+
+    class _SplitVoice:
+        def compile_profile(self, **_kwargs):
+            return SimpleNamespace(
+                word_budget=512,
+                tone_override=None,
+                multi_message=True,
+                followup_probability=0.0,
+            )
+
+        def shape_response(self, text):
+            first, rest = text.split(". ", 1)
+            return [first + ".", rest]
+
+        def decide_followup(self, **_kwargs):
+            return SimpleNamespace(should_followup=False)
+
+    monkeypatch.setattr(
+        "core.voice.substrate_voice_engine.get_substrate_voice_engine",
+        lambda: _SplitVoice(),
     )
     monkeypatch.setattr(
         "core.phases.response_generation.ContextAssembler.build_messages",
@@ -276,6 +304,71 @@ async def test_depth_worthy_desktop_turn_uses_one_latent_generation(monkeypatch)
     assert result.response_modifiers["latent_cortex_fallback_used"] is False
     assert result.response_modifiers["latent_cortex_identity_bound"] is True
     assert result.response_modifiers["live_mind_controls_worker_applied"] is True
+    delivered = result.cognition.working_memory[-1]["content"]
+    assert "restart the worker" in delivered
+    assert "one cleanup receipt before serving traffic." in delivered
+    assert "queued_messages" not in result.response_modifiers
+
+
+@pytest.mark.asyncio
+async def test_final_latent_surface_is_regraded_and_cannot_start_second_owner(
+    monkeypatch,
+):
+    objective = (
+        "Compare early ownership with late deduplication, choose the stronger design, "
+        "and explain how to verify cancellation and timeout faults."
+    )
+    raw_answer = (
+        "Early ownership is stronger, whereas late deduplication permits competing "
+        "generations to race. I recommend the early boundary because it keeps one "
+        "publisher and one proof ledger entry. Verify it with fault injection: cancel "
+        "the active owner and assert no stale publication, then force a timeout and "
+        "check that the fenced successor publishes exactly one clean result."
+    )
+    malformed_final = (
+        "<request> Compare early ownership with late deduplication, choose the stronger "
+        "design, and explain how to verify cancellation and timeout faults. </request> "
+        "Both designs process work."
+    )
+    state = AuraState()
+    state.cognition.current_objective = objective
+    state.cognition.current_origin = "desktop_ui"
+    state.cognition.current_mode = CognitiveMode.DELIBERATE
+    router = _Router()
+    latent = _LatentService(
+        {
+            "ok": True,
+            "text": raw_answer,
+            "receipt": _live_latent_receipt(raw_answer, objective),
+        }
+    )
+    phase = ResponseGenerationPhase(
+        _Container({"llm_router": router, "latent_cortex": latent})
+    )
+    monkeypatch.setattr(
+        "core.phases.response_generation.ContextAssembler.build_messages",
+        lambda *_args, **_kwargs: [{"role": "user", "content": objective}],
+    )
+    monkeypatch.setattr(
+        "core.phases.response_generation.get_executive_guard",
+        lambda: SimpleNamespace(align=lambda text: (text, False, [])),
+    )
+    monkeypatch.setattr(phase, "_clean_response", lambda *_args, **_kwargs: malformed_final)
+
+    result = await phase.execute(state, context=_latent_context(objective))
+
+    assert result is state
+    assert len(latent.calls) == 1
+    assert router.calls == []
+    assert result.response_modifiers["latent_cortex_succeeded"] is False
+    assert result.response_modifiers["model_retry_suppressed"] is True
+    assert result.response_modifiers["response_path"] == (
+        "cognitive_engine_latent_owner_exhausted"
+    )
+    quality = result.response_modifiers["latent_cortex_final_output_quality"]
+    assert quality["passed"] is False
+    assert "prompt_echo_contamination" in quality["reasons"]
+    assert "protocol_artifact_leakage" in quality["reasons"]
 
 
 @pytest.mark.asyncio

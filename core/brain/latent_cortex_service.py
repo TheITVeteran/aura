@@ -126,6 +126,7 @@ class LatentCortexService:
             "fast_weights_opt_steps": fast_weight_steps,
             "fast_weights_lr": 0.005,
             "fast_weights_max_layers": fast_weight_layers,
+            "fast_weights_canary_max_delta_rms": 0.05,
             "decode_max_tokens": 512,
         }
         budget = {
@@ -515,7 +516,9 @@ class LatentCortexService:
                 != receipt.get("fast_weight_optimized_steps", 0) + 1
                 or any(
                     later >= earlier
-                    for earlier, later in zip(loss_trail, loss_trail[1:])
+                    for earlier, later in zip(
+                        loss_trail, loss_trail[1:], strict=False
+                    )
                 )
             ):
                 errors.append("fast_weight_loss_descent_unproven")

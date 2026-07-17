@@ -16,9 +16,10 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **Checkpoint 102 is the current
-  source candidate in the `main` worktree; Checkpoint 101 is pushed at
-  `d44c5db3`, and exact rebuilt-app proof remains open after CP102**. Checkpoint 80
+- Current bounded implementation milestone: **Checkpoint 119 is the current
+  source candidate in the `main` worktree; related resident-32B consolidation
+  and image-generation checkpoints are pushed through `86d27cf0`, and exact
+  rebuilt-app public-output proof remains open after CP119**. Checkpoint 80
   made cached
   readiness truthful and fast,
   removed synchronous Phi/Eternal maintenance from the foreground cycle, and
@@ -200,8 +201,22 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   all line-search candidates failed to improve its proxy, so the success
   contract correctly rejected the otherwise complete decode. Checkpoint 102
   replaces that optimizer with receipt-bound resident-scale preconditioning.
-  Exact CP102 app proof is still open, so no capability or intelligence-gain
-  credit is awarded.
+  CP103-118 then established the decode bridge, compound answer discipline,
+  cleanup reserve, repetition/EOS/sentence-grace controls, verifier-guided
+  branch selection, typed organ ingress, consolidation and anti-interference
+  machinery, neural bytecode, GWT coupling, role lesions, pre-action execution
+  control, retrieval-to-fast-weight compilation, and the recurrence-native
+  training objective. The signed resident-32B CP106 run is the first authentic
+  full-stack latent answer. CP118 retains real mechanics evidence but its
+  product PASS is invalidated: the delivered reply leaked protocol/request
+  text, omitted architecture selection and the requested fault-verification
+  plan, and differed from its certified text hash. CP119 independently regrades
+  the exact post-cognition and public reply, requires contiguous SHA-256
+  raw-to-final and final-to-public mutation chains for every changed byte,
+  rejoins all voice-shaped answer chunks
+  into one transactional response, and removes the chat/Neural fixed-height
+  clipping owners. Exact rebuilt-app reproof is open, so CP118 earns no
+  complete-answer, capability, frontier, or release credit.
   A separate non-current `fable-improvement-pass` endurance attempt is retained
   as failed evidence: it stopped at 36/200 turns, served 31 timeout responses,
   had p50 latency 213.245 seconds, repeatedly reported a 503 conversation lane
@@ -211,7 +226,7 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   release, and causal-proof obligations remain open unless their rows
   explicitly close.
 - Overall completion percentage: **27% evidence-weighted planning estimate at
-  Checkpoint 102**. The exact
+  Checkpoint 119**. The exact
   Checkpoint 80 app earns bounded live credit for readiness, health, base boot,
   and one-attempt chat latency, but not output quality, sustained load, GUI
   frame SLO, portability, semantic review, release, or soak. The newly
@@ -223,16 +238,16 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   `PROGRESS-CONTROL-001` and `SCOPE-001` must replace the manual estimate with a
   generated denominator; new obligations increase it, regressions reopen it,
   and source-green/live-open work never receives full closure credit.
-  CP92-102 close bounded evidence-integrity, runtime-convergence, and initial
+  CP92-119 close bounded evidence-integrity, runtime-convergence, and initial
   latent ownership/lifecycle work already present in the denominator. The full
   Anima Rationis program adds causal ingress, consolidation, anti-interference,
   equal-compute science, live 32B, and independent certification obligations;
-  source mechanics do not receive capability credit. CP102 has no
-  exact rebuilt-app, portability,
+  source mechanics do not receive capability credit. CP119 has no exact
+  rebuilt-app, external-frontier, portability,
   release, or soak credit yet and therefore does not move the rounded
   percentage.
 - Total checkpoint forecast: **approximately 292-399 total checkpoints for the
-  expanded program, with 102 checkpoints and approximately 190-297 remaining before
+  expanded program, with 119 checkpoints and approximately 173-280 remaining before
   final soak/release closure**. The Recursive Latent Cortex / Anima Rationis
   requirement adds **40-56 total checkpoints** for independent foundation
   review; seven-mechanism hardening; exact compute and lifecycle accounting;
@@ -323,14 +338,14 @@ Status rules:
 | `RLC-LIFECYCLE-001` | `IN PROGRESS (CANONICAL REQUEST OWNERSHIP SOURCE GREEN; CANCELLATION/CRASH MATRIX OPEN) 2026-07-15` | Put every episode under the canonical model request lock, foreground owner, durable lane fence, generation accounting, timeout/cancel drain, process-death detection, cache cleanup, integrity-triggered recycle, shutdown, and restart contracts. Prove no overlap with generation, adapters, training, health probes, unload, or another latent episode. | `RUNTIME-001`, `FOREGROUND-LATENCY-001`, `RLC-MECHANICS-001`; CP95 |
 | `RLC-COMPUTE-001` | `IN PROGRESS (HARD LAYER-APP CAP SOURCE GREEN; COMPLETE FLOP/ENERGY LEDGER OPEN) 2026-07-15` | Build exact or conservatively bounded per-operation accounting for prefill, recurrence, probes, branch exchange, LM-head proxy work, forward/backward optimizer passes, fast weights, persistence, decode, verifier/tool calls, wall time, memory, and energy. Reserve completion capacity, prevent atomic overshoot, publish estimator identity/error bounds, and use the same ledger in admission and experiments. | `RLC-LIFECYCLE-001`, `PERF-001`, `RLC-FRONTIER-001`; CP95 |
 | `RLC-CAUSAL-INGRESS-001` | `OPEN 2026-07-15` | Wire governed memory retrieval, live perception/multimodal embeddings, world-model beliefs, body/allostasis, goals/Will preferences, tool observations, uncertainty, autobiographical continuity, and canonical self-model state directly into typed slots. Prove each ingress is fresh, attributable, causally used, ablatable/restorable, privacy-scoped, and cannot bypass authority or inject executable text. | `RLC-WORKSPACE-001`, `MEMORY-001`, `SUBSTRATE-001`, `ACTION-SPINE-001`, mirror/self-model program |
-| `RLC-RUNTIME-001` | `IN PROGRESS (IDENTITY-BOUND SINGLE-GENERATION DESKTOP ROUTE SOURCE GREEN; EXACT APP OPEN) 2026-07-16` | Keep the complete mechanism stack default-on for admitted live deep reasoning, make service health/readiness truthful, validate complete receipts, contain failures, preserve ordinary fallback only after proven cleanup, and route depth-worthy CognitiveEngine work through the exact installed-app resident 32B without duplicate generic generation. CP97 deterministically selects the foreground desktop route after full-context assembly, applies and receipts per-episode steering inside the exclusive resident worker section, suppresses downstream model retries/replacement after selection, independently rebinds the exact IPC request payload, and propagates bounded worker/model/source/app proof through CognitiveEngine and `/api/chat`. | `RLC-LIFECYCLE-001`, `RUNTIME-001`, `CHAT-001`; CP95, CP97 |
-| `RLC-CONSOLIDATION-001` | `OPEN 2026-07-15` | Complete the generated-synapse learning loop: transactional candidate queue, deduplication, evidence accumulation, trusted consumer, replay buffer, train/validation/holdout splits, promotion into the existing LoRA/CRSM pipeline, independent regression gates, signed publish, installed-worker activation, rollback, quarantine, retention, and outcome monitoring. A snapshot sitting in a queue is not learning. | `RLC-FAST-WEIGHTS-001`, `ADAPT-001`, `EFFECT-001` |
-| `RLC-ANTI-INTERFERENCE-001` | `OPEN 2026-07-15` | Prevent schedule/adapter/fast-weight consolidation from catastrophic forgetting, hidden specialization, benchmark overfit, identity drift, governance weakening, latency/resource regression, or cross-domain interference through stratified replay, canaries, non-inferiority margins, lesion tests, rollback, and longitudinal revalidation. | `RLC-CONSOLIDATION-001`, `CAPABILITY-CERT-001`, `IDENTITY-001` |
-| `RLC-EXPERIMENTS-001` | `IN PROGRESS (ALPHA-BOUND PAIRED GATE + COUNTERBALANCED CONTROL SOURCE GREEN; REAL RUNS OPEN) 2026-07-16` | Execute recurrence sweeps, depth extrapolation, slot ablation plus same-episode restoration, virtual width, gradient-vs-random optimization, fast-weight sham, schedule lesions, mechanism factorial ablations, scaling, null/common-driver controls, and restoration on frozen fresh tasks. CP95 derives family and pooled effect bounds from the configured alpha, applies simultaneous family bounds, and records deterministic counterbalanced arm order. Use repeated seeds, preregistered metrics, multiplicity correction, effect floors, exact receipts, and null-result-driven redesign. | `RLC-FRONTIER-001`, `TEST-DEPTH-001`; CP95 |
+| `RLC-RUNTIME-001` | `IN PROGRESS (SIGNED 32B SINGLE-OWNER MECHANICS GREEN; EXACT PUBLIC-OUTPUT REPROOF OPEN) 2026-07-17` | Keep the complete mechanism stack default-on for admitted live deep reasoning, make service health/readiness truthful, validate complete receipts, contain failures, preserve ordinary fallback only after proven cleanup, and route depth-worthy CognitiveEngine work through the exact installed-app resident 32B without duplicate generic generation. CP106 produced the first authentic live answer and CP118 executed the expanded organ head, but CP118's product verdict is revoked because the public bytes were malformed and differed from the graded hash. CP119 independently grades raw, post-cognition, and exact API text; requires contiguous raw-to-final and final-to-public cryptographic mutation chains; prevents a second owner after late rejection; and rejoins voice-shaped chunks. Rebuild/sign and repeat the live compound, cancellation, timeout, restart, health, Neural, and terminal campaign before closure. | `RLC-LIFECYCLE-001`, `RUNTIME-001`, `CHAT-001`; CP95-119 |
+| `RLC-CONSOLIDATION-001` | `IN PROGRESS (REAL FUSED-32B TRANSACTION GREEN; RETAINED GAIN/LONGITUDINAL PROMOTION OPEN) 2026-07-17` | Complete the generated-synapse learning loop: transactional candidate queue, deduplication, evidence accumulation, trusted consumer, replay buffer, train/validation/holdout splits, promotion into the existing LoRA/CRSM pipeline, independent regression gates, signed publish, installed-worker activation, rollback, quarantine, retention, and outcome monitoring. `latent_consolidation_train_32b_first.json` proves candidate screening, real 32B adapter distillation over layers 16-17, an 11-probe anti-interference PASS, activation, and exact rollback; it intentionally retained no production adapter and measured no held-out gain. Next prove repeated promotion, restart persistence, causal benefit, monitoring, and automatic rollback under regression. A snapshot or rolled-back trial is not completed learning. | `RLC-FAST-WEIGHTS-001`, `ADAPT-001`, `EFFECT-001`; CP107-118 follow-on, commits `01d48e02`/`8b69c518` |
+| `RLC-ANTI-INTERFERENCE-001` | `IN PROGRESS (FIRST 11-PROBE 32B BATTERY GREEN; BROAD/LONGITUDINAL NON-INFERIORITY OPEN) 2026-07-17` | Prevent schedule/adapter/fast-weight consolidation from catastrophic forgetting, hidden specialization, benchmark overfit, identity drift, governance weakening, latency/resource regression, or cross-domain interference through stratified replay, canaries, non-inferiority margins, lesion tests, rollback, and longitudinal revalidation. The first fused-32B transaction passed all 11 configured probes and proved rollback, but one battery and one rolled-back adapter cannot establish broad non-interference. Expand domains, seeds, identity/governance/tool/latency probes, retained activation windows, adversarial tasks, and independent replay. | `RLC-CONSOLIDATION-001`, `CAPABILITY-CERT-001`, `IDENTITY-001`; `latent_consolidation_train_32b_first.json` |
+| `RLC-EXPERIMENTS-001` | `IN PROGRESS (PREREGISTERED 1.5B CAMPAIGN COMPLETE/NEGATIVE; TRAINED-32B REDESIGN CAMPAIGN OPEN) 2026-07-17` | Execute recurrence sweeps, depth extrapolation, slot ablation plus same-episode restoration, virtual width, gradient-vs-random optimization, fast-weight sham, schedule lesions, mechanism factorial ablations, scaling, null/common-driver controls, and restoration on frozen fresh tasks. Seed 20260717 was committed before generation and 72-task arms ran with multiplicity correction: slot causality and all seven factorial latent arms were refuted; gradient/random/off tied; vanilla beat every latent arm on the untrained 1.5B vehicle. The null/regression is binding evidence, not a pass. Build recurrence-native training, then repeat on frozen 1.5B/7B/32B checkpoints across broader fresh tasks, seeds, controls, restoration, and independent replay before reconsidering a gain claim. | `RLC-FRONTIER-001`, `TEST-DEPTH-001`; CP95, `latent_campaign_prereg_20260717.json`, run1/run2 reports |
 | `RLC-BASELINES-001` | `OPEN 2026-07-15` | Implement canonical vanilla resident-32B, longer-token CoT, best-of-N, self-consistency, verifier-search, equivalent-forward-pass, equal-FLOP, equal-latency, and feature-ablation controls with identical prompt information, tools, verifier, cache state, checkpoint, task order, and output limits. No capability claim may use a straw baseline. | `RLC-COMPUTE-001`, `RLC-EXPERIMENTS-001` |
 | `RLC-FRESH-TASKS-001` | `IN PROGRESS (SIGNED TWO-PHASE COMMITMENT CONTRACT SOURCE GREEN; GENERATORS/CAMPAIGNS OPEN) 2026-07-16` | Build post-freeze task commitments and blinded generators across novel algorithms, mathematics, coding, scientific inference, long-horizon planning, calibration, misleading-premise robustness, and real Aura workflows. CP95 enforces architecture freeze before generation, a distinct externally pinned issuer's signed manifest commitment after generation, arm execution only after commitment, and final verification after execution. Add deduplication against training/eval/history, contamination scans, encrypted precommitments, difficulty calibration, immutable task lineage, and real campaigns. | `RLC-EXPERIMENTS-001`, `CAPABILITY-CERT-001`; CP95 |
-| `RLC-FRONTIER-001` | `IN PROGRESS (PRIMARY RAW PACKAGE VERIFICATION SOURCE GREEN; REAL EVIDENCE + RELEASE GATES OPEN) 2026-07-16` | Prove statistically significant, practically meaningful, compute-matched gains of the full integrated resident 32B over vanilla/equal-compute controls, then run contemporaneous external-frontier comparisons under equal information/tools and separately reported compute and latency budgets. CP95 binds producer identity into the evidence hash and requires externally supplied Ed25519 trust pins for distinct task-issuer and verifier roles. CP96 reopens every raw task/output/scorer/verifier/compute/runtime record, rejects unmanifested or linked files, pins the exact local verification kernel separately from the external signer implementation, and separates primary-comparison acceptance from release acceptance. External-model certification now fails closed until comparable provider telemetry exists. Require broad replicated gains, no material domain regression, exact checkpoint/build identity, operation-level compute recomputation, scorer replay, factorial ablations, and a machine-accepted release certificate. | `RLC-BASELINES-001`, `RLC-FRESH-TASKS-001`, `RLC-LIVE32B-001`; CP95-96 |
-| `RLC-LIVE32B-001` | `IN PROGRESS (EXACT IDENTITY/ROUTE SOURCE GREEN; INSTALLED-APP EXECUTION OPEN) 2026-07-16` | Rebuild and launch the installed Aura.app from the exact pushed commit, prove the resident checkpoint is the intended 32B artifact, run every mechanism and full composition through worker/service/CognitiveEngine paths, verify visible answer causality and latency/resource SLOs, inspect Neural and terminal streams, survive cancellation/restart/pressure, and publish immutable live receipts. CP97 provides the exact worker/model/checkpoint/request/source/workspace/shell/app identity and chat-proof contract required to evaluate that campaign, but no live 32B episode has yet earned credit. Tiny/1.5B/7B evidence is engineering/scaling evidence only. | `RLC-RUNTIME-001`, `GUI-001`, `VALIDATE-001`; CP97 |
+| `RLC-FRONTIER-001` | `IN PROGRESS (VERIFIER/RAW PACKAGE SOURCE GREEN; CURRENT GAIN HYPOTHESIS NOT SUPPORTED) 2026-07-17` | Prove statistically significant, practically meaningful, compute-matched gains of the full integrated resident 32B over vanilla/equal-compute controls, then run contemporaneous external-frontier comparisons under equal information/tools and separately reported compute and latency budgets. CP95-96 provide the fail-closed evidence package and verifier boundaries, but the available data do not prove a dividend: the 32B template sweep is statistical parity with vanilla ahead on point estimate, and the preregistered 1.5B factorial campaign has vanilla beating every latent arm. Treat this as a redesign/training result. Require recurrence-native trained checkpoints, broad replicated gains, no material domain regression, exact build identity, recomputed operation-level compute, scorer replay, factorial ablations, externally held trust roots, contemporaneous providers, and a machine-accepted release certificate. | `RLC-BASELINES-001`, `RLC-FRESH-TASKS-001`, `RLC-LIVE32B-001`; CP95-119 |
+| `RLC-LIVE32B-001` | `IN PROGRESS (AUTHENTIC CP106 ANSWER + CP118 MECHANICS + FIRST CONSOLIDATION TRANSACTION; COMPLETE PRODUCT/GAIN CERT OPEN) 2026-07-17` | Rebuild and launch the installed Aura.app from the exact pushed commit, prove the resident checkpoint is the intended 32B artifact, run every mechanism and full composition through worker/service/CognitiveEngine paths, verify visible answer causality and latency/resource SLOs, inspect Neural and terminal streams, survive cancellation/restart/pressure, and publish immutable live receipts. CP106 earns bounded authentic-answer credit. CP118 earns mechanism-only credit after independent invalidation of its malformed public reply. The first fused-32B consolidation transaction proves distill/activate/rollback machinery but no retained gain. CP119 exact-app reproof, broad same-checkpoint controls, recurrence-native training, fault campaigns, latency/resource envelopes, repeated runs, and independent acceptance remain mandatory. Smaller-model evidence never substitutes for this claim. | `RLC-RUNTIME-001`, `GUI-001`, `VALIDATE-001`; CP97-119 |
 | `RLC-SCALING-001` | `OPEN 2026-07-15` | Run frozen 1.5B/7B/32B scaling curves to distinguish architecture mechanics from capability effects, establish recurrence/slot/branch/optimizer scaling laws and resource envelopes, and detect gains that disappear or reverse at resident scale. Never substitute smaller-model success for the 32B release claim. | `RLC-EXPERIMENTS-001`, `RLC-LIVE32B-001` |
 | `RLC-INDEPENDENT-001` | `IN PROGRESS (RAW ARTIFACT RECOMPUTATION + EXTERNAL SIGNING REQUEST SOURCE GREEN; INDEPENDENT SCORE/STATS REIMPLEMENTATION OPEN) 2026-07-16` | Produce a standalone verifier implementation and reproducible evidence bundle; have an independent process/reviewer recompute hashes, task lineage, compute matching, statistics, ablations, and claim tier from raw outputs. CP95 rejects missing trust roots, wrong keys, signature tampering, producer/verifier or issuer/producer role collision, unbound producer identity, stale chronology, and divergent signed evidence. CP96 adds a model-free CLI, strict duplicate-key/non-finite JSON decoding, externally supplied role/key pins, a separately pinned local verification-kernel digest, six bounded canonical JSONL stores, exact raw-byte and structured-receipt rebinding, no-follow stable reads, complete raw-directory membership, deterministic certificates, and an unsigned-bundle preverification request for an externally held Ed25519 key. It does not yet independently reimplement statistics/scorers, reconstruct operation-level compute, verify signed worker-origin receipts, certify ablations, hold real external keys, or accept a live 32B result. | `RLC-FRONTIER-001`, `RELEASE-CONTRACT-001`; CP95-96 |
 | `RLC-CLAIMS-001` | `OPEN 2026-07-15` | Publish exact conclusions for mechanics, trained-checkpoint dynamics, resident-32B capability, broad/frontier gains, limitations, nulls, and non-claims. Documentation, UI, health, Foundry, and release manifests must derive from accepted artifacts and automatically demote stale, mismatched, or superseded evidence. | `RLC-INDEPENDENT-001`, `CLAIMS-001`, `RELEASE-CONTRACT-001` |
@@ -407,6 +422,7 @@ Status rules:
 | `EXTREME-001` | `OPEN` | Train and validate high-level navigation, diagnosis, repair, problem-solving, and assistance in hazardous/extreme simulated environments, then require governed digital-twin and hardware-transfer evidence before physical-world claims. | Capability Addendum 33, `CTX3-EXTREME-*` |
 | `COLLEAGUE-001` | `OPEN` | Validate the resident local synthetic-colleague contract through broad hidden day-in-the-life workflows, proactive precision, privacy, restart/update survival, honest degradation, and low correction burden. | Addendum 30 |
 | `UI-001` | `IN PROGRESS (CP91 VERIFIED-RUNTIME SHELL RECONCILIATION SOURCE GREEN; WHOLE UI AUDIT OPEN) 2026-07-15` | Audit every desktop route, screen, control and state for live-data truth, interaction completeness, accessibility, long text, responsive layout, visual stability, specific recovery, and screenshot evidence. CP91 prevents an already-open shell from silently retaining an older runtime contract: only matching verified signed-app source provenance establishes the loaded revision, and a later verified commit change causes one cache-busted reload while preserving an unsent draft. Prove that transition in the exact app and complete the whole surface audit. | Pass F 11; Matrix 14; `LAUNCH-PROVENANCE-001`; Checkpoint 91 |
+| `UI-LONG-CONTENT-001` | `IN PROGRESS (CP119 DOM/RESPONSIVE GATE GREEN; EXACT REBUILT APP OPEN) 2026-07-17` | Guarantee that complete chat, inline-thinking, Neural Stream, code, table, and diagnostic content is either fully visible or intentionally collapsed behind a persistent accessible control that reveals every byte. CP119 removes the 600px thinking cap and transition race, displays normal Neural payloads up to 8,000 characters in full, gives larger payloads `SHOW ALL`/`COLLAPSE`, prevents responsive resize from hiding both primary panels, and rejoins all voice-shaped answer chunks into one primary delivery. Playwright at 1440x900 and 390x844 proves zero hidden overflow for 12,889-character chat, 11,329-character thinking, 3,990-character normal Neural, and 16,210-character expanded Neural content with zero console errors. Rebuild/sign, repeat through genuine live responses and stream payloads, test code/tables/very long words and accessibility, then retain screenshots and layout metrics under exact provenance. | `UI-001`, `CONVERSATION-001`, `CHAT-DELIVERY-001`, `RLC-RUNTIME-001`; CP119 |
 | `TOPOLOGY-CONSISTENCY-001` | `IN PROGRESS (CP91 SOURCE GREEN; EXACT-APP STRESS/RECOVERY OPEN) 2026-07-15` | Keep mycelial topology, physical module maps, centrality, cross-layer links, pathway annotations, health projections, vault serialization, and graph API reads on one coherent concurrency contract. CP91 replaces incremental worker mutation with private construction and one-generation publication, gives readers detached snapshots, and prevents shutdown from publishing into a retired singleton. Deterministic tests prove no partial map is visible and the graph route never touches a mutation-sensitive raw mapping. Still run exact-app repeated graph/UI/health polling during mapping, reinforcement, vault sync, shutdown, and restart; require zero size-change exception, no partial generation, bounded latency, stable node/link identity, and explicit recovery. | `ARCH-001`, `ASYNC-TASK-001`, `HEALTH-SURFACE-001`, `UI-001`, `FAULT-001`, `TEST-DEPTH-001`; live CP90 `dictionary changed size during iteration` defect; Checkpoint 91 |
 | `RUNTIME-SETTINGS-001` | `IN PROGRESS (CP90 PROTECTED AGENCY + VOICE EXACT-APP GREEN; REMAINING SETTINGS MATRIX/THREE DEAD CONTROLS OPEN) 2026-07-15` | The source has one typed version-2 schema; strict atomic compare-and-swap patch/reset/rollback; request idempotency and superseded replay truth; interprocess serialization; crash recovery; retained revision history; chained mutation and owner-application receipts; integrity verification; authenticated backend hydration; and per-owner applied/deferred/failed state. Autonomous agency is now an immutable always-on runtime invariant rather than a user-facing kill switch: legacy false state is audit-repaired, false PATCH/rollback is rejected, and failure paths preserve agency while standing authority, Constitution, Will, Conscience, scope, risk, approval, substrate, ExecutiveCore, tokens, and effect receipts continue to govern consequences. Approval modes issue an exact action/arguments/source/risk/scope challenge that expires and can be consumed once. Proactive frequency, enrichment, and reflection controls reach real owners. CP89 makes the resident voice engine obey verified input/auto-listen/output state and prevents duplicate capture. The CP90 signed app at `acfe7d68` proved readiness, revision-10 persistence, real voice start/stop/idle effects, an `Autonomous Agency: ACTIVE` shell, and 422 rejection without state change for both live disable and historical rollback attacks. SHA-256 journals are corruption/tamper evidence, not a keyed hostile-admin signature. `permissions.files_workspace`, `memory.review_window`, and `dev.diagnostics_enabled` remain known-dead and must be implemented before their controls can ship; privacy redaction remains partial. Reset, conflict, confirmation, output, accessibility, and latest-main exact-app coverage remain mandatory. | `UI-001`, `AUTONOMY-AUTHORITY-001`, `ENTERPRISE-CONTROL-001`, `VOICE-001`, `ADAPTATION-STATE-AUTHORITY-001`, `DATA-LIFECYCLE-001`, `COMPATIBILITY-001`; CP87 `747bceea`, CP89 `89b382d6`, CP90 `acfe7d68`, and `docs/SETTINGS_WIRING_AUDIT.md` |
 | `SPLASH-001` | `WITHDRAWN FROM RELEASE SCOPE 2026-07-15` | The user accepted the current launch screen and explicitly asked that no further redesign work be done. Existing launch truth, failure/recovery behavior, performance, accessibility, and visual-stability obligations remain covered by `UI-001`, `ACCESSIBILITY-I18N-001`, `RUNTIME-001`, and `VALIDATE-001`; only the optional aesthetic redesign is withdrawn and earns no completion credit. | User scope update 2026-07-15 |
@@ -17900,3 +17916,155 @@ Bounded verification and next boundary:
   The foreground health-poll wait-budget warning is separately retained for
   repair. Multi-hour and 24-72 hour soaks remain deferred until every shorter
   gate is green.
+
+## Checkpoint 2026-07-17-119: Exact Public-Output Proof and Long-Content Delivery
+
+Checkpoint 119 is the current source candidate in the `main` worktree. It
+advances `RLC-RUNTIME-001`, `RLC-LIVE32B-001`, `RLC-CLAIMS-001`,
+`CHAT-DELIVERY-001`, `CONVERSATION-001`, `UI-LONG-CONTENT-001`, `PROOF-001`,
+and `TEST-DEPTH-001`. It does not claim frontier reasoning gains or final
+resident-32B product closure before an exact rebuilt signed-app run.
+
+Evidence reconciliation and claim correction:
+
+- The CP103-118 sequence (`42542582` through `ffc0e004`, with its intervening
+  mechanism commits) added the decode bridge, answer-surface controls,
+  verifier-guided branches, typed ingress, consolidation, anti-interference,
+  neural bytecode, learned execution control, GWT coupling, role lesions,
+  pre-action recurrence, identity checking, retrieval-to-fast-weight
+  compilation, and recurrence-native training objectives. Source presence and
+  bounded tests are not capability credit.
+- `artifacts/current/cp118_live_latent_turn.json` is preserved unchanged. Its
+  signed-app resident-32B episode really executed two branches and two recurrent
+  steps, accepted temporary fast-weight descent, erased temporary weights, and
+  preserved base parameters. Independent review of the exact delivered reply
+  found a different hash from the graded text, leaked protocol/request syntax,
+  no architecture choice, no fault-verification plan, and zero coverage of the
+  requested cancellation/timeout/worker-restart subjects. The original PASS is
+  therefore invalidated by `cp118_live_latent_turn_review.json`; mechanics
+  credit remains and product/capability/frontier/release credit is revoked.
+- The preregistered seed-20260717 1.5B campaign is binding negative evidence:
+  slot causality and every factorial latent arm were refuted, gradient/random/
+  off tied, and vanilla beat every latent configuration. The resident-32B
+  template sweep remains parity with vanilla ahead on point estimate. The next
+  gain attempt requires recurrence-native training, not another interpretation
+  of the same frozen-loop data.
+- Commits `01d48e02` and `8b69c518` add and execute the first real fused-32B
+  consolidation transaction. Seven candidates passed provenance screening, an
+  adapter was distilled on layers 16-17, all 11 anti-interference probes passed,
+  activation succeeded, and exact rollback restored both layers. This proves
+  the transaction and rollback machinery only: no adapter was retained and no
+  held-out capability improvement was measured.
+
+Exact-output and delivery implementation:
+
+- Every visible-text mutation now records SHA-256 digests of its exact before
+  and after bytes. The public contract accepts transformed latent text only when
+  bounded, contiguous, unique-event chains independently bind raw worker bytes
+  to the post-cognition bytes and those bytes to the exact API reply. A direct
+  unchanged transition is also checked explicitly. Missing, malformed,
+  disconnected, duplicated, unrelated-middle, or tampered chains fail closed.
+- The worker output, final post-cognition output, and exact public API reply are
+  independently graded against the same user objective. Public request echo,
+  leaked protocol wrappers, missing facets, missing listed subjects, malformed
+  termination, or a hash mismatch cannot inherit an earlier PASS. Regeneration
+  repeats the final grade and full-mind contract after stabilization instead of
+  accepting a pre-transformation proof.
+- Once a selected latent owner has consumed the resident model, late quality
+  rejection cannot start a second generation owner. The turn retains failure
+  evidence and fails closed.
+- Substrate Voice no longer returns only the first chunk of a multi-message
+  split while hoping delayed emissions survive. All shaped chunks are rejoined
+  into the one transactional primary answer, preserving complete content and
+  at-most-once delivery semantics.
+- Inline thinking no longer has a 600px cap or a transition-event race. Normal
+  Neural payloads up to 8,000 characters render completely by default; larger
+  payloads expose persistent `SHOW ALL`/`COLLAPSE` controls. Responsive resize
+  cannot leave both primary surfaces hidden.
+- The broad gate exposed a deterministic fast-weight safety defect: a grossly
+  destructive low-rank update could improve all six fixed continuation scores
+  by chance and evade the behavioral canary. The engine now computes exact
+  effective-delta RMS from rank-sized Gram matrices before decode, applies the
+  same bounded rescale ladder, and erases updates that remain non-finite or
+  above the configured ceiling. Receipts retain every attempt, layer, scale,
+  threshold, behavioral-probe status, and erase decision; the 32B path pays no
+  full-matrix materialization cost.
+
+Core Architecture obligation ledger (all remain in the total denominator):
+
+| # | Obligation | Current evidence state | Required closure |
+|---|---|---|---|
+| 1 | Recurrence-native post-training | `IN PROGRESS`: objective, norm-parity, and curriculum-loss source/tests exist. | Train frozen preregistered 1.5B/7B/32B checkpoints; prove held-out gains, scaling, no regressions, reproducibility, activation, and rollback. |
+| 2 | Learned per-problem controller | `IN PROGRESS`: evidence-gated contextual controller is wired. | Prove online outcome learning, budget calibration, policy stability, controller ablation, restart persistence, and live benefit over fixed policies. |
+| 3 | Full neural bytecode | `IN PROGRESS`: typed schedule instructions and verifier backtracking are source/test green. | Search/promote real programs on held-out tasks; prove topology portability, bounded execution, causal utility, drift retirement, and live 32B use. |
+| 4 | Learned latent roles | `IN PROGRESS`: role seed, swap, and lesion harnesses exist. | Train identifiable roles and prove task-specific causal loss/restoration, anti-collapse, transfer, and live resident behavior. |
+| 5 | Bidirectional GWT-RLC coupling | `IN PROGRESS`: both directions are wired and bounded tests pass. | Run exact-app causal lesions/restoration, freshness/conflict tests, workspace saturation, and prove downstream decision/answer benefit without duplicate mind ownership. |
+| 6 | Continuous pre-action RLC | `IN PROGRESS`: governed pre-action cortex is wired. | Prove real desktop/tool action improvement, latency budgets, cancellation, stale-state rejection, effect verification, rollback, and no unsafe authority expansion. |
+| 7 | Retrieval-to-fast-weight compilation | `IN PROGRESS`: compilation and transactional fast-weight path exist. | Prove provenance-preserving utility, contamination resistance, exact erase, matched random/sham controls, broad tasks, and safe live promotion. |
+| 8 | Joint multimodal recurrent training | `OPEN`. | Build synchronized text/vision/audio/desktop training data and objectives; prove cross-modal causal gains, missing-modality robustness, privacy, compute bounds, and 32B deployment. |
+| 9 | Conditional specialization | `OPEN`. | Learn when and where recurrence/roles/branches specialize; enforce anti-collapse and resource caps; prove transfer and no hidden domain regressions. |
+| 10 | On-policy first-error repair | `OPEN`. | Capture first causal reasoning errors from live trajectories, train repairs without answer leakage, replay failures, and prove lower recurrence of the original class. |
+| 11 | Teacher federation | `OPEN`. | Build provenance-bound multi-teacher distillation with disagreement arbitration, contamination controls, licensing/privacy policy, ablations, and student-held-out gains. |
+| 12 | Minimax weakest-domain curriculum | `OPEN`. | Define stable domain metrics and adversarial curriculum selection; prevent benchmark gaming; prove weakest-domain lift without aggregate or identity regressions. |
+| 13 | Long-horizon transition-level training | `OPEN`. | Train and score intermediate state transitions across extended plans/tools; prove credit assignment, recovery, bounded memory, and real long-horizon task completion. |
+| 14 | Social downstream-outcome learning | `OPEN`. | Ground social adaptation in consented downstream outcomes, not sentiment mimicry; prove privacy, non-manipulation, calibration, counterfactual controls, and longitudinal benefit. |
+| 15 | Structure-preserving robustness | `OPEN`. | Train/evaluate perturbation, paraphrase, state-noise, cache, tool, and modality robustness while preserving causal structure, governance, and calibrated abstention. |
+| 16 | Recurrent-depth curriculum | `IN PROGRESS`: depth curriculum loss is implemented. | Execute staged training and 2/4/8-step curves; prove monotone useful depth, overthinking control, compute-quality frontier, and cross-scale transfer. |
+| 17 | In-episode fast-weight canaries | `IN PROGRESS`: protected-behavior canaries plus exact effective-delta RMS bounds execute under active temporary weights; a previously accepted catastrophic delta now deterministically rescales and erases. | Expand identity/governance/tool/math/language canaries; calibrate behavioral and structural power/false alarms on real adapters; fault-inject; and prove automatic abort/erase on regression in live 32B. |
+| 18 | Latent safety telemetry | `IN PROGRESS`: bounded telemetry and safety signals are wired. | Define SLOs/error budgets, persistence and operator surfaces; test loss/corruption/backpressure; prove signals drive recovery rather than merely log. |
+| 19 | Attractor escape | `IN PROGRESS`: structured escape ladder is implemented. | Prove escape improves verified outcomes over matched perturbation while avoiding false escapes, instability, excess compute, and identity/commitment drift. |
+| 20 | ReasonCache recurrent compression | `OPEN`: prompt KV sharing/context compaction are not recurrent-state compression. | Build immutable prompt-cache sharing, low-rank/delta recurrent slot KV, stable snapshots, selective recompute, causal eviction, verifier-prefix reuse, integrity checks, and measured memory/latency wins. |
+| 21 | Retrieval epistemic firewall | `IN PROGRESS`: source independence, freshness, conflicts, claim typing, and admission control are source/test green. | Prove real retrieval/provider behavior, adversarial source duplication, contradiction handling, abstention/further-search decisions, live causal utility, and no authority bypass. |
+| 22 | RLC-local identity verifier | `IN PROGRESS`: canonical identity/commitment consistency checks are wired. | Prove exact-app drift prevention with legitimate-development controls, forged/stale/swapped identity attacks, lesion/restoration, calibrated evolution, and no rigid false refusal. |
+
+Bounded verification and next boundary:
+
+- The expanded RLC mechanism, controller, consolidation, GWT, verifier,
+  experiment, persistence, runtime-identity, ingress, scheduling, branch,
+  recurrence, fast-weight, behavioral-canary, and structural-delta campaign
+  passes 438/438. The separate response-generation, exact API contract, and
+  runtime-polish campaign passes 387/387, including raw/final/public chain
+  tamper, unrelated-middle, CP118 false-pass, single-owner, complete-delivery,
+  and long-content regressions. Seven additional certificate-driver tests prove
+  exact Git identity is obtained through the bounded read-only subprocess
+  gateway; require signed-app/current-commit/resident-32B identity, complete
+  latent mechanism execution and cleanup, full-mind/single-owner route evidence,
+  all three output-quality grades, exact public-byte/objective hashes, and
+  contiguous mutation transitions; independently regrade the public text; and
+  persist honest FAIL artifacts on gateway, Git, or transport failure.
+- Visible Playwright validation against the running server passes at 1440x900
+  and 390x844 with zero console errors. Measured chat, inline thinking, normal
+  Neural, and expanded large Neural bodies all have `scrollHeight` at most
+  `clientHeight`; the tested payloads are 12,889, 11,329, 3,990, and 16,210
+  characters respectively.
+- The dirty-tree mechanical closeout audit passes over 5,302 tracked files and
+  3,797,131 tracked text lines. Production readiness is 37/37, the architecture
+  map has 148 subsystems and 1,083 edges with no missing required surfaces, and
+  model-load/resource-observation ownership, source hygiene, governance lint,
+  ordinary lint, and diff checks are green. Exact source-ledger digests remain
+  in the generated audit artifact rather than being self-embedded in this
+  tracked file, which participates in the ledger it describes.
+- The 20-point closeout rubric passes 20/20. The enterprise static ratchet first
+  caught one direct `subprocess.run` in the new live-certificate driver. That
+  probe now uses the canonical read-only gateway with proof-tool provenance;
+  the rerun passes across 4,083 Python files with zero findings. The broader
+  audit also caught and closed an undefined response-reliability logger and an
+  incompletely inventoried/off-contract consolidation-training model load.
+- Mechanical audit success is not semantic closure. The current hash-backed
+  semantic ledger reports 442 reviewed of 5,279 tracked text files, 90,738 of
+  1,241,572 code lines (7.3083%), 91,815 of 3,797,131 text lines (2.4180%),
+  888 stale receipts, 26 orphan receipts, and
+  `full_semantic_review_current=false`. Full semantic review remains an explicit
+  Aura 1.0 blocker in the total denominator.
+- Evidence-weighted completion remains 27%. This is checkpoint 119 of the
+  faithful 292-399 total forecast, leaving approximately 173-280 checkpoints.
+  Negative experiments and newly explicit obligations remain in the denominator
+  and cannot be counted as completion.
+- Next: run the final post-edit closeout gate, commit and push CP119, run the
+  clean-head audit, rebuild/sign the exact app, and repeat the compound
+  resident-32B turn. Acceptance requires a complete direct public answer, exact
+  public hash/mutation-chain proof, no second owner, all requested comparison,
+  selection, explanation, and concrete-failure verification facets covered,
+  healthy foreground/Neural/terminal streams, and long-content GUI evidence.
+  Then begin recurrence-native training and same-checkpoint gain campaigns.
+  Multi-hour and 24-72-hour soaks remain deferred until all shorter gates pass.

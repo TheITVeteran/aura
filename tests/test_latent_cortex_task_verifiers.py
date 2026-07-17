@@ -191,6 +191,23 @@ def test_bare_cue_stuffing_does_not_satisfy_facets():
     assert set(result["unsupported_cues"]) >= {"compare", "select", "explain"}
 
 
+def test_echoed_request_cannot_win_verifier_facet_credit():
+    objective = (
+        "Compare the early owner design with late deduplication, choose the stronger "
+        "architecture, and explain how to verify cancellation and timeout faults."
+    )
+    echoed = (
+        "Compare the early owner design with late deduplication, choose the stronger "
+        "architecture, and explain how to verify cancellation and timeout faults. "
+        "Both approaches process requests."
+    )
+    result = check_facet_coverage(echoed, objective)
+    assert result["prompt_echo_detected"] is True
+    assert result["score"] == 0.0
+    assert "select" not in result["satisfied"]
+    assert "verify" not in result["satisfied"]
+
+
 def test_substantive_paraphrase_still_satisfies_facets():
     objective = "Compare the designs and explain why one is stronger."
     text = (

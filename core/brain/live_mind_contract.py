@@ -24,6 +24,7 @@ REQUIRED_LIVE_MIND_GENERATION_CONTROL_KEYS = frozenset(
 
 _MAX_TEXT_MUTATIONS = 64
 _CONTENT_FREE_REASON_RE = re.compile(r"^[A-Za-z0-9_.:/-]{1,96}$")
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def _content_free_reason(value: Any) -> str:
@@ -84,6 +85,9 @@ def normalize_text_mutations(value: Any) -> list[dict[str, Any]]:
                 entry[key] = max(0, int(item.get(key) or 0))
             except (TypeError, ValueError, OverflowError):
                 entry[key] = 0
+        for key in ("before_sha256", "after_sha256"):
+            digest = str(item.get(key) or "").strip().lower()
+            entry[key] = digest if _SHA256_RE.fullmatch(digest) else ""
         normalized.append(entry)
     return normalized
 
@@ -108,6 +112,8 @@ def merge_text_mutations(*values: Any) -> list[dict[str, Any]]:
                     entry["deterministic"],
                     entry["before_chars"],
                     entry["after_chars"],
+                    entry["before_sha256"],
+                    entry["after_sha256"],
                 )
             )
             if identity in seen:
@@ -154,6 +160,8 @@ def append_text_mutation(
         "deterministic": bool(deterministic),
         "before_chars": len(before_text),
         "after_chars": len(after_text),
+        "before_sha256": hashlib.sha256(before_text.encode("utf-8")).hexdigest(),
+        "after_sha256": hashlib.sha256(after_text.encode("utf-8")).hexdigest(),
     }
     mutations = merge_text_mutations(container.get("text_mutations"), [entry])
     container["text_mutations"] = mutations
@@ -162,6 +170,91 @@ def append_text_mutation(
         bool(item.get("deterministic")) for item in mutations
     )
     return container
+
+
+def verify_text_mutation_chain(
+    value: Any,
+    *,
+    before_sha256: Any,
+    after_sha256: Any,
+) -> dict[str, Any]:
+    """Verify a contiguous, hash-bound mutation suffix from before to after.
+
+    A surface ledger may contain worker-side mutations that happened before a
+    model output was quality-certified. Those entries are legitimate prefix
+    provenance, but the public-delivery proof begins at the certified output
+    hash. The verifier therefore accepts only a contiguous suffix beginning at
+    that hash and ending at the exact public bytes; every mutation in that
+    suffix must carry an independently checkable before/after digest.
+    """
+
+    expected_before = str(before_sha256 or "").strip().lower()
+    expected_after = str(after_sha256 or "").strip().lower()
+    entries = normalize_text_mutations(value)
+    reasons: list[str] = []
+    if not _SHA256_RE.fullmatch(expected_before):
+        reasons.append("invalid_before_sha256")
+    if not _SHA256_RE.fullmatch(expected_after):
+        reasons.append("invalid_after_sha256")
+    if not isinstance(value, list):
+        reasons.append("mutation_ledger_missing")
+    elif len(value) > _MAX_TEXT_MUTATIONS:
+        reasons.append("mutation_ledger_exceeds_bound")
+    elif len(entries) != len(value):
+        reasons.append("mutation_ledger_malformed")
+    if expected_before == expected_after and not reasons:
+        return {
+            "schema": "aura.text_mutation_chain.v1",
+            "passed": True,
+            "before_sha256": expected_before,
+            "after_sha256": expected_after,
+            "ledger_entry_count": len(entries),
+            "chain_start_sequence": 0,
+            "chain_length": 0,
+            "reasons": [],
+        }
+    if not entries:
+        reasons.append("mutation_chain_missing")
+
+    valid_suffix: list[dict[str, Any]] | None = None
+    if not reasons:
+        for index, entry in enumerate(entries):
+            if entry.get("before_sha256") != expected_before:
+                continue
+            suffix = entries[index:]
+            if any(
+                not item.get("event_id")
+                or not _SHA256_RE.fullmatch(str(item.get("before_sha256") or ""))
+                or not _SHA256_RE.fullmatch(str(item.get("after_sha256") or ""))
+                for item in suffix
+            ):
+                continue
+            if len({str(item["event_id"]) for item in suffix}) != len(suffix):
+                continue
+            if any(
+                left.get("after_sha256") != right.get("before_sha256")
+                for left, right in zip(suffix, suffix[1:], strict=False)
+            ):
+                continue
+            if suffix[-1].get("after_sha256") != expected_after:
+                continue
+            valid_suffix = suffix
+            break
+    if valid_suffix is None and not reasons:
+        reasons.append("mutation_hash_chain_mismatch")
+
+    return {
+        "schema": "aura.text_mutation_chain.v1",
+        "passed": not reasons,
+        "before_sha256": expected_before,
+        "after_sha256": expected_after,
+        "ledger_entry_count": len(entries),
+        "chain_start_sequence": (
+            int(valid_suffix[0].get("sequence") or 0) if valid_suffix else 0
+        ),
+        "chain_length": len(valid_suffix or ()),
+        "reasons": reasons,
+    }
 
 
 def live_mind_generation_controls_present(generation_controls: Any) -> bool:

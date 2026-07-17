@@ -482,6 +482,81 @@ def test_text_mutation_sequence_preserves_distinct_same_shaped_events():
     assert len(merge_text_mutations(merged, merged)) == 2
 
 
+def test_text_mutation_chain_cryptographically_binds_exact_public_bytes():
+    import hashlib
+
+    from core.brain.live_mind_contract import (
+        append_text_mutation,
+        verify_text_mutation_chain,
+    )
+
+    raw = "Complete model answer."
+    intermediate = "Complete model answer.\n\nVerified."
+    public = "Complete model answer.\n\nVerified and delivered."
+    receipt = {"text_mutations": []}
+    append_text_mutation(
+        receipt,
+        stage="response_generation.voice",
+        method="join_complete_chunks",
+        reasons=["voice_profile"],
+        before=raw,
+        after=intermediate,
+        deterministic=False,
+    )
+    append_text_mutation(
+        receipt,
+        stage="chat.final_contract",
+        method="deterministic_instruction_shape",
+        reasons=["verification_detail"],
+        before=intermediate,
+        after=public,
+        deterministic=True,
+    )
+
+    proof = verify_text_mutation_chain(
+        receipt["text_mutations"],
+        before_sha256=hashlib.sha256(raw.encode()).hexdigest(),
+        after_sha256=hashlib.sha256(public.encode()).hexdigest(),
+    )
+
+    assert proof["passed"] is True
+    assert proof["chain_length"] == 2
+    assert receipt["text_mutations"][0]["before_sha256"] == hashlib.sha256(
+        raw.encode()
+    ).hexdigest()
+
+
+def test_text_mutation_chain_rejects_tampered_or_disconnected_ledger():
+    import hashlib
+
+    from core.brain.live_mind_contract import (
+        append_text_mutation,
+        verify_text_mutation_chain,
+    )
+
+    receipt = {"text_mutations": []}
+    append_text_mutation(
+        receipt,
+        stage="response_generation.clean",
+        method="cleanup",
+        reasons=["surface_cleanup"],
+        before="raw",
+        after="clean",
+        deterministic=True,
+    )
+    tampered = [dict(receipt["text_mutations"][0])]
+    tampered[0]["after_sha256"] = "f" * 64
+
+    proof = verify_text_mutation_chain(
+        tampered,
+        before_sha256=hashlib.sha256(b"raw").hexdigest(),
+        after_sha256=hashlib.sha256(b"clean").hexdigest(),
+    )
+
+    assert proof["passed"] is False
+    assert proof["reasons"] == ["mutation_hash_chain_mismatch"]
+
+
 def test_mlx_degradation_records_have_explicit_runtime_actions():
     """MLX failures must connect to recovery behavior, not only log telemetry."""
     from pathlib import Path

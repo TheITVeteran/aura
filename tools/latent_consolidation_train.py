@@ -45,11 +45,15 @@ def main() -> int:
         purpose="benchmark",
         preemptible=False,
         metadata={"tool": "latent_consolidation_train", "operator_launched": True},
-    ):
-        return _run(args)
+    ) as model_lane_lease:
+        return _run(args, model_lane_lease=model_lane_lease)
 
 
-def _run(args: argparse.Namespace) -> int:
+def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
+    if getattr(model_lane_lease, "active", False) is not True:
+        raise RuntimeError(
+            "latent consolidation model load requires an active standalone model-lane lease"
+        )
     from core.config import DATA_DIR
     from core.learning.latent_adapter_distillation import (
         rollback_adapter,

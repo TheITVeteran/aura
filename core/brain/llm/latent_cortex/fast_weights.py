@@ -293,6 +293,61 @@ class EpisodicFastWeights:
         self.lifecycle.canary_rescales += 1
         return float(self.handles[0].wrapper.scale)
 
+    def effective_delta_metrics(self) -> dict[str, Any]:
+        """Measure the exact effective-delta RMS without materializing U@V.T.
+
+        For D = s*U@V.T, ||D||_F^2 is
+        s^2*trace((U.T@U)*(V@V.T)). Both Gram matrices are rank-by-rank, so
+        this structural safety check stays cheap even on the resident 32B.
+        """
+
+        import mlx.core as mx
+
+        rows: list[dict[str, Any]] = []
+        all_finite = bool(self.handles)
+        max_rms = 0.0
+        for handle in self.handles:
+            wrapper = handle.wrapper
+            gram_u = wrapper.U.T @ wrapper.U
+            gram_v = wrapper.V @ wrapper.V.T
+            mx.eval(gram_u, gram_v)
+            squared_frobenius = float(
+                (float(wrapper.scale) ** 2) * mx.sum(gram_u * gram_v.T)
+            )
+            finite = math.isfinite(squared_frobenius) and squared_frobenius >= 0.0
+            all_finite = all_finite and finite
+            if finite:
+                out_features = int(wrapper.U.shape[0])
+                in_features = int(wrapper.V.shape[1])
+                frobenius = math.sqrt(squared_frobenius)
+                rms = frobenius / math.sqrt(max(1, out_features * in_features))
+                max_rms = max(max_rms, rms)
+            else:
+                frobenius = math.inf
+                rms = math.inf
+            rows.append(
+                {
+                    "layer": int(handle.layer_index),
+                    "scale": round(float(wrapper.scale), 12),
+                    "effective_delta_frobenius": (
+                        round(frobenius, 12) if math.isfinite(frobenius) else None
+                    ),
+                    "effective_delta_rms": (
+                        round(rms, 12) if math.isfinite(rms) else None
+                    ),
+                    "finite": finite,
+                }
+            )
+        return {
+            "schema": "aura.fast_weight_delta_magnitude.v1",
+            "finite": all_finite,
+            "layer_count": len(rows),
+            "max_effective_delta_rms": (
+                round(max_rms, 12) if all_finite else None
+            ),
+            "layers": rows,
+        }
+
     def canary_erase(self) -> None:
         """Erase ΔW because the protected battery regressed under it.
 

@@ -193,20 +193,25 @@ launched, bounded).
   for the existing LoRA-compounding regression gates; nothing consolidates
   from inside an episode.
 
-## Closeout state (2026-07-17, head ffc0e004+)
+## Closeout state (2026-07-17, head 86d27cf0+)
 
-**Live PASS certificates on the resident 32B through the signed installed
-app:** `artifacts/current/cp106_live_latent_turn.json` (first authentic
-full-stack answer) and `artifacts/current/cp118_live_latent_turn.json`
-(the complete organ head: verifier-guided branch selection, typed
-cognitive ingress, execution-controller observation, live consolidation
-export, EOS floor, repetition guard, newline discipline, sentence grace,
-time-aware wall wind-down — answer finished at a sentence boundary,
-all four requested facets satisfied, fast-weight descent accepted and
-erased with proof, params unchanged).
+**Live resident-32B evidence through the signed installed app:**
+`artifacts/current/cp106_live_latent_turn.json` remains the first authentic
+full-stack answer. `artifacts/current/cp118_live_latent_turn.json` retains
+mechanics credit for the complete organ head: verifier-guided branch
+selection, typed cognitive ingress, execution-controller observation, live
+consolidation export, EOS floor, repetition guard, newline discipline,
+sentence grace, time-aware wall wind-down, accepted fast-weight descent,
+proven erase, and unchanged base parameters. Its product-quality PASS is
+revoked by `artifacts/current/cp118_live_latent_turn_review.json`: the exact
+public reply leaked request/protocol text, never selected an architecture,
+never supplied the requested cancellation/timeout/worker-restart verification
+plan, and did not match the text hash that the original receipt graded. It is
+mechanism evidence only, not a complete-answer, capability, frontier, or
+release certificate.
 
 **Organ inventory (the "Core architecture" additions):** all seven runtime
-organs landed — recurrence-native training objective (+ recurrent-depth
+organs landed - recurrence-native training objective (+ recurrent-depth
 curriculum loss, train/inference norm parity with the engine's anchored
 trust band), learned per-problem execution controller (evidence-gated
 contextual bandit, verified-outcome rewards), full neural bytecode with
@@ -220,7 +225,17 @@ the list are training programs (data + operator-launched runs), not
 runtime organs; the objective and curriculum losses are their entry
 point.
 
-**Capability evidence (honest):** template-parity 32B sweep — latent
+The in-episode fast-weight boundary now has two independent guards. The
+behavioral battery measures protected continuations, while an exact structural
+check computes the RMS of each effective `scale * U @ V.T` update from
+rank-sized Gram matrices. A destructive update that happened to improve every
+fixed continuation score exposed the behavioral battery's blind spot during
+the CP119 broad gate; it now deterministically walks the bounded rescale ladder
+and erases before decode when its magnitude remains non-finite or above the
+configured ceiling. This hardens temporary adaptation but is not evidence of a
+capability gain.
+
+**Capability evidence (honest):** template-parity 32B sweep - latent
 accuracy scales 0.167→0.375 from 1→2 recurrent steps (the live
 profile's setting) then plateaus; vanilla 0.417 leads on point estimate
 with fully overlapping Wilson intervals at n=24. Statistical parity,
@@ -255,3 +270,16 @@ result. The runtime machinery is causal, governed, and live; the dividend
 must come from recurrence-native training (the objective + curriculum
 losses are the entry point) — exactly what this harness was built to be
 able to say without flinching.
+
+## First resident-32B consolidation execution
+
+`artifacts/current/latent_consolidation_train_32b_first.json` records the first
+real fused-32B execution of the durable-learning transaction. Seven candidates
+passed provenance and honesty screening, one domain adapter was distilled over
+layers 16-17, the 11-probe anti-interference battery passed at 1.0 stable
+fraction, activation succeeded, and exact rollback restored both layers. Two
+invalid candidates were rejected for explicit honest flags. This proves the
+candidate-to-adapter-to-gate-to-activation-to-rollback machinery on the resident
+checkpoint. The run intentionally ended in proven rollback and did not measure
+held-out reasoning improvement, so it is not evidence that a retained adapter
+improves capability or reverses the preregistered null/regression result.

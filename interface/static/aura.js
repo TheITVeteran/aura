@@ -1845,10 +1845,20 @@ document.addEventListener('click', (e) => {
     }
 }, true);
 
-// Initial mobile state: Chat active
-if (window.innerWidth <= 1100) {
-    document.querySelector('.chat-panel').classList.add('mobile-active');
+function syncResponsiveConversationSurface() {
+    if (window.innerWidth > 1100) return;
+    const chatPanel = document.querySelector('.chat-panel');
+    const sidebar = document.querySelector('.sidebar');
+    if (!chatPanel || !sidebar) return;
+    if (!chatPanel.classList.contains('mobile-active') && !sidebar.classList.contains('mobile-active')) {
+        chatPanel.classList.add('mobile-active');
+    }
 }
+
+// Initial mobile state and desktop-window resize: never leave both primary
+// surfaces hidden after crossing the responsive breakpoint.
+syncResponsiveConversationSurface();
+window.addEventListener('resize', syncResponsiveConversationSurface, { passive: true });
 
 // ── Memory sub-tabs ──────────────────────────────────────
 // Use event delegation for reliable click handling
@@ -3092,8 +3102,15 @@ function addThoughtCard(data) {
     const msg = cleanThoughtText(rawMsg, ts, name);
     const fullMsg = cleanThoughtText(rawFull, ts, name);
     const repeatCount = Math.max(1, Number(data.repeatCount || 1));
-    const preview = thoughtPreviewText(msg);
-    const hasHiddenFullPayload = fullMsg !== msg;
+    const fullLines = fullMsg.split(/\r?\n/).length;
+    const showCompletePayload = fullMsg.length <= 8000 && fullLines <= 100;
+    const previewSource = showCompletePayload ? fullMsg : msg;
+    const preview = thoughtPreviewText(
+        previewSource,
+        showCompletePayload ? 8000 : 1200,
+        showCompletePayload ? 100 : 16
+    );
+    const hasHiddenFullPayload = fullMsg !== previewSource;
     const longThought = preview.clipped || hasHiddenFullPayload;
     if (longThought) cls += ' long';
     card.className = cls;
@@ -3115,7 +3132,7 @@ function addThoughtCard(data) {
     card.dataset.fullLength = String(fullMsg.length);
     if (hasHiddenFullPayload) card.dataset.previewOnly = 'true';
     const expandButton = longThought
-        ? `<button class="thought-expand-btn" type="button" onclick="toggleThoughtCardFull(this)" aria-expanded="false">FULL</button>`
+        ? `<button class="thought-expand-btn" type="button" onclick="toggleThoughtCardFull(this)" aria-expanded="false">SHOW ALL</button>`
         : '';
     const detailMeta = [level || 'info', repeatCount > 1 ? `seen ×${repeatCount}` : ''].filter(Boolean).join(' · ');
     card.innerHTML = `
@@ -4162,7 +4179,7 @@ async function appendMsg(role, text, isHtml = false, metadata = {}) {
         const thought = metadata.thought;
         if (!thought || typeof thought !== 'string' || thought.trim().length < 5) return '';
         const tid = 'thought-' + Math.random().toString(36).slice(2, 8);
-        return `<div class="thought-toggle" onclick="(function(el){var b=document.getElementById('${tid}');b.classList.toggle('expanded');el.classList.toggle('expanded')})(this)"><span class="thought-chevron">▶</span> Show thinking</div><div id="${tid}" class="thought-block">${escHtml(thought.trim())}</div>`;
+        return `<button class="thought-toggle" type="button" aria-expanded="false" aria-controls="${tid}" onclick="toggleInlineThought(this, '${tid}')"><span class="thought-chevron">▶</span> <span class="thought-toggle-label">Show thinking</span></button><div id="${tid}" class="thought-block">${escHtml(thought.trim())}</div>`;
     })();
 
     // Timestamp element (shows on hover)
@@ -4381,7 +4398,26 @@ function toggleThoughtCardFull(button) {
     preview.hidden = expanded;
     full.hidden = !expanded;
     button.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-    button.textContent = expanded ? 'PREVIEW' : 'FULL';
+    button.textContent = expanded ? 'COLLAPSE' : 'SHOW ALL';
+}
+
+function toggleInlineThought(button, blockId) {
+    const block = document.getElementById(blockId);
+    if (!button || !block) return;
+    const expanded = button.getAttribute('aria-expanded') !== 'true';
+    const label = button.querySelector('.thought-toggle-label');
+    if (expanded) {
+        block.classList.add('expanded');
+        block.style.maxHeight = 'none';
+        block.style.overflow = 'visible';
+    } else {
+        block.classList.remove('expanded');
+        block.style.maxHeight = '0px';
+        block.style.overflow = 'hidden';
+    }
+    button.classList.toggle('expanded', expanded);
+    button.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    if (label) label.textContent = expanded ? 'Hide thinking' : 'Show thinking';
 }
 
 // Make globally accessible for onclick handlers
@@ -4389,6 +4425,7 @@ window.copyCodeBlock = copyCodeBlock;
 window.copyThoughtCard = copyThoughtCard;
 window.toggleThoughtCardFull = toggleThoughtCardFull;
 window.toggleThoughtCardDetail = toggleThoughtCardDetail;
+window.toggleInlineThought = toggleInlineThought;
 
 // ── Magnum Opus 2: Connection Toast ─────────────────────
 let _connToastTimer = null;

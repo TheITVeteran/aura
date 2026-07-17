@@ -619,7 +619,7 @@ header {
     max-height: 0;
     overflow: hidden;
     opacity: 0;
-    transition: max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.25s ease, padding 0.25s ease;
+    transition: opacity 0.2s ease, padding 0.2s ease;
     background: rgba(138, 43, 226, 0.04);
     border-left: 2px solid rgba(138, 43, 226, 0.25);
     border-radius: 0 4px 4px 0;
@@ -629,12 +629,13 @@ header {
     line-height: 1.55;
     color: var(--text-dim);
     white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
 }
 .thought-block.expanded {
-    max-height: 600px;
     opacity: 1;
     padding: 8px 10px;
-    overflow-y: auto;
+    overflow: visible;
 }
 .thought-block::-webkit-scrollbar {
     width: 3px;
@@ -1767,11 +1768,6 @@ main {
     word-break: break-word;
 }
 
-.thought-card.long:not(.expanded) .thought-preview {
-    max-height: 11.5em;
-    overflow: hidden;
-}
-
 .thought-full[hidden],
 .thought-preview[hidden] {
     display: none !important;
@@ -1812,7 +1808,7 @@ main {
     border: 1px solid rgba(0, 229, 255, 0.22);
     border-radius: 999px;
     cursor: pointer;
-    opacity: 0.72;
+    opacity: 1;
     transition: all 0.2s ease;
 }
 

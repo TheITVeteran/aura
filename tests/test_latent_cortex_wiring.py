@@ -143,6 +143,7 @@ def test_config_from_job_maps_every_advanced_mechanism():
             "fast_weights_opt_steps": 3,
             "fast_weights_lr": 0.005,
             "fast_weights_max_layers": 4,
+            "fast_weights_canary_max_delta_rms": 0.025,
             "exchange_gamma": 0.2,
             "convergence_eps": 0.01,
             "decode_top_p": 0.82,
@@ -154,6 +155,7 @@ def test_config_from_job_maps_every_advanced_mechanism():
     assert cfg.latent_opt.lr == 0.02
     assert cfg.fast_weights.enabled is True and cfg.fast_weights.opt_steps == 3
     assert cfg.fast_weights.lr == 0.005 and cfg.fast_weights.max_wrapped_layers == 4
+    assert cfg.fast_weights.canary_max_effective_delta_rms == 0.025
     assert cfg.branches.exchange_gamma == 0.2
     assert cfg.recurrence.convergence_eps == 0.01
     assert cfg.decode_top_p == 0.82
@@ -971,7 +973,7 @@ def test_compound_objective_expands_answer_surface(monkeypatch):
     assert captured["config"]["decode_temperature"] == 0.3
     assert captured["config"]["decode_repetition_penalty"] == 1.25
     assert captured["config"]["decode_repetition_window"] == 72
-    assert captured["config"]["decode_bridge_policy"] == "assistant_answer_v2"
+    assert captured["config"]["decode_bridge_policy"] == "assistant_answer_v3"
     assert captured["budget"]["wall_clock_s"] >= 140.0
     assert captured["budget"]["wall_clock_s"] <= 157.0 - 8.0
     allocation = svc._last_allocation

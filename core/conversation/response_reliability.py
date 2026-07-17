@@ -6,6 +6,7 @@ as a successful answer that later systems have to explain away.
 """
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -13,6 +14,8 @@ from typing import Any
 
 from core.conversation.ontology_grounding import detect_unsupported_embodiment_claim
 from core.runtime.structured_input import looks_like_learning_resource_bundle
+
+logger = logging.getLogger("Aura.Conversation.ResponseReliability")
 
 _WORD_RE = re.compile(r"[A-Za-z][A-Za-z']*")
 _ROLE_OR_PROMPT_ARTIFACT_RE = re.compile(

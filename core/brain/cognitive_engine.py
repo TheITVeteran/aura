@@ -1754,6 +1754,8 @@ class CognitiveEngine:
                         "latent_cortex_failure_reason",
                         "latent_cortex_identity_bound",
                         "latent_cortex_final_text_transformed",
+                        "latent_cortex_final_output_quality",
+                        "latent_cortex_raw_final_quality_hash_match",
                         "latent_cortex_receipt",
                     )
                     if key in state.response_modifiers
@@ -2045,6 +2047,8 @@ class CognitiveEngine:
             "latent_cortex_failure_reason",
             "latent_cortex_identity_bound",
             "latent_cortex_final_text_transformed",
+            "latent_cortex_final_output_quality",
+            "latent_cortex_raw_final_quality_hash_match",
             "latent_cortex_receipt",
             "live_mind_controls_bound",
             "live_mind_generation_controls",

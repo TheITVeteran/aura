@@ -195,6 +195,12 @@ def test_destructive_delta_is_erased_before_decode(tiny_model, monkeypatch):
 
     assert receipt.fast_weight_canaries["decision"] == "erased"
     assert receipt.fast_weight_canaries["rescales"] == 1
+    assert receipt.fast_weight_canaries["behavioral_evaluated"] is False
+    final_magnitude = receipt.fast_weight_canaries["delta_magnitude_history"][-1]
+    assert final_magnitude["structural_regression"] is True
+    assert final_magnitude["max_effective_delta_rms"] > receipt.fast_weight_canaries[
+        "threshold_effective_delta_rms"
+    ]
     assert "fast_weight_canary_erased" in receipt.honest_flags
     assert "fast_weight_canary_rescaled" in receipt.honest_flags
     # The episode still finishes and the erase is still proven.
@@ -251,6 +257,9 @@ def test_rescale_validates_inputs(tiny_model):
         tiny_model.model, (2, 6), seed_stat=1.0, episode_id="canary-test"
     )
     try:
+        identity_metrics = fast_weights.effective_delta_metrics()
+        assert identity_metrics["finite"] is True
+        assert identity_metrics["max_effective_delta_rms"] == 0.0
         with pytest.raises(ValueError):
             fast_weights.rescale(1.5)
         with pytest.raises(ValueError):
@@ -271,6 +280,13 @@ def test_config_validation_bounds_canary_settings(tiny_model):
     )
     with pytest.raises(ValueError, match="canary_max_logprob_drop"):
         LatentCortexEngine(tiny_model, config=bad)
+    bad_magnitude = _config(
+        fast_weights=FastWeightsConfig(
+            enabled=True, canary_max_effective_delta_rms=float("inf")
+        )
+    )
+    with pytest.raises(ValueError, match="canary_max_effective_delta_rms"):
+        LatentCortexEngine(tiny_model, config=bad_magnitude)
     bad_attempts = _config(
         fast_weights=FastWeightsConfig(enabled=True, canary_rescale_attempts=99)
     )

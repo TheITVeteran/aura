@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -14,9 +15,9 @@ def test_repository_model_load_inventory_is_complete() -> None:
     assert report["passed"] is True
     # reasoning_background no longer loads a second Cortex in-process. The
     # resident MLX worker owns non-parametric key generation instead.
-    assert report["inventory_entries"] == 28
-    assert report["owned_paths"] == 28
-    assert report["load_references"] == 40
+    assert report["inventory_entries"] == 29
+    assert report["owned_paths"] == 29
+    assert report["load_references"] == 41
     assert report["source_paths_scanned"] >= 2_000
 
 
@@ -58,6 +59,16 @@ def test_uninventoried_model_load_fails_closed(
 
 def test_inventory_path_is_repository_scoped() -> None:
     assert (ROOT / "config" / "model_load_ownership.json").is_file()
+
+
+def test_latent_consolidation_loader_requires_active_model_lane() -> None:
+    from tools import latent_consolidation_train
+
+    with pytest.raises(RuntimeError, match="active standalone model-lane lease"):
+        latent_consolidation_train._run(
+            SimpleNamespace(),
+            model_lane_lease=SimpleNamespace(active=False),
+        )
 
 
 def test_inline_child_program_model_load_fails_closed(tmp_path: Path) -> None:

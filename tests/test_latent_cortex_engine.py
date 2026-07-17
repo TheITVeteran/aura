@@ -458,7 +458,7 @@ def test_decode_newline_discipline_caps_babble_runs(tiny_model, monkeypatch):
     assert word_id in out, "masking must expose the model's own runner-up token"
 
 
-def test_bridge_policy_v2_produces_distinct_hashable_cue(tiny_model):
+def test_bridge_policies_produce_distinct_hashable_cues(tiny_model):
     class RecordingTokenizer:
         eos_token_id = 0
 
@@ -474,7 +474,11 @@ def test_bridge_policy_v2_produces_distinct_hashable_cue(tiny_model):
     v2 = LatentCortexEngine(
         tiny_model, RecordingTokenizer(), config=_config(decode_bridge_policy="assistant_answer_v2")
     )._decode_bridge_tokens()
-    assert v1 and v2 and v1 != v2
+    v3 = LatentCortexEngine(
+        tiny_model, RecordingTokenizer(), config=_config(decode_bridge_policy="assistant_answer_v3")
+    )._decode_bridge_tokens()
+    assert v1 and v2 and v3
+    assert len({tuple(v1), tuple(v2), tuple(v3)}) == 3
     with pytest.raises(ValueError):
         LatentCortexEngine(
             tiny_model, RecordingTokenizer(), config=_config(decode_bridge_policy="bogus")

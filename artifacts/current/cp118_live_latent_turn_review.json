@@ -1,0 +1,64 @@
+{
+  "schema": "aura.live_latent_certificate_review.v1",
+  "reviewed_artifact": "artifacts/current/cp118_live_latent_turn.json",
+  "reviewed_artifact_sha256": "7916f770f8fe5407566d2ece46b50675860554a9d872c639654da15f23b0affc",
+  "reviewed_exact_commit": "ffc0e0044c8b49ccdf749cab95d7502c518aa2b1",
+  "original_verdict": "PASS",
+  "review_verdict": "INVALIDATED",
+  "capability_credit": "REVOKED",
+  "mechanics_credit": "RETAINED",
+  "mechanics_retained": [
+    "signed installed-app resident-32B execution",
+    "single resident generation owner",
+    "two recurrent steps and two branches",
+    "accepted temporary fast-weight descent",
+    "temporary-weight erase proof",
+    "base-parameter identity unchanged"
+  ],
+  "invalidated_claims": [
+    "complete user-facing answer",
+    "all requested facets satisfied",
+    "all listed fault subjects covered",
+    "exact public text bound to the certified quality hash"
+  ],
+  "original_certified_text_sha256": "73c4a988e6478e31b347d442801169c7c6edd65fd87702e93c4e98b41e723c45",
+  "delivered_public_text_sha256": "d1ab750dd34218ffa5d653fddcc423543d2437085d9b4b901ca004f738804199",
+  "hashes_match": false,
+  "independent_public_regrade": {
+    "schema": "aura.latent_output_quality.v1",
+    "policy": "resident_latent_product_quality_v1",
+    "passed": false,
+    "requested_facets": [
+      "compare",
+      "select",
+      "verify",
+      "explain"
+    ],
+    "satisfied_facets": [
+      "compare",
+      "explain"
+    ],
+    "missing_facets": [
+      "select",
+      "verify"
+    ],
+    "listed_subjects": [
+      "cancellation",
+      "timeout",
+      "worker-restart"
+    ],
+    "covered_listed_subjects": [],
+    "listed_subject_coverage": 0.0,
+    "prompt_echo_detected": true,
+    "protocol_artifact_detected": true,
+    "copied_objective_token_count": 36,
+    "longest_objective_copy_tokens": 21,
+    "reasons": [
+      "missing_requested_facets",
+      "prompt_echo_contamination",
+      "protocol_artifact_leakage",
+      "listed_subjects_uncovered"
+    ]
+  },
+  "disposition": "Historical artifact preserved unchanged. It may support live mechanism claims only and must not support product-quality, capability-gain, frontier-gain, or release claims."
+}

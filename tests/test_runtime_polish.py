@@ -896,12 +896,17 @@ def test_desktop_chat_and_neural_cards_do_not_clip_long_text():
     assert "card.dataset.previewOnly = 'true'" in aura_js
     assert "toggleThoughtCardFull(this)" in aura_js
     assert "window.toggleThoughtCardFull = toggleThoughtCardFull" in aura_js
+    assert "showCompletePayload = fullMsg.length <= 8000" in aura_js
+    assert "window.toggleInlineThought = toggleInlineThought" in aura_js
+    assert "block.style.maxHeight = 'none'" in aura_js
+    assert "block.style.overflow = 'visible'" in aura_js
+    assert "window.addEventListener('resize', syncResponsiveConversationSurface" in aura_js
     assert '<div class="msg-content">${h}</div>' in aura_js
     assert "neural_full_message" in server_py
     assert "_neural_query_preview(query)" in reasoning_py
     assert "query[:60]" not in reasoning_py
 
-    assert ".thought-card.long:not(.expanded) .thought-preview" in aura_css
+    assert ".thought-card.long:not(.expanded) .thought-preview" not in aura_css
     assert ".thought-full[hidden]," in aura_css
     assert ".thought-card.expanded .thought-full" in aura_css
     assert ".thought-expand-btn" in aura_css
@@ -909,6 +914,7 @@ def test_desktop_chat_and_neural_cards_do_not_clip_long_text():
     assert ".msg {\n    flex: 0 0 auto;\n    height: auto;\n    max-height: none;\n    overflow: visible;\n}" in aura_css
     assert ".msg-content {\n    min-width: 0;\n    max-width: min(76ch, 100%);" in aura_css
     assert ".thought-card {\n    height: auto;\n    max-height: none;\n    overflow: visible;\n}" in aura_css
+    assert "max-height: 600px" not in aura_css
 
 
 def test_programmatic_chat_sends_use_real_submit_path():
