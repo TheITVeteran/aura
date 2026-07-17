@@ -5109,6 +5109,8 @@ def _build_live_turn_contract_payload(
             "decode_termination",
             "decode_temperature",
             "decode_top_p",
+            "decode_newline_suppressions",
+            "decode_repetition_penalty_applied",
             "decode_bridge_applied", "decode_bridge_policy",
             "decode_bridge_token_count", "decode_bridge_tokens_sha256",
             "decode_bridge_logits_digest", "output_quality",
