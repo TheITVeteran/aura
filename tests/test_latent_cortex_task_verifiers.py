@@ -178,3 +178,56 @@ def test_engine_selects_branch_by_verifier_score():
     assert result.receipt.selected_branch == 1, (
         "the branch with the higher verified score must win"
     )
+
+
+# ── Goodhart hardening: cues without substance earn nothing ─────────────
+
+
+def test_bare_cue_stuffing_does_not_satisfy_facets():
+    objective = "Compare the designs, choose the best, and explain why."
+    stuffed = "Whereas. I choose. Because. The best."
+    result = check_facet_coverage(stuffed, objective)
+    assert result["satisfied"] == []
+    assert set(result["unsupported_cues"]) >= {"compare", "select", "explain"}
+
+
+def test_substantive_paraphrase_still_satisfies_facets():
+    objective = "Compare the designs and explain why one is stronger."
+    text = (
+        "The event-driven design is stronger because it isolates faults to "
+        "one worker, whereas the shared-loop design lets a stall cascade."
+    )
+    result = check_facet_coverage(text, objective)
+    assert "explain" in result["satisfied"]
+    assert "compare" in result["satisfied"]
+    assert result["excerpts"]
+
+
+def test_repetition_loop_scores_below_clean_answer():
+    from core.brain.llm.latent_cortex.task_verifiers import check_degeneracy
+
+    loop = ("The scheduler arbitrates deadlines by priority. " * 12).strip()
+    clean = (
+        "The scheduler arbitrates deadlines with priority aging: each "
+        "waiting task gains weight over time, so starvation is bounded. "
+        "Conflicts resolve toward the oldest deadline first, and preemption "
+        "only fires when the incumbent has passed its soft budget."
+    )
+    loop_row = check_degeneracy(loop)
+    clean_row = check_degeneracy(clean)
+    assert loop_row["applicable"] and clean_row["applicable"]
+    assert loop_row["factor"] < clean_row["factor"]
+
+    verifier = EpisodeTaskVerifier("Explain how the scheduler arbitrates deadlines.")
+    assert verifier(clean) > verifier(loop)
+
+
+def test_unverified_candidates_are_marked():
+    row = EpisodeTaskVerifier("").evaluate("")
+    assert row["score"] == 0.5
+    assert row["unverified"] is True
+
+    grounded_row = EpisodeTaskVerifier("Explain the fix").evaluate(
+        "The fix pins the loop to one owner because double-start raced."
+    )
+    assert grounded_row["unverified"] is False
