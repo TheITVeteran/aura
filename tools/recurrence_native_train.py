@@ -65,6 +65,12 @@ def main() -> int:
     parser.add_argument("--max-steps", type=_positive_int, default=100_000)
     parser.add_argument("--checkpoint-every", type=_positive_int, default=100)
     parser.add_argument("--log-every", type=_positive_int, default=10)
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="load adapter_latest.safetensors from --out-dir before training "
+        "(step counter continues from the saved receipt)",
+    )
     args = parser.parse_args()
 
     from core.runtime.model_lane_control import standalone_model_lane
@@ -145,6 +151,25 @@ def _run(args: argparse.Namespace) -> int:
     fingerprint = checkpoint_file_fingerprint(args.model)
 
     wrapped = _wrap_window_layers(model, rank=args.lora_rank, targets=targets)
+    resumed_from_step = 0
+    if args.resume:
+        latest = out_dir / "adapter_latest.safetensors"
+        prior_receipt_path = out_dir / "receipt.json"
+        if latest.is_file():
+            model.load_weights(list(mx.load(str(latest)).items()), strict=False)
+            if prior_receipt_path.is_file():
+                try:
+                    resumed_from_step = int(
+                        json.loads(prior_receipt_path.read_text()).get("steps") or 0
+                    )
+                except (ValueError, OSError):
+                    resumed_from_step = 0
+            print(
+                f"resumed adapter from {latest.name} (prior steps: {resumed_from_step})",
+                flush=True,
+            )
+        else:
+            print("--resume set but no adapter_latest.safetensors; starting fresh", flush=True)
     trainable = sum(
         v.size for _, v in tree_flatten(model.trainable_parameters())
     )
@@ -209,7 +234,8 @@ def _run(args: argparse.Namespace) -> int:
             json.dumps(receipt, indent=1, sort_keys=True)
         )
 
-    step = 0
+    step = resumed_from_step
+    receipt["resumed_from_step"] = resumed_from_step
     window_losses: list[float] = []
     order = list(range(len(examples)))
     epoch = 0
