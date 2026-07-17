@@ -1736,3 +1736,75 @@ def test_background_episode_stays_decoupled_from_live_mind(monkeypatch):
     assert calls["merge"] == 0
     assert calls["broadcast"] == 0
     assert "workspace_broadcast" not in result["receipt"]
+
+
+# ── Held-out facet grading loop (service ↔ Foundry) ─────────────────────
+
+
+def test_facet_weights_stay_none_until_foundry_has_graded_evidence(monkeypatch):
+    class NeutralFoundry:
+        def weight_for(self, verifier, domain):
+            return 1.0
+
+    import core.brain.verifiers.foundry as foundry_mod
+
+    monkeypatch.setattr(
+        foundry_mod, "get_verifier_foundry", lambda: NeutralFoundry()
+    )
+    assert LatentCortexService._facet_reliability_weights("general") is None
+
+    class MeasuredFoundry:
+        def weight_for(self, verifier, domain):
+            return 0.4 if verifier == "latent_facet_explain" else 1.0
+
+    monkeypatch.setattr(
+        foundry_mod, "get_verifier_foundry", lambda: MeasuredFoundry()
+    )
+    weights = LatentCortexService._facet_reliability_weights("general")
+    assert weights is not None
+    assert weights["explain"] == 0.4
+    assert weights["compare"] == 1.0
+
+
+def test_successful_episode_queues_facet_judgments_for_grading(monkeypatch):
+    recorded: list[dict] = []
+
+    class RecordingFoundry:
+        def record_verdict(self, **kwargs):
+            recorded.append(kwargs)
+            return f"vd-{len(recorded)}"
+
+        def weight_for(self, verifier, domain):
+            return 1.0
+
+    import core.brain.verifiers.foundry as foundry_mod
+
+    monkeypatch.setattr(
+        foundry_mod, "get_verifier_foundry", lambda: RecordingFoundry()
+    )
+    svc = LatentCortexService()
+    receipt = {
+        "verifier_guidance": {
+            "evaluations": 3,
+            "best_score": 0.8,
+            "facet_judgments": [
+                {
+                    "facet": "explain",
+                    "satisfied": True,
+                    "excerpt": "because the lease ordering bounds waiting",
+                },
+                {"facet": "compare", "satisfied": False, "excerpt": ""},
+                {"facet": 42, "satisfied": True},  # junk row is skipped
+            ],
+        }
+    }
+    svc._record_facet_judgments(receipt, "general", "why prefer older leases?")
+    assert len(recorded) == 2
+    by_verifier = {row["verifier"]: row for row in recorded}
+    explain = by_verifier["latent_facet_explain"]
+    assert explain["hard_pass"] is True and explain["score"] == 1.0
+    assert explain["checked"] is True
+    assert "lease ordering" in explain["meta"]["excerpt"]
+    compare = by_verifier["latent_facet_compare"]
+    assert compare["hard_pass"] is False and compare["score"] == 0.0
+    assert explain["task_key"] == compare["task_key"] != ""

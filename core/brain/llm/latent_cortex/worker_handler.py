@@ -337,8 +337,32 @@ def handle_latent_reason(
     # decoded probe text.
     task_verifier = None
     if bool(job.get("verifier_guidance")) and tokenizer is not None:
-        from core.brain.llm.latent_cortex.task_verifiers import EpisodeTaskVerifier
+        from core.brain.llm.latent_cortex.task_verifiers import (
+            _ANSWER_FACET_HINTS,
+            EpisodeTaskVerifier,
+        )
 
+        facet_reliability = job.get("facet_reliability")
+        if facet_reliability is not None:
+            if (
+                not isinstance(facet_reliability, dict)
+                or len(facet_reliability) > 8
+                or any(
+                    not isinstance(name, str)
+                    or name not in _ANSWER_FACET_HINTS
+                    or isinstance(value, bool)
+                    or not isinstance(value, (int, float))
+                    or not 0.0 <= float(value) <= 1.0
+                    for name, value in facet_reliability.items()
+                )
+            ):
+                return {
+                    "status": "error",
+                    "message": (
+                        "latent_reason facet_reliability must map known facet "
+                        "names to floats in [0, 1]"
+                    ),
+                }
         objective = prompt if isinstance(prompt, str) else ""
         if not objective and isinstance(episode_messages, list):
             for message in reversed(episode_messages):
@@ -347,7 +371,9 @@ def handle_latent_reason(
                     if isinstance(content, str) and content.strip():
                         objective = content
                         break
-        task_verifier = EpisodeTaskVerifier(objective)
+        task_verifier = EpisodeTaskVerifier(
+            objective, facet_reliability=facet_reliability
+        )
     result = engine.reason(
         prompt=prompt if isinstance(prompt, str) else None,
         messages=episode_messages,

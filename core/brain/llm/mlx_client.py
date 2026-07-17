@@ -3833,6 +3833,7 @@ class MLXLocalClient:
         timeout_s: float = 300.0,
         foreground_request: bool = True,
         verifier_guidance: bool = False,
+        facet_reliability: dict[str, float] | None = None,
         cognitive_context: list | None = None,
     ) -> dict[str, Any]:
         """Run a Recursive Latent Cortex episode on the RESIDENT worker model.
@@ -3996,6 +3997,15 @@ class MLXLocalClient:
             }
             if verifier_guidance:
                 job["verifier_guidance"] = True
+                if isinstance(facet_reliability, dict) and facet_reliability:
+                    # Held-out facet calibration rides only alongside the
+                    # verifier it calibrates; worker revalidates the shape.
+                    job["facet_reliability"] = {
+                        str(name): float(value)
+                        for name, value in list(facet_reliability.items())[:8]
+                        if isinstance(value, (int, float))
+                        and not isinstance(value, bool)
+                    }
             if prompt is not None:
                 job["prompt"] = str(prompt)
             if messages is not None:

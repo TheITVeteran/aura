@@ -620,6 +620,81 @@ class LatentCortexService:
                     return rendered
         return ""
 
+    @staticmethod
+    def _facet_reliability_weights(domain: str) -> dict[str, float] | None:
+        """Foundry-calibrated facet weights; None until any facet is measured.
+
+        weight_for stays 1.0 below 10 graded verdicts, so this returns None
+        (wire unchanged) until an operator has actually graded facet
+        judgments — behavior never shifts on ungraded speculation.
+        """
+        try:
+            from core.brain.llm.latent_cortex.task_verifiers import (
+                _ANSWER_FACET_HINTS,
+            )
+            from core.brain.verifiers.foundry import get_verifier_foundry
+
+            foundry = get_verifier_foundry()
+            weights = {
+                name: float(
+                    foundry.weight_for(f"latent_facet_{name}", str(domain))
+                )
+                for name in _ANSWER_FACET_HINTS
+            }
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            return None
+        if all(value == 1.0 for value in weights.values()):
+            return None
+        return weights
+
+    def _record_facet_judgments(
+        self, receipt: dict[str, Any], domain: str, objective: str
+    ) -> None:
+        """Feed the episode's facet judgments to the Foundry grade queue.
+
+        Each judgment (facet, satisfied, excerpt) becomes an ungraded
+        verdict an operator can grade against the excerpt — the held-out
+        loop that keeps 'because'-without-explaining from ever paying.
+        """
+        guidance = receipt.get("verifier_guidance")
+        if not isinstance(guidance, dict):
+            return
+        judgments = guidance.get("facet_judgments")
+        if not isinstance(judgments, list) or not judgments:
+            return
+        try:
+            import hashlib
+
+            from core.brain.verifiers.foundry import get_verifier_foundry
+
+            foundry = get_verifier_foundry()
+            task_key = hashlib.sha256(
+                str(objective or "").encode("utf-8")
+            ).hexdigest()[:16]
+            for row in judgments[:8]:
+                facet = row.get("facet") if isinstance(row, dict) else None
+                if not isinstance(facet, str) or not facet:
+                    continue
+                satisfied = bool(row.get("satisfied"))
+                foundry.record_verdict(
+                    verifier=f"latent_facet_{facet}",
+                    domain=str(domain),
+                    hard_pass=satisfied,
+                    score=1.0 if satisfied else 0.0,
+                    checked=True,
+                    task_key=task_key,
+                    meta={"excerpt": str(row.get("excerpt") or "")[:200]},
+                )
+        except (
+            ImportError,
+            AttributeError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+            OSError,
+        ) as exc:
+            logger.debug("Facet judgment recording skipped: %s", exc)
+
     # ── The episode ─────────────────────────────────────────────────────
     async def deep_reason(
         self,
@@ -883,6 +958,10 @@ class LatentCortexService:
                         allocation_profile
                         == "resident_32b_interactive_full_stack_v1"
                     ),
+                    # Held-out calibration: facets whose cue-detectors humans
+                    # keep overruling (Foundry grades) are muted inside the
+                    # episode's verifier. None until grading evidence exists.
+                    facet_reliability=self._facet_reliability_weights(domain),
                 )
             except asyncio.CancelledError:
                 raise
@@ -958,6 +1037,15 @@ class LatentCortexService:
             self._failure_streak = 0
             self._last_refusal = ""
             self._last_success_at = time.time()
+            # Held-out grading queue: every facet judgment on the winning
+            # candidate becomes a gradeable Foundry verdict (excerpt
+            # attached), so facet-cue reliability is measured against human
+            # ground truth instead of trusted forever.
+            self._record_facet_judgments(
+                result_receipt,
+                domain,
+                self._visible_objective(question, messages),
+            )
             # RLC→GWT coupling: the conclusion returns to the workspace as a
             # competing coalition (priced by how it was earned) BEFORE any
             # action path consumes it — deliberation revises the broadcast,

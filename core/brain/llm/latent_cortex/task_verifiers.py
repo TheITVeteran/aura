@@ -246,9 +246,44 @@ class EpisodeTaskVerifier:
         "grounding": 0.15,
     }
 
-    def __init__(self, objective: str) -> None:
+    def __init__(
+        self,
+        objective: str,
+        *,
+        facet_reliability: dict[str, float] | None = None,
+    ) -> None:
         self.objective = str(objective or "")
         self.evaluations: list[dict[str, Any]] = []
+        # Held-out calibration: per-facet reliability learned from GRADED
+        # verdicts (Verifier Foundry Wilson bounds, human ground truth). A
+        # facet whose cue-detector humans keep overruling is muted — it
+        # earns less when satisfied and demands less when requested — so
+        # "add the word because" stops being a strategy the moment grading
+        # evidence says the cue is hollow. Neutral (1.0) until measured.
+        self.facet_reliability: dict[str, float] = {}
+        for name, value in (facet_reliability or {}).items():
+            if (
+                name in _ANSWER_FACET_HINTS
+                and isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and 0.0 <= float(value) <= 1.0
+            ):
+                self.facet_reliability[name] = float(value)
+
+    def _facet_weighted_score(self, facets: dict[str, Any]) -> float | None:
+        requested = facets.get("requested") or []
+        if not requested:
+            return None
+        satisfied = set(facets.get("satisfied") or [])
+        total = sum(self.facet_reliability.get(name, 1.0) for name in requested)
+        if total <= 0.0:
+            return None
+        earned = sum(
+            self.facet_reliability.get(name, 1.0)
+            for name in requested
+            if name in satisfied
+        )
+        return earned / total
 
     def evaluate(self, text: str) -> dict[str, Any]:
         checks = {
@@ -257,6 +292,11 @@ class EpisodeTaskVerifier:
             "facets": check_facet_coverage(text, self.objective),
             "grounding": check_objective_grounding(text, self.objective),
         }
+        if self.facet_reliability:
+            checks["facets"]["score"] = self._facet_weighted_score(
+                checks["facets"]
+            )
+            checks["facets"]["reliability_weighted"] = True
         weighted = total_weight = 0.0
         for name, result in checks.items():
             score = result.get("score")
@@ -294,6 +334,21 @@ class EpisodeTaskVerifier:
         if not self.evaluations:
             return {"schema": TASK_VERIFIER_SCHEMA, "evaluations": 0}
         best = max(self.evaluations, key=lambda row: row["score"])
+        facets = best["checks"].get("facets") or {}
+        # Per-facet judgments on the WINNING candidate, excerpt included —
+        # the held-out grading surface. An operator (or downstream ground
+        # truth) grades whether the excerpt really addresses the facet; the
+        # grades calibrate facet_reliability for future episodes.
+        judgments = [
+            {
+                "facet": name,
+                "satisfied": name in (facets.get("satisfied") or []),
+                "excerpt": str((facets.get("excerpts") or {}).get(name, ""))[
+                    :200
+                ],
+            }
+            for name in (facets.get("requested") or [])
+        ]
         return {
             "schema": TASK_VERIFIER_SCHEMA,
             "evaluations": len(self.evaluations),
@@ -305,6 +360,8 @@ class EpisodeTaskVerifier:
                 for name, result in best["checks"].items()
                 if result.get("failures")
             },
+            "facet_judgments": judgments,
+            "facet_reliability": dict(self.facet_reliability),
         }
 
 

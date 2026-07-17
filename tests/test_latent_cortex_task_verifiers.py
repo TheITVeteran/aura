@@ -231,3 +231,66 @@ def test_unverified_candidates_are_marked():
         "The fix pins the loop to one owner because double-start raced."
     )
     assert grounded_row["unverified"] is False
+
+
+# ── Held-out facet calibration (Foundry-graded reliability) ─────────────
+
+
+def test_facet_reliability_mutes_untrusted_cues():
+    """A facet whose detector humans keep overruling earns less when its cue
+    fires — 'because'-stuffing stops paying once grading says it's hollow."""
+    objective = "Explain why the scheduler prefers the older lease and choose one policy."
+    answer = (
+        "The scheduler prefers the older lease because a newer lease would "
+        "starve long waiters of their turn. I recommend the oldest-first "
+        "policy since it bounds waiting time for every queued task."
+    )
+    trusted = EpisodeTaskVerifier(objective)
+    muted = EpisodeTaskVerifier(
+        objective, facet_reliability={"explain": 0.25, "select": 1.0}
+    )
+    trusted_row = trusted.evaluate(answer)
+    muted_row = muted.evaluate(answer)
+    assert muted_row["checks"]["facets"]["reliability_weighted"] is True
+    # Both facets satisfied: unweighted 2/2 = 1.0; muted (0.25+1.0)/(1.25)=1.0
+    # still 1.0 when ALL satisfied — the mute shows when the untrusted facet
+    # is the ONLY one satisfied:
+    partial = "This works because the lease ordering bounds the waiting time for tasks."
+    partial_trusted = EpisodeTaskVerifier(objective).evaluate(partial)
+    partial_muted = EpisodeTaskVerifier(
+        objective, facet_reliability={"explain": 0.25}
+    ).evaluate(partial)
+    trusted_facets = partial_trusted["checks"]["facets"]["score"]
+    muted_facets = partial_muted["checks"]["facets"]["score"]
+    assert muted_facets < trusted_facets
+    assert trusted_row["score"] >= muted_row["score"]
+
+
+def test_facet_reliability_rejects_junk_entries():
+    verifier = EpisodeTaskVerifier(
+        "compare the two options",
+        facet_reliability={
+            "compare": True,          # bool is not a weight
+            "unknown_facet": 0.5,     # not a facet
+            "explain": 2.0,           # out of range
+            "select": 0.8,            # valid
+        },
+    )
+    assert verifier.facet_reliability == {"select": 0.8}
+
+
+def test_receipt_exposes_gradeable_facet_judgments():
+    objective = "Compare eager and lazy loading and choose one for the cache."
+    verifier = EpisodeTaskVerifier(objective)
+    verifier.evaluate(
+        "Eager loading warms every entry up front, whereas lazy loading pays "
+        "on first touch. I recommend lazy loading for this cache because the "
+        "key space is sparse and mostly cold."
+    )
+    receipt = verifier.to_receipt()
+    judgments = {row["facet"]: row for row in receipt["facet_judgments"]}
+    assert {"compare", "select"} <= set(judgments)
+    assert judgments["compare"]["satisfied"] is True
+    assert "whereas" in judgments["compare"]["excerpt"].lower()
+    assert judgments["select"]["satisfied"] is True
+    assert receipt["facet_reliability"] == {}
