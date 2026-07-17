@@ -163,3 +163,59 @@ def test_non_string_inputs_fail_closed_not_crash():
     assert receipt["passed"] is False
     assert "empty_output" in receipt["reasons"]
     assert "invalid_generated_token_count" in receipt["reasons"]
+
+
+def test_phrase_loop_gate_is_length_aware():
+    """Shared reliability gate: a genuine loop is caught at any length, but a
+    long technical answer naming its subject a few times is not a loop —
+    the absolute 3-repeat rule rejected a correct live deep-reasoning
+    answer (CP111 evidence)."""
+    from core.conversation.response_reliability import _phrase_loop_reason
+
+    # A real degeneration loop: one phrase dozens of times.
+    loop = "the single owner design wins. " * 30
+    assert _phrase_loop_reason("q", loop) == "repetitive_phrase_loop"
+
+    # A 450+ word technical answer mentioning its key phrase four times.
+    filler_topics = [
+        "request admission and queue depth accounting under sustained load",
+        "ledger compaction cadence and the audit trail it must preserve",
+        "backpressure propagation between the ingest tier and the planner",
+        "snapshot cadence for durable state and the recovery point objective",
+        "capability lease renewal and the revocation path for stale owners",
+        "telemetry sampling budgets and the alert thresholds they feed",
+        "cold boot ordering across dependent subsystems and their probes",
+        "schema migration staging with reversible cutover checkpoints",
+    ]
+    sentence_frames = [
+        "First, {t} deserves a measured look before any budget lands.",
+        "A second concern is {t}, which shapes how failures surface.",
+        "Third, engineers must model {t} against realistic traffic.",
+        "Another axis involves {t} and its interaction with rollout pace.",
+        "Equally important, {t} constrains what operators can promise.",
+        "Beyond that, {t} decides whether incidents stay recoverable.",
+        "Planning must also cover {t} across every deployment ring.",
+        "Finally, {t} rounds out the review with hard evidence.",
+    ]
+    body_sentences = [
+        frame.format(t=topic)
+        for frame, topic in zip(sentence_frames, filler_topics)
+    ]
+    long_answer = (
+        "The single-owner design assigns each request to exactly one worker, "
+        "preventing duplicate generation from racing the proof ledger. "
+        + " ".join(body_sentences)
+        + " By contrast, late deduplication merges concurrent attempts after "
+        "the fact, so the single-owner design also simplifies verification. "
+        "Cancellation revokes the owner token; timeouts trip the deadline "
+        "guard; restarts replay the boot contract before serving traffic. "
+        "Therefore the single-owner design is the stronger choice, and the "
+        "single-owner design should be verified with fault injection."
+    )
+    from core.conversation.response_reliability import _phrase_loop_reason as plr
+
+    words = len(long_answer.split())
+    assert words > 220, words
+    assert plr("compare designs", long_answer) == "", (
+        "topical repetition in a long answer must not read as a loop"
+    )

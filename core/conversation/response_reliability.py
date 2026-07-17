@@ -4462,6 +4462,14 @@ def _phrase_loop_reason(user_message: Any, reply_text: Any) -> str:
                     speaker_labels.add(w)
     if speaker_labels:
         stop_words = stop_words.union(speaker_labels)
+    # Length-aware loop threshold: a genuine degeneration loop repeats a
+    # phrase dozens of times, while a long technical answer legitimately
+    # names its subject ("single-owner design", "worker restart") three or
+    # four times across 400+ words. An absolute 3-repeat rule rejected a
+    # correct 350-token deep-reasoning answer live; scaling the required
+    # repeats with length keeps full detection power against real loops
+    # without punishing topical vocabulary in long answers.
+    required_repeats = 3 + min(2, len(lower_words) // 220)
     for n in (4, 3, 2):
         counts: dict[tuple[str, ...], int] = {}
         for i in range(0, max(0, len(lower_words) - n + 1)):
@@ -4469,7 +4477,7 @@ def _phrase_loop_reason(user_message: Any, reply_text: Any) -> str:
             if sum(1 for part in gram if part not in stop_words) < 2:
                 continue
             counts[gram] = counts.get(gram, 0) + 1
-        if any(count >= 3 for count in counts.values()):
+        if any(count >= required_repeats for count in counts.values()):
             return "repetitive_phrase_loop"
 
     content_words = [
