@@ -67,6 +67,10 @@ _CONFIG_KEYS = {
     "exchange_gamma",
     "exchange_interval",
     "fast_weights",
+    "fast_weights_canary",
+    "fast_weights_canary_max_drop",
+    "fast_weights_canary_max_tokens",
+    "fast_weights_canary_rescale_attempts",
     "fast_weights_lr",
     "fast_weights_max_layers",
     "fast_weights_export_candidates",
@@ -195,6 +199,16 @@ def config_from_job(job_config: dict[str, Any] | None) -> CortexConfig:
             ),
             export_candidates=_typed_value(
                 raw, "fast_weights_export_candidates", False, bool
+            ),
+            canary_enabled=_typed_value(raw, "fast_weights_canary", True, bool),
+            canary_max_logprob_drop=_typed_value(
+                raw, "fast_weights_canary_max_drop", 0.5, float
+            ),
+            canary_rescale_attempts=_typed_value(
+                raw, "fast_weights_canary_rescale_attempts", 2, int
+            ),
+            canary_max_tokens=_typed_value(
+                raw, "fast_weights_canary_max_tokens", 24, int
             ),
         ),
         prelude_frac=_typed_value(raw, "prelude_frac", 0.25, float),

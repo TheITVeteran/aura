@@ -113,6 +113,8 @@ class FastWeightsLifecycle:
     line_search_backtracks: int = 0
     budget_exhausted: bool = False
     detach_conflicts: int = 0
+    canary_rescales: int = 0
+    canary_erased: bool = False
     loss_trail: list[float] = field(default_factory=list)
     gradient_global_norm_trail: list[float] = field(default_factory=list)
     accepted_step_sizes: list[float] = field(default_factory=list)
@@ -133,6 +135,8 @@ class FastWeightsLifecycle:
             "line_search_backtracks": self.line_search_backtracks,
             "budget_exhausted": self.budget_exhausted,
             "detach_conflicts": self.detach_conflicts,
+            "canary_rescales": self.canary_rescales,
+            "canary_erased": self.canary_erased,
             "loss_trail": [round(v, 6) for v in self.loss_trail],
             "gradient_global_norm_trail": [
                 round(v, 6) for v in self.gradient_global_norm_trail
@@ -228,6 +232,38 @@ class EpisodicFastWeights:
         self.lifecycle.detach_conflicts += conflicts
         self.lifecycle.erased = not self.handles
         return restored
+
+    def rescale(self, factor: float) -> float:
+        """Multiply every wrapper's scale — the canary ladder's step-down.
+
+        Scale lives outside U/V, so a rescale needs no re-optimization and no
+        new forward pass; the next canary measurement decides whether the
+        weaker ΔW is now behaviorally safe.
+        """
+        if (
+            isinstance(factor, bool)
+            or not isinstance(factor, (int, float))
+            or not math.isfinite(float(factor))
+            or not 0.0 < float(factor) < 1.0
+        ):
+            raise ValueError("fast-weight rescale factor must be inside (0, 1)")
+        if not self.handles:
+            raise RuntimeError("fast-weight rescale requires attached wrappers")
+        for handle in self.handles:
+            handle.wrapper.scale *= float(factor)
+        self.lifecycle.canary_rescales += 1
+        return float(self.handles[0].wrapper.scale)
+
+    def canary_erase(self) -> None:
+        """Erase ΔW because the protected battery regressed under it.
+
+        The episode continues on base weights with its refined latent state
+        intact; the lifecycle records that the canaries — not cleanup —
+        removed the adaptation, and consolidation export is off the table
+        because the post-detach snapshot is deliberately never taken.
+        """
+        self.detach()
+        self.lifecycle.canary_erased = True
 
     def prove_erase(self, probe_fn: Callable[[], Any], baseline) -> bool:
         """Assert the model's function is EXACTLY the pre-attach baseline."""

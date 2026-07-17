@@ -115,6 +115,16 @@ class FastWeightsConfig:
     # Export mechanically-clean episode synapses (accepted descent + proven
     # erase) to the governed consolidation queue for the compounding loop.
     export_candidates: bool = False
+    # In-episode protected-behavior canaries: before any decode happens under
+    # active ΔW, a tiny protected battery (prose / instruction-following /
+    # tool syntax / identity / calibration / reasoning) is measured under the
+    # adapted function and compared to the base function. Regression beyond
+    # the drop threshold walks a bounded ladder: halve the fast-weight scale
+    # and re-measure (up to canary_rescale_attempts), then erase entirely.
+    canary_enabled: bool = True
+    canary_max_logprob_drop: float = 0.5
+    canary_rescale_attempts: int = 2
+    canary_max_tokens: int = 24
 
 
 @dataclass
@@ -402,6 +412,19 @@ class CortexConfig:
             ABSOLUTE_MAX_RECURRENT_STEPS,
         ):
             problems.append("fast_weights.max_wrapped_layers outside [1, 64]")
+        if type(self.fast_weights.canary_enabled) is not bool:
+            problems.append("fast_weights.canary_enabled must be boolean")
+        if (
+            not finite(self.fast_weights.canary_max_logprob_drop)
+            or not 0.0 < self.fast_weights.canary_max_logprob_drop <= 10.0
+        ):
+            problems.append(
+                "fast_weights.canary_max_logprob_drop must be finite and inside (0, 10]"
+            )
+        if not integer_in(self.fast_weights.canary_rescale_attempts, 0, 8):
+            problems.append("fast_weights.canary_rescale_attempts outside [0, 8]")
+        if not integer_in(self.fast_weights.canary_max_tokens, 4, 128):
+            problems.append("fast_weights.canary_max_tokens outside [4, 128]")
         return problems
 
 
@@ -478,6 +501,10 @@ class EpisodeReceipt:
     fast_weight_gradient_norm_trail: list[float] = field(default_factory=list)
     fast_weight_accepted_step_sizes: list[float] = field(default_factory=list)
     fast_weight_line_search_backtracks: int = 0
+    # Protected-behavior canary evidence: what the adapted function did to
+    # the protected battery and what the ladder decided (accepted /
+    # rescaled / erased). Empty when canaries did not run.
+    fast_weight_canaries: dict[str, Any] = field(default_factory=dict)
     # Decode completeness. A token-limit or EOS stop is complete; a budget stop
     # is a truncated answer and cannot satisfy the production receipt contract.
     decode_requested_tokens: int = 0
@@ -585,6 +612,7 @@ class EpisodeReceipt:
             "fast_weight_line_search_backtracks": (
                 self.fast_weight_line_search_backtracks
             ),
+            "fast_weight_canaries": dict(self.fast_weight_canaries),
             "decode_requested_tokens": self.decode_requested_tokens,
             "decode_generated_tokens": self.decode_generated_tokens,
             "decode_termination": self.decode_termination,

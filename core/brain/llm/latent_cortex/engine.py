@@ -21,8 +21,13 @@ from pathlib import Path
 import time
 import uuid
 from collections.abc import Callable
+from typing import Any
 
 from core.brain.llm.latent_cortex.branches import BranchEnsemble, BranchState
+from core.brain.llm.latent_cortex.capability_canaries import (
+    CapabilityCanaries,
+    compare_canaries,
+)
 from core.brain.llm.latent_cortex.fast_weights import EpisodicFastWeights
 from core.brain.llm.latent_cortex.governance import CheckpointInvariant
 from core.brain.llm.latent_cortex.latent_opt import LatentOptimizer, build_proxy_loss
@@ -840,17 +845,32 @@ class LatentCortexEngine:
         fast_weight_probe_cost = (
             8 * self.n_layers if self.config.fast_weights.enabled else 0
         )
+        canaries: CapabilityCanaries | None = None
+        canary_pass_cost = 0
+        canary_reserve = 0
+        if self.config.fast_weights.enabled and self.config.fast_weights.canary_enabled:
+            canaries = CapabilityCanaries(
+                self.tokenizer,
+                vocab_size=int(self.model.model.embed_tokens.weight.shape[0]),
+                max_tokens_per_canary=self.config.fast_weights.canary_max_tokens,
+            )
+            canary_pass_cost = canaries.tokens_per_measurement * self.n_layers
+            # One adapted measurement plus one re-measurement per allowed
+            # rescale; the baseline pass is charged with the erase baseline.
+            canary_reserve = canary_pass_cost * (
+                1 + max(0, self.config.fast_weights.canary_rescale_attempts)
+            )
         completion_reserve = (
             persist_cost + bridge_cost + decode_cost + fast_weight_probe_cost
         )
         fallback_reserve = prefill_cost + decode_cost
-        safety_reserve = completion_reserve + fallback_reserve
+        safety_reserve = completion_reserve + fallback_reserve + canary_reserve
         branch_seed_cost = (
             self.config.branches.n_branches
             * self.config.workspace.n_slots
             * self.prelude_end
         )
-        fast_weight_baseline_cost = fast_weight_probe_cost
+        fast_weight_baseline_cost = fast_weight_probe_cost + canary_pass_cost
         minimum_admission = (
             prefill_cost
             + branch_seed_cost
@@ -1101,11 +1121,16 @@ class LatentCortexEngine:
         # ── Episode fast weights (attach → optimize → decode under ΔW) ──
         fast_weights: EpisodicFastWeights | None = None
         fw_baseline = None
+        canary_baseline: dict[str, float] | None = None
         if self.config.fast_weights.enabled:
             fast_weights = EpisodicFastWeights(self.config.fast_weights)
             if fast_weight_baseline_cost + safety_reserve > budget.remaining_layer_apps:
                 raise RuntimeError("compute budget cannot admit fast-weight baseline probe")
             fw_baseline = self._fw_probe(budget)
+            if canaries is not None:
+                canary_baseline = canaries.measure(
+                    lambda probe_tokens: self._canary_logits(probe_tokens, budget)
+                )
             stage_started = self._stage_checkpoint(
                 receipt=receipt,
                 budget=budget,
@@ -1165,6 +1190,24 @@ class LatentCortexEngine:
                     attempts=fast_weights.lifecycle.optimization_attempts,
                     accepted=fast_weights.lifecycle.optimized_steps,
                 )
+                if canaries is not None and canary_baseline is not None:
+                    canary_decision = self._enforce_fast_weight_canaries(
+                        canaries,
+                        canary_baseline,
+                        fast_weights,
+                        receipt,
+                        budget,
+                    )
+                    stage_started = self._stage_checkpoint(
+                        receipt=receipt,
+                        budget=budget,
+                        stage="fast_weight_canaries",
+                        stage_started=stage_started,
+                        episode_started=episode_started,
+                        progress=progress,
+                        cancel_check=cancel_check,
+                        decision=canary_decision,
+                    )
 
             # Experiment-3 instrumentation: destroy one refined thought slot
             # just before persistence, so its causal contribution and
@@ -1328,6 +1371,7 @@ class LatentCortexEngine:
         if (
             self.config.fast_weights.export_candidates
             and receipt.fast_weights_erased is True
+            and not lifecycle.canary_erased
             and lifecycle.optimized_steps > 0
             and len(lifecycle.loss_trail) >= 2
             and lifecycle.loss_trail[-1] < lifecycle.loss_trail[0]
@@ -1361,6 +1405,83 @@ class LatentCortexEngine:
                 )
 
     # ── Fast-weight helpers ─────────────────────────────────────────────
+    def _enforce_fast_weight_canaries(
+        self,
+        canaries: CapabilityCanaries,
+        baseline: dict[str, float],
+        fast_weights: EpisodicFastWeights,
+        receipt: EpisodeReceipt,
+        budget: ComputeBudget,
+    ) -> str:
+        """Measure protected behaviors under active ΔW; rescale then erase.
+
+        Runs only when at least one optimization step was accepted — before
+        that, V is still zero and the adapted function is bit-identical to
+        the baseline, so a measurement would spend budget to learn nothing.
+        """
+        cfg = self.config.fast_weights
+        if fast_weights.lifecycle.optimized_steps <= 0:
+            receipt.fast_weight_canaries = {
+                "evaluated": False,
+                "decision": "identity_no_check",
+                "rescales": 0,
+            }
+            return "identity_no_check"
+        max_rescales = max(0, int(cfg.canary_rescale_attempts))
+        decision = "accepted"
+        rescales = 0
+        comparison: dict[str, Any] = {}
+        while True:
+            adapted = canaries.measure(
+                lambda probe_tokens: self._canary_logits(probe_tokens, budget)
+            )
+            comparison = compare_canaries(
+                baseline,
+                adapted,
+                max_logprob_drop=cfg.canary_max_logprob_drop,
+            )
+            if not comparison["regressed"]:
+                break
+            if rescales >= max_rescales:
+                fast_weights.canary_erase()
+                decision = "erased"
+                receipt.flag("fast_weight_canary_erased")
+                logger.info(
+                    "Fast-weight canaries erased ΔW after %d rescales: %s",
+                    rescales,
+                    ",".join(comparison["regressed"]),
+                )
+                break
+            fast_weights.rescale(0.5)
+            rescales += 1
+            decision = "rescaled"
+            receipt.flag("fast_weight_canary_rescaled")
+        receipt.fast_weight_canaries = {
+            "evaluated": True,
+            "decision": decision,
+            "rescales": rescales,
+            **comparison,
+        }
+        return decision
+
+    def _canary_logits(self, probe_tokens: list[int], budget: ComputeBudget):
+        """Standard causal full-stack forward over one canary sequence."""
+        import mlx.core as mx
+        from mlx_lm.models.base import create_attention_mask
+
+        if not budget.can_afford(len(probe_tokens), self.n_layers):
+            raise RuntimeError("compute budget cannot afford capability canary pass")
+        budget.charge(tokens=len(probe_tokens), layers=self.n_layers)
+        inner = self.model.model
+        cache = self._fresh_cache()
+        h = inner.embed_tokens(mx.array([probe_tokens]))
+        mask = create_attention_mask(h, cache)
+        for index, layer in enumerate(inner.layers):
+            h = layer(h, mask, cache[index])
+        logits = self._logits(h)
+        mx.eval(logits)
+        return logits
+
     def _nocache_window_pass(self, z):
         """Window pass with no cache (grad-safe: zero side effects)."""
         inner = self.model.model
