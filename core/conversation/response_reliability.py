@@ -4143,6 +4143,144 @@ def _has_persona_card_deflection(reply_text: Any) -> bool:
     return bool(_PERSONA_CARD_DEFLECTION_RE.search(str(reply_text or "").strip()))
 
 
+# ── Ungrounded person narrative (live confabulation class, Jul 2026) ─────
+# Observed live: Aura opened with "Brenner usually had the good sense to
+# stay away from me after his last fiasco", invented "Peter Brenner" as a
+# colleague, and addressed the user as "Aaron" — an entire fictional social
+# world served as fact. The gate catches the two onset shapes:
+#   1. relational-familiarity claims about a named person nobody mentioned;
+#   2. addressing the user by an ungrounded name.
+# Names the USER introduced (this turn or recently) are grounded — answering
+# questions about people stays possible; so do self/system names and any
+# person registry reachable in-process (absent inside the MLX worker, where
+# conversation text is the only grounding — deliberately conservative).
+_PERSON_NAME_STOPLIST = frozenset(
+    {
+        "actually", "alright", "also", "anyway", "besides", "damn", "finally",
+        "first", "friday", "god", "hey", "hmm", "honestly", "however", "listen",
+        "look", "meanwhile", "monday", "next", "no", "now", "oh", "ok", "okay",
+        "please", "right", "saturday", "second", "seriously", "so", "sorry",
+        "sunday", "sure", "thanks", "then", "third", "thursday", "tuesday",
+        "wait", "wednesday", "well", "yeah", "yes",
+        # techno-nouns seen capitalized in ordinary replies
+        "python", "safari", "chrome", "github", "linux", "windows", "macos",
+        "internet", "english", "wikipedia", "nethack", "javascript",
+    }
+)
+_SELF_SYSTEM_NAMES = frozenset({"aura", "claude", "qwen", "assistant", "anthropic"})
+_RELATIONAL_FAMILIARITY_RES = (
+    # "Brenner and I go way back"
+    re.compile(r"\b([A-Z][a-z]{2,})\s+and\s+I\b"),
+    # "my friend Marcus", "our colleague Dana"
+    re.compile(
+        r"\b(?:my|our)\s+(?:friend|buddy|colleague|coworker|partner|rival|enemy|mentor|boss|contact)\s+([A-Z][a-z]{2,})\b"
+    ),
+    # "Brenner told me", "Dana warned me"
+    re.compile(
+        r"\b([A-Z][a-z]{2,})\s+(?:told|asked|warned|promised|texted|called|visited|owes?|owed)\s+(?:me|us)\b"
+    ),
+    # "I work with Brenner", "We teamed up with Dana"
+    re.compile(
+        r"\b(?:I|[Ww]e)\s+(?:work|worked|met|spoke|talked|argued|teamed)\s+(?:up\s+)?with\s+([A-Z][a-z]{2,})\b"
+    ),
+    # "Brenner usually had the good sense to stay away from me" — habitual
+    # behavior directed at the speaker.
+    re.compile(
+        r"\b([A-Z][a-z]{2,})\s+(?:usually|always|often|never)\s+\w+[^.!?]{0,50}\b(?:me|from\s+me|with\s+me|to\s+me)\b"
+    ),
+)
+# "Aaron, what's the plan?" — vocative address followed by engagement.
+_VOCATIVE_ADDRESS_RE = re.compile(
+    r"(?:^|[.!?]\s+)([A-Z][a-z]{2,}),\s+"
+    r"(?:what|who|where|when|why|how|are|is|do|does|can|could|will|would|let'?s|we|you|it)\b"
+)
+
+
+def _registry_grounded_person_names() -> set[str]:
+    """Names from in-process person/relationship organs (best effort)."""
+    names: set[str] = set()
+    try:
+        from core.runtime.service_registry import get_runtime_service
+    except (ImportError, AttributeError):
+        return names
+    for service_name in ("relationship_graph", "person_model", "user_model", "social_memory"):
+        try:
+            service = get_runtime_service(service_name, default=None)
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            continue
+        if service is None:
+            continue
+        for accessor in ("known_names", "person_names", "names"):
+            candidate = getattr(service, accessor, None)
+            try:
+                values = candidate() if callable(candidate) else candidate
+            except Exception:  # noqa: BLE001 - organ contract unknown; skip
+                continue
+            if isinstance(values, (list, tuple, set, frozenset)):
+                names.update(
+                    str(value).casefold()
+                    for value in list(values)[:64]
+                    if isinstance(value, str) and value.strip()
+                )
+                break
+    return names
+
+
+def _person_name_is_grounded(
+    name: str,
+    user_message: Any,
+    recent_user_messages: Iterable[str] | None,
+    registry_names: set[str],
+) -> bool:
+    lowered = name.casefold()
+    if lowered in _PERSON_NAME_STOPLIST or lowered in _SELF_SYSTEM_NAMES:
+        return True
+    if lowered in registry_names:
+        return True
+    corpus = _conversation_context_norm(user_message, recent_user_messages)
+    return bool(re.search(rf"\b{re.escape(lowered)}\b", corpus))
+
+
+def _has_ungrounded_person_narrative(
+    user_message: Any,
+    reply_text: Any,
+    recent_user_messages: Iterable[str] | None = None,
+) -> bool:
+    """Relational-familiarity claims about a person nobody introduced."""
+    raw = str(reply_text or "").strip()
+    if not raw:
+        return False
+    candidates: set[str] = set()
+    for pattern in _RELATIONAL_FAMILIARITY_RES:
+        candidates.update(match.group(1) for match in pattern.finditer(raw))
+    if not candidates:
+        return False
+    registry_names = _registry_grounded_person_names()
+    return any(
+        not _person_name_is_grounded(name, user_message, recent_user_messages, registry_names)
+        for name in candidates
+    )
+
+
+def _has_ungrounded_person_address(
+    user_message: Any,
+    reply_text: Any,
+    recent_user_messages: Iterable[str] | None = None,
+) -> bool:
+    """The reply addresses the user by a name that exists nowhere in context."""
+    raw = str(reply_text or "").strip()
+    if not raw:
+        return False
+    candidates = {match.group(1) for match in _VOCATIVE_ADDRESS_RE.finditer(raw)}
+    if not candidates:
+        return False
+    registry_names = _registry_grounded_person_names()
+    return any(
+        not _person_name_is_grounded(name, user_message, recent_user_messages, registry_names)
+        for name in candidates
+    )
+
+
 def _has_detail_request_deflection(user_message: Any, reply_text: Any) -> bool:
     raw = str(reply_text or "").strip()
     if not raw or not _DETAIL_REQUEST_DEFLECTION_RE.search(raw):
@@ -4751,6 +4889,10 @@ def assess_user_facing_reply(
         reasons.append("unfounded_voice_intrusion")
     if _has_unsupported_context_continuation_claim(user_message, raw, recent_messages):
         reasons.append("unsupported_context_continuation_claim")
+    if _has_ungrounded_person_narrative(user_message, raw, recent_messages):
+        reasons.append("ungrounded_person_narrative")
+    if _has_ungrounded_person_address(user_message, raw, recent_messages):
+        reasons.append("ungrounded_person_address")
 
     user_norm = _normalize(user_message)
     if _CORRUPTED_SOCIAL_FRAGMENT_RE.search(raw) and "lol" not in user_norm:
@@ -4880,6 +5022,8 @@ def assess_user_facing_reply(
         "unfounded_alarm_derailment",
         "unfounded_voice_intrusion",
         "unsupported_context_continuation_claim",
+        "ungrounded_person_narrative",
+        "ungrounded_person_address",
         "unrequested_pop_culture_intrusion",
         "unexpected_cjk_intrusion",
         "surface_nonsense_drift",
