@@ -43,12 +43,12 @@ from core.brain.llm.latent_cortex.types import (
     LatentReasoningResult,
 )
 from core.brain.llm.latent_cortex.workspace import per_position_rms
+from core.runtime.errors import record_degradation
 
 # Cognitive-slot sources whose content is RETRIEVED knowledge (already
 # epistemically admitted) — eligible for compilation into the fast-weight
 # adaptation subspace.
 _RETRIEVAL_SLOT_SOURCES = frozenset({"memory", "world_model"})
-from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.LatentCortex.Engine")
 
@@ -429,6 +429,7 @@ class LatentCortexEngine:
         cancel_check: Callable[[], bool] | None = None,
         progress: Callable[[dict], None] | None = None,
         wall_reserve_s: float = 0.0,
+        sentence_grace_tokens: int | None = None,
     ) -> tuple[list[int], str]:
         """Minimal sampler: first token from ``initial_logits`` (the logits of
         the last persisted position — prompt tail or final thought slot), then
@@ -437,7 +438,9 @@ class LatentCortexEngine:
         ``wall_reserve_s`` stops decoding while that much wall clock still
         remains — the engine reserves cleanup time when fast weights are
         attached, so a long answer degrades to token truncation instead of
-        endangering the erase proof."""
+        endangering the erase proof. ``sentence_grace_tokens=0`` is the hard
+        cap used by internal verifier previews; final answers retain the
+        product-facing sentence-completion grace by default."""
         import mlx.core as mx
         from mlx_lm.models.base import create_attention_mask
 
@@ -446,6 +449,13 @@ class LatentCortexEngine:
         limit = max_tokens if max_tokens is not None else self.config.decode_max_tokens
         temp = temperature if temperature is not None else self.config.decode_temperature
         nucleus = top_p if top_p is not None else self.config.decode_top_p
+        grace_tokens = (
+            _SENTENCE_GRACE_TOKENS
+            if sentence_grace_tokens is None
+            else sentence_grace_tokens
+        )
+        if type(grace_tokens) is not int or grace_tokens < 0:
+            raise ValueError("sentence_grace_tokens must be a non-negative integer")
 
         out: list[int] = []
         newline_run = 0
@@ -510,7 +520,7 @@ class LatentCortexEngine:
         token = sample_disciplined(initial_logits)
         termination = "token_limit"
         decode_started = time.monotonic()
-        for index in range(max(1, int(limit)) + _SENTENCE_GRACE_TOKENS):
+        for index in range(max(1, int(limit)) + grace_tokens):
             if self._cancel_requested(cancel_check):
                 raise _LatentEpisodeCancelled("decode")
             if token in eos:
@@ -527,7 +537,7 @@ class LatentCortexEngine:
                         else "token_limit_sentence_grace"
                     )
                     break
-                if index + 1 >= int(limit) + _SENTENCE_GRACE_TOKENS:
+                if index + 1 >= int(limit) + grace_tokens:
                     # Grace exhausted without punctuation: still a fragment,
                     # and the receipt says so honestly.
                     termination = "token_limit"
@@ -544,7 +554,7 @@ class LatentCortexEngine:
                 rate_s = max(0.02, (time.monotonic() - decode_started) / max(1, len(out)))
                 winding_down = (
                     budget.remaining_wall_s
-                    < wall_reserve_s + _SENTENCE_GRACE_TOKENS * rate_s
+                    < wall_reserve_s + grace_tokens * rate_s
                 )
                 if winding_down and sentence_done:
                     termination = "wall_reserve_sentence_grace"
@@ -583,7 +593,7 @@ class LatentCortexEngine:
         runner: WindowRunner,
         budget: ComputeBudget,
         *,
-        max_tokens: int = 48,
+        max_tokens: int | None = None,
         bridge_tokens: list[int] | None = None,
     ) -> list[int]:
         """Decode a short probe from a branch WITHOUT disturbing the caches.
@@ -606,11 +616,37 @@ class LatentCortexEngine:
                     budget,
                     bridge_tokens,
                 )
+            probe_tokens = (
+                self.config.verifier_probe_max_tokens
+                if max_tokens is None
+                else max_tokens
+            )
             return self._decode(
-                cache, budget, slot_logits, max_tokens=max_tokens, temperature=0.0
+                cache,
+                budget,
+                slot_logits,
+                max_tokens=probe_tokens,
+                temperature=0.0,
+                sentence_grace_tokens=0,
             )[0]
         finally:
             _restore_recurrent_caches(cache, 0, self.n_layers, snaps)
+
+    def _verifier_probe_layer_apps(
+        self,
+        bridge_tokens: list[int] | None = None,
+        *,
+        count: int = 1,
+    ) -> int:
+        """Exact conservative token-layer cost for verifier preview decodes."""
+        if type(count) is not int or count < 0:
+            raise ValueError("verifier probe count must be a non-negative integer")
+        per_probe_tokens = (
+            self.config.workspace.n_slots
+            + len(bridge_tokens or [])
+            + max(0, self.config.verifier_probe_max_tokens - 1)
+        )
+        return count * per_probe_tokens * self.n_layers
 
     def _persist_branch(self, branch: BranchState, cache, runner: WindowRunner):
         """Commit one branch's slots into every layer's KV (the causal step).
@@ -686,6 +722,7 @@ class LatentCortexEngine:
         receipt.decode_temperature = float(self.config.decode_temperature)
         receipt.decode_top_p = float(self.config.decode_top_p)
         receipt.decode_bridge_policy = self.config.decode_bridge_policy
+        receipt.verifier_probe_max_tokens = self.config.verifier_probe_max_tokens
 
         self.invariant.pre_episode()
         receipt.checkpoint_fingerprint = self.invariant.file_receipt.get("fingerprint", "")
@@ -1029,9 +1066,7 @@ class LatentCortexEngine:
                     "kind": op_kind,
                     "ran": False,
                 }
-                probe_cost = (
-                    self.config.workspace.n_slots + len(bridge_tokens or []) + 47
-                ) * self.n_layers
+                probe_cost = self._verifier_probe_layer_apps(bridge_tokens)
                 if verifier is None or self.tokenizer is None:
                     event["skip"] = "no_verifier"
                 elif probe_cost + safety_reserve > budget.remaining_layer_apps:
@@ -1129,11 +1164,11 @@ class LatentCortexEngine:
         receipt.exchanges = ensemble.exchanges
 
         # ── Branch selection ─────────────────────────────────────────────
-        branch_probe_cost = (
-            len(ensemble.branches)
-            * (self.config.workspace.n_slots + len(bridge_tokens) + 47)
-            * self.n_layers
+        branch_probe_cost = self._verifier_probe_layer_apps(
+            bridge_tokens,
+            count=len(ensemble.branches),
         )
+        branch_verifier_score: float | None = None
         if (
             verifier is not None
             and self.tokenizer is not None
@@ -1150,6 +1185,8 @@ class LatentCortexEngine:
                 return float(verifier(self.tokenizer.decode(probe)))
 
             winner = ensemble.select(score_fn=branch_score)
+            if math.isfinite(float(winner.score)):
+                branch_verifier_score = float(winner.score)
         else:
             if verifier is not None and self.tokenizer is not None:
                 receipt.flag("branch_verifier_skipped_budget")
@@ -1227,8 +1264,12 @@ class LatentCortexEngine:
                 z_opt, latent_opt_verifier_score = optimizer.run_with_verifier(
                     winner.z,
                     z_score,
-                    verifier_layer_apps=(
-                        (self.config.workspace.n_slots + 47) * self.n_layers
+                    verifier_layer_apps=self._verifier_probe_layer_apps(
+                        bridge_tokens
+                    ),
+                    initial_score=branch_verifier_score,
+                    accept_non_regression=(
+                        self.config.verifier_accept_non_regression
                     ),
                 )
             else:
@@ -1247,6 +1288,7 @@ class LatentCortexEngine:
             receipt.latent_opt_steps = optimizer.trace.accepted
             receipt.latent_opt_rejected = optimizer.trace.rejected
             receipt.latent_opt_budget_exhausted = optimizer.trace.budget_exhausted
+            receipt.latent_opt_verifier = optimizer.trace.verifier_receipt()
             if optimizer.trace.budget_exhausted:
                 receipt.flag("latent_opt_budget_exhausted")
             if not receipt.latent_opt_applied:
@@ -1284,11 +1326,7 @@ class LatentCortexEngine:
                 if math.isfinite(latent_opt_verifier_score):
                     fw_verifier_pre = float(latent_opt_verifier_score)
                 else:
-                    probe_cost = (
-                        self.config.workspace.n_slots
-                        + len(bridge_tokens or [])
-                        + 47
-                    ) * self.n_layers
+                    probe_cost = self._verifier_probe_layer_apps(bridge_tokens)
                     if probe_cost + safety_reserve <= budget.remaining_layer_apps:
                         probe = self._decode_probe(
                             winner,
@@ -1782,9 +1820,7 @@ class LatentCortexEngine:
             }
             receipt.flag("fast_weight_verifier_no_reference")
             return "no_reference"
-        probe_cost = (
-            self.config.workspace.n_slots + len(bridge_tokens or []) + 47
-        ) * self.n_layers
+        probe_cost = self._verifier_probe_layer_apps(bridge_tokens)
         if probe_cost + safety_reserve > budget.remaining_layer_apps:
             receipt.fast_weight_verifier = {
                 "evaluated": False,

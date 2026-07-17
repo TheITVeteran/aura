@@ -129,6 +129,8 @@ class LatentCortexService:
             "fast_weights_max_layers": fast_weight_layers,
             "fast_weights_canary_max_delta_rms": 0.05,
             "decode_max_tokens": 512,
+            "verifier_probe_max_tokens": 48,
+            "verifier_accept_non_regression": False,
         }
         budget = {
             "max_layer_apps": int((2_000_000 + 8_000_000 * stakes) * headroom),
@@ -140,7 +142,7 @@ class LatentCortexService:
             # remains causal, but the 32B lane receives a bounded amount of
             # virtual width and optimizer work instead of a small-model lab
             # schedule that cannot meet the desktop deadline.
-            allocation_profile = "resident_32b_interactive_full_stack_v1"
+            allocation_profile = "resident_32b_interactive_full_stack_v2"
             config.update(
                 {
                     "n_slots": 4,
@@ -157,6 +159,13 @@ class LatentCortexService:
                     "fast_weights_export_candidates": True,
                     "decode_max_tokens": 256,
                     "decode_bridge_policy": "assistant_answer_v1",
+                    # Product probes are previews used for branch/adaptation
+                    # arbitration, not user-facing drafts. CP120 measured five
+                    # 48-token probes consuming ~68s; 24 tokens plus verified
+                    # branch-baseline reuse preserves the answer budget while
+                    # keeping every arbitration mechanism causal and receipted.
+                    "verifier_probe_max_tokens": 24,
+                    "verifier_accept_non_regression": True,
                     "input_context_max_chars": 9000,
                     "allow_vanilla_fallback": False,
                 }
@@ -206,6 +215,181 @@ class LatentCortexService:
                 and isinstance(item, (int, float))
                 and math.isfinite(float(item))
                 for item in value
+            )
+
+        def finite_number(value: Any) -> bool:
+            return (
+                not isinstance(value, bool)
+                and isinstance(value, (int, float))
+                and math.isfinite(float(value))
+            )
+
+        def verifier_arbitration_valid(
+            arbitration: Any,
+            *,
+            attempts: int,
+            accepted_steps: int,
+        ) -> bool:
+            """Independently replay one non-regression arbitration receipt."""
+            if not isinstance(arbitration, dict):
+                return False
+            score_accepts = arbitration.get("score_improvement_accepts")
+            proxy_accepts = arbitration.get("proxy_nonregression_accepts")
+            decisions = arbitration.get("decisions")
+            score_trail = arbitration.get("score_trail")
+            tolerance = arbitration.get("score_tolerance")
+            proxy_scale = arbitration.get("proxy_tolerance_scale")
+            if (
+                arbitration.get("policy")
+                != "task_score_nonregression_with_proxy_descent_v1"
+                or arbitration.get("baseline_source")
+                not in {"caller_reused_verified_branch", "decoded_state_probe"}
+                or type(score_accepts) is not int
+                or score_accepts < 0
+                or type(proxy_accepts) is not int
+                or proxy_accepts < 0
+                or score_accepts + proxy_accepts != accepted_steps
+                or not finite_number(tolerance)
+                or not 0.0 <= float(tolerance) <= 1e-3
+                or not finite_number(proxy_scale)
+                or not 0.0 < float(proxy_scale) <= 1e-3
+                or not isinstance(decisions, list)
+                or len(decisions) != attempts
+                or not finite_number_list(score_trail)
+                or len(score_trail) != len(decisions) + 1
+            ):
+                return False
+
+            score_tolerance = float(tolerance)
+            proxy_tolerance_scale = float(proxy_scale)
+            receipt_epsilon = 2e-12
+            observed_score_accepts = 0
+            observed_proxy_accepts = 0
+            allowed_decisions = {
+                "accepted_task_score_improvement",
+                "accepted_task_score_nonregression_with_proxy_descent",
+                "rejected_task_score_regression",
+                "rejected_proxy_non_descent",
+                "rejected_nonfinite_task_score",
+                "rejected_nonfinite_proxy_loss",
+            }
+            for index, row in enumerate(decisions):
+                if not isinstance(row, dict) or row.get("proposal") != index:
+                    return False
+                decision = row.get("decision")
+                if decision not in allowed_decisions:
+                    return False
+                baseline = row.get("baseline_score")
+                current_proxy = row.get("current_proxy_loss")
+                required_delta = row.get("proxy_required_delta")
+                if (
+                    not finite_number(baseline)
+                    or not finite_number(current_proxy)
+                    or not finite_number(required_delta)
+                    or float(required_delta) < 0.0
+                    or not math.isclose(
+                        float(baseline),
+                        float(score_trail[index]),
+                        rel_tol=0.0,
+                        abs_tol=receipt_epsilon,
+                    )
+                    or not math.isclose(
+                        float(required_delta),
+                        proxy_tolerance_scale
+                        * max(1.0, abs(float(current_proxy))),
+                        rel_tol=1e-6,
+                        abs_tol=receipt_epsilon,
+                    )
+                ):
+                    return False
+                baseline_score = float(baseline)
+                next_score = float(score_trail[index + 1])
+                raw_candidate = row.get("candidate_score")
+                candidate_proxy = row.get("candidate_proxy_loss")
+                if decision == "rejected_nonfinite_task_score":
+                    if raw_candidate != "nonfinite" or not math.isclose(
+                        next_score,
+                        baseline_score,
+                        rel_tol=0.0,
+                        abs_tol=receipt_epsilon,
+                    ):
+                        return False
+                    continue
+                if not finite_number(raw_candidate):
+                    return False
+                candidate_score = float(raw_candidate)
+                score_improved = (
+                    candidate_score
+                    > baseline_score + score_tolerance + receipt_epsilon
+                )
+                score_nonregressing = (
+                    candidate_score
+                    >= baseline_score - score_tolerance - receipt_epsilon
+                )
+                proxy_finite = finite_number(candidate_proxy)
+                proxy_improved = bool(
+                    proxy_finite
+                    and float(candidate_proxy)
+                    < float(current_proxy) - float(required_delta) - receipt_epsilon
+                )
+                if decision == "rejected_nonfinite_proxy_loss":
+                    if proxy_finite or not math.isclose(
+                        next_score,
+                        baseline_score,
+                        rel_tol=0.0,
+                        abs_tol=receipt_epsilon,
+                    ):
+                        return False
+                elif decision == "accepted_task_score_improvement":
+                    if not proxy_finite or not score_improved or not math.isclose(
+                        next_score,
+                        candidate_score,
+                        rel_tol=0.0,
+                        abs_tol=receipt_epsilon,
+                    ):
+                        return False
+                    observed_score_accepts += 1
+                elif decision == (
+                    "accepted_task_score_nonregression_with_proxy_descent"
+                ):
+                    if (
+                        score_improved
+                        or not score_nonregressing
+                        or not proxy_improved
+                        or not math.isclose(
+                            next_score,
+                            max(baseline_score, candidate_score),
+                            rel_tol=0.0,
+                            abs_tol=receipt_epsilon,
+                        )
+                    ):
+                        return False
+                    observed_proxy_accepts += 1
+                elif decision == "rejected_task_score_regression":
+                    if score_nonregressing or not math.isclose(
+                        next_score,
+                        baseline_score,
+                        rel_tol=0.0,
+                        abs_tol=receipt_epsilon,
+                    ):
+                        return False
+                elif decision == "rejected_proxy_non_descent":
+                    if (
+                        not score_nonregressing
+                        or score_improved
+                        or not proxy_finite
+                        or proxy_improved
+                        or not math.isclose(
+                            next_score,
+                            baseline_score,
+                            rel_tol=0.0,
+                            abs_tol=receipt_epsilon,
+                        )
+                    ):
+                        return False
+            return (
+                observed_score_accepts == score_accepts
+                and observed_proxy_accepts == proxy_accepts
             )
 
         def sha256(value: Any) -> bool:
@@ -370,6 +554,12 @@ class LatentCortexService:
             errors.append("decode_request_mismatch")
         if not positive_int(receipt, "decode_generated_tokens"):
             errors.append("decode_output_empty")
+        configured_probe_tokens = config.get("verifier_probe_max_tokens", 48)
+        if (
+            type(configured_probe_tokens) is not int
+            or receipt.get("verifier_probe_max_tokens") != configured_probe_tokens
+        ):
+            errors.append("verifier_probe_profile_mismatch")
         if receipt.get("decode_termination") not in {
             "eos",
             "token_limit",
@@ -479,6 +669,14 @@ class LatentCortexService:
                 errors.append("latent_optimization_accounting_mismatch")
             if receipt.get("latent_opt_budget_exhausted") is not False:
                 errors.append("latent_optimization_budget_exhausted")
+            if config.get("verifier_accept_non_regression") is True:
+                arbitration = receipt.get("latent_opt_verifier")
+                if not verifier_arbitration_valid(
+                    arbitration,
+                    attempts=int(receipt.get("latent_opt_attempts") or 0),
+                    accepted_steps=int(receipt.get("latent_opt_steps") or 0),
+                ):
+                    errors.append("latent_optimization_verifier_receipt_invalid")
         if config.get("fast_weights") is True:
             if receipt.get("fast_weights_applied") is not True:
                 errors.append("fast_weights_not_applied")
@@ -875,7 +1073,7 @@ class LatentCortexService:
                         recurrent_region=(
                             (16, 48)
                             if allocation_profile
-                            == "resident_32b_interactive_full_stack_v1"
+                            == "resident_32b_interactive_full_stack_v2"
                             else None
                         ),
                     )
@@ -892,7 +1090,7 @@ class LatentCortexService:
             ) as exc:
                 logger.debug("Execution controller unavailable: %s", exc)
                 controller_decision = None
-        if allocation_profile == "resident_32b_interactive_full_stack_v1":
+        if allocation_profile == "resident_32b_interactive_full_stack_v2":
             try:
                 requested_decode_tokens = int(config.get("decode_max_tokens") or 256)
             except (TypeError, ValueError, OverflowError):
@@ -957,17 +1155,18 @@ class LatentCortexService:
                     max(150.0, float(budget.get("wall_clock_s") or 0.0)),
                     max(15.0, float(timeout_s) - 8.0),
                 )
-                # Fit the answer surface to the wall clock actually granted:
-                # decode measures ≈0.26 s/token on the resident 32B, and the
-                # non-decode stages (compaction, prefill, latent stack,
-                # persist, bridge, cleanup reserve) cost ≈30s. CP104's live
-                # turn proved that promising 384 tokens against a shorter
-                # wall converts the tail of the answer into a budget death.
+                # Fit the answer surface to the wall clock actually granted.
+                # CP120 measured ~100s before final decode because five
+                # 48-token verifier previews dominated the episode. The v2
+                # interactive profile shortens those previews and reuses the
+                # verified winner score; a conservative 65s still reserves
+                # prefill, all causal mechanisms, bridge, and cleanup. Never
+                # promise a 384-token surface the owner cannot finish.
                 affordable_tokens = int(
-                    (float(budget["wall_clock_s"]) - 30.0) / 0.26
+                    (float(budget["wall_clock_s"]) - 65.0) / 0.26
                 )
                 config["decode_max_tokens"] = max(
-                    256, min(int(config["decode_max_tokens"]), affordable_tokens)
+                    128, min(int(config["decode_max_tokens"]), affordable_tokens)
                 )
             self._last_allocation["objective_facets"] = list(objective_facets)
             self._last_allocation["compound_objective"] = compound_objective
@@ -1052,7 +1251,7 @@ class LatentCortexService:
                     # grounding) — verified correctness, not convergence.
                     verifier_guidance=(
                         allocation_profile
-                        == "resident_32b_interactive_full_stack_v1"
+                        == "resident_32b_interactive_full_stack_v2"
                     ),
                     # Held-out calibration: facets whose cue-detectors humans
                     # keep overruling (Foundry grades) are muted inside the
@@ -1290,6 +1489,8 @@ class LatentCortexService:
                     "fast_weight_gradient_norm_trail",
                     "fast_weight_accepted_step_sizes",
                     "fast_weight_line_search_backtracks",
+                    "verifier_probe_max_tokens",
+                    "latent_opt_verifier",
                     "last_stage",
                     "stage_timings_s",
                     "honest_flags",
@@ -1330,6 +1531,8 @@ class LatentCortexService:
                     "latent_opt_attempts",
                     "latent_opt_steps",
                     "latent_opt_budget_exhausted",
+                    "verifier_probe_max_tokens",
+                    "latent_opt_verifier",
                     "fast_weights_applied",
                     "fast_weight_optimization_attempts",
                     "fast_weight_optimized_steps",

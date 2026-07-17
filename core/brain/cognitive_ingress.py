@@ -24,6 +24,8 @@ from prompt punctuation.
 """
 from __future__ import annotations
 
+import asyncio
+import inspect
 import logging
 import re
 from dataclasses import dataclass, field
@@ -154,6 +156,27 @@ def _hit_kind(hit: Any) -> str:
     return "claim"
 
 
+def _dispose_hidden_awaitable(value: Any) -> None:
+    """Cancel/close an awaitable returned through a synchronous organ API."""
+    if isinstance(value, asyncio.Future):
+        try:
+            loop = value.get_loop()
+            if loop.is_running():
+                loop.call_soon_threadsafe(value.cancel)
+            else:
+                value.cancel()
+        except (RuntimeError, AttributeError):
+            value.cancel()
+        return
+    close = getattr(value, "close", None)
+    if callable(close):
+        close()
+        return
+    cancel = getattr(value, "cancel", None)
+    if callable(cancel):
+        cancel()
+
+
 def _signal_memory(objective: str) -> IngressSignal:
     """Recall familiarity + epistemic admission of what was recalled.
 
@@ -170,9 +193,19 @@ def _signal_memory(objective: str) -> IngressSignal:
         service = _get_service(name)
         if service is None:
             continue
-        for method in ("recall", "search", "retrieve"):
+        # This ingress assembler is intentionally synchronous. Prefer the
+        # facade's explicit sync contract and never leak an async search
+        # coroutine into a synchronous cognitive cycle.
+        for method in ("search_sync", "recall", "search", "retrieve"):
             fn = getattr(service, method, None)
             if not callable(fn):
+                continue
+            if inspect.iscoroutinefunction(fn):
+                logger.debug(
+                    "Skipping async memory organ method on synchronous ingress (%s.%s)",
+                    name,
+                    method,
+                )
                 continue
             try:
                 hits = fn(objective, limit=4) if method != "recall" else fn(objective)
@@ -184,6 +217,17 @@ def _signal_memory(objective: str) -> IngressSignal:
                     continue
             except Exception as probe_exc:  # noqa: BLE001 - organ contract unknown; absent
                 logger.debug("Memory organ probe failed (%s.%s): %s", name, method, probe_exc)
+                continue
+            if inspect.isawaitable(hits):
+                # Unknown/decorated organ contracts can hide an awaitable
+                # behind a regular callable. Dispose it without leaking work,
+                # then try the next synchronous accessor.
+                _dispose_hidden_awaitable(hits)
+                logger.debug(
+                    "Skipped awaitable memory result on synchronous ingress (%s.%s)",
+                    name,
+                    method,
+                )
                 continue
             count = len(hits) if isinstance(hits, (list, tuple)) else 0
             familiarity = min(1.0, count / 4.0)
@@ -634,6 +678,18 @@ def assemble_cognitive_ingress(
     )
 
 
+async def assemble_cognitive_ingress_async(
+    orchestrator: Any,
+    objective: str,
+) -> CognitiveIngress:
+    """Assemble organ ingress without blocking the foreground event loop."""
+    return await asyncio.to_thread(
+        assemble_cognitive_ingress,
+        orchestrator,
+        objective,
+    )
+
+
 def cognitive_context_items(ingress: CognitiveIngress) -> list[dict[str, str]]:
     """Slot-seeding items for the episode: organ CONTENT, not just budget.
 
@@ -689,5 +745,6 @@ __all__ = [
     "CognitiveIngress",
     "IngressSignal",
     "assemble_cognitive_ingress",
+    "assemble_cognitive_ingress_async",
     "cognitive_context_items",
 ]

@@ -84,6 +84,7 @@ def test_full_episode_produces_tokens_and_truthful_receipt(tiny_model):
     assert r.budget["spent_layer_apps"] > 0
     assert r.decode_requested_tokens == 8
     assert r.decode_generated_tokens == len(result.tokens)
+    assert r.verifier_probe_max_tokens == 48
     assert r.decode_termination in {"eos", "token_limit"}
     assert r.last_stage == "complete"
     assert r.stage_timings_s["prefill"] >= 0.0
@@ -91,6 +92,66 @@ def test_full_episode_produces_tokens_and_truthful_receipt(tiny_model):
     assert r.stage_timings_s["decode"] >= 0.0
     assert r.stage_timings_s["total"] >= 0.0
     assert not r.honest_flags, f"clean episode must carry no flags: {r.honest_flags}"
+
+
+def test_verifier_probe_cost_uses_receipted_profile_and_bridge(tiny_model):
+    engine = LatentCortexEngine(
+        tiny_model,
+        config=_config(verifier_probe_max_tokens=24),
+    )
+
+    assert engine._verifier_probe_layer_apps([3, 4], count=2) == (
+        2 * (4 + 2 + 23) * N_LAYERS
+    )
+    result = engine.reason(token_ids=PROMPT_TOKENS)
+    assert result.receipt.verifier_probe_max_tokens == 24
+
+
+def test_verifier_preview_is_hard_capped_and_compute_charge_is_exact(
+    tiny_model,
+    monkeypatch,
+):
+    engine = LatentCortexEngine(
+        tiny_model,
+        config=_config(verifier_probe_max_tokens=24),
+    )
+    engine.tokenizer = object()
+    monkeypatch.setattr(engine, "_eos_ids", lambda: set())
+    monkeypatch.setattr(engine, "_is_pure_newline_token", lambda _token: False)
+    monkeypatch.setattr(engine, "_token_ends_sentence", lambda _token: False)
+    monkeypatch.setattr(engine, "_sample", lambda *_args, **_kwargs: 1)
+
+    budget = ComputeBudget(max_layer_apps=100_000, wall_clock_s=30.0)
+    cache = engine._fresh_cache()
+    _, initial_logits = engine._prefill(PROMPT_TOKENS, cache, budget)
+    spent_before = budget.spent_layer_apps
+
+    tokens, termination = engine._decode(
+        cache,
+        budget,
+        initial_logits,
+        max_tokens=engine.config.verifier_probe_max_tokens,
+        temperature=0.0,
+        sentence_grace_tokens=0,
+    )
+
+    assert len(tokens) == 24
+    assert termination == "token_limit"
+    assert budget.spent_layer_apps - spent_before == 23 * N_LAYERS
+
+    # The user-facing decoder still owns the independent sentence grace.
+    final_budget = ComputeBudget(max_layer_apps=100_000, wall_clock_s=30.0)
+    final_cache = engine._fresh_cache()
+    _, final_logits = engine._prefill(PROMPT_TOKENS, final_cache, final_budget)
+    final_tokens, final_termination = engine._decode(
+        final_cache,
+        final_budget,
+        final_logits,
+        max_tokens=24,
+        temperature=0.0,
+    )
+    assert len(final_tokens) == 72
+    assert final_termination == "token_limit"
 
 
 def test_episode_cooperatively_cancels_at_safe_stage_and_preserves_checkpoint(

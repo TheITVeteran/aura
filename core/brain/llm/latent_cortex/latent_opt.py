@@ -117,6 +117,14 @@ class OptTrace:
     rejected: int = 0
     line_search_backtracks: int = 0
     budget_exhausted: bool = False
+    verifier_policy: str = "off"
+    verifier_baseline_source: str = ""
+    verifier_score_tolerance: float = 0.0
+    verifier_proxy_tolerance_scale: float = 1e-9
+    verifier_score_trail: list[float] = field(default_factory=list)
+    verifier_decisions: list[dict[str, Any]] = field(default_factory=list)
+    verifier_score_improvement_accepts: int = 0
+    verifier_proxy_nonregression_accepts: int = 0
 
     def to_receipt(self) -> dict[str, Any]:
         return {
@@ -128,6 +136,24 @@ class OptTrace:
             "rejected": self.rejected,
             "line_search_backtracks": self.line_search_backtracks,
             "budget_exhausted": self.budget_exhausted,
+            "verifier": self.verifier_receipt(),
+        }
+
+    def verifier_receipt(self) -> dict[str, Any]:
+        return {
+            "policy": self.verifier_policy,
+            "baseline_source": self.verifier_baseline_source,
+            "score_tolerance": round(self.verifier_score_tolerance, 12),
+            "proxy_tolerance_scale": round(
+                self.verifier_proxy_tolerance_scale,
+                12,
+            ),
+            "score_trail": [round(value, 12) for value in self.verifier_score_trail],
+            "decisions": [dict(row) for row in self.verifier_decisions],
+            "score_improvement_accepts": self.verifier_score_improvement_accepts,
+            "proxy_nonregression_accepts": (
+                self.verifier_proxy_nonregression_accepts
+            ),
         }
 
 
@@ -298,6 +324,9 @@ class LatentOptimizer:
         *,
         max_proposals: int | None = None,
         verifier_layer_apps: int = 0,
+        initial_score: float | None = None,
+        accept_non_regression: bool = False,
+        score_tolerance: float = 1e-9,
     ):
         """Greedy hill-climb: proxy-guided proposals, verifier-gated accepts.
 
@@ -311,28 +340,153 @@ class LatentOptimizer:
             raise TypeError("verifier_layer_apps must be an integer")
         if verifier_layer_apps < 0:
             raise ValueError("verifier_layer_apps cannot be negative")
+        if type(accept_non_regression) is not bool:
+            raise TypeError("accept_non_regression must be a boolean")
+        if (
+            isinstance(score_tolerance, bool)
+            or not isinstance(score_tolerance, (int, float))
+            or not math.isfinite(float(score_tolerance))
+            or not 0.0 <= float(score_tolerance) <= 1e-3
+        ):
+            raise ValueError("score_tolerance must be finite and inside [0, 1e-3]")
+        if initial_score is not None and (
+            isinstance(initial_score, bool)
+            or not isinstance(initial_score, (int, float))
+            or not math.isfinite(float(initial_score))
+        ):
+            raise ValueError("initial_score must be a finite number or None")
         proposals = max_proposals if max_proposals is not None else self.config.steps
         if not self._can_reserve(verifier_layer_apps):
             return z, float("-inf")
-        best_score = float(score_fn(z))
+        self.trace.verifier_policy = (
+            "task_score_nonregression_with_proxy_descent_v1"
+            if accept_non_regression
+            else "strict_task_score_improvement_v1"
+        )
+        self.trace.verifier_score_tolerance = float(score_tolerance)
+        self.trace.verifier_baseline_source = (
+            "caller_reused_verified_branch"
+            if initial_score is not None
+            else "decoded_state_probe"
+        )
+        best_score = (
+            float(initial_score) if initial_score is not None else float(score_fn(z))
+        )
         if not math.isfinite(best_score):
             raise RuntimeError("latent verifier returned a non-finite baseline score")
+        self.trace.verifier_score_trail.append(best_score)
         for i in range(max(0, int(proposals))):
-            candidate, admitted, _ = self._propose(
-                z, i, additional_reserve_layer_apps=verifier_layer_apps
+            proxy_eval_cost = self._layer_apps_per_loss if accept_non_regression else 0
+            candidate, admitted, current_loss = self._propose(
+                z,
+                i,
+                additional_reserve_layer_apps=verifier_layer_apps + proxy_eval_cost,
             )
             if not admitted:
                 break
+            candidate_loss: float | None = None
+            if accept_non_regression:
+                if current_loss is None:
+                    raise RuntimeError(
+                        "latent optimizer admitted a proposal without a proxy loss"
+                    )
+                if not self._charge_loss_evals(
+                    1, additional_reserve_layer_apps=verifier_layer_apps
+                ):
+                    raise RuntimeError(
+                        "latent optimizer lost an admitted proxy-verifier reservation"
+                    )
+                candidate_loss = float(self._loss_fn(candidate))
             candidate_score = float(score_fn(candidate))
+            proxy_required_delta = (
+                self.trace.verifier_proxy_tolerance_scale
+                * max(1.0, abs(float(current_loss)))
+                if current_loss is not None and math.isfinite(float(current_loss))
+                else None
+            )
+            decision: dict[str, Any] = {
+                "proposal": i,
+                "baseline_score": round(best_score, 12),
+                "candidate_score": (
+                    round(candidate_score, 12)
+                    if math.isfinite(candidate_score)
+                    else "nonfinite"
+                ),
+                "current_proxy_loss": (
+                    round(float(current_loss), 12)
+                    if current_loss is not None and math.isfinite(float(current_loss))
+                    else None
+                ),
+                "candidate_proxy_loss": (
+                    round(candidate_loss, 12)
+                    if candidate_loss is not None and math.isfinite(candidate_loss)
+                    else None
+                ),
+                "proxy_required_delta": (
+                    round(proxy_required_delta, 12)
+                    if proxy_required_delta is not None
+                    else None
+                ),
+            }
             if not math.isfinite(candidate_score):
                 self.trace.rejected += 1
+                decision["decision"] = "rejected_nonfinite_task_score"
+                self.trace.verifier_decisions.append(decision)
+                self.trace.verifier_score_trail.append(best_score)
                 continue
-            if candidate_score > best_score:
+            if accept_non_regression and (
+                candidate_loss is None or not math.isfinite(candidate_loss)
+            ):
+                self.trace.rejected += 1
+                decision["decision"] = "rejected_nonfinite_proxy_loss"
+                self.trace.verifier_decisions.append(decision)
+                self.trace.verifier_score_trail.append(best_score)
+                continue
+
+            score_improved = candidate_score > best_score + float(score_tolerance)
+            proxy_improved = bool(
+                current_loss is not None
+                and candidate_loss is not None
+                and candidate_loss
+                < float(current_loss) - float(proxy_required_delta or 0.0)
+            )
+            score_nonregressing = (
+                candidate_score >= best_score - float(score_tolerance)
+            )
+            if score_improved:
                 z, best_score = candidate, candidate_score
                 self.trace.accepted += 1
                 self.trace.steps_taken += 1
+                self.trace.verifier_score_improvement_accepts += 1
+                decision["decision"] = "accepted_task_score_improvement"
+                if candidate_loss is not None and proxy_improved:
+                    self.trace.loss_trail.append(candidate_loss)
+            elif accept_non_regression and score_nonregressing and proxy_improved:
+                z = candidate
+                best_score = max(best_score, candidate_score)
+                self.trace.accepted += 1
+                self.trace.steps_taken += 1
+                self.trace.verifier_proxy_nonregression_accepts += 1
+                self.trace.loss_trail.append(float(candidate_loss))
+                decision["decision"] = (
+                    "accepted_task_score_nonregression_with_proxy_descent"
+                )
             else:
                 self.trace.rejected += 1
+                decision["decision"] = (
+                    "rejected_task_score_regression"
+                    if not score_nonregressing
+                    else "rejected_proxy_non_descent"
+                    if accept_non_regression
+                    else "rejected_no_task_score_improvement"
+                )
+            self.trace.verifier_decisions.append(decision)
+            # This is the finite incumbent trail, not a raw candidate trail.
+            # Candidate scores (including explicit non-finite outcomes) live in
+            # the decision rows. Keeping one incumbent per decision makes the
+            # receipt total, monotonic, and JSON-safe under every verifier
+            # outcome.
+            self.trace.verifier_score_trail.append(best_score)
         return z, best_score
 
 

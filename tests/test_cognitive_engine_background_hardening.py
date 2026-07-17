@@ -948,11 +948,17 @@ def test_desktop_failure_thought_preserves_latent_attempt_receipt():
         generation_metadata={
             "generation_failure_class": "latent_timeout:cooperative_cancelled",
             "latent_cortex_selected": True,
+            "latent_cortex_prompt_shape": {
+                "question_parts": 4,
+                "requires_single_reply_coverage": True,
+            },
             "latent_cortex_attempted": True,
             "latent_cortex_succeeded": False,
             "latent_cortex_fallback_used": True,
             "latent_cortex_failure_reason": "latent_timeout:cooperative_cancelled",
             "latent_cortex_receipt": receipt,
+            "latent_cortex_ingress": {"schema": "aura.cognitive_ingress.v1"},
+            "latent_cortex_progress": {"stage": "decode", "elapsed_s": 118.0},
             "live_mind_controls_bound": True,
             "response_path": "cognitive_engine_generation_timeout",
         },
@@ -963,6 +969,12 @@ def test_desktop_failure_thought_preserves_latent_attempt_receipt():
     assert thought.metadata["latent_cortex_attempted"] is True
     assert thought.metadata["latent_cortex_succeeded"] is False
     assert thought.metadata["latent_cortex_receipt"] == receipt
+    assert thought.metadata["latent_cortex_prompt_shape"]["question_parts"] == 4
+    assert (
+        thought.metadata["latent_cortex_ingress"]["schema"]
+        == "aura.cognitive_ingress.v1"
+    )
+    assert thought.metadata["latent_cortex_progress"]["stage"] == "decode"
     assert (
         thought.metadata["generation_failure_class"]
         == "latent_timeout:cooperative_cancelled"

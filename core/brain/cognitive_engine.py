@@ -1748,6 +1748,7 @@ class CognitiveEngine:
                         "latent_cortex_selected",
                         "latent_cortex_selection_reason",
                         "latent_cortex_depth_worthy",
+                        "latent_cortex_prompt_shape",
                         "latent_cortex_attempted",
                         "latent_cortex_succeeded",
                         "latent_cortex_fallback_used",
@@ -1757,6 +1758,8 @@ class CognitiveEngine:
                         "latent_cortex_final_output_quality",
                         "latent_cortex_raw_final_quality_hash_match",
                         "latent_cortex_receipt",
+                        "latent_cortex_ingress",
+                        "latent_cortex_progress",
                     )
                     if key in state.response_modifiers
                 }
@@ -2041,6 +2044,7 @@ class CognitiveEngine:
             "latent_cortex_selected",
             "latent_cortex_selection_reason",
             "latent_cortex_depth_worthy",
+            "latent_cortex_prompt_shape",
             "latent_cortex_attempted",
             "latent_cortex_succeeded",
             "latent_cortex_fallback_used",
@@ -2050,6 +2054,8 @@ class CognitiveEngine:
             "latent_cortex_final_output_quality",
             "latent_cortex_raw_final_quality_hash_match",
             "latent_cortex_receipt",
+            "latent_cortex_ingress",
+            "latent_cortex_progress",
             "live_mind_controls_bound",
             "live_mind_generation_controls",
             "live_mind_snapshot_ready",

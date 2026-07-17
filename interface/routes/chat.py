@@ -5521,8 +5521,8 @@ def _build_live_turn_contract_payload(
     }
     latent_cortex_response_path = response_path == "cognitive_engine_latent_cortex"
     latent_cortex_path_proven = bool(
-        not latent_cortex_response_path
-        or (
+        latent_cortex_response_path
+        and (
             latent_cortex_selected
             and latent_cortex_attempted
             and latent_cortex_succeeded
@@ -5530,6 +5530,9 @@ def _build_live_turn_contract_payload(
             and latent_cortex_identity_bound
             and latent_cortex_output_quality_proven
         )
+    )
+    latent_cortex_path_requirement_satisfied = bool(
+        not latent_cortex_response_path or latent_cortex_path_proven
     )
     foreground_model_generation_count = int(
         trace.get("foreground_model_generation_count") or 0
@@ -5560,7 +5563,7 @@ def _build_live_turn_contract_payload(
         and not legacy_fallback_used
         and confidence == "high"
         and response_path in accepted_full_mind_response_paths
-        and latent_cortex_path_proven
+        and latent_cortex_path_requirement_satisfied
         and single_owner_model_generation_proven
     )
     accepted_cognitive_path = bool(
@@ -5688,6 +5691,9 @@ def _build_live_turn_contract_payload(
         ),
         "latent_cortex_output_mutation_chain": latent_cortex_output_mutation_chain,
         "latent_cortex_path_proven": latent_cortex_path_proven,
+        "latent_cortex_path_requirement_satisfied": (
+            latent_cortex_path_requirement_satisfied
+        ),
         "latent_cortex_final_text_transformed": bool(
             trace.get("latent_cortex_final_text_transformed")
         ),
@@ -5695,6 +5701,11 @@ def _build_live_turn_contract_payload(
         "latent_cortex_ingress": (
             dict(trace.get("latent_cortex_ingress"))
             if isinstance(trace.get("latent_cortex_ingress"), dict)
+            else {}
+        ),
+        "latent_cortex_progress": (
+            dict(trace.get("latent_cortex_progress"))
+            if isinstance(trace.get("latent_cortex_progress"), dict)
             else {}
         ),
         "live_mind_context_required": live_mind_context_required,
@@ -6863,6 +6874,16 @@ async def _run_cognitive_engine_chat_turn(
                 "latent_cortex_receipt": (
                     dict(raw_latent_receipt)
                     if isinstance(raw_latent_receipt, dict)
+                    else {}
+                ),
+                "latent_cortex_ingress": (
+                    dict(metadata.get("latent_cortex_ingress") or {})
+                    if isinstance(metadata.get("latent_cortex_ingress"), dict)
+                    else {}
+                ),
+                "latent_cortex_progress": (
+                    dict(metadata.get("latent_cortex_progress") or {})
+                    if isinstance(metadata.get("latent_cortex_progress"), dict)
                     else {}
                 ),
             }

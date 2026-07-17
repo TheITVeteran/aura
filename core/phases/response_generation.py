@@ -1595,13 +1595,13 @@ class ResponseGenerationPhase(BasePhase):
                             "reason": "latent_service_not_registered",
                         }
                     else:
-                        # 165s admits a compound-objective episode (384-token
-                        # decode ≈ 97s at the resident 32B's measured
-                        # 0.254 s/token, plus ~14s prefill and ~5s latent
-                        # stack) while keeping 15s of the 180s foreground
-                        # request budget in reserve. CP103's live turn failed
-                        # ONLY because the answer surface was smaller than
-                        # the product-quality contract demanded.
+                        # The 165s owner budget contains the complete compound
+                        # episode, including verifier previews and adaptation,
+                        # and retains an 8s outer cleanup reserve. The service
+                        # sizes the final answer from measured resident-32B
+                        # stage costs; do not duplicate a stale token estimate
+                        # here or let the request layer promise more decode
+                        # than the causal stack can complete.
                         latent_timeout = self._bounded_request_timeout(
                             runtime_context,
                             min(165.0, request_timeout),
@@ -1627,11 +1627,11 @@ class ResponseGenerationPhase(BasePhase):
                             ingress_slot_items: list | None = None
                             try:
                                 from core.brain.cognitive_ingress import (
-                                    assemble_cognitive_ingress,
+                                    assemble_cognitive_ingress_async,
                                     cognitive_context_items,
                                 )
 
-                                ingress = assemble_cognitive_ingress(
+                                ingress = await assemble_cognitive_ingress_async(
                                     getattr(self, "orchestrator", None),
                                     str(
                                         runtime_context.get("visible_user_message")

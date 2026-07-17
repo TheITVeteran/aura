@@ -6,11 +6,17 @@ stable baselines (not crashes, not zeros) when organs are absent.
 """
 from __future__ import annotations
 
+import asyncio
+import gc
+import threading
+import warnings
+
 import pytest
 
 from core.brain.cognitive_ingress import (
     COGNITIVE_INGRESS_SCHEMA,
     assemble_cognitive_ingress,
+    assemble_cognitive_ingress_async,
 )
 
 
@@ -55,6 +61,108 @@ def test_memory_familiarity_lowers_uncertainty_and_blankness_raises_it(registry)
     assert familiar.uncertainty < blank.uncertainty
     familiar_signal = next(s for s in familiar.signals if s.source == "memory")
     assert familiar_signal.present and familiar_signal.value == 1.0
+
+
+def test_memory_ingress_prefers_explicit_sync_facade_contract(registry):
+    class HybridMemory:
+        sync_calls = 0
+        async_calls = 0
+
+        def search_sync(self, objective, limit=4):
+            self.sync_calls += 1
+            return [{"content": "verified synchronous memory", "verified": True}]
+
+        async def search(self, objective, limit=4):
+            self.async_calls += 1
+            return [{"content": "async path must not run"}]
+
+    memory = HybridMemory()
+    registry["memory_facade"] = memory
+
+    ingress = assemble_cognitive_ingress(None, "the scheduler design")
+
+    signal = next(s for s in ingress.signals if s.source == "memory")
+    assert signal.present is True
+    assert signal.detail.startswith("memory_facade.search_sync:")
+    assert memory.sync_calls == 1
+    assert memory.async_calls == 0
+
+
+def test_memory_ingress_closes_hidden_awaitable_without_warning(registry):
+    class AwaitableOnlyMemory:
+        def search(self, objective, limit=4):
+            async def hidden_search():
+                return [{"content": "must not cross the sync boundary"}]
+
+            return hidden_search()
+
+    registry["memory_facade"] = AwaitableOnlyMemory()
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        ingress = assemble_cognitive_ingress(None, "the scheduler design")
+        gc.collect()
+
+    signal = next(s for s in ingress.signals if s.source == "memory")
+    assert signal.present is False
+    assert not any("was never awaited" in str(item.message) for item in caught)
+
+
+def test_memory_ingress_cancels_hidden_cancelable_awaitable(registry):
+    class HiddenAwaitable:
+        def __init__(self):
+            self.cancelled = False
+
+        def __await__(self):
+            async def value():
+                return []
+
+            return value().__await__()
+
+        def cancel(self):
+            self.cancelled = True
+
+    hidden = HiddenAwaitable()
+
+    class AwaitableOnlyMemory:
+        def search(self, objective, limit=4):
+            return hidden
+
+    registry["memory_facade"] = AwaitableOnlyMemory()
+    ingress = assemble_cognitive_ingress(None, "the scheduler design")
+
+    signal = next(s for s in ingress.signals if s.source == "memory")
+    assert signal.present is False
+    assert hidden.cancelled is True
+
+
+@pytest.mark.asyncio
+async def test_async_ingress_keeps_blocking_memory_search_off_event_loop(registry):
+    started = threading.Event()
+    release = threading.Event()
+
+    class BlockingMemory:
+        def search_sync(self, objective, limit=4):
+            started.set()
+            assert release.wait(timeout=2.0)
+            return [{"content": "recalled after worker release", "verified": True}]
+
+    registry["memory_facade"] = BlockingMemory()
+    assembly = asyncio.create_task(
+        assemble_cognitive_ingress_async(None, "the scheduler design")
+    )
+    assert await asyncio.to_thread(started.wait, 1.0)
+    ticker = asyncio.create_task(asyncio.sleep(0.01))
+    done, _ = await asyncio.wait(
+        {assembly, ticker},
+        timeout=0.25,
+        return_when=asyncio.FIRST_COMPLETED,
+    )
+    assert ticker in done
+    assert assembly not in done
+    release.set()
+    ingress = await assembly
+    signal = next(s for s in ingress.signals if s.source == "memory")
+    assert signal.present is True
 
 
 def test_goal_overlap_raises_stakes(registry):

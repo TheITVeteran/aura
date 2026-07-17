@@ -115,6 +115,8 @@ def test_config_from_job_defaults_are_conservative():
     assert cfg.branches.n_branches == 2
     assert cfg.latent_opt.enabled is False
     assert cfg.fast_weights.enabled is False
+    assert cfg.verifier_probe_max_tokens == 48
+    assert cfg.verifier_accept_non_regression is False
     assert cfg.validate() == []
 
 
@@ -131,6 +133,10 @@ def test_config_from_job_rejects_out_of_band_requests():
         config_from_job({"exchange_interval": 0})
     with pytest.raises(ValueError):
         config_from_job({"decode_temperature": float("nan")})
+    with pytest.raises(ValueError):
+        config_from_job({"verifier_probe_max_tokens": 15})
+    with pytest.raises(ValueError, match="JSON boolean"):
+        config_from_job({"verifier_accept_non_regression": "true"})
 
 
 def test_config_from_job_maps_every_advanced_mechanism():
@@ -147,6 +153,8 @@ def test_config_from_job_maps_every_advanced_mechanism():
             "exchange_gamma": 0.2,
             "convergence_eps": 0.01,
             "decode_top_p": 0.82,
+            "verifier_probe_max_tokens": 24,
+            "verifier_accept_non_regression": True,
             "input_context_max_chars": 4096,
             "allow_vanilla_fallback": False,
         }
@@ -159,6 +167,8 @@ def test_config_from_job_maps_every_advanced_mechanism():
     assert cfg.branches.exchange_gamma == 0.2
     assert cfg.recurrence.convergence_eps == 0.01
     assert cfg.decode_top_p == 0.82
+    assert cfg.verifier_probe_max_tokens == 24
+    assert cfg.verifier_accept_non_regression is True
     assert cfg.input_context_max_chars == 4096
     assert cfg.allow_vanilla_fallback is False
 
@@ -873,12 +883,14 @@ def test_resident_32b_interactive_allocation_keeps_full_stack_inside_live_budget
     assert cfg["fast_weights_max_layers"] == 2
     assert cfg["decode_max_tokens"] == 256
     assert cfg["decode_bridge_policy"] == "assistant_answer_v1"
+    assert cfg["verifier_probe_max_tokens"] == 24
+    assert cfg["verifier_accept_non_regression"] is True
     assert cfg["input_context_max_chars"] == 9000
     assert cfg["allow_vanilla_fallback"] is False
     assert budget["wall_clock_s"] <= 120.0
     assert (
         svc.get_status()["last_allocation"]["allocation_profile"]
-        == "resident_32b_interactive_full_stack_v1"
+        == "resident_32b_interactive_full_stack_v2"
     )
 
 
@@ -916,6 +928,8 @@ def test_service_applies_resident_identity_profile_before_worker_ipc(monkeypatch
     assert result == {"ok": False, "reason": "profile_observed"}
     assert captured["config"]["decode_max_tokens"] == 256
     assert captured["config"]["decode_bridge_policy"] == "assistant_answer_v1"
+    assert captured["config"]["verifier_probe_max_tokens"] == 24
+    assert captured["config"]["verifier_accept_non_regression"] is True
     assert captured["config"]["input_context_max_chars"] == 9000
     assert captured["config"]["allow_vanilla_fallback"] is False
     assert captured["config"]["max_steps"] == 2
@@ -1180,6 +1194,9 @@ def test_service_routes_through_client_and_records_receipt(monkeypatch):
                         "decode_temperature", 0.0
                     ),
                     "decode_top_p": kwargs["config"].get("decode_top_p", 1.0),
+                    "verifier_probe_max_tokens": kwargs["config"].get(
+                        "verifier_probe_max_tokens", 48
+                    ),
                     "latent_opt_applied": True,
                     "latent_opt_mode": "gradient",
                     "latent_opt_attempts": 2,
@@ -1282,6 +1299,96 @@ def test_service_rejects_nominal_full_stack_without_accepted_optimization():
 
     assert "latent_optimization_no_accepted_steps" in errors
     assert "fast_weight_optimization_no_accepted_steps" in errors
+
+
+def test_service_validates_interactive_verifier_profile_and_acceptance_receipt():
+    config = {
+        "latent_opt": True,
+        "verifier_probe_max_tokens": 24,
+        "verifier_accept_non_regression": True,
+    }
+    receipt = {
+        "latent_opt_applied": True,
+        "latent_opt_mode": "gradient",
+        "latent_opt_attempts": 1,
+        "latent_opt_steps": 1,
+        "latent_opt_rejected": 0,
+        "latent_opt_budget_exhausted": False,
+        "verifier_probe_max_tokens": 24,
+        "latent_opt_verifier": {
+            "policy": "task_score_nonregression_with_proxy_descent_v1",
+            "baseline_source": "caller_reused_verified_branch",
+            "score_tolerance": 1e-9,
+            "proxy_tolerance_scale": 1e-9,
+            "score_trail": [0.5, 0.5],
+            "decisions": [
+                {
+                    "proposal": 0,
+                    "baseline_score": 0.5,
+                    "candidate_score": 0.5,
+                    "current_proxy_loss": 1.0,
+                    "candidate_proxy_loss": 0.9,
+                    "proxy_required_delta": 1e-9,
+                    "decision": (
+                        "accepted_task_score_nonregression_with_proxy_descent"
+                    ),
+                }
+            ],
+            "score_improvement_accepts": 0,
+            "proxy_nonregression_accepts": 1,
+        },
+    }
+
+    errors = LatentCortexService._receipt_contract_errors(receipt, config)
+
+    assert "verifier_probe_profile_mismatch" not in errors
+    assert "latent_optimization_verifier_receipt_invalid" not in errors
+    tampered = dict(receipt)
+    tampered["verifier_probe_max_tokens"] = 48
+    assert "verifier_probe_profile_mismatch" in (
+        LatentCortexService._receipt_contract_errors(tampered, config)
+    )
+    tampered = dict(receipt)
+    tampered["latent_opt_verifier"] = {
+        **receipt["latent_opt_verifier"],
+        "proxy_nonregression_accepts": 0,
+    }
+    assert "latent_optimization_verifier_receipt_invalid" in (
+        LatentCortexService._receipt_contract_errors(tampered, config)
+    )
+    tampered = dict(receipt)
+    tampered["latent_opt_verifier"] = {
+        **receipt["latent_opt_verifier"],
+        "decisions": [
+            {
+                **receipt["latent_opt_verifier"]["decisions"][0],
+                "candidate_proxy_loss": 1.1,
+            }
+        ],
+    }
+    assert "latent_optimization_verifier_receipt_invalid" in (
+        LatentCortexService._receipt_contract_errors(tampered, config)
+    )
+    tampered = dict(receipt)
+    tampered["latent_opt_verifier"] = {
+        **receipt["latent_opt_verifier"],
+        "score_trail": [0.5, 0.6],
+    }
+    assert "latent_optimization_verifier_receipt_invalid" in (
+        LatentCortexService._receipt_contract_errors(tampered, config)
+    )
+
+
+def test_service_enforces_default_verifier_probe_profile():
+    assert "verifier_probe_profile_mismatch" in (
+        LatentCortexService._receipt_contract_errors({}, {})
+    )
+    assert "verifier_probe_profile_mismatch" not in (
+        LatentCortexService._receipt_contract_errors(
+            {"verifier_probe_max_tokens": 48},
+            {},
+        )
+    )
 
 
 @pytest.mark.parametrize(
@@ -1669,6 +1776,9 @@ def _full_success_stub_client(captured):
                     "decode_repetition_penalty_applied": 1.0,
                     "decode_temperature": 0.0,
                     "decode_top_p": 1.0,
+                    "verifier_probe_max_tokens": kwargs["config"].get(
+                        "verifier_probe_max_tokens", 48
+                    ),
                     "latent_opt_applied": True,
                     "latent_opt_mode": "gradient",
                     "latent_opt_attempts": 2,

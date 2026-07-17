@@ -18179,3 +18179,124 @@ Bounded verification and next boundary:
   recurrence-native training plus broad same-checkpoint gain campaigns.
   Multi-hour and 24-72-hour soaks remain deferred until every shorter gate is
   green.
+
+## Checkpoint 2026-07-17-121: Verifier Economy, Replayable Adaptation, and Async Ingress
+
+Checkpoint 121 is the current source candidate in the `main` worktree. It
+advances `RLC-COMPUTE-001`, `RLC-RUNTIME-001`, `RLC-LIFECYCLE-001`,
+`RLC-LIVE32B-001`, `RLC-CLAIMS-001`, `CHAT-001`, `OBSERVABILITY-001`, and
+`TEST-DEPTH-001`. It preserves the failed exact CP120 run as negative evidence
+and does not award resident-32B capability, frontier-gain, release, or soak
+credit before exact-app live proof and recurrence-native training succeed.
+
+Exact CP120 failure evidence:
+
+- The exact signed CP120 app ran pushed commit
+  `aface9270b75462be9d0b60ff5247ba41ff62be9` with the fused resident 32B. The
+  unchanged compound certificate turn returned HTTP 200 in 110.265 seconds
+  and correctly used exactly one foreground generation owner, but the strict
+  verdict remained FAIL.
+- The episode completed recurrence, two-branch selection, temporary fast-weight
+  descent, exact erase, and base-parameter preservation. Five nominally
+  48-token verifier previews consumed about 68 seconds; non-final-decode work
+  consumed roughly 100 seconds. Only 53 of 352 requested final-answer tokens
+  remained before the wall reserve, so the answer covered verification but
+  omitted comparison, selection, and explanation. The route failed closed
+  rather than publishing it.
+- The CP120 receipt did not expose the verifier preview profile or optimizer
+  arbitration trace, public failure evidence omitted the latest latent-stage
+  progress, and synchronous cognitive ingress produced an unawaited
+  `MemoryFacade.search` warning. These are proof/runtime defects, not reasons to
+  weaken the unchanged certificate.
+
+Source repair and independent review closeout:
+
+- Verifier preview length is now a typed profile. The resident interactive
+  profile requests 24 tokens, and internal preview decoding has zero sentence
+  grace. The actual decode loop is hard-capped at 24 tokens and charges exactly
+  23 autoregressive continuation passes; user-facing final decoding retains its
+  independent 48-token sentence-completion grace. Compute reservation uses the
+  same exact slot, bridge, continuation, layer, and probe-count formula.
+- Branch selection's already-verified winner score is reused as the latent
+  optimizer baseline, removing one redundant 32B probe. The live product
+  profile may accept a tied/nonregressing task score only when the answer-leak-
+  proof proxy strictly descends; a task-score regression always rejects. Strict
+  laboratory/frontier profiles retain strict task-score improvement.
+- Optimizer receipts carry 12-decimal baseline/candidate scores, current and
+  candidate proxy losses, score tolerance, proxy tolerance and required delta,
+  one decision row per proposal, and one finite incumbent per decision. The
+  service independently replays every decision, validates score/proxy branches,
+  acceptance counts, proposal order, and incumbent transitions, and rejects
+  false descent, contradictory trails, non-finite evidence, or omitted default
+  verifier profiles.
+- Cognitive ingress now runs through `asyncio.to_thread` from the foreground
+  response phase. Real synchronous memory/vector work cannot block the event
+  loop, async organ methods are not invoked through the sync boundary, and a
+  hidden coroutine/task/future is closed or cancelled rather than leaked.
+- Prompt-shape, typed ingress, and latest latent progress survive failed owner
+  paths through CognitiveEngine and are all exposed by the public live-turn
+  contract. One-owner and latent/non-latent truth semantics remain unchanged.
+
+RLC intelligence-learning bridge (explicit frontier obligation):
+
+- The preregistered 1.5B frozen-checkpoint campaign is binding negative
+  evidence: vanilla decoding scored 21/72 while the full stack scored 8/72,
+  and every isolated latent arm lost. The machinery is operational, but the
+  frozen checkpoint has not learned representations or credit assignment that
+  use recurrence productively. More runtime interpretation cannot close this.
+- Build and execute recurrence-native post-training across frozen,
+  reproducible 1.5B, 7B, and resident-32B baselines. The curriculum must train
+  useful intermediate slots, depth-conditioned state transitions, branch-role
+  diversity, verifier-guided credit assignment, adaptive halting, and safe
+  consolidation without answer leakage or benchmark contamination.
+- Measure 0/2/4/8-step curves and matched-compute vanilla, random recurrence,
+  shuffled-role, verifier-off, fast-weight-off, and full-stack arms. Require
+  monotone useful-depth evidence or a calibrated learned stop policy, held-out
+  multi-domain gains with confidence intervals and multiplicity correction,
+  weakest-domain non-regression, reproducibility across seeds, and transfer
+  across scale.
+- Promotion to Aura's resident 32B requires immutable external task roots,
+  contamination checks, blinded baseline/RLC scoring, exact checkpoint and
+  runtime identity, broad reasoning and long-horizon tasks, no material safety,
+  identity, tool, language, latency, or ordinary-chat regressions, durable
+  activation, exact rollback, and an independent frontier certificate. A
+  training run or mechanism receipt alone earns no intelligence-gain credit.
+- If a trained arm fails, retain the result and use first-error/state-transition
+  analysis to identify the missing representation, objective, controller,
+  role, or credit-assignment mechanism; implement it and rerun the same frozen
+  evaluation. The obligation closes only on demonstrated retained gain, not on
+  the existence of training code.
+
+Bounded verification and next boundary:
+
+- The focused RLC/ingress/epistemic/background/response campaign passes
+  223/223. The complete desktop conversation lane passes 282/282. The broad
+  recurrence, schedule, branch, optimizer, fast-weight, consolidation,
+  persistence, runtime-identity, output-quality, frontier-verifier,
+  certificate-driver, and controller campaign passes 433/433. The surrounding
+  cognitive routing, MLX resilience/runtime contract, generation, model-lane,
+  structured-input, runtime-polish, and desktop integration campaign passes
+  809/809. These campaigns overlap and are not summed as unique coverage.
+- Python compilation, `git diff --check`, and targeted `F`/`E9` correctness
+  lint pass. The enterprise static ratchet passes, and the closeout rubric
+  passes 20/20. A full Ruff scan also reports eight pre-existing naming/import-
+  order findings in legacy sections of touched files; no suppression or
+  unrelated refactor is included in CP121.
+- While CP121 was under test, pushed `main` advanced to soak P0 checkpoint
+  `c8d4ef5c` with dead-holder admission-lease reaping. It touched no CP121
+  source file and was fast-forwarded without conflict. The reconciled tree then
+  passed 233/233 admission-lifecycle, MLX resilience/runtime-contract, model-
+  lane, latent-wiring, and execution-controller interaction tests.
+- Evidence-weighted completion remains 27%. This is checkpoint 121 of the
+  faithful 292-399 total forecast, leaving approximately 171-278 checkpoints.
+  The source repair is necessary live-proof infrastructure, not frontier gain.
+- Next: commit and push CP121 directly to `main`, run the clean-head closeout
+  audit, stop CP120 cleanly, rebuild/sign/install exact CP121, and rerun the
+  unchanged resident-32B certificate. Acceptance requires one owner, a true
+  24-token verifier cap, reused branch baseline, replay-valid optimizer
+  decisions, a complete high-quality public answer, exact public-byte and
+  mutation-chain proof, clean terminal/Neural health, and no memory/runtime
+  warning. Then run genuine exact-app long chat, code, table, long-word, inline-
+  thinking, and large-Neural expansion checks at desktop/mobile viewports.
+  Multi-hour and 24-72-hour soaks remain deferred until every shorter gate is
+  green.

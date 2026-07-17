@@ -499,6 +499,8 @@ def test_structured_governance_refusal_can_prove_live_full_mind_path(monkeypatch
     assert payload["live_mind_generation_required"] is False
     assert payload["live_mind_controls_application_satisfied"] is True
     assert payload["live_mind_surface_quality_gate_passed"] is True
+    assert payload["latent_cortex_path_proven"] is False
+    assert payload["latent_cortex_path_requirement_satisfied"] is True
     assert payload["full_mind_path"] is True
 
 
@@ -534,6 +536,7 @@ def test_full_mind_contract_accepts_identity_bound_latent_cortex_path(monkeypatc
     )
 
     assert payload["latent_cortex_path_proven"] is True
+    assert payload["latent_cortex_path_requirement_satisfied"] is True
     assert payload["latent_cortex_identity_bound"] is True
     assert payload["authentic_cognitive_reply"] is True
     assert payload["full_mind_path"] is True
@@ -9432,6 +9435,21 @@ async def test_cognitive_engine_does_not_duplicate_a_consumed_model_owner(monkey
         {
             "desktop_cognitive_engine_failure": True,
             "failure_reason": "first_generation_rejected",
+            "latent_cortex_selected": True,
+            "latent_cortex_attempted": True,
+            "latent_cortex_succeeded": False,
+            "latent_cortex_fallback_used": True,
+            "latent_cortex_failure_reason": "output_quality_failed:missing_requested_facets",
+            "latent_cortex_prompt_shape": {
+                "question_parts": 4,
+                "requires_single_reply_coverage": True,
+            },
+            "latent_cortex_ingress": {"schema": "aura.cognitive_ingress.v1"},
+            "latent_cortex_progress": {"stage": "complete", "elapsed_s": 109.5},
+            "latent_cortex_receipt": {
+                "episode_id": "cp120-failed",
+                "last_stage": "complete",
+            },
         }
     )
     first_metadata["live_mind_surface_control_receipt"].update(
@@ -9502,6 +9520,22 @@ async def test_cognitive_engine_does_not_duplicate_a_consumed_model_owner(monkey
     assert trace["foreground_model_generation_consumed"] is True
     assert trace["foreground_model_generation_count"] == 1
     assert trace["single_owner_generation_exhausted"] is True
+    assert trace["latent_cortex_prompt_shape"]["question_parts"] == 4
+    assert trace["latent_cortex_ingress"]["schema"] == "aura.cognitive_ingress.v1"
+    assert trace["latent_cortex_progress"]["stage"] == "complete"
+    assert trace["latent_cortex_receipt"]["episode_id"] == "cp120-failed"
+    live_contract = chat_routes._build_live_turn_contract_payload(
+        desktop_required=True,
+        request_surface="desktop-ui",
+        lane_status={"conversation_ready": True, "state": "ready"},
+        response_confidence="degraded",
+        status="cognitive_engine_failed",
+        turn_trace=trace,
+    )
+    assert live_contract["latent_cortex_progress"] == {
+        "stage": "complete",
+        "elapsed_s": 109.5,
+    }
 
 
 @pytest.mark.asyncio

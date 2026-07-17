@@ -266,6 +266,14 @@ class CortexConfig:
     # tokens). Until this many tokens exist, EOS logits are masked — the
     # standard min-new-tokens constraint. 0 disables.
     decode_min_tokens: int = 0
+    # Task-verifier probes are answer previews, not user-visible answers. The
+    # lab/frontier default remains broad; the resident interactive profile may
+    # use a shorter, explicitly receipted probe to preserve the answer budget.
+    verifier_probe_max_tokens: int = 48
+    # Strict experiments accept only a higher task-verifier score. The live
+    # product profile may additionally accept an exactly non-regressing score
+    # when the candidate also proves descent on the answer-leak-proof proxy.
+    verifier_accept_non_regression: bool = False
     input_context_max_chars: int = 0
     allow_vanilla_fallback: bool = True
     # Structured attractor-escape ladder for diverged/stalled branches
@@ -396,6 +404,10 @@ class CortexConfig:
                 "decode_min_tokens must be an integer inside [0, 512] and "
                 "below decode_max_tokens"
             )
+        if not integer_in(self.verifier_probe_max_tokens, 16, 64):
+            problems.append("verifier_probe_max_tokens outside [16, 64]")
+        if type(self.verifier_accept_non_regression) is not bool:
+            problems.append("verifier_accept_non_regression must be boolean")
         if self.decode_bridge_policy not in {
             "none",
             "assistant_answer_v1",
@@ -558,6 +570,10 @@ class EpisodeReceipt:
     latent_opt_steps: int = 0
     latent_opt_rejected: int = 0
     latent_opt_budget_exhausted: bool = False
+    # Task-verifier arbitration over latent proposals: baseline provenance,
+    # score/proxy trails, and why each proposal was accepted or rejected.
+    latent_opt_verifier: dict[str, Any] = field(default_factory=dict)
+    verifier_probe_max_tokens: int = 48
     fast_weights_applied: bool = False
     fast_weights_layers: int = 0
     fast_weight_optimization_attempts: int = 0
@@ -675,6 +691,8 @@ class EpisodeReceipt:
             "latent_opt_steps": self.latent_opt_steps,
             "latent_opt_rejected": self.latent_opt_rejected,
             "latent_opt_budget_exhausted": self.latent_opt_budget_exhausted,
+            "latent_opt_verifier": dict(self.latent_opt_verifier),
+            "verifier_probe_max_tokens": self.verifier_probe_max_tokens,
             "fast_weights_applied": self.fast_weights_applied,
             "fast_weights_layers": self.fast_weights_layers,
             "fast_weight_optimization_attempts": self.fast_weight_optimization_attempts,

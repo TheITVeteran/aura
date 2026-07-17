@@ -164,6 +164,129 @@ def test_verifier_hill_climb_never_accepts_rejected_states(tiny_model):
         opt3.run_with_verifier(ws.z, lambda z: float("nan"))
 
 
+def test_verifier_reuses_branch_baseline_and_strict_default_rejects_ties(tiny_model):
+    ws = _workspace(tiny_model)
+    cfg = LatentOptConfig(enabled=True, steps=1, lr=0.05)
+    loss_fn = build_proxy_loss(tiny_model, ws.z, PROMPT_TOKENS, cfg)
+    opt = LatentOptimizer(loss_fn, cfg, seed=2)
+    calls = {"count": 0}
+
+    def tied_score(_z):
+        calls["count"] += 1
+        return 0.5
+
+    z_out, score = opt.run_with_verifier(
+        ws.z,
+        tied_score,
+        initial_score=0.5,
+    )
+
+    assert calls["count"] == 1, "the verified branch score must replace a baseline decode"
+    assert score == 0.5
+    assert bool(mx.allclose(z_out, ws.z))
+    assert opt.trace.accepted == 0 and opt.trace.rejected == 1
+    verifier = opt.trace.verifier_receipt()
+    assert verifier["policy"] == "strict_task_score_improvement_v1"
+    assert verifier["baseline_source"] == "caller_reused_verified_branch"
+    assert verifier["decisions"][0]["decision"] == "rejected_no_task_score_improvement"
+
+
+def test_interactive_verifier_accepts_only_nonregressing_proxy_descent(tiny_model):
+    ws = _workspace(tiny_model)
+    cfg = LatentOptConfig(enabled=True, steps=1, lr=0.05)
+    loss_fn = build_proxy_loss(tiny_model, ws.z, PROMPT_TOKENS, cfg)
+    opt = LatentOptimizer(loss_fn, cfg, seed=2)
+
+    z_out, score = opt.run_with_verifier(
+        ws.z,
+        lambda _z: 0.5,
+        initial_score=0.5,
+        accept_non_regression=True,
+    )
+
+    assert score == 0.5
+    assert not bool(mx.allclose(z_out, ws.z))
+    assert opt.trace.accepted == opt.trace.steps_taken == 1
+    verifier = opt.trace.verifier_receipt()
+    assert verifier["policy"] == "task_score_nonregression_with_proxy_descent_v1"
+    assert verifier["proxy_nonregression_accepts"] == 1
+    assert verifier["score_improvement_accepts"] == 0
+    decision = verifier["decisions"][0]
+    assert decision["decision"] == "accepted_task_score_nonregression_with_proxy_descent"
+    assert decision["candidate_proxy_loss"] < decision["current_proxy_loss"]
+
+
+def test_interactive_verifier_rejects_score_regression_even_with_proxy_descent(tiny_model):
+    ws = _workspace(tiny_model)
+    cfg = LatentOptConfig(enabled=True, steps=1, lr=0.05)
+    opt = LatentOptimizer(
+        build_proxy_loss(tiny_model, ws.z, PROMPT_TOKENS, cfg),
+        cfg,
+        seed=2,
+    )
+
+    z_out, score = opt.run_with_verifier(
+        ws.z,
+        lambda _z: 0.4,
+        initial_score=0.5,
+        accept_non_regression=True,
+    )
+
+    assert score == 0.5
+    assert bool(mx.allclose(z_out, ws.z))
+    assert opt.trace.accepted == 0 and opt.trace.rejected == 1
+    assert (
+        opt.trace.verifier_decisions[0]["decision"]
+        == "rejected_task_score_regression"
+    )
+
+
+def test_interactive_verifier_rejects_tie_without_proxy_descent():
+    z = mx.zeros((1, 2, 4))
+    cfg = LatentOptConfig(enabled=True, steps=1, lr=0.05)
+    opt = LatentOptimizer(lambda state: mx.sum(mx.square(state)), cfg, seed=2)
+
+    z_out, _ = opt.run_with_verifier(
+        z,
+        lambda _z: 0.5,
+        initial_score=0.5,
+        accept_non_regression=True,
+    )
+
+    assert bool(mx.allclose(z_out, z))
+    assert opt.trace.accepted == 0 and opt.trace.rejected == 1
+    assert opt.trace.verifier_decisions[0]["decision"] == "rejected_proxy_non_descent"
+
+
+def test_verifier_receipt_keeps_finite_incumbent_trail_for_nonfinite_candidate(
+    tiny_model,
+):
+    ws = _workspace(tiny_model)
+    cfg = LatentOptConfig(enabled=True, steps=1, lr=0.05)
+    opt = LatentOptimizer(
+        build_proxy_loss(tiny_model, ws.z, PROMPT_TOKENS, cfg),
+        cfg,
+        seed=2,
+    )
+
+    z_out, score = opt.run_with_verifier(
+        ws.z,
+        lambda _z: float("nan"),
+        initial_score=0.5,
+        accept_non_regression=True,
+    )
+
+    verifier = opt.trace.verifier_receipt()
+    assert score == 0.5
+    assert bool(mx.allclose(z_out, ws.z))
+    assert verifier["score_trail"] == [0.5, 0.5]
+    assert verifier["decisions"][0]["candidate_score"] == "nonfinite"
+    assert (
+        verifier["decisions"][0]["decision"]
+        == "rejected_nonfinite_task_score"
+    )
+
+
 def test_latent_optimizer_budget_preserves_completion_reserve(tiny_model):
     ws = _workspace(tiny_model)
     cfg = LatentOptConfig(enabled=True, steps=6, lr=0.05)

@@ -15,6 +15,8 @@ Job contract (all optional except the prompt source):
      "n_slots": 16, "n_branches": 2, "max_steps": 8,
      "latent_opt": false, "fast_weights": false,
      "decode_max_tokens": 512, "decode_temperature": 0.0,
+     "verifier_probe_max_tokens": 48,
+     "verifier_accept_non_regression": false,
      "decode_bridge_policy": "none",
      "schedule": {...}       # optional explicit program
   },
@@ -100,6 +102,8 @@ _CONFIG_KEYS = {
     "schedule",
     "seed",
     "telemetry",
+    "verifier_accept_non_regression",
+    "verifier_probe_max_tokens",
 }
 
 
@@ -224,6 +228,12 @@ def config_from_job(job_config: dict[str, Any] | None) -> CortexConfig:
         schedule=raw.get("schedule"),
         decode_max_tokens=_typed_value(raw, "decode_max_tokens", 512, int),
         decode_min_tokens=_typed_value(raw, "decode_min_tokens", 0, int),
+        verifier_probe_max_tokens=_typed_value(
+            raw, "verifier_probe_max_tokens", 48, int
+        ),
+        verifier_accept_non_regression=_typed_value(
+            raw, "verifier_accept_non_regression", False, bool
+        ),
         decode_temperature=_typed_value(raw, "decode_temperature", 0.0, float),
         decode_top_p=_typed_value(raw, "decode_top_p", 1.0, float),
         decode_repetition_penalty=_typed_value(
