@@ -229,3 +229,29 @@ graded CONJECTURE. The mechanism is proven causal, cheap (~3.5s of a
 has not yet appeared in the data. The recurrence-native objective exists
 precisely because the frozen-loop ceiling is real — the next capability
 move is training, not more runtime machinery.
+
+## Preregistered offline campaign (2026-07-17, seed committed first)
+
+`artifacts/current/latent_campaign_prereg_20260717.json` pinned the fresh
+task seed (20260717), power (n=24/family, 72/arm), and hypotheses BEFORE
+any campaign task was generated. Vehicle: Qwen2.5-1.5B-Instruct-4bit
+(the resident 32B stayed live). Reports: `latent_campaign_1p5b_run{1,2}.json`.
+
+| Experiment | Verdict | The data |
+|---|---|---|
+| 1 recurrence sweep | CONJECTURE | no monotone step curve |
+| 2 depth extrapolation | CONJECTURE ×3 families | no T∝depth signal |
+| 3 slot causality | **REFUTED** | no ablated slot caused specific loss (n=72) |
+| 4 virtual width | CONJECTURE (negative point) | self-consistency beat branches: boolean 12v4, khop 4v0 |
+| 5 latent opt | CONJECTURE | gradient == random control == off, exactly |
+| A factorial ablations | **all 7 arms REFUTED** | vanilla 21/72 beats every latent arm (7–13/72) |
+
+The honest headline: **on an untrained-for-recurrence checkpoint at this
+scale, the frozen-loop RLC does not merely fail to help — it hurts.**
+Plain decoding wins at matched budgets. Combined with the 32B parity
+sweep, the campaign converts "the intelligence dividend has not appeared"
+from an impression into a preregistered, adequately-powered, Holm-corrected
+result. The runtime machinery is causal, governed, and live; the dividend
+must come from recurrence-native training (the objective + curriculum
+losses are the entry point) — exactly what this harness was built to be
+able to say without flinching.

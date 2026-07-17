@@ -1,0 +1,2631 @@
+{
+ "checkpoint": {
+  "files": 1,
+  "fingerprint": "d6e4ecf7593b78cb88ded2f4e98dd26b16802b38d2421b2af805eaea2f24f37d",
+  "method": "sha256"
+ },
+ "claim_scope": "offline mechanism and scaling evidence only; exact installed-app resident-32B frontier certification is a separate required run",
+ "deadline_exceeded": false,
+ "finished_at": 1784279238.509046,
+ "frontier_claim_eligible": false,
+ "model": "/Users/bryan/.cache/huggingface/hub/models--mlx-community--Qwen2.5-1.5B-Instruct-4bit/snapshots/8b403126fc14f14cfc99bb4cfa72ecbc129ea677/",
+ "requested_experiments": [
+  "3",
+  "5",
+  "A"
+ ],
+ "results": {
+  "ablations": {
+   "arms": {
+    "branches_only": {
+     "boolean": {
+      "accuracy": 0.375,
+      "layer_apps": 141176,
+      "n": 24,
+      "name": "branches_only",
+      "successes": 9,
+      "wilson_lb": 0.233,
+      "wilson_ub": 0.5423
+     },
+     "khop": {
+      "accuracy": 0.0,
+      "layer_apps": 110152,
+      "n": 24,
+      "name": "branches_only",
+      "successes": 0,
+      "wilson_lb": 0.0,
+      "wilson_ub": 0.1013
+     },
+     "modular": {
+      "accuracy": 0.1667,
+      "layer_apps": 154616,
+      "n": 24,
+      "name": "branches_only",
+      "successes": 4,
+      "wilson_lb": 0.0771,
+      "wilson_ub": 0.3238
+     }
+    },
+    "fast_weights_only": {
+     "boolean": {
+      "accuracy": 0.2917,
+      "layer_apps": 443940,
+      "n": 24,
+      "name": "fast_weights_only",
+      "successes": 7,
+      "wilson_lb": 0.1666,
+      "wilson_ub": 0.459
+     },
+     "khop": {
+      "accuracy": 0.0,
+      "layer_apps": 402248,
+      "n": 24,
+      "name": "fast_weights_only",
+      "successes": 0,
+      "wilson_lb": 0.0,
+      "wilson_ub": 0.1013
+     },
+     "modular": {
+      "accuracy": 0.1667,
+      "layer_apps": 451780,
+      "n": 24,
+      "name": "fast_weights_only",
+      "successes": 4,
+      "wilson_lb": 0.0771,
+      "wilson_ub": 0.3238
+     }
+    },
+    "full_stack": {
+     "boolean": {
+      "accuracy": 0.25,
+      "layer_apps": 750736,
+      "n": 24,
+      "name": "full_stack",
+      "successes": 6,
+      "wilson_lb": 0.1352,
+      "wilson_ub": 0.4155
+     },
+     "khop": {
+      "accuracy": 0.0,
+      "layer_apps": 690256,
+      "n": 24,
+      "name": "full_stack",
+      "successes": 0,
+      "wilson_lb": 0.0,
+      "wilson_ub": 0.1013
+     },
+     "modular": {
+      "accuracy": 0.0833,
+      "layer_apps": 969416,
+      "n": 24,
+      "name": "full_stack",
+      "successes": 2,
+      "wilson_lb": 0.028,
+      "wilson_ub": 0.2231
+     }
+    },
+    "latent_opt_only": {
+     "boolean": {
+      "accuracy": 0.375,
+      "layer_apps": 775404,
+      "n": 24,
+      "name": "latent_opt_only",
+      "successes": 9,
+      "wilson_lb": 0.233,
+      "wilson_ub": 0.5423
+     },
+     "khop": {
+      "accuracy": 0.0,
+      "layer_apps": 747208,
+      "n": 24,
+      "name": "latent_opt_only",
+      "successes": 0,
+      "wilson_lb": 0.0,
+      "wilson_ub": 0.1013
+     },
+     "modular": {
+      "accuracy": 0.125,
+      "layer_apps": 793856,
+      "n": 24,
+      "name": "latent_opt_only",
+      "successes": 3,
+      "wilson_lb": 0.0511,
+      "wilson_ub": 0.2749
+     }
+    },
+    "recurrence_branches": {
+     "boolean": {
+      "accuracy": 0.1667,
+      "layer_apps": 194040,
+      "n": 24,
+      "name": "recurrence_branches",
+      "successes": 4,
+      "wilson_lb": 0.0771,
+      "wilson_ub": 0.3238
+     },
+     "khop": {
+      "accuracy": 0.0,
+      "layer_apps": 185416,
+      "n": 24,
+      "name": "recurrence_branches",
+      "successes": 0,
+      "wilson_lb": 0.0,
+      "wilson_ub": 0.1013
+     },
+     "modular": {
+      "accuracy": 0.125,
+      "layer_apps": 211316,
+      "n": 24,
+      "name": "recurrence_branches",
+      "successes": 3,
+      "wilson_lb": 0.0511,
+      "wilson_ub": 0.2749
+     }
+    },
+    "recurrence_only": {
+     "boolean": {
+      "accuracy": 0.2083,
+      "layer_apps": 149380,
+      "n": 24,
+      "name": "recurrence_only",
+      "successes": 5,
+      "wilson_lb": 0.1053,
+      "wilson_ub": 0.3705
+     },
+     "khop": {
+      "accuracy": 0.0,
+      "layer_apps": 139720,
+      "n": 24,
+      "name": "recurrence_only",
+      "successes": 0,
+      "wilson_lb": 0.0,
+      "wilson_ub": 0.1013
+     },
+     "modular": {
+      "accuracy": 0.125,
+      "layer_apps": 160020,
+      "n": 24,
+      "name": "recurrence_only",
+      "successes": 3,
+      "wilson_lb": 0.0511,
+      "wilson_ub": 0.2749
+     }
+    },
+    "recurrence_verifier": {
+     "boolean": {
+      "accuracy": 0.1667,
+      "layer_apps": 225008,
+      "n": 24,
+      "name": "recurrence_verifier",
+      "successes": 4,
+      "wilson_lb": 0.0771,
+      "wilson_ub": 0.3238
+     },
+     "khop": {
+      "accuracy": 0.0,
+      "layer_apps": 206920,
+      "n": 24,
+      "name": "recurrence_verifier",
+      "successes": 0,
+      "wilson_lb": 0.0,
+      "wilson_ub": 0.1013
+     },
+     "modular": {
+      "accuracy": 0.125,
+      "layer_apps": 297528,
+      "n": 24,
+      "name": "recurrence_verifier",
+      "successes": 3,
+      "wilson_lb": 0.0511,
+      "wilson_ub": 0.2749
+     }
+    },
+    "vanilla": {
+     "boolean": {
+      "accuracy": 0.5417,
+      "layer_apps": 130508,
+      "n": 24,
+      "name": "vanilla",
+      "successes": 13,
+      "wilson_lb": 0.3788,
+      "wilson_ub": 0.6961
+     },
+     "khop": {
+      "accuracy": 0.1667,
+      "layer_apps": 126280,
+      "n": 24,
+      "name": "vanilla",
+      "successes": 4,
+      "wilson_lb": 0.0771,
+      "wilson_ub": 0.3238
+     },
+     "modular": {
+      "accuracy": 0.1667,
+      "layer_apps": 115668,
+      "n": 24,
+      "name": "vanilla",
+      "successes": 4,
+      "wilson_lb": 0.0771,
+      "wilson_ub": 0.3238
+     }
+    }
+   },
+   "attribution": [],
+   "claims": {
+    "branches_only": {
+     "evidence": {
+      "alpha": 0.05,
+      "bootstrap_resamples": 10000,
+      "compute_tolerance": 0.05,
+      "families": {
+       "boolean": {
+        "compute_mismatch_task_ids": [
+         "boolean:2:160444617923:0",
+         "boolean:2:160444617924:1",
+         "boolean:2:160444617925:2",
+         "boolean:2:160444617926:3",
+         "boolean:2:160444617927:4",
+         "boolean:2:160444617929:6",
+         "boolean:2:160444617930:7",
+         "boolean:4:160444617923:8",
+         "boolean:4:160444617924:9",
+         "boolean:4:160444617925:10",
+         "boolean:4:160444617926:11",
+         "boolean:4:160444617927:12",
+         "boolean:4:160444617928:13",
+         "boolean:4:160444617929:14",
+         "boolean:4:160444617930:15",
+         "boolean:8:160444617923:16",
+         "boolean:8:160444617924:17",
+         "boolean:8:160444617925:18",
+         "boolean:8:160444617926:19",
+         "boolean:8:160444617927:20",
+         "boolean:8:160444617928:21",
+         "boolean:8:160444617929:22",
+         "boolean:8:160444617930:23"
+        ],
+        "control_wins": 4,
+        "effect_bound_alpha": 0.016666666666666666,
+        "effect_interval": [
+         -0.333333,
+         -0.041667
+        ],
+        "missing_compute": false,
+        "n": 24,
+        "nonpositive_compute": false,
+        "one_sided_exact_p": 1.0,
+        "paired_effect": -0.166667,
+        "ties": 20,
+        "treatment_wins": 0
+       },
+       "khop": {
+        "compute_mismatch_task_ids": [
+         "khop:2:160444617923:0",
+         "khop:2:160444617924:1",
+         "khop:2:160444617925:2",
+         "khop:2:160444617926:3",
+         "khop:2:160444617927:4",
+         "khop:2:160444617928:5",
+         "khop:2:160444617929:6",
+         "khop:2:160444617930:7",
+         "khop:4:160444617923:8",
+         "khop:4:160444617924:9",
+         "khop:4:160444617925:10",
+         "khop:4:160444617926:11",
+         "khop:4:160444617927:12",
+         "khop:4:160444617928:13",
+         "khop:4:160444617929:14",
+         "khop:4:160444617930:15",
+         "khop:8:160444617923:16",
+         "khop:8:160444617924:17",
+         "khop:8:160444617925:18",
+         "khop:8:160444617926:19",
+         "khop:8:160444617927:20",
+         "khop:8:160444617928:21",
+         "khop:8:160444617929:22",
+         "khop:8:160444617930:23"
+        ],
+        "control_wins": 4,
+        "effect_bound_alpha": 0.016666666666666666,
+        "effect_interval": [
+         -0.333333,
+         -0.041667
+        ],
+        "missing_compute": false,
+        "n": 24,
+        "nonpositive_compute": false,
+        "one_sided_exact_p": 1.0,
+        "paired_effect": -0.166667,
+        "ties": 20,
+        "treatment_wins": 0
+       },
+       "modular": {
+        "compute_mismatch_task_ids": [
+         "modular:2:160444617924:1",
+         "modular:2:160444617925:2",
+         "modular:2:160444617926:3",
+         "modular:2:160444617927:4",
+         "modular:2:160444617928:5",
+         "modular:2:160444617929:6",
+         "modular:4:160444617923:8",
+         "modular:4:160444617924:9",
+         "modular:4:160444617925:10",
+         "modular:4:160444617926:11",
+         "modular:4:160444617927:12",
+         "modular:4:160444617928:13",
+         "modular:4:160444617929:14",
+         "modular:4:160444617930:15",
+         "modular:8:160444617923:16",
+         "modular:8:160444617924:17",
+         "modular:8:160444617925:18",
+         "modular:8:160444617926:19",
+         "modular:8:160444617927:20",
+         "modular:8:160444617928:21",
+         "modular:8:160444617929:22",
+         "modular:8:160444617930:23"
+        ],
+        "control_wins": 2,
+        "effect_bound_alpha": 0.016666666666666666,
+        "effect_interval": [
+         -0.166667,
+         0.166667
+        ],
+        "missing_compute": false,
+        "n": 24,
+        "nonpositive_compute": false,
+        "one_sided_exact_p": 0.6875,
+        "paired_effect": 0.0,
+        "ties": 20,
+        "treatment_wins": 2
+       }
+      },
+      "holm_adjusted_p": {
+       "boolean": 1.0,
+       "khop": 1.0,
+       "modular": 1.0
+      },
+      "invalid_compute_families": [],
+      "method": "paired exact McNemar/binomial + Holm correction + alpha-derived one-sided percentile bounds",
+      "minimum_effect": 0.0,
+      "pooled": {
+       "control_wins": 10,
+       "effect_bound_alpha": 0.05,
+       "effect_interval": [
+        -0.194444,
+        -0.041667
+       ],
+       "n": 72,
+       "one_sided_exact_p": 0.996826171875,
+       "paired_effect": -0.111111,
+       "treatment_wins": 2
+      },
+      "positive_families": [],
+      "regressed_families": [
+       "khop",
+       "boolean"
+      ],
+      "required_positive_families": 2,
+      "underpowered_families": []
+     },
+     "experiment": "ablation_branches_only",
+     "graded_at": 1784279238.4657621,
+     "statement": "mechanism arm 'branches_only' beats vanilla decoding on the same tasks",
+     "tier": "REFUTED"
+    },
+    "fast_weights_only": {
+     "evidence": {
+      "alpha": 0.05,
+      "bootstrap_resamples": 10000,
+      "compute_tolerance": 0.05,
+      "families": {
+       "boolean": {
+        "compute_mismatch_task_ids": [
+         "boolean:2:160444617923:0",
+         "boolean:2:160444617924:1",
+         "boolean:2:160444617925:2",
+         "boolean:2:160444617926:3",
+         "boolean:2:160444617927:4",
+         "boolean:2:160444617928:5",
+         "boolean:2:160444617929:6",
+         "boolean:2:160444617930:7",
+         "boolean:4:160444617923:8",
+         "boolean:4:160444617924:9",
+         "boolean:4:160444617925:10",
+         "boolean:4:160444617926:11",
+         "boolean:4:160444617927:12",
+         "boolean:4:160444617928:13",
+         "boolean:4:160444617929:14",
+         "boolean:4:160444617930:15",
+         "boolean:8:160444617923:16",
+         "boolean:8:160444617924:17",
+         "boolean:8:160444617925:18",
+         "boolean:8:160444617926:19",
+         "boolean:8:160444617927:20",
+         "boolean:8:160444617928:21",
+         "boolean:8:160444617929:22",
+         "boolean:8:160444617930:23"
+        ],
+        "control_wins": 6,
+        "effect_bound_alpha": 0.016666666666666666,
+        "effect_interval": [
+         -0.458333,
+         -0.083333
+        ],
+        "missing_compute": false,
+        "n": 24,
+        "nonpositive_compute": false,
+        "one_sided_exact_p": 1.0,
+        "paired_effect": -0.25,
+        "ties": 18,
+        "treatment_wins": 0
+       },
+       "khop": {
+        "compute_mismatch_task_ids": [
+         "khop:2:160444617923:0",
+         "khop:2:160444617924:1",
+         "khop:2:160444617925:2",
+         "khop:2:160444617926:3",
+         "khop:2:160444617927:4",
+         "khop:2:160444617928:5",
+         "khop:2:160444617929:6",
+         "khop:2:160444617930:7",
+         "khop:4:160444617923:8",
+         "khop:4:160444617924:9",
+         "khop:4:160444617925:10",
+         "khop:4:160444617926:11",
+         "khop:4:160444617927:12",
+         "khop:4:160444617928:13",
+         "khop:4:160444617929:14",
+         "khop:4:160444617930:15",
+         "khop:8:160444617923:16",
+         "khop:8:160444617924:17",
+         "khop:8:160444617925:18",
+         "khop:8:160444617926:19",
+         "khop:8:160444617927:20",
+         "khop:8:160444617928:21",
+         "khop:8:160444617929:22",
+         "khop:8:160444617930:23"
+        ],
+        "control_wins": 4,
+        "effect_bound_alpha": 0.016666666666666666,
+        "effect_interval": [
+         -0.333333,
+         -0.041667
+        ],
+        "missing_compute": false,
+        "n": 24,
+        "nonpositive_compute": false,
+        "one_sided_exact_p": 1.0,
+        "paired_effect": -0.166667,
+        "ties": 20,
+        "treatment_wins": 0
+       },
+       "modular": {
+        "compute_mismatch_task_ids": [
+         "modular:2:160444617923:0",
+         "modular:2:160444617924:1",
+         "modular:2:160444617925:2",
+         "modular:2:160444617926:3",
+         "modular:2:160444617927:4",
+         "modular:2:160444617928:5",
+         "modular:2:160444617929:6",
+         "modular:2:160444617930:7",
+         "modular:4:160444617923:8",
+         "modular:4:160444617924:9",
+         "modular:4:160444617925:10",
+         "modular:4:160444617926:11",
+         "modular:4:160444617927:12",
+         "modular:4:160444617928:13",
+         "modular:4:160444617929:14",
+         "modular:4:160444617930:15",
+         "modular:8:160444617923:16",
+         "modular:8:160444617924:17",
+         "modular:8:160444617925:18",
+         "modular:8:160444617926:19",
+         "modular:8:160444617927:20",
+         "modular:8:160444617928:21",
+         "modular:8:160444617929:22",
+         "modular:8:160444617930:23"
+        ],
+        "control_wins": 2,
+        "effect_bound_alpha": 0.016666666666666666,
+        "effect_interval": [
+         -0.166667,
+         0.166667
+        ],
+        "missing_compute": false,
+        "n": 24,
+        "nonpositive_compute": false,
+        "one_sided_exact_p": 0.6875,
+        "paired_effect": 0.0,
+        "ties": 20,
+        "treatment_wins": 2
+       }
+      },
+      "holm_adjusted_p": {
+       "boolean": 1.0,
+       "khop": 1.0,
+       "modular": 1.0
+      },
+      "invalid_compute_families": [],
+      "method": "paired exact McNemar/binomial + Holm correction + alpha-derived one-sided percentile bounds",
+      "minimum_effect": 0.0,
+      "pooled": {
+       "control_wins": 12,
+       "effect_bound_alpha": 0.05,
+       "effect_interval": [
+        -0.222222,
+        -0.055556
+       ],
+       "n": 72,
+       "one_sided_exact_p": 0.99908447265625,
+       "paired_effect": -0.138889,
+       "treatment_wins": 2
+      },
+      "positive_families": [],
+      "regressed_families": [
+       "khop",
+       "boolean"
+      ],
+      "required_positive_families": 2,
+      "underpowered_families": []
+     },
+     "experiment": "ablation_fast_weights_only",
+     "graded_at": 1784279238.483018,
+     "statement": "mechanism arm 'fast_weights_only' beats vanilla decoding on the same tasks",
+     "tier": "REFUTED"
+    },
+    "full_stack": {
+     "evidence": {
+      "alpha": 0.05,
+      "bootstrap_resamples": 10000,
+      "compute_tolerance": 0.05,
+      "families": {
+       "boolean": {
+        "compute_mismatch_task_ids": [
+         "boolean:2:160444617923:0",
+         "boolean:2:160444617924:1",
+         "boolean:2:160444617925:2",
+         "boolean:2:160444617926:3",
+         "boolean:2:160444617927:4",
+         "boolean:2:160444617928:5",
+         "boolean:2:160444617929:6",
+         "boolean:2:160444617930:7",
+         "boolean:4:160444617923:8",
+         "boolean:4:160444617924:9",
+         "boolean:4:160444617925:10",
+         "boolean:4:160444617926:11",
+         "boolean:4:160444617927:12",
+         "boolean:4:160444617928:13",
+         "boolean:4:160444617929:14",
+         "boolean:4:160444617930:15",
+         "boolean:8:160444617923:16",
+         "boolean:8:160444617924:17",
+         "boolean:8:160444617925:18",
+         "boolean:8:160444617926:19",
+         "boolean:8:160444617927:20",
+         "boolean:8:160444617928:21",
+         "boolean:8:160444617929:22",
+         "boolean:8:160444617930:23"
+        ],
+        "control_wins": 7,
+        "effect_bound_alpha": 0.016666666666666666,
+        "effect_interval": [
+         -0.5,
+         -0.125
+        ],
+        "missing_compute": false,
+        "n": 24,
+        "nonpositive_compute": false,
+        "one_sided_exact_p": 1.0,
+        "paired_effect": -0.291667,
+        "ties": 17,
+        "treatment_wins": 0
+       },
+       "khop": {
+        "compute_mismatch_task_ids": [
+         "khop:2:160444617923:0",
+         "khop:2:160444617924:1",
+         "khop:2:160444617925:2",
+         "khop:2:160444617926:3",
+         "khop:2:160444617927:4",
+         "khop:2:160444617928:5",
+         "khop:2:160444617929:6",
+         "khop:2:160444617930:7",
+         "khop:4:160444617923:8",
+         "khop:4:160444617924:9",
+         "khop:4:160444617925:10",
+         "khop:4:160444617926:11",
+         "khop:4:160444617927:12",
+         "khop:4:160444617928:13",
+         "khop:4:160444617929:14",
+         "khop:4:160444617930:15",
+         "khop:8:160444617923:16",
+         "khop:8:160444617924:17",
+         "khop:8:160444617925:18",
+         "khop:8:160444617926:19",
+         "khop:8:160444617927:20",
+         "khop:8:160444617928:21",
+         "khop:8:160444617929:22",
+         "khop:8:160444617930:23"
+        ],
+        "control_wins": 4,
+        "effect_bound_alpha": 0.016666666666666666,
+        "effect_interval": [
+         -0.333333,
+         -0.041667
+        ],
+        "missing_compute": false,
+        "n": 24,
+        "nonpositive_compute": false,
+        "one_sided_exact_p": 1.0,
+        "paired_effect": -0.166667,
+        "ties": 20,
+        "treatment_wins": 0
+       },
+       "modular": {
+        "compute_mismatch_task_ids": [
+         "modular:2:160444617923:0",
+         "modular:2:160444617924:1",
+         "modular:2:160444617925:2",
+         "modular:2:160444617926:3",
+         "modular:2:160444617927:4",
+         "modular:2:160444617928:5",
+         "modular:2:160444617929:6",
+         "modular:2:160444617930:7",
+         "modular:4:160444617923:8",
+         "modular:4:160444617924:9",
+         "modular:4:160444617925:10",
+         "modular:4:160444617926:11",
+         "modular:4:160444617927:12",
+         "modular:4:160444617928:13",
+         "modular:4:160444617929:14",
+         "modular:4:160444617930:15",
+         "modular:8:160444617923:16",
+         "modular:8:160444617924:17",
+         "modular:8:160444617925:18",
+         "modular:8:160444617926:19",
+         "modular:8:160444617927:20",
+         "modular:8:160444617928:21",
+         "modular:8:160444617929:22",
+         "modular:8:160444617930:23"
+        ],
+        "control_wins": 2,
+        "effect_bound_alpha": 0.016666666666666666,
+        "effect_interval": [
+         -0.208333,
+         0.0
+        ],
+        "missing_compute": false,
+        "n": 24,
+        "nonpositive_compute": false,
+        "one_sided_exact_p": 1.0,
+        "paired_effect": -0.083333,
+        "ties": 22,
+        "treatment_wins": 0
+       }
+      },
+      "holm_adjusted_p": {
+       "boolean": 1.0,
+       "khop": 1.0,
+       "modular": 1.0
+      },
+      "invalid_compute_families": [],
+      "method": "paired exact McNemar/binomial + Holm correction + alpha-derived one-sided percentile bounds",
+      "minimum_effect": 0.0,
+      "pooled": {
+       "control_wins": 13,
+       "effect_bound_alpha": 0.05,
+       "effect_interval": [
+        -0.263889,
+        -0.111111
+       ],
+       "n": 72,
+       "one_sided_exact_p": 1.0,
+       "paired_effect": -0.180556,
+       "treatment_wins": 0
+      },
+      "positive_families": [],
+      "regressed_families": [
+       "khop",
+       "boolean"
+      ],
+      "required_positive_families": 2,
+      "underpowered_families": []
+     },
+     "experiment": "ablation_full_stack",
+     "graded_at": 1784279238.508868,
+     "statement": "mechanism arm 'full_stack' beats vanilla decoding on the same tasks",
+     "tier": "REFUTED"
+    },
+    "latent_opt_only": {
+     "evidence": {
+      "alpha": 0.05,
+      "bootstrap_resamples": 10000,
+      "compute_tolerance": 0.05,
+      "families": {
+       "boolean": {
+        "compute_mismatch_task_ids": [
+         "boolean:2:160444617923:0",
+         "boolean:2:160444617924:1",
+         "boolean:2:160444617925:2",
+         "boolean:2:160444617926:3",
+         "boolean:2:160444617927:4",
+         "boolean:2:160444617928:5",
+         "boolean:2:160444617929:6",
+         "boolean:2:160444617930:7",
+         "boolean:4:160444617923:8",
+         "boolean:4:160444617924:9",
+         "boolean:4:160444617925:10",
+         "boolean:4:160444617926:11",
+         "boolean:4:160444617927:12",
+         "boolean:4:160444617928:13",
+         "boolean:4:160444617929:14",
+         "boolean:4:160444617930:15",
+         "boolean:8:160444617923:16",
+         "boolean:8:160444617924:17",
+         "boolean:8:160444617925:18",
+         "boolean:8:160444617926:19",
+         "boolean:8:160444617927:20",
+         "boolean:8:160444617928:21",
+         "boolean:8:160444617929:22",
+         "boolean:8:160444617930:23"
+        ],
+        "control_wins": 4,
+        "effect_bound_alpha": 0.016666666666666666,
+        "effect_interval": [
+         -0.333333,
+         -0.041667
+        ],
+        "missing_compute": false,
+        "n": 24,
+        "nonpositive_compute": false,
+        "one_sided_exact_p": 1.0,
+        "paired_effect": -0.166667,
+        "ties": 20,
+        "treatment_wins": 0
+       },
+       "khop": {
+        "compute_mismatch_task_ids": [
+         "khop:2:160444617923:0",
+         "khop:2:160444617924:1",
+         "khop:2:160444617925:2",
+         "khop:2:160444617926:3",
+         "khop:2:160444617927:4",
+         "khop:2:160444617928:5",
+         "khop:2:160444617929:6",
+         "khop:2:160444617930:7",
+         "khop:4:160444617923:8",
+         "khop:4:160444617924:9",
+         "khop:4:160444617925:10",
+         "khop:4:160444617926:11",
+         "khop:4:160444617927:12",
+         "khop:4:160444617928:13",
+         "khop:4:160444617929:14",
+         "khop:4:160444617930:15",
+         "khop:8:160444617923:16",
+         "khop:8:160444617924:17",
+         "khop:8:160444617925:18",
+         "khop:8:160444617926:19",
+         "khop:8:160444617927:20",
+         "khop:8:160444617928:21",
+         "khop:8:160444617929:22",
+         "khop:8:160444617930:23"
+        ],
+        "control_wins": 4,
+        "effect_bound_alpha": 0.016666666666666666,
+        "effect_interval": [
+         -0.333333,
+         -0.041667
+        ],
+        "missing_compute": false,
+        "n": 24,
+        "nonpositive_compute": false,
+        "one_sided_exact_p": 1.0,
+        "paired_effect": -0.166667,
+        "ties": 20,
+        "treatment_wins": 0
+       },
+       "modular": {
+        "compute_mismatch_task_ids": [
+         "modular:2:160444617923:0",
+         "modular:2:160444617924:1",
+         "modular:2:160444617925:2",
+         "modular:2:160444617926:3",
+         "modular:2:160444617927:4",
+         "modular:2:160444617928:5",
+         "modular:2:160444617929:6",
+         "modular:2:160444617930:7",
+         "modular:4:160444617923:8",
+         "modular:4:160444617924:9",
+         "modular:4:160444617925:10",
+         "modular:4:160444617926:11",
+         "modular:4:160444617927:12",
+         "modular:4:160444617928:13",
+         "modular:4:160444617929:14",
+         "modular:4:160444617930:15",
+         "modular:8:160444617923:16",
+         "modular:8:160444617924:17",
+         "modular:8:160444617925:18",
+         "modular:8:160444617926:19",
+         "modular:8:160444617927:20",
+         "modular:8:160444617928:21",
+         "modular:8:160444617929:22",
+         "modular:8:160444617930:23"
+        ],
+        "control_wins": 3,
+        "effect_bound_alpha": 0.016666666666666666,
+        "effect_interval": [
+         -0.25,
+         0.166667
+        ],
+        "missing_compute": false,
+        "n": 24,
+        "nonpositive_compute": false,
+        "one_sided_exact_p": 0.8125,
+        "paired_effect": -0.041667,
+        "ties": 19,
+        "treatment_wins": 2
+       }
+      },
+      "holm_adjusted_p": {
+       "boolean": 1.0,
+       "khop": 1.0,
+       "modular": 1.0
+      },
+      "invalid_compute_families": [],
+      "method": "paired exact McNemar/binomial + Holm correction + alpha-derived one-sided percentile bounds",
+      "minimum_effect": 0.0,
+      "pooled": {
+       "control_wins": 11,
+       "effect_bound_alpha": 0.05,
+       "effect_interval": [
+        -0.208333,
+        -0.041667
+       ],
+       "n": 72,
+       "one_sided_exact_p": 0.998291015625,
+       "paired_effect": -0.125,
+       "treatment_wins": 2
+      },
+      "positive_families": [],
+      "regressed_families": [
+       "khop",
+       "boolean"
+      ],
+      "required_positive_families": 2,
+      "underpowered_families": []
+     },
+     "experiment": "ablation_latent_opt_only",
+     "graded_at": 1784279238.474228,
+     "statement": "mechanism arm 'latent_opt_only' beats vanilla decoding on the same tasks",
+     "tier": "REFUTED"
+    },
+    "recurrence_branches": {
+     "evidence": {
+      "alpha": 0.05,
+      "bootstrap_resamples": 10000,
+      "compute_tolerance": 0.05,
+      "families": {
+       "boolean": {
+        "compute_mismatch_task_ids": [
+         "boolean:2:160444617923:0",
+         "boolean:2:160444617924:1",
+         "boolean:2:160444617925:2",
+         "boolean:2:160444617926:3",
+         "boolean:2:160444617927:4",
+         "boolean:2:160444617928:5",
+         "boolean:2:160444617929:6",
+         "boolean:2:160444617930:7",
+         "boolean:4:160444617923:8",
+         "boolean:4:160444617924:9",
+         "boolean:4:160444617925:10",
+         "boolean:4:160444617926:11",
+         "boolean:4:160444617927:12",
+         "boolean:4:160444617928:13",
+         "boolean:4:160444617929:14",
+         "boolean:4:160444617930:15",
+         "boolean:8:160444617923:16",
+         "boolean:8:160444617924:17",
+         "boolean:8:160444617925:18",
+         "boolean:8:160444617926:19",
+         "boolean:8:160444617927:20",
+         "boolean:8:160444617928:21",
+         "boolean:8:160444617929:22",
+         "boolean:8:160444617930:23"
+        ],
+        "control_wins": 10,
+        "effect_bound_alpha": 0.016666666666666666,
+        "effect_interval": [
+         -0.625,
+         -0.125
+        ],
+        "missing_compute": false,
+        "n": 24,
+        "nonpositive_compute": false,
+        "one_sided_exact_p": 0.99951171875,
+        "paired_effect": -0.375,
+        "ties": 13,
+        "treatment_wins": 1
+       },
+       "khop": {
+        "compute_mismatch_task_ids": [
+         "khop:2:160444617923:0",
+         "khop:2:160444617924:1",
+         "khop:2:160444617925:2",
+         "khop:2:160444617926:3",
+         "khop:2:160444617927:4",
+         "khop:2:160444617928:5",
+         "khop:2:160444617929:6",
+         "khop:2:160444617930:7",
+         "khop:4:160444617923:8",
+         "khop:4:160444617924:9",
+         "khop:4:160444617925:10",
+         "khop:4:160444617926:11",
+         "khop:4:160444617927:12",
+         "khop:4:160444617928:13",
+         "khop:4:160444617929:14",
+         "khop:4:160444617930:15",
+         "khop:8:160444617923:16",
+         "khop:8:160444617924:17",
+         "khop:8:160444617925:18",
+         "khop:8:160444617926:19",
+         "khop:8:160444617927:20",
+         "khop:8:160444617928:21",
+         "khop:8:160444617929:22",
+         "khop:8:160444617930:23"
+        ],
+        "control_wins": 4,
+        "effect_bound_alpha": 0.016666666666666666,
+        "effect_interval": [
+         -0.333333,
+         -0.041667
+        ],
+        "missing_compute": false,
+        "n": 24,
+        "nonpositive_compute": false,
+        "one_sided_exact_p": 1.0,
+        "paired_effect": -0.166667,
+        "ties": 20,
+        "treatment_wins": 0
+       },
+       "modular": {
+        "compute_mismatch_task_ids": [
+         "modular:2:160444617923:0",
+         "modular:2:160444617924:1",
+         "modular:2:160444617925:2",
+         "modular:2:160444617926:3",
+         "modular:2:160444617927:4",
+         "modular:2:160444617928:5",
+         "modular:2:160444617929:6",
+         "modular:2:160444617930:7",
+         "modular:4:160444617923:8",
+         "modular:4:160444617924:9",
+         "modular:4:160444617925:10",
+         "modular:4:160444617926:11",
+         "modular:4:160444617927:12",
+         "modular:4:160444617928:13",
+         "modular:4:160444617929:14",
+         "modular:4:160444617930:15",
+         "modular:8:160444617923:16",
+         "modular:8:160444617924:17",
+         "modular:8:160444617925:18",
+         "modular:8:160444617926:19",
+         "modular:8:160444617927:20",
+         "modular:8:160444617928:21",
+         "modular:8:160444617929:22",
+         "modular:8:160444617930:23"
+        ],
+        "control_wins": 1,
+        "effect_bound_alpha": 0.016666666666666666,
+        "effect_interval": [
+         -0.166667,
+         0.0
+        ],
+        "missing_compute": false,
+        "n": 24,
+        "nonpositive_compute": false,
+        "one_sided_exact_p": 1.0,
+        "paired_effect": -0.041667,
+        "ties": 23,
+        "treatment_wins": 0
+       }
+      },
+      "holm_adjusted_p": {
+       "boolean": 1.0,
+       "khop": 1.0,
+       "modular": 1.0
+      },
+      "invalid_compute_families": [],
+      "method": "paired exact McNemar/binomial + Holm correction + alpha-derived one-sided percentile bounds",
+      "minimum_effect": 0.0,
+      "pooled": {
+       "control_wins": 15,
+       "effect_bound_alpha": 0.05,
+       "effect_interval": [
+        -0.277778,
+        -0.111111
+       ],
+       "n": 72,
+       "one_sided_exact_p": 0.9999847412109375,
+       "paired_effect": -0.194444,
+       "treatment_wins": 1
+      },
+      "positive_families": [],
+      "regressed_families": [
+       "khop",
+       "boolean"
+      ],
+      "required_positive_families": 2,
+      "underpowered_families": []
+     },
+     "experiment": "ablation_recurrence_branches",
+     "graded_at": 1784279238.491441,
+     "statement": "mechanism arm 'recurrence_branches' beats vanilla decoding on the same tasks",
+     "tier": "REFUTED"
+    },
+    "recurrence_only": {
+     "evidence": {
+      "alpha": 0.05,
+      "bootstrap_resamples": 10000,
+      "compute_tolerance": 0.05,
+      "families": {
+       "boolean": {
+        "compute_mismatch_task_ids": [
+         "boolean:2:160444617923:0",
+         "boolean:2:160444617924:1",
+         "boolean:2:160444617925:2",
+         "boolean:2:160444617926:3",
+         "boolean:2:160444617927:4",
+         "boolean:2:160444617928:5",
+         "boolean:2:160444617929:6",
+         "boolean:2:160444617930:7",
+         "boolean:4:160444617923:8",
+         "boolean:4:160444617924:9",
+         "boolean:4:160444617925:10",
+         "boolean:4:160444617926:11",
+         "boolean:4:160444617927:12",
+         "boolean:4:160444617928:13",
+         "boolean:4:160444617929:14",
+         "boolean:4:160444617930:15",
+         "boolean:8:160444617923:16",
+         "boolean:8:160444617924:17",
+         "boolean:8:160444617925:18",
+         "boolean:8:160444617926:19",
+         "boolean:8:160444617927:20",
+         "boolean:8:160444617928:21",
+         "boolean:8:160444617929:22",
+         "boolean:8:160444617930:23"
+        ],
+        "control_wins": 9,
+        "effect_bound_alpha": 0.016666666666666666,
+        "effect_interval": [
+         -0.583333,
+         -0.083333
+        ],
+        "missing_compute": false,
+        "n": 24,
+        "nonpositive_compute": false,
+        "one_sided_exact_p": 0.9990234375,
+        "paired_effect": -0.333333,
+        "ties": 14,
+        "treatment_wins": 1
+       },
+       "khop": {
+        "compute_mismatch_task_ids": [
+         "khop:2:160444617923:0",
+         "khop:2:160444617924:1",
+         "khop:2:160444617925:2",
+         "khop:2:160444617926:3",
+         "khop:2:160444617927:4",
+         "khop:2:160444617928:5",
+         "khop:2:160444617929:6",
+         "khop:2:160444617930:7",
+         "khop:4:160444617923:8",
+         "khop:4:160444617924:9",
+         "khop:4:160444617925:10",
+         "khop:4:160444617926:11",
+         "khop:4:160444617927:12",
+         "khop:4:160444617928:13",
+         "khop:4:160444617929:14",
+         "khop:4:160444617930:15",
+         "khop:8:160444617923:16",
+         "khop:8:160444617924:17",
+         "khop:8:160444617925:18",
+         "khop:8:160444617926:19",
+         "khop:8:160444617927:20",
+         "khop:8:160444617928:21",
+         "khop:8:160444617929:22",
+         "khop:8:160444617930:23"
+        ],
+        "control_wins": 4,
+        "effect_bound_alpha": 0.016666666666666666,
+        "effect_interval": [
+         -0.333333,
+         -0.041667
+        ],
+        "missing_compute": false,
+        "n": 24,
+        "nonpositive_compute": false,
+        "one_sided_exact_p": 1.0,
+        "paired_effect": -0.166667,
+        "ties": 20,
+        "treatment_wins": 0
+       },
+       "modular": {
+        "compute_mismatch_task_ids": [
+         "modular:2:160444617923:0",
+         "modular:2:160444617924:1",
+         "modular:2:160444617925:2",
+         "modular:2:160444617926:3",
+         "modular:2:160444617927:4",
+         "modular:2:160444617928:5",
+         "modular:2:160444617929:6",
+         "modular:2:160444617930:7",
+         "modular:4:160444617923:8",
+         "modular:4:160444617924:9",
+         "modular:4:160444617925:10",
+         "modular:4:160444617926:11",
+         "modular:4:160444617927:12",
+         "modular:4:160444617928:13",
+         "modular:4:160444617929:14",
+         "modular:4:160444617930:15",
+         "modular:8:160444617923:16",
+         "modular:8:160444617924:17",
+         "modular:8:160444617925:18",
+         "modular:8:160444617926:19",
+         "modular:8:160444617927:20",
+         "modular:8:160444617928:21",
+         "modular:8:160444617929:22",
+         "modular:8:160444617930:23"
+        ],
+        "control_wins": 1,
+        "effect_bound_alpha": 0.016666666666666666,
+        "effect_interval": [
+         -0.166667,
+         0.0
+        ],
+        "missing_compute": false,
+        "n": 24,
+        "nonpositive_compute": false,
+        "one_sided_exact_p": 1.0,
+        "paired_effect": -0.041667,
+        "ties": 23,
+        "treatment_wins": 0
+       }
+      },
+      "holm_adjusted_p": {
+       "boolean": 1.0,
+       "khop": 1.0,
+       "modular": 1.0
+      },
+      "invalid_compute_families": [],
+      "method": "paired exact McNemar/binomial + Holm correction + alpha-derived one-sided percentile bounds",
+      "minimum_effect": 0.0,
+      "pooled": {
+       "control_wins": 14,
+       "effect_bound_alpha": 0.05,
+       "effect_interval": [
+        -0.263889,
+        -0.097222
+       ],
+       "n": 72,
+       "one_sided_exact_p": 0.999969482421875,
+       "paired_effect": -0.180556,
+       "treatment_wins": 1
+      },
+      "positive_families": [],
+      "regressed_families": [
+       "khop",
+       "boolean"
+      ],
+      "required_positive_families": 2,
+      "underpowered_families": []
+     },
+     "experiment": "ablation_recurrence_only",
+     "graded_at": 1784279238.4570282,
+     "statement": "mechanism arm 'recurrence_only' beats vanilla decoding on the same tasks",
+     "tier": "REFUTED"
+    },
+    "recurrence_verifier": {
+     "evidence": {
+      "alpha": 0.05,
+      "bootstrap_resamples": 10000,
+      "compute_tolerance": 0.05,
+      "families": {
+       "boolean": {
+        "compute_mismatch_task_ids": [
+         "boolean:2:160444617923:0",
+         "boolean:2:160444617924:1",
+         "boolean:2:160444617925:2",
+         "boolean:2:160444617926:3",
+         "boolean:2:160444617927:4",
+         "boolean:2:160444617928:5",
+         "boolean:2:160444617929:6",
+         "boolean:2:160444617930:7",
+         "boolean:4:160444617923:8",
+         "boolean:4:160444617924:9",
+         "boolean:4:160444617925:10",
+         "boolean:4:160444617926:11",
+         "boolean:4:160444617927:12",
+         "boolean:4:160444617928:13",
+         "boolean:4:160444617929:14",
+         "boolean:4:160444617930:15",
+         "boolean:8:160444617923:16",
+         "boolean:8:160444617924:17",
+         "boolean:8:160444617925:18",
+         "boolean:8:160444617926:19",
+         "boolean:8:160444617927:20",
+         "boolean:8:160444617928:21",
+         "boolean:8:160444617929:22",
+         "boolean:8:160444617930:23"
+        ],
+        "control_wins": 10,
+        "effect_bound_alpha": 0.016666666666666666,
+        "effect_interval": [
+         -0.625,
+         -0.125
+        ],
+        "missing_compute": false,
+        "n": 24,
+        "nonpositive_compute": false,
+        "one_sided_exact_p": 0.99951171875,
+        "paired_effect": -0.375,
+        "ties": 13,
+        "treatment_wins": 1
+       },
+       "khop": {
+        "compute_mismatch_task_ids": [
+         "khop:2:160444617923:0",
+         "khop:2:160444617924:1",
+         "khop:2:160444617925:2",
+         "khop:2:160444617926:3",
+         "khop:2:160444617927:4",
+         "khop:2:160444617928:5",
+         "khop:2:160444617929:6",
+         "khop:2:160444617930:7",
+         "khop:4:160444617923:8",
+         "khop:4:160444617924:9",
+         "khop:4:160444617925:10",
+         "khop:4:160444617926:11",
+         "khop:4:160444617927:12",
+         "khop:4:160444617928:13",
+         "khop:4:160444617929:14",
+         "khop:4:160444617930:15",
+         "khop:8:160444617923:16",
+         "khop:8:160444617924:17",
+         "khop:8:160444617925:18",
+         "khop:8:160444617926:19",
+         "khop:8:160444617927:20",
+         "khop:8:160444617928:21",
+         "khop:8:160444617929:22",
+         "khop:8:160444617930:23"
+        ],
+        "control_wins": 4,
+        "effect_bound_alpha": 0.016666666666666666,
+        "effect_interval": [
+         -0.333333,
+         -0.041667
+        ],
+        "missing_compute": false,
+        "n": 24,
+        "nonpositive_compute": false,
+        "one_sided_exact_p": 1.0,
+        "paired_effect": -0.166667,
+        "ties": 20,
+        "treatment_wins": 0
+       },
+       "modular": {
+        "compute_mismatch_task_ids": [
+         "modular:2:160444617923:0",
+         "modular:2:160444617924:1",
+         "modular:2:160444617925:2",
+         "modular:2:160444617926:3",
+         "modular:2:160444617927:4",
+         "modular:2:160444617928:5",
+         "modular:2:160444617929:6",
+         "modular:2:160444617930:7",
+         "modular:4:160444617923:8",
+         "modular:4:160444617924:9",
+         "modular:4:160444617925:10",
+         "modular:4:160444617926:11",
+         "modular:4:160444617927:12",
+         "modular:4:160444617928:13",
+         "modular:4:160444617929:14",
+         "modular:4:160444617930:15",
+         "modular:8:160444617923:16",
+         "modular:8:160444617924:17",
+         "modular:8:160444617925:18",
+         "modular:8:160444617926:19",
+         "modular:8:160444617927:20",
+         "modular:8:160444617928:21",
+         "modular:8:160444617929:22",
+         "modular:8:160444617930:23"
+        ],
+        "control_wins": 1,
+        "effect_bound_alpha": 0.016666666666666666,
+        "effect_interval": [
+         -0.166667,
+         0.0
+        ],
+        "missing_compute": false,
+        "n": 24,
+        "nonpositive_compute": false,
+        "one_sided_exact_p": 1.0,
+        "paired_effect": -0.041667,
+        "ties": 23,
+        "treatment_wins": 0
+       }
+      },
+      "holm_adjusted_p": {
+       "boolean": 1.0,
+       "khop": 1.0,
+       "modular": 1.0
+      },
+      "invalid_compute_families": [],
+      "method": "paired exact McNemar/binomial + Holm correction + alpha-derived one-sided percentile bounds",
+      "minimum_effect": 0.0,
+      "pooled": {
+       "control_wins": 15,
+       "effect_bound_alpha": 0.05,
+       "effect_interval": [
+        -0.277778,
+        -0.111111
+       ],
+       "n": 72,
+       "one_sided_exact_p": 0.9999847412109375,
+       "paired_effect": -0.194444,
+       "treatment_wins": 1
+      },
+      "positive_families": [],
+      "regressed_families": [
+       "khop",
+       "boolean"
+      ],
+      "required_positive_families": 2,
+      "underpowered_families": []
+     },
+     "experiment": "ablation_recurrence_verifier",
+     "graded_at": 1784279238.500098,
+     "statement": "mechanism arm 'recurrence_verifier' beats vanilla decoding on the same tasks",
+     "tier": "REFUTED"
+    }
+   }
+  },
+  "exp3": {
+   "ablated": {
+    "0": {
+     "accuracy": 0.0833,
+     "layer_apps": 0,
+     "n": 72,
+     "name": "ablated_slot_0",
+     "successes": 6,
+     "wilson_lb": 0.0437,
+     "wilson_ub": 0.1531
+    },
+    "4": {
+     "accuracy": 0.0972,
+     "layer_apps": 0,
+     "n": 72,
+     "name": "ablated_slot_4",
+     "successes": 7,
+     "wilson_lb": 0.0536,
+     "wilson_ub": 0.17
+    },
+    "8": {
+     "accuracy": 0.125,
+     "layer_apps": 0,
+     "n": 72,
+     "name": "ablated_slot_8",
+     "successes": 9,
+     "wilson_lb": 0.0742,
+     "wilson_ub": 0.203
+    },
+    "12": {
+     "accuracy": 0.1111,
+     "layer_apps": 0,
+     "n": 72,
+     "name": "ablated_slot_12",
+     "successes": 8,
+     "wilson_lb": 0.0638,
+     "wilson_ub": 0.1866
+    }
+   },
+   "causally_necessary_slots": [],
+   "claim": {
+    "evidence": {
+     "damaged_slots": [],
+     "intact_accuracy": 0.09722222222222222
+    },
+    "experiment": "exp3_slot_causality",
+    "graded_at": 1784278119.876019,
+    "statement": "thought slots carry causally necessary intermediate computation",
+    "tier": "REFUTED"
+   },
+   "intact": {
+    "accuracy": 0.0972,
+    "layer_apps": 0,
+    "n": 72,
+    "name": "intact",
+    "successes": 7,
+    "wilson_lb": 0.0536,
+    "wilson_ub": 0.17
+   },
+   "paired_slot_claims": {
+    "0": {
+     "evidence": {
+      "alpha": 0.05,
+      "bootstrap_resamples": 10000,
+      "compute_tolerance": 0.05,
+      "families": {
+       "boolean": {
+        "compute_mismatch_task_ids": [],
+        "control_wins": 0,
+        "effect_bound_alpha": 0.016666666666666666,
+        "effect_interval": [
+         0.0,
+         0.166667
+        ],
+        "missing_compute": true,
+        "n": 24,
+        "nonpositive_compute": false,
+        "one_sided_exact_p": 0.5,
+        "paired_effect": 0.041667,
+        "ties": 23,
+        "treatment_wins": 1
+       },
+       "khop": {
+        "compute_mismatch_task_ids": [],
+        "control_wins": 0,
+        "effect_bound_alpha": 0.016666666666666666,
+        "effect_interval": [
+         0.0,
+         0.0
+        ],
+        "missing_compute": true,
+        "n": 24,
+        "nonpositive_compute": false,
+        "one_sided_exact_p": 1.0,
+        "paired_effect": 0.0,
+        "ties": 24,
+        "treatment_wins": 0
+       },
+       "modular": {
+        "compute_mismatch_task_ids": [],
+        "control_wins": 0,
+        "effect_bound_alpha": 0.016666666666666666,
+        "effect_interval": [
+         0.0,
+         0.0
+        ],
+        "missing_compute": true,
+        "n": 24,
+        "nonpositive_compute": false,
+        "one_sided_exact_p": 1.0,
+        "paired_effect": 0.0,
+        "ties": 24,
+        "treatment_wins": 0
+       }
+      },
+      "holm_adjusted_p": {
+       "boolean": 1.0,
+       "khop": 1.0,
+       "modular": 1.0
+      },
+      "invalid_compute_families": [],
+      "method": "paired exact McNemar/binomial + Holm correction + alpha-derived one-sided percentile bounds",
+      "minimum_effect": 0.0,
+      "pooled": {
+       "control_wins": 0,
+       "effect_bound_alpha": 0.05,
+       "effect_interval": [
+        0.0,
+        0.041667
+       ],
+       "n": 72,
+       "one_sided_exact_p": 0.5,
+       "paired_effect": 0.013889,
+       "treatment_wins": 1
+      },
+      "positive_families": [],
+      "regressed_families": [],
+      "required_positive_families": 2,
+      "underpowered_families": []
+     },
+     "experiment": "exp3_slot_causality",
+     "graded_at": 1784277955.304363,
+     "statement": "slot 0 carries causally necessary computation",
+     "tier": "CONJECTURE"
+    },
+    "4": {
+     "evidence": {
+      "alpha": 0.05,
+      "bootstrap_resamples": 10000,
+      "compute_tolerance": 0.05,
+      "families": {
+       "boolean": {
+        "compute_mismatch_task_ids": [],
+        "control_wins": 2,
+        "effect_bound_alpha": 0.016666666666666666,
+        "effect_interval": [
+         -0.208333,
+         0.125
+        ],
+        "missing_compute": true,
+        "n": 24,
+        "nonpositive_compute": false,
+        "one_sided_exact_p": 0.875,
+        "paired_effect": -0.041667,
+        "ties": 21,
+        "treatment_wins": 1
+       },
+       "khop": {
+        "compute_mismatch_task_ids": [],
+        "control_wins": 0,
+        "effect_bound_alpha": 0.016666666666666666,
+        "effect_interval": [
+         0.0,
+         0.0
+        ],
+        "missing_compute": true,
+        "n": 24,
+        "nonpositive_compute": false,
+        "one_sided_exact_p": 1.0,
+        "paired_effect": 0.0,
+        "ties": 24,
+        "treatment_wins": 0
+       },
+       "modular": {
+        "compute_mismatch_task_ids": [],
+        "control_wins": 0,
+        "effect_bound_alpha": 0.016666666666666666,
+        "effect_interval": [
+         0.0,
+         0.166667
+        ],
+        "missing_compute": true,
+        "n": 24,
+        "nonpositive_compute": false,
+        "one_sided_exact_p": 0.5,
+        "paired_effect": 0.041667,
+        "ties": 23,
+        "treatment_wins": 1
+       }
+      },
+      "holm_adjusted_p": {
+       "boolean": 1.0,
+       "khop": 1.0,
+       "modular": 1.0
+      },
+      "invalid_compute_families": [],
+      "method": "paired exact McNemar/binomial + Holm correction + alpha-derived one-sided percentile bounds",
+      "minimum_effect": 0.0,
+      "pooled": {
+       "control_wins": 2,
+       "effect_bound_alpha": 0.05,
+       "effect_interval": [
+        -0.041667,
+        0.041667
+       ],
+       "n": 72,
+       "one_sided_exact_p": 0.6875,
+       "paired_effect": 0.0,
+       "treatment_wins": 2
+      },
+      "positive_families": [],
+      "regressed_families": [],
+      "required_positive_families": 2,
+      "underpowered_families": []
+     },
+     "experiment": "exp3_slot_causality",
+     "graded_at": 1784278007.674809,
+     "statement": "slot 4 carries causally necessary computation",
+     "tier": "CONJECTURE"
+    },
+    "8": {
+     "evidence": {
+      "alpha": 0.05,
+      "bootstrap_resamples": 10000,
+      "compute_tolerance": 0.05,
+      "families": {
+       "boolean": {
+        "compute_mismatch_task_ids": [],
+        "control_wins": 1,
+        "effect_bound_alpha": 0.016666666666666666,
+        "effect_interval": [
+         -0.166667,
+         0.0
+        ],
+        "missing_compute": true,
+        "n": 24,
+        "nonpositive_compute": false,
+        "one_sided_exact_p": 1.0,
+        "paired_effect": -0.041667,
+        "ties": 23,
+        "treatment_wins": 0
+       },
+       "khop": {
+        "compute_mismatch_task_ids": [],
+        "control_wins": 0,
+        "effect_bound_alpha": 0.016666666666666666,
+        "effect_interval": [
+         0.0,
+         0.0
+        ],
+        "missing_compute": true,
+        "n": 24,
+        "nonpositive_compute": false,
+        "one_sided_exact_p": 1.0,
+        "paired_effect": 0.0,
+        "ties": 24,
+        "treatment_wins": 0
+       },
+       "modular": {
+        "compute_mismatch_task_ids": [],
+        "control_wins": 1,
+        "effect_bound_alpha": 0.016666666666666666,
+        "effect_interval": [
+         -0.166667,
+         0.0
+        ],
+        "missing_compute": true,
+        "n": 24,
+        "nonpositive_compute": false,
+        "one_sided_exact_p": 1.0,
+        "paired_effect": -0.041667,
+        "ties": 23,
+        "treatment_wins": 0
+       }
+      },
+      "holm_adjusted_p": {
+       "boolean": 1.0,
+       "khop": 1.0,
+       "modular": 1.0
+      },
+      "invalid_compute_families": [],
+      "method": "paired exact McNemar/binomial + Holm correction + alpha-derived one-sided percentile bounds",
+      "minimum_effect": 0.0,
+      "pooled": {
+       "control_wins": 2,
+       "effect_bound_alpha": 0.05,
+       "effect_interval": [
+        -0.069444,
+        0.0
+       ],
+       "n": 72,
+       "one_sided_exact_p": 1.0,
+       "paired_effect": -0.027778,
+       "treatment_wins": 0
+      },
+      "positive_families": [],
+      "regressed_families": [],
+      "required_positive_families": 2,
+      "underpowered_families": []
+     },
+     "experiment": "exp3_slot_causality",
+     "graded_at": 1784278065.185981,
+     "statement": "slot 8 carries causally necessary computation",
+     "tier": "REFUTED"
+    },
+    "12": {
+     "evidence": {
+      "alpha": 0.05,
+      "bootstrap_resamples": 10000,
+      "compute_tolerance": 0.05,
+      "families": {
+       "boolean": {
+        "compute_mismatch_task_ids": [],
+        "control_wins": 3,
+        "effect_bound_alpha": 0.016666666666666666,
+        "effect_interval": [
+         -0.25,
+         0.083333
+        ],
+        "missing_compute": true,
+        "n": 24,
+        "nonpositive_compute": false,
+        "one_sided_exact_p": 0.9375,
+        "paired_effect": -0.083333,
+        "ties": 20,
+        "treatment_wins": 1
+       },
+       "khop": {
+        "compute_mismatch_task_ids": [],
+        "control_wins": 0,
+        "effect_bound_alpha": 0.016666666666666666,
+        "effect_interval": [
+         0.0,
+         0.0
+        ],
+        "missing_compute": true,
+        "n": 24,
+        "nonpositive_compute": false,
+        "one_sided_exact_p": 1.0,
+        "paired_effect": 0.0,
+        "ties": 24,
+        "treatment_wins": 0
+       },
+       "modular": {
+        "compute_mismatch_task_ids": [],
+        "control_wins": 0,
+        "effect_bound_alpha": 0.016666666666666666,
+        "effect_interval": [
+         0.0,
+         0.166667
+        ],
+        "missing_compute": true,
+        "n": 24,
+        "nonpositive_compute": false,
+        "one_sided_exact_p": 0.5,
+        "paired_effect": 0.041667,
+        "ties": 23,
+        "treatment_wins": 1
+       }
+      },
+      "holm_adjusted_p": {
+       "boolean": 1.0,
+       "khop": 1.0,
+       "modular": 1.0
+      },
+      "invalid_compute_families": [],
+      "method": "paired exact McNemar/binomial + Holm correction + alpha-derived one-sided percentile bounds",
+      "minimum_effect": 0.0,
+      "pooled": {
+       "control_wins": 3,
+       "effect_bound_alpha": 0.05,
+       "effect_interval": [
+        -0.069444,
+        0.041667
+       ],
+       "n": 72,
+       "one_sided_exact_p": 0.8125,
+       "paired_effect": -0.013889,
+       "treatment_wins": 2
+      },
+      "positive_families": [],
+      "regressed_families": [],
+      "required_positive_families": 2,
+      "underpowered_families": []
+     },
+     "experiment": "exp3_slot_causality",
+     "graded_at": 1784278119.87599,
+     "statement": "slot 12 carries causally necessary computation",
+     "tier": "CONJECTURE"
+    }
+   }
+  },
+  "exp5": {
+   "arms": {
+    "control": {
+     "boolean": {
+      "accuracy": 0.1667,
+      "layer_apps": 651000,
+      "n": 24,
+      "name": "control",
+      "successes": 4,
+      "wilson_lb": 0.0771,
+      "wilson_ub": 0.3238
+     },
+     "khop": {
+      "accuracy": 0.0,
+      "layer_apps": 595336,
+      "n": 24,
+      "name": "control",
+      "successes": 0,
+      "wilson_lb": 0.0,
+      "wilson_ub": 0.1013
+     },
+     "modular": {
+      "accuracy": 0.125,
+      "layer_apps": 594356,
+      "n": 24,
+      "name": "control",
+      "successes": 3,
+      "wilson_lb": 0.0511,
+      "wilson_ub": 0.2749
+     }
+    },
+    "gradient": {
+     "boolean": {
+      "accuracy": 0.1667,
+      "layer_apps": 839160,
+      "n": 24,
+      "name": "gradient",
+      "successes": 4,
+      "wilson_lb": 0.0771,
+      "wilson_ub": 0.3238
+     },
+     "khop": {
+      "accuracy": 0.0,
+      "layer_apps": 830536,
+      "n": 24,
+      "name": "gradient",
+      "successes": 0,
+      "wilson_lb": 0.0,
+      "wilson_ub": 0.1013
+     },
+     "modular": {
+      "accuracy": 0.125,
+      "layer_apps": 856436,
+      "n": 24,
+      "name": "gradient",
+      "successes": 3,
+      "wilson_lb": 0.0511,
+      "wilson_ub": 0.2749
+     }
+    },
+    "off": {
+     "boolean": {
+      "accuracy": 0.1667,
+      "layer_apps": 194040,
+      "n": 24,
+      "name": "off",
+      "successes": 4,
+      "wilson_lb": 0.0771,
+      "wilson_ub": 0.3238
+     },
+     "khop": {
+      "accuracy": 0.0,
+      "layer_apps": 185416,
+      "n": 24,
+      "name": "off",
+      "successes": 0,
+      "wilson_lb": 0.0,
+      "wilson_ub": 0.1013
+     },
+     "modular": {
+      "accuracy": 0.125,
+      "layer_apps": 211316,
+      "n": 24,
+      "name": "off",
+      "successes": 3,
+      "wilson_lb": 0.0511,
+      "wilson_ub": 0.2749
+     }
+    }
+   },
+   "claim": {
+    "evidence": {
+     "alpha": 0.05,
+     "bootstrap_resamples": 10000,
+     "compute_tolerance": 0.05,
+     "families": {
+      "boolean": {
+       "compute_mismatch_task_ids": [
+        "boolean:2:160444617925:2",
+        "boolean:2:160444617927:4",
+        "boolean:2:160444617928:5",
+        "boolean:4:160444617923:8",
+        "boolean:4:160444617924:9",
+        "boolean:4:160444617926:11",
+        "boolean:4:160444617927:12",
+        "boolean:4:160444617928:13",
+        "boolean:4:160444617929:14",
+        "boolean:4:160444617930:15",
+        "boolean:8:160444617923:16",
+        "boolean:8:160444617925:18",
+        "boolean:8:160444617926:19",
+        "boolean:8:160444617927:20",
+        "boolean:8:160444617928:21",
+        "boolean:8:160444617929:22",
+        "boolean:8:160444617930:23"
+       ],
+       "control_wins": 0,
+       "effect_bound_alpha": 0.016666666666666666,
+       "effect_interval": [
+        0.0,
+        0.0
+       ],
+       "missing_compute": false,
+       "n": 24,
+       "nonpositive_compute": false,
+       "one_sided_exact_p": 1.0,
+       "paired_effect": 0.0,
+       "ties": 24,
+       "treatment_wins": 0
+      },
+      "khop": {
+       "compute_mismatch_task_ids": [
+        "khop:2:160444617923:0",
+        "khop:2:160444617924:1",
+        "khop:2:160444617925:2",
+        "khop:2:160444617926:3",
+        "khop:2:160444617927:4",
+        "khop:2:160444617928:5",
+        "khop:2:160444617929:6",
+        "khop:2:160444617930:7",
+        "khop:4:160444617923:8",
+        "khop:4:160444617924:9",
+        "khop:4:160444617925:10",
+        "khop:4:160444617926:11",
+        "khop:4:160444617927:12",
+        "khop:4:160444617928:13",
+        "khop:4:160444617929:14",
+        "khop:4:160444617930:15",
+        "khop:8:160444617923:16",
+        "khop:8:160444617924:17",
+        "khop:8:160444617925:18",
+        "khop:8:160444617926:19",
+        "khop:8:160444617927:20",
+        "khop:8:160444617928:21",
+        "khop:8:160444617929:22",
+        "khop:8:160444617930:23"
+       ],
+       "control_wins": 0,
+       "effect_bound_alpha": 0.016666666666666666,
+       "effect_interval": [
+        0.0,
+        0.0
+       ],
+       "missing_compute": false,
+       "n": 24,
+       "nonpositive_compute": false,
+       "one_sided_exact_p": 1.0,
+       "paired_effect": 0.0,
+       "ties": 24,
+       "treatment_wins": 0
+      },
+      "modular": {
+       "compute_mismatch_task_ids": [
+        "modular:2:160444617923:0",
+        "modular:2:160444617924:1",
+        "modular:2:160444617925:2",
+        "modular:2:160444617927:4",
+        "modular:2:160444617930:7",
+        "modular:4:160444617923:8",
+        "modular:4:160444617925:10",
+        "modular:4:160444617928:13",
+        "modular:8:160444617924:17",
+        "modular:8:160444617925:18",
+        "modular:8:160444617926:19",
+        "modular:8:160444617927:20",
+        "modular:8:160444617928:21",
+        "modular:8:160444617929:22",
+        "modular:8:160444617930:23"
+       ],
+       "control_wins": 0,
+       "effect_bound_alpha": 0.016666666666666666,
+       "effect_interval": [
+        0.0,
+        0.0
+       ],
+       "missing_compute": false,
+       "n": 24,
+       "nonpositive_compute": false,
+       "one_sided_exact_p": 1.0,
+       "paired_effect": 0.0,
+       "ties": 24,
+       "treatment_wins": 0
+      }
+     },
+     "holm_adjusted_p": {
+      "boolean": 1.0,
+      "khop": 1.0,
+      "modular": 1.0
+     },
+     "invalid_compute_families": [
+      "khop",
+      "boolean",
+      "modular"
+     ],
+     "method": "paired exact McNemar/binomial + Holm correction + alpha-derived one-sided percentile bounds",
+     "minimum_effect": 0.0,
+     "pooled": {
+      "control_wins": 0,
+      "effect_bound_alpha": 0.05,
+      "effect_interval": [
+       0.0,
+       0.0
+      ],
+      "n": 72,
+      "one_sided_exact_p": 1.0,
+      "paired_effect": 0.0,
+      "treatment_wins": 0
+     },
+     "positive_families": [],
+     "regressed_families": [],
+     "required_positive_families": 2,
+     "underpowered_families": []
+    },
+    "experiment": "exp5_latent_opt",
+    "graded_at": 1784278336.839057,
+    "statement": "gradient direction (not mere perturbation) improves outcomes",
+    "tier": "CONJECTURE"
+   },
+   "execution_order": [
+    {
+     "arms": [
+      "off",
+      "gradient",
+      "control"
+     ],
+     "task_id": "khop:2:160444617923:0"
+    },
+    {
+     "arms": [
+      "control",
+      "off",
+      "gradient"
+     ],
+     "task_id": "khop:2:160444617924:1"
+    },
+    {
+     "arms": [
+      "gradient",
+      "off",
+      "control"
+     ],
+     "task_id": "khop:2:160444617925:2"
+    },
+    {
+     "arms": [
+      "off",
+      "control",
+      "gradient"
+     ],
+     "task_id": "khop:2:160444617926:3"
+    },
+    {
+     "arms": [
+      "gradient",
+      "control",
+      "off"
+     ],
+     "task_id": "khop:2:160444617927:4"
+    },
+    {
+     "arms": [
+      "off",
+      "control",
+      "gradient"
+     ],
+     "task_id": "khop:2:160444617928:5"
+    },
+    {
+     "arms": [
+      "gradient",
+      "off",
+      "control"
+     ],
+     "task_id": "khop:2:160444617929:6"
+    },
+    {
+     "arms": [
+      "off",
+      "control",
+      "gradient"
+     ],
+     "task_id": "khop:2:160444617930:7"
+    },
+    {
+     "arms": [
+      "off",
+      "gradient",
+      "control"
+     ],
+     "task_id": "khop:4:160444617923:8"
+    },
+    {
+     "arms": [
+      "control",
+      "off",
+      "gradient"
+     ],
+     "task_id": "khop:4:160444617924:9"
+    },
+    {
+     "arms": [
+      "gradient",
+      "off",
+      "control"
+     ],
+     "task_id": "khop:4:160444617925:10"
+    },
+    {
+     "arms": [
+      "control",
+      "gradient",
+      "off"
+     ],
+     "task_id": "khop:4:160444617926:11"
+    },
+    {
+     "arms": [
+      "off",
+      "gradient",
+      "control"
+     ],
+     "task_id": "khop:4:160444617927:12"
+    },
+    {
+     "arms": [
+      "control",
+      "off",
+      "gradient"
+     ],
+     "task_id": "khop:4:160444617928:13"
+    },
+    {
+     "arms": [
+      "gradient",
+      "control",
+      "off"
+     ],
+     "task_id": "khop:4:160444617929:14"
+    },
+    {
+     "arms": [
+      "control",
+      "off",
+      "gradient"
+     ],
+     "task_id": "khop:4:160444617930:15"
+    },
+    {
+     "arms": [
+      "gradient",
+      "off",
+      "control"
+     ],
+     "task_id": "khop:8:160444617923:16"
+    },
+    {
+     "arms": [
+      "off",
+      "control",
+      "gradient"
+     ],
+     "task_id": "khop:8:160444617924:17"
+    },
+    {
+     "arms": [
+      "off",
+      "gradient",
+      "control"
+     ],
+     "task_id": "khop:8:160444617925:18"
+    },
+    {
+     "arms": [
+      "off",
+      "control",
+      "gradient"
+     ],
+     "task_id": "khop:8:160444617926:19"
+    },
+    {
+     "arms": [
+      "off",
+      "gradient",
+      "control"
+     ],
+     "task_id": "khop:8:160444617927:20"
+    },
+    {
+     "arms": [
+      "off",
+      "control",
+      "gradient"
+     ],
+     "task_id": "khop:8:160444617928:21"
+    },
+    {
+     "arms": [
+      "gradient",
+      "control",
+      "off"
+     ],
+     "task_id": "khop:8:160444617929:22"
+    },
+    {
+     "arms": [
+      "control",
+      "gradient",
+      "off"
+     ],
+     "task_id": "khop:8:160444617930:23"
+    },
+    {
+     "arms": [
+      "off",
+      "gradient",
+      "control"
+     ],
+     "task_id": "boolean:2:160444617923:0"
+    },
+    {
+     "arms": [
+      "off",
+      "control",
+      "gradient"
+     ],
+     "task_id": "boolean:2:160444617924:1"
+    },
+    {
+     "arms": [
+      "gradient",
+      "control",
+      "off"
+     ],
+     "task_id": "boolean:2:160444617925:2"
+    },
+    {
+     "arms": [
+      "control",
+      "gradient",
+      "off"
+     ],
+     "task_id": "boolean:2:160444617926:3"
+    },
+    {
+     "arms": [
+      "gradient",
+      "control",
+      "off"
+     ],
+     "task_id": "boolean:2:160444617927:4"
+    },
+    {
+     "arms": [
+      "control",
+      "gradient",
+      "off"
+     ],
+     "task_id": "boolean:2:160444617928:5"
+    },
+    {
+     "arms": [
+      "off",
+      "gradient",
+      "control"
+     ],
+     "task_id": "boolean:2:160444617929:6"
+    },
+    {
+     "arms": [
+      "control",
+      "off",
+      "gradient"
+     ],
+     "task_id": "boolean:2:160444617930:7"
+    },
+    {
+     "arms": [
+      "gradient",
+      "control",
+      "off"
+     ],
+     "task_id": "boolean:4:160444617923:8"
+    },
+    {
+     "arms": [
+      "control",
+      "gradient",
+      "off"
+     ],
+     "task_id": "boolean:4:160444617924:9"
+    },
+    {
+     "arms": [
+      "off",
+      "gradient",
+      "control"
+     ],
+     "task_id": "boolean:4:160444617925:10"
+    },
+    {
+     "arms": [
+      "control",
+      "gradient",
+      "off"
+     ],
+     "task_id": "boolean:4:160444617926:11"
+    },
+    {
+     "arms": [
+      "off",
+      "gradient",
+      "control"
+     ],
+     "task_id": "boolean:4:160444617927:12"
+    },
+    {
+     "arms": [
+      "off",
+      "control",
+      "gradient"
+     ],
+     "task_id": "boolean:4:160444617928:13"
+    },
+    {
+     "arms": [
+      "gradient",
+      "off",
+      "control"
+     ],
+     "task_id": "boolean:4:160444617929:14"
+    },
+    {
+     "arms": [
+      "off",
+      "control",
+      "gradient"
+     ],
+     "task_id": "boolean:4:160444617930:15"
+    },
+    {
+     "arms": [
+      "gradient",
+      "control",
+      "off"
+     ],
+     "task_id": "boolean:8:160444617923:16"
+    },
+    {
+     "arms": [
+      "control",
+      "gradient",
+      "off"
+     ],
+     "task_id": "boolean:8:160444617924:17"
+    },
+    {
+     "arms": [
+      "gradient",
+      "control",
+      "off"
+     ],
+     "task_id": "boolean:8:160444617925:18"
+    },
+    {
+     "arms": [
+      "off",
+      "control",
+      "gradient"
+     ],
+     "task_id": "boolean:8:160444617926:19"
+    },
+    {
+     "arms": [
+      "gradient",
+      "off",
+      "control"
+     ],
+     "task_id": "boolean:8:160444617927:20"
+    },
+    {
+     "arms": [
+      "off",
+      "control",
+      "gradient"
+     ],
+     "task_id": "boolean:8:160444617928:21"
+    },
+    {
+     "arms": [
+      "gradient",
+      "control",
+      "off"
+     ],
+     "task_id": "boolean:8:160444617929:22"
+    },
+    {
+     "arms": [
+      "off",
+      "control",
+      "gradient"
+     ],
+     "task_id": "boolean:8:160444617930:23"
+    },
+    {
+     "arms": [
+      "gradient",
+      "control",
+      "off"
+     ],
+     "task_id": "modular:2:160444617923:0"
+    },
+    {
+     "arms": [
+      "control",
+      "gradient",
+      "off"
+     ],
+     "task_id": "modular:2:160444617924:1"
+    },
+    {
+     "arms": [
+      "gradient",
+      "control",
+      "off"
+     ],
+     "task_id": "modular:2:160444617925:2"
+    },
+    {
+     "arms": [
+      "control",
+      "gradient",
+      "off"
+     ],
+     "task_id": "modular:2:160444617926:3"
+    },
+    {
+     "arms": [
+      "gradient",
+      "control",
+      "off"
+     ],
+     "task_id": "modular:2:160444617927:4"
+    },
+    {
+     "arms": [
+      "control",
+      "off",
+      "gradient"
+     ],
+     "task_id": "modular:2:160444617928:5"
+    },
+    {
+     "arms": [
+      "off",
+      "gradient",
+      "control"
+     ],
+     "task_id": "modular:2:160444617929:6"
+    },
+    {
+     "arms": [
+      "control",
+      "gradient",
+      "off"
+     ],
+     "task_id": "modular:2:160444617930:7"
+    },
+    {
+     "arms": [
+      "off",
+      "gradient",
+      "control"
+     ],
+     "task_id": "modular:4:160444617923:8"
+    },
+    {
+     "arms": [
+      "off",
+      "control",
+      "gradient"
+     ],
+     "task_id": "modular:4:160444617924:9"
+    },
+    {
+     "arms": [
+      "gradient",
+      "control",
+      "off"
+     ],
+     "task_id": "modular:4:160444617925:10"
+    },
+    {
+     "arms": [
+      "control",
+      "gradient",
+      "off"
+     ],
+     "task_id": "modular:4:160444617926:11"
+    },
+    {
+     "arms": [
+      "off",
+      "gradient",
+      "control"
+     ],
+     "task_id": "modular:4:160444617927:12"
+    },
+    {
+     "arms": [
+      "off",
+      "control",
+      "gradient"
+     ],
+     "task_id": "modular:4:160444617928:13"
+    },
+    {
+     "arms": [
+      "gradient",
+      "control",
+      "off"
+     ],
+     "task_id": "modular:4:160444617929:14"
+    },
+    {
+     "arms": [
+      "off",
+      "control",
+      "gradient"
+     ],
+     "task_id": "modular:4:160444617930:15"
+    },
+    {
+     "arms": [
+      "gradient",
+      "off",
+      "control"
+     ],
+     "task_id": "modular:8:160444617923:16"
+    },
+    {
+     "arms": [
+      "off",
+      "control",
+      "gradient"
+     ],
+     "task_id": "modular:8:160444617924:17"
+    },
+    {
+     "arms": [
+      "gradient",
+      "off",
+      "control"
+     ],
+     "task_id": "modular:8:160444617925:18"
+    },
+    {
+     "arms": [
+      "control",
+      "off",
+      "gradient"
+     ],
+     "task_id": "modular:8:160444617926:19"
+    },
+    {
+     "arms": [
+      "off",
+      "gradient",
+      "control"
+     ],
+     "task_id": "modular:8:160444617927:20"
+    },
+    {
+     "arms": [
+      "control",
+      "gradient",
+      "off"
+     ],
+     "task_id": "modular:8:160444617928:21"
+    },
+    {
+     "arms": [
+      "gradient",
+      "control",
+      "off"
+     ],
+     "task_id": "modular:8:160444617929:22"
+    },
+    {
+     "arms": [
+      "control",
+      "gradient",
+      "off"
+     ],
+     "task_id": "modular:8:160444617930:23"
+    }
+   ]
+  }
+ },
+ "settings": {
+  "branches": 2,
+  "depths": "2,4,8",
+  "experiments": "3,5,A",
+  "families": "khop,boolean,modular",
+  "max_minutes": 75.0,
+  "model": "/Users/bryan/.cache/huggingface/hub/models--mlx-community--Qwen2.5-1.5B-Instruct-4bit/snapshots/8b403126fc14f14cfc99bb4cfa72ecbc129ea677/",
+  "n_slots": 16,
+  "out": "artifacts/current/latent_campaign_1p5b_run2.json",
+  "per_cell": 8,
+  "record_foundry": true,
+  "steps": "1,2,4,8",
+  "task_seed": 20260717,
+  "vanilla_baseline": false
+ },
+ "started_at": 1784277876.1364748
+}
