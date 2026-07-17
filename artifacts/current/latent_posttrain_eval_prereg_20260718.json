@@ -1,0 +1,34 @@
+{
+  "schema": "aura.latent_campaign_preregistration.v1",
+  "campaign_id": "rlc-posttrain-eval-20260718",
+  "registered_at": "2026-07-17T04:55:00-07:00",
+  "registered_before_any_evaluation_task_was_generated": true,
+  "purpose": "Evaluate recurrence-native post-training: does teaching the window layers to think in loops move the recurrence curve?",
+  "trained_adapter": {
+    "trainer": "tools/recurrence_native_train.py",
+    "objective": "depth_curriculum_loss (answer-span CE under the engine's recurrent forward + monotonicity hinge)",
+    "train_seed": 777,
+    "train_families": ["khop", "boolean", "modular"],
+    "note": "train seed 777 is disjoint from every eval seed; eval tasks are fresh by construction"
+  },
+  "eval_task_seed": 20260718,
+  "families": ["khop", "boolean", "modular"],
+  "depths": [2, 4, 8],
+  "per_cell": 8,
+  "steps": [1, 2, 4, 8],
+  "arms": [
+    {"name": "adapter_on", "command": "latent_cortex_lab --adapter <run-dir> --experiments 1,A --task-seed 20260718"},
+    {"name": "adapter_off", "command": "latent_cortex_lab --experiments 1,A --task-seed 20260718"}
+  ],
+  "hypotheses": {
+    "h1": "adapter-on latent accuracy at recurrent steps 2-8 exceeds adapter-off latent accuracy (the trained window is a better recurrent operator)",
+    "h2": "adapter-on shows a positive accuracy-vs-steps slope where adapter-off plateaus or degrades",
+    "h3": "adapter-on full_stack/recurrence arms close the gap to (or beat) vanilla decoding that REFUTED them pre-training"
+  },
+  "honesty_bounds": [
+    "1.5B first: mechanism evidence that TRAINING moves the curve; 32B run follows the same protocol",
+    "grader conservatism unchanged (n<20 CONJECTURE, Holm correction, compute voiding)",
+    "train-on-family / eval-on-family means gains are within-distribution reasoning-procedure gains, not broad capability claims; broad claims need held-out families",
+    "no reruns with new seeds after seeing results"
+  ]
+}

@@ -85,6 +85,14 @@ def main() -> int:
         default=11,
         help="task-battery seed; preregister a FRESH value for campaign runs",
     )
+    parser.add_argument(
+        "--adapter",
+        default="",
+        help=(
+            "recurrence-native adapter dir (from tools/recurrence_native_train.py); "
+            "wraps the window projections and loads the trained LoRA before running"
+        ),
+    )
     parser.add_argument("--record-foundry", action="store_true")
     parser.add_argument(
         "--vanilla-baseline",
@@ -103,6 +111,57 @@ def main() -> int:
         metadata={"tool": "latent_cortex_lab", "operator_launched": True},
     ):
         return _run_admitted_lab(args, parser)
+
+
+def _load_recurrence_adapter(model, adapter_dir: Path) -> dict:
+    """Wrap window projections exactly as training did and load the LoRA.
+
+    The adapter's receipt.json is the authority for rank/targets; the
+    checkpoint fingerprint recorded at training time is returned so the
+    report can prove the adapter belongs to this model.
+    """
+    import mlx.core as mx
+    from mlx_lm.tuner.lora import LoRALinear
+
+    receipt = json.loads((adapter_dir / "receipt.json").read_text(encoding="utf-8"))
+    lora = receipt.get("lora") or {}
+    rank = int(lora.get("rank") or 8)
+    targets = tuple(lora.get("targets") or ("o_proj", "v_proj"))
+    inner = model.model
+    n_layers = len(inner.layers)
+    prelude_end = max(1, int(n_layers * 0.25))
+    coda_start = min(n_layers - 1, n_layers - int(n_layers * 0.25))
+    wrapped = 0
+    for layer in inner.layers[prelude_end:coda_start]:
+        for target in targets:
+            parent = (
+                layer.self_attn
+                if hasattr(layer.self_attn, target)
+                else layer.mlp
+                if hasattr(layer.mlp, target)
+                else None
+            )
+            if parent is None:
+                continue
+            setattr(parent, target, LoRALinear.from_base(getattr(parent, target), r=rank))
+            wrapped += 1
+    weights_path = adapter_dir / "adapter_final.safetensors"
+    if not weights_path.is_file():
+        weights_path = adapter_dir / "adapter_latest.safetensors"
+    flat = mx.load(str(weights_path))
+    model.load_weights(list(flat.items()), strict=False)
+    mx.eval(model.parameters())
+    return {
+        "adapter_dir": str(adapter_dir),
+        "weights_file": weights_path.name,
+        "rank": rank,
+        "targets": list(targets),
+        "wrapped_projections": wrapped,
+        "trained_steps": receipt.get("steps"),
+        "train_seed": receipt.get("train_seed"),
+        "trained_on_checkpoint": (receipt.get("checkpoint") or {}).get("fingerprint"),
+        "objective_schema": receipt.get("objective_schema"),
+    }
 
 
 def _run_admitted_lab(
@@ -170,6 +229,17 @@ def _run_admitted_lab(
     deadline = time.monotonic() + args.max_minutes * 60.0
     model, tokenizer = load(args.model)
     checkpoint_receipt = checkpoint_file_fingerprint(args.model)
+    adapter_receipt: dict | None = None
+    if args.adapter:
+        adapter_dir = Path(args.adapter).expanduser()
+        adapter_receipt = _load_recurrence_adapter(model, adapter_dir)
+        print(
+            "🧬 recurrence-native adapter loaded: "
+            f"{adapter_receipt['wrapped_projections']} projections, "
+            f"rank {adapter_receipt['rank']}, "
+            f"trained_steps {adapter_receipt.get('trained_steps')}",
+            flush=True,
+        )
 
     def make_engine(
         max_steps: int,
@@ -399,6 +469,7 @@ def _run_admitted_lab(
     report: dict = {
         "model": args.model,
         "checkpoint": checkpoint_receipt,
+        "recurrence_native_adapter": adapter_receipt,
         "frontier_claim_eligible": False,
         "claim_scope": (
             "offline mechanism and scaling evidence only; exact installed-app "

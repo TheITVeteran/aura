@@ -40,10 +40,20 @@ def role_anchor(role: str, dim: int, base_seed: int = 0):
 
 
 def per_position_rms(x):
-    """Per-position RMS over the hidden dimension: (..., L, D) → (..., L, 1)."""
+    """Per-position RMS over the hidden dimension: (..., L, D) → (..., L, 1).
+
+    The accumulation runs in float32 regardless of input dtype: real Qwen
+    activations carry outlier channels whose SQUARE overflows fp16's 65504
+    ceiling, which surfaced as NaN the first time the recurrence-native
+    objective ran the shared trust-band math over full-sequence states. The
+    result is cast back to the input dtype, so downstream math is unchanged
+    whenever the fp16 computation would have been finite anyway.
+    """
     import mlx.core as mx
 
-    return mx.sqrt(mx.mean(mx.square(x), axis=-1, keepdims=True))
+    return mx.sqrt(
+        mx.mean(mx.square(x.astype(mx.float32)), axis=-1, keepdims=True)
+    ).astype(x.dtype)
 
 
 @dataclass
