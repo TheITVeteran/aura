@@ -15,9 +15,9 @@ def test_repository_model_load_inventory_is_complete() -> None:
     assert report["passed"] is True
     # reasoning_background no longer loads a second Cortex in-process. The
     # resident MLX worker owns non-parametric key generation instead.
-    assert report["inventory_entries"] == 29
-    assert report["owned_paths"] == 29
-    assert report["load_references"] == 41
+    assert report["inventory_entries"] == 30
+    assert report["owned_paths"] == 30
+    assert report["load_references"] == 42
     assert report["source_paths_scanned"] >= 2_000
 
 
@@ -66,6 +66,16 @@ def test_latent_consolidation_loader_requires_active_model_lane() -> None:
 
     with pytest.raises(RuntimeError, match="active standalone model-lane lease"):
         latent_consolidation_train._run(
+            SimpleNamespace(),
+            model_lane_lease=SimpleNamespace(active=False),
+        )
+
+
+def test_recurrence_native_trainer_requires_active_model_lane() -> None:
+    from tools import recurrence_native_train
+
+    with pytest.raises(RuntimeError, match="active standalone model-lane lease"):
+        recurrence_native_train._run(
             SimpleNamespace(),
             model_lane_lease=SimpleNamespace(active=False),
         )

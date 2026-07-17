@@ -18275,6 +18275,47 @@ Bounded verification and concurrent recurrence training:
   retained and routed to first-error/state-transition analysis. Multi-hour and
   24-72-hour soaks remain last.
 
+## Checkpoint 2026-07-17-123: Recurrence Trainer Model-Lane Ownership
+
+Checkpoint 123 is the current source candidate in the `main` worktree. It
+advances `RLC-LIFECYCLE-001`, `RLC-LIVE32B-001`, `RESOURCE-OWNERSHIP-001`,
+`CLOSEOUT-001`, and `TEST-DEPTH-001`. It closes the exact clean-head blocker
+introduced by the recurrence-native trainer and does not award training-gain,
+frontier, release, semantic-review, live-app, or soak credit.
+
+- The clean CP122 mechanical audit enumerated 5,323 tracked files and 3,802,673
+  tracked text lines, but correctly failed its model-load ownership gate:
+  `tools/recurrence_native_train.py` contained one direct `mlx_lm.load`
+  reference without a matching inventory entry. All other configured gates
+  passed. The semantic ledger independently remains incomplete: 434 of 5,300
+  tracked text files are fully current, 4,826 are unreviewed, and stale/orphan
+  receipts remain.
+- The trainer already entered `standalone_model_lane`, but its private `_run`
+  function could still be invoked directly without proving the lease. The
+  context manager now passes its concrete lease into `_run`, which refuses
+  before importing or loading MLX unless `lease.active is True`. The running
+  `32b_r1` process had already acquired the same lane before model load and is
+  not restarted by this source hardening.
+- `config/model_load_ownership.json` now inventories the trainer as a
+  standalone-process owner with one expected `mlx_lm` load and a required
+  `standalone_model_lane` guard site. The ownership audit passes with 30 paths,
+  42 references, and zero findings. Its nine contract tests pass, including a
+  direct-call refusal regression; compilation, targeted `F`/`E9` lint, and
+  `git diff --check` pass.
+- Semantic closeout will use a read-first grouped workflow: freeze file hashes,
+  partition the entire tracked text corpus into auditable batches, record
+  findings and cross-file dependencies without edits, then apply fixes by
+  subsystem so edits do not repeatedly invalidate later review. Mechanical
+  enumeration is not semantic credit, and no batch is complete without a
+  matching hash receipt.
+- Evidence-weighted completion remains 27%. This is checkpoint 123 of the
+  faithful 292-399 total forecast, leaving approximately 169-276 checkpoints.
+- Next: publish CP123 directly to `main`, rerun the clean full closeout audit,
+  and begin the hash-stable semantic inventory while monitoring `32b_r1`
+  through its receipt and log only. On trainer exit, validate and execute the
+  immutable preregistered adapter-on/off evaluation before any live activation.
+  Multi-hour and 24-72-hour soaks remain deferred.
+
 ## Checkpoint 2026-07-17-121: Verifier Economy, Replayable Adaptation, and Async Ingress
 
 Checkpoint 121 is the current source candidate in the `main` worktree. It

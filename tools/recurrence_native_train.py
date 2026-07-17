@@ -81,8 +81,8 @@ def main() -> int:
         purpose="training",
         preemptible=False,
         metadata={"tool": "recurrence_native_train", "operator_launched": True},
-    ):
-        return _run(args)
+    ) as model_lane_lease:
+        return _run(args, model_lane_lease=model_lane_lease)
 
 
 def _wrap_window_layers(model, *, rank: int, targets: tuple[str, ...]) -> int:
@@ -124,7 +124,12 @@ def _render_example(tokenizer, task) -> tuple[list[int], int]:
     return list(prompt_tokens) + tail, len(prompt_tokens)
 
 
-def _run(args: argparse.Namespace) -> int:
+def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
+    if getattr(model_lane_lease, "active", False) is not True:
+        raise RuntimeError(
+            "recurrence-native model load requires an active standalone "
+            "model-lane lease"
+        )
     import mlx.core as mx
     import mlx.nn as nn
     import mlx.optimizers as optim
