@@ -451,6 +451,7 @@ class LatentCortexEngine:
 
         penalty = float(self.config.decode_repetition_penalty)
         window = max(1, int(self.config.decode_repetition_window))
+        min_tokens = max(0, int(self.config.decode_min_tokens))
 
         def penalize_repeats(logits):
             """CTRL-style sliding-window repetition penalty.
@@ -476,6 +477,15 @@ class LatentCortexEngine:
             text is still entirely the model's own tokens, never edited."""
             nonlocal suppressions
             logits = penalize_repeats(logits)
+            # EOS floor: below decode_min_tokens, end-of-sequence logits are
+            # masked so sampling variance cannot abandon the answer a few
+            # tokens in (min-new-tokens, the standard serving constraint).
+            if eos and len(out) < min_tokens:
+                eos_ids = mx.array(sorted(eos))
+                gathered = logits[eos_ids]
+                logits = logits.at[eos_ids].add(
+                    mx.full(gathered.shape, -1e9) - gathered
+                )
             token = self._sample(logits, temp, nucleus)
             if self.tokenizer is None or newline_run < _MAX_NEWLINE_RUN:
                 return token

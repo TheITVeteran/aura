@@ -257,6 +257,11 @@ class CortexConfig:
     # tuning alone (one line repeated ~80 times at t=0.35).
     decode_repetition_penalty: float = 1.0
     decode_repetition_window: int = 72
+    # EOS suppression floor: sampling variance can emit end-of-sequence a
+    # handful of tokens into an answer (a live 32B turn stopped at 16
+    # tokens). Until this many tokens exist, EOS logits are masked — the
+    # standard min-new-tokens constraint. 0 disables.
+    decode_min_tokens: int = 0
     input_context_max_chars: int = 0
     allow_vanilla_fallback: bool = True
     # Structured attractor-escape ladder for diverged/stalled branches
@@ -377,6 +382,15 @@ class CortexConfig:
         ):
             problems.append(
                 "decode_repetition_window must be an integer inside [1, 512]"
+            )
+        if (
+            type(self.decode_min_tokens) is not int
+            or not 0 <= self.decode_min_tokens <= 512
+            or self.decode_min_tokens >= max(1, self.decode_max_tokens)
+        ):
+            problems.append(
+                "decode_min_tokens must be an integer inside [0, 512] and "
+                "below decode_max_tokens"
             )
         if self.decode_bridge_policy not in {
             "none",

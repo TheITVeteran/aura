@@ -582,3 +582,58 @@ def test_sentence_grace_finishes_the_sentence(tiny_model, monkeypatch):
     assert termination == "token_limit_sentence_grace"
     assert out[-1] == period_id, "grace must end at the model's own period"
     assert 6 < len(out) <= 6 + 24
+
+
+def test_eos_floor_suppresses_early_stop(tiny_model, monkeypatch):
+    """Sampling variance must not abandon an answer a few tokens in: below
+    decode_min_tokens the EOS logits are masked (min-new-tokens), and after
+    the floor the model's own EOS is honored (CP116 live regression)."""
+    import mlx.core as mx
+
+    from core.brain.llm.latent_cortex import engine as engine_mod
+    from core.brain.llm.latent_cortex.types import ComputeBudget
+    from mlx_lm.models.cache import KVCache
+    from mlx_lm.models.base import create_attention_mask
+
+    eos_id, word_id, vocab = 3, 9, 128
+
+    class EosTokenizer:
+        eos_token_id = eos_id
+
+        def encode(self, text, **kwargs):
+            return [1, 2]
+
+        def decode(self, ids):
+            return "w" * len(ids)
+
+    # The model "wants" to stop immediately: EOS is always argmax.
+    spiked = mx.full((1, 1, vocab), -20.0)
+    spiked[0, 0, eos_id] = 9.0
+    spiked[0, 0, word_id] = 5.0
+    monkeypatch.setattr(
+        engine_mod.LatentCortexEngine, "_logits", lambda self, h: spiked
+    )
+
+    def run(min_tokens):
+        engine = engine_mod.LatentCortexEngine(
+            tiny_model,
+            EosTokenizer(),
+            config=_config(decode_max_tokens=20, decode_min_tokens=min_tokens),
+        )
+        cache = [KVCache() for _ in tiny_model.model.layers]
+        inner = tiny_model.model
+        h = inner.embed_tokens(mx.array([PROMPT_TOKENS]))
+        mask = create_attention_mask(h, cache)
+        for i, layer in enumerate(inner.layers):
+            h = layer(h, mask, cache[i])
+        return engine._decode(
+            cache, ComputeBudget(), spiked[0, 0], max_tokens=20, temperature=0.0
+        )
+
+    out, termination = run(0)
+    assert termination == "eos" and len(out) == 0, "control: instant EOS honored"
+
+    out, termination = run(8)
+    assert termination == "eos"
+    assert len(out) == 8, "EOS must be masked until the floor, then honored"
+    assert all(token == word_id for token in out), "runner-up token fills the floor"

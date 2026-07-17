@@ -890,12 +890,16 @@ class LatentCortexService:
                     min(384, max(requested_decode_tokens, 320)),
                 )
                 config["decode_bridge_policy"] = "assistant_answer_v2"
+                # EOS floor: a compound answer abandoned 16 tokens in is
+                # sampling variance, not a decision (CP116 live evidence).
+                config["decode_min_tokens"] = 96
             else:
                 config["decode_max_tokens"] = max(
                     64,
                     min(256, requested_decode_tokens),
                 )
                 config["decode_bridge_policy"] = "assistant_answer_v1"
+                config["decode_min_tokens"] = 48
             # Degeneration guard for every resident answer: CP105's live turn
             # proved a repetition loop survives temperature tuning (one line
             # ~80 times at t=0.35, trigram diversity 0.012). The persona

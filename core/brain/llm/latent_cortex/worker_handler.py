@@ -58,6 +58,7 @@ _CONFIG_KEYS = {
     "comm_slot",
     "convergence_eps",
     "decode_max_tokens",
+    "decode_min_tokens",
     "decode_bridge_policy",
     "decode_repetition_penalty",
     "decode_repetition_window",
@@ -217,6 +218,7 @@ def config_from_job(job_config: dict[str, Any] | None) -> CortexConfig:
         coda_frac=_typed_value(raw, "coda_frac", 0.25, float),
         schedule=raw.get("schedule"),
         decode_max_tokens=_typed_value(raw, "decode_max_tokens", 512, int),
+        decode_min_tokens=_typed_value(raw, "decode_min_tokens", 0, int),
         decode_temperature=_typed_value(raw, "decode_temperature", 0.0, float),
         decode_top_p=_typed_value(raw, "decode_top_p", 1.0, float),
         decode_repetition_penalty=_typed_value(
