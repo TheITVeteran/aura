@@ -392,3 +392,90 @@ def test_reason_rejects_malformed_decode_override(tiny_model, invalid):
     engine = LatentCortexEngine(tiny_model, config=_config())
     with pytest.raises((TypeError, ValueError)):
         engine.reason(token_ids=PROMPT_TOKENS, decode_max_tokens=invalid)
+
+
+def test_decode_newline_discipline_caps_babble_runs(tiny_model, monkeypatch):
+    """Force the model into pure-newline babble and prove the sampling
+    discipline caps runs at two, counts every suppression, and never edits
+    emitted text (all output tokens remain model-sampled ids)."""
+    import mlx.core as mx
+
+    from core.brain.llm.latent_cortex import engine as engine_mod
+
+    newline_id, word_id, vocab = 7, 9, 128
+
+    class NewlineTokenizer:
+        eos_token_id = 0
+
+        def encode(self, text, **kwargs):
+            return [5, 9, 17]
+
+        def decode(self, ids):
+            return "".join("\n" if i == newline_id else "x" for i in ids)
+
+    engine = engine_mod.LatentCortexEngine(
+        tiny_model, NewlineTokenizer(), config=_config(decode_max_tokens=12)
+    )
+
+    # The model "wants" endless newlines: every logits call favors newline_id
+    # overwhelmingly, with word_id as the runner-up the mask must expose.
+    spiked = mx.full((1, 1, vocab), -20.0)
+    spiked[0, 0, newline_id] = 10.0
+    spiked[0, 0, word_id] = 5.0
+
+    monkeypatch.setattr(
+        engine_mod.LatentCortexEngine,
+        "_logits",
+        lambda self, h: spiked,
+    )
+
+    from core.brain.llm.latent_cortex.types import ComputeBudget
+    from mlx_lm.models.cache import KVCache
+
+    cache = [KVCache() for _ in tiny_model.model.layers]
+    budget = ComputeBudget()
+    # Prefill through the real layers so the cache is genuine.
+    import mlx.core as mx2
+    from mlx_lm.models.base import create_attention_mask
+
+    inner = tiny_model.model
+    h = inner.embed_tokens(mx2.array([PROMPT_TOKENS]))
+    mask = create_attention_mask(h, cache)
+    for i, layer in enumerate(inner.layers):
+        h = layer(h, mask, cache[i])
+
+    out, termination = engine._decode(
+        cache, budget, spiked[0, 0], max_tokens=12, temperature=0.0
+    )
+    assert termination == "token_limit"
+    assert engine._last_decode_newline_suppressions >= 3
+    # No run of pure-newline tokens longer than the discipline allows.
+    run = longest = 0
+    for token in out:
+        run = run + 1 if token == newline_id else 0
+        longest = max(longest, run)
+    assert longest <= 2, out
+    assert word_id in out, "masking must expose the model's own runner-up token"
+
+
+def test_bridge_policy_v2_produces_distinct_hashable_cue(tiny_model):
+    class RecordingTokenizer:
+        eos_token_id = 0
+
+        def encode(self, text, **kwargs):
+            return [ord(c) % 128 for c in text][:24]
+
+        def decode(self, ids):
+            return " ".join(str(i) for i in ids)
+
+    v1 = LatentCortexEngine(
+        tiny_model, RecordingTokenizer(), config=_config(decode_bridge_policy="assistant_answer_v1")
+    )._decode_bridge_tokens()
+    v2 = LatentCortexEngine(
+        tiny_model, RecordingTokenizer(), config=_config(decode_bridge_policy="assistant_answer_v2")
+    )._decode_bridge_tokens()
+    assert v1 and v2 and v1 != v2
+    with pytest.raises(ValueError):
+        LatentCortexEngine(
+            tiny_model, RecordingTokenizer(), config=_config(decode_bridge_policy="bogus")
+        )

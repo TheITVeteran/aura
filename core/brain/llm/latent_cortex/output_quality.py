@@ -62,6 +62,17 @@ _SUBJECT_NOISE = {
 }
 
 
+def request_facets(objective: Any) -> list[str]:
+    """Facets a request explicitly asks for (compare/select/verify/…).
+
+    Public so allocation can shape the answer surface (token budget, decode
+    discipline) with EXACTLY the same definition the quality gate will later
+    judge the answer by — no drift between what is provisioned and what is
+    demanded."""
+    text = objective if isinstance(objective, str) else ""
+    return [name for name, pattern in _REQUEST_FACETS.items() if pattern.search(text)]
+
+
 def _tokens(text: str) -> list[str]:
     return [token.lower() for token in _WORD_RE.findall(text)]
 
@@ -283,4 +294,4 @@ def evaluate_latent_output(
     }
 
 
-__all__ = ["OUTPUT_QUALITY_SCHEMA", "evaluate_latent_output"]
+__all__ = ["OUTPUT_QUALITY_SCHEMA", "evaluate_latent_output", "request_facets"]

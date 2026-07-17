@@ -39,6 +39,21 @@ from core.runtime.errors import record_degradation
 logger = logging.getLogger("Aura.LatentCortex.Engine")
 
 _ASSISTANT_ANSWER_BRIDGE = "\nFinal answer:\n"
+# v2 demands complete coverage per token spent: compound requests fail the
+# product-quality gate when the decode budget is burned on preamble instead
+# of the asked-for facets. The cue is generic — it names no specific task.
+_ASSISTANT_ANSWER_BRIDGE_V2 = (
+    "\nFinal answer (address every part of the request, concisely):\n"
+)
+_BRIDGE_TEXT_BY_POLICY = {
+    "assistant_answer_v1": _ASSISTANT_ANSWER_BRIDGE,
+    "assistant_answer_v2": _ASSISTANT_ANSWER_BRIDGE_V2,
+}
+# Decode discipline: at most this many consecutive pure-newline tokens are
+# admitted before newline-family logits are masked for the next sample. Two
+# newlines = one blank line — enough for any legitimate paragraph/list break.
+_MAX_NEWLINE_RUN = 2
+_NEWLINE_RESAMPLE_ATTEMPTS = 4
 
 # Guard classes the engine treats as "latent phase failed, fall back honest".
 _LATENT_PHASE_ERRORS = (
@@ -94,6 +109,11 @@ class LatentCortexEngine:
             raise ValueError(f"invalid CortexConfig: {problems}")
         self.library = schedule_library
         self.invariant = CheckpointInvariant(model, model_path)
+        # Decode discipline state: token→is-pure-newline verdicts (per
+        # tokenizer, so per engine) and the last final-decode suppression
+        # count for the episode receipt.
+        self._newline_token_cache: dict[int, bool] = {}
+        self._last_decode_newline_suppressions = 0
         inner = getattr(model, "model", None)
         layers = getattr(inner, "layers", None)
         if not layers:
@@ -184,21 +204,37 @@ class LatentCortexEngine:
         policy = self.config.decode_bridge_policy
         if policy == "none":
             return []
-        if policy != "assistant_answer_v1":
+        bridge_text = _BRIDGE_TEXT_BY_POLICY.get(policy)
+        if bridge_text is None:
             raise ValueError(f"unsupported decode bridge policy: {policy}")
         if self.tokenizer is None:
             raise ValueError("assistant answer decode bridge requires a tokenizer")
         try:
             encoded = self.tokenizer.encode(
-                _ASSISTANT_ANSWER_BRIDGE,
+                bridge_text,
                 add_special_tokens=False,
             )
         except TypeError:
-            encoded = self.tokenizer.encode(_ASSISTANT_ANSWER_BRIDGE)
+            encoded = self.tokenizer.encode(bridge_text)
         tokens = list(encoded)
         if not tokens or any(type(token) is not int or token < 0 for token in tokens):
             raise ValueError("assistant answer decode bridge produced invalid tokens")
         return tokens
+
+    def _is_pure_newline_token(self, token: int) -> bool:
+        """True when the token renders to newline-only whitespace."""
+        if self.tokenizer is None:
+            return False
+        cached = self._newline_token_cache.get(token)
+        if cached is not None:
+            return cached
+        try:
+            piece = self.tokenizer.decode([token])
+        except (TypeError, ValueError, KeyError, AttributeError):
+            piece = ""
+        verdict = bool(piece) and piece.strip() == "" and "\n" in piece
+        self._newline_token_cache[token] = verdict
+        return verdict
 
     def _apply_decode_bridge(self, cache, budget: ComputeBudget, tokens: list[int]):
         """Append a lexical answer cue after thought slots in the same KV owner."""
@@ -308,9 +344,38 @@ class LatentCortexEngine:
         nucleus = top_p if top_p is not None else self.config.decode_top_p
 
         out: list[int] = []
+        newline_run = 0
+        suppressions = 0
+        self._last_decode_newline_suppressions = 0
         if budget.exhausted:
             return out, "budget_exhausted"
-        token = self._sample(initial_logits, temp, nucleus)
+
+        def sample_disciplined(logits):
+            """Sample under the newline-run discipline.
+
+            A run of more than _MAX_NEWLINE_RUN pure-newline tokens is decode
+            babble: it wastes answer budget and independently fails the
+            product-quality gate (excessive_blank_lines). Masking newline
+            logits for the next sample is a sampling CONSTRAINT — the emitted
+            text is still entirely the model's own tokens, never edited."""
+            nonlocal suppressions
+            token = self._sample(logits, temp, nucleus)
+            if self.tokenizer is None or newline_run < _MAX_NEWLINE_RUN:
+                return token
+            masked = logits
+            for _ in range(_NEWLINE_RESAMPLE_ATTEMPTS):
+                if not self._is_pure_newline_token(token):
+                    return token
+                suppressions += 1
+                masked = mx.where(
+                    mx.arange(masked.shape[-1]) == token,
+                    mx.full(masked.shape, -1e9),
+                    masked,
+                )
+                token = self._sample(masked, temp, nucleus)
+            return token
+
+        token = sample_disciplined(initial_logits)
         termination = "token_limit"
         for index in range(max(1, int(limit))):
             if self._cancel_requested(cancel_check):
@@ -319,6 +384,7 @@ class LatentCortexEngine:
                 termination = "eos"
                 break
             out.append(token)
+            newline_run = newline_run + 1 if self._is_pure_newline_token(token) else 0
             if index + 1 >= limit:
                 termination = "token_limit"
                 break
@@ -334,7 +400,7 @@ class LatentCortexEngine:
             for i, layer in enumerate(inner.layers):
                 h = layer(h, mask, cache[i])
             logits = self._logits(h)[0, -1]
-            token = self._sample(logits, temp, nucleus)
+            token = sample_disciplined(logits)
             if (index + 1) % 16 == 0:
                 self._emit_progress(
                     progress,
@@ -345,6 +411,7 @@ class LatentCortexEngine:
                         "spent_layer_apps": int(budget.spent_layer_apps),
                     },
                 )
+        self._last_decode_newline_suppressions = suppressions
         return out, termination
 
     # ── Probe decoding for branch selection / verifier loops ────────────
@@ -1004,6 +1071,9 @@ class LatentCortexEngine:
             receipt.decode_requested_tokens = decode_limit
             receipt.decode_generated_tokens = len(out_tokens)
             receipt.decode_termination = decode_termination
+            receipt.decode_newline_suppressions = int(
+                self._last_decode_newline_suppressions
+            )
             if decode_termination.startswith("budget_"):
                 receipt.flag(f"decode_{decode_termination}")
             stage_started = self._stage_checkpoint(

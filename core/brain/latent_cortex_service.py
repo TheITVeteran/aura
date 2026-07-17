@@ -367,7 +367,7 @@ class LatentCortexService:
         if receipt.get("decode_termination") not in {"eos", "token_limit"}:
             errors.append("decode_incomplete")
         decode_bridge_policy = config.get("decode_bridge_policy", "none")
-        if decode_bridge_policy == "assistant_answer_v1":
+        if decode_bridge_policy in {"assistant_answer_v1", "assistant_answer_v2"}:
             if receipt.get("decode_bridge_applied") is not True:
                 errors.append("decode_bridge_unapplied")
             if receipt.get("decode_bridge_policy") != decode_bridge_policy:
@@ -378,6 +378,8 @@ class LatentCortexService:
                 errors.append("decode_bridge_token_identity_unproven")
             if not sha256(receipt.get("decode_bridge_logits_digest")):
                 errors.append("decode_bridge_logits_unproven")
+        if not nonnegative_int(receipt, "decode_newline_suppressions"):
+            errors.append("decode_newline_discipline_unreceipted")
         configured_temperature = config.get("decode_temperature", 0.0)
         configured_top_p = config.get("decode_top_p", 1.0)
         if (
@@ -702,11 +704,48 @@ class LatentCortexService:
                 requested_decode_tokens = int(config.get("decode_max_tokens") or 256)
             except (TypeError, ValueError, OverflowError):
                 return self._record_failure("invalid_decode_token_override")
-            config["decode_max_tokens"] = max(
-                64,
-                min(256, requested_decode_tokens),
+            # Compound-aware answer surface: the SAME facet definition the
+            # product-quality gate judges by decides how much room and how
+            # much sampling discipline the answer gets. CP103's live turn
+            # proved a 4-facet request cannot earn the gate inside 256 tokens
+            # at persona-lane temperature — the episode was mechanically
+            # complete and the ANSWER SURFACE was the only failing stage.
+            from core.brain.llm.latent_cortex.output_quality import request_facets
+
+            objective_facets = request_facets(
+                self._visible_objective(question, messages)
             )
-            config["decode_bridge_policy"] = "assistant_answer_v1"
+            compound_objective = len(objective_facets) >= 2
+            if compound_objective:
+                config["decode_max_tokens"] = max(
+                    256,
+                    min(384, max(requested_decode_tokens, 320)),
+                )
+                try:
+                    requested_temperature = float(
+                        config.get("decode_temperature") or 0.0
+                    )
+                except (TypeError, ValueError, OverflowError):
+                    return self._record_failure("invalid_decode_temperature_override")
+                config["decode_temperature"] = min(0.35, max(0.0, requested_temperature))
+                config["decode_bridge_policy"] = "assistant_answer_v2"
+            else:
+                config["decode_max_tokens"] = max(
+                    64,
+                    min(256, requested_decode_tokens),
+                )
+                config["decode_bridge_policy"] = "assistant_answer_v1"
+            if compound_objective:
+                # The 105s wall-clock floor was tuned for 256-token answers.
+                # A 384-token compound answer measures ≈116s on the resident
+                # 32B; grant up to 150s but never exceed what the owner's
+                # timeout can actually wait for.
+                budget["wall_clock_s"] = min(
+                    max(150.0, float(budget.get("wall_clock_s") or 0.0)),
+                    max(15.0, float(timeout_s) - 8.0),
+                )
+            self._last_allocation["objective_facets"] = list(objective_facets)
+            self._last_allocation["compound_objective"] = compound_objective
         if require_full_stack:
             config["latent_opt"] = True
             config["latent_opt_control"] = False

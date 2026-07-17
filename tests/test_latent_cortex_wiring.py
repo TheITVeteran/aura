@@ -921,6 +921,73 @@ def test_service_applies_resident_identity_profile_before_worker_ipc(monkeypatch
     assert captured["budget"]["wall_clock_s"] <= 120.0
 
 
+def test_compound_objective_expands_answer_surface(monkeypatch):
+    """A request the quality gate will judge on 4 facets must be provisioned
+    for 4 facets: more decode room, lower temperature, the coverage-demanding
+    v2 bridge, and a wall clock that admits the bigger decode."""
+    svc = LatentCortexService()
+    captured: dict = {}
+
+    class Resident32Client:
+        def get_worker_identity_snapshot(self):
+            return {"worker_model_parameter_count": 32_500_000_000}
+
+        async def latent_reason_async(self, **kwargs):
+            captured.update(kwargs)
+            return {"ok": False, "reason": "profile_observed"}
+
+    import core.brain.llm.mlx_client as mlx_client_mod
+
+    monkeypatch.setattr(
+        mlx_client_mod,
+        "get_mlx_client",
+        lambda *args, **kwargs: Resident32Client(),
+    )
+
+    compound = (
+        "Compare an early single-owner design with a late deduplication design, "
+        "then choose the stronger architecture and explain how you would verify "
+        "it under cancellation, timeout, and worker-restart faults."
+    )
+    result = asyncio.run(
+        svc.deep_reason(
+            compound,
+            stakes=0.75,
+            uncertainty=0.8,
+            config_overrides={
+                "decode_max_tokens": 256,
+                "decode_temperature": 0.58,
+                "decode_top_p": 0.85,
+            },
+            timeout_s=157.0,
+            foreground_request=True,
+        )
+    )
+    assert result == {"ok": False, "reason": "profile_observed"}
+    assert 320 <= captured["config"]["decode_max_tokens"] <= 384
+    assert captured["config"]["decode_temperature"] <= 0.35
+    assert captured["config"]["decode_bridge_policy"] == "assistant_answer_v2"
+    assert captured["budget"]["wall_clock_s"] >= 140.0
+    assert captured["budget"]["wall_clock_s"] <= 157.0 - 8.0
+    allocation = svc._last_allocation
+    assert allocation["compound_objective"] is True
+    assert set(allocation["objective_facets"]) >= {"compare", "select", "verify"}
+
+    # A simple objective keeps the tight interactive profile.
+    captured.clear()
+    asyncio.run(
+        svc.deep_reason(
+            "What time zone does the scheduler use?",
+            stakes=0.7,
+            uncertainty=0.8,
+            timeout_s=128.0,
+            foreground_request=True,
+        )
+    )
+    assert captured["config"]["decode_max_tokens"] == 256
+    assert captured["config"]["decode_bridge_policy"] == "assistant_answer_v1"
+
+
 def test_allocation_damped_by_body_pressure(monkeypatch):
     svc = LatentCortexService()
     monkeypatch.setattr(svc, "_body_pressure", lambda: 0.0)
@@ -1073,6 +1140,8 @@ def test_service_routes_through_client_and_records_receipt(monkeypatch):
                     "decode_requested_tokens": kwargs["config"]["decode_max_tokens"],
                     "decode_generated_tokens": 12,
                     "decode_termination": "eos",
+        "decode_newline_suppressions": 0,
+                    "decode_newline_suppressions": 0,
                     "decode_temperature": kwargs["config"].get(
                         "decode_temperature", 0.0
                     ),
@@ -1263,6 +1332,7 @@ def test_service_rejects_truncated_or_exhausted_decode_receipts(
         "decode_requested_tokens": 512,
         "decode_generated_tokens": 20,
         "decode_termination": termination,
+        "decode_newline_suppressions": 0,
         "honest_flags": [],
     }
 

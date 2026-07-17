@@ -313,9 +313,14 @@ class CortexConfig:
             problems.append("decode_temperature must be finite and inside [0, 2]")
         if not finite(self.decode_top_p) or not 0.0 < self.decode_top_p <= 1.0:
             problems.append("decode_top_p must be finite and inside (0, 1]")
-        if self.decode_bridge_policy not in {"none", "assistant_answer_v1"}:
+        if self.decode_bridge_policy not in {
+            "none",
+            "assistant_answer_v1",
+            "assistant_answer_v2",
+        }:
             problems.append(
-                "decode_bridge_policy must be none or assistant_answer_v1"
+                "decode_bridge_policy must be none, assistant_answer_v1, or "
+                "assistant_answer_v2"
             )
         if not (
             type(self.input_context_max_chars) is int
@@ -427,6 +432,10 @@ class EpisodeReceipt:
     decode_requested_tokens: int = 0
     decode_generated_tokens: int = 0
     decode_termination: str = "not_started"
+    # Times the decode sampler masked a pure-newline token because the run
+    # already held _MAX_NEWLINE_RUN — a sampling constraint, never text
+    # editing; nonzero values reveal the model still trying to babble.
+    decode_newline_suppressions: int = 0
     decode_temperature: float = 0.0
     decode_top_p: float = 1.0
     decode_bridge_applied: bool = False
@@ -522,6 +531,7 @@ class EpisodeReceipt:
             "decode_requested_tokens": self.decode_requested_tokens,
             "decode_generated_tokens": self.decode_generated_tokens,
             "decode_termination": self.decode_termination,
+            "decode_newline_suppressions": self.decode_newline_suppressions,
             "decode_temperature": self.decode_temperature,
             "decode_top_p": self.decode_top_p,
             "decode_bridge_applied": self.decode_bridge_applied,
