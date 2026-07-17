@@ -69,6 +69,7 @@ _CONFIG_KEYS = {
     "fast_weights",
     "fast_weights_lr",
     "fast_weights_max_layers",
+    "fast_weights_export_candidates",
     "fast_weights_opt_steps",
     "fast_weights_rank",
     "fast_weights_scale",
@@ -191,6 +192,9 @@ def config_from_job(job_config: dict[str, Any] | None) -> CortexConfig:
             lr=_typed_value(raw, "fast_weights_lr", 0.01, float),
             max_wrapped_layers=_typed_value(
                 raw, "fast_weights_max_layers", 8, int
+            ),
+            export_candidates=_typed_value(
+                raw, "fast_weights_export_candidates", False, bool
             ),
         ),
         prelude_frac=_typed_value(raw, "prelude_frac", 0.25, float),

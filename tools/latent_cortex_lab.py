@@ -193,8 +193,12 @@ def _run_admitted_lab(
             raise LabDeadlineError("lab wall-clock bound reached")
         engine = make_engine(n_steps, latent_opt=latent_opt)
         budget = ComputeBudget(wall_clock_s=min(120.0, remaining_s))
+        # Chat-template parity with the vanilla control arm: an instruct
+        # checkpoint answers through its template; comparing a template-free
+        # latent arm against a templated control confounds the experiment
+        # (the first 32B sweep measured exactly that confound).
         result = engine.reason(
-            prompt=task.prompt,
+            messages=[{"role": "user", "content": task.prompt}],
             budget=budget,
             ablate_slot=ablate,
             decode_max_tokens=64,

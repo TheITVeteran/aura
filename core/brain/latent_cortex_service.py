@@ -149,6 +149,10 @@ class LatentCortexService:
                     "latent_opt_steps": 1,
                     "fast_weights_opt_steps": 1,
                     "fast_weights_max_layers": 2,
+                    # Mechanically-clean episode synapses become durable
+                    # learning CANDIDATES (consumer + compounding gates
+                    # decide; nothing consolidates from inside an episode).
+                    "fast_weights_export_candidates": True,
                     "decode_max_tokens": 256,
                     "decode_bridge_policy": "assistant_answer_v1",
                     "input_context_max_chars": 9000,

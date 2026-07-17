@@ -112,6 +112,9 @@ class FastWeightsConfig:
     # Layers (within the recurrent window) that receive fast weights; None ⇒
     # every window layer. Keep small on big models.
     max_wrapped_layers: int = 8
+    # Export mechanically-clean episode synapses (accepted descent + proven
+    # erase) to the governed consolidation queue for the compounding loop.
+    export_candidates: bool = False
 
 
 @dataclass
@@ -407,6 +410,7 @@ class EpisodeReceipt:
     """Everything one reasoning episode actually did — the honesty record."""
 
     episode_id: str = ""
+    domain: str = "general"
     started_at: float = field(default_factory=time.time)
     # Invariant proofs (governance.CheckpointInvariant fills these).
     checkpoint_fingerprint: str = ""
@@ -508,6 +512,7 @@ class EpisodeReceipt:
     def to_dict(self) -> dict[str, Any]:
         return {
             "episode_id": self.episode_id,
+            "domain": self.domain,
             "started_at": self.started_at,
             "checkpoint_fingerprint": self.checkpoint_fingerprint,
             "checkpoint_fingerprint_method": self.checkpoint_fingerprint_method,

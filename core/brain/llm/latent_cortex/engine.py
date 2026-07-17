@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from pathlib import Path
 import time
 import uuid
 from collections.abc import Callable
@@ -779,6 +780,7 @@ class LatentCortexEngine:
         )
 
         schedule = self._resolve_schedule(domain)
+        receipt.domain = str(domain or "general")
         receipt.schedule_hash = schedule.schedule_hash
         receipt.n_slots = self.config.workspace.n_slots
         receipt.n_branches = self.config.branches.n_branches
@@ -1191,6 +1193,46 @@ class LatentCortexEngine:
             receipt.flag("fast_weight_budget_exhausted")
         if lifecycle.optimized_steps <= 0:
             receipt.flag("fast_weight_no_accepted_step")
+
+        # Consolidation handoff: a mechanically clean episode (accepted
+        # descent, proven erase) exports its temporary synapses + evidence
+        # to the governed queue. Export is EVIDENCE COLLECTION only — the
+        # consolidation consumer and the compounding loop's regression gates
+        # decide what (if anything) becomes durable learning.
+        if (
+            self.config.fast_weights.export_candidates
+            and receipt.fast_weights_erased is True
+            and lifecycle.optimized_steps > 0
+            and len(lifecycle.loss_trail) >= 2
+            and lifecycle.loss_trail[-1] < lifecycle.loss_trail[0]
+        ):
+            try:
+                from core.config import DATA_DIR
+
+                queue_dir = Path(DATA_DIR) / "latent_cortex" / "consolidation_queue"
+                exported = fast_weights.export_candidate(
+                    queue_dir,
+                    episode_id=receipt.episode_id,
+                    evidence={
+                        "schema": "aura.latent_consolidation_candidate.v1",
+                        "domain": receipt.domain,
+                        "schedule_hash": receipt.schedule_hash,
+                        "loss_trail": list(lifecycle.loss_trail),
+                        "accepted_step_sizes": list(lifecycle.accepted_step_sizes),
+                        "steps_taken": receipt.steps_taken,
+                        "checkpoint_fingerprint": receipt.checkpoint_fingerprint,
+                        "honest_flags": list(receipt.honest_flags),
+                    },
+                )
+                if exported is not None:
+                    receipt.flag("fast_weight_candidate_exported")
+            except _LATENT_PHASE_ERRORS as exc:
+                record_degradation(
+                    "latent_cortex",
+                    exc,
+                    action="dropped consolidation candidate after export failed",
+                    severity="warning",
+                )
 
     # ── Fast-weight helpers ─────────────────────────────────────────────
     def _nocache_window_pass(self, z):
