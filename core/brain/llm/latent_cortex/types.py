@@ -541,6 +541,11 @@ class EpisodeReceipt:
     # the protected battery and what the ladder decided (accepted /
     # rescaled / erased). Empty when canaries did not run.
     fast_weight_canaries: dict[str, Any] = field(default_factory=dict)
+    # Task-verifier arbitration over the adapted function: the verifier
+    # scores a decoded probe before and after ΔW optimization and erases
+    # the adaptation on regression — the verifier, not the proxy, has the
+    # last word over fast weights too. Empty when arbitration did not run.
+    fast_weight_verifier: dict[str, Any] = field(default_factory=dict)
     # Decode completeness. A token-limit or EOS stop is complete; a budget stop
     # is a truncated answer and cannot satisfy the production receipt contract.
     decode_requested_tokens: int = 0
@@ -654,6 +659,7 @@ class EpisodeReceipt:
                 self.fast_weight_line_search_backtracks
             ),
             "fast_weight_canaries": dict(self.fast_weight_canaries),
+            "fast_weight_verifier": dict(self.fast_weight_verifier),
             "decode_requested_tokens": self.decode_requested_tokens,
             "decode_generated_tokens": self.decode_generated_tokens,
             "decode_termination": self.decode_termination,

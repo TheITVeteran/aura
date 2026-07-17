@@ -485,3 +485,157 @@ def test_consolidation_export_rejects_tampered_batch_receipt(
     assert exported is None
     assert fw.lifecycle.exported is False
     assert fw.last_export_receipt is None
+
+
+# ── Verifier arbitration over the adapted function (ΔW last word) ──────
+
+
+class _ProbeTokenizer:
+    eos_token_id = 0
+
+    def encode(self, text, add_special_tokens=False):
+        return [ord(c) % 128 for c in text][:16]
+
+    def decode(self, ids):
+        return " ".join(str(i) for i in ids)
+
+
+def _fresh_model():
+    args = ModelArgs(
+        model_type="qwen2",
+        hidden_size=64,
+        num_hidden_layers=N_LAYERS,
+        intermediate_size=128,
+        num_attention_heads=4,
+        rms_norm_eps=1e-6,
+        vocab_size=128,
+        num_key_value_heads=2,
+        max_position_embeddings=512,
+        rope_theta=10000.0,
+    )
+    model = Model(args)
+    mx.eval(model.parameters())
+    return model
+
+
+def _fw_engine_config(opt_steps: int = 1):
+    from core.brain.llm.latent_cortex.types import (
+        BranchConfig,
+        CortexConfig,
+        RecurrenceConfig,
+    )
+
+    return CortexConfig(
+        workspace=WorkspaceConfig(n_slots=4, seed=7),
+        recurrence=RecurrenceConfig(max_steps=2, min_steps=1),
+        branches=BranchConfig(n_branches=1),
+        latent_opt=LatentOptConfig(enabled=False),
+        fast_weights=FastWeightsConfig(
+            enabled=True, rank=2, target="o_proj", opt_steps=opt_steps
+        ),
+        decode_max_tokens=4,
+    )
+
+
+def _force_accepted_step(monkeypatch, bump: float = 1e-3):
+    """Deterministically accept one benign ΔW step regardless of the proxy."""
+
+    def patched(self, loss_fn, **kwargs):
+        for handle in self.handles:
+            handle.wrapper.U = handle.wrapper.U * 0.0 + bump
+            handle.wrapper.V = handle.wrapper.V * 0.0 + bump
+        self.lifecycle.optimization_attempts += 1
+        self.lifecycle.optimized_steps += 1
+        self.lifecycle.loss_trail.extend([1.0, 0.5])
+
+    monkeypatch.setattr(EpisodicFastWeights, "optimize", patched)
+
+
+def test_fast_weight_verifier_erases_on_regression(monkeypatch):
+    from core.brain.llm.latent_cortex.engine import LatentCortexEngine
+
+    _force_accepted_step(monkeypatch)
+    calls = {"n": 0}
+
+    def declining_verifier(text: str) -> float:
+        calls["n"] += 1
+        return 1.0 / calls["n"]  # every later probe scores strictly worse
+
+    engine = LatentCortexEngine(
+        _fresh_model(), _ProbeTokenizer(), config=_fw_engine_config()
+    )
+    result = engine.reason(
+        token_ids=PROMPT_TOKENS,
+        budget=ComputeBudget(),
+        verifier=declining_verifier,
+    )
+    assert result.ok
+    arbitration = result.receipt.fast_weight_verifier
+    assert arbitration["evaluated"] is True
+    assert arbitration["decision"] == "erased"
+    assert arbitration["post_score"] < arbitration["pre_score"]
+    assert "fast_weight_verifier_erased" in result.receipt.honest_flags
+    assert result.receipt.fast_weights_erased is True
+    assert "fast_weight_verifier" in result.receipt.stage_timings_s
+
+
+def test_fast_weight_verifier_accepts_on_improvement(monkeypatch):
+    from core.brain.llm.latent_cortex.engine import LatentCortexEngine
+
+    _force_accepted_step(monkeypatch)
+    calls = {"n": 0}
+
+    def improving_verifier(text: str) -> float:
+        calls["n"] += 1
+        return float(calls["n"])  # every later probe scores strictly better
+
+    engine = LatentCortexEngine(
+        _fresh_model(), _ProbeTokenizer(), config=_fw_engine_config()
+    )
+    result = engine.reason(
+        token_ids=PROMPT_TOKENS,
+        budget=ComputeBudget(),
+        verifier=improving_verifier,
+    )
+    assert result.ok
+    arbitration = result.receipt.fast_weight_verifier
+    assert arbitration["evaluated"] is True
+    assert arbitration["decision"] == "accepted"
+    assert arbitration["post_score"] > arbitration["pre_score"]
+    assert "fast_weight_verifier_erased" not in result.receipt.honest_flags
+    # Cleanup still proves erasure at episode end — acceptance is scoped.
+    assert result.receipt.fast_weights_erased is True
+
+
+def test_fast_weight_verifier_skips_identity_delta(monkeypatch):
+    from core.brain.llm.latent_cortex.engine import LatentCortexEngine
+
+    def rejecting_optimize(self, loss_fn, **kwargs):
+        self.lifecycle.optimization_attempts += 1
+        self.lifecycle.rejected_steps += 1  # V stays zero: exact identity
+
+    monkeypatch.setattr(EpisodicFastWeights, "optimize", rejecting_optimize)
+    engine = LatentCortexEngine(
+        _fresh_model(), _ProbeTokenizer(), config=_fw_engine_config()
+    )
+    result = engine.reason(
+        token_ids=PROMPT_TOKENS,
+        budget=ComputeBudget(),
+        verifier=lambda text: 1.0,
+    )
+    assert result.ok
+    arbitration = result.receipt.fast_weight_verifier
+    assert arbitration["evaluated"] is False
+    assert arbitration["decision"] == "identity_no_check"
+
+
+def test_fast_weight_verifier_absent_without_verifier(monkeypatch):
+    from core.brain.llm.latent_cortex.engine import LatentCortexEngine
+
+    _force_accepted_step(monkeypatch)
+    engine = LatentCortexEngine(
+        _fresh_model(), _ProbeTokenizer(), config=_fw_engine_config()
+    )
+    result = engine.reason(token_ids=PROMPT_TOKENS, budget=ComputeBudget())
+    assert result.ok
+    assert result.receipt.fast_weight_verifier == {}

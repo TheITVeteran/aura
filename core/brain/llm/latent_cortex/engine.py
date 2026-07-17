@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 from pathlib import Path
 import time
 import uuid
@@ -1061,6 +1062,9 @@ class LatentCortexEngine:
         )
 
         # ── Latent optimization on the winner ────────────────────────────
+        # Best VERIFIED score of the winner's final latent state — becomes
+        # the pre-adaptation reference for fast-weight verifier arbitration.
+        latent_opt_verifier_score = float("-inf")
         if self.config.latent_opt.enabled:
             loss_fn = build_proxy_loss(self.model, winner.anchor, tokens, self.config.latent_opt)
             optimizer = LatentOptimizer(
@@ -1096,7 +1100,7 @@ class LatentCortexEngine:
                         winner.z = saved
                         winner.workspace.update(saved)
 
-                z_opt, _ = optimizer.run_with_verifier(
+                z_opt, latent_opt_verifier_score = optimizer.run_with_verifier(
                     winner.z,
                     z_score,
                     verifier_layer_apps=(
@@ -1148,6 +1152,30 @@ class LatentCortexEngine:
                 canary_baseline = canaries.measure(
                     lambda probe_tokens: self._canary_logits(probe_tokens, budget)
                 )
+            # Verified pre-adaptation reference. Reuse the latent-opt score
+            # when it exists (same latent state, zero extra compute);
+            # otherwise decode one probe on base weights, budget admitting.
+            fw_verifier_pre: float | None = None
+            if verifier is not None and self.tokenizer is not None:
+                if math.isfinite(latent_opt_verifier_score):
+                    fw_verifier_pre = float(latent_opt_verifier_score)
+                else:
+                    probe_cost = (
+                        self.config.workspace.n_slots
+                        + len(bridge_tokens or [])
+                        + 47
+                    ) * self.n_layers
+                    if probe_cost + safety_reserve <= budget.remaining_layer_apps:
+                        probe = self._decode_probe(
+                            winner,
+                            cache,
+                            runner,
+                            budget,
+                            bridge_tokens=bridge_tokens,
+                        )
+                        pre = float(verifier(self.tokenizer.decode(probe)))
+                        if math.isfinite(pre):
+                            fw_verifier_pre = pre
             stage_started = self._stage_checkpoint(
                 receipt=receipt,
                 budget=budget,
@@ -1225,6 +1253,29 @@ class LatentCortexEngine:
                         progress=progress,
                         cancel_check=cancel_check,
                         decision=canary_decision,
+                    )
+                if verifier is not None and self.tokenizer is not None:
+                    verifier_decision = self._enforce_fast_weight_verifier(
+                        verifier,
+                        fast_weights,
+                        winner,
+                        cache,
+                        runner,
+                        budget,
+                        bridge_tokens,
+                        receipt,
+                        pre_score=fw_verifier_pre,
+                        safety_reserve=safety_reserve,
+                    )
+                    stage_started = self._stage_checkpoint(
+                        receipt=receipt,
+                        budget=budget,
+                        stage="fast_weight_verifier",
+                        stage_started=stage_started,
+                        episode_started=episode_started,
+                        progress=progress,
+                        cancel_check=cancel_check,
+                        decision=verifier_decision,
                     )
 
             # Experiment-3 instrumentation: destroy one refined thought slot
@@ -1480,6 +1531,99 @@ class LatentCortexEngine:
             "decision": decision,
             "rescales": rescales,
             **comparison,
+        }
+        return decision
+
+    def _enforce_fast_weight_verifier(
+        self,
+        verifier: Callable[[str], float],
+        fast_weights: EpisodicFastWeights,
+        winner: BranchState,
+        cache,
+        runner: WindowRunner,
+        budget: ComputeBudget,
+        bridge_tokens: list[int] | None,
+        receipt: EpisodeReceipt,
+        *,
+        pre_score: float | None,
+        safety_reserve: int,
+    ) -> str:
+        """Give the task verifier the last word over the adapted function.
+
+        Decode one probe under active ΔW and compare its verified score
+        against the verified score of the SAME latent state before
+        adaptation. A regression erases ΔW — the episode continues on base
+        weights with its refined latent state intact. Identity ΔW (no
+        accepted step) and canary-erased ΔW are never re-measured; a
+        missing pre-adaptation reference or an unaffordable probe keeps ΔW
+        (the canaries already guarded protected behavior) but is receipted
+        so the consumer knows arbitration did not run.
+        """
+        lifecycle = fast_weights.lifecycle
+        if lifecycle.canary_erased or not fast_weights.handles:
+            receipt.fast_weight_verifier = {
+                "evaluated": False,
+                "decision": "already_erased",
+            }
+            return "already_erased"
+        if lifecycle.optimized_steps <= 0:
+            receipt.fast_weight_verifier = {
+                "evaluated": False,
+                "decision": "identity_no_check",
+            }
+            return "identity_no_check"
+        if pre_score is None or not math.isfinite(pre_score):
+            receipt.fast_weight_verifier = {
+                "evaluated": False,
+                "decision": "no_reference",
+            }
+            receipt.flag("fast_weight_verifier_no_reference")
+            return "no_reference"
+        probe_cost = (
+            self.config.workspace.n_slots + len(bridge_tokens or []) + 47
+        ) * self.n_layers
+        if probe_cost + safety_reserve > budget.remaining_layer_apps:
+            receipt.fast_weight_verifier = {
+                "evaluated": False,
+                "decision": "skipped_budget",
+                "pre_score": round(float(pre_score), 6),
+            }
+            receipt.flag("fast_weight_verifier_skipped_budget")
+            return "skipped_budget"
+        probe = self._decode_probe(
+            winner,
+            cache,
+            runner,
+            budget,
+            bridge_tokens=bridge_tokens,
+        )
+        post_score = float(verifier(self.tokenizer.decode(probe)))
+        if not math.isfinite(post_score):
+            fast_weights.canary_erase()
+            receipt.fast_weight_verifier = {
+                "evaluated": True,
+                "decision": "erased_nonfinite_score",
+                "pre_score": round(float(pre_score), 6),
+            }
+            receipt.flag("fast_weight_verifier_erased")
+            return "erased_nonfinite_score"
+        if post_score < float(pre_score) - 1e-6:
+            fast_weights.canary_erase()
+            decision = "erased"
+            receipt.flag("fast_weight_verifier_erased")
+            logger.info(
+                "Fast-weight verifier erased ΔW: verified score regressed "
+                "%.4f → %.4f under the adapted function",
+                float(pre_score),
+                post_score,
+            )
+        else:
+            decision = "accepted"
+        receipt.fast_weight_verifier = {
+            "evaluated": True,
+            "decision": decision,
+            "pre_score": round(float(pre_score), 6),
+            "post_score": round(post_score, 6),
         }
         return decision
 
