@@ -1,0 +1,470 @@
+{
+ "checkpoint": {
+  "files": 1,
+  "fingerprint": "d6e4ecf7593b78cb88ded2f4e98dd26b16802b38d2421b2af805eaea2f24f37d",
+  "method": "sha256"
+ },
+ "claim_scope": "offline mechanism and scaling evidence only; exact installed-app resident-32B frontier certification is a separate required run",
+ "deadline_exceeded": false,
+ "finished_at": 1784277813.258155,
+ "frontier_claim_eligible": false,
+ "model": "/Users/bryan/.cache/huggingface/hub/models--mlx-community--Qwen2.5-1.5B-Instruct-4bit/snapshots/8b403126fc14f14cfc99bb4cfa72ecbc129ea677/",
+ "requested_experiments": [
+  "1",
+  "2",
+  "4"
+ ],
+ "results": {
+  "exp1": {
+   "claim": {
+    "evidence": {
+     "curve": [
+      {
+       "accuracy": 0.1806,
+       "layer_apps": 405944,
+       "n": 72,
+       "name": "steps=1",
+       "successes": 13,
+       "wilson_lb": 0.118,
+       "wilson_ub": 0.2662
+      },
+      {
+       "accuracy": 0.1111,
+       "layer_apps": 429492,
+       "n": 72,
+       "name": "steps=2",
+       "successes": 8,
+       "wilson_lb": 0.0638,
+       "wilson_ub": 0.1866
+      },
+      {
+       "accuracy": 0.0972,
+       "layer_apps": 469028,
+       "n": 72,
+       "name": "steps=4",
+       "successes": 7,
+       "wilson_lb": 0.0536,
+       "wilson_ub": 0.17
+      },
+      {
+       "accuracy": 0.0972,
+       "layer_apps": 590772,
+       "n": 72,
+       "name": "steps=8",
+       "successes": 7,
+       "wilson_lb": 0.0536,
+       "wilson_ub": 0.17
+      }
+     ],
+     "limitation": "equal-compute baseline missing",
+     "n_tasks": 72
+    },
+    "experiment": "exp1_recurrence_sweep",
+    "graded_at": 1784277654.9447198,
+    "statement": "additional recurrent steps improve equal-compute accuracy",
+    "tier": "CONJECTURE"
+   },
+   "curve": [
+    {
+     "accuracy": 0.1806,
+     "layer_apps": 405944,
+     "n": 72,
+     "name": "steps=1",
+     "successes": 13,
+     "wilson_lb": 0.118,
+     "wilson_ub": 0.2662
+    },
+    {
+     "accuracy": 0.1111,
+     "layer_apps": 429492,
+     "n": 72,
+     "name": "steps=2",
+     "successes": 8,
+     "wilson_lb": 0.0638,
+     "wilson_ub": 0.1866
+    },
+    {
+     "accuracy": 0.0972,
+     "layer_apps": 469028,
+     "n": 72,
+     "name": "steps=4",
+     "successes": 7,
+     "wilson_lb": 0.0536,
+     "wilson_ub": 0.17
+    },
+    {
+     "accuracy": 0.0972,
+     "layer_apps": 590772,
+     "n": 72,
+     "name": "steps=8",
+     "successes": 7,
+     "wilson_lb": 0.0536,
+     "wilson_ub": 0.17
+    }
+   ],
+   "monotone_gain": false
+  },
+  "exp2": {
+   "boolean": {
+    "claim": {
+     "evidence": {
+      "t_required": {
+       "2": 2,
+       "4": null,
+       "8": null
+      }
+     },
+     "experiment": "exp2_depth_extrapolation",
+     "graded_at": 1784277696.5910022,
+     "statement": "required recurrence scales with compositional depth",
+     "tier": "CONJECTURE"
+    },
+    "family": "boolean",
+    "matrix": {
+     "2": {
+      "1": 0.25,
+      "2": 0.5,
+      "4": 0.125,
+      "8": 0.25
+     },
+     "4": {
+      "1": 0.0,
+      "2": 0.0,
+      "4": 0.0,
+      "8": 0.0
+     },
+     "8": {
+      "1": 0.25,
+      "2": 0.0,
+      "4": 0.125,
+      "8": 0.25
+     }
+    },
+    "t_required": {
+     "2": 2,
+     "4": null,
+     "8": null
+    }
+   },
+   "khop": {
+    "claim": {
+     "evidence": {
+      "t_required": {
+       "2": null,
+       "4": null,
+       "8": null
+      }
+     },
+     "experiment": "exp2_depth_extrapolation",
+     "graded_at": 1784277669.7297752,
+     "statement": "required recurrence scales with compositional depth",
+     "tier": "CONJECTURE"
+    },
+    "family": "khop",
+    "matrix": {
+     "2": {
+      "1": 0.0,
+      "2": 0.0,
+      "4": 0.0,
+      "8": 0.0
+     },
+     "4": {
+      "1": 0.0,
+      "2": 0.0,
+      "4": 0.0,
+      "8": 0.0
+     },
+     "8": {
+      "1": 0.0,
+      "2": 0.0,
+      "4": 0.0,
+      "8": 0.0
+     }
+    },
+    "t_required": {
+     "2": null,
+     "4": null,
+     "8": null
+    }
+   },
+   "modular": {
+    "claim": {
+     "evidence": {
+      "t_required": {
+       "2": 4,
+       "4": null,
+       "8": null
+      }
+     },
+     "experiment": "exp2_depth_extrapolation",
+     "graded_at": 1784277756.9094772,
+     "statement": "required recurrence scales with compositional depth",
+     "tier": "CONJECTURE"
+    },
+    "family": "modular",
+    "matrix": {
+     "2": {
+      "1": 0.25,
+      "2": 0.375,
+      "4": 0.5,
+      "8": 0.5
+     },
+     "4": {
+      "1": 0.25,
+      "2": 0.0,
+      "4": 0.0,
+      "8": 0.125
+     },
+     "8": {
+      "1": 0.0,
+      "2": 0.0,
+      "4": 0.0,
+      "8": 0.0
+     }
+    },
+    "t_required": {
+     "2": 4,
+     "4": null,
+     "8": null
+    }
+   }
+  },
+  "exp4": {
+   "claim": {
+    "evidence": {
+     "alpha": 0.05,
+     "bootstrap_resamples": 10000,
+     "compute_tolerance": 0.05,
+     "families": {
+      "boolean": {
+       "compute_mismatch_task_ids": [
+        "boolean:2:160444617923:0",
+        "boolean:2:160444617924:1",
+        "boolean:2:160444617925:2",
+        "boolean:2:160444617926:3",
+        "boolean:2:160444617927:4",
+        "boolean:2:160444617928:5",
+        "boolean:2:160444617929:6",
+        "boolean:2:160444617930:7",
+        "boolean:4:160444617923:8",
+        "boolean:4:160444617924:9",
+        "boolean:4:160444617925:10",
+        "boolean:4:160444617926:11",
+        "boolean:4:160444617927:12",
+        "boolean:4:160444617928:13",
+        "boolean:4:160444617929:14",
+        "boolean:4:160444617930:15",
+        "boolean:8:160444617923:16",
+        "boolean:8:160444617924:17",
+        "boolean:8:160444617925:18",
+        "boolean:8:160444617926:19",
+        "boolean:8:160444617927:20",
+        "boolean:8:160444617928:21",
+        "boolean:8:160444617929:22",
+        "boolean:8:160444617930:23"
+       ],
+       "control_wins": 12,
+       "effect_bound_alpha": 0.016666666666666666,
+       "effect_interval": [
+        -0.625,
+        0.0
+       ],
+       "missing_compute": false,
+       "n": 24,
+       "nonpositive_compute": false,
+       "one_sided_exact_p": 0.9893646240234375,
+       "paired_effect": -0.333333,
+       "ties": 8,
+       "treatment_wins": 4
+      },
+      "khop": {
+       "compute_mismatch_task_ids": [
+        "khop:2:160444617923:0",
+        "khop:2:160444617924:1",
+        "khop:2:160444617925:2",
+        "khop:2:160444617926:3",
+        "khop:2:160444617927:4",
+        "khop:2:160444617928:5",
+        "khop:2:160444617929:6",
+        "khop:2:160444617930:7",
+        "khop:4:160444617923:8",
+        "khop:4:160444617924:9",
+        "khop:4:160444617925:10",
+        "khop:4:160444617926:11",
+        "khop:4:160444617927:12",
+        "khop:4:160444617928:13",
+        "khop:4:160444617929:14",
+        "khop:4:160444617930:15",
+        "khop:8:160444617923:16",
+        "khop:8:160444617924:17",
+        "khop:8:160444617925:18",
+        "khop:8:160444617926:19",
+        "khop:8:160444617927:20",
+        "khop:8:160444617928:21",
+        "khop:8:160444617929:22",
+        "khop:8:160444617930:23"
+       ],
+       "control_wins": 4,
+       "effect_bound_alpha": 0.016666666666666666,
+       "effect_interval": [
+        -0.333333,
+        -0.041667
+       ],
+       "missing_compute": false,
+       "n": 24,
+       "nonpositive_compute": false,
+       "one_sided_exact_p": 1.0,
+       "paired_effect": -0.166667,
+       "ties": 20,
+       "treatment_wins": 0
+      },
+      "modular": {
+       "compute_mismatch_task_ids": [
+        "modular:2:160444617925:2",
+        "modular:2:160444617928:5",
+        "modular:2:160444617930:7",
+        "modular:4:160444617923:8",
+        "modular:4:160444617924:9",
+        "modular:4:160444617925:10",
+        "modular:4:160444617926:11",
+        "modular:4:160444617927:12",
+        "modular:4:160444617928:13",
+        "modular:4:160444617929:14",
+        "modular:4:160444617930:15",
+        "modular:8:160444617923:16",
+        "modular:8:160444617924:17",
+        "modular:8:160444617925:18",
+        "modular:8:160444617926:19",
+        "modular:8:160444617927:20",
+        "modular:8:160444617928:21",
+        "modular:8:160444617929:22",
+        "modular:8:160444617930:23"
+       ],
+       "control_wins": 0,
+       "effect_bound_alpha": 0.016666666666666666,
+       "effect_interval": [
+        0.0,
+        0.208333
+       ],
+       "missing_compute": false,
+       "n": 24,
+       "nonpositive_compute": false,
+       "one_sided_exact_p": 0.25,
+       "paired_effect": 0.083333,
+       "ties": 22,
+       "treatment_wins": 2
+      }
+     },
+     "holm_adjusted_p": {
+      "boolean": 1.0,
+      "khop": 1.0,
+      "modular": 0.75
+     },
+     "invalid_compute_families": [
+      "khop",
+      "boolean",
+      "modular"
+     ],
+     "method": "paired exact McNemar/binomial + Holm correction + alpha-derived one-sided percentile bounds",
+     "minimum_effect": 0.0,
+     "pooled": {
+      "control_wins": 16,
+      "effect_bound_alpha": 0.05,
+      "effect_interval": [
+       -0.25,
+       -0.027778
+      ],
+      "n": 72,
+      "one_sided_exact_p": 0.9915497303009033,
+      "paired_effect": -0.138889,
+      "treatment_wins": 6
+     },
+     "positive_families": [],
+     "regressed_families": [
+      "khop"
+     ],
+     "required_positive_families": 2,
+     "underpowered_families": []
+    },
+    "experiment": "exp4_virtual_width",
+    "graded_at": 1784277813.258115,
+    "statement": "latent branches beat equal-FLOP self-consistency sampling",
+    "tier": "CONJECTURE"
+   },
+   "control": {
+    "boolean": {
+     "accuracy": 0.5,
+     "layer_apps": 261016,
+     "n": 24,
+     "name": "sampling_k2",
+     "successes": 12,
+     "wilson_lb": 0.3408,
+     "wilson_ub": 0.6592
+    },
+    "khop": {
+     "accuracy": 0.1667,
+     "layer_apps": 252560,
+     "n": 24,
+     "name": "sampling_k2",
+     "successes": 4,
+     "wilson_lb": 0.0771,
+     "wilson_ub": 0.3238
+    },
+    "modular": {
+     "accuracy": 0.0417,
+     "layer_apps": 231336,
+     "n": 24,
+     "name": "sampling_k2",
+     "successes": 1,
+     "wilson_lb": 0.0094,
+     "wilson_ub": 0.1669
+    }
+   },
+   "treatment": {
+    "boolean": {
+     "accuracy": 0.1667,
+     "layer_apps": 194040,
+     "n": 24,
+     "name": "branches_k2",
+     "successes": 4,
+     "wilson_lb": 0.0771,
+     "wilson_ub": 0.3238
+    },
+    "khop": {
+     "accuracy": 0.0,
+     "layer_apps": 185416,
+     "n": 24,
+     "name": "branches_k2",
+     "successes": 0,
+     "wilson_lb": 0.0,
+     "wilson_ub": 0.1013
+    },
+    "modular": {
+     "accuracy": 0.125,
+     "layer_apps": 211316,
+     "n": 24,
+     "name": "branches_k2",
+     "successes": 3,
+     "wilson_lb": 0.0511,
+     "wilson_ub": 0.2749
+    }
+   }
+  }
+ },
+ "settings": {
+  "branches": 2,
+  "depths": "2,4,8",
+  "experiments": "1,2,4",
+  "families": "khop,boolean,modular",
+  "max_minutes": 55.0,
+  "model": "/Users/bryan/.cache/huggingface/hub/models--mlx-community--Qwen2.5-1.5B-Instruct-4bit/snapshots/8b403126fc14f14cfc99bb4cfa72ecbc129ea677/",
+  "n_slots": 16,
+  "out": "artifacts/current/latent_campaign_1p5b_run1.json",
+  "per_cell": 8,
+  "record_foundry": true,
+  "steps": "1,2,4,8",
+  "task_seed": 20260717,
+  "vanilla_baseline": false
+ },
+ "started_at": 1784277555.259274
+}
