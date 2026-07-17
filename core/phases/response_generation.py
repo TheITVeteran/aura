@@ -1609,10 +1609,54 @@ class ResponseGenerationPhase(BasePhase):
                                 "reason": "latent_cycle_budget_insufficient",
                             }
                         else:
+                            # Typed ingress: how much thought this episode
+                            # deserves comes from the organs that know
+                            # (memory familiarity, body pressure, goals,
+                            # Will, felt uncertainty, self-model, world
+                            # model), each receipted — never from prompt
+                            # punctuation. The prompt-shape gate above still
+                            # decides WHETHER the turn is depth-worthy.
+                            ingress_stakes = float(selection.get("stakes") or 0.75)
+                            ingress_uncertainty = float(
+                                selection.get("uncertainty") or 0.80
+                            )
+                            try:
+                                from core.brain.cognitive_ingress import (
+                                    assemble_cognitive_ingress,
+                                )
+
+                                ingress = assemble_cognitive_ingress(
+                                    getattr(self, "orchestrator", None),
+                                    str(
+                                        runtime_context.get("visible_user_message")
+                                        or objective
+                                        or ""
+                                    ),
+                                )
+                                ingress_stakes = max(ingress.stakes, ingress_stakes - 0.15)
+                                ingress_uncertainty = ingress.uncertainty
+                                latent_trace["latent_cortex_ingress"] = (
+                                    ingress.to_receipt()
+                                )
+                            except (
+                                ImportError,
+                                AttributeError,
+                                RuntimeError,
+                                TypeError,
+                                ValueError,
+                            ) as ingress_exc:
+                                record_degradation(
+                                    "latent_cortex",
+                                    ingress_exc,
+                                    action=(
+                                        "allocated latent episode from prompt-shape "
+                                        "defaults after typed ingress failed"
+                                    ),
+                                )
                             latent_result = await service.deep_reason(
                                 messages=messages,
-                                stakes=float(selection.get("stakes") or 0.75),
-                                uncertainty=float(selection.get("uncertainty") or 0.80),
+                                stakes=ingress_stakes,
+                                uncertainty=ingress_uncertainty,
                                 domain=str(
                                     runtime_context.get("latent_cortex_domain")
                                     or "desktop_conversation"
