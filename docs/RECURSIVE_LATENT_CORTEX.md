@@ -123,6 +123,18 @@ no theatrical success.
 
 Results are graded claims — PROVEN / SUPPORTED / CONJECTURE / REFUTED — and
 verifier verdicts are recorded to the Verifier Foundry reliability ledger.
+
+Experiment 6 evidence is certified by a standalone verification kernel
+(`frontier_verifier.py` + `tools/verify_latent_cortex_frontier.py`) that
+recomputes every raw binding from disk. Two comparison kinds are supported:
+`resident_32b_vs_vanilla_same_checkpoint` (same-checkpoint superiority) and
+`resident_32b_vs_external_frontier` (frontier comparison). External-frontier
+evidence must pin the control model/build/provider in the preregistration,
+bind every trial's control receipt to those pins, and ship the raw provider
+responses in a `provider_receipts` store whose per-trial SHA-256 is
+recomputable — otherwise the package is rejected. Supporting a comparison
+kind is evidence machinery, not a capability claim: no external-frontier
+campaign has run yet.
 Task generators are seeded and self-verifying (graph reachability, boolean
 evaluation, modular-arithmetic composition), so Experiments 1–5 run offline
 on any checkpoint, including the tiny random-weight Qwen2 used by the test

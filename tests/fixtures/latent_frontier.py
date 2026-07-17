@@ -141,17 +141,21 @@ def _certify(bundle: dict) -> dict:
     )
 
 
-def _bundle(*, include_attestation: bool = True) -> dict:
+def _bundle(
+    *,
+    include_attestation: bool = True,
+    comparison_kind: str = "resident_32b_vs_vanilla_same_checkpoint",
+) -> dict:
     checkpoint = "8" * 64
     app_build = "4" * 64
+    external = comparison_kind == "resident_32b_vs_external_frontier"
     prereg = {
         "protocol_id": "rlc-frontier-v1",
-        "comparison_kind": "resident_32b_vs_vanilla_same_checkpoint",
+        "comparison_kind": comparison_kind,
         "architecture_freeze_sha256": "a" * 64,
         "tool_policy_sha256": "c" * 64,
         "compute_estimator_sha256": "e" * 64,
         "treatment_checkpoint_fingerprint": checkpoint,
-        "control_checkpoint_fingerprint": checkpoint,
         "frozen_at": 1000.0,
         "domains": ["math", "coding", "science"],
         "min_trials_per_domain": 40,
@@ -160,6 +164,12 @@ def _bundle(*, include_attestation: bool = True) -> dict:
         "compute_tolerance": 0.05,
         "compute_metric": "estimated_flops",
     }
+    if external:
+        prereg["control_model_id"] = "frontier-model-x"
+        prereg["control_model_build_fingerprint"] = "build-2026-06"
+        prereg["control_provider"] = "frontier-provider"
+    else:
+        prereg["control_checkpoint_fingerprint"] = checkpoint
     trials = []
     index = 0
     for domain in prereg["domains"]:
@@ -224,17 +234,29 @@ def _bundle(*, include_attestation: bool = True) -> dict:
                         "steps_taken": 4,
                         "honest_flags": [],
                     },
-                    "control_receipt": {
-                        "request_id": f"control-{trial_id}",
-                        "mode": "vanilla",
-                        "latent_cortex_enabled": False,
-                        "params_unchanged": True,
-                        "checkpoint_fingerprint": checkpoint,
-                        "checkpoint_fingerprint_method": "sha256",
-                        "checkpoint_file_count": 8,
-                        "worker_boot_id": "boot-live-1",
-                        "installed_app_build_sha256": app_build,
-                    },
+                    "control_receipt": (
+                        {
+                            "request_id": f"control-{trial_id}",
+                            "model_id": "frontier-model-x",
+                            "model_build_fingerprint": "build-2026-06",
+                            "provider": "frontier-provider",
+                            "provider_receipt_sha256": canonical_sha256(
+                                ["provider", trial_id]
+                            ),
+                        }
+                        if external
+                        else {
+                            "request_id": f"control-{trial_id}",
+                            "mode": "vanilla",
+                            "latent_cortex_enabled": False,
+                            "params_unchanged": True,
+                            "checkpoint_fingerprint": checkpoint,
+                            "checkpoint_fingerprint_method": "sha256",
+                            "checkpoint_file_count": 8,
+                            "worker_boot_id": "boot-live-1",
+                            "installed_app_build_sha256": app_build,
+                        }
+                    ),
                 }
             )
             index += 1

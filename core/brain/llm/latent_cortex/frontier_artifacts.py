@@ -41,6 +41,11 @@ _BLOB_STORES = {
     "verifier_receipts": "verifier_receipt_sha256",
 }
 _STRUCTURED_STORE = "structured_receipts"
+# External-frontier comparisons must ship the raw provider responses so the
+# per-trial provider_receipt_sha256 binding is independently recomputable —
+# without them, "the frontier model said X" would be an unverifiable claim.
+_PROVIDER_STORE = "provider_receipts"
+_EXTERNAL_COMPARISON_KIND = "resident_32b_vs_external_frontier"
 _REQUIRED_STORES = frozenset((*_BLOB_STORES, _STRUCTURED_STORE))
 _STRUCTURED_FIELDS = (
     "treatment_receipt",
@@ -402,8 +407,20 @@ def verify_raw_artifact_package(
     for field in ("producer_id", "preregistration_sha256", "task_commitment_sha256"):
         if manifest.get(field) != bundle.get(field):
             _fail("raw_artifact_manifest_bundle_mismatch")
+    preregistration = bundle.get("preregistration")
+    comparison_kind = (
+        str(preregistration.get("comparison_kind") or "")
+        if isinstance(preregistration, Mapping)
+        else ""
+    )
+    external_comparison = comparison_kind == _EXTERNAL_COMPARISON_KIND
+    required_stores = (
+        _REQUIRED_STORES | {_PROVIDER_STORE}
+        if external_comparison
+        else _REQUIRED_STORES
+    )
     stores = manifest.get("stores")
-    if not isinstance(stores, dict) or set(stores) != _REQUIRED_STORES:
+    if not isinstance(stores, dict) or set(stores) != required_stores:
         _fail("raw_artifact_store_set_invalid")
     descriptors = {name: _validate_descriptor(stores[name], store=name) for name in sorted(stores)}
     paths = [str(descriptor["path"]) for descriptor in descriptors.values()]
@@ -438,6 +455,17 @@ def verify_raw_artifact_package(
             _fail(f"{name}_trial_set_mismatch")
         decoded_stores[name] = decoded
         store_receipts[name] = receipt
+    if external_comparison:
+        decoded, receipt = _read_jsonl_store(
+            Path(artifact_root),
+            descriptors[_PROVIDER_STORE],
+            store=_PROVIDER_STORE,
+            decoder=_decode_blob_row,
+        )
+        if set(decoded) != expected_trial_ids:
+            _fail("provider_receipts_trial_set_mismatch")
+        decoded_stores[_PROVIDER_STORE] = decoded
+        store_receipts[_PROVIDER_STORE] = receipt
     structured, structured_receipt = _read_jsonl_store(
         Path(artifact_root),
         descriptors[_STRUCTURED_STORE],
@@ -458,6 +486,17 @@ def verify_raw_artifact_package(
             if digest != trial.get(field):
                 _fail(f"{store}_bundle_hash_mismatch")
             row[field] = digest
+        if external_comparison:
+            control_receipt = trial.get("control_receipt")
+            expected_provider_digest = (
+                control_receipt.get("provider_receipt_sha256")
+                if isinstance(control_receipt, Mapping)
+                else None
+            )
+            provider_record = decoded_stores[_PROVIDER_STORE][trial_id]
+            if provider_record["payload_sha256"] != expected_provider_digest:
+                _fail("provider_receipts_bundle_hash_mismatch")
+            row["provider_receipt_sha256"] = expected_provider_digest
         verifier_receipt = decoded_stores["verifier_receipts"][trial_id].get("receipt")
         _validate_trial_verifier_receipt(verifier_receipt, trial)
         for field in _STRUCTURED_FIELDS:

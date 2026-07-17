@@ -45,6 +45,7 @@ _STORE_NAMES = (
     "verifier_receipts",
     "structured_receipts",
 )
+_EXTERNAL_COMPARISON = "resident_32b_vs_external_frontier"
 
 
 def _jsonl(rows: list[dict]) -> bytes:
@@ -78,12 +79,19 @@ def _publish_manifest_and_bundle(package: dict, *, signed: bool) -> None:
     _write_json(package["bundle_path"], package["bundle"])
 
 
-def _build_package(tmp_path: Path, *, signed: bool = True) -> dict:
+def _build_package(
+    tmp_path: Path,
+    *,
+    signed: bool = True,
+    comparison_kind: str = "resident_32b_vs_vanilla_same_checkpoint",
+) -> dict:
     root = tmp_path / "frontier-package"
     raw = root / "raw"
     raw.mkdir(parents=True)
-    bundle = _bundle(include_attestation=False)
-    rows = {name: [] for name in _STORE_NAMES}
+    external = comparison_kind == _EXTERNAL_COMPARISON
+    store_names = (*_STORE_NAMES, "provider_receipts") if external else _STORE_NAMES
+    bundle = _bundle(include_attestation=False, comparison_kind=comparison_kind)
+    rows = {name: [] for name in store_names}
 
     for trial in bundle["trials"]:
         trial_id = trial["trial_id"]
@@ -119,6 +127,19 @@ def _build_package(tmp_path: Path, *, signed: bool = True) -> dict:
             "scorer_configs": scorer,
             "verifier_receipts": verifier_payload,
         }
+        if external:
+            provider = canonical_json_bytes(
+                {
+                    "model_id": trial["control_receipt"]["model_id"],
+                    "provider": trial["control_receipt"]["provider"],
+                    "request_id": trial["control_receipt"]["request_id"],
+                    "response": f"control output {trial_id}",
+                }
+            )
+            trial["control_receipt"]["provider_receipt_sha256"] = hashlib.sha256(
+                provider
+            ).hexdigest()
+            payloads["provider_receipts"] = provider
         for store, payload in payloads.items():
             rows[store].append(
                 {
@@ -153,7 +174,7 @@ def _build_package(tmp_path: Path, *, signed: bool = True) -> dict:
         "manifest_path": root / "manifest.json",
         "trust_path": root / "trust.json",
     }
-    for name in _STORE_NAMES:
+    for name in store_names:
         _publish_store(package, name)
     _publish_manifest_and_bundle(package, signed=signed)
     _write_json(package["trust_path"], _trust_config())
@@ -367,17 +388,134 @@ def test_standalone_verifier_rejects_unpinned_local_verification_kernel(
     assert certificate["reasons"] == ["verification_kernel_trust_pin_mismatch"]
 
 
-def test_standalone_verifier_refuses_external_model_comparison_without_telemetry(
+def test_standalone_verifier_accepts_complete_external_frontier_package(tmp_path: Path):
+    package = _build_package(tmp_path, comparison_kind=_EXTERNAL_COMPARISON)
+
+    first = _verify(package)
+    second = _verify(package)
+
+    assert first == second
+    assert first["accepted"] is True, first["reasons"]
+    assert first["claim_tier"] == "PROVEN"
+    assert first["core_certificate"]["comparison_kind"] == _EXTERNAL_COMPARISON
+    assert first["artifact_verification"]["artifact_store_count"] == 7
+    assert first["artifact_verification"]["trial_count"] == 120
+
+
+def test_standalone_verifier_refuses_relabeled_external_comparison_without_provider_receipts(
     tmp_path: Path,
 ):
     package = _build_package(tmp_path)
-    package["bundle"]["preregistration"]["comparison_kind"] = "resident_32b_vs_external_frontier"
+    package["bundle"]["preregistration"]["comparison_kind"] = _EXTERNAL_COMPARISON
     _write_json(package["bundle_path"], package["bundle"])
 
     certificate = _verify(package)
 
     assert certificate["accepted"] is False
-    assert certificate["reasons"] == ["external_frontier_comparable_telemetry_unimplemented"]
+    assert certificate["reasons"] == ["raw_artifact_store_set_invalid"]
+
+
+def test_standalone_verifier_rejects_external_package_missing_provider_store(
+    tmp_path: Path,
+):
+    package = _build_package(tmp_path, comparison_kind=_EXTERNAL_COMPARISON)
+    del package["manifest"]["stores"]["provider_receipts"]
+    (package["root"] / "raw" / "provider_receipts.jsonl").unlink()
+    _publish_manifest_and_bundle(package, signed=True)
+
+    certificate = _verify(package)
+
+    assert certificate["accepted"] is False
+    assert certificate["reasons"] == ["raw_artifact_store_set_invalid"]
+
+
+def test_standalone_verifier_rejects_vanilla_package_shipping_provider_store(
+    tmp_path: Path,
+):
+    package = _build_package(tmp_path)
+    package["rows"]["provider_receipts"] = [
+        {
+            "payload_b64": base64.b64encode(b"unexpected provider evidence").decode("ascii"),
+            "trial_id": package["bundle"]["trials"][0]["trial_id"],
+        }
+    ]
+    _publish_store(package, "provider_receipts")
+    _publish_manifest_and_bundle(package, signed=True)
+
+    certificate = _verify(package)
+
+    assert certificate["accepted"] is False
+    assert certificate["reasons"] == ["raw_artifact_store_set_invalid"]
+
+
+def test_standalone_verifier_rejects_forged_provider_receipt_bytes(tmp_path: Path):
+    package = _build_package(tmp_path, comparison_kind=_EXTERNAL_COMPARISON)
+    package["rows"]["provider_receipts"][0]["payload_b64"] = base64.b64encode(
+        b"forged provider response"
+    ).decode("ascii")
+    _publish_store(package, "provider_receipts")
+    _publish_manifest_and_bundle(package, signed=True)
+
+    certificate = _verify(package)
+
+    assert certificate["accepted"] is False
+    assert certificate["reasons"] == ["provider_receipts_bundle_hash_mismatch"]
+
+
+def test_standalone_verifier_rejects_missing_provider_receipt_record(tmp_path: Path):
+    package = _build_package(tmp_path, comparison_kind=_EXTERNAL_COMPARISON)
+    package["rows"]["provider_receipts"].pop()
+    _publish_store(package, "provider_receipts")
+    _publish_manifest_and_bundle(package, signed=True)
+
+    certificate = _verify(package)
+
+    assert certificate["accepted"] is False
+    assert certificate["reasons"] == ["provider_receipts_trial_set_mismatch"]
+
+
+def test_standalone_verifier_rejects_unknown_comparison_kind(tmp_path: Path):
+    package = _build_package(tmp_path)
+    package["bundle"]["preregistration"]["comparison_kind"] = "resident_32b_vs_wishful_thinking"
+    _write_json(package["bundle_path"], package["bundle"])
+
+    certificate = _verify(package)
+
+    assert certificate["accepted"] is False
+    assert certificate["verification_status"] == "MALFORMED_OR_TAMPERED"
+    assert certificate["reasons"] == ["comparison_kind_unsupported"]
+
+
+def test_external_attestation_prepare_and_signature_complete_the_flow(tmp_path: Path):
+    package = _build_package(tmp_path, signed=False, comparison_kind=_EXTERNAL_COMPARISON)
+
+    request = prepare_independent_attestation_request(
+        bundle_path=package["bundle_path"],
+        manifest_path=package["manifest_path"],
+        artifact_root=package["root"],
+        trust_path=package["trust_path"],
+        verifier_id=_VERIFIER_ID,
+        verified_at=3000.0,
+    )
+
+    payload = request["signed_payload"]
+    package["bundle"]["independent_verifier"] = {
+        "schema": INDEPENDENT_ATTESTATION_SCHEMA,
+        "signed_payload": payload,
+        "signer": {
+            "algorithm": "Ed25519",
+            "signer_id": _VERIFIER_ID,
+            "public_key_b64": _VERIFIER_PUBLIC_KEY,
+            "signature_b64": base64.b64encode(
+                _VERIFIER_KEY.sign(canonical_json_bytes(payload))
+            ).decode("ascii"),
+        },
+    }
+    _write_json(package["bundle_path"], package["bundle"])
+
+    certificate = _verify(package)
+    assert certificate["accepted"] is True, certificate["reasons"]
+    assert certificate["core_certificate"]["comparison_kind"] == _EXTERNAL_COMPARISON
 
 
 def test_standalone_cli_returns_truthful_exit_codes(tmp_path: Path):

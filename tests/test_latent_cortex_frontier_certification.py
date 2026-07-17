@@ -8,6 +8,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from core.brain.llm.latent_cortex.frontier_certification import (
+    canonical_sha256,
     evidence_payload_sha256,
     verify_frontier_gain_bundle,
 )
@@ -33,6 +34,61 @@ def test_frontier_certificate_accepts_only_complete_replicated_gain():
     assert certificate["task_issuer_id"] == _TASK_ISSUER_ID
     assert certificate["task_commitment_attestation_sha256"]
     assert certificate["certificate_sha256"]
+
+
+def test_frontier_certificate_accepts_external_frontier_comparison():
+    certificate = _certify(_bundle(comparison_kind="resident_32b_vs_external_frontier"))
+    assert certificate["accepted"] is True, certificate["reasons"]
+    assert certificate["comparison_kind"] == "resident_32b_vs_external_frontier"
+    assert certificate["claim_tier"] == "PROVEN"
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_reason"),
+    [
+        (
+            lambda b: b["preregistration"].pop("control_model_id"),
+            "external_frontier_control_model_missing",
+        ),
+        (
+            lambda b: b["preregistration"].pop("control_model_build_fingerprint"),
+            "external_frontier_control_build_missing",
+        ),
+        (
+            lambda b: b["preregistration"].pop("control_provider"),
+            "external_frontier_control_provider_missing",
+        ),
+        (
+            lambda b: b["trials"][0]["control_receipt"].update(model_id="different-model"),
+            "external_control_model_mismatch",
+        ),
+        (
+            lambda b: b["trials"][0]["control_receipt"].update(
+                model_build_fingerprint="different-build"
+            ),
+            "external_control_build_mismatch",
+        ),
+        (
+            lambda b: b["trials"][0]["control_receipt"].update(provider="different-provider"),
+            "external_control_provider_mismatch",
+        ),
+        (
+            lambda b: b["trials"][0]["control_receipt"].pop("provider_receipt_sha256"),
+            "external_control_receipt_unproven",
+        ),
+    ],
+)
+def test_frontier_certificate_rejects_unpinned_external_control(mutation, expected_reason):
+    bundle = _bundle(comparison_kind="resident_32b_vs_external_frontier")
+    mutation(bundle)
+    bundle["preregistration_sha256"] = canonical_sha256(bundle["preregistration"])
+    _refresh_task_commitment(bundle)
+    _refresh_attestation(bundle)
+
+    certificate = _certify(bundle)
+
+    assert certificate["accepted"] is False
+    assert any(expected_reason in reason for reason in certificate["reasons"])
 
 
 def test_frontier_certificate_requires_an_external_trust_root():

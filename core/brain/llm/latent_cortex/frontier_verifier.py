@@ -31,7 +31,15 @@ VERIFICATION_KERNEL_IDENTITY_SCHEMA = "aura.latent_cortex.verification_kernel_id
 
 _PIN_FIELDS = {"public_key_b64", "implementation_sha256", "release_sha256"}
 _EXPECTED_PREATTESTATION_REASON = "independent_verifier_trust_pin_missing"
-_SUPPORTED_COMPARISON = "resident_32b_vs_vanilla_same_checkpoint"
+_SUPPORTED_COMPARISONS = frozenset(
+    {
+        "resident_32b_vs_vanilla_same_checkpoint",
+        # External-frontier evidence: the certification core validates the
+        # pinned control model/build/provider per trial, and the raw package
+        # must ship recomputable provider receipts (frontier_artifacts).
+        "resident_32b_vs_external_frontier",
+    }
+)
 _MAX_IMPLEMENTATION_MODULE_BYTES = 16 * 1024 * 1024
 
 
@@ -223,8 +231,8 @@ def _validate_supported_comparison(bundle: Mapping[str, Any]) -> None:
     comparison = (
         preregistration.get("comparison_kind") if isinstance(preregistration, Mapping) else None
     )
-    if comparison != _SUPPORTED_COMPARISON:
-        _fail("external_frontier_comparable_telemetry_unimplemented")
+    if comparison not in _SUPPORTED_COMPARISONS:
+        _fail("comparison_kind_unsupported")
 
 
 def verify_frontier_evidence_package(
