@@ -781,10 +781,14 @@ class LatentCortexEngine:
             },
         )
         receipt.budget = budget.to_receipt()
-        if (
-            not failure_reason
-            and receipt.decode_termination not in {"eos", "token_limit"}
-        ):
+        if not failure_reason and receipt.decode_termination not in {
+            "eos",
+            "token_limit",
+            # The limit landed mid-sentence and sampling continued a few
+            # model-chosen tokens to the natural boundary — a complete
+            # answer, receipted under its own termination kind.
+            "token_limit_sentence_grace",
+        }:
             failure_reason = f"decode_incomplete:{receipt.decode_termination}"
         if receipt.params_unchanged is False:
             receipt.flag("checkpoint_invariant_violated")
