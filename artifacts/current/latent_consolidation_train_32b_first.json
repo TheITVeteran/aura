@@ -1,0 +1,129 @@
+{
+ "candidates": [
+  {
+   "checkpoint_fingerprint": "8eae71e73a14d1228a942d4faf84690d70b62148f25b0f924435535f7c550fad",
+   "created_at": 1784253542.596716,
+   "domain": "desktop_conversation",
+   "episode_id": "0a73e16ff884",
+   "loss_improvement": 0.440777,
+   "path": "/Users/bryan/.aura/data/latent_cortex/consolidation_queue/0a73e16ff884",
+   "rejection_reasons": [
+    "honest_flags_present:latent_opt_no_accepted_step"
+   ],
+   "valid": false
+  },
+  {
+   "checkpoint_fingerprint": "8eae71e73a14d1228a942d4faf84690d70b62148f25b0f924435535f7c550fad",
+   "created_at": 1784273461.2525902,
+   "domain": "desktop_conversation",
+   "episode_id": "2af4525eadb0",
+   "loss_improvement": 0.238977,
+   "path": "/Users/bryan/.aura/data/latent_cortex/consolidation_queue/2af4525eadb0",
+   "rejection_reasons": [
+    "honest_flags_present:decode_wall_reserve"
+   ],
+   "valid": false
+  },
+  {
+   "checkpoint_fingerprint": "8eae71e73a14d1228a942d4faf84690d70b62148f25b0f924435535f7c550fad",
+   "created_at": 1784254343.770655,
+   "domain": "desktop_conversation",
+   "episode_id": "2fb3c42b7d56",
+   "loss_improvement": 0.47505,
+   "path": "/Users/bryan/.aura/data/latent_cortex/consolidation_queue/2fb3c42b7d56",
+   "rejection_reasons": [],
+   "valid": true
+  },
+  {
+   "checkpoint_fingerprint": "8eae71e73a14d1228a942d4faf84690d70b62148f25b0f924435535f7c550fad",
+   "created_at": 1784272213.343328,
+   "domain": "desktop_conversation",
+   "episode_id": "63d4ee2aac30",
+   "loss_improvement": 0.846497,
+   "path": "/Users/bryan/.aura/data/latent_cortex/consolidation_queue/63d4ee2aac30",
+   "rejection_reasons": [],
+   "valid": true
+  },
+  {
+   "checkpoint_fingerprint": "8eae71e73a14d1228a942d4faf84690d70b62148f25b0f924435535f7c550fad",
+   "created_at": 1784273064.136876,
+   "domain": "desktop_conversation",
+   "episode_id": "691a2b54b426",
+   "loss_improvement": 0.435762,
+   "path": "/Users/bryan/.aura/data/latent_cortex/consolidation_queue/691a2b54b426",
+   "rejection_reasons": [],
+   "valid": true
+  },
+  {
+   "checkpoint_fingerprint": "8eae71e73a14d1228a942d4faf84690d70b62148f25b0f924435535f7c550fad",
+   "created_at": 1784275888.084599,
+   "domain": "desktop_conversation",
+   "episode_id": "88535d3a0f64",
+   "loss_improvement": 0.311501,
+   "path": "/Users/bryan/.aura/data/latent_cortex/consolidation_queue/88535d3a0f64",
+   "rejection_reasons": [],
+   "valid": true
+  },
+  {
+   "checkpoint_fingerprint": "8eae71e73a14d1228a942d4faf84690d70b62148f25b0f924435535f7c550fad",
+   "created_at": 1784253921.943764,
+   "domain": "desktop_conversation",
+   "episode_id": "9857ae8e14ae",
+   "loss_improvement": 0.280548,
+   "path": "/Users/bryan/.aura/data/latent_cortex/consolidation_queue/9857ae8e14ae",
+   "rejection_reasons": [],
+   "valid": true
+  },
+  {
+   "checkpoint_fingerprint": "8eae71e73a14d1228a942d4faf84690d70b62148f25b0f924435535f7c550fad",
+   "created_at": 1784273796.410259,
+   "domain": "desktop_conversation",
+   "episode_id": "98cd8ab0a00f",
+   "loss_improvement": 0.34293,
+   "path": "/Users/bryan/.aura/data/latent_cortex/consolidation_queue/98cd8ab0a00f",
+   "rejection_reasons": [],
+   "valid": true
+  },
+  {
+   "checkpoint_fingerprint": "8eae71e73a14d1228a942d4faf84690d70b62148f25b0f924435535f7c550fad",
+   "created_at": 1784275509.708983,
+   "domain": "desktop_conversation",
+   "episode_id": "996b2961ea5f",
+   "loss_improvement": 0.232025,
+   "path": "/Users/bryan/.aura/data/latent_cortex/consolidation_queue/996b2961ea5f",
+   "rejection_reasons": [],
+   "valid": true
+  }
+ ],
+ "finished_at": 1784279858.854761,
+ "model": "/Users/bryan/.aura/live-source/training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118",
+ "queue": "/Users/bryan/.aura/data/latent_cortex/consolidation_queue",
+ "schema": "aura.latent_consolidation_train_report.v1",
+ "started_at": 1784279817.583724,
+ "trains": [
+  {
+   "activated": true,
+   "activated_layers": [
+    16,
+    17
+   ],
+   "adapter_id": "latent_desktop_conversation_1784279823",
+   "distillation": {
+    "adapter_dir": "/Users/bryan/.aura/data/latent_cortex/durable_adapters/latent_desktop_conversation_1784279823",
+    "ok": true
+   },
+   "domain": "desktop_conversation",
+   "interference_battery": {
+    "probes": 11,
+    "stable_fraction": 1.0,
+    "verdict": "PASS"
+   },
+   "rollback": {
+    "restored_layers": 2,
+    "rollback_proven": true
+   },
+   "schema": "aura.latent_consolidation_train.v1",
+   "started_at": 1784279823.290713
+  }
+ ]
+}
