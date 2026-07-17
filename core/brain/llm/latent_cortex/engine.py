@@ -73,7 +73,7 @@ _NEWLINE_RESAMPLE_ATTEMPTS = 4
 # still entirely model-sampled tokens, charged to the budget, receipted as
 # termination "token_limit_sentence_grace". A truncated tail otherwise
 # fails the product gate as a terminal fragment (CP110 live evidence).
-_SENTENCE_GRACE_TOKENS = 24
+_SENTENCE_GRACE_TOKENS = 48
 _SENTENCE_TERMINALS = (".", "!", "?", ".\n", "!\n", "?\n")
 
 # Guard classes the engine treats as "latent phase failed, fall back honest".

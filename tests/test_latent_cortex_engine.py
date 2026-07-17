@@ -581,7 +581,7 @@ def test_sentence_grace_finishes_the_sentence(tiny_model, monkeypatch):
     )
     assert termination == "token_limit_sentence_grace"
     assert out[-1] == period_id, "grace must end at the model's own period"
-    assert 6 < len(out) <= 6 + 24
+    assert 6 < len(out) <= 6 + 48
 
 
 def test_eos_floor_suppresses_early_stop(tiny_model, monkeypatch):

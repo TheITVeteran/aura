@@ -965,9 +965,10 @@ def test_compound_objective_expands_answer_surface(monkeypatch):
     )
     assert result == {"ok": False, "reason": "profile_observed"}
     assert 320 <= captured["config"]["decode_max_tokens"] <= 384
-    # The persona temperature is preserved; the degeneration guard is the
-    # repetition penalty, not a temperature clamp (CP105 lesson).
-    assert captured["config"]["decode_temperature"] == 0.58
+    # Compound answers decode near-greedy for coverage determinism — safe
+    # now that the repetition penalty, EOS floor, and newline discipline
+    # guard against the degeneration CP105 measured at low temperature.
+    assert captured["config"]["decode_temperature"] == 0.3
     assert captured["config"]["decode_repetition_penalty"] == 1.25
     assert captured["config"]["decode_repetition_window"] == 72
     assert captured["config"]["decode_bridge_policy"] == "assistant_answer_v2"

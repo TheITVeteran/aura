@@ -893,6 +893,22 @@ class LatentCortexService:
                 # EOS floor: a compound answer abandoned 16 tokens in is
                 # sampling variance, not a decision (CP116 live evidence).
                 config["decode_min_tokens"] = 96
+                # Coverage determinism: compound answers must satisfy every
+                # requested facet inside a bounded budget; persona-lane
+                # temperature (0.58) makes that a coin flip (CP113-117 each
+                # failed on a different sampling tail). CP105's lesson was
+                # that a temperature clamp WITHOUT a degeneration guard
+                # loops; the repetition penalty, EOS floor, and newline
+                # discipline now make low-temperature decoding safe.
+                try:
+                    requested_temperature = float(
+                        config.get("decode_temperature") or 0.0
+                    )
+                except (TypeError, ValueError, OverflowError):
+                    return self._record_failure(
+                        "invalid_decode_temperature_override"
+                    )
+                config["decode_temperature"] = min(0.3, max(0.0, requested_temperature))
             else:
                 config["decode_max_tokens"] = max(
                     64,
