@@ -223,3 +223,53 @@ def test_engine_export_lands_valid_candidate_in_queue(tiny_model, tmp_path, monk
         # A tiny random model may reject every optimizer step — then the
         # export must NOT have happened and the queue must be empty.
         assert not queue.exists() or not any(queue.iterdir())
+
+
+def test_natural_probes_measure_protected_behavior_regions(tiny_model):
+    from core.learning.interference_battery import (
+        NATURAL_STABILITY_PROBE_TEXTS,
+        natural_stability_probes,
+        stability_probes_for,
+    )
+
+    class Vocab8Tokenizer:
+        def encode(self, text, add_special_tokens=False):
+            return [ord(ch) % 8 for ch in text][:16]
+
+    tokenizer = Vocab8Tokenizer()
+    probes = natural_stability_probes(tokenizer)
+    assert len(probes) == len(NATURAL_STABILITY_PROBE_TEXTS)
+    assert all(probe for probe in probes)
+    # With a tokenizer the selector must prefer the natural battery.
+    assert stability_probes_for(tiny_model, tokenizer) == probes
+
+
+def test_probe_selector_falls_back_without_tokenizer(tiny_model):
+    from core.learning.interference_battery import (
+        default_stability_probes,
+        stability_probes_for,
+    )
+
+    assert stability_probes_for(tiny_model, None) == default_stability_probes()
+
+
+def test_battery_runs_on_natural_probes(tiny_model):
+    from core.brain.llm.latent_cortex.fast_weights import EpisodicFastWeights
+    from core.brain.llm.latent_cortex.types import FastWeightsConfig
+    from core.learning.interference_battery import run_interference_battery
+
+    class Vocab8Tokenizer:
+        def encode(self, text, add_special_tokens=False):
+            return [ord(ch) % 8 for ch in text][:16]
+
+    fw = EpisodicFastWeights(FastWeightsConfig(enabled=True, rank=2, target="o_proj"))
+    receipt = run_interference_battery(
+        tiny_model,
+        lambda: fw.attach(
+            tiny_model.model, (2, 6), seed_stat=0.4, episode_id="battery-natural"
+        ),
+        fw.detach,
+        tokenizer=Vocab8Tokenizer(),
+    )
+    assert receipt["verdict"] == "PASS"  # identity attach must not move behavior
+    assert receipt["probes"] == 11

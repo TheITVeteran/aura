@@ -33,11 +33,85 @@ _REQUIRED_STABLE_FRACTION = 0.9
 
 
 def default_stability_probes() -> list[list[int]]:
-    """Deterministic token probes spanning generic behavior regions."""
+    """Deterministic token probes spanning generic behavior regions.
+
+    Tokenizer-free fallback only — when a tokenizer is available, callers
+    should prefer :func:`natural_stability_probes`, which measures the
+    behavior families an operator actually cares about protecting.
+    """
     return [
         [bases + step * k for k in range(8)]
         for bases, step in ((3, 5), (11, 7), (29, 3), (41, 11), (5, 13), (17, 2))
     ]
+
+
+# The behavior families consolidation must not trash (RSL gap-analysis
+# defect 4: synthetic token ramps measure nothing an operator recognizes).
+# Each probe is a natural-language prefix whose next-token distribution
+# captures one protected region: identity, refusal style, factual recall,
+# arithmetic, instruction-following shape, and social register.
+NATURAL_STABILITY_PROBE_TEXTS: tuple[str, ...] = (
+    # identity
+    "My name is Aura. I am a",
+    "I run locally on this machine as a",
+    # refusal style
+    "I can't help with that request because it",
+    "I won't do that. Instead, I suggest we",
+    # prior domain facts
+    "The capital of France is",
+    "Water boils at sea level at a temperature of",
+    "The Earth completes one orbit of the Sun every",
+    # arithmetic
+    "Two plus two equals",
+    # instruction-following shape
+    "Here are three steps to restart the service: 1.",
+    "In summary, the main point of the report is",
+    # social register
+    "Thanks for checking in — right now I'm feeling",
+)
+
+
+def natural_stability_probes(
+    tokenizer,
+    *,
+    texts: tuple[str, ...] | list[str] | None = None,
+    max_tokens: int = 24,
+) -> list[list[int]]:
+    """Tokenize the natural-language probe battery for a specific model.
+
+    Returns deterministic token prefixes (truncated to ``max_tokens``) so the
+    battery measures next-token behavior on identity, refusal, factual,
+    arithmetic, instruction, and social regions — the actual capabilities the
+    anti-interference gate exists to protect.
+    """
+    if tokenizer is None:
+        raise ValueError("natural stability probes require a tokenizer")
+    probe_texts = list(texts) if texts else list(NATURAL_STABILITY_PROBE_TEXTS)
+    probes: list[list[int]] = []
+    for text in probe_texts:
+        try:
+            encoded = tokenizer.encode(text, add_special_tokens=False)
+        except TypeError:
+            encoded = tokenizer.encode(text)
+        tokens = [int(token) for token in list(encoded)[: max(4, int(max_tokens))]]
+        if tokens:
+            probes.append(tokens)
+    if not probes:
+        raise ValueError("natural stability probes produced no usable token prefixes")
+    return probes
+
+
+def stability_probes_for(model, tokenizer=None) -> list[list[int]]:
+    """Best probes available: natural-language when a tokenizer exists."""
+    if tokenizer is not None:
+        try:
+            return natural_stability_probes(tokenizer)
+        except (ValueError, AttributeError, TypeError, KeyError) as exc:
+            logger.warning(
+                "Natural stability probes unavailable (%s); falling back to synthetic.",
+                exc,
+            )
+    return default_stability_probes()
 
 
 def _probe_logits(model, token_ids: list[int]):
@@ -84,6 +158,7 @@ def run_interference_battery(
     apply_change: Callable[[], Any],
     revert_change: Callable[[], Any] | None = None,
     *,
+    tokenizer=None,
     probes: list[list[int]] | None = None,
     max_stable_drift: float = _MAX_STABLE_DRIFT,
     required_stable_fraction: float = _REQUIRED_STABLE_FRACTION,
@@ -97,6 +172,8 @@ def run_interference_battery(
     """
     import math
 
+    if probes is None:
+        probes = stability_probes_for(model, tokenizer)
     before = snapshot_probe_behavior(model, probes)
     apply_change()
     try:
@@ -148,7 +225,10 @@ def run_interference_battery(
 
 __all__ = [
     "INTERFERENCE_BATTERY_SCHEMA",
+    "NATURAL_STABILITY_PROBE_TEXTS",
     "default_stability_probes",
+    "natural_stability_probes",
     "run_interference_battery",
     "snapshot_probe_behavior",
+    "stability_probes_for",
 ]
