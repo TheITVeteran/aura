@@ -1,0 +1,32 @@
+{
+  "schema": "aura.latent_campaign_preregistration.v1",
+  "campaign_id": "rlc-offline-1p5b-20260717",
+  "registered_at": "2026-07-17T05:30:00-07:00",
+  "registered_before_any_campaign_task_was_generated": true,
+  "model": "mlx-community/Qwen2.5-1.5B-Instruct-4bit (offline lab vehicle; resident 32B stays live)",
+  "task_seed": 20260717,
+  "families": ["khop", "boolean", "modular"],
+  "depths": [2, 4, 8],
+  "per_cell": 8,
+  "steps": [1, 2, 4, 8],
+  "n_slots": 16,
+  "branches": 2,
+  "runs": [
+    {"run": 1, "experiments": ["1", "2", "4"], "max_minutes": 55},
+    {"run": 2, "experiments": ["3", "5", "A"], "max_minutes": 75}
+  ],
+  "hypotheses": {
+    "exp1": "latent accuracy rises with recurrent steps and beats the equal-FLOP vanilla baseline",
+    "exp2": "required steps scale with problem depth (T_required ∝ depth)",
+    "exp3": "ablating refined thought slots causes specific, recoverable accuracy loss",
+    "exp4": "K latent branches beat K-sample self-consistency at verified equal FLOPs",
+    "exp5": "gradient-direction latent optimization beats matched-magnitude random perturbation",
+    "ablations": "any observed gain decomposes onto identifiable mechanisms vs vanilla"
+  },
+  "grading": "conservative paired grading in core/brain/llm/latent_cortex/experiments.py (Holm-corrected, compute-mismatch voiding, n<20 => CONJECTURE); claims recorded to the Verifier Foundry",
+  "honesty_bounds": [
+    "1.5B results are mechanism evidence, not resident-32B capability claims",
+    "frozen-loop literature predicts small or null gains; a null result is a reportable outcome",
+    "no reruns with new seeds after seeing results; this file commits the seed first"
+  ]
+}

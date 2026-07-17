@@ -79,6 +79,12 @@ def main() -> int:
     parser.add_argument("--branches", type=_positive_int, default=2)
     parser.add_argument("--max-minutes", type=_positive_float, default=30.0)
     parser.add_argument("--out", default="")
+    parser.add_argument(
+        "--task-seed",
+        type=_positive_int,
+        default=11,
+        help="task-battery seed; preregister a FRESH value for campaign runs",
+    )
     parser.add_argument("--record-foundry", action="store_true")
     parser.add_argument(
         "--vanilla-baseline",
@@ -405,7 +411,7 @@ def _run_admitted_lab(
         "results": {},
     }
 
-    battery = task_battery(families, depths, args.per_cell, seed=11)
+    battery = task_battery(families, depths, args.per_cell, seed=args.task_seed)
     try:
         if "1" in wanted and not out_of_time():
             print(f"▶ Experiment 1: recurrence sweep over {len(battery)} tasks …", flush=True)
