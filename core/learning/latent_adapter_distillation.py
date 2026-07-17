@@ -41,6 +41,15 @@ _TARGET_ATTRS = {
     "o_proj": ("self_attn", "o_proj"),
     "down_proj": ("mlp", "down_proj"),
 }
+
+
+def _linear_dims(module) -> tuple[int, int]:
+    """(out_features, in_features) for Linear or QuantizedLinear."""
+    weight = module.weight
+    if hasattr(module, "scales"):  # QuantizedLinear packs weights
+        bits = int(getattr(module, "bits", 4))
+        return int(weight.shape[0]), int(weight.shape[1]) * (32 // bits)
+    return int(weight.shape[0]), int(weight.shape[1])
 # Held-out accuracy may drop at most this much after activation.
 _HELDOUT_REGRESSION_TOLERANCE = 0.02
 
@@ -150,17 +159,30 @@ def distill_proposal_to_adapter(
         return {"ok": False, "reason": f"mixed_targets:{sorted(targets)}"}
     if len(fingerprints) != 1:
         return {"ok": False, "reason": "mixed_checkpoint_fingerprints"}
+    if not next(iter(fingerprints)):
+        return {"ok": False, "reason": "checkpoint_fingerprint_missing"}
     if set(per_layer_u) != set(per_layer_v):
         return {"ok": False, "reason": "layer_uv_mismatch"}
+    # One model ⇒ one geometry. Every U must share out_features and every V
+    # in_features, across candidates AND layers — the leaked tiny-model
+    # candidates (hidden 64) crashing a 32B attach is the failure this
+    # refuses at the merge, before any model is touched.
+    out_dims = {u.shape[0] for us in per_layer_u.values() for u in us}
+    in_dims = {v.shape[1] for vs in per_layer_v.values() for v in vs}
+    if len(out_dims) != 1 or len(in_dims) != 1:
+        return {
+            "ok": False,
+            "reason": (
+                f"candidate_dimension_mismatch:out={sorted(out_dims)}:in={sorted(in_dims)}"
+            ),
+        }
 
     n = len(candidates)
     merged: dict[str, Any] = {}
     for layer_index in sorted(per_layer_u):
         us, vs = per_layer_u[layer_index], per_layer_v[layer_index]
-        if len(us) != n or len(vs) != n:
-            # A layer only some episodes touched still merges exactly: the
-            # missing episodes contributed zero delta on that layer.
-            pass
+        # Dividing by n (not len(us)) is the exact mean over ALL candidates:
+        # an episode that never touched this layer contributed zero delta.
         merged[f"layer{layer_index}_U"] = np.concatenate(us, axis=1)
         merged[f"layer{layer_index}_V"] = np.concatenate(
             [v / float(n) for v in vs], axis=0
@@ -227,6 +249,15 @@ def _attach(model, adapter_dir: Path) -> ActiveDurableAdapter:
             layer = inner.layers[int(layer_index)]
             parent = getattr(layer, parent_attr)
             original = getattr(parent, leaf_attr)
+            u = arrays[f"layer{layer_index}_U"]
+            v = arrays[f"layer{layer_index}_V"]
+            out_features, in_features = _linear_dims(original)
+            if u.shape[0] != out_features or v.shape[1] != in_features:
+                raise ValueError(
+                    "adapter_model_dimension_mismatch: adapter "
+                    f"({u.shape[0]}x{v.shape[1]}) vs module "
+                    f"({out_features}x{in_features}) at layer {layer_index}"
+                )
             wrapper = DurableDeltaLinear(
                 original,
                 arrays[f"layer{layer_index}_U"],
@@ -330,12 +361,25 @@ def run_consolidation_train(
         nonlocal trial
         trial = _attach(model, adapter_path)
 
-    battery = run_interference_battery(
-        model,
-        apply_change,
-        lambda: _detach(trial),
-        probes=probes,
-    )
+    try:
+        battery = run_interference_battery(
+            model,
+            apply_change,
+            lambda: _detach(trial),
+            probes=probes,
+        )
+    except (ValueError, KeyError, IndexError, RuntimeError, TypeError) as exc:
+        # Attach-time refusals (dimension mismatch, malformed artifact) leave
+        # the model untouched (_attach unwinds transactionally) and become an
+        # honest refusal, never a crashed train.
+        _detach(trial)
+        record_degradation(
+            "latent_adapter_distillation",
+            exc,
+            action="refused adapter activation after attach-time validation failed",
+        )
+        receipt["refusal_reason"] = f"attach_failed:{exc}"
+        return receipt
     receipt["interference_battery"] = {
         "verdict": battery["verdict"],
         "stable_fraction": battery["stable_fraction"],

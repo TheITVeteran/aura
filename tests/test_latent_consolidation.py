@@ -23,7 +23,7 @@ from core.learning.latent_consolidation import (
 
 
 def _make_candidate(root, episode_id, *, domain="math", erase=True, steps=2,
-                    trail=(3.0, 2.0), flags=()):
+                    trail=(3.0, 2.0), flags=(), fingerprint="fp-abc"):
     d = root / episode_id
     d.mkdir(parents=True)
     (d / "delta_weights.npz").write_bytes(b"npz-bytes")
@@ -35,6 +35,7 @@ def _make_candidate(root, episode_id, *, domain="math", erase=True, steps=2,
             "domain": domain,
             "loss_trail": list(trail),
             "honest_flags": list(flags),
+            "checkpoint_fingerprint": fingerprint,
         },
     }))
     return d
@@ -357,13 +358,24 @@ def test_distillation_merge_is_the_exact_mean_delta(tmp_path):
 
 
 def test_mixed_fingerprints_refuse_distillation(tmp_path):
+    """Aggregation is fingerprint-scoped, so a mixed proposal can no longer
+    be BUILT — but the distiller's own refusal stays as belt and braces
+    against hand-assembled or legacy proposals."""
     from core.learning.latent_adapter_distillation import distill_proposal_to_adapter
 
     queue = tmp_path / "queue"
-    _make_weighted_candidate(queue, "ep-0", fingerprint="fp-a")
-    _make_weighted_candidate(queue, "ep-1", fingerprint="fp-a")
-    _make_weighted_candidate(queue, "ep-2", fingerprint="fp-DIFFERENT")
-    proposal = _proposal_for(queue)
+    dirs = [
+        _make_weighted_candidate(queue, "ep-0", fingerprint="fp-a"),
+        _make_weighted_candidate(queue, "ep-1", fingerprint="fp-a"),
+        _make_weighted_candidate(queue, "ep-2", fingerprint="fp-DIFFERENT"),
+    ]
+    # Fingerprint-scoped aggregation refuses to build the mixed proposal.
+    assert build_proposals(scan_queue(queue), min_candidates=3) == []
+    # A hand-assembled mixed proposal still refuses at the distiller.
+    proposal = {
+        "domain": "math",
+        "candidates": [validate_candidate(d).to_dict() for d in dirs],
+    }
     result = distill_proposal_to_adapter(proposal, adapter_dir=tmp_path / "adapters")
     assert not result["ok"]
     assert result["reason"] == "mixed_checkpoint_fingerprints"
@@ -439,3 +451,89 @@ def test_heldout_regression_blocks_activation(tiny_model, tmp_path):
     )
     assert receipt["activated"] is False
     assert receipt["refusal_reason"] == "heldout_regression"
+
+
+# ── Provenance discipline (the Jul-2026 leaked-candidate incident) ───────
+
+
+def test_missing_fingerprint_candidate_is_rejected(tmp_path):
+    record = validate_candidate(_make_candidate(tmp_path, "ep-anon", fingerprint=""))
+    assert not record.valid
+    assert "checkpoint_fingerprint_missing" in record.rejection_reasons
+
+
+def test_proposals_are_scoped_per_checkpoint_fingerprint(tmp_path):
+    for i in range(3):
+        _make_candidate(tmp_path, f"a-{i}", domain="chat", fingerprint="fp-32b")
+    for i in range(2):
+        _make_candidate(tmp_path, f"b-{i}", domain="chat", fingerprint="fp-tiny")
+    proposals = build_proposals(scan_queue(tmp_path), min_candidates=3)
+    assert len(proposals) == 1
+    assert proposals[0]["checkpoint_fingerprint"] == "fp-32b"
+    assert proposals[0]["candidate_count"] == 3
+
+
+def test_cross_dimension_candidates_refuse_distillation(tmp_path):
+    from core.learning.latent_adapter_distillation import distill_proposal_to_adapter
+
+    queue = tmp_path / "queue"
+    _make_weighted_candidate(queue, "big-0", hidden=128)
+    _make_weighted_candidate(queue, "big-1", hidden=128)
+    _make_weighted_candidate(queue, "tiny-0", hidden=64)
+    proposal = _proposal_for(queue)
+    result = distill_proposal_to_adapter(proposal, adapter_dir=tmp_path / "adapters")
+    assert not result["ok"]
+    assert result["reason"].startswith("candidate_dimension_mismatch")
+
+
+def test_attach_dimension_mismatch_is_refused_not_crashed(tiny_model, tmp_path):
+    """An adapter distilled for a different model must refuse cleanly at the
+    train, leave the model untouched, and never crash the run."""
+    from core.learning.interference_battery import snapshot_probe_behavior
+    from core.learning.latent_adapter_distillation import run_consolidation_train
+
+    queue = tmp_path / "queue"
+    for i in range(3):
+        # hidden=128 adapters against the hidden=64 tiny model.
+        _make_weighted_candidate(queue, f"ep-{i}", hidden=128, layers=(2, 3))
+    proposal = _proposal_for(queue)
+    before = snapshot_probe_behavior(tiny_model)
+    receipt = run_consolidation_train(
+        proposal, tiny_model, adapter_dir=tmp_path / "adapters"
+    )
+    assert receipt["activated"] is False
+    assert receipt["refusal_reason"].startswith("attach_failed")
+    after = snapshot_probe_behavior(tiny_model)
+    assert [r["digest"] for r in before] == [r["digest"] for r in after]
+
+
+def test_anonymous_episode_never_exports(tiny_model):
+    """An engine without model_path (no checkpoint fingerprint) must refuse
+    candidate export even when the episode is mechanically clean."""
+    from core.brain.llm.latent_cortex.engine import LatentCortexEngine
+    from core.brain.llm.latent_cortex.types import (
+        BranchConfig,
+        CortexConfig,
+        FastWeightsConfig,
+        LatentOptConfig,
+        RecurrenceConfig,
+        WorkspaceConfig,
+    )
+
+    engine = LatentCortexEngine(
+        tiny_model,
+        config=CortexConfig(
+            workspace=WorkspaceConfig(n_slots=4, seed=3),
+            recurrence=RecurrenceConfig(max_steps=3, min_steps=2),
+            branches=BranchConfig(n_branches=1),
+            latent_opt=LatentOptConfig(enabled=False),
+            fast_weights=FastWeightsConfig(
+                enabled=True, rank=2, target="o_proj", opt_steps=3, lr=0.05,
+                export_candidates=True,
+            ),
+            decode_max_tokens=6,
+        ),
+    )
+    result = engine.reason(token_ids=[5, 9, 17, 3, 42], domain="anon-test")
+    assert result.ok
+    assert "fast_weight_candidate_exported" not in result.receipt.honest_flags

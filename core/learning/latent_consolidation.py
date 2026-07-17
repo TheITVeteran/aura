@@ -46,6 +46,7 @@ class CandidateRecord:
     loss_improvement: float
     created_at: float
     valid: bool
+    checkpoint_fingerprint: str = ""
     rejection_reasons: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -56,6 +57,7 @@ class CandidateRecord:
             "loss_improvement": round(self.loss_improvement, 6),
             "created_at": self.created_at,
             "valid": self.valid,
+            "checkpoint_fingerprint": self.checkpoint_fingerprint,
             "rejection_reasons": list(self.rejection_reasons),
         }
 
@@ -77,6 +79,7 @@ def validate_candidate(candidate_dir: Path) -> CandidateRecord:
     episode_id = candidate_dir.name
     reasons: list[str] = []
     domain = "general"
+    fingerprint = ""
     improvement = 0.0
     created_at = 0.0
     evidence_path = candidate_dir / "evidence.json"
@@ -95,6 +98,12 @@ def validate_candidate(candidate_dir: Path) -> CandidateRecord:
         lifecycle = lifecycle if isinstance(lifecycle, dict) else {}
         evidence = evidence if isinstance(evidence, dict) else {}
         domain = str(evidence.get("domain") or "general")
+        fingerprint = str(evidence.get("checkpoint_fingerprint") or "")
+        if not fingerprint:
+            # A delta without checkpoint provenance can never be evidence —
+            # and mixing checkpoints inside one adapter is how the first real
+            # 32B train crashed (leaked tiny-model candidates, Jul 2026).
+            reasons.append("checkpoint_fingerprint_missing")
         if lifecycle.get("erase_proven") is not True:
             reasons.append("erase_unproven")
         if not lifecycle.get("optimized_steps"):
@@ -124,6 +133,7 @@ def validate_candidate(candidate_dir: Path) -> CandidateRecord:
         loss_improvement=improvement,
         created_at=created_at,
         valid=not reasons,
+        checkpoint_fingerprint=fingerprint,
         rejection_reasons=reasons,
     )
 
@@ -144,19 +154,27 @@ def build_proposals(
     *,
     min_candidates: int = MIN_CANDIDATES_PER_DOMAIN,
 ) -> list[dict[str, Any]]:
-    """Aggregate valid candidates by domain into consolidation proposals."""
-    by_domain: dict[str, list[CandidateRecord]] = {}
+    """Aggregate valid candidates into proposals per (domain, checkpoint).
+
+    The checkpoint fingerprint is part of the aggregation key: one adapter
+    is only ever distilled from deltas of ONE model. Cross-checkpoint mixes
+    are structurally impossible here, not merely refused downstream.
+    """
+    by_key: dict[tuple[str, str], list[CandidateRecord]] = {}
     for record in records:
         if record.valid:
-            by_domain.setdefault(record.domain, []).append(record)
+            by_key.setdefault(
+                (record.domain, record.checkpoint_fingerprint), []
+            ).append(record)
     proposals = []
-    for domain, group in sorted(by_domain.items()):
+    for (domain, fingerprint), group in sorted(by_key.items()):
         if len(group) < min_candidates:
             continue
         proposals.append(
             {
                 "schema": CONSOLIDATION_PROPOSAL_SCHEMA,
                 "domain": domain,
+                "checkpoint_fingerprint": fingerprint,
                 "candidates": [r.to_dict() for r in group],
                 "candidate_count": len(group),
                 "mean_loss_improvement": round(

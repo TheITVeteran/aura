@@ -90,12 +90,23 @@ def _run(args: argparse.Namespace) -> int:
                 break
             print(f"▶ train: domain={proposal['domain']} "
                   f"candidates={proposal['candidate_count']} …", flush=True)
-            receipt = run_consolidation_train(
-                proposal,
-                model,
-                adapter_dir=adapter_dir,
-                tokenizer=tokenizer,
-            )
+            try:
+                receipt = run_consolidation_train(
+                    proposal,
+                    model,
+                    adapter_dir=adapter_dir,
+                    tokenizer=tokenizer,
+                )
+            except Exception as exc:  # noqa: BLE001 - one bad proposal must not kill the run
+                print(f"  train crashed: {type(exc).__name__}: {exc}", flush=True)
+                report["trains"].append(
+                    {
+                        "domain": proposal.get("domain"),
+                        "activated": False,
+                        "refusal_reason": f"train_crashed:{type(exc).__name__}",
+                    }
+                )
+                continue
             active = receipt.pop("active_adapter", None)
             if active is not None and active.active:
                 # Operator-tool contract: prove activation AND prove rollback;

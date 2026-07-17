@@ -1584,6 +1584,12 @@ class LatentCortexEngine:
         # decide what (if anything) becomes durable learning.
         if (
             self.config.fast_weights.export_candidates
+            # No checkpoint fingerprint ⇒ no provenance ⇒ never evidence.
+            # This keeps anonymous-model episodes (tests, ad-hoc engines
+            # built without model_path) out of the LIVE queue — three
+            # hidden-size-64 candidates leaked in on Jul 16 and crashed the
+            # first real 32B consolidation train at attach.
+            and receipt.checkpoint_fingerprint
             and receipt.fast_weights_erased is True
             and not lifecycle.canary_erased
             and lifecycle.optimized_steps > 0
