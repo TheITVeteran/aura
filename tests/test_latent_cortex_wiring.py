@@ -965,7 +965,11 @@ def test_compound_objective_expands_answer_surface(monkeypatch):
     )
     assert result == {"ok": False, "reason": "profile_observed"}
     assert 320 <= captured["config"]["decode_max_tokens"] <= 384
-    assert captured["config"]["decode_temperature"] <= 0.35
+    # The persona temperature is preserved; the degeneration guard is the
+    # repetition penalty, not a temperature clamp (CP105 lesson).
+    assert captured["config"]["decode_temperature"] == 0.58
+    assert captured["config"]["decode_repetition_penalty"] == 1.25
+    assert captured["config"]["decode_repetition_window"] == 72
     assert captured["config"]["decode_bridge_policy"] == "assistant_answer_v2"
     assert captured["budget"]["wall_clock_s"] >= 140.0
     assert captured["budget"]["wall_clock_s"] <= 157.0 - 8.0
@@ -1140,8 +1144,10 @@ def test_service_routes_through_client_and_records_receipt(monkeypatch):
                     "decode_requested_tokens": kwargs["config"]["decode_max_tokens"],
                     "decode_generated_tokens": 12,
                     "decode_termination": "eos",
-        "decode_newline_suppressions": 0,
                     "decode_newline_suppressions": 0,
+                    "decode_repetition_penalty_applied": kwargs["config"].get(
+                        "decode_repetition_penalty", 1.0
+                    ),
                     "decode_temperature": kwargs["config"].get(
                         "decode_temperature", 0.0
                     ),
@@ -1333,6 +1339,7 @@ def test_service_rejects_truncated_or_exhausted_decode_receipts(
         "decode_generated_tokens": 20,
         "decode_termination": termination,
         "decode_newline_suppressions": 0,
+        "decode_repetition_penalty_applied": 1.25,
         "honest_flags": [],
     }
 

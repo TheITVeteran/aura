@@ -479,3 +479,54 @@ def test_bridge_policy_v2_produces_distinct_hashable_cue(tiny_model):
         LatentCortexEngine(
             tiny_model, RecordingTokenizer(), config=_config(decode_bridge_policy="bogus")
         )
+
+
+def test_repetition_penalty_breaks_forced_loop(tiny_model, monkeypatch):
+    """A model that 'wants' to emit one token forever must be broken out of
+    the loop by the sliding-window penalty — the CP105 live degeneration
+    (one line repeated ~80 times) as a mechanical regression."""
+    import mlx.core as mx
+
+    from core.brain.llm.latent_cortex import engine as engine_mod
+    from core.brain.llm.latent_cortex.types import ComputeBudget
+    from mlx_lm.models.cache import KVCache
+
+    loop_id, alt_id, vocab = 11, 23, 128
+
+    spiked = mx.full((1, 1, vocab), -20.0)
+    spiked[0, 0, loop_id] = 6.0
+    spiked[0, 0, alt_id] = 5.5  # runner-up the penalty must expose
+
+    monkeypatch.setattr(
+        engine_mod.LatentCortexEngine, "_logits", lambda self, h: spiked
+    )
+
+    def run(penalty):
+        engine = engine_mod.LatentCortexEngine(
+            tiny_model,
+            config=_config(
+                decode_max_tokens=24,
+                decode_repetition_penalty=penalty,
+            ),
+        )
+        cache = [KVCache() for _ in tiny_model.model.layers]
+        from mlx_lm.models.base import create_attention_mask
+
+        inner = tiny_model.model
+        h = inner.embed_tokens(mx.array([PROMPT_TOKENS]))
+        mask = create_attention_mask(h, cache)
+        for i, layer in enumerate(inner.layers):
+            h = layer(h, mask, cache[i])
+        out, _ = engine._decode(cache, ComputeBudget(), spiked[0, 0], max_tokens=24, temperature=0.0)
+        return out
+
+    unguarded = run(1.0)
+    assert unguarded.count(loop_id) == len(unguarded), "control arm must loop"
+
+    guarded = run(1.25)
+    assert alt_id in guarded, "penalty must surface the runner-up token"
+    longest = run_len = 0
+    for token in guarded:
+        run_len = run_len + 1 if token == loop_id else 0
+        longest = max(longest, run_len)
+    assert longest < len(guarded), "penalty must break the monoculture"

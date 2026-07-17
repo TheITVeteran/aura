@@ -59,6 +59,8 @@ _CONFIG_KEYS = {
     "convergence_eps",
     "decode_max_tokens",
     "decode_bridge_policy",
+    "decode_repetition_penalty",
+    "decode_repetition_window",
     "decode_temperature",
     "decode_top_p",
     "divergence_ratio",
@@ -197,6 +199,12 @@ def config_from_job(job_config: dict[str, Any] | None) -> CortexConfig:
         decode_max_tokens=_typed_value(raw, "decode_max_tokens", 512, int),
         decode_temperature=_typed_value(raw, "decode_temperature", 0.0, float),
         decode_top_p=_typed_value(raw, "decode_top_p", 1.0, float),
+        decode_repetition_penalty=_typed_value(
+            raw, "decode_repetition_penalty", 1.0, float
+        ),
+        decode_repetition_window=_typed_value(
+            raw, "decode_repetition_window", 72, int
+        ),
         decode_bridge_policy=_typed_value(
             raw, "decode_bridge_policy", "none", str
         ),

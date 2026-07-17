@@ -356,6 +356,23 @@ class LatentCortexEngine:
         if budget.exhausted:
             return out, "budget_exhausted"
 
+        penalty = float(self.config.decode_repetition_penalty)
+        window = max(1, int(self.config.decode_repetition_window))
+
+        def penalize_repeats(logits):
+            """CTRL-style sliding-window repetition penalty.
+
+            Degeneration loops (one line sampled forever) survive any single
+            temperature; dividing the logits of recently-emitted tokens is
+            the standard, receipted guard. penalty=1.0 disables it."""
+            if penalty <= 1.0 or not out:
+                return logits
+            recent = sorted(set(out[-window:]))
+            ids = mx.array(recent)
+            gathered = logits[ids]
+            adjusted = mx.where(gathered > 0, gathered / penalty, gathered * penalty)
+            return logits.at[ids].add(adjusted - gathered)
+
         def sample_disciplined(logits):
             """Sample under the newline-run discipline.
 
@@ -365,6 +382,7 @@ class LatentCortexEngine:
             logits for the next sample is a sampling CONSTRAINT — the emitted
             text is still entirely the model's own tokens, never edited."""
             nonlocal suppressions
+            logits = penalize_repeats(logits)
             token = self._sample(logits, temp, nucleus)
             if self.tokenizer is None or newline_run < _MAX_NEWLINE_RUN:
                 return token
@@ -1088,6 +1106,9 @@ class LatentCortexEngine:
             receipt.decode_termination = decode_termination
             receipt.decode_newline_suppressions = int(
                 self._last_decode_newline_suppressions
+            )
+            receipt.decode_repetition_penalty_applied = float(
+                self.config.decode_repetition_penalty
             )
             if decode_termination.startswith("budget_") or decode_termination == "wall_reserve":
                 receipt.flag(f"decode_{decode_termination}")

@@ -233,6 +233,12 @@ class CortexConfig:
     decode_temperature: float = 0.0
     decode_top_p: float = 1.0
     decode_bridge_policy: str = "none"
+    # CTRL-style sliding-window repetition penalty for the answer decode.
+    # 1.0 disables; the resident live profile runs 1.25 over 72 tokens —
+    # CP105's live turn proved a degeneration loop survives temperature
+    # tuning alone (one line repeated ~80 times at t=0.35).
+    decode_repetition_penalty: float = 1.0
+    decode_repetition_window: int = 72
     input_context_max_chars: int = 0
     allow_vanilla_fallback: bool = True
 
@@ -335,6 +341,20 @@ class CortexConfig:
             problems.append("decode_temperature must be finite and inside [0, 2]")
         if not finite(self.decode_top_p) or not 0.0 < self.decode_top_p <= 1.0:
             problems.append("decode_top_p must be finite and inside (0, 1]")
+        if (
+            not finite(self.decode_repetition_penalty)
+            or not 1.0 <= self.decode_repetition_penalty <= 2.0
+        ):
+            problems.append(
+                "decode_repetition_penalty must be finite and inside [1, 2]"
+            )
+        if (
+            type(self.decode_repetition_window) is not int
+            or not 1 <= self.decode_repetition_window <= 512
+        ):
+            problems.append(
+                "decode_repetition_window must be an integer inside [1, 512]"
+            )
         if self.decode_bridge_policy not in {
             "none",
             "assistant_answer_v1",
@@ -458,6 +478,7 @@ class EpisodeReceipt:
     # already held _MAX_NEWLINE_RUN — a sampling constraint, never text
     # editing; nonzero values reveal the model still trying to babble.
     decode_newline_suppressions: int = 0
+    decode_repetition_penalty_applied: float = 1.0
     decode_temperature: float = 0.0
     decode_top_p: float = 1.0
     decode_bridge_applied: bool = False
@@ -554,6 +575,7 @@ class EpisodeReceipt:
             "decode_generated_tokens": self.decode_generated_tokens,
             "decode_termination": self.decode_termination,
             "decode_newline_suppressions": self.decode_newline_suppressions,
+            "decode_repetition_penalty_applied": self.decode_repetition_penalty_applied,
             "decode_temperature": self.decode_temperature,
             "decode_top_p": self.decode_top_p,
             "decode_bridge_applied": self.decode_bridge_applied,

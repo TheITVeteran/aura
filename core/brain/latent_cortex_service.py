@@ -380,6 +380,16 @@ class LatentCortexService:
                 errors.append("decode_bridge_logits_unproven")
         if not nonnegative_int(receipt, "decode_newline_suppressions"):
             errors.append("decode_newline_discipline_unreceipted")
+        configured_repetition = config.get("decode_repetition_penalty", 1.0)
+        applied_repetition = receipt.get("decode_repetition_penalty_applied")
+        if (
+            isinstance(applied_repetition, bool)
+            or not isinstance(applied_repetition, (int, float))
+            or not isinstance(configured_repetition, (int, float))
+            or isinstance(configured_repetition, bool)
+            or abs(float(applied_repetition) - float(configured_repetition)) > 1e-9
+        ):
+            errors.append("decode_repetition_guard_unproven")
         configured_temperature = config.get("decode_temperature", 0.0)
         configured_top_p = config.get("decode_top_p", 1.0)
         if (
@@ -721,13 +731,6 @@ class LatentCortexService:
                     256,
                     min(384, max(requested_decode_tokens, 320)),
                 )
-                try:
-                    requested_temperature = float(
-                        config.get("decode_temperature") or 0.0
-                    )
-                except (TypeError, ValueError, OverflowError):
-                    return self._record_failure("invalid_decode_temperature_override")
-                config["decode_temperature"] = min(0.35, max(0.0, requested_temperature))
                 config["decode_bridge_policy"] = "assistant_answer_v2"
             else:
                 config["decode_max_tokens"] = max(
@@ -735,6 +738,13 @@ class LatentCortexService:
                     min(256, requested_decode_tokens),
                 )
                 config["decode_bridge_policy"] = "assistant_answer_v1"
+            # Degeneration guard for every resident answer: CP105's live turn
+            # proved a repetition loop survives temperature tuning (one line
+            # ~80 times at t=0.35, trigram diversity 0.012). The persona
+            # lane's temperature is kept; the CTRL-style penalty is what
+            # actually prevents loops.
+            config["decode_repetition_penalty"] = 1.25
+            config["decode_repetition_window"] = 72
             if compound_objective:
                 # The 105s wall-clock floor was tuned for 256-token answers.
                 # A 384-token compound answer measures ≈116s on the resident
