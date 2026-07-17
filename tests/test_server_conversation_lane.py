@@ -76,6 +76,14 @@ def _bound_live_mind_controls_metadata():
 
 
 def _proven_latent_cortex_trace():
+    quality = {
+        "schema": "aura.latent_output_quality.v1",
+        "policy": "resident_latent_product_quality_v1",
+        "passed": True,
+        "text_sha256": "5" * 64,
+        "objective_sha256": "6" * 64,
+        "reasons": [],
+    }
     return {
         "latent_cortex_selected": True,
         "latent_cortex_selection_reason": "deliberate_cognitive_mode",
@@ -84,6 +92,8 @@ def _proven_latent_cortex_trace():
         "latent_cortex_succeeded": True,
         "latent_cortex_fallback_used": False,
         "latent_cortex_identity_bound": True,
+        "latent_cortex_final_output_quality": dict(quality),
+        "latent_cortex_raw_final_quality_hash_match": True,
         "latent_cortex_receipt": {
             "episode_id": "live-episode",
             "checkpoint_fingerprint": "a" * 64,
@@ -107,14 +117,7 @@ def _proven_latent_cortex_trace():
             "decode_requested_tokens": 512,
             "decode_generated_tokens": 64,
             "decode_termination": "eos",
-            "output_quality": {
-                "schema": "aura.latent_output_quality.v1",
-                "policy": "resident_latent_product_quality_v1",
-                "passed": True,
-                "text_sha256": "5" * 64,
-                "objective_sha256": "6" * 64,
-                "reasons": [],
-            },
+            "output_quality": dict(quality),
             "last_stage": "complete",
             "stage_timings_s": {"prefill": 1.0, "decode": 2.0, "total": 4.0},
             "runtime_identity": {
@@ -531,6 +534,49 @@ def test_full_mind_contract_accepts_identity_bound_latent_cortex_path(monkeypatc
     assert payload["latent_cortex_receipt"]["last_stage"] == "complete"
     assert payload["latent_cortex_receipt"]["stage_timings_s"]["total"] == 4.0
     assert "source_root" not in payload["latent_cortex_receipt"]["runtime_identity"]
+
+
+def test_full_mind_contract_rejects_unbound_final_latent_text(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    _force_full_mind_runtime(monkeypatch, chat_routes)
+    latent = _proven_latent_cortex_trace()
+    latent.pop("latent_cortex_final_output_quality")
+    latent["latent_cortex_raw_final_quality_hash_match"] = False
+    payload = chat_routes._build_live_turn_contract_payload(
+        desktop_required=True,
+        request_surface="desktop-ui",
+        lane_status={
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "foreground_endpoint": "Cortex",
+        },
+        response_confidence="high",
+        status="cognitive_engine",
+        reply_source="cognitive_engine",
+        turn_trace={
+            "engine_think_invoked": True,
+            "cognitive_engine_reply_accepted": True,
+            "bounded_contract_used": False,
+            "legacy_fallback_used": False,
+            "live_mind_context_present": True,
+            "live_mind_snapshot_present": True,
+            "live_mind_snapshot_ready": True,
+            "live_mind_required_subsystems_ok": True,
+            "response_path": "cognitive_engine_latent_cortex",
+            **_bound_live_mind_controls_trace(),
+            **latent,
+        },
+    )
+
+    assert payload["latent_cortex_raw_output_quality_proven"] is True
+    assert payload["latent_cortex_final_output_quality_proven"] is False
+    assert payload["latent_cortex_output_quality_proven"] is False
+    assert payload["latent_cortex_path_proven"] is False
+    assert "latent_cortex_output_quality_unproven" in payload[
+        "full_mind_missing_proofs"
+    ]
 
 
 def test_full_mind_contract_rejects_tampered_latent_cortex_identity(monkeypatch):
@@ -13293,3 +13339,63 @@ def test_live_desktop_quality_recovery_does_not_surface_gate_jargon():
     assert "_build_social_continuity_repair_reply(user_message)" in bounded_repair_slice
     assert "_build_bounded_capability_inventory_repair_reply(user_message)" in bounded_repair_slice
     assert "_build_bounded_planning_reply(user_message)" in bounded_repair_slice
+
+
+def test_aura_now_welfare_recovery_yields_to_explicit_owner_desktop_action():
+    """Live veto (Jul 2026): recovery_drive 0.84 blocked the owner's RENDER
+    THIS click indefinitely. Welfare's graded brakes convert to receipted
+    constraints for an explicit owner action carrying the full desktop
+    execution contract; strain still shapes budgets via the economy."""
+    from types import SimpleNamespace as _NS
+
+    from core.being.runtime import BeingRuntime
+
+    runtime = BeingRuntime.__new__(BeingRuntime)
+    runtime._last_welfare = _NS(
+        action_inhibition=0.7,
+        recovery_drive=0.84,
+        integrity_guard=0.2,
+        self_report_confidence=0.9,
+        welfare_score=0.4,
+        truth_protection=0.5,
+        distress=0.2,
+        should_protect_integrity=lambda: False,
+        should_verify_before_claiming=lambda: False,
+    )
+    runtime._last_body_snapshot = _NS(fatigue=0.4)
+    runtime.body_service = _NS(spend=lambda *_a, **_k: {"compute": 0.01})
+    now = _NS(
+        body=_NS(total_pressure=0.5),
+        affect=_NS(distress=0.2, dominant_drive="coherence"),
+        prediction=_NS(controllability=0.7, free_energy=1.0),
+        workspace=_NS(
+            ignition_strength=0.7,
+            broadcast_targets=("executive",),
+            winner="body_pressure",
+        ),
+        ownership=_NS(agency_confidence=0.82),
+        state_hash="state-welfare-test",
+        tick=55711,
+    )
+
+    contract = {
+        "desktop_execution_contract": True,
+        "foreground_request": True,
+        "user_explicitly_authorized": True,
+        "user_visible_desktop_action": True,
+        "verification_required": True,
+    }
+    policy = runtime.action_policy(
+        now, domain="tool_execution", priority=0.9, context=contract
+    )
+    assert policy["defers"] == []
+    assert policy["outcome"] != "defer"
+    assert any(
+        c.startswith("foreground_desktop_note:welfare") for c in policy["constraints"]
+    )
+
+    # WITHOUT the owner contract the same welfare state still defers.
+    autonomous = runtime.action_policy(
+        now, domain="tool_execution", priority=0.9, context={}
+    )
+    assert "welfare_recovery_required_before_action" in autonomous["defers"]

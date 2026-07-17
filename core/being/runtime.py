@@ -487,8 +487,23 @@ class BeingRuntime:
                 "workspace_not_ignited",
                 "no_workspace_broadcast_for_consequential_action",
                 "prediction_error_requires_observation_or_plan",
+                # Welfare's graded brakes yield to an EXPLICIT owner action
+                # carrying the full desktop execution contract: the owner is
+                # the authority, the strain still shapes budgets through the
+                # allocation economy, and the note below receipts it. Live
+                # evidence (Jul 2026): recovery_drive 0.84 vetoed the owner's
+                # RENDER THIS click indefinitely — a broken brake, not
+                # protection. Integrity protection and body-cost accounting
+                # failures remain hard.
+                "welfare_recovery_required_before_action",
             }
-            hard_defers = [item for item in defers if item not in desktop_soft_defers]
+            desktop_soft_defer_prefixes = ("welfare_action_inhibition=",)
+            hard_defers = [
+                item
+                for item in defers
+                if item not in desktop_soft_defers
+                and not item.startswith(desktop_soft_defer_prefixes)
+            ]
             if not hard_defers:
                 constraints.append("foreground_desktop_action_constrained:not_deferred")
                 constraints.extend(f"foreground_desktop_note:{item}" for item in defers[:4])
