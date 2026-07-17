@@ -12,6 +12,10 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
+from core.brain.llm.latent_cortex.output_quality import (
+    evaluate_facet_coverage,
+    request_facets,
+)
 from core.conversation.ontology_grounding import detect_unsupported_embodiment_claim
 from core.runtime.structured_input import looks_like_learning_resource_bundle
 
@@ -37,6 +41,12 @@ _BROKEN_LANE_BOILERPLATE_RE = re.compile(
     r"hold on\s*[—-]\s*i'?m still finishing|still finishing the last turn|"
     r"let me regroup|my deeper processing|"
     r"lost the (?:reply|conversation|response) lane|ask (?:that|it|me) again)",
+    re.IGNORECASE,
+)
+_MODEL_RUNTIME_ARTIFACT_RE = re.compile(
+    r"\{\s*[a-z][a-z0-9 _-]{0,60}(?:encountered|error|failed)\s*\}"
+    r"|\bsomething went wrong with my external coordination\b"
+    r"|\bunder elevated load pressure,?\s+i(?:'m| am) channeling\b",
     re.IGNORECASE,
 )
 _FRIENDLY_FAILURE_PLACEHOLDER_RE = re.compile(
@@ -2273,6 +2283,17 @@ def _instruction_coverage_reasons(user_message: Any, reply_text: Any) -> list[st
         if phrase and phrase not in normalized_reply:
             reasons.append("missing_requested_phrase")
             break
+    facet_evidence = evaluate_facet_coverage(reply, user)
+    requested_facets = list(facet_evidence.get("requested") or [])
+    satisfied_facets = set(facet_evidence.get("satisfied") or [])
+    if len(requested_facets) >= 2 and any(
+        facet not in satisfied_facets for facet in requested_facets
+    ):
+        reasons.append("missing_requested_objective_facets")
+    if len(requested_facets) >= 2 and facet_evidence.get("prompt_echo_detected"):
+        reasons.append("prompt_echo_contamination")
+    if facet_evidence.get("protocol_artifact_detected"):
+        reasons.append("protocol_artifact_leakage")
     return reasons
 
 
@@ -4672,7 +4693,7 @@ def _model_text_integrity_reasons(
             reasons.append("escaped_control_artifact")
         if _ROLE_OR_PROMPT_ARTIFACT_RE.search(raw) and not _matches_exact_reply_request(prompt, raw):
             reasons.append("prompt_artifact")
-        if _BROKEN_LANE_BOILERPLATE_RE.search(raw):
+        if _BROKEN_LANE_BOILERPLATE_RE.search(raw) or _MODEL_RUNTIME_ARTIFACT_RE.search(raw):
             reasons.append("runtime_boilerplate")
         if _KNOWN_CORRUPT_RE.search(raw):
             reasons.append("corrupted_language")
@@ -4686,7 +4707,7 @@ def _model_text_integrity_reasons(
         reasons.append("escaped_control_artifact")
     if _ROLE_OR_PROMPT_ARTIFACT_RE.search(raw) and not _matches_exact_reply_request(prompt, raw):
         reasons.append("prompt_artifact")
-    if _BROKEN_LANE_BOILERPLATE_RE.search(raw):
+    if _BROKEN_LANE_BOILERPLATE_RE.search(raw) or _MODEL_RUNTIME_ARTIFACT_RE.search(raw):
         reasons.append("runtime_boilerplate")
     if user_facing and _RAW_TOOL_RESULT_FRAGMENT_RE.match(raw):
         reasons.append("raw_tool_result_fragment")
@@ -5071,6 +5092,9 @@ def assess_user_facing_reply(
         "unsupported_tool_readiness_claim",
         "missing_self_claim_evidence_boundary",
         "missing_requested_exact_reply",
+        "missing_requested_objective_facets",
+        "prompt_echo_contamination",
+        "protocol_artifact_leakage",
     }
     retryable_reasons = hard_reasons | {
         "low_signal_reliability_reply",
@@ -5103,6 +5127,9 @@ def assess_user_facing_reply(
         "missing_identity_answer",
         "missing_requested_self_process_coverage",
         "unsupported_memory_guarantee",
+        "missing_requested_objective_facets",
+        "prompt_echo_contamination",
+        "protocol_artifact_leakage",
     }
     unique = tuple(dict.fromkeys(reasons))
     return ConversationReplyAssessment(
@@ -5199,6 +5226,13 @@ def conversation_reliability_system_block(user_message: Any = "") -> str:
         )
     if _FOLLOWUP_QUESTION_REQUEST_RE.search(str(user_message or "")):
         instruction_notes.append("End with a real follow-up question because the user requested one.")
+    requested_reasoning_facets = request_facets(user_message)
+    if len(requested_reasoning_facets) >= 2:
+        instruction_notes.append(
+            "Satisfy every explicit reasoning facet in this same answer: "
+            + ", ".join(requested_reasoning_facets)
+            + ". Do not substitute a related topic or a follow-up question for any facet."
+        )
     continuation_match = _NAMED_CONTINUATION_ANCHOR_RE.search(str(user_message or ""))
     if continuation_match:
         topic = " ".join(str(continuation_match.group("topic") or "").split())

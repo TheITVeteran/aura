@@ -30,6 +30,8 @@ def _force_full_mind_runtime(monkeypatch, chat_routes):
 
 def _bound_live_mind_controls_trace():
     return {
+        "foreground_model_generation_consumed": True,
+        "foreground_model_generation_count": 1,
         "live_mind_controls_bound": True,
         "live_mind_generation_controls": {
             "temperature": 0.61,
@@ -85,6 +87,8 @@ def _proven_latent_cortex_trace():
         "reasons": [],
     }
     return {
+        "foreground_model_generation_consumed": True,
+        "foreground_model_generation_count": 1,
         "latent_cortex_selected": True,
         "latent_cortex_selection_reason": "deliberate_cognitive_mode",
         "latent_cortex_depth_worthy": True,
@@ -538,6 +542,49 @@ def test_full_mind_contract_accepts_identity_bound_latent_cortex_path(monkeypatc
     assert "source_root" not in payload["latent_cortex_receipt"]["runtime_identity"]
 
 
+def test_full_mind_contract_rejects_latent_path_without_generation_owner_proof(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    _force_full_mind_runtime(monkeypatch, chat_routes)
+    latent = _proven_latent_cortex_trace()
+    latent["foreground_model_generation_consumed"] = False
+    latent["foreground_model_generation_count"] = 0
+    payload = chat_routes._build_live_turn_contract_payload(
+        desktop_required=True,
+        request_surface="desktop-ui",
+        lane_status={
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "foreground_endpoint": "Cortex",
+        },
+        response_confidence="high",
+        status="cognitive_engine",
+        reply_source="cognitive_engine",
+        turn_trace={
+            "engine_think_invoked": True,
+            "cognitive_engine_reply_accepted": True,
+            "bounded_contract_used": False,
+            "legacy_fallback_used": False,
+            "live_mind_context_present": True,
+            "live_mind_snapshot_present": True,
+            "live_mind_snapshot_ready": True,
+            "live_mind_required_subsystems_ok": True,
+            "response_path": "cognitive_engine_latent_cortex",
+            **_bound_live_mind_controls_trace(),
+            **latent,
+        },
+    )
+
+    assert payload["single_owner_model_generation_proven"] is False
+    assert payload["authentic_cognitive_reply"] is False
+    assert payload["full_mind_path"] is False
+    assert (
+        "foreground_model_generation_ownership_unproven"
+        in payload["full_mind_missing_proofs"]
+    )
+
+
 def test_full_mind_contract_rejects_unbound_final_latent_text(monkeypatch):
     from interface.routes import chat as chat_routes
 
@@ -871,6 +918,8 @@ def test_full_mind_contract_preserves_proven_generation_when_lane_flips_failed(m
             "live_mind_snapshot_ready": True,
             "live_mind_required_subsystems_ok": True,
             "response_path": "cognitive_engine",
+            "foreground_model_generation_consumed": True,
+            "foreground_model_generation_count": 1,
             "live_mind_controls_bound": True,
             "live_mind_generation_controls": {
                 "temperature": 0.58,
@@ -961,6 +1010,7 @@ def test_bounded_planning_floor_can_prove_live_full_mind_path(monkeypatch):
             "live_mind_snapshot_ready": True,
             "live_mind_required_subsystems_ok": True,
             "response_path": "cognitive_engine_bounded_planning",
+            "live_mind_generation_required": False,
             "live_mind_controls_bound": True,
             "live_mind_generation_controls": {
                 "temperature": 0.58,
@@ -7183,7 +7233,7 @@ async def test_api_chat_desktop_required_blocks_unfounded_voice_intrusion(monkey
 
 
 @pytest.mark.asyncio
-async def test_api_chat_desktop_required_recovers_only_through_full_mind_path(monkeypatch):
+async def test_api_chat_desktop_required_does_not_start_second_full_mind_owner(monkeypatch):
     from interface import server as server_module
     from interface.routes import chat as chat_routes
 
@@ -7296,18 +7346,20 @@ async def test_api_chat_desktop_required_recovers_only_through_full_mind_path(mo
 
     payload = json.loads(response.body)
     assert response.status_code == 200
-    assert payload["status"] == "cognitive_engine_recovered"
-    assert payload["response_confidence"] == "high"
+    assert payload["status"] == "desktop_response_quality_failed"
+    assert payload["response_confidence"] == "failed"
     assert payload["live_turn_contract"]["live_mind_controls_bound"] is True
-    assert payload["live_turn_contract"]["full_mind_path"] is True
-    assert payload["live_turn_contract"]["response_path"] == "cognitive_engine"
+    assert payload["live_turn_contract"]["full_mind_path"] is False
+    assert payload["live_turn_contract"]["foreground_model_generation_consumed"] is True
+    assert payload["live_turn_contract"]["foreground_model_generation_count"] == 1
+    assert payload["live_turn_contract"]["single_owner_model_generation_proven"] is True
     assert "nail this pitch" not in payload["response"]
-    assert len(cognitive_calls) == 2
+    assert len(cognitive_calls) == 1
     assert raw_gate_calls == []
     assert completed_exchanges
-    assert completed_exchanges[0][1]["record_experience"] is True
+    assert completed_exchanges[0][1]["record_experience"] is False
     assert output_receipts
-    assert output_receipts[0][1]["metadata"]["path"] == "cognitive_engine_recovery"
+    assert output_receipts[0][1]["metadata"]["path"] == "desktop_required_final_quality_failed"
 
 
 @pytest.mark.asyncio
@@ -9371,7 +9423,7 @@ async def test_desktop_cognitive_engine_strips_internal_context_leak(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_cognitive_engine_repair_retry_adopts_winning_receipt(monkeypatch):
+async def test_cognitive_engine_does_not_duplicate_a_consumed_model_owner(monkeypatch):
     from core.providers import engine_connection_pool as pool_module
     from interface.routes import chat as chat_routes
 
@@ -9389,27 +9441,18 @@ async def test_cognitive_engine_repair_retry_adopts_winning_receipt(monkeypatch)
             "attempt_marker": "rejected",
         }
     )
-    retry_metadata = _bound_live_mind_controls_metadata()
-    retry_metadata["live_mind_surface_control_receipt"].update(
-        {
-            "generation_max_tokens": 19,
-            "generated_tokens": 1,
-            "attempt_marker": "accepted_retry",
-        }
-    )
-
     class _FakeCognitiveEngine:
         def __init__(self):
             self.calls = 0
 
         async def think(self, objective, context=None, **kwargs):
             self.calls += 1
-            if self.calls == 1:
-                return SimpleNamespace(
-                    content="The first generation is a declared failure envelope.",
-                    metadata=first_metadata,
-                )
-            return SimpleNamespace(content="yes", metadata=retry_metadata)
+            if self.calls > 1:
+                raise AssertionError("a consumed foreground model owner must not be duplicated")
+            return SimpleNamespace(
+                content="The first generation is a declared failure envelope.",
+                metadata=first_metadata,
+            )
 
     class _Pool:
         async def acquire_engine_connection(self, *_args, **_kwargs):
@@ -9450,17 +9493,15 @@ async def test_cognitive_engine_repair_retry_adopts_winning_receipt(monkeypatch)
         turn_trace=trace,
     )
 
-    assert reply == "yes"
-    assert engine.calls == 2
+    assert reply is None
+    assert engine.calls == 1
     receipt = trace["live_mind_surface_control_receipt"]
-    assert receipt["attempt_marker"] == "accepted_retry"
-    assert receipt["generation_max_tokens"] == 19
-    assert receipt["generated_tokens"] == 1
-    assert any(
-        item["stage"] == "chat.cognitive_engine_repair_retry"
-        and item["deterministic"] is False
-        for item in receipt["text_mutations"]
-    )
+    assert receipt["attempt_marker"] == "rejected"
+    assert receipt["generation_max_tokens"] == 111
+    assert receipt["generated_tokens"] == 17
+    assert trace["foreground_model_generation_consumed"] is True
+    assert trace["foreground_model_generation_count"] == 1
+    assert trace["single_owner_generation_exhausted"] is True
 
 
 @pytest.mark.asyncio
@@ -9682,7 +9723,7 @@ async def test_empty_cognitive_result_with_owner_suppression_does_not_retry(monk
 
 
 @pytest.mark.asyncio
-async def test_metadata_less_retry_cannot_inherit_rejected_generation_proof(monkeypatch):
+async def test_rejected_generation_cannot_open_metadata_less_second_owner(monkeypatch):
     from core.providers import engine_connection_pool as pool_module
     from interface.routes import chat as chat_routes
 
@@ -9700,13 +9741,11 @@ async def test_metadata_less_retry_cannot_inherit_rejected_generation_proof(monk
 
         async def think(self, objective, context=None, **kwargs):
             self.calls += 1
-            if self.calls == 1:
-                return SimpleNamespace(
-                    content="The first generation is a declared failure envelope.",
-                    metadata=first_metadata,
-                )
+            if self.calls > 1:
+                raise AssertionError("metadata-less second owner must remain unreachable")
             return SimpleNamespace(
-                content="yes[RECENT CONTEXT]User: private prior turn"
+                content="The first generation is a declared failure envelope.",
+                metadata=first_metadata,
             )
 
     class _Pool:
@@ -9757,24 +9796,14 @@ async def test_metadata_less_retry_cannot_inherit_rejected_generation_proof(monk
         turn_trace=trace,
     )
 
-    assert reply == "yes grounded"
-    assert engine.calls == 2
-    assert trace["live_mind_generation_controls"] == {}
-    assert trace["live_mind_snapshot_ready"] is False
-    assert trace["live_mind_required_subsystems_ok"] is False
-    assert trace["live_mind_controls_worker_applied"] is False
+    assert reply is None
+    assert engine.calls == 1
+    assert trace["foreground_model_generation_consumed"] is True
+    assert trace["foreground_model_generation_count"] == 1
+    assert trace["single_owner_generation_exhausted"] is True
     receipt = trace["live_mind_surface_control_receipt"]
-    assert receipt["applied"] is False
-    assert receipt["application_status"] == "worker_receipt_missing"
-    assert [item["stage"] for item in receipt["text_mutations"]] == [
-        "chat.cognitive_engine_repair_retry",
-        "chat.cognitive_engine_retry_context_leak_strip",
-        "chat.cognitive_engine_retry_grounding",
-    ]
-    for previous, current in zip(
-        receipt["text_mutations"], receipt["text_mutations"][1:], strict=False
-    ):
-        assert previous["after_chars"] == current["before_chars"]
+    assert receipt["applied"] is True
+    assert receipt["surface_quality_gate_attempts"] == 1
 
 
 @pytest.mark.asyncio
@@ -10176,6 +10205,118 @@ def test_compact_desktop_contract_keeps_hypothetical_tool_plans_compact():
         )
         is True
     )
+
+
+def test_self_contained_choice_does_not_request_stale_conversation_context():
+    from core.brain.types import ThinkingMode
+    from interface.routes import chat as chat_routes
+
+    user_message = (
+        "Compare optimistic and pessimistic locking for a hot task queue, choose "
+        "which one you would use in a single-host async runtime, explain why, and "
+        "verify your choice with one concrete failure scenario."
+    )
+
+    assert chat_routes._has_local_choice_antecedent(user_message) is True
+    assert chat_routes._is_contextual_relevance_challenge(user_message) is False
+    assert chat_routes._desktop_turn_needs_recent_context(user_message) is False
+    assert chat_routes._select_cognitive_chat_mode(user_message, user_message) is ThinkingMode.DEEP
+    assert (
+        chat_routes._is_compact_desktop_chat_contract(
+            user_message,
+            user_message,
+            desktop_execution_contract=False,
+            capability_inventory_contract=False,
+        )
+        is False
+    )
+
+    unresolved = "Which one should I choose?"
+    assert chat_routes._has_local_choice_antecedent(unresolved) is False
+    assert chat_routes._is_contextual_relevance_challenge(unresolved) is True
+    assert chat_routes._desktop_turn_needs_recent_context(unresolved) is True
+
+
+@pytest.mark.asyncio
+async def test_compound_choice_reaches_engine_as_deep_self_contained_turn(monkeypatch):
+    from core.brain.types import ThinkingMode
+    from core.providers import engine_connection_pool as pool_module
+    from interface.routes import chat as chat_routes
+
+    user_message = (
+        "Compare optimistic and pessimistic locking for a hot task queue, choose "
+        "which one you would use in a single-host async runtime, explain why, and "
+        "verify your choice with one concrete failure scenario."
+    )
+    answer = (
+        "Optimistic locking lets workers race and reject stale claims, whereas pessimistic "
+        "locking serializes acquisition before work begins. I would choose pessimistic locking "
+        "for a hot single-host async queue because one short critical section prevents duplicate "
+        "ownership without repeated conflict retries. To verify it, inject cancellation immediately "
+        "after a worker acquires the queue lock; the test should show that a finally block releases "
+        "the lock and exactly one waiting worker acquires the task."
+    )
+    calls = []
+
+    class _FakeCognitiveEngine:
+        async def think(self, objective, context=None, **kwargs):
+            calls.append(
+                {
+                    "objective": objective,
+                    "context": dict(context or {}),
+                    "kwargs": dict(kwargs),
+                }
+            )
+            metadata = _bound_live_mind_controls_metadata()
+            metadata["live_mind_surface_control_receipt"].update(
+                {"generation_max_tokens": 512, "generated_tokens": 94}
+            )
+            return SimpleNamespace(content=answer, metadata=metadata)
+
+    class _Pool:
+        async def acquire_engine_connection(self, *_args, **_kwargs):
+            return None
+
+    recent = AsyncCallFixture(return_value=[{"user": "stale", "assistant": "stale"}])
+    monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _Pool())
+    monkeypatch.setattr(chat_routes, "_recent_completed_conversation_exchanges", recent)
+    for name in (
+        "_build_conversation_recall_reply",
+        "_build_retained_memory_evidence_context",
+        "_build_context_challenge_repair_reply",
+        "_fetch_deep_memory_context",
+    ):
+        monkeypatch.setattr(chat_routes, name, AsyncCallFixture(return_value=""))
+    engine = _FakeCognitiveEngine()
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: engine if name == "cognitive_engine" else default
+        ),
+    )
+
+    trace = {}
+    reply = await chat_routes._run_cognitive_engine_chat_turn(
+        user_message,
+        visible_user_message=user_message,
+        origin="user",
+        timeout_s=120.0,
+        lane={"conversation_ready": True, "state": "ready", "foreground_endpoint": "Cortex"},
+        source="desktop_ui",
+        require_engine=True,
+        turn_trace=trace,
+    )
+
+    assert reply == answer
+    assert len(calls) == 1
+    assert calls[0]["kwargs"]["mode"] is ThinkingMode.DEEP
+    assert calls[0]["context"]["compact_desktop_chat_contract"] is False
+    assert calls[0]["context"]["prompt_shape"]["imperative_parts"] == 4
+    assert calls[0]["context"]["recent_completed_exchanges"] == []
+    recent.assert_not_awaited()
+    assert trace["foreground_model_generation_count"] == 1
+    assert trace["single_owner_generation_exhausted"] is True
 
 
 def test_compact_desktop_contract_does_not_hide_actual_tool_execution_requests():

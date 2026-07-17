@@ -27,6 +27,7 @@ from typing import Any
 
 from core.brain.llm.latent_cortex.output_quality import evaluate_latent_output
 from core.runtime.errors import record_degradation
+from core.runtime.structured_input import analyze_prompt_shape
 
 logger = logging.getLogger("Aura.LatentCortexService")
 
@@ -551,29 +552,32 @@ class LatentCortexService:
         incompatible_contract: bool,
         proof_or_benchmark: bool,
         explicitly_required: bool = False,
+        visible_objective: str | None = None,
     ) -> dict[str, Any]:
         """Return a deterministic, auditable decision for live latent routing."""
 
         shape = dict(prompt_shape or {})
+        analyzed_shape = analyze_prompt_shape(visible_objective).to_dict()
+        for key in (
+            "question_parts",
+            "explicit_question_marks",
+            "question_like_lines",
+            "connector_parts",
+            "repeated_clause_parts",
+            "numbered_parts",
+            "imperative_parts",
+        ):
+            supplied = shape.get(key)
+            supplied = supplied if type(supplied) is int else 0
+            shape[key] = max(supplied, int(analyzed_shape.get(key) or 0))
+        for key in ("prefers_extended_answer", "requires_single_reply_coverage"):
+            shape[key] = bool(shape.get(key) or analyzed_shape.get(key))
         question_parts = shape.get("question_parts", 0)
         question_parts = question_parts if type(question_parts) is int else 0
         extended = bool(shape.get("prefers_extended_answer"))
         single_reply_coverage = bool(shape.get("requires_single_reply_coverage"))
         mode = str(cognitive_mode or "").strip().lower()
 
-        exclusion = ""
-        if not foreground:
-            exclusion = "not_foreground"
-        elif not desktop_required:
-            exclusion = "desktop_cognitive_engine_not_required"
-        elif compact_contract:
-            exclusion = "compact_contract"
-        elif strict_output_contract:
-            exclusion = "strict_output_contract"
-        elif incompatible_contract:
-            exclusion = "incompatible_contract"
-        elif proof_or_benchmark and not explicitly_required:
-            exclusion = "proof_lane_not_explicitly_opted_in"
         depth_worthy = bool(
             explicitly_required
             or mode == "deliberate"
@@ -581,6 +585,19 @@ class LatentCortexService:
             or single_reply_coverage
             or question_parts > 1
         )
+        exclusion = ""
+        if not foreground:
+            exclusion = "not_foreground"
+        elif not desktop_required:
+            exclusion = "desktop_cognitive_engine_not_required"
+        elif compact_contract and not depth_worthy:
+            exclusion = "compact_contract"
+        elif strict_output_contract:
+            exclusion = "strict_output_contract"
+        elif incompatible_contract:
+            exclusion = "incompatible_contract"
+        elif proof_or_benchmark and not explicitly_required:
+            exclusion = "proof_lane_not_explicitly_opted_in"
         selected = bool(not exclusion and depth_worthy)
         reason = (
             "explicit_requirement"
@@ -602,6 +619,7 @@ class LatentCortexService:
             "latent_cortex_selected": selected,
             "latent_cortex_selection_reason": reason,
             "latent_cortex_depth_worthy": depth_worthy,
+            "latent_cortex_prompt_shape": shape,
             "stakes": round(max(0.55, depth_signal - 0.05), 3),
             "uncertainty": round(depth_signal, 3),
         }

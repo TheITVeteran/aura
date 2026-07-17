@@ -1107,6 +1107,31 @@ def test_explicit_proof_lane_requirement_selects_latent_episode():
     assert decision["latent_cortex_selection_reason"] == "explicit_requirement"
 
 
+def test_selection_recomputes_visible_compound_depth_when_caller_shape_is_stale():
+    objective = (
+        "Compare optimistic and pessimistic locking for a hot task queue, choose "
+        "which one you would use in a single-host async runtime, explain why, and "
+        "verify your choice with one concrete failure scenario."
+    )
+
+    decision = LatentCortexService.select_foreground_episode(
+        foreground=True,
+        desktop_required=True,
+        cognitive_mode="reactive",
+        prompt_shape={},
+        compact_contract=True,
+        strict_output_contract=False,
+        incompatible_contract=False,
+        proof_or_benchmark=False,
+        visible_objective=objective,
+    )
+
+    assert decision["latent_cortex_selected"] is True
+    assert decision["latent_cortex_selection_reason"] == "multipart_or_extended_prompt"
+    assert decision["latent_cortex_prompt_shape"]["imperative_parts"] == 4
+    assert decision["latent_cortex_prompt_shape"]["question_parts"] == 4
+
+
 def test_service_routes_through_client_and_records_receipt(monkeypatch):
     monkeypatch.delenv("AURA_LATENT_CORTEX", raising=False)
     svc = LatentCortexService()

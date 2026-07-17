@@ -29,10 +29,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from core.runtime.subprocess_gateway import get_subprocess_gateway  # noqa: E402
 from core.brain.llm.latent_cortex.output_quality import (  # noqa: E402
     evaluate_latent_output,
 )
+from core.runtime.subprocess_gateway import get_subprocess_gateway  # noqa: E402
 
 # NOT self-referential: a prompt about her own processes routes through the
 # self-process grounding contract, which excludes the latent lane by design
@@ -96,6 +96,8 @@ def _evaluate_live_response(
     for key in (
         "full_mind_path",
         "authentic_cognitive_reply",
+        "foreground_model_generation_consumed",
+        "single_owner_model_generation_proven",
         "latent_cortex_selected",
         "latent_cortex_attempted",
         "latent_cortex_succeeded",
@@ -108,6 +110,10 @@ def _evaluate_live_response(
         "final_requested_output_contract_proven",
     ):
         require(key, contract.get(key) is True)
+    require(
+        "exactly_one_foreground_model_generation",
+        contract.get("foreground_model_generation_count") == 1,
+    )
     for key in (
         "latent_cortex_fallback_used",
         "bounded_contract_used",

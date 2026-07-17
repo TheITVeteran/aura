@@ -2472,3 +2472,48 @@ def test_malformed_surface_fragment_still_triggers_surface_nonsense_drift():
 
     assert assessment.retryable
     assert "surface_nonsense_drift" in assessment.reasons
+
+
+def test_compound_reasoning_facets_are_a_hard_user_facing_contract():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    prompt = (
+        "Compare optimistic and pessimistic locking for a hot task queue, choose "
+        "which one you would use in a single-host async runtime, explain why, and "
+        "verify your choice with one concrete failure scenario."
+    )
+    incomplete = (
+        "Semaphore is the right answer for threads that acquire and release work frequently. "
+        "Which failure mode are you stressing?"
+    )
+    complete = (
+        "Optimistic locking lets workers race and reject stale claims, whereas pessimistic "
+        "locking serializes acquisition before work begins. I would choose pessimistic locking "
+        "for a hot single-host async queue because one short critical section prevents duplicate "
+        "ownership without repeated conflict retries. To verify it, inject cancellation immediately "
+        "after a worker acquires the queue lock; the test should show that a finally block releases "
+        "the lock and exactly one waiting worker acquires the task."
+    )
+
+    rejected = assess_user_facing_reply(prompt, incomplete)
+    accepted = assess_user_facing_reply(prompt, complete)
+
+    assert rejected.ok is False
+    assert rejected.hard_failure is True
+    assert "missing_requested_objective_facets" in rejected.reasons
+    assert accepted.ok is True
+
+
+def test_reported_model_runtime_artifact_is_hard_rejected():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "Explain the locking choice.",
+        (
+            "Understanding the setup would{load encountered} Something went wrong with my "
+            "external coordination. Under elevated load pressure, I'm channeling to stable handling."
+        ),
+    )
+
+    assert assessment.hard_failure is True
+    assert "runtime_boilerplate" in assessment.reasons

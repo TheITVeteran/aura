@@ -14,8 +14,8 @@ from core.brain.live_mind_contract import (
     merge_text_mutations,
     normalize_live_mind_surface_control_receipt,
 )
-from core.brain.llm.latent_cortex.output_quality import evaluate_latent_output
 from core.brain.llm.context_assembler import ContextAssembler
+from core.brain.llm.latent_cortex.output_quality import evaluate_latent_output
 from core.container import ServiceContainer
 from core.conversation.response_reliability import (
     assess_user_facing_reply,
@@ -1567,6 +1567,9 @@ class ResponseGenerationPhase(BasePhase):
                     proof_or_benchmark=proof_answer_run,
                     explicitly_required=bool(
                         runtime_context.get("latent_cortex_required", False)
+                    ),
+                    visible_objective=str(
+                        runtime_context.get("visible_user_message") or objective or ""
                     ),
                 )
                 latent_trace.update(

@@ -71,6 +71,9 @@ def _passing_live_body(commit: str) -> tuple[dict[str, object], str]:
     contract: dict[str, object] = {
         "full_mind_path": True,
         "authentic_cognitive_reply": True,
+        "foreground_model_generation_consumed": True,
+        "foreground_model_generation_count": 1,
+        "single_owner_model_generation_proven": True,
         "latent_cortex_selected": True,
         "latent_cortex_attempted": True,
         "latent_cortex_succeeded": True,
@@ -160,6 +163,25 @@ def test_live_response_certificate_rejects_stale_app_and_unbound_public_bytes() 
 
     assert "exact_source_commit" in result["fail_reasons"]
     assert "public_quality_binds_exact_api_bytes" in result["fail_reasons"]
+
+
+def test_live_response_certificate_rejects_duplicate_foreground_generation() -> None:
+    commit = "a" * 40
+    body, _answer = _passing_live_body(commit)
+    contract = body["live_turn_contract"]
+    assert isinstance(contract, dict)
+    contract["foreground_model_generation_count"] = 2
+    contract["single_owner_model_generation_proven"] = False
+
+    result = certificate._evaluate_live_response(
+        body,
+        message=certificate.DEFAULT_MESSAGE,
+        exact_commit=commit,
+        http_status=200,
+    )
+
+    assert "single_owner_model_generation_proven" in result["fail_reasons"]
+    assert "exactly_one_foreground_model_generation" in result["fail_reasons"]
 
 
 def test_live_response_certificate_independently_rejects_forged_cp118_style_pass() -> None:

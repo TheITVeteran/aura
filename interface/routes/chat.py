@@ -36,8 +36,8 @@ from core.brain.live_mind_contract import (
     normalize_live_mind_surface_control_receipt,
     verify_text_mutation_chain,
 )
-from core.brain.llm.latent_cortex.output_quality import evaluate_latent_output
 from core.brain.llm.cloud_errors import cloud_call_error_types
+from core.brain.llm.latent_cortex.output_quality import evaluate_latent_output
 from core.container import ServiceContainer
 from core.reasoning.artifact_synthesis import response_satisfies_artifact_contract
 from core.runtime import resource_psutil as psutil
@@ -2850,6 +2850,14 @@ _CONTEXTUAL_RELEVANCE_CHALLENGE_MARKERS = (
     "what are you talking about",
     "why did you bring",
 )
+_LOCAL_CHOICE_REFERENCE_RE = re.compile(r"\b(?:what|which)\s+one\b", re.IGNORECASE)
+_LOCAL_CHOICE_ANTECEDENT_RE = re.compile(
+    r"\b(?:compare|contrast|between|either|options?|alternatives?)\b"
+    r"(?s:.{1,320})\b(?:and|or|versus|vs\.?)\b"
+    r"(?s:.{1,180})\b(?:choose|select|recommend|prefer)\b"
+    r"(?s:.{0,40})\b(?:what|which)\s+one\b",
+    re.IGNORECASE,
+)
 _CONTEXTUAL_RELEVANCE_BRIDGE_MARKERS = (
     "you mentioned",
     "you brought",
@@ -3018,6 +3026,21 @@ def _extract_topic_tokens(text: str) -> set[str]:
     return tokens
 
 
+def _has_local_choice_antecedent(user_message: str) -> bool:
+    """Distinguish a self-contained choice from a conversational pronoun.
+
+    "Which one?" needs history. "Compare A and B, then choose which one" has
+    its antecedent in the current turn and must not be rewritten as a context
+    challenge or polluted with an older answer.
+    """
+
+    text = str(user_message or "").strip()
+    return bool(
+        _LOCAL_CHOICE_REFERENCE_RE.search(text)
+        and _LOCAL_CHOICE_ANTECEDENT_RE.search(text)
+    )
+
+
 def _is_contextual_relevance_challenge(user_message: str) -> bool:
     text = _normalize_user_message(user_message)
     if not text:
@@ -3025,7 +3048,10 @@ def _is_contextual_relevance_challenge(user_message: str) -> bool:
     stripped = text.strip(" ?!.")
     if stripped in {"huh", "wait what", "what"}:
         return True
-    return any(marker in text for marker in _CONTEXTUAL_RELEVANCE_CHALLENGE_MARKERS)
+    markers = _CONTEXTUAL_RELEVANCE_CHALLENGE_MARKERS
+    if _has_local_choice_antecedent(text):
+        markers = tuple(marker for marker in markers if marker not in {"what one", "which one"})
+    return any(marker in text for marker in markers)
 
 
 async def _gather_recent_user_messages_for_relevance(current_user_message: str, *, limit: int = 4) -> list[str]:
@@ -3200,7 +3226,10 @@ def _desktop_turn_needs_recent_context(user_message: str) -> bool:
         return True
     if _is_contextual_relevance_challenge(text):
         return True
-    if _SHORT_FOLLOWUP_CONTEXT_NEEDED_RE.search(text):
+    short_followup_surface = text
+    if _has_local_choice_antecedent(text):
+        short_followup_surface = _LOCAL_CHOICE_REFERENCE_RE.sub("", text)
+    if _SHORT_FOLLOWUP_CONTEXT_NEEDED_RE.search(short_followup_surface):
         return True
     try:
         from core.conversation.response_reliability import is_status_check_turn
@@ -5502,6 +5531,24 @@ def _build_live_turn_contract_payload(
             and latent_cortex_output_quality_proven
         )
     )
+    foreground_model_generation_count = int(
+        trace.get("foreground_model_generation_count") or 0
+    )
+    foreground_model_generation_consumed = bool(
+        trace.get("foreground_model_generation_consumed")
+    )
+    single_owner_model_generation_proven = bool(
+        (
+            live_mind_generation_required
+            and foreground_model_generation_consumed
+            and foreground_model_generation_count == 1
+        )
+        or (
+            not live_mind_generation_required
+            and not foreground_model_generation_consumed
+            and foreground_model_generation_count == 0
+        )
+    )
     # SPEAKER-IDENTITY proofs: did Aura's real cognitive engine author this
     # text (vs repair machinery / legacy fallback speaking in her voice)?
     # These are never waived — theater must never serve as Aura speech.
@@ -5514,6 +5561,7 @@ def _build_live_turn_contract_payload(
         and confidence == "high"
         and response_path in accepted_full_mind_response_paths
         and latent_cortex_path_proven
+        and single_owner_model_generation_proven
     )
     accepted_cognitive_path = bool(
         authentic_cognitive_reply
@@ -5556,6 +5604,12 @@ def _build_live_turn_contract_payload(
         missing_proofs.append("latent_cortex_path_unproven")
     if latent_cortex_response_path and not latent_cortex_output_quality_proven:
         missing_proofs.append("latent_cortex_output_quality_unproven")
+    if not single_owner_model_generation_proven:
+        missing_proofs.append(
+            "duplicate_foreground_model_generation"
+            if foreground_model_generation_count > 1
+            else "foreground_model_generation_ownership_unproven"
+        )
     if not architecture_context_bound:
         missing_proofs.append("architecture_context_unbound")
     if not live_mind_snapshot_bound:
@@ -5581,6 +5635,9 @@ def _build_live_turn_contract_payload(
         "authentic_cognitive_reply": authentic_cognitive_reply,
         "full_mind_missing_proofs": missing_proofs,
         "engine_think_invoked": engine_think_invoked,
+        "foreground_model_generation_consumed": foreground_model_generation_consumed,
+        "foreground_model_generation_count": foreground_model_generation_count,
+        "single_owner_model_generation_proven": single_owner_model_generation_proven,
         "cognitive_engine_reply_accepted": engine_reply_accepted,
         "cognitive_engine_reply_failed": engine_reply_failed,
         "bounded_contract_used": bounded_contract_used,
@@ -5591,6 +5648,11 @@ def _build_live_turn_contract_payload(
         ),
         "latent_cortex_depth_worthy": bool(
             trace.get("latent_cortex_depth_worthy")
+        ),
+        "latent_cortex_prompt_shape": (
+            dict(trace.get("latent_cortex_prompt_shape") or {})
+            if isinstance(trace.get("latent_cortex_prompt_shape"), dict)
+            else {}
         ),
         "latent_cortex_attempted": latent_cortex_attempted,
         "latent_cortex_succeeded": latent_cortex_succeeded,
@@ -6566,6 +6628,33 @@ def _paired_device_information_scope_reply(
     return None
 
 
+def _generation_metadata_consumed_foreground_owner(metadata: Any) -> bool:
+    """Return whether a CognitiveEngine result proves resident model work ran."""
+
+    if not isinstance(metadata, dict):
+        return False
+    if bool(metadata.get("model_retry_suppressed")):
+        return True
+    if bool(metadata.get("latent_cortex_attempted")):
+        return True
+    for receipt_key in (
+        "live_mind_surface_control_receipt",
+        "surface_control_receipt",
+        "latent_cortex_receipt",
+    ):
+        receipt = metadata.get(receipt_key)
+        if not isinstance(receipt, dict):
+            continue
+        for token_key in ("generated_tokens", "decode_generated_tokens"):
+            token_count = receipt.get(token_key)
+            if type(token_count) is int and token_count > 0:
+                return True
+        attempts = receipt.get("surface_quality_gate_attempts")
+        if type(attempts) is int and attempts > 0 and bool(receipt.get("applied")):
+            return True
+    return False
+
+
 async def _run_cognitive_engine_chat_turn(
     effective_user_message: str,
     *,
@@ -6610,6 +6699,9 @@ async def _run_cognitive_engine_chat_turn(
                 "live_mind_generation_controls": {},
                 "live_mind_surface_control_receipt": {},
                 "live_mind_controls_worker_applied": False,
+                "foreground_model_generation_consumed": False,
+                "foreground_model_generation_count": 0,
+                "single_owner_generation_exhausted": False,
                 "response_path": "",
             }
         )
@@ -6717,6 +6809,12 @@ async def _run_cognitive_engine_chat_turn(
                 "text_mutation_count": len(receipt_mutations),
             }
         )
+        if require_engine and _generation_metadata_consumed_foreground_owner(metadata):
+            turn_trace["foreground_model_generation_consumed"] = True
+            turn_trace["foreground_model_generation_count"] = (
+                int(turn_trace.get("foreground_model_generation_count") or 0) + 1
+            )
+            turn_trace["single_owner_generation_exhausted"] = True
         raw_latent_receipt = metadata.get("latent_cortex_receipt")
         turn_trace.update(
             {
@@ -6728,6 +6826,11 @@ async def _run_cognitive_engine_chat_turn(
                 ),
                 "latent_cortex_depth_worthy": bool(
                     metadata.get("latent_cortex_depth_worthy", False)
+                ),
+                "latent_cortex_prompt_shape": (
+                    dict(metadata.get("latent_cortex_prompt_shape") or {})
+                    if isinstance(metadata.get("latent_cortex_prompt_shape"), dict)
+                    else {}
                 ),
                 "latent_cortex_attempted": bool(
                     metadata.get("latent_cortex_attempted", False)
@@ -6969,6 +7072,7 @@ async def _run_cognitive_engine_chat_turn(
         capability_inventory_contract=capability_inventory_contract,
         identity_continuity_contract=identity_continuity_contract,
     )
+    prompt_shape_payload = shape.to_dict()
     # Required live desktop turns must exercise CognitiveEngine, but they do not
     # all need the heavyweight phase stack. Simple conversation uses the compact
     # live-mind speech contract; execution, identity/self-process, long, and
@@ -6995,6 +7099,15 @@ async def _run_cognitive_engine_chat_turn(
         recent_context_limit = 0
     elif recent_context_needed:
         recent_context_limit = _RECENT_CONVERSATION_CONTEXT_EXCHANGES
+    elif require_engine and (
+        bool(getattr(shape, "requires_single_reply_coverage", False))
+        or bool(getattr(shape, "prefers_extended_answer", False))
+        or int(getattr(shape, "question_parts", 0) or 0) >= 2
+    ):
+        # A self-contained compound task must not inherit an older answer just
+        # because all desktop turns historically received a default transcript
+        # window. Explicit continuation/recall signals above still opt in.
+        recent_context_limit = 0
     elif require_engine:
         # The live desktop CognitiveEngine path must not depend on a classifier
         # before it can see the local thread. A small default window prevents
@@ -7067,13 +7180,7 @@ async def _run_cognitive_engine_chat_turn(
             if conversation_only_surface
             else dict(lane or {})
         ),
-        "prompt_shape": {
-            "question_parts": int(getattr(shape, "question_parts", 0) or 0),
-            "prefers_extended_answer": bool(getattr(shape, "prefers_extended_answer", False)),
-            "requires_single_reply_coverage": bool(
-                getattr(shape, "requires_single_reply_coverage", False)
-            ),
-        },
+        "prompt_shape": dict(prompt_shape_payload),
     }
     exact_principal = " ".join(str(principal_id or "").strip().split())[:160]
     if exact_principal:
@@ -7191,6 +7298,7 @@ async def _run_cognitive_engine_chat_turn(
                 "runtime_fact_status_contract": runtime_fact_status_contract,
                 "memory_state_contract": memory_state_contract,
                 "self_condition_contract": self_condition_contract,
+                "prompt_shape": dict(prompt_shape_payload),
             }
         )
     if require_engine:
@@ -7568,6 +7676,18 @@ async def _run_cognitive_engine_chat_turn(
         reasons: tuple[str, ...] | list[str],
     ) -> str | None:
         if require_engine:
+            if bool(
+                turn_trace
+                and (
+                    turn_trace.get("foreground_model_generation_consumed")
+                    or turn_trace.get("single_owner_generation_exhausted")
+                )
+            ):
+                logger.warning(
+                    "Skipping CognitiveEngine desktop repair retry; the foreground "
+                    "model owner already produced work for this turn."
+                )
+                return None
             allowed, block_reason = _desktop_secondary_model_repair_allowed(
                 reason="cognitive_engine_repair_retry",
                 lane_snapshot=lane,
@@ -7990,7 +8110,14 @@ async def _run_cognitive_engine_chat_turn(
             thought_metadata.get("model_retry_suppressed", False)
         )
         quality_retry_exhausted = generation_failure_class == "surface_quality_rejected"
-        single_owner_exhausted = model_retry_suppressed or quality_retry_exhausted
+        single_owner_exhausted = bool(
+            model_retry_suppressed
+            or quality_retry_exhausted
+            or (
+                turn_trace
+                and turn_trace.get("foreground_model_generation_consumed")
+            )
+        )
         if single_owner_exhausted:
             logger.warning(
                 "CognitiveEngine retained single ownership of the failed turn "
@@ -8014,7 +8141,13 @@ async def _run_cognitive_engine_chat_turn(
         return None
     if not text or text == "…" or text.startswith("background_thought_suppressed"):
         if require_engine:
-            model_retry_suppressed = bool(thought_metadata.get("model_retry_suppressed", False))
+            model_retry_suppressed = bool(
+                thought_metadata.get("model_retry_suppressed", False)
+                or (
+                    turn_trace
+                    and turn_trace.get("foreground_model_generation_consumed")
+                )
+            )
             retry_reply = None
             if not model_retry_suppressed:
                 retry_reply = await _attempt_repair_retry(text, ("empty_cognitive_engine_reply",))
@@ -17642,7 +17775,10 @@ async def api_chat(
             nonlocal pending_exchange_id
             if not desktop_requires_cognitive_engine:
                 return None
-            if bool(_live_turn_trace.get("single_owner_generation_exhausted")):
+            if bool(
+                _live_turn_trace.get("single_owner_generation_exhausted")
+                or _live_turn_trace.get("foreground_model_generation_consumed")
+            ):
                 logger.warning(
                     "Skipping duplicate desktop recovery generation after the "
                     "CognitiveEngine owner exhausted this turn."

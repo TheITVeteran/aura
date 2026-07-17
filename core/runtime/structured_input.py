@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import re
-
+from dataclasses import dataclass
 
 _LEARNING_BUNDLE_INTRO_MARKERS = (
     "i have some suggestions",
@@ -35,6 +34,16 @@ _DIRECTIVE_LINE_RE = re.compile(
     r"^\s*(?:then|and then|also|next|after that|give|tell|describe|name|answer|pick|"
     r"recall|compare|contrast|choose|explain|verify|evaluate|trace|test)\b",
     re.IGNORECASE,
+)
+
+_COORDINATED_DIRECTIVE_RE = re.compile(
+    r"(?:^|[,;:]\s*(?:and\s+)?|[.!?]\s+|\b(?:and|then|also|next|finally)\s+)"
+    r"(?:please\s+)?(?:"
+    r"answer|build|calculate|choose|compare|contrast|debug|derive|describe|design|"
+    r"diagnose|enumerate|evaluate|explain|fix|give|identify|implement|justify|list|"
+    r"name|plan|prove|recommend|review|select|show|summarize|tell|test|trace|validate|verify"
+    r")\b",
+    re.IGNORECASE | re.MULTILINE,
 )
 
 _CONNECTOR_RE = re.compile(
@@ -136,8 +145,22 @@ class PromptShape:
     connector_parts: int = 0
     repeated_clause_parts: int = 0
     numbered_parts: int = 0
+    imperative_parts: int = 0
     prefers_extended_answer: bool = False
     requires_single_reply_coverage: bool = False
+
+    def to_dict(self) -> dict[str, int | bool]:
+        return {
+            "question_parts": self.question_parts,
+            "explicit_question_marks": self.explicit_question_marks,
+            "question_like_lines": self.question_like_lines,
+            "connector_parts": self.connector_parts,
+            "repeated_clause_parts": self.repeated_clause_parts,
+            "numbered_parts": self.numbered_parts,
+            "imperative_parts": self.imperative_parts,
+            "prefers_extended_answer": self.prefers_extended_answer,
+            "requires_single_reply_coverage": self.requires_single_reply_coverage,
+        }
 
 
 def analyze_prompt_shape(text: str) -> PromptShape:
@@ -162,6 +185,7 @@ def analyze_prompt_shape(text: str) -> PromptShape:
     connector_parts = len(_CONNECTOR_RE.findall(raw))
     numbered_parts = len(_NUMBERED_ITEM_RE.findall(raw))
     repeated_clause_parts = max(0, len(_REPEATED_CLAUSE_RE.findall(raw)) - 1)
+    imperative_parts = len(_COORDINATED_DIRECTIVE_RE.findall(raw))
 
     part_candidates = [
         1,
@@ -171,6 +195,7 @@ def analyze_prompt_shape(text: str) -> PromptShape:
         connector_parts + 1 if connector_parts else 0,
         repeated_clause_parts + 1 if repeated_clause_parts else 0,
         directive_lines if directive_lines >= 2 else 0,
+        imperative_parts if imperative_parts >= 2 else 0,
     ]
     question_parts = max(1, min(6, max(part_candidates)))
 
@@ -190,6 +215,7 @@ def analyze_prompt_shape(text: str) -> PromptShape:
         connector_parts=connector_parts,
         repeated_clause_parts=repeated_clause_parts,
         numbered_parts=numbered_parts,
+        imperative_parts=imperative_parts,
         prefers_extended_answer=prefers_extended_answer,
         requires_single_reply_coverage=requires_single_reply_coverage,
     )
