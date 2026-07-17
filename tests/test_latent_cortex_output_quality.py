@@ -231,3 +231,36 @@ def test_phrase_loop_gate_is_length_aware():
     # a loop.
     parroting = long_answer + " The single-owner design wins." * 8
     assert plr(question, parroting) == "repetitive_phrase_loop"
+
+
+def test_semicolon_chained_prose_counts_as_developed():
+    """A compound answer written in semicolon-chained technical clauses is
+    developed discourse — a live 228-word answer satisfying every requested
+    facet was rejected because only [.!?] counted as boundaries (CP114)."""
+    objective = (
+        "Compare the two designs, choose the stronger one, and explain how "
+        "you would verify it under cancellation and timeout faults."
+    )
+    chained = (
+        "The single-owner design is stronger than late deduplication because "
+        "exactly one worker computes each request; duplicate generations "
+        "whereas racing merges corrupt the proof ledger and answer quality; "
+        "I recommend the single-owner architecture for this service. "
+        "Verification proceeds by fault injection: cancellation revokes the "
+        "owner token and the episode must abort with a cleanup receipt; a "
+        "timeout trips the deadline guard and the worker must cancel the "
+        "stage without spawning a second computation path; therefore the "
+        "test asserts one owner, one result, and one truthful receipt."
+    )
+    receipt = _grade(chained, generated=200)
+    receipt = evaluate_latent_output(
+        chained, generated_tokens=200, termination="eos", objective=objective
+    )
+    assert receipt["compound_request"] is True
+    assert "compound_answer_underdeveloped" not in receipt["reasons"], receipt["reasons"]
+
+    thin = "Both are fine; pick either."
+    thin_receipt = evaluate_latent_output(
+        thin, generated_tokens=64, termination="eos", objective=objective
+    )
+    assert thin_receipt["passed"] is False  # brevity still fails other floors

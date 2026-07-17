@@ -181,7 +181,12 @@ def evaluate_latent_output(
     code_fence_count = rendered.count("```")
     structured = bool(list_items >= 2 or (code_fence_count >= 2 and code_fence_count % 2 == 0))
     sentence_count = len(_SENTENCE_END_RE.findall(rendered))
-    discourse_units = max(sentence_count, list_items)
+    # Technical prose legitimately chains clauses with semicolons
+    # ("cancellation revokes the token; timeouts trip the guard; …") — a
+    # live 228-word answer satisfying every requested facet was rejected as
+    # underdeveloped because only [.!?] counted as discourse boundaries.
+    semicolon_clauses = rendered.count(";")
+    discourse_units = max(sentence_count + semicolon_clauses, list_items)
     max_blank_lines = _max_blank_line_run(rendered)
     lexical_yield = len(words) / max(1, generated)
 
