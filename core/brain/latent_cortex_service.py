@@ -374,6 +374,11 @@ class LatentCortexService:
             # Sentence grace: the limit landed mid-sentence and sampling
             # continued a few model-chosen tokens to the natural boundary.
             "token_limit_sentence_grace",
+            # Wall-clock analogues: time pressure ended decoding, ideally at
+            # a sentence boundary (wind-down). The output-quality gate is
+            # the completeness judge either way.
+            "wall_reserve_sentence_grace",
+            "wall_reserve",
         }:
             errors.append("decode_incomplete")
         decode_bridge_policy = config.get("decode_bridge_policy", "none")

@@ -494,6 +494,7 @@ class LatentCortexEngine:
 
         token = sample_disciplined(initial_logits)
         termination = "token_limit"
+        decode_started = time.monotonic()
         for index in range(max(1, int(limit)) + _SENTENCE_GRACE_TOKENS):
             if self._cancel_requested(cancel_check):
                 raise _LatentEpisodeCancelled("decode")
@@ -502,10 +503,8 @@ class LatentCortexEngine:
                 break
             out.append(token)
             newline_run = newline_run + 1 if self._is_pure_newline_token(token) else 0
+            sentence_done = self.tokenizer is None or self._token_ends_sentence(token)
             if index + 1 >= int(limit):
-                sentence_done = (
-                    self.tokenizer is None or self._token_ends_sentence(token)
-                )
                 if sentence_done:
                     termination = (
                         "token_limit"
@@ -521,9 +520,23 @@ class LatentCortexEngine:
             if budget.exhausted:
                 termination = "budget_exhausted"
                 break
-            if wall_reserve_s > 0.0 and budget.remaining_wall_s < wall_reserve_s:
-                termination = "wall_reserve"
-                break
+            if wall_reserve_s > 0.0:
+                # Time-aware sentence wind-down: when the MEASURED decode
+                # rate says another grace window would eat into the cleanup
+                # reserve, finish at the next sentence boundary instead of
+                # cutting mid-clause (CP115: the fixed rate estimate ran hot
+                # on a cold boot and the reserve guillotined token 330).
+                rate_s = max(0.02, (time.monotonic() - decode_started) / max(1, len(out)))
+                winding_down = (
+                    budget.remaining_wall_s
+                    < wall_reserve_s + _SENTENCE_GRACE_TOKENS * rate_s
+                )
+                if winding_down and sentence_done:
+                    termination = "wall_reserve_sentence_grace"
+                    break
+                if budget.remaining_wall_s < wall_reserve_s:
+                    termination = "wall_reserve"
+                    break
             if not budget.can_afford(1, self.n_layers):
                 termination = "budget_unaffordable"
                 break
@@ -788,6 +801,14 @@ class LatentCortexEngine:
             # model-chosen tokens to the natural boundary — a complete
             # answer, receipted under its own termination kind.
             "token_limit_sentence_grace",
+            # Time pressure ended decoding at a sentence boundary (the
+            # wall-clock analogue of the token-limit grace). A time-bounded
+            # stop has the same epistemic status as a token-bounded one:
+            # the product-quality gate — terminal completeness, facet and
+            # subject coverage — judges whether the text stands as an
+            # answer, not the budget dimension that ended sampling.
+            "wall_reserve_sentence_grace",
+            "wall_reserve",
         }:
             failure_reason = f"decode_incomplete:{receipt.decode_termination}"
         if receipt.params_unchanged is False:
