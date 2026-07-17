@@ -503,13 +503,34 @@ class CognitiveContext:
             is_ephemeral_conversation_turn,
             is_transient_foreground_projection,
         )
+        from core.goals.objective_lifecycle import has_explicit_durable_binding
+        from core.goals.standing_objective import (
+            is_valid_standing_objective,
+            standing_objective_rejection_for_bound_work,
+        )
+
+        def _item_survives_restore(item: Any) -> bool:
+            # Explicitly-bound durable work (task/commitment ids) keeps its
+            # row even with chat-like text; structural garbage (renders,
+            # contract scaffolds) never survives regardless of bindings.
+            if has_explicit_durable_binding(item):
+                return not standing_objective_rejection_for_bound_work(
+                    _normalize_goal_text(item)
+                )
+            return is_valid_standing_objective(_normalize_goal_text(item))
 
         self.sanitize_autonomy_state()
         current_text = _normalize_goal_text(self.current_objective)
-        if (
-            current_text
-            and _origin_is_user_anchored(self.current_origin)
-            and is_ephemeral_conversation_turn(current_text)
+        # An invalid standing objective (chat turn, control-contract scaffold,
+        # screen render) is purged REGARDLESS of recorded origin: live
+        # evidence showed a NetHack framebuffer surviving restore because its
+        # origin ("embodied_motor_reflex") was not user-anchored.
+        if current_text and (
+            not is_valid_standing_objective(self.current_objective)
+            or (
+                _origin_is_user_anchored(self.current_origin)
+                and is_ephemeral_conversation_turn(current_text)
+            )
         ):
             self.current_objective = None
             self.current_origin = "system"
@@ -519,12 +540,28 @@ class CognitiveContext:
             item
             for item in list(self.pending_initiatives or [])
             if not is_transient_foreground_projection(item)
+            and _item_survives_restore(item)
         ]
         self.active_goals = [
             item
             for item in list(self.active_goals or [])
             if not is_transient_foreground_projection(item)
+            and _item_survives_restore(item)
         ]
+        # Executive projections of the purged/invalid objective must not
+        # survive restore either — hysteresis re-commits whatever it carries.
+        modifiers = dict(self.modifiers or {})
+        for key in ("executive_objective", "executive_background_commitment"):
+            if key in modifiers and not is_valid_standing_objective(
+                _normalize_goal_text(modifiers.get(key))
+            ):
+                modifiers.pop(key, None)
+        hysteresis = modifiers.get("executive_hysteresis")
+        if isinstance(hysteresis, dict) and not is_valid_standing_objective(
+            _normalize_goal_text(hysteresis.get("committed_objective"))
+        ):
+            modifiers.pop("executive_hysteresis", None)
+        self.modifiers = modifiers
 
     def trim_working_memory(self, limit: Optional[int] = None):
         self.sanitize_autonomy_state()

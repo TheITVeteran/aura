@@ -11,6 +11,7 @@ import numpy as np
 from core.container import ServiceContainer
 from core.continuity import is_evaluation_contamination
 from core.goals.goal_text import is_actionable_goal_text, is_intrinsic_goal_text
+from core.goals.standing_objective import is_valid_standing_objective
 from core.goals.objective_lifecycle import (
     is_actionable_foreground_objective,
     is_transient_foreground_projection,
@@ -544,6 +545,12 @@ class ExecutiveClosureEngine:
             current_objective
             and not is_evaluation_contamination(current_objective)
             and not is_intrinsic_goal_text(current_objective)
+            # A chat turn, control-contract scaffold, or screen render must
+            # never surface as the executive imperative even transiently:
+            # hysteresis commits whatever is selected here, and the live
+            # instance carried "Ok. Once more. You with me?" (then a NetHack
+            # framebuffer) as CURRENT IMPERATIVE through exactly this path.
+            and is_valid_standing_objective(current_objective)
         ):
             return current_objective
 

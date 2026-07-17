@@ -63,7 +63,17 @@ def is_intrinsic_goal_text(value: Any) -> bool:
 
 def is_actionable_goal_text(value: Any) -> bool:
     text = normalize_goal_text(value)
-    return bool(text) and not is_intrinsic_goal_text(text) and not is_stale_or_prompt_scaffold_goal(text)
+    if not text or is_intrinsic_goal_text(text) or is_stale_or_prompt_scaffold_goal(text):
+        return False
+    # Standing-objective validity is the durable-goal ingress authority:
+    # ephemeral chat turns, control-contract scaffolds, and non-linguistic
+    # renders must never become actionable volitional state (live evidence:
+    # a check-in question and a NetHack framebuffer both reached CURRENT
+    # IMPERATIVE at urgency 0.98). Imported lazily — objective_lifecycle
+    # imports this module at module scope.
+    from core.goals.standing_objective import is_valid_standing_objective
+
+    return is_valid_standing_objective(value)
 
 
 def first_actionable_goal_text(values: Iterable[Any]) -> str:

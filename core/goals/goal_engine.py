@@ -309,19 +309,50 @@ class GoalEngine:
             rows = self._conn.execute(
                 "SELECT * FROM goals WHERE status IN ('queued', 'in_progress', 'blocked', 'paused')"
             ).fetchall()
+            from core.goals.objective_lifecycle import has_explicit_durable_binding
+            from core.goals.standing_objective import (
+                standing_objective_rejection_for_bound_work,
+                standing_objective_rejection_reason,
+            )
+
             for row in rows:
                 record = self._row_to_record(row)
                 payload = record.to_dict()
-                if not is_transient_foreground_projection(payload):
+                transient = is_transient_foreground_projection(payload)
+                # The transient-projection diagnosis is more specific, so it
+                # names the quarantine when both apply. Explicitly-bound rows
+                # only fall to STRUCTURAL standing rejections (renders,
+                # contract scaffolds) — a dispatched task may track chat text.
+                standing_rejection = (
+                    standing_objective_rejection_for_bound_work(
+                        record.objective or record.name
+                    )
+                    if has_explicit_durable_binding(payload)
+                    else standing_objective_rejection_reason(
+                        record.objective or record.name
+                    )
+                )
+                if transient:
+                    standing_rejection = ""
+                if not transient and not standing_rejection:
                     continue
+                quarantine_reason = (
+                    f"standing_objective_invalid:{standing_rejection}"
+                    if standing_rejection
+                    else "transient_foreground_projection"
+                )
                 metadata = dict(record.metadata or {})
                 metadata["quarantine"] = {
-                    "reason": "transient_foreground_projection",
+                    "reason": quarantine_reason,
                     "prior_status": record.status,
                     "quarantined_at": now,
                 }
                 summary = (
-                    "Quarantined after provenance repair: a completed foreground "
+                    "Quarantined after provenance repair: text that may not be a "
+                    f"standing objective ({standing_rejection}) was promoted into "
+                    "autonomous work."
+                    if standing_rejection
+                    else "Quarantined after provenance repair: a completed foreground "
                     "conversation turn was incorrectly promoted into autonomous work."
                 )
                 self._conn.execute(

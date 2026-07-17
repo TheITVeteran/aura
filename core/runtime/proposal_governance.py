@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional, Tuple
 from core.consciousness.executive_authority import get_executive_authority
 from core.constitution import get_constitutional_core
 from core.goals.objective_lifecycle import is_transient_foreground_projection
+from core.goals.standing_objective import standing_objective_rejection_reason
 from core.health.degraded_events import record_degraded_event
 from core.runtime.errors import record_degradation
 from core.runtime.service_access import resolve_state_repository
@@ -45,6 +46,13 @@ async def propose_governed_initiative_to_state(
             "action": "quarantined",
             "reason": "transient_foreground_projection",
             "goal": normalized_goal,
+        }
+    rejection = standing_objective_rejection_reason(goal)
+    if rejection:
+        return state, {
+            "action": "rejected",
+            "reason": f"standing_objective_invalid:{rejection}",
+            "goal": normalized_goal[:160],
         }
 
     constitution = get_constitutional_core(orchestrator)

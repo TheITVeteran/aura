@@ -558,6 +558,10 @@ def _is_quarantined_initiative(initiative: dict) -> bool:
         return True
     if is_stale_or_prompt_scaffold_goal(goal):
         return True
+    from core.goals.standing_objective import is_valid_standing_objective
+
+    if not is_valid_standing_objective(_goal(initiative)):
+        return True
     return (
         lowered.startswith(("stalled goal:", "unresolved: stalled goal:"))
         or "desktop task receipt" in lowered
