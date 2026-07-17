@@ -214,8 +214,20 @@ def test_phrase_loop_gate_is_length_aware():
     )
     from core.conversation.response_reliability import _phrase_loop_reason as plr
 
-    words = len(long_answer.split())
-    assert words > 220, words
-    assert plr("compare designs", long_answer) == "", (
-        "topical repetition in a long answer must not read as a loop"
+    question = (
+        "Compare an early single-owner design with a late deduplication "
+        "design, then choose the stronger architecture and explain how you "
+        "would verify it under cancellation, timeout, and worker-restart faults."
     )
+    # Echoing the question's own noun phrase while comparing/choosing/
+    # verifying is topical, not degenerate.
+    assert plr(question, long_answer) == "", (
+        "question-sourced repetition in a technical answer must not read as a loop"
+    )
+    # The same phrase count WITHOUT question support still trips: the answer
+    # invented its repetition.
+    assert plr("compare the architectures", long_answer) == "repetitive_phrase_loop"
+    # And looping the question's own words at pathological density is still
+    # a loop.
+    parroting = long_answer + " The single-owner design wins." * 8
+    assert plr(question, parroting) == "repetitive_phrase_loop"

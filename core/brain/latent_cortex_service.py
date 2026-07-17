@@ -816,6 +816,52 @@ class LatentCortexService:
         )
         if config_overrides is not None:
             config.update(dict(config_overrides))
+        # Learned execution controller: evidence-gated arm selection over
+        # the base allocation (deeper recurrence / wider branches /
+        # probe-guided bytecode / lean ΔW). Exploits only after Wilson
+        # separation on graded outcomes in this context bucket; explores
+        # sparsely; never touches explicit operator overrides.
+        controller_decision: dict[str, Any] | None = None
+        if foreground_request and config_overrides is None:
+            try:
+                from core.brain.llm.latent_cortex.execution_controller import (
+                    controller_enabled,
+                    get_execution_controller,
+                )
+
+                if not controller_enabled():
+                    raise RuntimeError("execution controller disabled")
+                controller = get_execution_controller()
+                controller_decision = controller.choose(
+                    objective=self._visible_objective(question, messages),
+                    domain=domain,
+                    stakes=stakes,
+                    uncertainty=uncertainty,
+                )
+                if controller_decision["arm"] != "base":
+                    config = controller.apply_arm(
+                        controller_decision["arm"],
+                        config,
+                        recurrent_region=(
+                            (16, 48)
+                            if allocation_profile
+                            == "resident_32b_interactive_full_stack_v1"
+                            else None
+                        ),
+                    )
+                self._last_allocation["execution_controller"] = (
+                    controller_decision
+                )
+            except (
+                ImportError,
+                AttributeError,
+                RuntimeError,
+                TypeError,
+                ValueError,
+                OSError,
+            ) as exc:
+                logger.debug("Execution controller unavailable: %s", exc)
+                controller_decision = None
         if allocation_profile == "resident_32b_interactive_full_stack_v1":
             try:
                 requested_decode_tokens = int(config.get("decode_max_tokens") or 256)
@@ -1037,6 +1083,44 @@ class LatentCortexService:
             self._failure_streak = 0
             self._last_refusal = ""
             self._last_success_at = time.time()
+            # Controller learning: this episode's VERIFIED outcome becomes
+            # bandit evidence for its (context, arm) cell. Episodes that
+            # never completed record nothing — an arm can only earn
+            # exploitation with completed, verified wins.
+            if controller_decision is not None:
+                try:
+                    from core.brain.llm.latent_cortex.execution_controller import (
+                        get_execution_controller,
+                    )
+
+                    verifier_evidence = result_receipt.get("verifier_guidance")
+                    best_score = 0.0
+                    if isinstance(verifier_evidence, dict):
+                        raw_best = verifier_evidence.get("best_score")
+                        if (
+                            isinstance(raw_best, (int, float))
+                            and not isinstance(raw_best, bool)
+                            and math.isfinite(float(raw_best))
+                        ):
+                            best_score = max(0.0, min(1.0, float(raw_best)))
+                    get_execution_controller().record_outcome(
+                        bucket=str(controller_decision.get("bucket") or ""),
+                        arm=str(controller_decision.get("arm") or "base"),
+                        verified_score=best_score,
+                        success=True,
+                        wall_clock_s=time.monotonic() - started,
+                    )
+                    result_receipt["execution_controller"] = controller_decision
+                    result["receipt"] = result_receipt
+                except (
+                    ImportError,
+                    AttributeError,
+                    RuntimeError,
+                    TypeError,
+                    ValueError,
+                    OSError,
+                ) as exc:
+                    logger.debug("Controller outcome not recorded: %s", exc)
             # Identity consistency: the canonical self verifies the
             # conclusion (persona displacement, forbidden intentions, core
             # values). The verdict PRICES the broadcast — an inconsistent

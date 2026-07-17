@@ -25,6 +25,12 @@ os.environ.setdefault(
     str(Path(tempfile.gettempdir()) / f"aura-test-logs-{os.getpid()}"),
 )
 
+# Ledger hermeticity: the latent execution controller learns from live
+# episode outcomes and persists them under the real data dir. Tests running
+# fake episodes must never pollute that evidence; tests that exercise the
+# controller construct their own instance with a tmp root.
+os.environ.setdefault("AURA_EXECUTION_CONTROLLER", "0")
+
 # Determinism: token-progress budgets adapt to LIVE machine memory pressure
 # by default (the host running this suite often has a 20GB model resident).
 # Pin the adaptation off so timing assertions can't drift with the

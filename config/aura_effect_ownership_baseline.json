@@ -2977,6 +2977,14 @@
       "scope": "<module>.IdentityService.save"
     },
     {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().append_text",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/brain/llm/latent_cortex/execution_controller.py",
+      "scope": "<module>.ExecutionController._append"
+    },
+    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_bytes_batch",
       "canonical_owner": true,
       "category": "file_write_gateway",
@@ -3439,6 +3447,46 @@
       "count": 1,
       "path": "core/learning/genuine_learning_pipeline.py",
       "scope": "<module>.ExperienceBuffer.record._write_record"
+    },
+    {
+      "callee": "<file_write_gateway>.ensure_directory",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/learning/latent_adapter_distillation.py",
+      "scope": "<module>.distill_proposal_to_adapter"
+    },
+    {
+      "callee": "<file_write_gateway>.write_bytes",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/learning/latent_adapter_distillation.py",
+      "scope": "<module>.distill_proposal_to_adapter"
+    },
+    {
+      "callee": "<file_write_gateway>.write_text",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/learning/latent_adapter_distillation.py",
+      "scope": "<module>.distill_proposal_to_adapter"
+    },
+    {
+      "callee": "<file_write_gateway>.ensure_directory",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/learning/latent_consolidation.py",
+      "scope": "<module>.run_consolidation_cycle"
+    },
+    {
+      "callee": "<file_write_gateway>.write_text",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/learning/latent_consolidation.py",
+      "scope": "<module>.run_consolidation_cycle"
     },
     {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
@@ -13842,6 +13890,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "bb6b9bd3ec3a308bab0b5f10dc81203f337aa5f713d1d3cfd82cf80bd6e49402",
+  "inventory_sha256": "6e83c9f04b7f9cb6251a094a13a3115e699cabcfd39db4420ddecd439f9ea66d",
   "schema_version": 1
 }

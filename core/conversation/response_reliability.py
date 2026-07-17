@@ -4602,12 +4602,18 @@ def _phrase_loop_reason(user_message: Any, reply_text: Any) -> str:
         stop_words = stop_words.union(speaker_labels)
     # Length-aware loop threshold: a genuine degeneration loop repeats a
     # phrase dozens of times, while a long technical answer legitimately
-    # names its subject ("single-owner design", "worker restart") three or
-    # four times across 400+ words. An absolute 3-repeat rule rejected a
-    # correct 350-token deep-reasoning answer live; scaling the required
-    # repeats with length keeps full detection power against real loops
-    # without punishing topical vocabulary in long answers.
+    # names its subject three or four times across 400+ words. An absolute
+    # 3-repeat rule rejected a correct 350-token deep-reasoning answer live.
     required_repeats = 3 + min(2, len(lower_words) // 220)
+    # Question-sourced phrases are topical by definition: an answer that
+    # compares "an early single-owner design with a late deduplication
+    # design" MUST echo those noun phrases while comparing, choosing, and
+    # describing verification. They only count as a loop at pathological
+    # density (a model looping the question's own words still gets caught).
+    question_content_words = {
+        w.lower() for w in _WORD_RE.findall(user) if w.lower() not in stop_words
+    }
+    question_phrase_repeats = max(8, required_repeats * 2)
     for n in (4, 3, 2):
         counts: dict[tuple[str, ...], int] = {}
         for i in range(0, max(0, len(lower_words) - n + 1)):
@@ -4615,8 +4621,22 @@ def _phrase_loop_reason(user_message: Any, reply_text: Any) -> str:
             if sum(1 for part in gram if part not in stop_words) < 2:
                 continue
             counts[gram] = counts.get(gram, 0) + 1
-        if any(count >= required_repeats for count in counts.values()):
-            return "repetitive_phrase_loop"
+        for gram, count in counts.items():
+            # Content-word containment (not literal n-gram match): the answer
+            # says "the single-owner design" where the question said "an
+            # early single-owner design" — same topical phrase, different
+            # articles. Recombining question vocabulary is topical; only
+            # pathological density of it reads as a loop.
+            question_sourced = question_content_words and all(
+                part in question_content_words
+                for part in gram
+                if part not in stop_words
+            )
+            threshold = (
+                question_phrase_repeats if question_sourced else required_repeats
+            )
+            if count >= threshold:
+                return "repetitive_phrase_loop"
 
     content_words = [
         w for w in lower_words
