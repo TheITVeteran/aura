@@ -1209,6 +1209,31 @@ class GlobalWorkspace:
             for r in self._history[-n:]
         ]
 
+    def get_competing_coalitions(self, n: int = 3) -> list[dict[str, Any]]:
+        """The live competition, strongest first — read-only and bounded.
+
+        This is the GWT→RLC coupling surface: pending candidates (not yet
+        broadcast) rendered so deep deliberation can take the mind's actual
+        competing coalitions as typed thought-slot seeds.
+        """
+        rows: list[dict[str, Any]] = []
+        for candidate in sorted(
+            list(self._candidates),
+            key=lambda c: c.effective_priority,
+            reverse=True,
+        )[: max(0, int(n))]:
+            rows.append(
+                {
+                    "source": candidate.source,
+                    "content": candidate.content[:400],
+                    "priority": round(candidate.effective_priority, 4),
+                    "content_type": getattr(
+                        candidate.content_type, "name", str(candidate.content_type)
+                    ),
+                }
+            )
+        return rows
+
     def get_context_stream(self, n: int = 5) -> str:
         """Return a formatted string of the last N winners for prompt injection."""
         winners = self.get_last_n_winners(n)

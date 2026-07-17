@@ -835,6 +835,26 @@ class LatentCortexService:
         if generation_lease_id is None:
             return self._record_failure("generation_gate_busy")
 
+        # GWT→RLC coupling: the mind's live broadcast and its strongest
+        # competing coalitions seed identifiable thought slots alongside the
+        # organ items — deliberation runs over what consciousness is actually
+        # about, not just the prompt. Organ items keep priority; coalitions
+        # only fill remaining slots. Lab/background episodes stay decoupled:
+        # live workspace state would confound controlled experiments.
+        if foreground_request:
+            try:
+                from core.brain.gwt_rlc_coupling import merge_cognitive_context
+
+                cognitive_context = merge_cognitive_context(cognitive_context)
+            except (
+                ImportError,
+                AttributeError,
+                RuntimeError,
+                TypeError,
+                ValueError,
+            ) as exc:
+                logger.debug("Workspace coalition merge skipped: %s", exc)
+
         self._episodes += 1
         self._last_attempt_at = time.time()
         self._last_progress = {}
@@ -938,6 +958,36 @@ class LatentCortexService:
             self._failure_streak = 0
             self._last_refusal = ""
             self._last_success_at = time.time()
+            # RLC→GWT coupling: the conclusion returns to the workspace as a
+            # competing coalition (priced by how it was earned) BEFORE any
+            # action path consumes it — deliberation revises the broadcast,
+            # the broadcast reaches the Will through the normal competition.
+            # Lab/background episodes never write into the live mind.
+            if foreground_request:
+                try:
+                    from core.brain.gwt_rlc_coupling import (
+                        broadcast_episode_conclusion,
+                    )
+
+                    result_receipt["workspace_broadcast"] = (
+                        await broadcast_episode_conclusion(
+                            self._visible_objective(question, messages),
+                            str(result.get("text") or ""),
+                            result_receipt,
+                            stakes=stakes,
+                        )
+                    )
+                    result["receipt"] = result_receipt
+                except (
+                    ImportError,
+                    AttributeError,
+                    RuntimeError,
+                    TypeError,
+                    ValueError,
+                ) as exc:
+                    logger.debug(
+                        "Workspace broadcast of conclusion skipped: %s", exc
+                    )
             self._last_receipt = result_receipt
             self._last_failure_receipt = {}
             logger.info(

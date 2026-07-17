@@ -1602,3 +1602,137 @@ def test_service_requests_verifier_guidance_for_resident_profile(monkeypatch):
         )
     )
     assert captured["verifier_guidance"] is True
+
+
+# ── GWT ↔ RLC coupling gating ───────────────────────────────────────────
+
+
+def _full_success_stub_client(captured):
+    class StubClient:
+        async def latent_reason_async(self, prompt=None, **kwargs):
+            captured["prompt"] = prompt
+            captured["config"] = kwargs.get("config")
+            return {
+                "ok": True,
+                "text": "A deliberate conclusion that answers the question.",
+                "receipt": {
+                    "steps_taken": 7,
+                    "halting_reason": "converged",
+                    "n_branches": kwargs["config"]["n_branches"],
+                    "n_slots": kwargs["config"]["n_slots"],
+                    "episode_id": "ep-gwt",
+                    "schedule_hash": "b" * 64,
+                    "checkpoint_fingerprint": "a" * 64,
+                    "checkpoint_fingerprint_method": "sha256",
+                    "checkpoint_file_count": 8,
+                    **_identity_receipt(),
+                    "params_unchanged": True,
+                    "budget": {
+                        "max_layer_apps": 1_000,
+                        "spent_layer_apps": 100,
+                        "exhausted": False,
+                    },
+                    "decode_requested_tokens": kwargs["config"][
+                        "decode_max_tokens"
+                    ],
+                    "decode_generated_tokens": 12,
+                    "decode_termination": "eos",
+                    "decode_newline_suppressions": 0,
+                    "decode_repetition_penalty_applied": 1.0,
+                    "decode_temperature": 0.0,
+                    "decode_top_p": 1.0,
+                    "latent_opt_applied": True,
+                    "latent_opt_mode": "gradient",
+                    "latent_opt_attempts": 2,
+                    "latent_opt_steps": 2,
+                    "latent_opt_rejected": 0,
+                    "latent_opt_budget_exhausted": False,
+                    "fast_weights_applied": True,
+                    "fast_weights_erased": True,
+                    "fast_weights_layers": 2,
+                    "fast_weight_optimization_attempts": 2,
+                    "fast_weight_optimized_steps": 2,
+                    "fast_weight_rejected_steps": 0,
+                    "fast_weight_budget_exhausted": False,
+                    "fast_weight_optimizer": (
+                        "rms_normalized_sgd_backtracking_v1"
+                    ),
+                    "fast_weight_loss_trail": [2.0, 1.5, 1.0],
+                    "fast_weight_gradient_norm_trail": [3.0, 2.0],
+                    "fast_weight_accepted_step_sizes": [0.005, 0.0025],
+                    "fast_weight_line_search_backtracks": 1,
+                    "honest_flags": [],
+                },
+                "reason": "",
+            }
+
+    return StubClient
+
+
+def _run_episode_with_coupling_probes(monkeypatch, *, foreground: bool):
+    import core.brain.gwt_rlc_coupling as coupling_mod
+    import core.brain.llm.mlx_client as mlx_client_mod
+
+    monkeypatch.delenv("AURA_LATENT_CORTEX", raising=False)
+    svc = LatentCortexService()
+    captured: dict = {}
+    calls = {"merge": 0, "broadcast": 0}
+
+    def _fake_merge(items, **kwargs):
+        calls["merge"] += 1
+        return items
+
+    async def _fake_broadcast(objective, text, receipt, *, stakes=0.5):
+        calls["broadcast"] += 1
+        return {
+            "schema": coupling_mod.GWT_RLC_SCHEMA,
+            "submitted": True,
+            "accepted": True,
+            "priority": 0.7,
+            "pricing": {"verified": False},
+        }
+
+    monkeypatch.setattr(coupling_mod, "merge_cognitive_context", _fake_merge)
+    monkeypatch.setattr(
+        coupling_mod, "broadcast_episode_conclusion", _fake_broadcast
+    )
+    monkeypatch.setattr(
+        mlx_client_mod,
+        "get_mlx_client",
+        lambda *a, **k: _full_success_stub_client(captured)(),
+    )
+    result = asyncio.run(
+        svc.deep_reason(
+            "hard question",
+            stakes=0.9,
+            uncertainty=0.9,
+            foreground_request=foreground,
+            runtime_controls={
+                "clean_user_surface_recurrent_loops": 2,
+                "clean_user_surface_steering_alpha": 0.30,
+            },
+        )
+    )
+    return result, calls
+
+
+def test_foreground_episode_couples_to_workspace(monkeypatch):
+    result, calls = _run_episode_with_coupling_probes(
+        monkeypatch, foreground=True
+    )
+    assert result["ok"]
+    assert calls["merge"] == 1
+    assert calls["broadcast"] == 1
+    broadcast = result["receipt"]["workspace_broadcast"]
+    assert broadcast["submitted"] is True
+    assert broadcast["accepted"] is True
+
+
+def test_background_episode_stays_decoupled_from_live_mind(monkeypatch):
+    result, calls = _run_episode_with_coupling_probes(
+        monkeypatch, foreground=False
+    )
+    assert result["ok"]
+    assert calls["merge"] == 0
+    assert calls["broadcast"] == 0
+    assert "workspace_broadcast" not in result["receipt"]
