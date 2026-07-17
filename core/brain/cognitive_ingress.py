@@ -238,19 +238,77 @@ def _signal_memory(objective: str) -> IngressSignal:
 
 
 def _signal_body(orchestrator: Any) -> IngressSignal:
+    """The whole pressure VECTOR, not one scalar.
+
+    total_pressure still moves stakes, but the signal now (a) reads the
+    per-channel decomposition so the receipt names WHAT is strained, (b)
+    weights anticipatory pressure separately — where the body is heading
+    matters more per unit than where it is (errors compound on a
+    deteriorating substrate), and (c) renders the strained channels as
+    slot-eligible interoceptive content so deep reasoning can take its own
+    body into account, not just spend less.
+    """
+    if orchestrator is None:
+        # No live orchestrator ⇒ no body to read. Host telemetry alone
+        # (disk usage of whatever machine imports this module) is not her
+        # body and would make cold-context allocation nondeterministic.
+        return IngressSignal(source="body", present=False, detail="no orchestrator")
     try:
         from core.being.aura_now import BodyState
 
         state = getattr(orchestrator, "state", None)
-        pressure = float(BodyState.from_aura_state(state).total_pressure())
+        body = BodyState.from_aura_state(state)
+        total_raw = body.total_pressure
+        # Property on the canonical BodyState; tolerate method-shaped
+        # doubles. The old call-only read raised TypeError on the REAL
+        # organ and silently reported the body absent every episode.
+        total = float(total_raw() if callable(total_raw) else total_raw)
+        vector = {
+            str(key): float(value)
+            for key, value in body.pressure_vector().items()
+        }
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
         return IngressSignal(source="body", present=False)
+    total = min(1.0, max(0.0, total))
+    anticipatory = min(
+        1.0, max(0.0, vector.get("anticipatory_pressure", 0.0))
+    )
+    strained = sorted(
+        (
+            (key.removesuffix("_pressure"), value)
+            for key, value in vector.items()
+            if key != "anticipatory_pressure" and value >= 0.30
+        ),
+        key=lambda kv: kv[1],
+        reverse=True,
+    )[:3]
+    context = ""
+    if strained or anticipatory >= 0.20:
+        parts = []
+        if strained:
+            parts.append(
+                "strained now: "
+                + ", ".join(f"{name} {value:.2f}" for name, value in strained)
+            )
+        if anticipatory >= 0.20:
+            parts.append(
+                f"forecast pressure {anticipatory:.2f} — heading toward strain"
+            )
+        context = "My body: " + "; ".join(parts)
     return IngressSignal(
         source="body",
         present=True,
-        value=pressure,
-        stakes_delta=0.10 * min(1.0, max(0.0, pressure)),
-        detail=f"total_pressure={pressure:.3f}",
+        value=total,
+        stakes_delta=min(0.15, 0.10 * total + 0.05 * anticipatory),
+        detail=(
+            f"total_pressure={total:.3f} anticipatory={anticipatory:.3f}"
+            + (
+                " strained=" + ",".join(name for name, _ in strained)
+                if strained
+                else ""
+            )
+        ),
+        context_text=context[:400],
     )
 
 
@@ -358,44 +416,166 @@ def _signal_will(orchestrator: Any) -> IngressSignal:
     return IngressSignal(source="will", present=False)
 
 
-def _signal_affect(orchestrator: Any) -> IngressSignal:
-    """Felt uncertainty/doubt from the affect organ raises uncertainty."""
-    service = _get_service("affect_engine") or getattr(orchestrator, "affect", None)
-    if service is None:
-        return IngressSignal(source="affect", present=False)
-    for accessor in ("felt_uncertainty", "uncertainty", "doubt"):
+def _unit_reading(service: Any, accessors: tuple[str, ...]) -> float | None:
+    """First finite scalar an organ exposes under any of these names."""
+    for accessor in accessors:
         candidate = getattr(service, accessor, None)
         try:
             value = candidate() if callable(candidate) else candidate
-        except Exception:  # noqa: BLE001 - organ contract unknown; absent
+        except Exception:  # noqa: BLE001 - organ contract unknown; skip
             continue
         if isinstance(value, (int, float)) and not isinstance(value, bool):
-            value = min(1.0, max(0.0, float(value)))
-            return IngressSignal(
-                source="affect",
-                present=True,
-                value=value,
-                uncertainty_delta=0.15 * value,
-                detail=f"{accessor}={value:.2f}",
-            )
-    return IngressSignal(source="affect", present=False)
+            return float(value)
+    return None
+
+
+def _signal_affect(orchestrator: Any) -> IngressSignal:
+    """Multi-dimensional felt state, not a single float.
+
+    Doubt raises uncertainty (as before). Valence and arousal now also
+    speak: distress — negative valence, elevated arousal — raises stakes,
+    because acting carelessly while distressed is how felt states get
+    ignored. When the felt state is pronounced it becomes slot-eligible
+    content, so the episode reasons WITH the feeling instead of merely
+    being budgeted by it.
+    """
+    service = _get_service("affect_engine") or getattr(orchestrator, "affect", None)
+    if service is None:
+        return IngressSignal(source="affect", present=False)
+    doubt = _unit_reading(service, ("felt_uncertainty", "uncertainty", "doubt"))
+    if doubt is not None:
+        doubt = min(1.0, max(0.0, doubt))
+    state = getattr(service, "state", None)
+    valence = None
+    arousal = None
+    if state is not None:
+        raw_valence = getattr(state, "valence", None)
+        if isinstance(raw_valence, (int, float)) and not isinstance(
+            raw_valence, bool
+        ):
+            valence = max(-1.0, min(1.0, float(raw_valence)))
+        raw_arousal = getattr(state, "arousal", None)
+        if isinstance(raw_arousal, (int, float)) and not isinstance(
+            raw_arousal, bool
+        ):
+            arousal = max(0.0, min(1.0, float(raw_arousal)))
+    if doubt is None and valence is None and arousal is None:
+        return IngressSignal(source="affect", present=False)
+    stakes_delta = 0.0
+    dims: list[str] = []
+    if valence is not None:
+        stakes_delta += 0.08 * max(0.0, -valence)
+        dims.append(f"valence {valence:+.2f}")
+    if arousal is not None:
+        stakes_delta += 0.05 * max(0.0, (arousal - 0.6) / 0.4)
+        dims.append(f"arousal {arousal:.2f}")
+    if doubt is not None:
+        dims.append(f"doubt {doubt:.2f}")
+    pronounced = (
+        (valence is not None and valence <= -0.25)
+        or (arousal is not None and arousal >= 0.70)
+        or (doubt is not None and doubt >= 0.50)
+    )
+    context = ""
+    if pronounced:
+        label = getattr(state, "label", "") or getattr(state, "mood_label", "")
+        quality = (
+            f" ({label.strip()})"
+            if isinstance(label, str) and label.strip()
+            else ""
+        )
+        context = "How this feels right now: " + ", ".join(dims) + quality
+    return IngressSignal(
+        source="affect",
+        present=True,
+        value=doubt if doubt is not None else (arousal or 0.0),
+        stakes_delta=min(0.13, stakes_delta),
+        uncertainty_delta=0.15 * (doubt or 0.0),
+        detail=", ".join(dims)[:160],
+        context_text=context[:400],
+    )
+
+
+def _embedding_similarity(text_a: str, text_b: str) -> float | None:
+    """Cosine similarity via the vector organ; None when it cannot run."""
+    vector = _get_service("vector_memory") or _get_service("vector_memory_engine")
+    embed = getattr(vector, "embed", None) if vector is not None else None
+    if not callable(embed):
+        return None
+    try:
+        vec_a = embed(text_a)
+        vec_b = embed(text_b)
+        num = float((vec_a * vec_b).sum())
+        den = float(
+            ((vec_a**2).sum() ** 0.5) * ((vec_b**2).sum() ** 0.5)
+        )
+        return max(0.0, num / den) if den > 1e-9 else 0.0
+    except Exception as exc:  # noqa: BLE001 - organ contract unknown
+        logger.debug("Embedding similarity unavailable: %s", exc)
+        return None
 
 
 def _signal_self_model(objective: str) -> IngressSignal:
+    """Identity relevance by MEANING, not only a keyword list.
+
+    The canonical self (values, commitments, current intention) is the
+    reference: embedding similarity between the objective and the live
+    self context block catches identity-relevant subjects phrased in
+    nobody's keyword list ("should someone retrain your reward pathway?").
+    The keyword probe remains as the no-vector-organ fallback, and keyword
+    hits still name WHICH identity terms fired.
+    """
     terms = _objective_terms(objective)
     matched = sorted(terms & _SELF_TERMS)
-    relevance = min(1.0, len(matched) / 2.0)
+    keyword_relevance = min(1.0, len(matched) / 2.0)
+    semantic: float | None = None
+    method = "keyword_terms"
+    self_service = _get_service("canonical_self")
+    if self_service is not None:
+        block = ""
+        reader = getattr(self_service, "get_context_block", None)
+        try:
+            candidate = reader() if callable(reader) else ""
+            if isinstance(candidate, str):
+                block = candidate.strip()
+        except Exception:  # noqa: BLE001 - organ contract unknown
+            block = ""
+        if block:
+            semantic = _embedding_similarity(objective, block[:2000])
+            if semantic is not None:
+                method = "embedding_cosine_vs_canonical_self"
+    relevance = keyword_relevance
+    if semantic is not None:
+        # Raw cosine floors well above zero on unrelated text; rescale
+        # [0.35, 0.80] → [0, 1] so mundane objectives contribute nothing.
+        relevance = max(
+            keyword_relevance,
+            min(1.0, max(0.0, float(semantic) - 0.35) / 0.45),
+        )
+    present = bool(matched) or relevance > 0.0
+    if matched:
+        context = "This question touches my own identity: " + ", ".join(
+            matched[:4]
+        )
+    elif relevance >= 0.5:
+        context = (
+            "This question is about who I am — it matched my canonical "
+            "self by meaning, not by keyword."
+        )
+    else:
+        context = ""
+    detail = f"method={method} relevance={relevance:.2f}"
+    if matched:
+        detail += f" identity_terms={matched[:4]}"
+    if semantic is not None:
+        detail += f" cosine={float(semantic):.2f}"
     return IngressSignal(
         source="self_model",
-        present=bool(matched),
-        value=relevance if matched else None,
+        present=present,
+        value=relevance if present else None,
         stakes_delta=0.10 * relevance,
-        detail=f"identity_terms={matched[:4]}" if matched else "",
-        context_text=(
-            "This question touches my own identity: " + ", ".join(matched[:4])
-            if matched
-            else ""
-        ),
+        detail=detail if present else "",
+        context_text=context,
     )
 
 
@@ -472,6 +652,14 @@ def cognitive_context_items(ingress: CognitiveIngress) -> list[dict[str, str]]:
             items.append(
                 {"source": "epistemic_caution", "text": signal.caution_text[:400]}
             )
+    felt_lines: list[str] = []
+    # Rich interoceptive content first: WHAT is strained / HOW it feels
+    # (body pressure decomposition, pronounced affect), then the scalar
+    # summary — all sharing one identifiable interoception slot.
+    for source in ("body", "affect"):
+        signal = by_source.get(source)
+        if signal is not None and signal.present and signal.context_text.strip():
+            felt_lines.append(signal.context_text.strip())
     felt: list[str] = []
     for source, label in (
         ("body", "body pressure"),
@@ -482,8 +670,10 @@ def cognitive_context_items(ingress: CognitiveIngress) -> list[dict[str, str]]:
         if signal is not None and signal.present and signal.value is not None:
             felt.append(f"{label} {float(signal.value):.2f}")
     if felt:
+        felt_lines.append("Current felt state: " + "; ".join(felt))
+    if felt_lines:
         items.append(
-            {"source": "interoception", "text": "Current felt state: " + "; ".join(felt)}
+            {"source": "interoception", "text": " | ".join(felt_lines)[:400]}
         )
     return items[:5]
 
