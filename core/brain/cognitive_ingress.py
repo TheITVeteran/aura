@@ -58,6 +58,12 @@ class IngressSignal:
     # eligible to seed an identifiable workspace slot inside the episode
     # (memory recall, matched goal, world summary, ...). Bounded at source.
     context_text: str = ""
+    # Epistemic-firewall receipt when this signal's content passed through
+    # admission control (currently the memory/retrieval signal).
+    firewall: dict[str, Any] = field(default_factory=dict)
+    # A caution the episode should be seeded with instead of (or alongside)
+    # content, e.g. when retrieved reports conflict irreconcilably.
+    caution_text: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -68,6 +74,8 @@ class IngressSignal:
             "uncertainty_delta": round(self.uncertainty_delta, 4),
             "detail": self.detail[:160],
             "context_text_chars": len(self.context_text),
+            "firewall": dict(self.firewall),
+            "caution_text_chars": len(self.caution_text),
         }
 
 
@@ -120,8 +128,44 @@ def _hit_text(hit: Any) -> str:
     return ""
 
 
+def _hit_observed_at(hit: Any) -> float | None:
+    """Best-effort recording time for an unknown-shaped memory hit."""
+    for key in ("observed_at", "timestamp", "created_at", "recorded_at"):
+        value = hit.get(key) if isinstance(hit, dict) else getattr(hit, key, None)
+        if (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and float(value) > 0.0
+        ):
+            return float(value)
+    return None
+
+
+def _hit_kind(hit: Any) -> str:
+    """Provenance typing: verified/receipted hits are observed facts."""
+    for key in ("kind", "provenance_kind", "evidence_kind"):
+        value = hit.get(key) if isinstance(hit, dict) else getattr(hit, key, None)
+        if isinstance(value, str) and value in {"observed_fact", "claim", "inference"}:
+            return value
+    for key in ("verified", "receipted", "grounded"):
+        value = hit.get(key) if isinstance(hit, dict) else getattr(hit, key, None)
+        if value is True:
+            return "observed_fact"
+    return "claim"
+
+
 def _signal_memory(objective: str) -> IngressSignal:
-    """Recall familiarity: strong hits ⇒ less uncertainty; blankness ⇒ more."""
+    """Recall familiarity + epistemic admission of what was recalled.
+
+    Familiarity moves the allocation (strong hits ⇒ less uncertainty;
+    blankness ⇒ more). The recalled CONTENT then passes the epistemic
+    firewall before it may seed a thought slot: duplicate reports collapse
+    to independent sources, conflicting reports refuse each other, and an
+    unresolved conflict seeds a caution instead of a winner — with the whole
+    decision receipted on the signal.
+    """
+    from core.brain.epistemic_firewall import EpistemicFirewall, EvidenceItem
+
     for name in ("memory_facade", "episodic_memory"):
         service = _get_service(name)
         if service is None:
@@ -142,21 +186,53 @@ def _signal_memory(objective: str) -> IngressSignal:
             count = len(hits) if isinstance(hits, (list, tuple)) else 0
             familiarity = min(1.0, count / 4.0)
             recalled = ""
+            caution = ""
+            firewall_receipt: dict[str, Any] = {}
+            conflict_uncertainty = 0.0
             if count:
-                recalled = " ".join(
-                    fragment
-                    for fragment in (
-                        _hit_text(hit).strip() for hit in list(hits)[:2]
+                evidence = [
+                    EvidenceItem(
+                        text=_hit_text(hit).strip(),
+                        origin=f"{name}.{method}#{position}",
+                        channel=name,
+                        observed_at=_hit_observed_at(hit),
+                        kind=_hit_kind(hit),
                     )
-                    if fragment
-                )[:400]
+                    for position, hit in enumerate(list(hits)[:8])
+                    if _hit_text(hit).strip()
+                ]
+                try:
+                    verdict = EpistemicFirewall(max_admitted=2).review(
+                        objective, evidence
+                    )
+                    firewall_receipt = verdict.to_receipt()
+                    recalled = " ".join(verdict.admitted_texts())[:400]
+                    caution = verdict.caution_text()
+                    if verdict.abstain:
+                        # Irreconcilable recall is worse than no recall: the
+                        # episode must feel the doubt, not inherit one side.
+                        conflict_uncertainty = 0.10
+                        familiarity = min(familiarity, 0.25)
+                except (TypeError, ValueError) as exc:
+                    logger.warning("Epistemic firewall failed open->closed: %s", exc)
+                    recalled = ""
+                    caution = "Evidence check: retrieval admission failed; nothing seeded"
             return IngressSignal(
                 source="memory",
                 present=True,
                 value=familiarity,
-                uncertainty_delta=(0.10 if count == 0 else -0.10 * familiarity),
-                detail=f"{name}.{method}: {count} hits",
+                uncertainty_delta=(
+                    0.10
+                    if count == 0
+                    else -0.10 * familiarity + conflict_uncertainty
+                ),
+                detail=(
+                    f"{name}.{method}: {count} hits, "
+                    f"{len(firewall_receipt.get('admitted', []))} admitted"
+                ),
                 context_text=recalled,
+                firewall=firewall_receipt,
+                caution_text=caution,
             )
     return IngressSignal(source="memory", present=False)
 
@@ -385,8 +461,17 @@ def cognitive_context_items(ingress: CognitiveIngress) -> list[dict[str, str]]:
     by_source = {signal.source: signal for signal in ingress.signals}
     for source in ("memory", "goals", "world_model", "self_model"):
         signal = by_source.get(source)
-        if signal is not None and signal.present and signal.context_text.strip():
+        if signal is None or not signal.present:
+            continue
+        if signal.context_text.strip():
             items.append({"source": source, "text": signal.context_text[:400]})
+        # Epistemic caution outranks silence: when admission refused the
+        # content (conflicts, thin coverage), the episode is seeded with the
+        # doubt itself — deep recurrence must not amplify a lie by omission.
+        if signal.caution_text.strip():
+            items.append(
+                {"source": "epistemic_caution", "text": signal.caution_text[:400]}
+            )
     felt: list[str] = []
     for source, label in (
         ("body", "body pressure"),
