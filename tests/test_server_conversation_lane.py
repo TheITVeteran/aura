@@ -107,6 +107,14 @@ def _proven_latent_cortex_trace():
             "decode_requested_tokens": 512,
             "decode_generated_tokens": 64,
             "decode_termination": "eos",
+            "output_quality": {
+                "schema": "aura.latent_output_quality.v1",
+                "policy": "resident_latent_product_quality_v1",
+                "passed": True,
+                "text_sha256": "5" * 64,
+                "objective_sha256": "6" * 64,
+                "reasons": [],
+            },
             "last_stage": "complete",
             "stage_timings_s": {"prefill": 1.0, "decode": 2.0, "total": 4.0},
             "runtime_identity": {

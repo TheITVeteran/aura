@@ -773,6 +773,14 @@ class ResponseGenerationPhase(BasePhase):
             and alpha_applied_ok
             and recurrence_applied_ok
         )
+        output_quality = receipt.get("output_quality")
+        output_quality = (
+            dict(output_quality) if isinstance(output_quality, dict) else {}
+        )
+        output_quality_passed = bool(
+            output_quality.get("schema") == "aura.latent_output_quality.v1"
+            and output_quality.get("passed") is True
+        )
         return {
             "enabled": True,
             "applied": controls_applied,
@@ -789,10 +797,13 @@ class ResponseGenerationPhase(BasePhase):
             "surface_alpha_applied_ok": alpha_applied_ok,
             "recurrent_runtime_loops_applied": observed_steps,
             "recurrent_runtime_loops_applied_ok": recurrence_applied_ok,
-            "surface_quality_gate_enabled": False,
-            "surface_quality_gate_passed": True,
-            "surface_quality_gate_attempts": 0,
-            "surface_quality_gate_reasons": [],
+            "surface_quality_gate_enabled": True,
+            "surface_quality_gate_passed": output_quality_passed,
+            "surface_quality_gate_attempts": 1,
+            "surface_quality_gate_reasons": list(
+                output_quality.get("reasons") or []
+            ),
+            "latent_output_quality": output_quality,
             "generation_max_tokens": int(token_budget),
             "generated_tokens": int(receipt.get("decode_generated_tokens") or 0),
             "decode_temperature_applied": receipt.get("decode_temperature"),

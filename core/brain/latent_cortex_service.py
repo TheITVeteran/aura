@@ -25,6 +25,7 @@ import os
 import time
 from typing import Any
 
+from core.brain.llm.latent_cortex.output_quality import evaluate_latent_output
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.LatentCortexService")
@@ -148,7 +149,8 @@ class LatentCortexService:
                     "latent_opt_steps": 1,
                     "fast_weights_opt_steps": 1,
                     "fast_weights_max_layers": 2,
-                    "decode_max_tokens": 160,
+                    "decode_max_tokens": 256,
+                    "decode_bridge_policy": "assistant_answer_v1",
                     "input_context_max_chars": 9000,
                     "allow_vanilla_fallback": False,
                 }
@@ -364,6 +366,18 @@ class LatentCortexService:
             errors.append("decode_output_empty")
         if receipt.get("decode_termination") not in {"eos", "token_limit"}:
             errors.append("decode_incomplete")
+        decode_bridge_policy = config.get("decode_bridge_policy", "none")
+        if decode_bridge_policy == "assistant_answer_v1":
+            if receipt.get("decode_bridge_applied") is not True:
+                errors.append("decode_bridge_unapplied")
+            if receipt.get("decode_bridge_policy") != decode_bridge_policy:
+                errors.append("decode_bridge_policy_mismatch")
+            if not positive_int(receipt, "decode_bridge_token_count"):
+                errors.append("decode_bridge_tokens_missing")
+            if not sha256(receipt.get("decode_bridge_tokens_sha256")):
+                errors.append("decode_bridge_token_identity_unproven")
+            if not sha256(receipt.get("decode_bridge_logits_digest")):
+                errors.append("decode_bridge_logits_unproven")
         configured_temperature = config.get("decode_temperature", 0.0)
         configured_top_p = config.get("decode_top_p", 1.0)
         if (
@@ -555,6 +569,27 @@ class LatentCortexService:
         self._last_refusal = str(reason or "unknown")
         return {"ok": False, "reason": self._last_refusal}
 
+    @staticmethod
+    def _visible_objective(question: str | None, messages: list | None) -> str:
+        if isinstance(question, str) and question.strip():
+            return question.strip()
+        for message in reversed(messages or []):
+            if not isinstance(message, dict) or message.get("role") != "user":
+                continue
+            content = message.get("content")
+            if isinstance(content, str) and content.strip():
+                return content.strip()
+            if isinstance(content, list):
+                parts = [
+                    str(item.get("text") or "").strip()
+                    for item in content
+                    if isinstance(item, dict) and item.get("type") == "text"
+                ]
+                rendered = "\n".join(part for part in parts if part).strip()
+                if rendered:
+                    return rendered
+        return ""
+
     # ── The episode ─────────────────────────────────────────────────────
     async def deep_reason(
         self,
@@ -664,13 +699,14 @@ class LatentCortexService:
             config.update(dict(config_overrides))
         if allocation_profile == "resident_32b_interactive_full_stack_v1":
             try:
-                requested_decode_tokens = int(config.get("decode_max_tokens") or 160)
+                requested_decode_tokens = int(config.get("decode_max_tokens") or 256)
             except (TypeError, ValueError, OverflowError):
                 return self._record_failure("invalid_decode_token_override")
             config["decode_max_tokens"] = max(
                 64,
-                min(160, requested_decode_tokens),
+                min(256, requested_decode_tokens),
             )
+            config["decode_bridge_policy"] = "assistant_answer_v1"
         if require_full_stack:
             config["latent_opt"] = True
             config["latent_opt_control"] = False
@@ -760,6 +796,32 @@ class LatentCortexService:
                     "latent_cortex",
                     RuntimeError(reason),
                     action="refused to count incomplete latent episode as successful",
+                    severity="degraded",
+                )
+                failed = dict(result)
+                failed.update(self._record_failure(reason))
+                failed["receipt"] = result_receipt
+                self._last_failure_receipt = result_receipt
+                return failed
+            quality_receipt = evaluate_latent_output(
+                result.get("text"),
+                generated_tokens=result_receipt.get("decode_generated_tokens"),
+                termination=result_receipt.get("decode_termination"),
+                objective=self._visible_objective(question, messages),
+            )
+            result_receipt["output_quality"] = quality_receipt
+            result["receipt"] = result_receipt
+            if quality_receipt.get("passed") is not True:
+                reasons = quality_receipt.get("reasons")
+                reason = "output_quality_failed:" + ",".join(
+                    str(item) for item in reasons or ["unknown"]
+                )
+                record_degradation(
+                    "latent_cortex.output_quality",
+                    RuntimeError(reason),
+                    action=(
+                        "refused a mechanically complete latent episode whose visible answer did not satisfy the product contract"
+                    ),
                     severity="degraded",
                 )
                 failed = dict(result)

@@ -5066,6 +5066,22 @@ def _build_live_turn_contract_payload(
         <= float(raw_latent_receipt.get("episode_affective_steering_alpha"))
         <= 1.0
     )
+    raw_latent_output_quality = raw_latent_receipt.get("output_quality")
+    raw_latent_output_quality = (
+        dict(raw_latent_output_quality)
+        if isinstance(raw_latent_output_quality, dict)
+        else {}
+    )
+    latent_cortex_output_quality_proven = bool(
+        raw_latent_output_quality.get("schema")
+        == "aura.latent_output_quality.v1"
+        and raw_latent_output_quality.get("policy")
+        == "resident_latent_product_quality_v1"
+        and raw_latent_output_quality.get("passed") is True
+        and _sha256(raw_latent_output_quality.get("text_sha256"))
+        and _sha256(raw_latent_output_quality.get("objective_sha256"))
+        and raw_latent_output_quality.get("reasons") == []
+    )
     latent_cortex_receipt = {
         key: raw_latent_receipt.get(key)
         for key in (
@@ -5093,6 +5109,9 @@ def _build_live_turn_contract_payload(
             "decode_termination",
             "decode_temperature",
             "decode_top_p",
+            "decode_bridge_applied", "decode_bridge_policy",
+            "decode_bridge_token_count", "decode_bridge_tokens_sha256",
+            "decode_bridge_logits_digest", "output_quality",
             "latent_opt_applied",
             "latent_opt_steps",
             "fast_weights_applied", "fast_weights_erased",
@@ -5331,6 +5350,7 @@ def _build_live_turn_contract_payload(
             and latent_cortex_succeeded
             and not latent_cortex_fallback_used
             and latent_cortex_identity_bound
+            and latent_cortex_output_quality_proven
         )
     )
     # SPEAKER-IDENTITY proofs: did Aura's real cognitive engine author this
@@ -5385,6 +5405,8 @@ def _build_live_turn_contract_payload(
         missing_proofs.append(f"response_path:{response_path or 'unset'}")
     if latent_cortex_response_path and not latent_cortex_path_proven:
         missing_proofs.append("latent_cortex_path_unproven")
+    if latent_cortex_response_path and not latent_cortex_output_quality_proven:
+        missing_proofs.append("latent_cortex_output_quality_unproven")
     if not architecture_context_bound:
         missing_proofs.append("architecture_context_unbound")
     if not live_mind_snapshot_bound:
@@ -5426,6 +5448,7 @@ def _build_live_turn_contract_payload(
         "latent_cortex_fallback_used": latent_cortex_fallback_used,
         "latent_cortex_failure_reason": latent_cortex_failure_reason,
         "latent_cortex_identity_bound": latent_cortex_identity_bound,
+        "latent_cortex_output_quality_proven": latent_cortex_output_quality_proven,
         "latent_cortex_path_proven": latent_cortex_path_proven,
         "latent_cortex_final_text_transformed": bool(
             trace.get("latent_cortex_final_text_transformed")

@@ -176,6 +176,14 @@ def _live_latent_receipt():
         "decode_termination": "eos",
         "decode_temperature": 0.61,
         "decode_top_p": 0.87,
+        "output_quality": {
+            "schema": "aura.latent_output_quality.v1",
+            "policy": "resident_latent_product_quality_v1",
+            "passed": True,
+            "text_sha256": "3" * 64,
+            "objective_sha256": "4" * 64,
+            "reasons": [],
+        },
         "runtime_identity": {
             "identity_bound": True,
             "launch_mode": "signed_app",

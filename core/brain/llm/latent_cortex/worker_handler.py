@@ -15,6 +15,7 @@ Job contract (all optional except the prompt source):
      "n_slots": 16, "n_branches": 2, "max_steps": 8,
      "latent_opt": false, "fast_weights": false,
      "decode_max_tokens": 512, "decode_temperature": 0.0,
+     "decode_bridge_policy": "none",
      "schedule": {...}       # optional explicit program
   },
   "budget": {"max_layer_apps": ..., "wall_clock_s": ...}
@@ -57,6 +58,7 @@ _CONFIG_KEYS = {
     "comm_slot",
     "convergence_eps",
     "decode_max_tokens",
+    "decode_bridge_policy",
     "decode_temperature",
     "decode_top_p",
     "divergence_ratio",
@@ -195,6 +197,9 @@ def config_from_job(job_config: dict[str, Any] | None) -> CortexConfig:
         decode_max_tokens=_typed_value(raw, "decode_max_tokens", 512, int),
         decode_temperature=_typed_value(raw, "decode_temperature", 0.0, float),
         decode_top_p=_typed_value(raw, "decode_top_p", 1.0, float),
+        decode_bridge_policy=_typed_value(
+            raw, "decode_bridge_policy", "none", str
+        ),
         input_context_max_chars=_typed_value(
             raw, "input_context_max_chars", 0, int
         ),

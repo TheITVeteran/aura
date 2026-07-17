@@ -210,6 +210,7 @@ class CortexConfig:
     decode_max_tokens: int = 512
     decode_temperature: float = 0.0
     decode_top_p: float = 1.0
+    decode_bridge_policy: str = "none"
     input_context_max_chars: int = 0
     allow_vanilla_fallback: bool = True
 
@@ -312,6 +313,10 @@ class CortexConfig:
             problems.append("decode_temperature must be finite and inside [0, 2]")
         if not finite(self.decode_top_p) or not 0.0 < self.decode_top_p <= 1.0:
             problems.append("decode_top_p must be finite and inside (0, 1]")
+        if self.decode_bridge_policy not in {"none", "assistant_answer_v1"}:
+            problems.append(
+                "decode_bridge_policy must be none or assistant_answer_v1"
+            )
         if not (
             type(self.input_context_max_chars) is int
             and (
@@ -424,6 +429,12 @@ class EpisodeReceipt:
     decode_termination: str = "not_started"
     decode_temperature: float = 0.0
     decode_top_p: float = 1.0
+    decode_bridge_applied: bool = False
+    decode_bridge_policy: str = "none"
+    decode_bridge_token_count: int = 0
+    decode_bridge_tokens_sha256: str = ""
+    decode_bridge_logits_digest: str = ""
+    output_quality: dict[str, Any] = field(default_factory=dict)
     # Runtime lifecycle evidence. Timings are stage-local wall-clock seconds;
     # progress messages use the same stage names so a parent can distinguish a
     # slow live episode from a wedged worker without peeking into model state.
@@ -513,6 +524,12 @@ class EpisodeReceipt:
             "decode_termination": self.decode_termination,
             "decode_temperature": self.decode_temperature,
             "decode_top_p": self.decode_top_p,
+            "decode_bridge_applied": self.decode_bridge_applied,
+            "decode_bridge_policy": self.decode_bridge_policy,
+            "decode_bridge_token_count": self.decode_bridge_token_count,
+            "decode_bridge_tokens_sha256": self.decode_bridge_tokens_sha256,
+            "decode_bridge_logits_digest": self.decode_bridge_logits_digest,
+            "output_quality": dict(self.output_quality),
             "last_stage": self.last_stage,
             "stage_timings_s": {
                 str(name): round(float(seconds), 6)

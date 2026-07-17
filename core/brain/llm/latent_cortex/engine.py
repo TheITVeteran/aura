@@ -38,6 +38,8 @@ from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.LatentCortex.Engine")
 
+_ASSISTANT_ANSWER_BRIDGE = "\nFinal answer:\n"
+
 # Guard classes the engine treats as "latent phase failed, fall back honest".
 _LATENT_PHASE_ERRORS = (
     AttributeError,
@@ -178,6 +180,45 @@ class LatentCortexEngine:
             )
         return list(self.tokenizer.encode(prompt or ""))
 
+    def _decode_bridge_tokens(self) -> list[int]:
+        policy = self.config.decode_bridge_policy
+        if policy == "none":
+            return []
+        if policy != "assistant_answer_v1":
+            raise ValueError(f"unsupported decode bridge policy: {policy}")
+        if self.tokenizer is None:
+            raise ValueError("assistant answer decode bridge requires a tokenizer")
+        try:
+            encoded = self.tokenizer.encode(
+                _ASSISTANT_ANSWER_BRIDGE,
+                add_special_tokens=False,
+            )
+        except TypeError:
+            encoded = self.tokenizer.encode(_ASSISTANT_ANSWER_BRIDGE)
+        tokens = list(encoded)
+        if not tokens or any(type(token) is not int or token < 0 for token in tokens):
+            raise ValueError("assistant answer decode bridge produced invalid tokens")
+        return tokens
+
+    def _apply_decode_bridge(self, cache, budget: ComputeBudget, tokens: list[int]):
+        """Append a lexical answer cue after thought slots in the same KV owner."""
+        import mlx.core as mx
+        from mlx_lm.models.base import create_attention_mask
+
+        if not tokens:
+            raise ValueError("decode bridge tokens cannot be empty")
+        if not budget.can_afford(len(tokens), self.n_layers):
+            raise RuntimeError("compute budget cannot admit decode bridge")
+        budget.charge(tokens=len(tokens), layers=self.n_layers)
+        inner = self.model.model
+        h = inner.embed_tokens(mx.array([tokens]))
+        mask = create_attention_mask(h, cache)
+        for index, layer in enumerate(inner.layers):
+            h = layer(h, mask, cache[index])
+        logits = self._logits(h)[0, -1]
+        mx.eval(logits)
+        return logits
+
     def _eos_ids(self) -> set[int]:
         if self.tokenizer is None:
             return set()
@@ -315,6 +356,7 @@ class LatentCortexEngine:
         budget: ComputeBudget,
         *,
         max_tokens: int = 48,
+        bridge_tokens: list[int] | None = None,
     ) -> list[int]:
         """Decode a short probe from a branch WITHOUT disturbing the caches.
 
@@ -330,6 +372,12 @@ class LatentCortexEngine:
         snaps = _snapshot_recurrent_caches(cache, 0, self.n_layers)
         try:
             slot_logits = self._persist_branch(branch, cache, runner)
+            if bridge_tokens:
+                slot_logits = self._apply_decode_bridge(
+                    cache,
+                    budget,
+                    bridge_tokens,
+                )
             return self._decode(
                 cache, budget, slot_logits, max_tokens=max_tokens, temperature=0.0
             )[0]
@@ -407,6 +455,7 @@ class LatentCortexEngine:
         receipt.input_token_count = len(tokens)
         receipt.decode_temperature = float(self.config.decode_temperature)
         receipt.decode_top_p = float(self.config.decode_top_p)
+        receipt.decode_bridge_policy = self.config.decode_bridge_policy
 
         self.invariant.pre_episode()
         receipt.checkpoint_fingerprint = self.invariant.file_receipt.get("fingerprint", "")
@@ -592,14 +641,16 @@ class LatentCortexEngine:
             if decode_max_tokens is not None
             else self.config.decode_max_tokens
         )
+        bridge_tokens = self._decode_bridge_tokens()
         prefill_cost = len(tokens) * self.n_layers
         decode_cost = max(0, int(decode_limit) - 1) * self.n_layers
         persist_cost = self.config.workspace.n_slots * self.n_layers
+        bridge_cost = len(bridge_tokens) * self.n_layers
         fast_weight_probe_cost = (
             8 * self.n_layers if self.config.fast_weights.enabled else 0
         )
         completion_reserve = (
-            persist_cost + decode_cost + fast_weight_probe_cost
+            persist_cost + bridge_cost + decode_cost + fast_weight_probe_cost
         )
         fallback_reserve = prefill_cost + decode_cost
         safety_reserve = completion_reserve + fallback_reserve
@@ -712,7 +763,7 @@ class LatentCortexEngine:
         # ── Branch selection ─────────────────────────────────────────────
         branch_probe_cost = (
             len(ensemble.branches)
-            * (self.config.workspace.n_slots + 47)
+            * (self.config.workspace.n_slots + len(bridge_tokens) + 47)
             * self.n_layers
         )
         if (
@@ -721,7 +772,13 @@ class LatentCortexEngine:
             and branch_probe_cost + safety_reserve <= budget.remaining_layer_apps
         ):
             def branch_score(branch: BranchState) -> float:
-                probe = self._decode_probe(branch, cache, runner, budget)
+                probe = self._decode_probe(
+                    branch,
+                    cache,
+                    runner,
+                    budget,
+                    bridge_tokens=bridge_tokens,
+                )
                 return float(verifier(self.tokenizer.decode(probe)))
 
             winner = ensemble.select(score_fn=branch_score)
@@ -773,7 +830,13 @@ class LatentCortexEngine:
                     winner.z = z
                     winner.workspace.update(z)
                     try:
-                        probe = self._decode_probe(winner, cache, runner, budget)
+                        probe = self._decode_probe(
+                            winner,
+                            cache,
+                            runner,
+                            budget,
+                            bridge_tokens=bridge_tokens,
+                        )
                         return float(verifier(self.tokenizer.decode(probe)))
                     finally:
                         winner.z = saved
@@ -901,10 +964,39 @@ class LatentCortexEngine:
                 progress=progress,
                 cancel_check=cancel_check,
             )
+            decode_logits = slot_logits
+            if bridge_tokens:
+                decode_logits = self._apply_decode_bridge(
+                    cache,
+                    budget,
+                    bridge_tokens,
+                )
+                serialized_bridge = json.dumps(
+                    bridge_tokens,
+                    separators=(",", ":"),
+                    allow_nan=False,
+                ).encode("ascii")
+                receipt.decode_bridge_applied = True
+                receipt.decode_bridge_token_count = len(bridge_tokens)
+                receipt.decode_bridge_tokens_sha256 = hashlib.sha256(
+                    serialized_bridge
+                ).hexdigest()
+                receipt.decode_bridge_logits_digest = _logits_digest(decode_logits)
+                stage_started = self._stage_checkpoint(
+                    receipt=receipt,
+                    budget=budget,
+                    stage="decode_bridge",
+                    stage_started=stage_started,
+                    episode_started=episode_started,
+                    progress=progress,
+                    cancel_check=cancel_check,
+                    bridge_policy=self.config.decode_bridge_policy,
+                    bridge_tokens=len(bridge_tokens),
+                )
             out_tokens, decode_termination = self._decode(
                 cache,
                 budget,
-                slot_logits,
+                decode_logits,
                 max_tokens=decode_max_tokens,
                 cancel_check=cancel_check,
                 progress=progress,

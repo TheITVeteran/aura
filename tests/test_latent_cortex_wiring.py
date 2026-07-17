@@ -869,7 +869,8 @@ def test_resident_32b_interactive_allocation_keeps_full_stack_inside_live_budget
     assert cfg["fast_weights"] is True
     assert cfg["fast_weights_opt_steps"] == 1
     assert cfg["fast_weights_max_layers"] == 2
-    assert cfg["decode_max_tokens"] == 160
+    assert cfg["decode_max_tokens"] == 256
+    assert cfg["decode_bridge_policy"] == "assistant_answer_v1"
     assert cfg["input_context_max_chars"] == 9000
     assert cfg["allow_vanilla_fallback"] is False
     assert budget["wall_clock_s"] <= 120.0
@@ -911,7 +912,8 @@ def test_service_applies_resident_identity_profile_before_worker_ipc(monkeypatch
     )
 
     assert result == {"ok": False, "reason": "profile_observed"}
-    assert captured["config"]["decode_max_tokens"] == 160
+    assert captured["config"]["decode_max_tokens"] == 256
+    assert captured["config"]["decode_bridge_policy"] == "assistant_answer_v1"
     assert captured["config"]["input_context_max_chars"] == 9000
     assert captured["config"]["allow_vanilla_fallback"] is False
     assert captured["config"]["max_steps"] == 2
@@ -1048,7 +1050,9 @@ def test_service_routes_through_client_and_records_receipt(monkeypatch):
             captured["gate_snapshot"] = generation_gate_snapshot()
             return {
                 "ok": True,
-                "text": "the deep answer",
+                "text": (
+                    "The deep answer explains the architecture and preserves its evidence."
+                ),
                 "receipt": {
                     "steps_taken": 7,
                     "halting_reason": "converged",
@@ -1110,7 +1114,9 @@ def test_service_routes_through_client_and_records_receipt(monkeypatch):
             },
         )
     )
-    assert result["ok"] and result["text"] == "the deep answer"
+    assert result["ok"]
+    assert result["text"].startswith("The deep answer explains")
+    assert result["receipt"]["output_quality"]["passed"] is True
     assert captured["prompt"] == "hard question"
     assert captured["config"]["n_branches"] >= 2
     assert captured["config"]["latent_opt"] is True
