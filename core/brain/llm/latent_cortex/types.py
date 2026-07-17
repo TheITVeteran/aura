@@ -160,6 +160,28 @@ class ComputeBudget:
             )
         self.spent_layer_apps += layer_apps
 
+    def charge_cleanup_overdraft(self, tokens: int, layers: int) -> None:
+        """Charge safety-obligation work even past exhaustion.
+
+        Cleanup proofs (fast-weight erase probes) must NEVER be refused for
+        budget reasons — refusing converts a slow episode into an integrity
+        failure and a worker recycle. The spend still lands in the receipt,
+        so an overdraft is visible, just not refusable."""
+        if (
+            isinstance(tokens, bool)
+            or isinstance(layers, bool)
+            or not isinstance(tokens, int)
+            or not isinstance(layers, int)
+            or tokens < 0
+            or layers < 0
+        ):
+            raise ValueError("budget charges require non-negative integer tokens and layers")
+        self.spent_layer_apps += tokens * layers
+
+    @property
+    def remaining_wall_s(self) -> float:
+        return max(0.0, self.wall_clock_s - (time.monotonic() - self.started_monotonic))
+
     def can_afford(self, tokens: int, layers: int, *, reserve_layer_apps: int = 0) -> bool:
         if any(
             isinstance(value, bool) or not isinstance(value, int) or value < 0

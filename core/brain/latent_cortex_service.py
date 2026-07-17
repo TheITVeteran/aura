@@ -744,6 +744,18 @@ class LatentCortexService:
                     max(150.0, float(budget.get("wall_clock_s") or 0.0)),
                     max(15.0, float(timeout_s) - 8.0),
                 )
+                # Fit the answer surface to the wall clock actually granted:
+                # decode measures ≈0.26 s/token on the resident 32B, and the
+                # non-decode stages (compaction, prefill, latent stack,
+                # persist, bridge, cleanup reserve) cost ≈30s. CP104's live
+                # turn proved that promising 384 tokens against a shorter
+                # wall converts the tail of the answer into a budget death.
+                affordable_tokens = int(
+                    (float(budget["wall_clock_s"]) - 30.0) / 0.26
+                )
+                config["decode_max_tokens"] = max(
+                    256, min(int(config["decode_max_tokens"]), affordable_tokens)
+                )
             self._last_allocation["objective_facets"] = list(objective_facets)
             self._last_allocation["compound_objective"] = compound_objective
         if require_full_stack:

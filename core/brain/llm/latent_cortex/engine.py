@@ -330,10 +330,16 @@ class LatentCortexEngine:
         top_p: float | None = None,
         cancel_check: Callable[[], bool] | None = None,
         progress: Callable[[dict], None] | None = None,
+        wall_reserve_s: float = 0.0,
     ) -> tuple[list[int], str]:
         """Minimal sampler: first token from ``initial_logits`` (the logits of
         the last persisted position — prompt tail or final thought slot), then
-        autoregressive continuation over the populated cache."""
+        autoregressive continuation over the populated cache.
+
+        ``wall_reserve_s`` stops decoding while that much wall clock still
+        remains — the engine reserves cleanup time when fast weights are
+        attached, so a long answer degrades to token truncation instead of
+        endangering the erase proof."""
         import mlx.core as mx
         from mlx_lm.models.base import create_attention_mask
 
@@ -390,6 +396,9 @@ class LatentCortexEngine:
                 break
             if budget.exhausted:
                 termination = "budget_exhausted"
+                break
+            if wall_reserve_s > 0.0 and budget.remaining_wall_s < wall_reserve_s:
+                termination = "wall_reserve"
                 break
             if not budget.can_afford(1, self.n_layers):
                 termination = "budget_unaffordable"
@@ -1067,6 +1076,12 @@ class LatentCortexEngine:
                 max_tokens=decode_max_tokens,
                 cancel_check=cancel_check,
                 progress=progress,
+                # Cleanup time is sacrosanct: with temporary synapses attached
+                # the decode surrenders its tail rather than let the wall
+                # clock expire before the erase proof.
+                wall_reserve_s=(
+                    6.0 if self.config.fast_weights.enabled else 0.0
+                ),
             )
             receipt.decode_requested_tokens = decode_limit
             receipt.decode_generated_tokens = len(out_tokens)
@@ -1074,7 +1089,7 @@ class LatentCortexEngine:
             receipt.decode_newline_suppressions = int(
                 self._last_decode_newline_suppressions
             )
-            if decode_termination.startswith("budget_"):
+            if decode_termination.startswith("budget_") or decode_termination == "wall_reserve":
                 receipt.flag(f"decode_{decode_termination}")
             stage_started = self._stage_checkpoint(
                 receipt=receipt,
@@ -1118,9 +1133,12 @@ class LatentCortexEngine:
         finally:
             try:
                 fast_weights.detach()
+                cleanup_overdraft = not budget.can_afford(8, self.n_layers)
                 receipt.fast_weights_erased = fast_weights.prove_erase(
-                    lambda: self._fw_probe(budget), baseline
+                    lambda: self._fw_probe(budget, cleanup=True), baseline
                 )
+                if cleanup_overdraft:
+                    receipt.flag("fast_weight_cleanup_overdraft")
             except _LATENT_PHASE_ERRORS as exc:
                 receipt.fast_weights_erased = False
                 receipt.flag(f"fast_weight_cleanup_failed:{type(exc).__name__}")
@@ -1162,16 +1180,27 @@ class LatentCortexEngine:
             h = inner.layers[i](h, None, None)
         return h
 
-    def _fw_probe(self, budget: ComputeBudget):
-        """Deterministic full-stack probe for erase proofs (cache-free)."""
+    def _fw_probe(self, budget: ComputeBudget, *, cleanup: bool = False):
+        """Deterministic full-stack probe for erase proofs (cache-free).
+
+        ``cleanup=True`` marks the post-detach integrity proof: it is a
+        SAFETY OBLIGATION, not discretionary work, so it may overdraw an
+        exhausted budget (honestly charged and flagged upstream) rather than
+        refuse — CP104's live turn proved that refusing cleanup for budget
+        reasons converts a slow answer into a critical worker recycle."""
         import mlx.core as mx
 
         inner = self.model.model
         vocab = inner.embed_tokens.weight.shape[0]
         probe_tokens = mx.array([[i % int(vocab) for i in range(1, 9)]])
-        if not budget.can_afford(8, self.n_layers):
-            raise RuntimeError("compute budget cannot afford fast-weight erase probe")
-        budget.charge(tokens=8, layers=self.n_layers)
+        if cleanup:
+            budget.charge_cleanup_overdraft(tokens=8, layers=self.n_layers)
+        else:
+            if not budget.can_afford(8, self.n_layers):
+                raise RuntimeError(
+                    "compute budget cannot afford fast-weight erase probe"
+                )
+            budget.charge(tokens=8, layers=self.n_layers)
         h = inner.embed_tokens(probe_tokens)
         for layer in inner.layers:
             h = layer(h, None, None)
