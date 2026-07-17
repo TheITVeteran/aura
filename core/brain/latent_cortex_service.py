@@ -368,7 +368,13 @@ class LatentCortexService:
             errors.append("decode_request_mismatch")
         if not positive_int(receipt, "decode_generated_tokens"):
             errors.append("decode_output_empty")
-        if receipt.get("decode_termination") not in {"eos", "token_limit"}:
+        if receipt.get("decode_termination") not in {
+            "eos",
+            "token_limit",
+            # Sentence grace: the limit landed mid-sentence and sampling
+            # continued a few model-chosen tokens to the natural boundary.
+            "token_limit_sentence_grace",
+        }:
             errors.append("decode_incomplete")
         decode_bridge_policy = config.get("decode_bridge_policy", "none")
         if decode_bridge_policy in {"assistant_answer_v1", "assistant_answer_v2"}:

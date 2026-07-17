@@ -55,6 +55,13 @@ _BRIDGE_TEXT_BY_POLICY = {
 # newlines = one blank line — enough for any legitimate paragraph/list break.
 _MAX_NEWLINE_RUN = 2
 _NEWLINE_RESAMPLE_ATTEMPTS = 4
+# Sentence grace: when the token limit lands mid-sentence, sampling may
+# continue up to this many extra tokens until sentence-final punctuation —
+# still entirely model-sampled tokens, charged to the budget, receipted as
+# termination "token_limit_sentence_grace". A truncated tail otherwise
+# fails the product gate as a terminal fragment (CP110 live evidence).
+_SENTENCE_GRACE_TOKENS = 24
+_SENTENCE_TERMINALS = (".", "!", "?", ".\n", "!\n", "?\n")
 
 # Guard classes the engine treats as "latent phase failed, fall back honest".
 _LATENT_PHASE_ERRORS = (
@@ -221,6 +228,17 @@ class LatentCortexEngine:
         if not tokens or any(type(token) is not int or token < 0 for token in tokens):
             raise ValueError("assistant answer decode bridge produced invalid tokens")
         return tokens
+
+    def _token_ends_sentence(self, token: int) -> bool:
+        """True when the token's rendered text ends at a sentence boundary."""
+        if self.tokenizer is None:
+            return False
+        try:
+            piece = self.tokenizer.decode([token])
+        except (TypeError, ValueError, KeyError, AttributeError):
+            return False
+        stripped = str(piece).rstrip()
+        return stripped.endswith(_SENTENCE_TERMINALS) if stripped else False
 
     def _is_pure_newline_token(self, token: int) -> bool:
         """True when the token renders to newline-only whitespace."""
@@ -402,7 +420,7 @@ class LatentCortexEngine:
 
         token = sample_disciplined(initial_logits)
         termination = "token_limit"
-        for index in range(max(1, int(limit))):
+        for index in range(max(1, int(limit)) + _SENTENCE_GRACE_TOKENS):
             if self._cancel_requested(cancel_check):
                 raise _LatentEpisodeCancelled("decode")
             if token in eos:
@@ -410,9 +428,22 @@ class LatentCortexEngine:
                 break
             out.append(token)
             newline_run = newline_run + 1 if self._is_pure_newline_token(token) else 0
-            if index + 1 >= limit:
-                termination = "token_limit"
-                break
+            if index + 1 >= int(limit):
+                sentence_done = (
+                    self.tokenizer is None or self._token_ends_sentence(token)
+                )
+                if sentence_done:
+                    termination = (
+                        "token_limit"
+                        if index + 1 == int(limit)
+                        else "token_limit_sentence_grace"
+                    )
+                    break
+                if index + 1 >= int(limit) + _SENTENCE_GRACE_TOKENS:
+                    # Grace exhausted without punctuation: still a fragment,
+                    # and the receipt says so honestly.
+                    termination = "token_limit"
+                    break
             if budget.exhausted:
                 termination = "budget_exhausted"
                 break

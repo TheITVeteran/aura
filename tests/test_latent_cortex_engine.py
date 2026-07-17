@@ -530,3 +530,55 @@ def test_repetition_penalty_breaks_forced_loop(tiny_model, monkeypatch):
         run_len = run_len + 1 if token == loop_id else 0
         longest = max(longest, run_len)
     assert longest < len(guarded), "penalty must break the monoculture"
+
+
+def test_sentence_grace_finishes_the_sentence(tiny_model, monkeypatch):
+    """When the token limit lands mid-sentence, the decoder may sample up to
+    the grace window until sentence-final punctuation — model tokens only,
+    receipted as its own termination kind."""
+    import mlx.core as mx
+
+    from core.brain.llm.latent_cortex import engine as engine_mod
+    from core.brain.llm.latent_cortex.types import ComputeBudget
+    from mlx_lm.models.cache import KVCache
+    from mlx_lm.models.base import create_attention_mask
+
+    word_id, period_id, vocab = 9, 13, 128
+
+    class GraceTokenizer:
+        eos_token_id = 0
+
+        def encode(self, text, **kwargs):
+            return [1, 2, 3]
+
+        def decode(self, ids):
+            return "".join("." if i == period_id else "w" for i in ids)
+
+    calls = {"n": 0}
+
+    def scripted_logits(self, h):
+        # Words until well past the limit, then a period.
+        calls["n"] += 1
+        spiked = mx.full((1, 1, vocab), -20.0)
+        spiked[0, 0, period_id if calls["n"] >= 10 else word_id] = 8.0
+        return spiked
+
+    monkeypatch.setattr(engine_mod.LatentCortexEngine, "_logits", scripted_logits)
+    engine = engine_mod.LatentCortexEngine(
+        tiny_model, GraceTokenizer(), config=_config(decode_max_tokens=6)
+    )
+    cache = [KVCache() for _ in tiny_model.model.layers]
+    inner = tiny_model.model
+    h = inner.embed_tokens(mx.array([PROMPT_TOKENS]))
+    mask = create_attention_mask(h, cache)
+    for i, layer in enumerate(inner.layers):
+        h = layer(h, mask, cache[i])
+
+    first = mx.full((1, 1, vocab), -20.0)
+    first[0, 0, word_id] = 8.0
+    out, termination = engine._decode(
+        cache, ComputeBudget(), first[0, 0], max_tokens=6, temperature=0.0
+    )
+    assert termination == "token_limit_sentence_grace"
+    assert out[-1] == period_id, "grace must end at the model's own period"
+    assert 6 < len(out) <= 6 + 24
