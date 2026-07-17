@@ -28,11 +28,13 @@ from core.brain.llm.latent_cortex.capability_canaries import (
     CapabilityCanaries,
     compare_canaries,
 )
+from core.brain.llm.latent_cortex.escape import EscapeConfig
 from core.brain.llm.latent_cortex.fast_weights import EpisodicFastWeights
 from core.brain.llm.latent_cortex.governance import CheckpointInvariant
 from core.brain.llm.latent_cortex.latent_opt import LatentOptimizer, build_proxy_loss
 from core.brain.llm.latent_cortex.recurrence import WindowRunner
 from core.brain.llm.latent_cortex.schedules import LayerSchedule, ScheduleLibrary
+from core.brain.llm.latent_cortex.telemetry import LatentTelemetry
 from core.brain.llm.latent_cortex.types import (
     ComputeBudget,
     CortexConfig,
@@ -904,6 +906,8 @@ class LatentCortexEngine:
         context_seeds = self._embed_cognitive_context(
             list(cognitive_context_items or [])
         )
+        telemetry = LatentTelemetry(enabled=bool(self.config.telemetry_enabled))
+        escape_cfg = EscapeConfig(**dict(self.config.escape or {}))
         ensemble = BranchEnsemble.seed(
             embeddings,
             self.config.workspace,
@@ -913,7 +917,9 @@ class LatentCortexEngine:
             cache,
             self.prelude_end,
             context_seeds=context_seeds,
+            escape_cfg=escape_cfg,
         )
+        ensemble.telemetry = telemetry if telemetry.enabled else None
         if ensemble.branches and ensemble.branches[0].workspace.context_slots:
             seeded = ensemble.branches[0].workspace.context_slots
             by_source = {
@@ -1030,6 +1036,17 @@ class LatentCortexEngine:
         receipt.best_step = winner.halting.best_step
         receipt.halting_reason = winner.halt_reason
         receipt.reverted_to_best = winner.halt_reason.endswith("_reverted")
+        telemetry.record_selection(receipt.branch_scores, winner.index)
+        escape_receipts: dict[str, Any] = {}
+        for branch in ensemble.branches:
+            if branch.escape is not None and branch.escape.attempts:
+                escape_receipts[str(branch.index)] = branch.escape.to_receipt()
+                outcomes = {a.outcome for a in branch.escape.attempts}
+                if "retained" in outcomes:
+                    receipt.flag("attractor_escape_retained")
+                if "failed" in outcomes:
+                    receipt.flag("attractor_escape_failed")
+        receipt.escape = escape_receipts
         stage_started = self._stage_checkpoint(
             receipt=receipt,
             budget=budget,
@@ -1198,6 +1215,7 @@ class LatentCortexEngine:
                         receipt,
                         budget,
                     )
+                    telemetry.record_fast_weights(receipt.fast_weight_canaries)
                     stage_started = self._stage_checkpoint(
                         receipt=receipt,
                         budget=budget,
@@ -1301,6 +1319,7 @@ class LatentCortexEngine:
         if fast_weights is not None and receipt.fast_weights_erased is not True:
             raise _FastWeightCleanupError("fast-weight cleanup proof did not pass")
 
+        receipt.latent_telemetry = telemetry.to_receipt()
         return out_tokens, receipt
 
     def _finalize_fast_weights(

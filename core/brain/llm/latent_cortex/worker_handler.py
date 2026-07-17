@@ -64,6 +64,7 @@ _CONFIG_KEYS = {
     "decode_temperature",
     "decode_top_p",
     "divergence_ratio",
+    "escape",
     "exchange_gamma",
     "exchange_interval",
     "fast_weights",
@@ -95,6 +96,7 @@ _CONFIG_KEYS = {
     "rms_clip_ratio",
     "schedule",
     "seed",
+    "telemetry",
 }
 
 
@@ -232,6 +234,8 @@ def config_from_job(job_config: dict[str, Any] | None) -> CortexConfig:
         allow_vanilla_fallback=_typed_value(
             raw, "allow_vanilla_fallback", True, bool
         ),
+        escape=raw.get("escape"),
+        telemetry_enabled=_typed_value(raw, "telemetry", True, bool),
     )
     problems = cfg.validate()
     if problems:

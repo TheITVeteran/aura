@@ -254,6 +254,11 @@ class CortexConfig:
     decode_repetition_window: int = 72
     input_context_max_chars: int = 0
     allow_vanilla_fallback: bool = True
+    # Structured attractor-escape ladder for diverged/stalled branches
+    # (escape.EscapeConfig form); None ⇒ ladder enabled with defaults.
+    escape: dict[str, Any] | None = None
+    # Per-episode latent interpretability/safety telemetry in the receipt.
+    telemetry_enabled: bool = True
 
     def validate(self) -> list[str]:
         """Return a list of human-readable violations (empty ⇒ valid)."""
@@ -425,6 +430,37 @@ class CortexConfig:
             problems.append("fast_weights.canary_rescale_attempts outside [0, 8]")
         if not integer_in(self.fast_weights.canary_max_tokens, 4, 128):
             problems.append("fast_weights.canary_max_tokens outside [4, 128]")
+        if type(self.telemetry_enabled) is not bool:
+            problems.append("telemetry_enabled must be boolean")
+        if self.escape is not None:
+            if not isinstance(self.escape, dict):
+                problems.append("escape must be a mapping or null")
+            else:
+                if type(self.escape.get("enabled", True)) is not bool:
+                    problems.append("escape.enabled must be boolean")
+                for key, low, high in (
+                    ("stall_patience", 1, 32),
+                    ("max_attempts", 0, 8),
+                    ("probation_steps", 1, 16),
+                ):
+                    value = self.escape.get(key)
+                    if value is not None and not integer_in(value, low, high):
+                        problems.append(f"escape.{key} outside [{low}, {high}]")
+                scale = self.escape.get("perturbation_scale")
+                if scale is not None and (
+                    not finite(scale) or not 0.0 < float(scale) <= 0.5
+                ):
+                    problems.append("escape.perturbation_scale outside (0, 0.5]")
+                unknown = set(self.escape) - {
+                    "enabled",
+                    "stall_patience",
+                    "max_attempts",
+                    "probation_steps",
+                    "perturbation_scale",
+                    "min_improvement",
+                }
+                if unknown:
+                    problems.append(f"escape has unknown keys: {sorted(unknown)}")
         return problems
 
 
@@ -518,6 +554,11 @@ class EpisodeReceipt:
     # Deterministic task-verifier evidence when the episode ran under
     # verifier guidance (task_verifiers.EpisodeTaskVerifier receipt).
     verifier_guidance: dict[str, Any] = field(default_factory=dict)
+    # Attractor-escape evidence: per-branch ladder receipts (rungs tried,
+    # triggers, probation outcomes). Empty when no branch needed escape.
+    escape: dict[str, Any] = field(default_factory=dict)
+    # Latent interpretability/safety telemetry (telemetry.LatentTelemetry).
+    latent_telemetry: dict[str, Any] = field(default_factory=dict)
     decode_temperature: float = 0.0
     decode_top_p: float = 1.0
     decode_bridge_applied: bool = False
@@ -619,6 +660,8 @@ class EpisodeReceipt:
             "decode_newline_suppressions": self.decode_newline_suppressions,
             "decode_repetition_penalty_applied": self.decode_repetition_penalty_applied,
             "verifier_guidance": dict(self.verifier_guidance),
+            "escape": dict(self.escape),
+            "latent_telemetry": dict(self.latent_telemetry),
             "decode_temperature": self.decode_temperature,
             "decode_top_p": self.decode_top_p,
             "decode_bridge_applied": self.decode_bridge_applied,

@@ -26,6 +26,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from core.brain.llm.latent_cortex.escape import BranchEscapeLadder, EscapeConfig
 from core.brain.llm.latent_cortex.recurrence import (
     HaltingController,
     WindowRunner,
@@ -63,9 +64,10 @@ class BranchState:
     halt_reason: str = ""
     steps: int = 0
     score: float = 0.0
+    escape: BranchEscapeLadder | None = None
 
     def to_receipt(self) -> dict[str, Any]:
-        return {
+        receipt = {
             "index": self.index,
             "role": self.role,
             "steps": self.steps,
@@ -74,6 +76,9 @@ class BranchState:
             "score": round(float(self.score), 6),
             "residual_trail": [round(r, 5) for r in self.halting.residual_trail],
         }
+        if self.escape is not None and self.escape.attempts:
+            receipt["escape"] = self.escape.to_receipt()
+        return receipt
 
 
 class BranchEnsemble:
@@ -95,6 +100,8 @@ class BranchEnsemble:
         self.config = config
         self.recurrence = recurrence
         self.exchanges = 0
+        # Optional per-episode observers, attached by the engine.
+        self.telemetry: Any = None
 
     # ── Construction ────────────────────────────────────────────────────
     @classmethod
@@ -109,6 +116,7 @@ class BranchEnsemble:
         prelude_end: int,
         *,
         context_seeds: list[tuple[str, Any]] | None = None,
+        escape_cfg: EscapeConfig | None = None,
     ) -> BranchEnsemble:
         import mlx.core as mx
 
@@ -134,7 +142,17 @@ class BranchEnsemble:
             )
             branches.append(
                 BranchState(
-                    index=k, role=role, workspace=ws, halting=halting, z=z0, anchor=z0
+                    index=k,
+                    role=role,
+                    workspace=ws,
+                    halting=halting,
+                    z=z0,
+                    anchor=z0,
+                    escape=(
+                        BranchEscapeLadder(escape_cfg, k)
+                        if escape_cfg is not None and escape_cfg.enabled
+                        else None
+                    ),
                 )
             )
         return cls(branches, branch_cfg, recurrence_cfg)
@@ -180,12 +198,28 @@ class BranchEnsemble:
             branch.z = z_next
             branch.workspace.update(z_next)
             branch.steps += 1
+            if self.telemetry is not None:
+                self.telemetry.record_step(
+                    branch.index, branch.z, branch.anchor, residual
+                )
             if decision.should_halt:
-                final, reverted = branch.halting.final_state(branch.z)
-                branch.z = final
-                branch.workspace.update(final)
-                branch.halted = True
-                branch.halt_reason = decision.reason + ("_reverted" if reverted else "")
+                # Divergence gets a second life through the escape ladder;
+                # legitimate halts (converged / max_steps / budget) do not.
+                if (
+                    branch.escape is not None
+                    and decision.reason.startswith("diverged")
+                ):
+                    action = branch.escape.on_divergence(branch, decision.reason)
+                    if action == "escaped":
+                        continue
+                    self._halt(branch, action.removeprefix("halt:"))
+                    continue
+                self._halt(branch, decision.reason)
+                continue
+            if branch.escape is not None:
+                action = branch.escape.on_step(branch)
+                if action.startswith("halt:"):
+                    self._halt(branch, action.removeprefix("halt:"))
 
         if (
             len(self.active()) > 1
@@ -196,6 +230,16 @@ class BranchEnsemble:
             self.exchange()
             self.maintain_diversity()
         return True
+
+    def _halt(self, branch: BranchState, reason: str) -> None:
+        """Halt one branch, shipping the best state when it beats the last."""
+        final, reverted = branch.halting.final_state(branch.z)
+        branch.z = final
+        branch.workspace.update(final)
+        branch.halted = True
+        branch.halt_reason = reason + ("_reverted" if reverted else "")
+        if branch.escape is not None:
+            branch.escape.finalize()
 
     # ── Communication ───────────────────────────────────────────────────
     def exchange(self) -> None:
@@ -212,6 +256,8 @@ class BranchEnsemble:
         if len(live) < 2:
             return
         summaries = [b.workspace.summary() for b in live]  # (1,1,D) each
+        if self.telemetry is not None:
+            self.telemetry.record_exchange(summaries)
         stack = mx.concatenate(summaries, axis=1)  # (1,K,D)
         mean = mx.mean(stack, axis=1, keepdims=True)  # (1,1,D)
 
