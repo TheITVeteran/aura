@@ -29,8 +29,9 @@ from __future__ import annotations
 import logging
 import os
 import uuid
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from core.brain.llm.latent_cortex.engine import LatentCortexEngine
 from core.brain.llm.latent_cortex.schedules import ScheduleLibrary

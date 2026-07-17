@@ -25,9 +25,10 @@ import io
 import json
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from core.runtime.errors import record_degradation
 
@@ -269,10 +270,16 @@ def rollback_adapter(model, active: ActiveDurableAdapter) -> dict[str, Any]:
         model,
         [row["probe"] for row in active.baseline_probe_rows] or None,
     )
-    identical = all(
-        before["digest"] == after["digest"]
-        for before, after in zip(active.baseline_probe_rows, proof_rows)
-    ) if active.baseline_probe_rows else False
+    identical = (
+        bool(active.baseline_probe_rows)
+        and len(proof_rows) == len(active.baseline_probe_rows)
+        and all(
+            before["digest"] == after["digest"]
+            for before, after in zip(
+                active.baseline_probe_rows, proof_rows, strict=True
+            )
+        )
+    )
     return {
         "restored_layers": restored,
         "rollback_proven": identical,

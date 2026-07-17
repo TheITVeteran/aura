@@ -18,10 +18,10 @@ import hashlib
 import json
 import logging
 import math
-from pathlib import Path
 import time
 import uuid
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from core.brain.llm.latent_cortex.branches import BranchEnsemble, BranchState
@@ -319,7 +319,7 @@ class LatentCortexEngine:
 
     def _embed_cognitive_context(
         self, items: list[dict]
-    ) -> list[tuple[str, "object"]]:
+    ) -> list[tuple[str, object]]:
         """Pooled embed_tokens vectors for each organ item — no layer passes.
 
         Embedding lookup is table indexing, so the ingress costs no layer

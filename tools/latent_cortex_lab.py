@@ -299,7 +299,7 @@ def _run_admitted_lab(
             tokenize=False,
         )
         claims: list[str] = []
-        for sample_index in range(max(1, int(k))):
+        for _sample_index in range(max(1, int(k))):
             if time.monotonic() > deadline:
                 raise LabDeadlineError("lab wall-clock bound reached during sampling")
             text = mlx_generate(

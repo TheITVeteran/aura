@@ -190,7 +190,7 @@ def evaluate_latent_output(
     max_blank_lines = _max_blank_line_run(rendered)
     lexical_yield = len(words) / max(1, generated)
 
-    trigrams = list(zip(words, words[1:], words[2:]))
+    trigrams = list(zip(words, words[1:], words[2:], strict=False))
     trigram_diversity = len(set(trigrams)) / max(1, len(trigrams))
     line_duplication_ratio = (
         1.0 - len(set(normalized_nonempty_lines)) / len(normalized_nonempty_lines)

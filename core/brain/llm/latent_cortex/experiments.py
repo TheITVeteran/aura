@@ -1009,7 +1009,7 @@ ROLE_ARMS: tuple[str, ...] = (
 
 
 def run_role_lesion(
-    solve_arm: "Callable[[Task, str], tuple[bool, int, float]]",
+    solve_arm: Callable[[Task, str], tuple[bool, int, float]],
     tasks_by_family: dict[str, list[Task]],
     *,
     divergence_margin: float = 0.02,
