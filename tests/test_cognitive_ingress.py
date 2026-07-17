@@ -88,6 +88,124 @@ def test_memory_ingress_prefers_explicit_sync_facade_contract(registry):
     assert memory.async_calls == 0
 
 
+def test_retrieval_revalidates_old_failed_conversation_before_slot_admission(
+    registry,
+):
+    prompt = (
+        "Compare optimistic and pessimistic locking for a hot task queue, "
+        "choose which one you would use in a single-host async runtime, "
+        "explain why, and verify your choice with one concrete failure scenario."
+    )
+    failed_reply = (
+        "Semaphore. Understanding your communication setup would {load encountered}. "
+        "Something went wrong with my external coordination. Under elevated load "
+        "pressure, I'm channeling to stable local handling for you."
+    )
+
+    class OldConversationMemory:
+        def search_sync(self, objective, limit=4):
+            return [
+                {
+                    "content": f"User said: {prompt} Aura replied: {failed_reply}",
+                    "metadata": {
+                        "conversation_turn": True,
+                        "user_utterance": prompt,
+                        "aura_response": failed_reply,
+                        "learning_admission": "verified",
+                        "memory_type": "conversation_continuity",
+                    },
+                }
+            ]
+
+    registry["memory_facade"] = OldConversationMemory()
+    ingress = assemble_cognitive_ingress(None, prompt)
+    signal = next(s for s in ingress.signals if s.source == "memory")
+
+    assert signal.present is True
+    assert signal.value == 0.0
+    assert signal.context_text == ""
+    assert "1 retrieved, 0 eligible, 0 admitted" in signal.detail
+    assert signal.firewall["retrieved_count"] == 1
+    assert signal.firewall["eligible_count"] == 0
+    refusals = signal.firewall["pre_admission_refused"]
+    assert refusals[0]["origin"] == "memory_facade.search_sync#0"
+    assert "current_quality:runtime_boilerplate" in refusals[0]["reasons"]
+    # The receipt explains the refusal without repeating contaminated prose.
+    assert "load encountered" not in str(signal.firewall).lower()
+
+
+def test_conversation_recall_requires_subject_overlap_but_admits_relevant_quality(
+    registry,
+):
+    current_prompt = (
+        "Compare optimistic and pessimistic locking for a hot task queue, "
+        "choose which one you would use in a single-host async runtime, "
+        "explain why, and verify your choice with one concrete failure scenario."
+    )
+    unrelated_prompt = (
+        "Compare a latent workspace with ordinary decoding, choose one for "
+        "high-stakes arithmetic, explain why, and verify the choice with a "
+        "concrete failure scenario."
+    )
+    unrelated_reply = (
+        "Ordinary decoding emits answer tokens immediately, whereas a latent "
+        "workspace can revise intermediate state before exposure. I would choose "
+        "the latent workspace because carry chains benefit from internal correction. "
+        "Verify with a fault-injection test that flips one intermediate carry: the "
+        "workspace should repair it while ordinary decoding preserves the error."
+    )
+    relevant_reply = (
+        "Optimistic locking commits only if the observed queue version is unchanged, "
+        "whereas pessimistic locking reserves queue state before mutation. I would "
+        "choose pessimistic locking with an asyncio.Lock around the short dequeue "
+        "critical section because high contention makes stale-snapshot retries waste "
+        "scheduler work. Verify with a cancellation test: workers A and B observe task "
+        "T, A removes it while B waits, and B must see the next task after acquiring "
+        "the lock; cancellation-safe release also prevents a permanent queue wedge."
+    )
+
+    class MixedConversationMemory:
+        def search_sync(self, objective, limit=4):
+            return [
+                {
+                    "content": "A sound but unrelated latent-workspace answer.",
+                    "metadata": {
+                        "conversation_turn": True,
+                        "user_utterance": unrelated_prompt,
+                        "aura_response": unrelated_reply,
+                        "learning_admission": "verified",
+                    },
+                },
+                {
+                    "content": "Relevant locking evidence: " + relevant_reply,
+                    "metadata": {
+                        "conversation_turn": True,
+                        "user_utterance": current_prompt,
+                        "aura_response": relevant_reply,
+                        "learning_admission": "verified",
+                    },
+                },
+            ]
+
+    registry["memory_facade"] = MixedConversationMemory()
+    ingress = assemble_cognitive_ingress(None, current_prompt)
+    signal = next(s for s in ingress.signals if s.source == "memory")
+
+    assert signal.value == pytest.approx(0.25)
+    assert "Relevant locking evidence" in signal.context_text
+    assert "latent-workspace" not in signal.context_text
+    assert signal.firewall["retrieved_count"] == 2
+    assert signal.firewall["eligible_count"] == 1
+    refusals = signal.firewall["pre_admission_refused"]
+    assert len(refusals) == 1
+    assert refusals[0]["origin"] == "memory_facade.search_sync#0"
+    assert refusals[0]["reasons"] == ["subject_mismatch"]
+    assert refusals[0]["query_subject_terms"] > 0
+    assert refusals[0]["memory_subject_terms"] > 0
+    assert refusals[0]["subject_overlap"] == 0
+    assert signal.firewall["admitted"][0]["origin"].endswith("#1")
+
+
 def test_memory_ingress_closes_hidden_awaitable_without_warning(registry):
     class AwaitableOnlyMemory:
         def search(self, objective, limit=4):

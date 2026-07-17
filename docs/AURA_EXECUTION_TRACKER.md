@@ -18180,6 +18180,101 @@ Bounded verification and next boundary:
   Multi-hour and 24-72-hour soaks remain deferred until every shorter gate is
   green.
 
+## Checkpoint 2026-07-17-122: Retrieval Integrity and Complete Public RLC Evidence
+
+Checkpoint 122 is the current source candidate in the `main` worktree. It
+advances `RLC-RUNTIME-001`, `RLC-LIVE32B-001`, `RLC-CLAIMS-001`, `MEMORY-001`,
+`CHAT-001`, `OBSERVABILITY-001`, and `TEST-DEPTH-001`. It preserves the exact
+CP121 signed-app run as negative evidence. This checkpoint repairs memory and
+proof integrity; it does not award resident-32B capability, frontier-gain,
+release, semantic-closeout, GUI, portability, or soak credit.
+
+Exact CP121 negative evidence:
+
+- The exact signed CP121 app ran pushed commit
+  `377fa46759fd7d75b96a566d518d2d89a1165d12` with the fused resident 32B. The
+  unchanged compound certificate turn returned HTTP 200 in 116.319 seconds and
+  used exactly one foreground model-generation owner. Runtime identity,
+  recurrence, two-branch virtual width, temporary fast weights, exact erase,
+  latent optimization, and base-parameter preservation passed.
+- CP121's verifier economy materially reduced non-final work, but it did not
+  make the frozen checkpoint answer well. The 264-token raw decode contained
+  212 words and six sentences, yet repeated-line ratio reached 0.631579,
+  compare/select/verify were missing, and the tail was incomplete. The route
+  correctly rejected that output. The exact public failure envelope was then
+  independently regraded FAIL with 21 words, no requested facets, and no
+  objective coverage; no fallback or padded answer earned credit.
+- The full episode receipt proved a deeper input defect: cognitive ingress
+  admitted an older failed answer to the same locking prompt as a memory slot.
+  That stored turn contained runtime boilerplate, a load marker, a deflection,
+  and missing requested facets but carried a historical `verified` admission
+  stamp from before the current contract. A second interaction-shaped record
+  represented the same failed reply. Retrieval relevance alone therefore
+  allowed old failure state to contaminate new recurrence.
+- The worker's full receipt contained the true 24-token verifier profile,
+  optimizer attempts/rejections and replay trace, fast-weight lifecycle, and
+  compute budget, while the public live-turn allowlist omitted them. The
+  artifact could prove that work happened but could not independently replay
+  all adaptation decisions from the public contract.
+
+Source repair:
+
+- Every retrieved conversation record is now revalidated under the current
+  `assess_conversation_learning_admission` contract before epistemic-firewall
+  review. Both supported durable shapes are typed: continuity records use
+  `user_utterance`/`aura_response`, while interaction records use
+  `context`/`outcome` only when the action is `conversation_reply`. Missing
+  pairs fail closed. Arbitrary non-conversation evidence keeps its existing
+  path.
+- Conversation recall must also overlap the current request on subject terms,
+  not generic instructions such as compare, choose, explain, or verify. This
+  prevents a structurally similar but domain-unrelated answer from becoming a
+  latent slot. Original retrieval indexes remain in evidence origins.
+- Memory familiarity and uncertainty now use eligible hits, not raw retrieval
+  count. The firewall receipt separately reports retrieved, eligible, and
+  admitted counts plus bounded pre-admission refusal reasons and overlap
+  counts. Rejected prose is not copied into the refusal receipt or slot.
+- The public latent receipt now preserves the verifier probe profile, latent
+  optimizer mode/loss/attempt/reject/budget/replay evidence, fast-weight
+  attempt/accept/reject/budget/canary/verifier evidence, and total compute
+  budget on both successful and failed one-owner paths. Runtime identity
+  filtering and answer-quality requirements are unchanged.
+
+Bounded verification and concurrent recurrence training:
+
+- The ingress/epistemic/slot campaign passes 42/42. The complete desktop
+  conversation lane passes 282/282. The broad RLC engine, schedule, branch,
+  optimizer, fast-weight, persistence, output-quality, runtime-identity,
+  frontier-certificate, cognitive-background, conversation-support, and
+  response-generation campaign passes 523/523. These campaigns overlap and
+  are not summed as unique coverage. Python compilation, `git diff --check`,
+  targeted `F`/`E9` lint, the enterprise static ratchet, and all 20 closeout
+  rubric criteria pass.
+- The separately launched recurrence-native resident-32B run `32b_r1` is
+  protected concurrent work, not evidence of gain. It trains 4,194,304 LoRA
+  parameters across 64 recurrent-window projections on 576 disjoint-seed
+  khop/boolean/modular tasks with depth curriculum 1/2/4 and a 180-minute hard
+  bound. Its first logged point is step 10, mean loss 1.0641, with 174.7
+  estimated minutes remaining. No adapter-on/off evaluation has run and no
+  capability claim is eligible.
+- An older Fable end-phase soak had concurrently booted another 32B headless
+  runtime. It was terminated precisely because the training handoff requires a
+  single 32B load and final endurance soaks remain deferred. The trainer was
+  not signaled or restarted.
+- Evidence-weighted completion remains 27%. This is checkpoint 122 of the
+  faithful 292-399 total forecast, leaving approximately 170-277 checkpoints.
+  Mechanical audit success and passing source tests do not close the separate
+  semantic-review, live product, recurrence-gain, release, or endurance gates.
+- Next: publish CP122 directly to `main` and run clean-head static/closeout
+  gates. While `32b_r1` runs, perform only non-model source and artifact work.
+  On trainer exit, validate its receipt, loss trajectory, finite-state and
+  checkpoint invariants, then execute the preregistered adapter-on and
+  adapter-off held-out campaigns without changing seeds or graders. Only a
+  statistically defensible positive result may proceed to governed live
+  adapter activation and a rebuilt exact-app certificate. A negative result is
+  retained and routed to first-error/state-transition analysis. Multi-hour and
+  24-72-hour soaks remain last.
+
 ## Checkpoint 2026-07-17-121: Verifier Economy, Replayable Adaptation, and Async Ingress
 
 Checkpoint 121 is the current source candidate in the `main` worktree. It

@@ -123,6 +123,25 @@ def _proven_latent_cortex_trace():
             "decode_requested_tokens": 512,
             "decode_generated_tokens": 64,
             "decode_termination": "eos",
+            "verifier_probe_max_tokens": 24,
+            "latent_opt_applied": True,
+            "latent_opt_mode": "gradient",
+            "latent_opt_attempts": 2,
+            "latent_opt_steps": 1,
+            "latent_opt_rejected": 1,
+            "latent_opt_budget_exhausted": False,
+            "latent_opt_verifier": {
+                "policy": "strict_task_score_improvement_v1",
+                "decisions": [{"accepted": True}],
+            },
+            "fast_weights_applied": True,
+            "fast_weights_erased": True,
+            "fast_weight_optimization_attempts": 2,
+            "fast_weight_optimized_steps": 1,
+            "fast_weight_rejected_steps": 1,
+            "fast_weight_budget_exhausted": False,
+            "fast_weight_verifier": {"accepted": True},
+            "budget": {"spent_layer_apps": 12345, "max_layer_apps": 4000000},
             "output_quality": dict(quality),
             "last_stage": "complete",
             "stage_timings_s": {"prefill": 1.0, "decode": 2.0, "total": 4.0},
@@ -542,6 +561,13 @@ def test_full_mind_contract_accepts_identity_bound_latent_cortex_path(monkeypatc
     assert payload["full_mind_path"] is True
     assert payload["latent_cortex_receipt"]["last_stage"] == "complete"
     assert payload["latent_cortex_receipt"]["stage_timings_s"]["total"] == 4.0
+    assert payload["latent_cortex_receipt"]["verifier_probe_max_tokens"] == 24
+    assert payload["latent_cortex_receipt"]["latent_opt_attempts"] == 2
+    assert payload["latent_cortex_receipt"]["latent_opt_rejected"] == 1
+    assert payload["latent_cortex_receipt"]["latent_opt_verifier"]["decisions"]
+    assert payload["latent_cortex_receipt"]["fast_weight_optimization_attempts"] == 2
+    assert payload["latent_cortex_receipt"]["fast_weight_rejected_steps"] == 1
+    assert payload["latent_cortex_receipt"]["budget"]["spent_layer_apps"] == 12345
     assert "source_root" not in payload["latent_cortex_receipt"]["runtime_identity"]
 
 
@@ -9449,6 +9475,14 @@ async def test_cognitive_engine_does_not_duplicate_a_consumed_model_owner(monkey
             "latent_cortex_receipt": {
                 "episode_id": "cp120-failed",
                 "last_stage": "complete",
+                "verifier_probe_max_tokens": 24,
+                "latent_opt_attempts": 1,
+                "latent_opt_rejected": 0,
+                "latent_opt_verifier": {
+                    "policy": "task_score_nonregression_with_proxy_descent_v1",
+                    "decisions": [{"accepted": True}],
+                },
+                "budget": {"spent_layer_apps": 147776},
             },
         }
     )
@@ -9536,6 +9570,12 @@ async def test_cognitive_engine_does_not_duplicate_a_consumed_model_owner(monkey
         "stage": "complete",
         "elapsed_s": 109.5,
     }
+    failed_receipt = live_contract["latent_cortex_receipt"]
+    assert failed_receipt["verifier_probe_max_tokens"] == 24
+    assert failed_receipt["latent_opt_attempts"] == 1
+    assert failed_receipt["latent_opt_rejected"] == 0
+    assert failed_receipt["latent_opt_verifier"]["decisions"][0]["accepted"] is True
+    assert failed_receipt["budget"]["spent_layer_apps"] == 147776
 
 
 @pytest.mark.asyncio

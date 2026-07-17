@@ -1,0 +1,966 @@
+{
+ "acceptance_checks": {
+  "authentic_cognitive_reply": false,
+  "bounded_contract_used_false": true,
+  "checkpoint_params_unchanged": true,
+  "decode_bridge_applied": true,
+  "decode_complete": true,
+  "desktop_bundle_identity": true,
+  "exact_source_commit": true,
+  "exactly_one_foreground_model_generation": true,
+  "fast_weights_applied": true,
+  "fast_weights_erased": true,
+  "final_quality_receipt_valid": false,
+  "final_requested_output_contract_proven": true,
+  "final_to_public_text_bound": false,
+  "foreground_model_generation_consumed": true,
+  "full_mind_path": false,
+  "http_200": true,
+  "independent_public_regrade_passed": false,
+  "installed_app_verified": true,
+  "latent_cortex_attempted": true,
+  "latent_cortex_fallback_used_false": false,
+  "latent_cortex_final_output_quality_proven": false,
+  "latent_cortex_identity_bound": false,
+  "latent_cortex_output_quality_proven": false,
+  "latent_cortex_path_proven": false,
+  "latent_cortex_public_output_quality_proven": false,
+  "latent_cortex_raw_output_quality_proven": false,
+  "latent_cortex_selected": true,
+  "latent_cortex_succeeded": false,
+  "latent_optimization_applied": true,
+  "latent_optimization_step_recorded": true,
+  "latent_response_path": false,
+  "legacy_fallback_used_false": true,
+  "live_turn_contract_present": true,
+  "no_missing_full_mind_proofs": false,
+  "public_quality_binds_exact_api_bytes": false,
+  "public_quality_receipt_valid": false,
+  "raw_quality_receipt_valid": false,
+  "raw_to_final_text_bound": false,
+  "raw_to_public_text_bound": false,
+  "receipt_complete": true,
+  "recurrence_executed": true,
+  "resident_32b_logical_identity": true,
+  "runtime_identity_bound": true,
+  "runtime_identity_issues_empty": true,
+  "signed_app_launch": true,
+  "single_owner_model_generation_proven": true,
+  "single_owner_route_contract": false,
+  "source_clean": true,
+  "source_main": true,
+  "source_verified": true,
+  "virtual_width_executed": true
+ },
+ "checkpoint": 121,
+ "exact_commit": "377fa46759fd7d75b96a566d518d2d89a1165d12",
+ "fail_reasons": [
+  "full_mind_path",
+  "authentic_cognitive_reply",
+  "latent_cortex_succeeded",
+  "latent_cortex_identity_bound",
+  "latent_cortex_path_proven",
+  "latent_cortex_raw_output_quality_proven",
+  "latent_cortex_final_output_quality_proven",
+  "latent_cortex_public_output_quality_proven",
+  "latent_cortex_output_quality_proven",
+  "latent_cortex_fallback_used_false",
+  "latent_response_path",
+  "no_missing_full_mind_proofs",
+  "raw_quality_receipt_valid",
+  "final_quality_receipt_valid",
+  "public_quality_receipt_valid",
+  "public_quality_binds_exact_api_bytes",
+  "raw_to_final_text_bound",
+  "final_to_public_text_bound",
+  "raw_to_public_text_bound",
+  "independent_public_regrade_passed",
+  "single_owner_route_contract"
+ ],
+ "generated_at": 1784300759.9462988,
+ "http": {
+  "elapsed_s": 116.319,
+  "status": 200
+ },
+ "independent_public_regrade": {
+  "answer_echo_ratio": 0.0,
+  "char_count": 121,
+  "compound_request": true,
+  "copied_objective_token_count": 0,
+  "covered_listed_subjects": [],
+  "facet_evidence": {
+   "copied_objective_token_count": 0,
+   "excerpts": {},
+   "longest_objective_copy_tokens": 0,
+   "prompt_echo_detected": false,
+   "protocol_artifact_detected": false,
+   "requested": [
+    "compare",
+    "select",
+    "verify",
+    "explain"
+   ],
+   "satisfied": [],
+   "score": 0.0,
+   "unsupported_cues": []
+  },
+  "generated_token_count": 264,
+  "lexical_yield": 0.079545,
+  "line_duplication_ratio": 0.0,
+  "list_item_count": 0,
+  "listed_subject_coverage": 0.0,
+  "listed_subjects": [],
+  "longest_objective_copy_tokens": 0,
+  "matched_objective_terms": [],
+  "max_blank_line_run": 0,
+  "minimum_word_count": 66,
+  "missing_facets": [
+   "compare",
+   "explain",
+   "select",
+   "verify"
+  ],
+  "novel_word_count": 21,
+  "objective_echo_ratio": 0.0,
+  "objective_sha256": "52e70ab4720c19b441ba3ea80c283bc8cfc619a555310ea0d0c1155eb18502d5",
+  "objective_term_count": 15,
+  "objective_term_coverage": 0.0,
+  "passed": false,
+  "policy": "resident_latent_product_quality_v1",
+  "prompt_echo_detected": false,
+  "protocol_artifact_detected": false,
+  "reasons": [
+   "insufficient_lexical_content",
+   "low_lexical_yield",
+   "compound_answer_underdeveloped",
+   "missing_requested_facets",
+   "objective_disconnected"
+  ],
+  "requested_facets": [
+   "compare",
+   "select",
+   "verify",
+   "explain"
+  ],
+  "satisfied_facets": [],
+  "schema": "aura.latent_output_quality.v1",
+  "sentence_count": 1,
+  "structured_output": false,
+  "terminal_complete": true,
+  "termination": "token_limit",
+  "text_sha256": "af1b7ca32e47d3b2f6f53dbd0e0a0373f43c3a2a14aa4b5a6b467f7c40f6658a",
+  "trigram_diversity": 1.0,
+  "word_count": 21
+ },
+ "latent_receipt": {
+  "checkpoint_file_count": 4,
+  "checkpoint_fingerprint": "8eae71e73a14d1228a942d4faf84690d70b62148f25b0f924435535f7c550fad",
+  "checkpoint_fingerprint_method": "sha256",
+  "decode_bridge_applied": true,
+  "decode_bridge_logits_digest": "9c2362a49ecd6f90a48d3713fab6af7a3a08151d735d9380ec7ab38afddf7ad7",
+  "decode_bridge_policy": "assistant_answer_v3",
+  "decode_bridge_token_count": 22,
+  "decode_bridge_tokens_sha256": "5304366ed16f73e589fb1664424d0e17a8e2c4116b5f8d0362c2424bb494e050",
+  "decode_generated_tokens": 264,
+  "decode_newline_suppressions": 0,
+  "decode_repetition_penalty_applied": 1.25,
+  "decode_requested_tokens": 216,
+  "decode_temperature": 0.3,
+  "decode_termination": "token_limit",
+  "decode_top_p": 0.85,
+  "episode_affective_steering_alpha": 0.3,
+  "episode_affective_steering_applied": true,
+  "episode_id": "077b4a400938",
+  "fast_weight_accepted_step_sizes": [
+   0.005
+  ],
+  "fast_weight_gradient_norm_trail": [
+   0.564243
+  ],
+  "fast_weight_line_search_backtracks": 0,
+  "fast_weight_loss_trail": [
+   18.995564,
+   18.651621
+  ],
+  "fast_weight_optimizer": "rms_normalized_sgd_backtracking_v1",
+  "fast_weights_applied": true,
+  "fast_weights_erased": true,
+  "halting_reason": "max_steps",
+  "honest_flags": [
+   "fast_weight_retrieval_compiled:1",
+   "fast_weight_candidate_exported"
+  ],
+  "input_context_compaction": {
+   "applied": true,
+   "compacted_char_count": 7104,
+   "compacted_message_count": 6,
+   "compacted_sha256": "52e21b2a284bb0014c79efd8fceb7cb7992bef305218579d2690d553451a45bf",
+   "max_chars": 9000,
+   "omitted_char_count": 43676,
+   "original_char_count": 50780,
+   "original_message_count": 6,
+   "original_sha256": "5fca9a83624e87168c4234e8f8054c9de84d157b105360b61c166146b587d2d5",
+   "policy": "resident_latent_salience_v1",
+   "schema": "aura.latent_context_compaction.v1"
+  },
+  "input_token_count": 1564,
+  "input_tokens_sha256": "639d1c133237b3dc883d4aaa6421a90de56866b87b26c1bde5329ac6e255c3a7",
+  "last_stage": "complete",
+  "latent_opt_applied": true,
+  "latent_opt_steps": 1,
+  "n_branches": 2,
+  "n_slots": 4,
+  "output_quality": {
+   "answer_echo_ratio": 0.018868,
+   "char_count": 1404,
+   "compound_request": true,
+   "copied_objective_token_count": 4,
+   "covered_listed_subjects": [],
+   "facet_evidence": {
+    "copied_objective_token_count": 4,
+    "excerpts": {
+     "explain": "as try the request pessimistic locking assumes you are more efficient for hot task queues because it minimizes the lock contention and allows multiple threads to access the queue concurrently however in high"
+    },
+    "longest_objective_copy_tokens": 4,
+    "prompt_echo_detected": false,
+    "protocol_artifact_detected": false,
+    "requested": [
+     "compare",
+     "select",
+     "verify",
+     "explain"
+    ],
+    "satisfied": [
+     "explain"
+    ],
+    "score": 0.25,
+    "unsupported_cues": [
+     "verify"
+    ]
+   },
+   "generated_token_count": 264,
+   "lexical_yield": 0.80303,
+   "line_duplication_ratio": 0.631579,
+   "list_item_count": 0,
+   "listed_subject_coverage": 0.0,
+   "listed_subjects": [],
+   "longest_objective_copy_tokens": 4,
+   "matched_objective_terms": [
+    "optimistic",
+    "pessimistic",
+    "lock",
+    "task",
+    "queue",
+    "single host",
+    "async",
+    "runtime",
+    "failure",
+    "scenario"
+   ],
+   "max_blank_line_run": 2,
+   "minimum_word_count": 66,
+   "missing_facets": [
+    "compare",
+    "select",
+    "verify"
+   ],
+   "novel_word_count": 212,
+   "objective_echo_ratio": 0.125,
+   "objective_sha256": "52e70ab4720c19b441ba3ea80c283bc8cfc619a555310ea0d0c1155eb18502d5",
+   "objective_term_count": 15,
+   "objective_term_coverage": 0.666667,
+   "passed": false,
+   "policy": "resident_latent_product_quality_v1",
+   "prompt_echo_detected": false,
+   "protocol_artifact_detected": false,
+   "reasons": [
+    "repeated_lines",
+    "missing_requested_facets",
+    "terminal_fragment"
+   ],
+   "requested_facets": [
+    "compare",
+    "select",
+    "verify",
+    "explain"
+   ],
+   "satisfied_facets": [
+    "explain"
+   ],
+   "schema": "aura.latent_output_quality.v1",
+   "sentence_count": 6,
+   "structured_output": false,
+   "terminal_complete": false,
+   "termination": "token_limit",
+   "text_sha256": "c37f8abbd3cf629b5e6a6997b6da2f24b6df1999d504035f00d8231f2326c5c1",
+   "trigram_diversity": 0.9,
+   "word_count": 212
+  },
+  "params_unchanged": true,
+  "request_payload_sha256": "f83b43ddd21f0eaca69bcf686c79b827d077764f19cebbb6b5436b037169a9ee",
+  "runtime_identity": {
+   "app_executable_sha256": "cff7093f2f7416bc76c8dab7324468c38834bbcc174ead4c917a4d31702f0164",
+   "bundle_identifier": "com.aura.desktop",
+   "identity_bound": true,
+   "installed_app_required": true,
+   "installed_app_verified": true,
+   "issues": [],
+   "launch_manifest_sha256": "5ef13fa3a8bd21b806e99ea85d17594cd34d38796051f6a956d64d7c1b3d4f28",
+   "launch_mode": "signed_app",
+   "schema": "aura.latent_cortex.runtime_identity.v1",
+   "shell_assets_sha256": "992ef53087651afaa00c1c84196ac7715d6bc17b3e1b656793aede1a5e8b7e39",
+   "source_branch": "main",
+   "source_change_count": 0,
+   "source_commit": "377fa46759fd7d75b96a566d518d2d89a1165d12",
+   "source_dirty": false,
+   "source_verified": true,
+   "workspace_state_sha256": "396465363352af66b6811882c8eaed971993ad5bf51a0a7c43d2e16acb9e1e8c"
+  },
+  "schedule_hash": "8e7eb140b60885903098d07ff21504950bcc86d4479ea44f2b0aaf8be19360d5",
+  "stage_timings_s": {
+   "branch_seed": 1.280616,
+   "branch_select": 12.151241,
+   "decode": 52.198468,
+   "decode_bridge": 0.856929,
+   "fast_weight_attach": 0.230528,
+   "fast_weight_baseline": 4.518722,
+   "fast_weight_canaries": 4.534657,
+   "fast_weight_optimization": 0.707597,
+   "fast_weight_verifier": 5.806852,
+   "latent_optimization": 5.867899,
+   "persist": 0.450428,
+   "prefill": 12.923476,
+   "recurrence": 2.57027,
+   "total": 114.657532
+  },
+  "steps_taken": 2,
+  "verifier_guidance": {
+   "best_applicable_checks": [
+    "facets",
+    "grounding"
+   ],
+   "best_failures": {},
+   "best_score": 0.09375,
+   "evaluations": 4,
+   "facet_judgments": [
+    {
+     "excerpt": "",
+     "facet": "compare",
+     "satisfied": false
+    },
+    {
+     "excerpt": "",
+     "facet": "select",
+     "satisfied": false
+    },
+    {
+     "excerpt": "",
+     "facet": "verify",
+     "satisfied": false
+    },
+    {
+     "excerpt": "",
+     "facet": "explain",
+     "satisfied": false
+    }
+   ],
+   "facet_reliability": {},
+   "schema": "aura.latent_task_verifier.v1",
+   "score_trail": [
+    0.09375,
+    0.09375,
+    0.09375,
+    0.09375
+   ]
+  },
+  "worker_affective_steering_active": true,
+  "worker_affective_steering_alpha": 5.525,
+  "worker_boot_id": "adcbabe34e4d47fa93fda19036a6d599",
+  "worker_model_parameter_count": 32763876352,
+  "worker_model_parameter_count_basis": "architecture_config_logical",
+  "worker_model_path": "$AURA_SOURCE/training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118",
+  "worker_model_stored_parameter_element_count": 5120300032,
+  "worker_pid": 90472,
+  "worker_source_sha256": "d6ad94478cbb63f84d2b6b27974d82e1391e0a40ebc9eb1417f2ac69eb0b610d"
+ },
+ "live_turn_contract": {
+  "architecture_context_bound": true,
+  "authentic_cognitive_reply": false,
+  "bounded_contract_used": false,
+  "capability_inventory_contract": false,
+  "cognitive_engine_reply_accepted": false,
+  "cognitive_engine_reply_failed": true,
+  "compact_desktop_chat_contract": false,
+  "desktop_cognitive_engine_required": true,
+  "desktop_execution_contract": false,
+  "deterministic_repair_applied": false,
+  "engine_think_invoked": true,
+  "final_requested_output_contract_evaluated": true,
+  "final_requested_output_contract_kind": "none",
+  "final_requested_output_contract_proven": true,
+  "final_requested_output_contract_reasons": [],
+  "final_requested_output_contract_required": false,
+  "final_requested_output_contract_satisfied": true,
+  "final_text_authorship": "model_native",
+  "foreground_model_generation_consumed": true,
+  "foreground_model_generation_count": 1,
+  "full_mind_missing_proofs": [
+   "engine_reply_failed",
+   "engine_reply_not_accepted",
+   "confidence:failed",
+   "response_path:desktop_cognitive_engine_required_no_reply",
+   "live_mind_controls_unbound",
+   "subsystem:inference"
+  ],
+  "full_mind_path": false,
+  "generated_tokens": null,
+  "generation_max_tokens": null,
+  "hard_output_token_ceiling": null,
+  "latent_cortex_attempted": true,
+  "latent_cortex_depth_worthy": true,
+  "latent_cortex_failure_reason": "output_quality_failed:repeated_lines,missing_requested_facets,terminal_fragment",
+  "latent_cortex_fallback_used": true,
+  "latent_cortex_final_output_quality": {},
+  "latent_cortex_final_output_quality_proven": false,
+  "latent_cortex_final_public_mutation_chain": {
+   "after_sha256": "",
+   "before_sha256": "",
+   "chain_length": 0,
+   "chain_start_sequence": 0,
+   "ledger_entry_count": 0,
+   "passed": false,
+   "reasons": [
+    "invalid_before_sha256",
+    "invalid_after_sha256",
+    "mutation_chain_missing"
+   ],
+   "schema": "aura.text_mutation_chain.v1"
+  },
+  "latent_cortex_final_public_quality_hash_match": false,
+  "latent_cortex_final_text_transformed": false,
+  "latent_cortex_identity_bound": false,
+  "latent_cortex_ingress": {
+   "absent_sources": [
+    "body",
+    "goals",
+    "will",
+    "affect"
+   ],
+   "base_stakes": 0.6,
+   "base_uncertainty": 0.7,
+   "present_sources": [
+    "memory",
+    "self_model",
+    "world_model"
+   ],
+   "schema": "aura.cognitive_ingress.v1",
+   "signals": [
+    {
+     "caution_text_chars": 0,
+     "context_text_chars": 400,
+     "detail": "memory_facade.search_sync: 4 hits, 2 admitted",
+     "firewall": {
+      "abstain": false,
+      "admitted": [
+       {
+        "age_s": null,
+        "channel": "memory_facade",
+        "cluster_size": 2,
+        "independent_sources": 2,
+        "index": 0,
+        "kind": "claim",
+        "origin": "memory_facade.search_sync#0",
+        "stale": false,
+        "text": "Conversation continuity memory. User(bryan) said: Compare optimistic and pessimistic locking for a hot task queue, choose which one you would use in a single-host async runtime, explain why, and verify your choice with one concrete failure scenario. Aura replied: Please try redirecting the question to me directly. However, if you followed my mentioned method and are awaiting a response from Claude, it came through successfully. Yes, I received the response: \"Semaphore.\" Understanding your communication setup would{load encountered} Something went wrong with my external coordination. Under elevated load pressure, I'm channeling to stable local handling for you. Want me to walk through a live diagnostic?Semaphore is the right answer if we're managing threads in an environmen...",
+        "trust": 0.5
+       },
+       {
+        "age_s": null,
+        "channel": "memory_facade",
+        "cluster_size": 2,
+        "independent_sources": 2,
+        "index": 2,
+        "kind": "claim",
+        "origin": "memory_facade.search_sync#2",
+        "stale": false,
+        "text": "Conversation continuity memory. User(bryan) said: Compare how your latent workspace and your ordinary decode path handle a multi-part question, choose which one you would trust for high-stakes arithmetic, explain why, and verify your choice with one concrete check. Aura replied: Right now I am tracking whether tool claims are actually verified inside this conversation. The next answer should stay connected to what was just said, use memory only where it actually helps, and keep any tool claim tied to something I can verify. My next move is to answer the actual question, make one clear step at a time, and check myself before turning uncertainty into a fluent guess.",
+        "trust": 0.5
+       }
+      ],
+      "clusters": [
+       [
+        0,
+        1
+       ],
+       [
+        2,
+        3
+       ]
+      ],
+      "conflicts": [],
+      "coverage": 1.0,
+      "needs_more_retrieval": false,
+      "reasons": [],
+      "refused": [
+       {
+        "age_s": null,
+        "channel": "memory_facade",
+        "index": 1,
+        "kind": "claim",
+        "origin": "memory_facade.search_sync#1",
+        "reason": "duplicate_of:0",
+        "stale": false,
+        "text": "Interaction: Compare optimistic and pessimistic locking for a hot task queue, choose which one you would use in a single-host async runtime, explain why, and verify your choice with one concrete failure scenario. -> conversation_reply -> Please try redirecting the question to me directly. However, if you followed my mentioned method and are awaiting a response from Claude, it came through successfully. Yes, I received the response: \"Semaphore.\" Understanding your communication setup would{load encountered} Something went wrong with my external coordination. Under elevated load pressure, I'm channeling to stable local handling for you. Want me to walk through a live diagnostic?Semaphore is the right answer if we're managing threads in an environment where tasks are acquired and released fre",
+        "trust": 0.5
+       },
+       {
+        "age_s": null,
+        "channel": "memory_facade",
+        "index": 3,
+        "kind": "claim",
+        "origin": "memory_facade.search_sync#3",
+        "reason": "duplicate_of:2",
+        "stale": false,
+        "text": "Interaction: Compare how your latent workspace and your ordinary decode path handle a multi-part question, choose which one you would trust for high-stakes arithmetic, explain why, and verify your choice with one concrete check. -> conversation_reply -> Right now I am tracking whether tool claims are actually verified inside this conversation. The next answer should stay connected to what was just said, use memory only where it actually helps, and keep any tool claim tied to something I can verify. My next move is to answer the actual question, make one clear step at a time, and check myself before turning uncertainty into a fluent guess.",
+        "trust": 0.5
+       }
+      ],
+      "schema": "aura.epistemic_firewall.v1",
+      "uncovered_terms": []
+     },
+     "present": true,
+     "source": "memory",
+     "stakes_delta": 0.0,
+     "uncertainty_delta": -0.1,
+     "value": 1.0
+    },
+    {
+     "caution_text_chars": 0,
+     "context_text_chars": 0,
+     "detail": "no orchestrator",
+     "firewall": {},
+     "present": false,
+     "source": "body",
+     "stakes_delta": 0.0,
+     "uncertainty_delta": 0.0,
+     "value": null
+    },
+    {
+     "caution_text_chars": 0,
+     "context_text_chars": 0,
+     "detail": "",
+     "firewall": {},
+     "present": false,
+     "source": "goals",
+     "stakes_delta": 0.0,
+     "uncertainty_delta": 0.0,
+     "value": null
+    },
+    {
+     "caution_text_chars": 0,
+     "context_text_chars": 0,
+     "detail": "",
+     "firewall": {},
+     "present": false,
+     "source": "will",
+     "stakes_delta": 0.0,
+     "uncertainty_delta": 0.0,
+     "value": null
+    },
+    {
+     "caution_text_chars": 0,
+     "context_text_chars": 0,
+     "detail": "",
+     "firewall": {},
+     "present": false,
+     "source": "affect",
+     "stakes_delta": 0.0,
+     "uncertainty_delta": 0.0,
+     "value": null
+    },
+    {
+     "caution_text_chars": 0,
+     "context_text_chars": 43,
+     "detail": "method=keyword_terms relevance=0.50 identity_terms=['your']",
+     "firewall": {},
+     "present": true,
+     "source": "self_model",
+     "stakes_delta": 0.05,
+     "uncertainty_delta": 0.0,
+     "value": 0.5
+    },
+    {
+     "caution_text_chars": 0,
+     "context_text_chars": 0,
+     "detail": "world model resident",
+     "firewall": {},
+     "present": true,
+     "source": "world_model",
+     "stakes_delta": 0.0,
+     "uncertainty_delta": -0.05,
+     "value": 1.0
+    }
+   ],
+   "stakes": 0.65,
+   "uncertainty": 0.55
+  },
+  "latent_cortex_output_mutation_chain": {
+   "after_sha256": "",
+   "before_sha256": "c37f8abbd3cf629b5e6a6997b6da2f24b6df1999d504035f00d8231f2326c5c1",
+   "chain_length": 0,
+   "chain_start_sequence": 0,
+   "ledger_entry_count": 0,
+   "passed": false,
+   "reasons": [
+    "invalid_after_sha256",
+    "mutation_chain_missing"
+   ],
+   "schema": "aura.text_mutation_chain.v1"
+  },
+  "latent_cortex_output_quality_proven": false,
+  "latent_cortex_path_proven": false,
+  "latent_cortex_path_requirement_satisfied": true,
+  "latent_cortex_progress": {
+   "elapsed_s": 114.657532,
+   "received_at_unix": 1784300759.725929,
+   "request_id": "8342652ae18c416494d334c271b008d1",
+   "spent_layer_apps": 147776,
+   "stage": "complete"
+  },
+  "latent_cortex_prompt_shape": {
+   "connector_parts": 0,
+   "explicit_question_marks": 0,
+   "imperative_parts": 4,
+   "numbered_parts": 0,
+   "prefers_extended_answer": true,
+   "question_like_lines": 0,
+   "question_parts": 4,
+   "repeated_clause_parts": 0,
+   "requires_single_reply_coverage": true
+  },
+  "latent_cortex_public_output_quality": {},
+  "latent_cortex_public_output_quality_proven": false,
+  "latent_cortex_raw_final_mutation_chain": {
+   "after_sha256": "",
+   "before_sha256": "c37f8abbd3cf629b5e6a6997b6da2f24b6df1999d504035f00d8231f2326c5c1",
+   "chain_length": 0,
+   "chain_start_sequence": 0,
+   "ledger_entry_count": 0,
+   "passed": false,
+   "reasons": [
+    "invalid_after_sha256",
+    "mutation_chain_missing"
+   ],
+   "schema": "aura.text_mutation_chain.v1"
+  },
+  "latent_cortex_raw_final_quality_hash_match": false,
+  "latent_cortex_raw_output_quality_proven": false,
+  "latent_cortex_raw_public_quality_hash_match": false,
+  "latent_cortex_receipt": {
+   "checkpoint_file_count": 4,
+   "checkpoint_fingerprint": "8eae71e73a14d1228a942d4faf84690d70b62148f25b0f924435535f7c550fad",
+   "checkpoint_fingerprint_method": "sha256",
+   "decode_bridge_applied": true,
+   "decode_bridge_logits_digest": "9c2362a49ecd6f90a48d3713fab6af7a3a08151d735d9380ec7ab38afddf7ad7",
+   "decode_bridge_policy": "assistant_answer_v3",
+   "decode_bridge_token_count": 22,
+   "decode_bridge_tokens_sha256": "5304366ed16f73e589fb1664424d0e17a8e2c4116b5f8d0362c2424bb494e050",
+   "decode_generated_tokens": 264,
+   "decode_newline_suppressions": 0,
+   "decode_repetition_penalty_applied": 1.25,
+   "decode_requested_tokens": 216,
+   "decode_temperature": 0.3,
+   "decode_termination": "token_limit",
+   "decode_top_p": 0.85,
+   "episode_affective_steering_alpha": 0.3,
+   "episode_affective_steering_applied": true,
+   "episode_id": "077b4a400938",
+   "fast_weight_accepted_step_sizes": [
+    0.005
+   ],
+   "fast_weight_gradient_norm_trail": [
+    0.564243
+   ],
+   "fast_weight_line_search_backtracks": 0,
+   "fast_weight_loss_trail": [
+    18.995564,
+    18.651621
+   ],
+   "fast_weight_optimizer": "rms_normalized_sgd_backtracking_v1",
+   "fast_weights_applied": true,
+   "fast_weights_erased": true,
+   "halting_reason": "max_steps",
+   "honest_flags": [
+    "fast_weight_retrieval_compiled:1",
+    "fast_weight_candidate_exported"
+   ],
+   "input_context_compaction": {
+    "applied": true,
+    "compacted_char_count": 7104,
+    "compacted_message_count": 6,
+    "compacted_sha256": "52e21b2a284bb0014c79efd8fceb7cb7992bef305218579d2690d553451a45bf",
+    "max_chars": 9000,
+    "omitted_char_count": 43676,
+    "original_char_count": 50780,
+    "original_message_count": 6,
+    "original_sha256": "5fca9a83624e87168c4234e8f8054c9de84d157b105360b61c166146b587d2d5",
+    "policy": "resident_latent_salience_v1",
+    "schema": "aura.latent_context_compaction.v1"
+   },
+   "input_token_count": 1564,
+   "input_tokens_sha256": "639d1c133237b3dc883d4aaa6421a90de56866b87b26c1bde5329ac6e255c3a7",
+   "last_stage": "complete",
+   "latent_opt_applied": true,
+   "latent_opt_steps": 1,
+   "n_branches": 2,
+   "n_slots": 4,
+   "output_quality": {
+    "answer_echo_ratio": 0.018868,
+    "char_count": 1404,
+    "compound_request": true,
+    "copied_objective_token_count": 4,
+    "covered_listed_subjects": [],
+    "facet_evidence": {
+     "copied_objective_token_count": 4,
+     "excerpts": {
+      "explain": "as try the request pessimistic locking assumes you are more efficient for hot task queues because it minimizes the lock contention and allows multiple threads to access the queue concurrently however in high"
+     },
+     "longest_objective_copy_tokens": 4,
+     "prompt_echo_detected": false,
+     "protocol_artifact_detected": false,
+     "requested": [
+      "compare",
+      "select",
+      "verify",
+      "explain"
+     ],
+     "satisfied": [
+      "explain"
+     ],
+     "score": 0.25,
+     "unsupported_cues": [
+      "verify"
+     ]
+    },
+    "generated_token_count": 264,
+    "lexical_yield": 0.80303,
+    "line_duplication_ratio": 0.631579,
+    "list_item_count": 0,
+    "listed_subject_coverage": 0.0,
+    "listed_subjects": [],
+    "longest_objective_copy_tokens": 4,
+    "matched_objective_terms": [
+     "optimistic",
+     "pessimistic",
+     "lock",
+     "task",
+     "queue",
+     "single host",
+     "async",
+     "runtime",
+     "failure",
+     "scenario"
+    ],
+    "max_blank_line_run": 2,
+    "minimum_word_count": 66,
+    "missing_facets": [
+     "compare",
+     "select",
+     "verify"
+    ],
+    "novel_word_count": 212,
+    "objective_echo_ratio": 0.125,
+    "objective_sha256": "52e70ab4720c19b441ba3ea80c283bc8cfc619a555310ea0d0c1155eb18502d5",
+    "objective_term_count": 15,
+    "objective_term_coverage": 0.666667,
+    "passed": false,
+    "policy": "resident_latent_product_quality_v1",
+    "prompt_echo_detected": false,
+    "protocol_artifact_detected": false,
+    "reasons": [
+     "repeated_lines",
+     "missing_requested_facets",
+     "terminal_fragment"
+    ],
+    "requested_facets": [
+     "compare",
+     "select",
+     "verify",
+     "explain"
+    ],
+    "satisfied_facets": [
+     "explain"
+    ],
+    "schema": "aura.latent_output_quality.v1",
+    "sentence_count": 6,
+    "structured_output": false,
+    "terminal_complete": false,
+    "termination": "token_limit",
+    "text_sha256": "c37f8abbd3cf629b5e6a6997b6da2f24b6df1999d504035f00d8231f2326c5c1",
+    "trigram_diversity": 0.9,
+    "word_count": 212
+   },
+   "params_unchanged": true,
+   "request_payload_sha256": "f83b43ddd21f0eaca69bcf686c79b827d077764f19cebbb6b5436b037169a9ee",
+   "runtime_identity": {
+    "app_executable_sha256": "cff7093f2f7416bc76c8dab7324468c38834bbcc174ead4c917a4d31702f0164",
+    "bundle_identifier": "com.aura.desktop",
+    "identity_bound": true,
+    "installed_app_required": true,
+    "installed_app_verified": true,
+    "issues": [],
+    "launch_manifest_sha256": "5ef13fa3a8bd21b806e99ea85d17594cd34d38796051f6a956d64d7c1b3d4f28",
+    "launch_mode": "signed_app",
+    "schema": "aura.latent_cortex.runtime_identity.v1",
+    "shell_assets_sha256": "992ef53087651afaa00c1c84196ac7715d6bc17b3e1b656793aede1a5e8b7e39",
+    "source_branch": "main",
+    "source_change_count": 0,
+    "source_commit": "377fa46759fd7d75b96a566d518d2d89a1165d12",
+    "source_dirty": false,
+    "source_verified": true,
+    "workspace_state_sha256": "396465363352af66b6811882c8eaed971993ad5bf51a0a7c43d2e16acb9e1e8c"
+   },
+   "schedule_hash": "8e7eb140b60885903098d07ff21504950bcc86d4479ea44f2b0aaf8be19360d5",
+   "stage_timings_s": {
+    "branch_seed": 1.280616,
+    "branch_select": 12.151241,
+    "decode": 52.198468,
+    "decode_bridge": 0.856929,
+    "fast_weight_attach": 0.230528,
+    "fast_weight_baseline": 4.518722,
+    "fast_weight_canaries": 4.534657,
+    "fast_weight_optimization": 0.707597,
+    "fast_weight_verifier": 5.806852,
+    "latent_optimization": 5.867899,
+    "persist": 0.450428,
+    "prefill": 12.923476,
+    "recurrence": 2.57027,
+    "total": 114.657532
+   },
+   "steps_taken": 2,
+   "verifier_guidance": {
+    "best_applicable_checks": [
+     "facets",
+     "grounding"
+    ],
+    "best_failures": {},
+    "best_score": 0.09375,
+    "evaluations": 4,
+    "facet_judgments": [
+     {
+      "excerpt": "",
+      "facet": "compare",
+      "satisfied": false
+     },
+     {
+      "excerpt": "",
+      "facet": "select",
+      "satisfied": false
+     },
+     {
+      "excerpt": "",
+      "facet": "verify",
+      "satisfied": false
+     },
+     {
+      "excerpt": "",
+      "facet": "explain",
+      "satisfied": false
+     }
+    ],
+    "facet_reliability": {},
+    "schema": "aura.latent_task_verifier.v1",
+    "score_trail": [
+     0.09375,
+     0.09375,
+     0.09375,
+     0.09375
+    ]
+   },
+   "worker_affective_steering_active": true,
+   "worker_affective_steering_alpha": 5.525,
+   "worker_boot_id": "adcbabe34e4d47fa93fda19036a6d599",
+   "worker_model_parameter_count": 32763876352,
+   "worker_model_parameter_count_basis": "architecture_config_logical",
+   "worker_model_path": "$AURA_SOURCE/training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118",
+   "worker_model_stored_parameter_element_count": 5120300032,
+   "worker_pid": 90472,
+   "worker_source_sha256": "d6ad94478cbb63f84d2b6b27974d82e1391e0a40ebc9eb1417f2ac69eb0b610d"
+  },
+  "latent_cortex_selected": true,
+  "latent_cortex_selection_reason": "deliberate_cognitive_mode",
+  "latent_cortex_succeeded": false,
+  "legacy_fallback_used": false,
+  "live_mind_context_present": true,
+  "live_mind_context_required": true,
+  "live_mind_controls_application_satisfied": false,
+  "live_mind_controls_bound": false,
+  "live_mind_controls_structurally_bound": false,
+  "live_mind_controls_worker_applied": false,
+  "live_mind_generation_controls": {},
+  "live_mind_generation_controls_present": false,
+  "live_mind_generation_required": true,
+  "live_mind_required_subsystems_ok": false,
+  "live_mind_snapshot_bound": true,
+  "live_mind_snapshot_missing_services": [],
+  "live_mind_snapshot_present": true,
+  "live_mind_snapshot_ready": true,
+  "live_mind_surface_control_receipt": {
+   "applied": false,
+   "clean_user_surface_contract": false,
+   "deterministic_repair_applied": false,
+   "enabled": false,
+   "live_mind_controls_bound": false,
+   "surface_quality_gate_attempts": 0,
+   "surface_quality_gate_enabled": false,
+   "surface_quality_gate_passed": false,
+   "surface_quality_gate_reasons": [
+    "worker_receipt_missing"
+   ],
+   "text_mutation_count": 0,
+   "text_mutations": []
+  },
+  "live_mind_surface_quality_gate_enabled": false,
+  "live_mind_surface_quality_gate_passed": true,
+  "model_native_output": true,
+  "post_generation_repair_applied": false,
+  "preflight_live_mind_required_subsystems_ok": true,
+  "recent_context_exchanges": 0,
+  "recent_context_needed": false,
+  "request_surface": "desktop",
+  "requested_output_contract": null,
+  "required_subsystems": {
+   "cognitive_engine": true,
+   "inference": false,
+   "kernel": true,
+   "memory": true,
+   "substrate_voice": true,
+   "tool_governance": true
+  },
+  "required_subsystems_ok": false,
+  "response_confidence": "failed",
+  "response_path": "desktop_cognitive_engine_required_no_reply",
+  "semantic_output_token_cap": null,
+  "single_owner_model_generation_proven": true,
+  "status": "desktop_cognitive_engine_unavailable",
+  "text_mutation_count": 0,
+  "text_mutations": [],
+  "worker_instruction_shape_repair_applied": false
+ },
+ "request": {
+  "message": "Compare optimistic and pessimistic locking for a hot task queue, choose which one you would use in a single-host async runtime, explain why, and verify your choice with one concrete failure scenario.",
+  "session_id": "cp121-live-latent"
+ },
+ "response": {
+  "authentic_cognitive_reply": false,
+  "full_mind_path": false,
+  "latent_cortex_identity_bound": false,
+  "latent_cortex_output_quality_proven": false,
+  "latent_cortex_succeeded": false,
+  "response": "I could not produce a reliable full-mind reply for that turn, so I failed closed instead of sending an ungrounded answer.",
+  "response_sha256": "af1b7ca32e47d3b2f6f53dbd0e0a0373f43c3a2a14aa4b5a6b467f7c40f6658a",
+  "status": "desktop_cognitive_engine_unavailable"
+ },
+ "schema": "aura.live_latent_certificate.v2",
+ "verdict": "FAIL"
+}
