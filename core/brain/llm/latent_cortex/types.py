@@ -82,6 +82,11 @@ class BranchConfig:
     # deterministic decorrelation jitter is applied to the later branch.
     collapse_cos_threshold: float = 0.98
     jitter_scale: float = 0.02
+    # Role-causality instrumentation (Experiment R): when non-empty, branch
+    # k takes roles[k] instead of the default rotation. Lesion arms repeat
+    # one role; swap arms permute — proving the ANCHOR, not the branch
+    # index, drives differentiated cognitive labor. Must match n_branches.
+    roles: tuple[str, ...] = ()
 
 
 @dataclass

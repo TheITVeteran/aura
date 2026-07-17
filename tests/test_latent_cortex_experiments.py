@@ -457,3 +457,129 @@ def test_factorial_ablations_underpowered_stays_conjecture():
         arms=("full_stack",),
     )
     assert result["claims"]["full_stack"]["tier"] == "CONJECTURE"
+
+
+# ── Experiment R: role lesion/swap causality ─────────────────────────────
+
+
+@pytest.fixture(scope="module")
+def tiny_model():
+    mx = pytest.importorskip("mlx.core")
+    pytest.importorskip("mlx_lm")
+    from mlx_lm.models.qwen2 import Model, ModelArgs
+
+    args = ModelArgs(
+        model_type="qwen2",
+        hidden_size=64,
+        num_hidden_layers=8,
+        intermediate_size=128,
+        num_attention_heads=4,
+        rms_norm_eps=1e-6,
+        vocab_size=128,
+        num_key_value_heads=2,
+        max_position_embeddings=512,
+        rope_theta=10000.0,
+    )
+    model = Model(args)
+    mx.eval(model.parameters())
+    return model
+
+
+def test_role_override_controls_branch_roles(tiny_model):
+    from core.brain.llm.latent_cortex.engine import LatentCortexEngine
+    from core.brain.llm.latent_cortex.types import (
+        BranchConfig,
+        ComputeBudget,
+        CortexConfig,
+        RecurrenceConfig,
+        WorkspaceConfig,
+    )
+
+    engine = LatentCortexEngine(
+        tiny_model,
+        config=CortexConfig(
+            workspace=WorkspaceConfig(n_slots=4, seed=7),
+            recurrence=RecurrenceConfig(max_steps=2, min_steps=1),
+            branches=BranchConfig(
+                n_branches=2, roles=("analogy", "analogy")
+            ),
+            decode_max_tokens=4,
+        ),
+    )
+    result = engine.reason(token_ids=[5, 9, 17, 3], budget=ComputeBudget())
+    assert result.ok
+
+
+def test_role_override_must_match_branch_count(tiny_model):
+    from core.brain.llm.latent_cortex.branches import BranchEnsemble
+    from core.brain.llm.latent_cortex.types import BranchConfig
+
+    with pytest.raises(ValueError, match="exactly n_branches"):
+        BranchEnsemble.seed(
+            None,
+            None,
+            BranchConfig(n_branches=3, roles=("analogy",)),
+            None,
+            None,
+            None,
+            0,
+        )
+
+
+def test_run_role_lesion_grades_diversity_and_divergence():
+    from core.brain.llm.latent_cortex.experiments import (
+        ROLE_ARMS,
+        run_role_lesion,
+        task_battery,
+    )
+
+    battery = task_battery(["boolean"], [2], 20, seed=3)
+    by_family = {"boolean": battery}
+    lesioned_calls = {"n": 0}
+
+    def solve_arm(task, arm):
+        # Distinct/swapped roles solve everything with high divergence;
+        # the lesioned ensemble collapses (low divergence, half the wins).
+        if arm in {"distinct_roles", "swapped_roles"}:
+            return True, 100, 0.30
+        lesioned_calls["n"] += 1
+        return (lesioned_calls["n"] % 2 == 0), 100, 0.05
+
+    report = run_role_lesion(solve_arm, by_family)
+    assert set(report["arms"]) == set(ROLE_ARMS)
+    assert report["behavioral_claim"]["tier"] in {"PROVEN", "SUPPORTED"}
+    assert report["divergence_claim"]["tier"] == "SUPPORTED"
+    parity = report["swap_parity"]["boolean"]
+    assert parity["distinct_accuracy"] == parity["swapped_accuracy"] == 1.0
+
+
+def test_run_role_lesion_refutes_when_lesion_changes_nothing():
+    from core.brain.llm.latent_cortex.experiments import (
+        run_role_lesion,
+        task_battery,
+    )
+
+    battery = task_battery(["boolean"], [2], 20, seed=5)
+    by_family = {"boolean": battery}
+
+    def solve_arm(task, arm):
+        return True, 100, 0.10  # identical everywhere: roles carry nothing
+
+    report = run_role_lesion(solve_arm, by_family)
+    assert report["behavioral_claim"]["tier"] in {"CONJECTURE", "REFUTED"}
+    assert report["divergence_claim"]["tier"] == "REFUTED"
+
+
+def test_run_role_lesion_conjectures_without_telemetry():
+    from core.brain.llm.latent_cortex.experiments import (
+        run_role_lesion,
+        task_battery,
+    )
+
+    battery = task_battery(["boolean"], [2], 6, seed=9)
+
+    def solve_arm(task, arm):
+        return True, 100, float("nan")  # no exchange telemetry recorded
+
+    report = run_role_lesion(solve_arm, {"boolean": battery})
+    assert report["divergence_claim"]["tier"] == "CONJECTURE"

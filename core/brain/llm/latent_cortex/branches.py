@@ -121,8 +121,18 @@ class BranchEnsemble:
         import mlx.core as mx
 
         branches: list[BranchState] = []
+        role_override = tuple(branch_cfg.roles or ())
+        if role_override and len(role_override) != branch_cfg.n_branches:
+            raise ValueError(
+                "BranchConfig.roles must name exactly n_branches roles, got "
+                f"{len(role_override)} for {branch_cfg.n_branches} branches"
+            )
         for k in range(branch_cfg.n_branches):
-            role = BRANCH_ROLES[k % len(BRANCH_ROLES)]
+            role = (
+                role_override[k]
+                if role_override
+                else BRANCH_ROLES[k % len(BRANCH_ROLES)]
+            )
             ws = LatentWorkspace.from_prompt_embeddings(
                 prompt_embeddings,
                 workspace_cfg,

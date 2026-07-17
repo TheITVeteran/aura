@@ -113,6 +113,7 @@ def _run_admitted_lab(
         run_factorial_ablations,
         run_latent_opt_control,
         run_recurrence_sweep,
+        run_role_lesion,
         run_slot_causality,
         run_virtual_width,
         task_battery,
@@ -129,7 +130,7 @@ def _run_admitted_lab(
         WorkspaceConfig,
     )
 
-    supported_experiments = {"1", "2", "3", "4", "5", "A"}
+    supported_experiments = {"1", "2", "3", "4", "5", "A", "R"}
     wanted = {value.strip() for value in args.experiments.split(",") if value.strip()}
     if not wanted:
         _parser_error(parser, "--experiments cannot be empty")
@@ -139,7 +140,8 @@ def _run_admitted_lab(
             parser,
             "unsupported experiment(s): "
             + ",".join(unknown)
-            + "; supported: 1,2,3,4,5 and A (factorial mechanism ablations)",
+            + "; supported: 1,2,3,4,5, A (factorial mechanism ablations), "
+            "and R (role lesion/swap causality)",
         )
     if args.n_slots > ABSOLUTE_MAX_SLOTS:
         _parser_error(parser, f"--n-slots cannot exceed {ABSOLUTE_MAX_SLOTS}")
@@ -169,9 +171,16 @@ def _run_admitted_lab(
         latent_opt: str = "off",
         branches: int | None = None,
         fast_weights: bool = False,
+        roles: tuple[str, ...] = (),
+        exchange_interval: int | None = None,
     ):
         from core.brain.llm.latent_cortex.types import FastWeightsConfig
 
+        branch_kwargs: dict = {"n_branches": branches or args.branches}
+        if roles:
+            branch_kwargs["roles"] = roles
+        if exchange_interval is not None:
+            branch_kwargs["exchange_interval"] = exchange_interval
         return LatentCortexEngine(
             model,
             tokenizer,
@@ -180,7 +189,7 @@ def _run_admitted_lab(
                 recurrence=RecurrenceConfig(
                     max_steps=max_steps, min_steps=max_steps, convergence_eps=1e-9
                 ),
-                branches=BranchConfig(n_branches=branches or args.branches),
+                branches=BranchConfig(**branch_kwargs),
                 latent_opt=LatentOptConfig(
                     enabled=latent_opt != "off",
                     control_mode=latent_opt == "control",
@@ -302,6 +311,57 @@ def _run_admitted_lab(
         cost = max(1, int(k)) * (prompt_tokens + 64) * n_layers
         return bool(voted) and voted == task.answer, cost
 
+    def solve_role_arm(task, arm: str) -> tuple[bool, int, float]:
+        """One Experiment-R arm: role rotation, lesioned, or swapped anchors.
+
+        Returns (success, layer_apps, branch_divergence) where divergence is
+        1 − mean pairwise branch-summary cosine across exchange snapshots
+        (NaN when no exchange telemetry was recorded)."""
+        from core.brain.llm.latent_cortex.branches import BRANCH_ROLES
+
+        k = max(2, args.branches)
+        base_roles = tuple(BRANCH_ROLES[i % len(BRANCH_ROLES)] for i in range(k))
+        if arm == "distinct_roles":
+            roles = base_roles
+        elif arm == "lesioned_uniform_role":
+            roles = (base_roles[0],) * k
+        elif arm == "swapped_roles":
+            roles = base_roles[1:] + base_roles[:1]
+        else:
+            raise ValueError(f"unknown role arm: {arm}")
+        remaining_s = deadline - time.monotonic()
+        if remaining_s <= 0.0:
+            raise LabDeadlineError("lab wall-clock bound reached")
+        engine = make_engine(
+            max(steps), branches=k, roles=roles, exchange_interval=2
+        )
+        budget = ComputeBudget(wall_clock_s=min(120.0, remaining_s))
+        result = engine.reason(
+            messages=[{"role": "user", "content": task.prompt}],
+            budget=budget,
+            decode_max_tokens=64,
+        )
+        if time.monotonic() > deadline:
+            raise LabDeadlineError("lab wall-clock bound reached during episode")
+        divergence = float("nan")
+        snapshots = (result.receipt.latent_telemetry or {}).get(
+            "exchange_snapshots"
+        ) or []
+        cosines = [
+            float(row["mean_cos"])
+            for row in snapshots
+            if isinstance(row, dict)
+            and isinstance(row.get("mean_cos"), (int, float))
+            and math.isfinite(float(row["mean_cos"]))
+        ]
+        if cosines:
+            divergence = 1.0 - (sum(cosines) / len(cosines))
+        return (
+            result.ok and task.verify(result.text),
+            budget.spent_layer_apps,
+            divergence,
+        )
+
     def solve_ablation_arm(task, arm: str) -> tuple[bool, int]:
         """One factorial-ablation arm: exactly one mechanism (or named combo)."""
         deep = max(steps)
@@ -400,6 +460,20 @@ def _run_admitted_lab(
                 lambda t, arm: solve(t, max(steps), latent_opt=arm), by_family
             )
             print("  claim:", report["results"]["exp5"]["claim"]["tier"], flush=True)
+        if "R" in wanted and not out_of_time():
+            print("▶ Experiment R: role lesion/swap causality …", flush=True)
+            by_family = {
+                family: [t for t in battery if t.family == family]
+                for family in families
+            }
+            report["results"]["expR"] = run_role_lesion(solve_role_arm, by_family)
+            print(
+                "  behavioral:",
+                report["results"]["expR"]["behavioral_claim"]["tier"],
+                "| divergence:",
+                report["results"]["expR"]["divergence_claim"]["tier"],
+                flush=True,
+            )
         if "A" in wanted and not out_of_time():
             print("▶ Factorial ablations: mechanism attribution vs vanilla …", flush=True)
             by_family = {family: [t for t in battery if t.family == family] for family in families}

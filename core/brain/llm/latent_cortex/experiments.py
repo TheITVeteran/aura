@@ -999,7 +999,171 @@ def record_claim_to_foundry(claim: Claim | dict[str, Any], domain: str) -> bool:
         return False
 
 
+# ── Experiment R: are role anchors causal cognitive labor? ──────────────
+
+ROLE_ARMS: tuple[str, ...] = (
+    "distinct_roles",
+    "lesioned_uniform_role",
+    "swapped_roles",
+)
+
+
+def run_role_lesion(
+    solve_arm: "Callable[[Task, str], tuple[bool, int, float]]",
+    tasks_by_family: dict[str, list[Task]],
+    *,
+    divergence_margin: float = 0.02,
+) -> dict[str, Any]:
+    """Lesion/swap the branch role anchors and measure what they carry.
+
+    ``solve_arm(task, arm)`` runs one arm and returns
+    (success, layer_apps, branch_divergence) where branch_divergence is
+    1 − mean pairwise branch-summary cosine at exchanges (NaN when the
+    episode had no exchange telemetry). Arms:
+
+    - distinct_roles: the default role rotation (treatment);
+    - lesioned_uniform_role: every branch gets the SAME anchor — role
+      diversity removed, everything else identical;
+    - swapped_roles: the same distinct anchors, permuted across branch
+      indices — if roles are causal, outcomes should track the anchors,
+      not the branch index.
+
+    Claims: a paired behavioral claim (distinct vs lesioned), a
+    mechanistic divergence claim (distinct trajectories diverge more than
+    lesioned ones by at least ``divergence_margin``), and a swap-parity
+    observation (swapped ≈ distinct implies anchor-causality, not
+    index-causality). Divergence claims cap at SUPPORTED: internal
+    geometry cannot earn PROVEN.
+    """
+    if (
+        isinstance(divergence_margin, bool)
+        or not isinstance(divergence_margin, (int, float))
+        or not math.isfinite(float(divergence_margin))
+        or not 0.0 <= float(divergence_margin) < 1.0
+    ):
+        raise ValueError("divergence_margin must be a finite number in [0, 1)")
+    outcomes: dict[str, dict[str, list[tuple[bool, int, float]]]] = {
+        arm: {} for arm in ROLE_ARMS
+    }
+    for arm in ROLE_ARMS:
+        for family, tasks in tasks_by_family.items():
+            rows = outcomes[arm].setdefault(family, [])
+            for task in tasks:
+                ok, cost, divergence = solve_arm(task, arm)
+                rows.append((bool(ok), int(cost), float(divergence)))
+
+    paired: dict[str, list[PairedObservation]] = {}
+    for family, tasks in tasks_by_family.items():
+        for index, task in enumerate(tasks):
+            treatment = outcomes["distinct_roles"][family][index]
+            control = outcomes["lesioned_uniform_role"][family][index]
+            paired.setdefault(family, []).append(
+                PairedObservation(
+                    task_id=f"{family}:{task.depth}:{task.seed}:{index}",
+                    family=family,
+                    treatment_success=treatment[0],
+                    control_success=control[0],
+                    treatment_layer_apps=treatment[1],
+                    control_layer_apps=control[1],
+                )
+            )
+    behavioral = grade_paired_treatment_vs_control(
+        "expR_role_diversity",
+        "distinct role anchors beat a lesioned uniform-role ensemble",
+        paired,
+        # Arms run identical topology; compute parity is structural here.
+        require_compute=False,
+    )
+
+    def _mean_divergence(arm: str) -> tuple[float, int]:
+        values = [
+            divergence
+            for rows in outcomes[arm].values()
+            for _, _, divergence in rows
+            if math.isfinite(divergence)
+        ]
+        if not values:
+            return float("nan"), 0
+        return sum(values) / len(values), len(values)
+
+    distinct_div, distinct_n = _mean_divergence("distinct_roles")
+    lesioned_div, lesioned_n = _mean_divergence("lesioned_uniform_role")
+    swapped_div, swapped_n = _mean_divergence("swapped_roles")
+    divergence_evidence = {
+        "distinct_mean_divergence": distinct_div,
+        "lesioned_mean_divergence": lesioned_div,
+        "swapped_mean_divergence": swapped_div,
+        "samples": {
+            "distinct_roles": distinct_n,
+            "lesioned_uniform_role": lesioned_n,
+            "swapped_roles": swapped_n,
+        },
+        "divergence_margin": float(divergence_margin),
+        "limitation": (
+            "internal trajectory geometry; decorrelation jitter fires on "
+            "near-collapse ensembles and partially masks lesioning"
+        ),
+    }
+    enough = min(distinct_n, lesioned_n) >= _MIN_N_FOR_VERDICT
+    if not enough or not (
+        math.isfinite(distinct_div) and math.isfinite(lesioned_div)
+    ):
+        divergence_tier = CONJECTURE
+    elif distinct_div - lesioned_div >= float(divergence_margin):
+        divergence_tier = SUPPORTED
+    elif lesioned_div >= distinct_div:
+        divergence_tier = REFUTED
+    else:
+        divergence_tier = CONJECTURE
+    mechanistic = Claim(
+        experiment="expR_role_divergence",
+        statement=(
+            "distinct role anchors produce more divergent branch "
+            "trajectories than a lesioned uniform-role ensemble"
+        ),
+        tier=divergence_tier,
+        evidence=divergence_evidence,
+    )
+
+    swap_parity: dict[str, Any] = {
+        "note": (
+            "swapped ≈ distinct on both accuracy and divergence implies the "
+            "ANCHOR, not the branch index, carries the role"
+        )
+    }
+    for family in tasks_by_family:
+        distinct_acc = sum(
+            1 for ok, _, _ in outcomes["distinct_roles"][family] if ok
+        ) / max(1, len(outcomes["distinct_roles"][family]))
+        swapped_acc = sum(
+            1 for ok, _, _ in outcomes["swapped_roles"][family] if ok
+        ) / max(1, len(outcomes["swapped_roles"][family]))
+        swap_parity[family] = {
+            "distinct_accuracy": round(distinct_acc, 4),
+            "swapped_accuracy": round(swapped_acc, 4),
+        }
+
+    return {
+        "arms": {
+            arm: {
+                family: {
+                    "n": len(rows),
+                    "successes": sum(1 for ok, _, _ in rows if ok),
+                    "layer_apps": sum(cost for _, cost, _ in rows),
+                }
+                for family, rows in by_family.items()
+            }
+            for arm, by_family in outcomes.items()
+        },
+        "behavioral_claim": behavioral.to_dict(),
+        "divergence_claim": mechanistic.to_dict(),
+        "swap_parity": swap_parity,
+    }
+
+
 __all__ = [
+    "ROLE_ARMS",
+    "run_role_lesion",
     "ArmResult",
     "CONJECTURE",
     "Claim",
