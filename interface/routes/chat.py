@@ -5114,6 +5114,7 @@ def _build_live_turn_contract_payload(
             "decode_bridge_applied", "decode_bridge_policy",
             "decode_bridge_token_count", "decode_bridge_tokens_sha256",
             "decode_bridge_logits_digest", "output_quality",
+            "verifier_guidance",
             "latent_opt_applied",
             "latent_opt_steps",
             "fast_weights_applied", "fast_weights_erased",

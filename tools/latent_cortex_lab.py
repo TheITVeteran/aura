@@ -80,6 +80,11 @@ def main() -> int:
     parser.add_argument("--max-minutes", type=_positive_float, default=30.0)
     parser.add_argument("--out", default="")
     parser.add_argument("--record-foundry", action="store_true")
+    parser.add_argument(
+        "--vanilla-baseline",
+        action="store_true",
+        help="run the ordinary-decoding control arm alongside Experiment 1",
+    )
     args = parser.parse_args()
 
     from core.runtime.model_lane_control import standalone_model_lane
@@ -198,6 +203,28 @@ def _run_admitted_lab(
             raise LabDeadlineError("lab wall-clock bound reached during episode")
         return result.ok and task.verify(result.text), budget.spent_layer_apps
 
+    def solve_vanilla(task) -> tuple[bool, int]:
+        """The strong control: the same checkpoint, ordinary decoding, no
+        latent machinery. Compute is charged identically (token-layer apps)
+        so the sweep's equal-compute comparison stays honest."""
+        remaining_s = deadline - time.monotonic()
+        if remaining_s <= 0.0:
+            raise LabDeadlineError("lab wall-clock bound reached")
+        from mlx_lm import generate as mlx_generate
+
+        rendered = tokenizer.apply_chat_template(
+            [{"role": "user", "content": task.prompt}],
+            add_generation_prompt=True,
+            tokenize=False,
+        )
+        text = mlx_generate(
+            model, tokenizer, prompt=rendered, max_tokens=64, verbose=False
+        )
+        prompt_tokens = len(tokenizer.encode(rendered))
+        n_layers = len(model.model.layers)
+        cost = (prompt_tokens + 64) * n_layers
+        return task.verify(text), cost
+
     report: dict = {
         "model": args.model,
         "checkpoint": checkpoint_receipt,
@@ -218,7 +245,10 @@ def _run_admitted_lab(
         if "1" in wanted and not out_of_time():
             print(f"▶ Experiment 1: recurrence sweep over {len(battery)} tasks …", flush=True)
             report["results"]["exp1"] = run_recurrence_sweep(
-                lambda t, s: solve(t, s), battery, steps
+                lambda t, s: solve(t, s),
+                battery,
+                steps,
+                baseline=(solve_vanilla if args.vanilla_baseline else None),
             )
             print("  claim:", report["results"]["exp1"]["claim"]["tier"], flush=True)
         if "2" in wanted and not out_of_time():

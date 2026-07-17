@@ -1515,3 +1515,90 @@ def test_service_name_registered_in_spine():
     from core.service_names import ServiceNames
 
     assert ServiceNames.LATENT_CORTEX == "latent_cortex"
+
+
+def test_handler_builds_task_verifier_when_guided(monkeypatch):
+    from core.brain.llm.latent_cortex.types import (
+        EpisodeReceipt,
+        LatentReasoningResult,
+    )
+
+    monkeypatch.delenv("AURA_LATENT_CORTEX", raising=False)
+    captured: dict = {}
+
+    class StubEngine:
+        def __init__(self, model, tokenizer, config, **kwargs):
+            pass
+
+        def reason(self, **kwargs):
+            captured.update(kwargs)
+            if kwargs.get("verifier") is not None:
+                kwargs["verifier"]("probe with 2 + 2 = 4")
+            return LatentReasoningResult(ok=True, text="ok", receipt=EpisodeReceipt())
+
+    import core.brain.llm.latent_cortex.worker_handler as handler_mod
+
+    monkeypatch.setattr(handler_mod, "LatentCortexEngine", StubEngine)
+
+    class StubTokenizer:
+        eos_token_id = 0
+
+        def encode(self, text, **kwargs):
+            return [1, 2, 3]
+
+        def decode(self, ids):
+            return "x"
+
+    body = handler_mod.handle_latent_reason(
+        {"prompt": "verify that 2 + 2 = 4", "verifier_guidance": True},
+        model=object(),
+        tokenizer=StubTokenizer(),
+        model_path="",
+        worker_identity=dict(_WORKER_IDENTITY),
+    )
+    assert body["status"] == "ok"
+    assert captured["verifier"] is not None
+    guidance = body["receipt"]["verifier_guidance"]
+    assert guidance["evaluations"] == 1
+    assert "arithmetic" in guidance["best_applicable_checks"]
+    assert not guidance.get("best_failures"), "correct arithmetic must not be flagged"
+
+    # Without the flag, no verifier is constructed.
+    captured.clear()
+    handler_mod.handle_latent_reason(
+        {"prompt": "verify that 2 + 2 = 4"},
+        model=object(),
+        tokenizer=StubTokenizer(),
+        model_path="",
+        worker_identity=dict(_WORKER_IDENTITY),
+    )
+    assert captured["verifier"] is None
+
+
+def test_service_requests_verifier_guidance_for_resident_profile(monkeypatch):
+    svc = LatentCortexService()
+    captured: dict = {}
+
+    class Resident32Client:
+        def get_worker_identity_snapshot(self):
+            return {"worker_model_parameter_count": 32_500_000_000}
+
+        async def latent_reason_async(self, **kwargs):
+            captured.update(kwargs)
+            return {"ok": False, "reason": "profile_observed"}
+
+    import core.brain.llm.mlx_client as mlx_client_mod
+
+    monkeypatch.setattr(
+        mlx_client_mod, "get_mlx_client", lambda *a, **k: Resident32Client()
+    )
+    asyncio.run(
+        svc.deep_reason(
+            "hard live question",
+            stakes=0.7,
+            uncertainty=0.8,
+            timeout_s=128.0,
+            foreground_request=True,
+        )
+    )
+    assert captured["verifier_guidance"] is True

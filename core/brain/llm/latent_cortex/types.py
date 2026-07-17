@@ -479,6 +479,9 @@ class EpisodeReceipt:
     # editing; nonzero values reveal the model still trying to babble.
     decode_newline_suppressions: int = 0
     decode_repetition_penalty_applied: float = 1.0
+    # Deterministic task-verifier evidence when the episode ran under
+    # verifier guidance (task_verifiers.EpisodeTaskVerifier receipt).
+    verifier_guidance: dict[str, Any] = field(default_factory=dict)
     decode_temperature: float = 0.0
     decode_top_p: float = 1.0
     decode_bridge_applied: bool = False
@@ -576,6 +579,7 @@ class EpisodeReceipt:
             "decode_termination": self.decode_termination,
             "decode_newline_suppressions": self.decode_newline_suppressions,
             "decode_repetition_penalty_applied": self.decode_repetition_penalty_applied,
+            "verifier_guidance": dict(self.verifier_guidance),
             "decode_temperature": self.decode_temperature,
             "decode_top_p": self.decode_top_p,
             "decode_bridge_applied": self.decode_bridge_applied,

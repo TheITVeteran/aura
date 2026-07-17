@@ -3832,6 +3832,7 @@ class MLXLocalClient:
         domain: str = "general",
         timeout_s: float = 300.0,
         foreground_request: bool = True,
+        verifier_guidance: bool = False,
     ) -> dict[str, Any]:
         """Run a Recursive Latent Cortex episode on the RESIDENT worker model.
 
@@ -3971,6 +3972,8 @@ class MLXLocalClient:
                 "action": "latent_reason",
                 "domain": str(domain or "general"),
             }
+            if verifier_guidance:
+                job["verifier_guidance"] = True
             if prompt is not None:
                 job["prompt"] = str(prompt)
             if messages is not None:

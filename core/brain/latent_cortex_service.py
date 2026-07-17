@@ -819,6 +819,14 @@ class LatentCortexService:
                     runtime_controls=runtime_controls,
                     timeout_s=timeout_s,
                     foreground_request=foreground_request,
+                    # Foreground resident episodes select branches and accept
+                    # latent-opt proposals by deterministic task-typed checks
+                    # (arithmetic recomputation, code syntax, facet coverage,
+                    # grounding) — verified correctness, not convergence.
+                    verifier_guidance=(
+                        allocation_profile
+                        == "resident_32b_interactive_full_stack_v1"
+                    ),
                 )
             except asyncio.CancelledError:
                 raise

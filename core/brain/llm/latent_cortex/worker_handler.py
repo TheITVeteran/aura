@@ -283,14 +283,36 @@ def handle_latent_reason(
             episode_messages,
             max_chars=config.input_context_max_chars,
         )
+    # Verifier guidance: when the caller asks for it, candidate branches and
+    # latent-opt proposals are scored by deterministic task-typed checks
+    # (arithmetic recomputation, code syntax, facet coverage, grounding) —
+    # the winner is picked because its answer CHECKS OUT, not because its
+    # trajectory converged prettier. Tokenizer required: verification reads
+    # decoded probe text.
+    task_verifier = None
+    if bool(job.get("verifier_guidance")) and tokenizer is not None:
+        from core.brain.llm.latent_cortex.task_verifiers import EpisodeTaskVerifier
+
+        objective = prompt if isinstance(prompt, str) else ""
+        if not objective and isinstance(episode_messages, list):
+            for message in reversed(episode_messages):
+                if isinstance(message, dict) and message.get("role") == "user":
+                    content = message.get("content")
+                    if isinstance(content, str) and content.strip():
+                        objective = content
+                        break
+        task_verifier = EpisodeTaskVerifier(objective)
     result = engine.reason(
         prompt=prompt if isinstance(prompt, str) else None,
         messages=episode_messages,
         budget=budget,
         domain=str(job.get("domain", "general")),
+        verifier=task_verifier,
         cancel_check=cancel_check,
         progress=progress,
     )
+    if task_verifier is not None:
+        result.receipt.verifier_guidance = task_verifier.to_receipt()
     if worker_identity is None:
         from core.brain.llm.latent_cortex.runtime_identity import build_worker_identity
 
