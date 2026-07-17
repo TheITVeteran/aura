@@ -389,3 +389,71 @@ def test_engine_ablation_hook_runs_and_flags():
     assert intact.receipt.first_logits_digest != ablated.receipt.first_logits_digest, (
         "slot ablation must causally move the answer distribution"
     )
+
+
+# ── Answer extraction + self-consistency voting (Experiment 4 control) ──
+
+
+def test_extract_final_numeric_claim_uses_last_claim():
+    from core.brain.llm.latent_cortex.experiments import extract_final_numeric_claim
+
+    assert extract_final_numeric_claim("Thinking... 3 then 7, final answer: 5.") == "5"
+    assert extract_final_numeric_claim("answer is -4") == "-4"
+    assert extract_final_numeric_claim("no numbers here") == ""
+
+
+def test_majority_answer_votes_and_breaks_ties_deterministically():
+    from core.brain.llm.latent_cortex.experiments import majority_answer
+
+    assert majority_answer(["5", "5", "7"]) == "5"
+    assert majority_answer(["", "", "9"]) == "9"
+    assert majority_answer([]) == ""
+    # Tie: lexicographic winner, stable across runs.
+    assert majority_answer(["3", "7"]) == "3"
+
+
+# ── Factorial ablations: mechanism attribution ───────────────────────────
+
+
+def test_factorial_ablations_attribute_gain_to_the_right_mechanism():
+    from core.brain.llm.latent_cortex.experiments import (
+        FACTORIAL_ARMS,
+        run_factorial_ablations,
+        task_battery,
+    )
+
+    tasks = task_battery(["modular"], [2], 24, seed=5)
+    by_family = {"modular": tasks}
+
+    def solve_arm(task, arm):
+        # Deterministic synthetic world: recurrence-bearing arms solve
+        # everything; vanilla and the others solve nothing.
+        winners = {"recurrence_only", "recurrence_branches", "full_stack"}
+        return (arm in winners), 100
+    result = run_factorial_ablations(solve_arm, by_family)
+
+    assert set(result["claims"]) == set(FACTORIAL_ARMS)
+    assert set(result["attribution"]) == {
+        "recurrence_only",
+        "recurrence_branches",
+        "full_stack",
+    }
+    losing = result["claims"]["branches_only"]
+    assert losing["tier"] in {"CONJECTURE", "REFUTED"}
+    vanilla_arm = result["arms"]["vanilla"]["modular"]
+    assert vanilla_arm["n"] == 24 and vanilla_arm["successes"] == 0
+
+
+def test_factorial_ablations_underpowered_stays_conjecture():
+    from core.brain.llm.latent_cortex.experiments import (
+        run_factorial_ablations,
+        task_battery,
+    )
+
+    tasks = task_battery(["modular"], [2], 4, seed=6)  # n=4 << MIN_N
+    result = run_factorial_ablations(
+        lambda task, arm: (arm != "vanilla", 10),
+        {"modular": tasks},
+        arms=("full_stack",),
+    )
+    assert result["claims"]["full_stack"]["tier"] == "CONJECTURE"

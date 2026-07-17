@@ -763,6 +763,113 @@ def run_virtual_width(
     }
 
 
+def extract_final_numeric_claim(text: str) -> str:
+    """The candidate's final numeric claim, by the SAME rule Task.verify uses.
+
+    Self-consistency voting needs answer extraction that cannot peek at the
+    ground truth: the last numeric token wins, hedging loses."""
+    tokens = [t.strip(".,:;!()[]") for t in str(text or "").split()]
+    numeric = [t for t in tokens if t and t.lstrip("-").isdigit()]
+    return numeric[-1] if numeric else ""
+
+
+def majority_answer(answers: list[str]) -> str:
+    """Most common non-empty extracted answer; deterministic tie-break."""
+    filtered = [answer for answer in answers if answer]
+    if not filtered:
+        return ""
+    counts: dict[str, int] = {}
+    for answer in filtered:
+        counts[answer] = counts.get(answer, 0) + 1
+    top = max(counts.values())
+    return sorted(answer for answer, count in counts.items() if count == top)[0]
+
+
+# ── Factorial ablations: which mechanism carries any gain ───────────────
+
+FACTORIAL_ARMS: tuple[str, ...] = (
+    "recurrence_only",
+    "branches_only",
+    "latent_opt_only",
+    "fast_weights_only",
+    "recurrence_branches",
+    "recurrence_verifier",
+    "full_stack",
+)
+
+
+def run_factorial_ablations(
+    solve_arm: Callable[[Task, str], tuple[bool, int]],
+    tasks_by_family: dict[str, list[Task]],
+    *,
+    arms: tuple[str, ...] = FACTORIAL_ARMS,
+) -> dict[str, Any]:
+    """Attribute any gain to a mechanism: every arm paired against vanilla.
+
+    ``solve_arm(task, arm)`` runs one configuration ("vanilla" is the
+    ordinary-decoding control; the treatment arms enable one mechanism or a
+    named combination). Each arm earns its own paired claim vs vanilla on
+    the SAME tasks, so "the full stack helps" can be decomposed into which
+    ingredient actually carried the effect — the RSL gap analysis's
+    mechanism-attribution obligation."""
+    arm_names = ("vanilla", *arms)
+    results: dict[str, dict[str, ArmResult]] = {
+        arm: {family: ArmResult(name=arm) for family in tasks_by_family}
+        for arm in arm_names
+    }
+    outcomes: dict[str, dict[str, list[tuple[bool, int]]]] = {
+        arm: {family: [] for family in tasks_by_family} for arm in arm_names
+    }
+    for family, tasks in tasks_by_family.items():
+        for task in tasks:
+            for arm in arm_names:
+                success, cost = solve_arm(task, arm)
+                row = results[arm][family]
+                row.n += 1
+                row.successes += int(bool(success))
+                row.layer_apps += int(cost)
+                outcomes[arm][family].append((bool(success), int(cost)))
+    claims: dict[str, dict[str, Any]] = {}
+    for arm in arms:
+        paired: dict[str, list[PairedObservation]] = {}
+        for family, tasks in tasks_by_family.items():
+            for index, task in enumerate(tasks):
+                treatment = outcomes[arm][family][index]
+                control = outcomes["vanilla"][family][index]
+                paired.setdefault(family, []).append(
+                    PairedObservation(
+                        task_id=f"{family}:{task.depth}:{task.seed}:{index}",
+                        family=family,
+                        treatment_success=treatment[0],
+                        control_success=control[0],
+                        treatment_layer_apps=treatment[1],
+                        control_layer_apps=control[1],
+                    )
+                )
+        claims[arm] = grade_paired_treatment_vs_control(
+            f"ablation_{arm}",
+            f"mechanism arm '{arm}' beats vanilla decoding on the same tasks",
+            paired,
+            # Mechanism arms intentionally spend different compute than
+            # vanilla — attribution is about direction, not FLOP parity;
+            # Experiments 1/4 own the equal-compute claims.
+            require_compute=False,
+        ).to_dict()
+    attribution = [
+        arm
+        for arm in arms
+        if claims[arm]["tier"] in {PROVEN, SUPPORTED}
+    ]
+    return {
+        "arms": {
+            arm: {family: row.to_dict() for family, row in families.items()}
+            for arm, families in results.items()
+        },
+        "claims": claims,
+        "attribution": attribution,
+    }
+
+
 # ── Experiment 5: latent optimization vs random control ─────────────────
 
 
@@ -902,14 +1009,18 @@ __all__ = [
     "SUPPORTED",
     "TASK_FAMILIES",
     "Task",
+    "FACTORIAL_ARMS",
+    "extract_final_numeric_claim",
     "frontier_comparison_protocol",
     "grade_treatment_vs_control",
     "grade_paired_treatment_vs_control",
     "khop_reachability",
+    "majority_answer",
     "modular_chain",
     "nested_boolean",
     "record_claim_to_foundry",
     "run_depth_extrapolation",
+    "run_factorial_ablations",
     "run_latent_opt_control",
     "run_recurrence_sweep",
     "run_slot_causality",

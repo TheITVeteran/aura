@@ -106,11 +106,15 @@ def _run_admitted_lab(
     from core.brain.llm.latent_cortex.engine import LatentCortexEngine
     from core.brain.llm.latent_cortex.experiments import (
         TASK_FAMILIES,
+        extract_final_numeric_claim,
+        majority_answer,
         record_claim_to_foundry,
         run_depth_extrapolation,
+        run_factorial_ablations,
         run_latent_opt_control,
         run_recurrence_sweep,
         run_slot_causality,
+        run_virtual_width,
         task_battery,
     )
     from core.brain.llm.latent_cortex.governance import checkpoint_file_fingerprint
@@ -125,7 +129,7 @@ def _run_admitted_lab(
         WorkspaceConfig,
     )
 
-    supported_experiments = {"1", "2", "3", "5"}
+    supported_experiments = {"1", "2", "3", "4", "5", "A"}
     wanted = {value.strip() for value in args.experiments.split(",") if value.strip()}
     if not wanted:
         _parser_error(parser, "--experiments cannot be empty")
@@ -135,7 +139,7 @@ def _run_admitted_lab(
             parser,
             "unsupported experiment(s): "
             + ",".join(unknown)
-            + "; experiment 4 remains an explicit open implementation obligation",
+            + "; supported: 1,2,3,4,5 and A (factorial mechanism ablations)",
         )
     if args.n_slots > ABSOLUTE_MAX_SLOTS:
         _parser_error(parser, f"--n-slots cannot exceed {ABSOLUTE_MAX_SLOTS}")
@@ -159,7 +163,15 @@ def _run_admitted_lab(
     model, tokenizer = load(args.model)
     checkpoint_receipt = checkpoint_file_fingerprint(args.model)
 
-    def make_engine(max_steps: int, *, latent_opt: str = "off", branches: int | None = None):
+    def make_engine(
+        max_steps: int,
+        *,
+        latent_opt: str = "off",
+        branches: int | None = None,
+        fast_weights: bool = False,
+    ):
+        from core.brain.llm.latent_cortex.types import FastWeightsConfig
+
         return LatentCortexEngine(
             model,
             tokenizer,
@@ -174,6 +186,7 @@ def _run_admitted_lab(
                     control_mode=latent_opt == "control",
                     steps=4,
                 ),
+                fast_weights=FastWeightsConfig(enabled=fast_weights),
                 decode_max_tokens=64,
             ),
             model_path=args.model,
@@ -186,13 +199,32 @@ def _run_admitted_lab(
         return False
 
     def solve(
-        task, n_steps: int, *, latent_opt: str = "off", ablate=None
+        task,
+        n_steps: int,
+        *,
+        latent_opt: str = "off",
+        ablate=None,
+        branches: int | None = None,
+        fast_weights: bool = False,
+        verifier_guided: bool = False,
     ) -> tuple[bool, int]:
         remaining_s = deadline - time.monotonic()
         if remaining_s <= 0.0:
             raise LabDeadlineError("lab wall-clock bound reached")
-        engine = make_engine(n_steps, latent_opt=latent_opt)
+        engine = make_engine(
+            n_steps,
+            latent_opt=latent_opt,
+            branches=branches,
+            fast_weights=fast_weights,
+        )
         budget = ComputeBudget(wall_clock_s=min(120.0, remaining_s))
+        verifier = None
+        if verifier_guided:
+            from core.brain.llm.latent_cortex.task_verifiers import (
+                EpisodeTaskVerifier,
+            )
+
+            verifier = EpisodeTaskVerifier(task.prompt)
         # Chat-template parity with the vanilla control arm: an instruct
         # checkpoint answers through its template; comparing a template-free
         # latent arm against a templated control confounds the experiment
@@ -201,6 +233,7 @@ def _run_admitted_lab(
             messages=[{"role": "user", "content": task.prompt}],
             budget=budget,
             ablate_slot=ablate,
+            verifier=verifier,
             decode_max_tokens=64,
         )
         if time.monotonic() > deadline:
@@ -228,6 +261,74 @@ def _run_admitted_lab(
         n_layers = len(model.model.layers)
         cost = (prompt_tokens + 64) * n_layers
         return task.verify(text), cost
+
+    def solve_branches(task, k: int) -> tuple[bool, int]:
+        """Experiment-4 treatment: K latent branches, convergence-selected."""
+        return solve(task, max(steps), branches=k)
+
+    def solve_sampling(task, k: int) -> tuple[bool, int]:
+        """Experiment-4 control: K-sample self-consistency at matched FLOPs.
+
+        Standard recipe — sample K answers at temperature, majority-vote the
+        EXTRACTED final claims (extraction never sees the ground truth), then
+        verify the winning claim once."""
+        remaining_s = deadline - time.monotonic()
+        if remaining_s <= 0.0:
+            raise LabDeadlineError("lab wall-clock bound reached")
+        from mlx_lm import generate as mlx_generate
+        from mlx_lm.sample_utils import make_sampler
+
+        rendered = tokenizer.apply_chat_template(
+            [{"role": "user", "content": task.prompt}],
+            add_generation_prompt=True,
+            tokenize=False,
+        )
+        claims: list[str] = []
+        for sample_index in range(max(1, int(k))):
+            if time.monotonic() > deadline:
+                raise LabDeadlineError("lab wall-clock bound reached during sampling")
+            text = mlx_generate(
+                model,
+                tokenizer,
+                prompt=rendered,
+                max_tokens=64,
+                verbose=False,
+                sampler=make_sampler(temp=0.8, top_p=0.95),
+            )
+            claims.append(extract_final_numeric_claim(text))
+        voted = majority_answer(claims)
+        prompt_tokens = len(tokenizer.encode(rendered))
+        n_layers = len(model.model.layers)
+        cost = max(1, int(k)) * (prompt_tokens + 64) * n_layers
+        return bool(voted) and voted == task.answer, cost
+
+    def solve_ablation_arm(task, arm: str) -> tuple[bool, int]:
+        """One factorial-ablation arm: exactly one mechanism (or named combo)."""
+        deep = max(steps)
+        if arm == "vanilla":
+            return solve_vanilla(task)
+        if arm == "recurrence_only":
+            return solve(task, deep, branches=1)
+        if arm == "branches_only":
+            return solve(task, 1, branches=args.branches)
+        if arm == "latent_opt_only":
+            return solve(task, 1, branches=1, latent_opt="gradient")
+        if arm == "fast_weights_only":
+            return solve(task, 1, branches=1, fast_weights=True)
+        if arm == "recurrence_branches":
+            return solve(task, deep, branches=args.branches)
+        if arm == "recurrence_verifier":
+            return solve(task, deep, branches=args.branches, verifier_guided=True)
+        if arm == "full_stack":
+            return solve(
+                task,
+                deep,
+                branches=args.branches,
+                latent_opt="gradient",
+                fast_weights=True,
+                verifier_guided=True,
+            )
+        raise ValueError(f"unknown ablation arm: {arm}")
 
     report: dict = {
         "model": args.model,
@@ -281,6 +382,17 @@ def _run_admitted_lab(
                 slot_indices=list(range(0, args.n_slots, max(1, args.n_slots // 4))),
             )
             print("  claim:", report["results"]["exp3"]["claim"]["tier"], flush=True)
+        if "4" in wanted and not out_of_time():
+            print(
+                f"▶ Experiment 4: {args.branches} branches vs {args.branches}-sample "
+                "self-consistency …",
+                flush=True,
+            )
+            by_family = {family: [t for t in battery if t.family == family] for family in families}
+            report["results"]["exp4"] = run_virtual_width(
+                solve_branches, solve_sampling, by_family, k=args.branches
+            )
+            print("  claim:", report["results"]["exp4"]["claim"]["tier"], flush=True)
         if "5" in wanted and not out_of_time():
             print("▶ Experiment 5: latent opt vs random control …", flush=True)
             by_family = {family: [t for t in battery if t.family == family] for family in families}
@@ -288,6 +400,17 @@ def _run_admitted_lab(
                 lambda t, arm: solve(t, max(steps), latent_opt=arm), by_family
             )
             print("  claim:", report["results"]["exp5"]["claim"]["tier"], flush=True)
+        if "A" in wanted and not out_of_time():
+            print("▶ Factorial ablations: mechanism attribution vs vanilla …", flush=True)
+            by_family = {family: [t for t in battery if t.family == family] for family in families}
+            report["results"]["ablations"] = run_factorial_ablations(
+                solve_ablation_arm, by_family
+            )
+            print(
+                "  attribution:",
+                report["results"]["ablations"]["attribution"] or "none yet",
+                flush=True,
+            )
     except LabDeadlineError as exc:
         report["deadline_exceeded"] = True
         report["incomplete_reason"] = str(exc)
@@ -307,9 +430,14 @@ def _run_admitted_lab(
 
     if args.record_foundry:
         for res in report["results"].values():
-            claims = [res["claim"]] if "claim" in res else [
-                v["claim"] for v in res.values() if isinstance(v, dict) and "claim" in v
-            ]
+            if "claim" in res:
+                claims = [res["claim"]]
+            elif "claims" in res and isinstance(res["claims"], dict):
+                claims = list(res["claims"].values())
+            else:
+                claims = [
+                    v["claim"] for v in res.values() if isinstance(v, dict) and "claim" in v
+                ]
             for claim in claims:
                 record_claim_to_foundry(claim, domain="latent_lab")
     return 0
