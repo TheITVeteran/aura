@@ -439,13 +439,21 @@ class LatentCortexService:
                 errors.append("latent_optimization_wrong_mode")
             if not positive_int(receipt, "latent_opt_attempts"):
                 errors.append("latent_optimization_not_attempted")
-            if not positive_int(receipt, "latent_opt_steps"):
+            # Under verifier guidance, zero ACCEPTED steps is a legitimate
+            # verified outcome (every proposal was checked and declined) —
+            # the verifier evidence must exist to earn that exemption.
+            verifier_evidence = receipt.get("verifier_guidance")
+            verifier_ran = (
+                isinstance(verifier_evidence, dict)
+                and int(verifier_evidence.get("evaluations") or 0) > 0
+            )
+            if not positive_int(receipt, "latent_opt_steps") and not verifier_ran:
                 errors.append("latent_optimization_no_accepted_steps")
             if not nonnegative_int(receipt, "latent_opt_rejected"):
                 errors.append("latent_optimization_rejection_count_invalid")
             elif (
                 positive_int(receipt, "latent_opt_attempts")
-                and positive_int(receipt, "latent_opt_steps")
+                and nonnegative_int(receipt, "latent_opt_steps")
                 and (
                     receipt["latent_opt_attempts"]
                     != receipt["latent_opt_steps"] + receipt["latent_opt_rejected"]

@@ -949,7 +949,12 @@ class LatentCortexEngine:
                 z_opt = optimizer.run(winner.z)
             winner.z = z_opt
             winner.workspace.update(z_opt)
-            receipt.latent_opt_applied = optimizer.trace.accepted > 0
+            # "Applied" means the optimizer genuinely RAN (attempts > 0).
+            # Under verifier guidance, rejecting every proposal is the
+            # verifier doing its job — receipted via latent_opt_steps=0 and
+            # the latent_opt_no_accepted_step flag, never faked as success
+            # and never treated as "optimization didn't happen".
+            receipt.latent_opt_applied = optimizer.trace.attempts > 0
             receipt.latent_opt_mode = optimizer.trace.mode
             receipt.latent_opt_loss_trail = list(optimizer.trace.loss_trail)
             receipt.latent_opt_attempts = optimizer.trace.attempts

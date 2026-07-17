@@ -5457,6 +5457,11 @@ def _build_live_turn_contract_payload(
             trace.get("latent_cortex_final_text_transformed")
         ),
         "latent_cortex_receipt": latent_cortex_receipt,
+        "latent_cortex_ingress": (
+            dict(trace.get("latent_cortex_ingress"))
+            if isinstance(trace.get("latent_cortex_ingress"), dict)
+            else {}
+        ),
         "live_mind_context_required": live_mind_context_required,
         "live_mind_context_present": live_mind_context_present,
         "live_mind_snapshot_present": live_mind_snapshot_present,
