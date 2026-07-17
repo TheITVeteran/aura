@@ -961,7 +961,84 @@ class LatentCortexEngine:
 
         # ── Recurrent computation under the schedule program ────────────
         recurrence_budget_limited = False
-        for op in schedule.ops:
+        bytecode_events: list[dict[str, Any]] = []
+        last_probe_score: float | None = None
+        for op_index, op in enumerate(schedule.ops):
+            op_kind = getattr(op, "kind", "window")
+            if op_kind == "exchange":
+                bytecode_events.append(
+                    {
+                        "op": op_index,
+                        "kind": op_kind,
+                        "done": ensemble.exchange_now(),
+                    }
+                )
+                continue
+            if op_kind == "savepoint":
+                bytecode_events.append(
+                    {
+                        "op": op_index,
+                        "kind": op_kind,
+                        "branches": ensemble.savepoint_all(),
+                    }
+                )
+                continue
+            if op_kind == "verify_probe":
+                event: dict[str, Any] = {
+                    "op": op_index,
+                    "kind": op_kind,
+                    "ran": False,
+                }
+                probe_cost = (
+                    self.config.workspace.n_slots + len(bridge_tokens or []) + 47
+                ) * self.n_layers
+                if verifier is None or self.tokenizer is None:
+                    event["skip"] = "no_verifier"
+                elif probe_cost + safety_reserve > budget.remaining_layer_apps:
+                    event["skip"] = "budget"
+                    receipt.flag("bytecode_probe_skipped_budget")
+                else:
+                    candidates = ensemble.active() or list(ensemble.branches)
+                    target = min(
+                        candidates,
+                        key=lambda b: (
+                            b.halting.residual_trail[-1]
+                            if b.halting.residual_trail
+                            else float("inf")
+                        ),
+                    )
+                    probe = self._decode_probe(
+                        target,
+                        cache,
+                        runner,
+                        budget,
+                        bridge_tokens=bridge_tokens,
+                    )
+                    probe_score = float(verifier(self.tokenizer.decode(probe)))
+                    event.update(
+                        {
+                            "ran": True,
+                            "branch": target.index,
+                            "score": round(probe_score, 6),
+                        }
+                    )
+                    if (
+                        op.revert_on_drop
+                        and last_probe_score is not None
+                        and probe_score < last_probe_score - 1e-9
+                    ):
+                        event["reverted_branches"] = (
+                            ensemble.revert_all_to_savepoint()
+                        )
+                        receipt.flag("bytecode_probe_reverted")
+                    elif math.isfinite(probe_score):
+                        last_probe_score = (
+                            probe_score
+                            if last_probe_score is None
+                            else max(last_probe_score, probe_score)
+                        )
+                bytecode_events.append(event)
+                continue
             for _ in range(op.repeats):
                 if ensemble.all_halted() or budget.exhausted:
                     break
@@ -993,6 +1070,8 @@ class LatentCortexEngine:
                 )
             if recurrence_budget_limited:
                 break
+        if bytecode_events:
+            receipt.bytecode_events = bytecode_events
         for branch in ensemble.branches:
             if not branch.halted:
                 final, reverted = branch.halting.final_state(branch.z)

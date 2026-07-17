@@ -88,15 +88,41 @@ def _safe_display(value: Any, *, limit: int = 120) -> str:
 
 @dataclass(frozen=True)
 class StageOp:
-    """One instruction: run layers [start, end) ``repeats`` times."""
+    """One typed instruction of the neural bytecode.
 
-    start: int
-    end: int
+    Kinds:
+      window        — run layers [start, end) ``repeats`` times (the
+                      original schedule instruction; the only kind that
+                      spends layer compute directly).
+      exchange      — force a branch-communication exchange NOW, instead
+                      of waiting for the step-count interval.
+      savepoint     — snapshot every branch's latent state (one slot;
+                      later savepoints overwrite).
+      verify_probe  — decode a probe from the current leading branch and
+                      score it with the episode verifier; with
+                      ``revert_on_drop`` every branch backtracks to its
+                      savepoint when the verified score fell — explicit,
+                      receipted, verifier-guided backtracking.
+
+    Every kind is validated, canonically serialized, and covered by the
+    schedule hash. ``window`` payloads serialize exactly as before, so
+    existing library hashes and provenance receipts remain valid.
+    """
+
+    start: int = 0
+    end: int = 0
     repeats: int = 1
     alpha: float | None = None  # override the recurrence alpha for this stage
+    kind: str = "window"
+    revert_on_drop: bool = False
 
     def to_dict(self) -> dict[str, Any]:
-        out: dict[str, Any] = {"start": self.start, "end": self.end, "repeats": self.repeats}
+        if self.kind != "window":
+            out: dict[str, Any] = {"kind": self.kind}
+            if self.revert_on_drop:
+                out["revert_on_drop"] = True
+            return out
+        out = {"start": self.start, "end": self.end, "repeats": self.repeats}
         if self.alpha is not None:
             try:
                 alpha = float(self.alpha)
@@ -106,6 +132,12 @@ class StageOp:
                 raise ValueError("stage alpha must be a finite number")
             out["alpha"] = round(alpha, 6)
         return out
+
+
+STAGE_OP_KINDS: frozenset[str] = frozenset(
+    {"window", "exchange", "savepoint", "verify_probe"}
+)
+_MAX_VERIFY_PROBES = 4
 
 
 @dataclass
@@ -131,7 +163,29 @@ class LayerSchedule:
         for index, op in enumerate(raw_ops):
             if not isinstance(op, dict):
                 raise ValueError(f"schedule op{index} must be a mapping")
-            op_unknown = sorted(set(op) - {"start", "end", "repeats", "alpha"})
+            kind = op.get("kind", "window")
+            if kind not in STAGE_OP_KINDS:
+                raise ValueError(
+                    f"schedule op{index}.kind must be one of {sorted(STAGE_OP_KINDS)}"
+                )
+            if kind != "window":
+                op_unknown = sorted(set(op) - {"kind", "revert_on_drop"})
+                if op_unknown:
+                    raise ValueError(
+                        f"schedule op{index} ({kind}) contains unknown keys: {op_unknown}"
+                    )
+                revert_on_drop = op.get("revert_on_drop", False)
+                if type(revert_on_drop) is not bool:
+                    raise ValueError(
+                        f"schedule op{index}.revert_on_drop must be boolean"
+                    )
+                if revert_on_drop and kind != "verify_probe":
+                    raise ValueError(
+                        f"schedule op{index}.revert_on_drop only applies to verify_probe"
+                    )
+                parsed.append(StageOp(kind=kind, revert_on_drop=revert_on_drop))
+                continue
+            op_unknown = sorted(set(op) - {"start", "end", "repeats", "alpha", "kind"})
             if op_unknown:
                 raise ValueError(f"schedule op{index} contains unknown keys: {op_unknown}")
             for key in ("start", "end"):
@@ -194,7 +248,30 @@ class LayerSchedule:
         if not self.ops:
             problems.append("schedule has no ops")
         total_layer_repeats = 0
+        window_ops = 0
+        verify_probes = 0
+        savepoint_seen = False
         for i, op in enumerate(self.ops):
+            kind = getattr(op, "kind", "window")
+            if kind not in STAGE_OP_KINDS:
+                problems.append(f"op{i} unknown kind {_safe_display(kind)}")
+                continue
+            if kind != "window":
+                if kind == "savepoint":
+                    savepoint_seen = True
+                elif kind == "verify_probe":
+                    verify_probes += 1
+                    if op.revert_on_drop and not savepoint_seen:
+                        problems.append(
+                            f"op{i} verify_probe revert_on_drop needs a "
+                            "preceding savepoint op"
+                        )
+                elif op.revert_on_drop:
+                    problems.append(
+                        f"op{i} revert_on_drop only applies to verify_probe"
+                    )
+                continue
+            window_ops += 1
             if any(type(value) is not int for value in (op.start, op.end, op.repeats)):
                 problems.append(f"op{i} start/end/repeats must be integers")
                 continue
@@ -231,6 +308,13 @@ class LayerSchedule:
             problems.append(
                 f"total layer repeats {_safe_display(total_layer_repeats)} exceeds "
                 f"{MAX_TOTAL_LAYER_REPEATS}"
+            )
+        if self.ops and window_ops == 0:
+            problems.append("schedule needs at least one window op")
+        if verify_probes > _MAX_VERIFY_PROBES:
+            problems.append(
+                f"{verify_probes} verify_probe ops exceed the "
+                f"{_MAX_VERIFY_PROBES}-probe budget"
             )
         return problems
 

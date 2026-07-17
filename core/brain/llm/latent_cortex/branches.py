@@ -65,6 +65,10 @@ class BranchState:
     steps: int = 0
     score: float = 0.0
     escape: BranchEscapeLadder | None = None
+    # Neural-bytecode savepoint: one snapshot slot per branch (later
+    # savepoints overwrite). verify_probe(revert_on_drop) restores it.
+    savepoint: Any = None
+    savepoint_steps: int = 0
 
     def to_receipt(self) -> dict[str, Any]:
         receipt = {
@@ -240,6 +244,34 @@ class BranchEnsemble:
             self.exchange()
             self.maintain_diversity()
         return True
+
+    # ── Neural-bytecode instructions ────────────────────────────────────
+    def exchange_now(self) -> bool:
+        """Bytecode-forced exchange: communicate immediately when ≥2 live."""
+        if len(self.active()) < 2:
+            return False
+        self.exchange()
+        self.maintain_diversity()
+        return True
+
+    def savepoint_all(self) -> int:
+        """Snapshot every live branch's latent state (one slot each)."""
+        saved = 0
+        for branch in self.active():
+            branch.savepoint = branch.z
+            branch.savepoint_steps = branch.steps
+            saved += 1
+        return saved
+
+    def revert_all_to_savepoint(self) -> int:
+        """Backtrack every branch that holds a savepoint to it."""
+        reverted = 0
+        for branch in self.branches:
+            if branch.savepoint is not None:
+                branch.z = branch.savepoint
+                branch.workspace.update(branch.savepoint)
+                reverted += 1
+        return reverted
 
     def _halt(self, branch: BranchState, reason: str) -> None:
         """Halt one branch, shipping the best state when it beats the last."""

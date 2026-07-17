@@ -567,6 +567,10 @@ class EpisodeReceipt:
     # Attractor-escape evidence: per-branch ladder receipts (rungs tried,
     # triggers, probation outcomes). Empty when no branch needed escape.
     escape: dict[str, Any] = field(default_factory=dict)
+    # Neural-bytecode trace: one event per non-window instruction the
+    # schedule program executed (exchange/savepoint/verify_probe outcomes,
+    # probe scores, backtracks). Empty for plain window programs.
+    bytecode_events: list[dict[str, Any]] = field(default_factory=list)
     # Latent interpretability/safety telemetry (telemetry.LatentTelemetry).
     latent_telemetry: dict[str, Any] = field(default_factory=dict)
     decode_temperature: float = 0.0
@@ -672,6 +676,7 @@ class EpisodeReceipt:
             "decode_repetition_penalty_applied": self.decode_repetition_penalty_applied,
             "verifier_guidance": dict(self.verifier_guidance),
             "escape": dict(self.escape),
+            "bytecode_events": [dict(row) for row in self.bytecode_events],
             "latent_telemetry": dict(self.latent_telemetry),
             "decode_temperature": self.decode_temperature,
             "decode_top_p": self.decode_top_p,

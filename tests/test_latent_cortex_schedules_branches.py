@@ -436,3 +436,146 @@ def test_branch_round_is_all_or_none_under_budget(tiny_model):
     assert admitted is False
     assert budget.spent_layer_apps == 0
     assert all(branch.steps == 0 for branch in ensemble.branches)
+
+
+# ── Neural bytecode: typed non-window instructions ───────────────────────
+
+
+def test_bytecode_ops_parse_validate_and_hash_stably():
+    from core.brain.llm.latent_cortex.schedules import LayerSchedule, StageOp
+
+    program = LayerSchedule.from_dict(
+        {
+            "name": "probe-guided",
+            "ops": [
+                {"start": 2, "end": 6, "repeats": 2},
+                {"kind": "savepoint"},
+                {"kind": "exchange"},
+                {"start": 2, "end": 6, "repeats": 2, "alpha": 0.5},
+                {"kind": "verify_probe", "revert_on_drop": True},
+            ],
+        }
+    )
+    assert program.validate(prelude_end=2, coda_start=6) == []
+    assert program.total_layer_repeats == 16  # bytecode ops spend no layers
+    # Window-only serialization is unchanged ⇒ legacy hashes survive.
+    legacy = LayerSchedule(ops=(StageOp(2, 6, 2),))
+    assert '"kind"' not in legacy.canonical_json()
+    # Bytecode ops are covered by the hash.
+    without_probe = LayerSchedule.from_dict(
+        {
+            "ops": [
+                {"start": 2, "end": 6, "repeats": 2},
+                {"kind": "savepoint"},
+                {"kind": "exchange"},
+                {"start": 2, "end": 6, "repeats": 2, "alpha": 0.5},
+            ]
+        }
+    )
+    assert program.schedule_hash != without_probe.schedule_hash
+
+
+def test_bytecode_validation_rejects_malformed_programs():
+    from core.brain.llm.latent_cortex.schedules import LayerSchedule
+
+    with pytest.raises(ValueError, match="kind must be one of"):
+        LayerSchedule.from_dict({"ops": [{"kind": "teleport"}]})
+    with pytest.raises(ValueError, match="revert_on_drop only applies"):
+        LayerSchedule.from_dict(
+            {"ops": [{"kind": "exchange", "revert_on_drop": True}]}
+        )
+    with pytest.raises(ValueError, match="unknown keys"):
+        LayerSchedule.from_dict(
+            {"ops": [{"kind": "savepoint", "start": 2}]}
+        )
+    # revert_on_drop without a preceding savepoint is invalid.
+    naked = LayerSchedule.from_dict(
+        {
+            "ops": [
+                {"start": 2, "end": 6},
+                {"kind": "verify_probe", "revert_on_drop": True},
+            ]
+        }
+    )
+    problems = naked.validate(prelude_end=2, coda_start=6)
+    assert any("preceding savepoint" in p for p in problems)
+    # A program of only bytecode ops computes nothing.
+    inert = LayerSchedule.from_dict(
+        {"ops": [{"kind": "savepoint"}, {"kind": "exchange"}]}
+    )
+    assert any(
+        "at least one window op" in p
+        for p in inert.validate(prelude_end=2, coda_start=6)
+    )
+    # Probe budget is bounded.
+    flood = LayerSchedule.from_dict(
+        {
+            "ops": [{"start": 2, "end": 6}]
+            + [{"kind": "verify_probe"} for _ in range(5)]
+        }
+    )
+    assert any("probe budget" in p for p in flood.validate(prelude_end=2, coda_start=6))
+
+
+def test_bytecode_program_executes_and_traces(tiny_model):
+    from core.brain.llm.latent_cortex.engine import LatentCortexEngine
+    from core.brain.llm.latent_cortex.types import (
+        BranchConfig,
+        ComputeBudget,
+        CortexConfig,
+        RecurrenceConfig,
+        WorkspaceConfig,
+    )
+
+    scores = iter([0.8, 0.2])  # second probe drops ⇒ backtrack
+
+    def verifier(text: str) -> float:
+        return next(scores, 0.2)
+
+    engine = LatentCortexEngine(
+        tiny_model,
+        _ProbeTokenizer(),
+        config=CortexConfig(
+            workspace=WorkspaceConfig(n_slots=4, seed=7),
+            recurrence=RecurrenceConfig(
+                max_steps=8, min_steps=1, convergence_eps=1e-9
+            ),
+            branches=BranchConfig(n_branches=2),
+            decode_max_tokens=4,
+            schedule={
+                "name": "probe-backtrack",
+                "ops": [
+                    {"start": 2, "end": 6, "repeats": 1},
+                    {"kind": "savepoint"},
+                    {"kind": "verify_probe", "revert_on_drop": True},
+                    {"kind": "exchange"},
+                    {"start": 2, "end": 6, "repeats": 1},
+                    {"kind": "verify_probe", "revert_on_drop": True},
+                ],
+            },
+        ),
+    )
+    result = engine.reason(
+        token_ids=[5, 9, 17, 3, 42], budget=ComputeBudget(), verifier=verifier
+    )
+    assert result.ok
+    events = result.receipt.bytecode_events
+    kinds = [event["kind"] for event in events]
+    assert kinds == ["savepoint", "verify_probe", "exchange", "verify_probe"]
+    assert events[0]["branches"] == 2
+    assert events[1]["ran"] is True and events[1]["score"] == 0.8
+    assert events[2]["done"] is True
+    assert events[3]["ran"] is True and events[3]["score"] == 0.2
+    assert events[3]["reverted_branches"] == 2
+    assert "bytecode_probe_reverted" in result.receipt.honest_flags
+    assert result.receipt.to_dict()["bytecode_events"] == events
+
+
+class _ProbeTokenizer:
+    eos_token_id = 0
+
+    def encode(self, text, add_special_tokens=False):
+        return [ord(c) % 128 for c in text][:16]
+
+    def decode(self, ids):
+        return " ".join(str(i) for i in ids)
