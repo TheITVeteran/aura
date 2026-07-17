@@ -187,3 +187,37 @@ class TestGoalStoreRepair:
             assert healthy["status"] != "abandoned"
         finally:
             engine.close()
+
+
+class TestSelfModelBeliefSanitation:
+    def test_restored_chat_turn_projection_is_scrubbed(self):
+        from core.self_model import SelfModel
+
+        beliefs = {
+            "executive_closure": {
+                "selected_objective": CHAT_TURN,
+                "background_commitment": NETHACK_RENDER,
+                "attention_focus": "Phenomenal Surge",
+            },
+            "unrelated": "kept",
+        }
+        cleaned = SelfModel._sanitize_restored_beliefs(beliefs)
+        closure = cleaned["executive_closure"]
+        assert closure["selected_objective"] == ""
+        assert closure["background_commitment"] == ""
+        assert closure["attention_focus"] == "Phenomenal Surge"
+        assert cleaned["unrelated"] == "kept"
+
+    def test_valid_objective_survives_belief_restore(self):
+        from core.self_model import SelfModel
+
+        beliefs = {
+            "executive_closure": {"selected_objective": VALID_GOALS[0]}
+        }
+        cleaned = SelfModel._sanitize_restored_beliefs(beliefs)
+        assert cleaned["executive_closure"]["selected_objective"] == VALID_GOALS[0]
+
+    def test_malformed_beliefs_degrade_to_empty(self):
+        from core.self_model import SelfModel
+
+        assert SelfModel._sanitize_restored_beliefs("not a dict") == {}

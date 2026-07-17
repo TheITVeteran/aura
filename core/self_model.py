@@ -59,12 +59,12 @@ class SelfModel:
                 raw = json.loads(DATA_FILE.read_text())
                 snaps_raw = raw.get("snapshots", {})
                 snapshots = {k: SelfSnapshot(**v) for k, v in snaps_raw.items()}
-                
+
                 return cls(
                     id=raw.get("id", str(uuid4())),
                     name=raw.get("name", "aura"),
                     version=raw.get("version", 0),
-                    beliefs=raw.get("beliefs", {}),
+                    beliefs=cls._sanitize_restored_beliefs(raw.get("beliefs", {})),
                     snapshots=snapshots,
                     pending_updates=list(raw.get("pending_updates", []) or []),
                 )
@@ -73,6 +73,32 @@ class SelfModel:
                 logger.error("Failed to load self model: %s", e)
                 
         return cls(id=str(uuid4()))
+
+    @staticmethod
+    def _sanitize_restored_beliefs(beliefs: Any) -> Dict[str, Any]:
+        """Scrub restored executive projections that fail objective validity.
+
+        Live evidence (Jul 2026): a chat turn ("Ok. Once more. You with me?")
+        persisted inside beliefs.executive_closure.selected_objective and kept
+        DISPLAYING as CURRENT IMPERATIVE long after the goal stores were
+        repaired, because closure belief updates can be deferred indefinitely
+        by the present-state policy. Restore is the one boundary where the
+        stale projection can be dropped without racing the live writer.
+        """
+        if not isinstance(beliefs, dict):
+            return {}
+        closure = beliefs.get("executive_closure")
+        if isinstance(closure, dict):
+            try:
+                from core.goals.standing_objective import is_valid_standing_objective
+
+                for key in ("selected_objective", "background_commitment"):
+                    value = closure.get(key)
+                    if isinstance(value, str) and value and not is_valid_standing_objective(value):
+                        closure[key] = ""
+            except (ImportError, AttributeError, RecursionError) as exc:
+                logger.debug("Self-model belief sanitation unavailable: %s", exc)
+        return beliefs
 
     @effect_sink("belief.self_model_persist", allowed_domains=("memory_write",))
     async def persist(self):
