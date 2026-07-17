@@ -662,7 +662,11 @@ class SubprocessGateway:
                     timeout=float(timeout),
                 )
             except TimeoutError as exc:
-                stdout_bytes, stderr_bytes = await _terminate_async_process_group(process)
+                partial_stdout, partial_stderr = await _terminate_async_process_group(
+                    process
+                )
+                stdout_bytes = partial_stdout or b""
+                stderr_bytes = partial_stderr or b""
                 raise subprocess.TimeoutExpired(
                     command,
                     float(timeout),

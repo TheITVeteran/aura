@@ -169,7 +169,7 @@ def _header_values(request: Request, name: str) -> tuple[str, ...]:
     raw_headers = scope.get("headers") if isinstance(scope, dict) else None
     if isinstance(raw_headers, (list, tuple)):
         expected = name.lower().encode("ascii")
-        values: list[str] = []
+        collected: list[str] = []
         for item in raw_headers:
             if not isinstance(item, (list, tuple)) or len(item) != 2:
                 continue
@@ -179,11 +179,11 @@ def _header_values(request: Request, name: str) -> tuple[str, ...]:
             if raw_name.lower() != expected:
                 continue
             if isinstance(raw_value, bytes):
-                values.append(raw_value.decode("latin-1", errors="strict"))
+                collected.append(raw_value.decode("latin-1", errors="strict"))
             else:
-                values.append(str(raw_value))
-        if values:
-            return tuple(values)
+                collected.append(str(raw_value))
+        if collected:
+            return tuple(collected)
 
     value = _header_value(request, name)
     return (value,) if value else ()

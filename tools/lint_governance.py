@@ -106,6 +106,11 @@ ALLOW_LIST = {
     "core/sovereignty/migration.py",
     "core/sovereignty/wallet.py",
     "core/will.py",
+    # /api/imagination/visualize renders Aura's own mental canvas via
+    # execute_tool("image_gen", ...) — the CANONICAL governed chain
+    # (owner-authenticated route, desktop execution contract, standing
+    # authority, Will, constitution, capability token), not a bypass.
+    "interface/routes/system.py",
 }
 
 CANONICAL_PRIMITIVE_OWNERS: dict[str, frozenset[str]] = {

@@ -324,7 +324,17 @@ class ExecutionController:
 
 def controller_enabled() -> bool:
     """Kill switch: AURA_EXECUTION_CONTROLLER=0 disables learn + apply."""
-    return os.environ.get("AURA_EXECUTION_CONTROLLER", "1") != "0"
+    from core.runtime.flags import FlagKind, declare
+
+    return bool(
+        declare(
+            "AURA_EXECUTION_CONTROLLER",
+            kind=FlagKind.BOOL,
+            default=True,
+            description="Learned per-problem execution controller (learn + apply)",
+            owner="core.brain.llm.latent_cortex.execution_controller",
+        ).value()
+    )
 
 
 _instance: ExecutionController | None = None

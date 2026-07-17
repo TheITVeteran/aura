@@ -67,6 +67,7 @@ Contract version: `runtime-health-v1`
 | Agent Delegator | `agent_delegator` | `is_alive` | Coordinates parallel task execution and specialized agents. |
 | Stability Guardian | `stability_guardian` | presence only | Health monitoring and auto-recovery. |
 | Metrics Exporter | `metrics_exporter` | presence only | Prometheus metrics endpoint. |
+| Allostasis Engine | `allostasis_engine` | `is_ready` | Predictive interoception: forecasts vital-sign trajectories and regulates before crises, with a calibration ledger. |
 
 ## Required health probe groups
 

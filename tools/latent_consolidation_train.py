@@ -8,8 +8,10 @@ exact pre-run state (this tool proves it); durable ACTIVATION on the live
 instance goes through the service/adapter seam, not this operator tool.
 
 MEMORY SAFETY: only point this at the 32B when the live instance is DOWN.
+Set AURA_LOG_DIR so lab logging never lands in the live ~/.aura/logs:
 
-  caffeinate -dims .venv/bin/python tools/latent_consolidation_train.py \
+  AURA_LOG_DIR=~/.aura/lab-logs caffeinate -dims \
+      .venv/bin/python tools/latent_consolidation_train.py \
       --model <mlx-model-dir> [--queue <dir>] [--out <report.json>] \
       [--max-minutes 20]
 """
@@ -24,8 +26,6 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
-
-os.environ.setdefault("AURA_LOG_DIR", str(Path.home() / ".aura" / "lab-logs"))
 
 
 def main() -> int:

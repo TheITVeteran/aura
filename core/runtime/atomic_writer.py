@@ -132,13 +132,13 @@ def interprocess_file_lock(path: PathLike) -> Iterator[None]:
         finally:
             state.depth -= 1
             if state.depth == 0:
-                fd = state.fd
+                held_fd = state.fd
                 state.fd = None
-                if fd is not None:
+                if held_fd is not None:
                     try:
-                        fcntl.flock(fd, fcntl.LOCK_UN)
+                        fcntl.flock(held_fd, fcntl.LOCK_UN)
                     finally:
-                        os.close(fd)
+                        os.close(held_fd)
     finally:
         state.thread_lock.release()
 

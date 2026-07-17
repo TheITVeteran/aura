@@ -47,6 +47,20 @@ _SELF_TERMS = {
     "cortex", "consciousness", "governance", "constitution", "will",
 }
 
+# Conversation recall must overlap on the subject, not merely on request shape.
+# These terms are intentionally limited to grammar and common instruction verbs;
+# domain terms such as ``runtime``, ``locking``, and ``queue`` remain available.
+_RETRIEVAL_GENERIC_TERMS = {
+    "about", "after", "again", "against", "also", "another", "answer",
+    "because", "before", "between", "both", "choose", "choice", "compare",
+    "concrete", "could", "decide", "describe", "does", "each", "explain",
+    "failure", "from", "give", "have", "into", "itself", "just", "make",
+    "more", "most", "other", "question", "reply", "requested", "scenario",
+    "should", "show", "single", "than", "that", "their", "there", "these",
+    "they", "this", "through", "under", "using", "verify", "what", "when",
+    "where", "which", "while", "with", "would", "your",
+}
+
 
 @dataclass
 class IngressSignal:
@@ -156,6 +170,129 @@ def _hit_kind(hit: Any) -> str:
     return "claim"
 
 
+def _hit_metadata(hit: Any) -> dict[str, Any]:
+    """Return structured memory metadata without trusting a flattened shape."""
+    raw = hit.get("metadata") if isinstance(hit, dict) else getattr(hit, "metadata", None)
+    metadata = dict(raw) if isinstance(raw, dict) else {}
+    # Some organ adapters flatten selected metadata onto the result. Preserve
+    # those typed fields without treating arbitrary hit content as metadata.
+    for key in (
+        "action",
+        "aura_response",
+        "context",
+        "conversation_turn",
+        "learning_admission",
+        "memory_type",
+        "objective",
+        "outcome",
+        "user_utterance",
+    ):
+        value = hit.get(key) if isinstance(hit, dict) else getattr(hit, key, None)
+        if key not in metadata and value is not None:
+            metadata[key] = value
+    return metadata
+
+
+def _metadata_flag(value: Any) -> bool:
+    if value is True:
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes"}
+    return False
+
+
+def _subject_terms(text: Any) -> set[str]:
+    return _objective_terms(str(text or "")) - _RETRIEVAL_GENERIC_TERMS
+
+
+def _conversation_pair(metadata: dict[str, Any]) -> tuple[str, str] | None:
+    """Extract the prompt/reply pair from either supported conversation record."""
+    conversation_turn = _metadata_flag(metadata.get("conversation_turn"))
+    conversation_turn = conversation_turn or (
+        str(metadata.get("memory_type") or "").strip().lower()
+        == "conversation_continuity"
+    )
+    if not conversation_turn:
+        return None
+
+    user_utterance = str(metadata.get("user_utterance") or "").strip()
+    aura_response = str(metadata.get("aura_response") or "").strip()
+    if not user_utterance and str(metadata.get("action") or "").strip().lower() == "conversation_reply":
+        user_utterance = str(
+            metadata.get("context") or metadata.get("objective") or ""
+        ).strip()
+    if not aura_response and str(metadata.get("action") or "").strip().lower() == "conversation_reply":
+        aura_response = str(metadata.get("outcome") or "").strip()
+    return user_utterance, aura_response
+
+
+def _subject_relevance(
+    objective: str,
+    remembered_user_utterance: str,
+) -> tuple[bool, dict[str, int]]:
+    current = _subject_terms(objective)
+    remembered = _subject_terms(remembered_user_utterance)
+    overlap = current & remembered
+    smaller = min(len(current), len(remembered))
+    relevant = bool(
+        overlap
+        and (
+            smaller <= 2
+            or len(overlap) >= 2
+            or len(overlap) / max(1, smaller) >= 0.5
+        )
+    )
+    return relevant, {
+        "query_subject_terms": len(current),
+        "memory_subject_terms": len(remembered),
+        "subject_overlap": len(overlap),
+    }
+
+
+def _conversation_pre_admission(
+    objective: str,
+    hit: Any,
+    *,
+    origin: str,
+) -> tuple[bool, dict[str, Any] | None]:
+    """Revalidate conversation memory under today's quality and topic policy."""
+    metadata = _hit_metadata(hit)
+    pair = _conversation_pair(metadata)
+    if pair is None:
+        return True, None
+
+    user_utterance, aura_response = pair
+    reasons: list[str] = []
+    if not user_utterance or not aura_response:
+        reasons.append("conversation_pair_missing")
+        relevance = {
+            "query_subject_terms": len(_subject_terms(objective)),
+            "memory_subject_terms": 0,
+            "subject_overlap": 0,
+        }
+    else:
+        from core.conversation.response_reliability import (
+            assess_conversation_learning_admission,
+        )
+
+        assessment = assess_conversation_learning_admission(
+            user_utterance,
+            aura_response,
+        )
+        reasons.extend(f"current_quality:{reason}" for reason in assessment.reasons)
+        relevant, relevance = _subject_relevance(objective, user_utterance)
+        if not relevant:
+            reasons.append("subject_mismatch")
+
+    if not reasons:
+        return True, None
+    return False, {
+        "origin": origin,
+        "reasons": list(dict.fromkeys(reasons))[:12],
+        **relevance,
+    }
+
+
 def _dispose_hidden_awaitable(value: Any) -> None:
     """Cancel/close an awaitable returned through a synchronous organ API."""
     if isinstance(value, asyncio.Future):
@@ -229,13 +366,28 @@ def _signal_memory(objective: str) -> IngressSignal:
                     method,
                 )
                 continue
-            count = len(hits) if isinstance(hits, (list, tuple)) else 0
-            familiarity = min(1.0, count / 4.0)
+            raw_hits = list(hits) if isinstance(hits, (list, tuple)) else []
+            retrieved_count = len(raw_hits)
+            eligible_hits: list[tuple[int, Any]] = []
+            pre_admission_refused: list[dict[str, Any]] = []
+            for position, hit in enumerate(raw_hits[:8]):
+                origin = f"{name}.{method}#{position}"
+                eligible, refusal = _conversation_pre_admission(
+                    objective,
+                    hit,
+                    origin=origin,
+                )
+                if eligible:
+                    eligible_hits.append((position, hit))
+                elif refusal is not None:
+                    pre_admission_refused.append(refusal)
+            eligible_count = len(eligible_hits)
+            familiarity = min(1.0, eligible_count / 4.0)
             recalled = ""
             caution = ""
             firewall_receipt: dict[str, Any] = {}
             conflict_uncertainty = 0.0
-            if count:
+            if retrieved_count:
                 evidence = [
                     EvidenceItem(
                         text=_hit_text(hit).strip(),
@@ -244,7 +396,7 @@ def _signal_memory(objective: str) -> IngressSignal:
                         observed_at=_hit_observed_at(hit),
                         kind=_hit_kind(hit),
                     )
-                    for position, hit in enumerate(list(hits)[:8])
+                    for position, hit in eligible_hits
                     if _hit_text(hit).strip()
                 ]
                 try:
@@ -252,6 +404,13 @@ def _signal_memory(objective: str) -> IngressSignal:
                         objective, evidence
                     )
                     firewall_receipt = verdict.to_receipt()
+                    firewall_receipt.update(
+                        {
+                            "retrieved_count": retrieved_count,
+                            "eligible_count": eligible_count,
+                            "pre_admission_refused": pre_admission_refused,
+                        }
+                    )
                     recalled = " ".join(verdict.admitted_texts())[:400]
                     caution = verdict.caution_text()
                     if verdict.abstain:
@@ -269,11 +428,12 @@ def _signal_memory(objective: str) -> IngressSignal:
                 value=familiarity,
                 uncertainty_delta=(
                     0.10
-                    if count == 0
+                    if eligible_count == 0
                     else -0.10 * familiarity + conflict_uncertainty
                 ),
                 detail=(
-                    f"{name}.{method}: {count} hits, "
+                    f"{name}.{method}: {retrieved_count} retrieved, "
+                    f"{eligible_count} eligible, "
                     f"{len(firewall_receipt.get('admitted', []))} admitted"
                 ),
                 context_text=recalled,

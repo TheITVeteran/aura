@@ -32,6 +32,8 @@ from __future__ import annotations
 
 import logging
 import os
+
+from core.runtime.flags import FlagKind, declare
 import time
 from typing import Any
 
@@ -57,8 +59,17 @@ _REHEARSAL_TIMEOUT_S = 45.0
 _RECONCILE_TIMEOUT_S = 60.0
 
 
+_PREACTION_RLC_FLAG = declare(
+    "AURA_PREACTION_RLC",
+    kind=FlagKind.BOOL,
+    default=True,
+    description="Pre-action cortex loop (RLC rehearsal before consequential actions)",
+    owner="core.brain.preaction_cortex",
+)
+
+
 def _enabled() -> bool:
-    return os.environ.get("AURA_PREACTION_RLC", "1") != "0"
+    return bool(_PREACTION_RLC_FLAG.value())
 
 
 def _latent_service() -> Any:
