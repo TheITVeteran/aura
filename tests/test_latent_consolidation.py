@@ -10,6 +10,7 @@ trashing prior behavior.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -273,3 +274,168 @@ def test_battery_runs_on_natural_probes(tiny_model):
     )
     assert receipt["verdict"] == "PASS"  # identity attach must not move behavior
     assert receipt["probes"] == 11
+
+
+# ── The complete durable-learning train ──────────────────────────────────
+
+
+def _make_weighted_candidate(
+    root, episode_id, *, domain="math", layers=(2, 3), rank=2, hidden=64,
+    v_scale=0.0, fingerprint="fp-abc",
+):
+    """A candidate with REAL delta arrays in the export wire format."""
+    import io as _io
+
+    import numpy as np
+
+    d = root / episode_id
+    d.mkdir(parents=True)
+    rng = np.random.default_rng(abs(hash(episode_id)) % (2**32))
+    arrays = {}
+    for layer in layers:
+        arrays[f"layer{layer}_U"] = rng.normal(size=(hidden, rank)).astype("float32")
+        arrays[f"layer{layer}_V"] = (
+            rng.normal(size=(rank, hidden)).astype("float32") * v_scale
+        )
+    buffer = _io.BytesIO()
+    np.savez(buffer, **arrays)
+    (d / "delta_weights.npz").write_bytes(buffer.getvalue())
+    (d / "evidence.json").write_text(json.dumps({
+        "episode_id": episode_id,
+        "created_at": 1000.0,
+        "target": "o_proj",
+        "rank": rank,
+        "layers": list(layers),
+        "scale": 1.0,
+        "lifecycle": {"erase_proven": True, "optimized_steps": 2},
+        "evidence": {
+            "domain": domain,
+            "loss_trail": [3.0, 2.0],
+            "honest_flags": [],
+            "checkpoint_fingerprint": fingerprint,
+        },
+    }))
+    return d
+
+
+def _proposal_for(queue_dir, domain="math"):
+    records = scan_queue(queue_dir)
+    proposals = build_proposals(records, min_candidates=3)
+    assert proposals and proposals[0]["domain"] == domain
+    return proposals[0]
+
+
+def test_distillation_merge_is_the_exact_mean_delta(tmp_path):
+    import io as _io
+
+    import numpy as np
+
+    from core.learning.latent_adapter_distillation import distill_proposal_to_adapter
+
+    queue = tmp_path / "queue"
+    dirs = [
+        _make_weighted_candidate(queue, f"ep-{i}", v_scale=0.1) for i in range(3)
+    ]
+    proposal = _proposal_for(queue)
+    result = distill_proposal_to_adapter(proposal, adapter_dir=tmp_path / "adapters")
+    assert result["ok"], result
+
+    with np.load(
+        _io.BytesIO(
+            (Path(result["adapter_dir"]) / "delta_weights.npz").read_bytes()
+        )
+    ) as merged:
+        merged_delta = merged["layer2_U"] @ merged["layer2_V"]
+    expected = np.zeros_like(merged_delta)
+    for d in dirs:
+        with np.load(_io.BytesIO((d / "delta_weights.npz").read_bytes())) as c:
+            expected += c["layer2_U"] @ c["layer2_V"]
+    expected /= 3.0
+    assert np.allclose(merged_delta, expected, atol=1e-5)
+    assert result["manifest"]["candidate_count"] == 3
+    assert result["manifest"]["checkpoint_fingerprint"] == "fp-abc"
+
+
+def test_mixed_fingerprints_refuse_distillation(tmp_path):
+    from core.learning.latent_adapter_distillation import distill_proposal_to_adapter
+
+    queue = tmp_path / "queue"
+    _make_weighted_candidate(queue, "ep-0", fingerprint="fp-a")
+    _make_weighted_candidate(queue, "ep-1", fingerprint="fp-a")
+    _make_weighted_candidate(queue, "ep-2", fingerprint="fp-DIFFERENT")
+    proposal = _proposal_for(queue)
+    result = distill_proposal_to_adapter(proposal, adapter_dir=tmp_path / "adapters")
+    assert not result["ok"]
+    assert result["reason"] == "mixed_checkpoint_fingerprints"
+
+
+def test_full_train_activates_identity_adapter_and_rolls_back(tiny_model, tmp_path):
+    from core.learning.latent_adapter_distillation import (
+        rollback_adapter,
+        run_consolidation_train,
+    )
+
+    queue = tmp_path / "queue"
+    for i in range(3):
+        _make_weighted_candidate(queue, f"ep-{i}", v_scale=0.0)  # V=0 ⇒ identity
+    proposal = _proposal_for(queue)
+
+    receipt = run_consolidation_train(
+        proposal,
+        tiny_model,
+        adapter_dir=tmp_path / "adapters",
+        heldout_solver=lambda model: 0.5,
+    )
+    assert receipt["activated"] is True, receipt
+    assert receipt["interference_battery"]["verdict"] == "PASS"
+    assert receipt["heldout"] == {"before": 0.5, "after": 0.5}
+    active = receipt["active_adapter"]
+    # The adapter is genuinely attached: the target module is the wrapper.
+    layer = tiny_model.model.layers[active.handles[0].layer_index]
+    assert layer.self_attn.o_proj is active.handles[0].wrapper
+
+    rollback = rollback_adapter(tiny_model, active)
+    assert rollback["rollback_proven"] is True
+    assert rollback["restored_layers"] >= 1
+    assert not active.active
+    layer = tiny_model.model.layers[2]
+    assert not hasattr(layer.self_attn.o_proj, "wrapper")
+
+
+def test_disruptive_adapter_is_refused_and_model_untouched(tiny_model, tmp_path):
+    from core.learning.interference_battery import snapshot_probe_behavior
+    from core.learning.latent_adapter_distillation import run_consolidation_train
+
+    queue = tmp_path / "queue"
+    for i in range(3):
+        _make_weighted_candidate(queue, f"ep-{i}", v_scale=25.0)  # wrecking ball
+    proposal = _proposal_for(queue)
+
+    before = snapshot_probe_behavior(tiny_model)
+    receipt = run_consolidation_train(
+        proposal, tiny_model, adapter_dir=tmp_path / "adapters"
+    )
+    assert receipt["activated"] is False
+    assert receipt["refusal_reason"] == "interference_battery_failed"
+    after = snapshot_probe_behavior(tiny_model)
+    assert [r["digest"] for r in before] == [r["digest"] for r in after]
+
+
+def test_heldout_regression_blocks_activation(tiny_model, tmp_path):
+    from core.learning.latent_adapter_distillation import run_consolidation_train
+
+    queue = tmp_path / "queue"
+    for i in range(3):
+        _make_weighted_candidate(queue, f"ep-{i}", v_scale=0.0)
+    proposal = _proposal_for(queue)
+
+    scores = iter([0.8, 0.5])  # before, after: a real regression
+
+    receipt = run_consolidation_train(
+        proposal,
+        tiny_model,
+        adapter_dir=tmp_path / "adapters",
+        heldout_solver=lambda model: next(scores),
+    )
+    assert receipt["activated"] is False
+    assert receipt["refusal_reason"] == "heldout_regression"
