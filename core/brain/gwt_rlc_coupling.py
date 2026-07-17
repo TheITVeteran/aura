@@ -138,17 +138,35 @@ def _conclusion_priority(receipt: dict[str, Any], stakes: float) -> tuple[float,
             best_score = max(0.0, min(1.0, float(raw_best)))
             verified = best_score > 0.5 and not verifier.get("best_failures")
     bounded_stakes = max(0.0, min(1.0, float(stakes)))
-    priority = min(
-        _PRIORITY_CAP,
-        _BASE_PRIORITY
-        + (_VERIFIED_BONUS * best_score if verified else 0.0)
-        + _STAKES_WEIGHT * bounded_stakes,
+    # Identity consistency prices the bid: a conclusion the canonical self
+    # flagged must outcompete honestly from a lower rung — bounded penalty,
+    # never a veto.
+    identity = receipt.get("identity_consistency")
+    identity_penalty = 0.0
+    if isinstance(identity, dict):
+        raw_penalty = identity.get("priced_penalty")
+        if (
+            isinstance(raw_penalty, (int, float))
+            and not isinstance(raw_penalty, bool)
+            and math.isfinite(float(raw_penalty))
+        ):
+            identity_penalty = max(0.0, min(0.3, float(raw_penalty)))
+    priority = max(
+        0.05,
+        min(
+            _PRIORITY_CAP,
+            _BASE_PRIORITY
+            + (_VERIFIED_BONUS * best_score if verified else 0.0)
+            + _STAKES_WEIGHT * bounded_stakes,
+        )
+        - identity_penalty,
     )
     return priority, {
         "base": _BASE_PRIORITY,
         "verified": verified,
         "verifier_best_score": round(best_score, 4),
         "stakes": round(bounded_stakes, 4),
+        "identity_penalty": round(identity_penalty, 4),
         "priority": round(priority, 4),
     }
 

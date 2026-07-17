@@ -66,7 +66,15 @@ class EpisodicDeltaLinear:
     attached. Gradients reach U/V functionally (see ``optimize``).
     """
 
-    def __init__(self, base, rank: int, scale: float, seed_stat: float, tag: str) -> None:
+    def __init__(
+        self,
+        base,
+        rank: int,
+        scale: float,
+        seed_stat: float,
+        tag: str,
+        seed_vectors=None,
+    ) -> None:
         import mlx.core as mx
 
         self.base = base
@@ -81,6 +89,29 @@ class EpisodicDeltaLinear:
         seed_scale = min(1.0, max(0.1, abs(float(seed_stat))))
         init_std = seed_scale / math.sqrt(max(1, out_features))
         self.U = mx.random.normal((out_features, rank), key=key) * init_std
+        # Retrieval-to-fast-weight compilation: refined retrieval slot
+        # states become the leading columns of U, so the adaptation
+        # SUBSPACE is spanned by retrieved knowledge — the temporary
+        # synapses can write those directions into the residual stream once
+        # V learns when to fire. V stays zero, so attach remains exactly
+        # identity and the erase proof is untouched.
+        self.retrieval_seeded_columns = 0
+        if (
+            seed_vectors is not None
+            and getattr(seed_vectors, "ndim", 0) == 2
+            and int(seed_vectors.shape[1]) == out_features
+        ):
+            k = min(int(rank), int(seed_vectors.shape[0]))
+            if k > 0:
+                target_norm = init_std * math.sqrt(max(1, out_features))
+                columns = []
+                for j in range(k):
+                    vector = seed_vectors[j].astype(self.U.dtype)
+                    norm = mx.maximum(mx.linalg.norm(vector), 1e-6)
+                    columns.append(vector / norm * target_norm)
+                seeded = mx.stack(columns, axis=1)
+                self.U = mx.concatenate([seeded, self.U[:, k:]], axis=1)
+                self.retrieval_seeded_columns = k
         self.V = mx.zeros((rank, in_features))
         mx.eval(self.U, self.V)
 
@@ -115,6 +146,7 @@ class FastWeightsLifecycle:
     detach_conflicts: int = 0
     canary_rescales: int = 0
     canary_erased: bool = False
+    retrieval_seeded_columns: int = 0
     loss_trail: list[float] = field(default_factory=list)
     gradient_global_norm_trail: list[float] = field(default_factory=list)
     accepted_step_sizes: list[float] = field(default_factory=list)
@@ -137,6 +169,7 @@ class FastWeightsLifecycle:
             "detach_conflicts": self.detach_conflicts,
             "canary_rescales": self.canary_rescales,
             "canary_erased": self.canary_erased,
+            "retrieval_seeded_columns": self.retrieval_seeded_columns,
             "loss_trail": [round(v, 6) for v in self.loss_trail],
             "gradient_global_norm_trail": [
                 round(v, 6) for v in self.gradient_global_norm_trail
@@ -167,6 +200,7 @@ class EpisodicFastWeights:
         *,
         seed_stat: float,
         episode_id: str,
+        seed_vectors=None,
     ) -> int:
         """Wrap the target linear in up to ``max_wrapped_layers`` window layers."""
         if self.handles:
@@ -186,6 +220,7 @@ class EpisodicFastWeights:
                     scale=self.config.scale,
                     seed_stat=seed_stat,
                     tag=f"{episode_id}:{i}:{self.config.target}",
+                    seed_vectors=seed_vectors,
                 )
                 setattr(parent, leaf_attr, wrapper)
                 self.handles.append(
@@ -208,6 +243,10 @@ class EpisodicFastWeights:
         self.lifecycle.layers = [h.layer_index for h in self.handles]
         self.lifecycle.target = self.config.target
         self.lifecycle.rank = self.config.rank
+        self.lifecycle.retrieval_seeded_columns = max(
+            (h.wrapper.retrieval_seeded_columns for h in self.handles),
+            default=0,
+        )
         return len(self.handles)
 
     def detach(self) -> int:

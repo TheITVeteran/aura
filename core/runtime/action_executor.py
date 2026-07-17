@@ -216,6 +216,31 @@ class ActionExecutor:
             }
 
         will_receipt_id = str(decision.receipt_id)
+        # Pre-action cortex: consequential actions get ONE cognitive thread
+        # across their whole cycle — a latent rehearsal now (predicted
+        # effect, preconditions, failure mode) and a discrepancy-driven
+        # reconciliation after observation. Fully defensive: no latent
+        # service, busy gate, or kill switch ⇒ receipted skip, same action.
+        preaction_thread = None
+        try:
+            from core.brain.preaction_cortex import (
+                PreActionCortexThread,
+                deliberation_worthy,
+            )
+
+            if deliberation_worthy(domain.value):
+                preaction_thread = PreActionCortexThread(
+                    domain=domain.value,
+                    action_name=action_name,
+                    request_digest=request_digest,
+                )
+                await preaction_thread.rehearse(
+                    action_summary=_safe_action_summary(action_name, params),
+                    expectation_objective=expectation_contract.objective,
+                )
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            logger.debug("Pre-action rehearsal unavailable: %s", exc)
+            preaction_thread = None
         body_service = BodyStateService.get()
         welfare_service = WelfareState.get()
         tx = WelfareTransaction.begin(
@@ -348,6 +373,17 @@ class ActionExecutor:
                     exc,
                     action=f"continued after Will outcome reinforcement failed for {action_name}",
                 )
+
+        if preaction_thread is not None:
+            # Same cognitive thread, phase 2: reality arrived. Replanning
+            # runs only on objective discrepancy (transport failure or an
+            # unverified effect) and its conclusion competes for Global
+            # Workspace broadcast — the loop closes through the mind.
+            try:
+                await preaction_thread.reconcile(result)
+                result["preaction_cortex"] = preaction_thread.to_receipt()
+            except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                logger.debug("Pre-action reconciliation unavailable: %s", exc)
 
         result["will_receipt_id"] = will_receipt_id
         result["welfare_transaction_id"] = tx.tx_id

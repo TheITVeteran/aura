@@ -639,3 +639,74 @@ def test_fast_weight_verifier_absent_without_verifier(monkeypatch):
     result = engine.reason(token_ids=PROMPT_TOKENS, budget=ComputeBudget())
     assert result.ok
     assert result.receipt.fast_weight_verifier == {}
+
+
+# ── Retrieval-to-fast-weight compilation ────────────────────────────────
+
+
+def test_retrieval_seeds_span_leading_U_columns(tiny_model):
+    layer = tiny_model.model.layers[3].self_attn.o_proj
+    hidden = 64
+    seeds = mx.stack(
+        [mx.ones((hidden,)) * 0.5, mx.arange(hidden).astype(mx.float32)]
+    )
+    from core.brain.llm.latent_cortex.fast_weights import EpisodicDeltaLinear
+
+    wrapper = EpisodicDeltaLinear(
+        layer, rank=4, scale=1.0, seed_stat=1.0, tag="t:3:o_proj",
+        seed_vectors=seeds,
+    )
+    assert wrapper.retrieval_seeded_columns == 2
+    # Leading columns are the normalized seed directions (up to scale).
+    for j, seed in enumerate([seeds[0], seeds[1]]):
+        column = wrapper.U[:, j]
+        cos = float(
+            (column * seed).sum()
+            / (mx.linalg.norm(column) * mx.linalg.norm(seed))
+        )
+        assert cos > 0.999
+    # Remaining columns keep the random init (nonzero, not seed-aligned).
+    assert float(mx.linalg.norm(wrapper.U[:, 2])) > 0.0
+
+
+def test_retrieval_seeding_preserves_exact_identity_at_attach(tiny_model):
+    x = mx.random.normal((1, 5, 64), key=mx.random.key(0))
+    layer = tiny_model.model.layers[2].self_attn.o_proj
+    from core.brain.llm.latent_cortex.fast_weights import EpisodicDeltaLinear
+
+    wrapper = EpisodicDeltaLinear(
+        layer, rank=2, scale=1.0, seed_stat=1.0, tag="t:2:o_proj",
+        seed_vectors=mx.random.normal((2, 64), key=mx.random.key(7)),
+    )
+    assert bool(mx.allclose(wrapper(x), layer(x), atol=0.0, rtol=0.0))
+
+
+def test_mismatched_seed_shapes_fall_back_to_random_init(tiny_model):
+    layer = tiny_model.model.layers[1].self_attn.o_proj
+    from core.brain.llm.latent_cortex.fast_weights import EpisodicDeltaLinear
+
+    wrapper = EpisodicDeltaLinear(
+        layer, rank=2, scale=1.0, seed_stat=1.0, tag="t:1:o_proj",
+        seed_vectors=mx.random.normal((2, 32), key=mx.random.key(1)),  # wrong dim
+    )
+    assert wrapper.retrieval_seeded_columns == 0
+
+
+def test_attach_records_retrieval_compilation_in_lifecycle(tiny_model):
+    fw = EpisodicFastWeights(
+        FastWeightsConfig(enabled=True, rank=3, target="o_proj", opt_steps=1)
+    )
+    seeds = mx.random.normal((2, 64), key=mx.random.key(9))
+    wrapped = fw.attach(
+        tiny_model.model,
+        (P_END, C_START),
+        seed_stat=1.0,
+        episode_id="ep-ret",
+        seed_vectors=seeds,
+    )
+    try:
+        assert wrapped > 0
+        assert fw.lifecycle.retrieval_seeded_columns == 2
+        assert fw.lifecycle.to_receipt()["retrieval_seeded_columns"] == 2
+    finally:
+        fw.detach()

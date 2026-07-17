@@ -1037,6 +1037,21 @@ class LatentCortexService:
             self._failure_streak = 0
             self._last_refusal = ""
             self._last_success_at = time.time()
+            # Identity consistency: the canonical self verifies the
+            # conclusion (persona displacement, forbidden intentions, core
+            # values). The verdict PRICES the broadcast — an inconsistent
+            # thought must outcompete honestly, never silently erased.
+            try:
+                from core.self.identity_consistency import (
+                    check_identity_consistency,
+                )
+
+                result_receipt["identity_consistency"] = (
+                    check_identity_consistency(str(result.get("text") or ""))
+                )
+                result["receipt"] = result_receipt
+            except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                logger.debug("Identity consistency check skipped: %s", exc)
             # Held-out grading queue: every facet judgment on the winning
             # candidate becomes a gradeable Foundry verdict (excerpt
             # attached), so facet-cue reliability is measured against human

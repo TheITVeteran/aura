@@ -43,6 +43,11 @@ from core.brain.llm.latent_cortex.types import (
     LatentReasoningResult,
 )
 from core.brain.llm.latent_cortex.workspace import per_position_rms
+
+# Cognitive-slot sources whose content is RETRIEVED knowledge (already
+# epistemically admitted) — eligible for compilation into the fast-weight
+# adaptation subspace.
+_RETRIEVAL_SLOT_SOURCES = frozenset({"memory", "world_model"})
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.LatentCortex.Engine")
@@ -1186,12 +1191,32 @@ class LatentCortexEngine:
                 cancel_check=cancel_check,
             )
             seed_stat = float(mx.mean(per_position_rms(winner.z)))
+            # Retrieval-to-fast-weight compilation: the refined states of
+            # retrieval-seeded slots (memory, world model — already
+            # epistemically admitted) span the leading columns of U, so the
+            # episode's temporary synapses start FROM retrieved knowledge
+            # instead of generic noise. Identity-at-attach and erase proof
+            # are untouched (V stays zero).
+            retrieval_seed_vectors = None
+            retrieval_indices = [
+                int(row["slot"])
+                for row in receipt.cognitive_slots
+                if row.get("source") in _RETRIEVAL_SLOT_SOURCES
+            ]
+            if retrieval_indices:
+                retrieval_seed_vectors = winner.z[0, retrieval_indices, :]
             wrapped = fast_weights.attach(
                 self.model.model,
                 (self.prelude_end, self.coda_start),
                 seed_stat=seed_stat,
                 episode_id=receipt.episode_id,
+                seed_vectors=retrieval_seed_vectors,
             )
+            if fast_weights.lifecycle.retrieval_seeded_columns > 0:
+                receipt.flag(
+                    "fast_weight_retrieval_compiled:"
+                    f"{fast_weights.lifecycle.retrieval_seeded_columns}"
+                )
             receipt.fast_weights_applied = True
             receipt.fast_weights_layers = wrapped
 
