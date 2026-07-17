@@ -1053,6 +1053,61 @@ class ResourceAdmissionController:
             pressure=pressure,
         )
 
+    def reap_dead_holder_leases_sync(
+        self,
+        *,
+        lane: str,
+        work_class: WorkClass = WorkClass.MODEL_LOAD,
+        reason: str = "holder_died",
+    ) -> int:
+        """Release leases whose holder is known dead — the 2026-07-15 soak P0.
+
+        A MODEL_LOAD lease conflicts with every other MODEL_LOAD lease, so a
+        cortex-load lease that dies without release (worker killed mid-load,
+        handshake failure) walls every recovery load behind its TTL while
+        each retry burns its own ``timeout_s`` into ``resource_timeout`` —
+        and the K1 reconciler retries into the same wall forever. The
+        worker-death seam (``_note_lane_worker_death``) calls this so the
+        wall falls within one poll interval, not one TTL.
+
+        Thread-safe and receipt-free: history carries the honest outcome
+        (``holder_died:<reason>``), and the holder that would have received
+        the release receipt is dead. The dead holder's own late ``release()``
+        becomes the already-tolerated KeyError path ("lease expired before
+        release"). Worst case a late death note reaps a NEWER same-lane
+        load's lease: that load keeps running (the global spawn mutex still
+        serializes real spawns beneath admission) and its release logs the
+        same tolerated line — bounded, and strictly better than the
+        deadlock. Never raises.
+        """
+        reaped = 0
+        try:
+            with self._lock:
+                victims = [
+                    lease
+                    for lease in self._leases.values()
+                    if lease.request.work_class is work_class
+                    and str(lease.request.lane) == str(lane)
+                ]
+                for lease in victims:
+                    self._leases.pop(lease.lease_id, None)
+                    self._request_to_lease.pop(lease.request.request_id, None)
+                    self._expired += 1
+                    self._append_history_locked(
+                        lease.request,
+                        AdmissionOutcome.EXPIRED,
+                        f"holder_died:{reason}"[:120],
+                        lease_id=lease.lease_id,
+                    )
+                    reaped += 1
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "resource_admission",
+                exc,
+                action="continued without reaping dead-holder leases",
+            )
+        return reaped
+
     def active_lease_count(self, work_class: WorkClass | None = None) -> int:
         with self._lock:
             self._expire_leases_locked(time.monotonic())

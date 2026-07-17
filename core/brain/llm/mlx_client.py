@@ -594,6 +594,31 @@ def _note_lane_worker_death(client: Any, reason: str) -> None:
         )
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
         logger.debug("Crash-loop death report skipped: %s", exc)
+    # The dead worker's MODEL_LOAD admission lease must die with it: a
+    # MODEL_LOAD lease conflicts with every other MODEL_LOAD lease, so an
+    # unreleased lease walls every recovery load behind its TTL while each
+    # retry burns to resource_timeout — the 2026-07-15 soak P0 (cortex
+    # never loaded all night while RAM sat at 40%). Same seam as the K4
+    # report, same never-throws contract.
+    try:
+        from core.brain.lane_admission import classify_lane
+        from core.runtime.control_plane import WorkClass, get_runtime_control_plane
+
+        lane, _qos = classify_lane(client.model_path)
+        reaped = get_runtime_control_plane().admission.reap_dead_holder_leases_sync(
+            lane=lane,
+            work_class=WorkClass.MODEL_LOAD,
+            reason=reason,
+        )
+        if reaped:
+            logger.warning(
+                "🧹 Reaped %d orphaned model-load admission lease(s) for dead %s worker (%s).",
+                reaped,
+                lane,
+                reason,
+            )
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        logger.debug("Dead-holder lease reap skipped: %s", exc)
 
 
 def _lane_is_last_warm(client: Any) -> bool:
