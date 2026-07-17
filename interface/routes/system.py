@@ -3422,6 +3422,35 @@ async def api_imagination_visualize(request: Request) -> JSONResponse:
                     "steps": 4,
                     "guidance_scale": 0.0,
                 },
+                # The owner clicked RENDER THIS on the authenticated desktop
+                # panel. Without this contract the governed spine correctly
+                # treats the render as an ungrounded autonomous act: standing
+                # authority finds no user-facing origin (live veto:
+                # "signed_standing_authority_lease_missing") and the AuraNow
+                # present-state policy defers it. The desktop execution
+                # contract is what lets an explicit owner action traverse the
+                # full tool spine — same envelope as chat's desktop lane.
+                context={
+                    "origin": "desktop_ui",
+                    "source": "desktop_ui",
+                    "route": "system.imagination_visualize",
+                    "objective": (
+                        "Render the imagination frame's own mental canvas — "
+                        "owner clicked RENDER THIS"
+                    ),
+                    "desktop_execution_contract": True,
+                    "foreground_request": True,
+                    "user_requested_action": True,
+                    "user_explicit_action_request": True,
+                    "user_explicitly_authorized": True,
+                    "user_visible_desktop_action": True,
+                    "local_desktop_action": True,
+                    "verification_required": True,
+                    "predicted_outcome": (
+                        "A rendered image of the frame's mental canvas is "
+                        "returned and shown in the Imagine panel."
+                    ),
+                },
             )
         except _SYSTEM_RECOVERABLE_ERRORS as exc:
             record_degradation("system", exc, action="imagination render failed")
