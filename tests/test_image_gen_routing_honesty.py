@@ -63,3 +63,47 @@ class TestImageGenInputShape:
     def test_truly_empty_input_still_fails_validation(self):
         with pytest.raises(Exception):
             ImageGenInput(**{"strength": 0.75})
+
+
+@pytest.mark.asyncio
+async def test_save_and_respond_writes_inside_governed_scope(tmp_path, monkeypatch):
+    """Live RENDER THIS failure (Jul 2026): every authorization gate passed,
+    the image generated, and the SAVE failed with 'called outside governed
+    context'. The artifact write must run inside a governed scope."""
+    from types import SimpleNamespace
+
+    from core.skills.image_gen import ImageGenSkill
+
+    skill = ImageGenSkill.__new__(ImageGenSkill)
+    skill._output_dir = tmp_path
+
+    class FakeImage:
+        def save(self, output, format="PNG"):
+            output.write(b"\x89PNG-fake-payload")
+
+    monkeypatch.setattr(
+        ImageGenSkill, "_is_degenerate", staticmethod(lambda image: False)
+    )
+
+    captured: dict = {}
+
+    class FakeGateway:
+        async def write_bytes_async(self, path, payload, *, source=""):
+            from core.governance_context import get_active_governance
+
+            captured["governance"] = get_active_governance()
+            captured["path"] = str(path)
+            captured["source"] = source
+
+    import core.skills.image_gen as image_gen_mod
+
+    monkeypatch.setattr(
+        image_gen_mod, "get_file_write_gateway", lambda: FakeGateway()
+    )
+
+    result = await skill._save_and_respond(FakeImage(), "a test prompt")
+    assert result["ok"], result
+    assert captured["source"] == "skills.image_gen.output"
+    assert captured["governance"] is not None, (
+        "artifact write must carry an active governed scope"
+    )

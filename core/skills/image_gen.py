@@ -565,11 +565,19 @@ class ImageGenSkill(BaseSkill):
                 return output.getvalue()
 
             payload = await asyncio.to_thread(_encode_png)
-            await get_file_write_gateway().write_bytes_async(
-                filepath,
-                payload,
-                source="skills.image_gen.output",
-            )
+            # The tool execution itself was authorized upstream (standing
+            # authority + Will + constitution); this internal artifact write
+            # still needs an active governed scope or the gateway refuses it
+            # — the exact failure the first live RENDER THIS hit after every
+            # authorization gate had already passed.
+            from core.governance_context import local_internal_governed_scope
+
+            with local_internal_governed_scope("image_gen_output"):
+                await get_file_write_gateway().write_bytes_async(
+                    filepath,
+                    payload,
+                    source="skills.image_gen.output",
+                )
         except _IMAGEGEN_RECOVERABLE_ERRORS as exc:
             return {"ok": False, "error": f"Failed to save image: {exc}"}
 

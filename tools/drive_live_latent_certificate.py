@@ -25,10 +25,13 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
+# NOT self-referential: a prompt about her own processes routes through the
+# self-process grounding contract, which excludes the latent lane by design
+# (CP119 first attempt proved this). Compound engineering question, 4 facets.
 DEFAULT_MESSAGE = (
-    "Compare how your latent workspace and your ordinary decode path handle a "
-    "multi-part question, choose which one you would trust for high-stakes "
-    "arithmetic, explain why, and verify your choice with one concrete check."
+    "Compare optimistic and pessimistic locking for a hot task queue, choose "
+    "which one you would use in a single-host async runtime, explain why, and "
+    "verify your choice with one concrete failure scenario."
 )
 
 
