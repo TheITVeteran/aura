@@ -396,10 +396,10 @@ class CortexConfig:
             "none",
             "assistant_answer_v1",
             "assistant_answer_v2",
+            "assistant_answer_v3",
         }:
             problems.append(
-                "decode_bridge_policy must be none, assistant_answer_v1, or "
-                "assistant_answer_v2"
+                "decode_bridge_policy must be none or an assistant_answer_v1-v3 policy"
             )
         if not (
             type(self.input_context_max_chars) is int

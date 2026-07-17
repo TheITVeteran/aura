@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import math
 import re
+from difflib import SequenceMatcher
 from typing import Any
 
 OUTPUT_QUALITY_SCHEMA = "aura.latent_output_quality.v1"
@@ -28,15 +29,19 @@ _REQUEST_FACETS = {
 }
 _ANSWER_FACETS = {
     "compare": re.compile(
-        r"\b(?:whereas|while|unlike|versus|compared|by\s+contrast|in\s+contrast|early|late)\b",
+        r"\b(?:whereas|while|unlike|versus|compared|by\s+contrast|in\s+contrast)\b",
         re.I,
     ),
     "select": re.compile(
-        r"\b(?:choose|recommend|prefer|stronger|best|should\s+(?:use|choose|adopt)|the\s+winner)\b",
+        r"(?:\b(?:i|we)\s+(?:would\s+)?(?:choose|recommend|prefer)\b|"
+        r"\b(?:is|remains)\s+(?:the\s+)?stronger\b|"
+        r"\bshould\s+(?:use|choose|adopt)\b|\bthe\s+winner\b)",
         re.I,
     ),
     "verify": re.compile(
-        r"\b(?:verify|test|assert|inject|simulate|fault|cancel|timeout|restart|invariant|receipt)\w*\b",
+        r"\b(?:test(?:ing|ed|s)?|assert(?:ion|s|ed)?|inject(?:ion|ed|s)?|"
+        r"simulate(?:d|s|ion)?|exercise(?:d|s)?|replay(?:ed|s)?|"
+        r"measure(?:d|s|ment)?|check(?:ed|s)?|verify\s+(?:by|with|that))\b",
         re.I,
     ),
     "explain": re.compile(
@@ -60,6 +65,12 @@ _SUBJECT_NOISE = {
     "and", "case", "cases", "condition", "conditions", "fault", "faults", "scenario",
     "scenarios", "the", "with",
 }
+_PROTOCOL_ARTIFACT_RE = re.compile(
+    r"(?:<\s*/?\s*(?:request|response|system|assistant|user)\b|"
+    r"<\s*div\b[^>]{0,160}\bresponse\b[^>]{0,160}\brequest\b)",
+    re.I,
+)
+_FENCED_BLOCK_RE = re.compile(r"```.*?```", re.DOTALL)
 
 
 def request_facets(objective: Any) -> list[str]:
@@ -75,6 +86,110 @@ def request_facets(objective: Any) -> list[str]:
 
 def _tokens(text: str) -> list[str]:
     return [token.lower() for token in _WORD_RE.findall(text)]
+
+
+def _analysis_surface(text: str, objective: str) -> dict[str, Any]:
+    """Remove copied request spans before judging whether an answer did work.
+
+    A model may legitimately reuse individual topic terms. What cannot earn
+    credit is a long contiguous copy of the request: CP118 echoed the entire
+    compare/choose/verify clause, and the old gate counted those instructions
+    as if the answer had fulfilled them.
+    """
+
+    answer_tokens = _tokens(text)
+    objective_tokens = _tokens(objective)
+    copied_indexes: set[int] = set()
+    longest_run = 0
+    matcher = SequenceMatcher(
+        None,
+        objective_tokens,
+        answer_tokens,
+        autojunk=False,
+    )
+    for block in matcher.get_matching_blocks():
+        if block.size < 4:
+            continue
+        longest_run = max(longest_run, block.size)
+        copied_indexes.update(range(block.b, block.b + block.size))
+    copied_count = len(copied_indexes)
+    objective_echo_ratio = copied_count / max(1, len(objective_tokens))
+    answer_echo_ratio = copied_count / max(1, len(answer_tokens))
+    echo_threshold = max(8, math.ceil(len(objective_tokens) * 0.25))
+    prompt_echo_detected = bool(
+        longest_run >= echo_threshold or objective_echo_ratio >= 0.35
+    )
+    novel_tokens = [
+        token for index, token in enumerate(answer_tokens) if index not in copied_indexes
+    ]
+    visible_without_code = _FENCED_BLOCK_RE.sub("", text)
+    protocol_artifact_detected = bool(
+        _PROTOCOL_ARTIFACT_RE.search(visible_without_code)
+    )
+    return {
+        "analysis_text": " ".join(novel_tokens),
+        "analysis_tokens": novel_tokens,
+        "prompt_echo_detected": prompt_echo_detected,
+        "protocol_artifact_detected": protocol_artifact_detected,
+        "copied_objective_token_count": copied_count,
+        "longest_objective_copy_tokens": longest_run,
+        "objective_echo_ratio": objective_echo_ratio,
+        "answer_echo_ratio": answer_echo_ratio,
+    }
+
+
+def evaluate_facet_coverage(text: Any, objective: Any) -> dict[str, Any]:
+    """Judge requested facets only on answer-authored, non-echoed content."""
+
+    rendered = text if isinstance(text, str) else ""
+    objective_text = objective if isinstance(objective, str) else ""
+    surface = _analysis_surface(rendered, objective_text)
+    analysis_text = str(surface["analysis_text"])
+    requested = request_facets(objective_text)
+    list_items = len(_LIST_ITEM_RE.findall(rendered))
+    satisfied: list[str] = []
+    excerpts: dict[str, str] = {}
+    unsupported_cues: list[str] = []
+    broad_hints = {
+        "compare": re.compile(r"\b(?:compare|contrast|early|late|whereas|while)\b", re.I),
+        "select": re.compile(r"\b(?:choose|recommend|prefer|stronger|best|winner)\b", re.I),
+        "verify": re.compile(r"\b(?:verif\w*|test\w*|fault|cancel|timeout|restart)\b", re.I),
+        "explain": _ANSWER_FACETS["explain"],
+        "enumerate": re.compile(r"\b(?:first|second|third|finally|steps?)\b", re.I),
+    }
+    for name in requested:
+        matched = bool(_ANSWER_FACETS[name].search(analysis_text))
+        if name == "compare" and not matched:
+            matched = bool(
+                re.search(r"\bearly\b", analysis_text, re.I)
+                and re.search(r"\blate\b", analysis_text, re.I)
+                and re.search(r"\b(?:pros?|cons?|advantage|disadvantage)\w*\b", analysis_text, re.I)
+            )
+        if name == "enumerate" and list_items >= 2:
+            matched = True
+        if matched:
+            satisfied.append(name)
+            match = _ANSWER_FACETS[name].search(analysis_text)
+            start = max(0, (match.start() if match else 0) - 90)
+            end = min(len(analysis_text), (match.end() if match else 0) + 110)
+            excerpts[name] = analysis_text[start:end].strip()
+        elif broad_hints[name].search(analysis_text):
+            unsupported_cues.append(name)
+    if surface["prompt_echo_detected"] or surface["protocol_artifact_detected"]:
+        score = 0.0 if requested else None
+    else:
+        score = (len(satisfied) / len(requested)) if requested else None
+    return {
+        "requested": requested,
+        "satisfied": satisfied,
+        "unsupported_cues": unsupported_cues,
+        "excerpts": excerpts,
+        "score": score,
+        "prompt_echo_detected": bool(surface["prompt_echo_detected"]),
+        "protocol_artifact_detected": bool(surface["protocol_artifact_detected"]),
+        "copied_objective_token_count": int(surface["copied_objective_token_count"]),
+        "longest_objective_copy_tokens": int(surface["longest_objective_copy_tokens"]),
+    }
 
 
 def _concept(token: str) -> str:
@@ -169,7 +284,10 @@ def evaluate_latent_output(
     objective_text = objective if isinstance(objective, str) else ""
     generated = generated_tokens if type(generated_tokens) is int else 0
     stop = termination if isinstance(termination, str) else ""
-    words = _tokens(rendered)
+    surface = _analysis_surface(rendered, objective_text)
+    analysis_text = str(surface["analysis_text"])
+    visible_words = _tokens(rendered)
+    words = list(surface["analysis_tokens"])
     objective_words = _tokens(objective_text)
     normalized_nonempty_lines = [
         " ".join(_tokens(line))
@@ -188,9 +306,11 @@ def evaluate_latent_output(
     semicolon_clauses = rendered.count(";")
     discourse_units = max(sentence_count + semicolon_clauses, list_items)
     max_blank_lines = _max_blank_line_run(rendered)
-    lexical_yield = len(words) / max(1, generated)
+    lexical_yield = len(visible_words) / max(1, generated)
 
-    trigrams = list(zip(words, words[1:], words[2:], strict=False))
+    trigrams = list(
+        zip(visible_words, visible_words[1:], visible_words[2:], strict=False)
+    )
     trigram_diversity = len(set(trigrams)) / max(1, len(trigrams))
     line_duplication_ratio = (
         1.0 - len(set(normalized_nonempty_lines)) / len(normalized_nonempty_lines)
@@ -198,15 +318,9 @@ def evaluate_latent_output(
         else 0.0
     )
 
-    requested_facets = [
-        name for name, pattern in _REQUEST_FACETS.items() if pattern.search(objective_text)
-    ]
-    satisfied_facets = [
-        name
-        for name in requested_facets
-        if _ANSWER_FACETS[name].search(rendered)
-        or (name == "enumerate" and list_items >= 2)
-    ]
+    facet_evidence = evaluate_facet_coverage(rendered, objective_text)
+    requested_facets = list(facet_evidence["requested"])
+    satisfied_facets = list(facet_evidence["satisfied"])
     missing_facets = sorted(set(requested_facets) - set(satisfied_facets))
     compound = len(requested_facets) >= 2
 
@@ -258,9 +372,13 @@ def evaluate_latent_output(
         reasons.append("compound_answer_underdeveloped")
     if missing_facets:
         reasons.append("missing_requested_facets")
+    if surface["prompt_echo_detected"]:
+        reasons.append("prompt_echo_contamination")
+    if surface["protocol_artifact_detected"]:
+        reasons.append("protocol_artifact_leakage")
     if compound and (len(matched_objective_terms) < 2 or objective_coverage < 0.08):
         reasons.append("objective_disconnected")
-    if len(listed_subjects) >= 2 and listed_subject_coverage < 0.60:
+    if len(listed_subjects) >= 2 and listed_subject_coverage < 1.0:
         reasons.append("listed_subjects_uncovered")
     terminal_complete = _terminal_complete(rendered)
     if rendered.strip() and not structured and not terminal_complete:
@@ -273,7 +391,8 @@ def evaluate_latent_output(
         "text_sha256": hashlib.sha256(rendered.encode("utf-8")).hexdigest(),
         "objective_sha256": hashlib.sha256(objective_text.encode("utf-8")).hexdigest(),
         "char_count": len(rendered),
-        "word_count": len(words),
+        "word_count": len(visible_words),
+        "novel_word_count": len(words),
         "generated_token_count": generated,
         "termination": stop,
         "lexical_yield": round(lexical_yield, 6),
@@ -295,8 +414,24 @@ def evaluate_latent_output(
         "listed_subjects": [subject["label"] for subject in listed_subjects],
         "covered_listed_subjects": covered_subjects,
         "listed_subject_coverage": round(listed_subject_coverage, 6),
+        "prompt_echo_detected": bool(surface["prompt_echo_detected"]),
+        "protocol_artifact_detected": bool(surface["protocol_artifact_detected"]),
+        "copied_objective_token_count": int(
+            surface["copied_objective_token_count"]
+        ),
+        "longest_objective_copy_tokens": int(
+            surface["longest_objective_copy_tokens"]
+        ),
+        "objective_echo_ratio": round(float(surface["objective_echo_ratio"]), 6),
+        "answer_echo_ratio": round(float(surface["answer_echo_ratio"]), 6),
+        "facet_evidence": facet_evidence,
         "reasons": reasons,
     }
 
 
-__all__ = ["OUTPUT_QUALITY_SCHEMA", "evaluate_latent_output", "request_facets"]
+__all__ = [
+    "OUTPUT_QUALITY_SCHEMA",
+    "evaluate_facet_coverage",
+    "evaluate_latent_output",
+    "request_facets",
+]

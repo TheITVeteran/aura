@@ -168,7 +168,7 @@ def test_engine_selects_branch_by_verifier_score():
 
     def verifier(text: str) -> float:
         scored.append(text)
-        # Prefer whichever probe this deterministic stub sees SECOND —
+        # Prefer whichever probe this deterministic scorer sees SECOND —
         # proving selection follows the score, not branch order.
         return float(len(scored))
 

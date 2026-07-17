@@ -59,9 +59,14 @@ _ASSISTANT_ANSWER_BRIDGE = "\nFinal answer:\n"
 _ASSISTANT_ANSWER_BRIDGE_V2 = (
     "\nFinal answer (address every part of the request, concisely):\n"
 )
+_ASSISTANT_ANSWER_BRIDGE_V3 = (
+    "\nFinal answer (do not quote or repeat the request; answer each part "
+    "directly and finish the complete response):\n"
+)
 _BRIDGE_TEXT_BY_POLICY = {
     "assistant_answer_v1": _ASSISTANT_ANSWER_BRIDGE,
     "assistant_answer_v2": _ASSISTANT_ANSWER_BRIDGE_V2,
+    "assistant_answer_v3": _ASSISTANT_ANSWER_BRIDGE_V3,
 }
 # Decode discipline: at most this many consecutive pure-newline tokens are
 # admitted before newline-family logits are masked for the next sample. Two
@@ -1640,7 +1645,9 @@ class LatentCortexEngine:
         decision = "accepted"
         rescales = 0
         comparison: dict[str, Any] = {}
-        while True:
+        # Bounded by construction: one measurement per rescale attempt plus
+        # the initial one; the final regressed pass erases ΔW and exits.
+        for _attempt in range(max_rescales + 1):
             adapted = canaries.measure(
                 lambda probe_tokens: self._canary_logits(probe_tokens, budget)
             )

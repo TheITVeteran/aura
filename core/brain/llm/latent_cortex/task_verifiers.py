@@ -29,7 +29,9 @@ import logging
 import re
 from typing import Any
 
-from core.brain.llm.latent_cortex.output_quality import request_facets
+from core.brain.llm.latent_cortex.output_quality import (
+    evaluate_facet_coverage,
+)
 
 logger = logging.getLogger("Aura.LatentCortex.TaskVerifiers")
 
@@ -132,58 +134,10 @@ def check_code_blocks(text: str) -> dict[str, Any]:
 
 
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+|\n{2,}")
-_CONTENT_WORD_RE = re.compile(r"[^\W\d_]{4,}", re.UNICODE)
-
-
-def _facet_cue_sentences(text: str, pattern: re.Pattern[str]) -> list[str]:
-    """Sentences containing a facet cue AND enough content to mean it.
-
-    Anti-Goodhart: bare cue tokens ("Because. Whereas. I choose.") must not
-    satisfy a facet — the model could learn to emit the keyword without the
-    substance. A cue only counts inside a sentence of >= 6 words carrying
-    >= 3 content words beyond the cue itself. Genuine paraphrased substance
-    passes; keyword stuffing does not. The matched excerpts are receipted so
-    facet claims stay auditable by held-out human grading.
-    """
-    sentences = []
-    for sentence in _SENTENCE_SPLIT_RE.split(text or ""):
-        match = pattern.search(sentence)
-        if not match:
-            continue
-        words = sentence.split()
-        if len(words) < 6:
-            continue
-        cue_tokens = {token.lower() for token in match.group(0).split()}
-        content = [
-            word
-            for word in _CONTENT_WORD_RE.findall(sentence)
-            if word.lower() not in cue_tokens
-        ]
-        if len(content) >= 3:
-            sentences.append(sentence.strip()[:200])
-    return sentences
 
 
 def check_facet_coverage(text: str, objective: str) -> dict[str, Any]:
-    requested = request_facets(objective)
-    satisfied: list[str] = []
-    unsupported_cues: list[str] = []
-    excerpts: dict[str, str] = {}
-    for name in requested:
-        pattern = _ANSWER_FACET_HINTS[name]
-        supported = _facet_cue_sentences(text or "", pattern)
-        if supported:
-            satisfied.append(name)
-            excerpts[name] = supported[0]
-        elif pattern.search(text or ""):
-            unsupported_cues.append(name)
-    return {
-        "requested": requested,
-        "satisfied": satisfied,
-        "unsupported_cues": unsupported_cues,
-        "excerpts": excerpts,
-        "score": (len(satisfied) / len(requested)) if requested else None,
-    }
+    return evaluate_facet_coverage(text, objective)
 
 
 def check_degeneracy(text: str) -> dict[str, Any]:

@@ -4214,7 +4214,12 @@ def _registry_grounded_person_names() -> set[str]:
             candidate = getattr(service, accessor, None)
             try:
                 values = candidate() if callable(candidate) else candidate
-            except Exception:  # noqa: BLE001 - organ contract unknown; skip
+            except Exception as accessor_exc:  # noqa: BLE001 - organ contract unknown; skip
+                logger.debug(
+                    "Person-registry accessor probe failed (%s): %s",
+                    accessor,
+                    accessor_exc,
+                )
                 continue
             if isinstance(values, (list, tuple, set, frozenset)):
                 names.update(

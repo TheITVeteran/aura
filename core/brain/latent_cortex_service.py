@@ -382,7 +382,11 @@ class LatentCortexService:
         }:
             errors.append("decode_incomplete")
         decode_bridge_policy = config.get("decode_bridge_policy", "none")
-        if decode_bridge_policy in {"assistant_answer_v1", "assistant_answer_v2"}:
+        if decode_bridge_policy in {
+            "assistant_answer_v1",
+            "assistant_answer_v2",
+            "assistant_answer_v3",
+        }:
             if receipt.get("decode_bridge_applied") is not True:
                 errors.append("decode_bridge_unapplied")
             if receipt.get("decode_bridge_policy") != decode_bridge_policy:
@@ -889,7 +893,7 @@ class LatentCortexService:
                     256,
                     min(384, max(requested_decode_tokens, 320)),
                 )
-                config["decode_bridge_policy"] = "assistant_answer_v2"
+                config["decode_bridge_policy"] = "assistant_answer_v3"
                 # EOS floor: a compound answer abandoned 16 tokens in is
                 # sampling variance, not a decision (CP116 live evidence).
                 config["decode_min_tokens"] = 96

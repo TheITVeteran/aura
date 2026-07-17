@@ -1529,7 +1529,7 @@ def test_handler_builds_task_verifier_when_guided(monkeypatch):
 
     class StubEngine:
         def __init__(self, model, tokenizer, config, **kwargs):
-            pass
+            """Accept the engine construction contract; state is unused."""
 
         def reason(self, **kwargs):
             captured.update(kwargs)

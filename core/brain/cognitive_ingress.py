@@ -179,9 +179,11 @@ def _signal_memory(objective: str) -> IngressSignal:
             except TypeError:
                 try:
                     hits = fn(objective)
-                except Exception:  # noqa: BLE001 - organ contract unknown; absent
+                except Exception as retry_exc:  # noqa: BLE001 - organ contract unknown; absent
+                    logger.debug("Memory organ probe failed (%s.%s): %s", name, method, retry_exc)
                     continue
-            except Exception:  # noqa: BLE001 - organ contract unknown; absent
+            except Exception as probe_exc:  # noqa: BLE001 - organ contract unknown; absent
+                logger.debug("Memory organ probe failed (%s.%s): %s", name, method, probe_exc)
                 continue
             count = len(hits) if isinstance(hits, (list, tuple)) else 0
             familiarity = min(1.0, count / 4.0)
@@ -321,7 +323,8 @@ def _signal_goals(objective: str) -> IngressSignal:
         candidate = getattr(service, accessor, None)
         try:
             items = candidate() if callable(candidate) else candidate
-        except Exception:  # noqa: BLE001 - organ contract unknown; absent
+        except Exception as accessor_exc:  # noqa: BLE001 - organ contract unknown; absent
+            logger.debug("Organ accessor probe failed (%s): %s", accessor, accessor_exc)
             continue
         if isinstance(items, (list, tuple)):
             for item in items[:16]:
@@ -402,7 +405,8 @@ def _signal_will(orchestrator: Any) -> IngressSignal:
         candidate = getattr(service, accessor, None)
         try:
             value = candidate() if callable(candidate) else candidate
-        except Exception:  # noqa: BLE001 - organ contract unknown; absent
+        except Exception as accessor_exc:  # noqa: BLE001 - organ contract unknown; absent
+            logger.debug("Organ accessor probe failed (%s): %s", accessor, accessor_exc)
             continue
         if isinstance(value, (int, float)) and not isinstance(value, bool):
             value = min(1.0, max(0.0, float(value)))
@@ -422,7 +426,8 @@ def _unit_reading(service: Any, accessors: tuple[str, ...]) -> float | None:
         candidate = getattr(service, accessor, None)
         try:
             value = candidate() if callable(candidate) else candidate
-        except Exception:  # noqa: BLE001 - organ contract unknown; skip
+        except Exception as accessor_exc:  # noqa: BLE001 - organ contract unknown; skip
+            logger.debug("Organ accessor probe failed (%s): %s", accessor, accessor_exc)
             continue
         if isinstance(value, (int, float)) and not isinstance(value, bool):
             return float(value)
@@ -588,7 +593,8 @@ def _signal_world_model(orchestrator: Any) -> IngressSignal:
         candidate = getattr(service, accessor, None)
         try:
             value = candidate() if callable(candidate) else candidate
-        except Exception:  # noqa: BLE001 - organ contract unknown; skip
+        except Exception as accessor_exc:  # noqa: BLE001 - organ contract unknown; skip
+            logger.debug("Organ accessor probe failed (%s): %s", accessor, accessor_exc)
             continue
         if isinstance(value, str) and value.strip():
             summary = value.strip()[:400]
