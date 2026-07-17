@@ -192,3 +192,40 @@ launched, bounded).
 - Consolidation candidates land in `data/latent_cortex/consolidation_queue/`
   for the existing LoRA-compounding regression gates; nothing consolidates
   from inside an episode.
+
+## Closeout state (2026-07-17, head ffc0e004+)
+
+**Live PASS certificates on the resident 32B through the signed installed
+app:** `artifacts/current/cp106_live_latent_turn.json` (first authentic
+full-stack answer) and `artifacts/current/cp118_live_latent_turn.json`
+(the complete organ head: verifier-guided branch selection, typed
+cognitive ingress, execution-controller observation, live consolidation
+export, EOS floor, repetition guard, newline discipline, sentence grace,
+time-aware wall wind-down — answer finished at a sentence boundary,
+all four requested facets satisfied, fast-weight descent accepted and
+erased with proof, params unchanged).
+
+**Organ inventory (the "Core architecture" additions):** all seven runtime
+organs landed — recurrence-native training objective (+ recurrent-depth
+curriculum loss, train/inference norm parity with the engine's anchored
+trust band), learned per-problem execution controller (evidence-gated
+contextual bandit, verified-outcome rewards), full neural bytecode with
+verifier-guided backtracking, role lesion/swap causality (Experiment R),
+GWT↔RLC bidirectional coupling, continuous pre-action cortex loop,
+retrieval→ΔW compilation; plus fast-weight capability canaries, latent
+safety telemetry, attractor escape ladder, vector organ ingress,
+held-out facet grading, verifier arbitration over ΔW, and durable
+adapter distillation with the anti-interference battery. Items 8–15 of
+the list are training programs (data + operator-launched runs), not
+runtime organs; the objective and curriculum losses are their entry
+point.
+
+**Capability evidence (honest):** template-parity 32B sweep — latent
+accuracy scales 0.167→0.375 from 1→2 recurrent steps (the live
+profile's setting) then plateaus; vanilla 0.417 leads on point estimate
+with fully overlapping Wilson intervals at n=24. Statistical parity,
+graded CONJECTURE. The mechanism is proven causal, cheap (~3.5s of a
+~110s episode; decode dominates), and live; the intelligence dividend
+has not yet appeared in the data. The recurrence-native objective exists
+precisely because the frozen-loop ceiling is real — the next capability
+move is training, not more runtime machinery.
