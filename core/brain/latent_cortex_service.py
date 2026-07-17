@@ -634,6 +634,7 @@ class LatentCortexService:
         timeout_s: float = 300.0,
         require_full_stack: bool = True,
         foreground_request: bool = True,
+        cognitive_context: list | None = None,
     ) -> dict[str, Any]:
         """Run one latent-reasoning episode on the resident model."""
         if not _cortex_enabled():
@@ -673,6 +674,19 @@ class LatentCortexService:
             return self._record_failure("invalid_require_full_stack")
         if type(foreground_request) is not bool:
             return self._record_failure("invalid_foreground_request")
+        if cognitive_context is not None:
+            if not isinstance(cognitive_context, list) or len(cognitive_context) > 6:
+                return self._record_failure("invalid_cognitive_context")
+            for entry in cognitive_context:
+                if (
+                    not isinstance(entry, dict)
+                    or not isinstance(entry.get("source"), str)
+                    or not entry["source"].strip()
+                    or not isinstance(entry.get("text"), str)
+                    or not entry["text"].strip()
+                    or len(entry["text"]) > 400
+                ):
+                    return self._record_failure("invalid_cognitive_context")
         try:
             timeout_s = float(timeout_s)
         except (TypeError, ValueError, OverflowError):
@@ -837,6 +851,10 @@ class LatentCortexService:
                     runtime_controls=runtime_controls,
                     timeout_s=timeout_s,
                     foreground_request=foreground_request,
+                    # Typed cognitive-slot ingress: organ content (memory,
+                    # goals, world model, interoception, self-model) seeds
+                    # identifiable workspace slots inside the episode.
+                    cognitive_context=cognitive_context,
                     # Foreground resident episodes select branches and accept
                     # latent-opt proposals by deterministic task-typed checks
                     # (arithmetic recomputation, code syntax, facet coverage,

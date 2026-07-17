@@ -1620,9 +1620,11 @@ class ResponseGenerationPhase(BasePhase):
                             ingress_uncertainty = float(
                                 selection.get("uncertainty") or 0.80
                             )
+                            ingress_slot_items: list | None = None
                             try:
                                 from core.brain.cognitive_ingress import (
                                     assemble_cognitive_ingress,
+                                    cognitive_context_items,
                                 )
 
                                 ingress = assemble_cognitive_ingress(
@@ -1635,6 +1637,14 @@ class ResponseGenerationPhase(BasePhase):
                                 )
                                 ingress_stakes = max(ingress.stakes, ingress_stakes - 0.15)
                                 ingress_uncertainty = ingress.uncertainty
+                                # Slot ingress: the organs' CONTENT seeds
+                                # identifiable workspace slots inside the
+                                # episode — memory/goals/world model/
+                                # interoception reach her thoughts, not just
+                                # her compute budget.
+                                ingress_slot_items = (
+                                    cognitive_context_items(ingress) or None
+                                )
                                 latent_trace["latent_cortex_ingress"] = (
                                     ingress.to_receipt()
                                 )
@@ -1682,6 +1692,7 @@ class ResponseGenerationPhase(BasePhase):
                                 timeout_s=latent_timeout,
                                 require_full_stack=True,
                                 foreground_request=True,
+                                cognitive_context=ingress_slot_items,
                             )
                     if (
                         isinstance(latent_result, dict)

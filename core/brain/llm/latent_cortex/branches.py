@@ -107,6 +107,8 @@ class BranchEnsemble:
         runner: WindowRunner,
         cache,
         prelude_end: int,
+        *,
+        context_seeds: list[tuple[str, Any]] | None = None,
     ) -> BranchEnsemble:
         import mlx.core as mx
 
@@ -114,7 +116,10 @@ class BranchEnsemble:
         for k in range(branch_cfg.n_branches):
             role = BRANCH_ROLES[k % len(BRANCH_ROLES)]
             ws = LatentWorkspace.from_prompt_embeddings(
-                prompt_embeddings, workspace_cfg, branch_role=role
+                prompt_embeddings,
+                workspace_cfg,
+                branch_role=role,
+                context_seeds=context_seeds,
             )
             # Prelude pass: persist=False for every branch — the engine
             # persists the WINNER's prelude at selection time. Rationale: all

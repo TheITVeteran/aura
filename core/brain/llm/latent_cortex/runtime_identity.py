@@ -48,6 +48,7 @@ def latent_request_payload_sha256(
     config: Any,
     budget: Any,
     runtime_controls: Any,
+    cognitive_context: Any = None,
 ) -> str:
     payload = {
         "prompt": prompt,
@@ -57,6 +58,10 @@ def latent_request_payload_sha256(
         "budget": budget,
         "runtime_controls": runtime_controls,
     }
+    # Additive so pre-ingress request digests stay reproducible: episodes
+    # without typed cognitive context hash exactly as they always did.
+    if cognitive_context is not None:
+        payload["cognitive_context"] = cognitive_context
     encoded = json.dumps(
         payload,
         sort_keys=True,

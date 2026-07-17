@@ -3833,6 +3833,7 @@ class MLXLocalClient:
         timeout_s: float = 300.0,
         foreground_request: bool = True,
         verifier_guidance: bool = False,
+        cognitive_context: list | None = None,
     ) -> dict[str, Any]:
         """Run a Recursive Latent Cortex episode on the RESIDENT worker model.
 
@@ -3857,6 +3858,26 @@ class MLXLocalClient:
             return {**base, "reason": "invalid_budget"}
         if runtime_controls is not None and not isinstance(runtime_controls, dict):
             return {**base, "reason": "invalid_runtime_controls"}
+        wire_cognitive_context: list[dict[str, str]] | None = None
+        if cognitive_context is not None:
+            if not isinstance(cognitive_context, list) or len(cognitive_context) > 6:
+                return {**base, "reason": "invalid_cognitive_context"}
+            wire_cognitive_context = []
+            for entry in cognitive_context:
+                if (
+                    not isinstance(entry, dict)
+                    or not isinstance(entry.get("source"), str)
+                    or not entry["source"].strip()
+                    or not isinstance(entry.get("text"), str)
+                    or not entry["text"].strip()
+                    or len(entry["text"]) > 400
+                ):
+                    return {**base, "reason": "invalid_cognitive_context"}
+                wire_cognitive_context.append(
+                    {"source": entry["source"].strip()[:40], "text": entry["text"]}
+                )
+            if not wire_cognitive_context:
+                wire_cognitive_context = None
         wire_config = dict(config or {})
         wire_budget = dict(budget or {})
         wire_runtime_controls = dict(runtime_controls or {})
@@ -3896,6 +3917,7 @@ class MLXLocalClient:
                 runtime_controls=(
                     wire_runtime_controls if runtime_controls is not None else None
                 ),
+                cognitive_context=wire_cognitive_context,
             )
         except (TypeError, ValueError, OverflowError):
             return {**base, "reason": "invalid_request_payload"}
@@ -3987,6 +4009,8 @@ class MLXLocalClient:
                 job["clean_user_surface_contract"] = True
                 job["live_mind_controls_bound"] = True
                 job.update(wire_runtime_controls)
+            if wire_cognitive_context is not None:
+                job["cognitive_context"] = wire_cognitive_context
 
             fut = _new_shared_future()
             self._pending_generations[req_id] = fut

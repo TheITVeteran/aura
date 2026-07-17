@@ -269,6 +269,30 @@ def handle_latent_reason(
 
     config = config_from_job(job.get("config"))
     budget = budget_from_job(job.get("budget"))
+    cognitive_context = job.get("cognitive_context")
+    if cognitive_context is not None:
+        if not isinstance(cognitive_context, list) or len(cognitive_context) > 6:
+            return {
+                "status": "error",
+                "message": "latent_reason cognitive_context must be a list of at most 6 items",
+            }
+        for entry in cognitive_context:
+            if (
+                not isinstance(entry, dict)
+                or not isinstance(entry.get("source"), str)
+                or not entry["source"].strip()
+                or not isinstance(entry.get("text"), str)
+                or not entry["text"].strip()
+                or len(entry["text"]) > 400
+                or set(entry) - {"source", "text"}
+            ):
+                return {
+                    "status": "error",
+                    "message": (
+                        "latent_reason cognitive_context entries must be "
+                        "{source, text<=400 chars}"
+                    ),
+                }
     engine = LatentCortexEngine(
         model,
         tokenizer,
@@ -312,6 +336,7 @@ def handle_latent_reason(
         budget=budget,
         domain=str(job.get("domain", "general")),
         verifier=task_verifier,
+        cognitive_context=cognitive_context,
         cancel_check=cancel_check,
         progress=progress,
     )
@@ -370,6 +395,7 @@ def handle_latent_reason(
         config=job.get("config"),
         budget=job.get("budget"),
         runtime_controls=job.get("runtime_controls"),
+        cognitive_context=cognitive_context,
     )
     body = result.to_dict()
     body["status"] = "ok" if result.ok else "error"

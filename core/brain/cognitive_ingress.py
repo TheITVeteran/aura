@@ -54,6 +54,10 @@ class IngressSignal:
     stakes_delta: float = 0.0
     uncertainty_delta: float = 0.0
     detail: str = ""
+    # Organ CONTENT for cognitive-slot ingress: when non-empty, this text is
+    # eligible to seed an identifiable workspace slot inside the episode
+    # (memory recall, matched goal, world summary, ...). Bounded at source.
+    context_text: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -63,6 +67,7 @@ class IngressSignal:
             "stakes_delta": round(self.stakes_delta, 4),
             "uncertainty_delta": round(self.uncertainty_delta, 4),
             "detail": self.detail[:160],
+            "context_text_chars": len(self.context_text),
         }
 
 
@@ -98,6 +103,23 @@ def _get_service(name: str):
         return None
 
 
+def _hit_text(hit: Any) -> str:
+    """Extract readable content from an unknown-shaped memory hit."""
+    if isinstance(hit, str):
+        return hit
+    if isinstance(hit, dict):
+        for key in ("content", "text", "summary", "value", "description"):
+            candidate = hit.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate
+        return ""
+    for attr in ("content", "text", "summary", "description"):
+        candidate = getattr(hit, attr, None)
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate
+    return ""
+
+
 def _signal_memory(objective: str) -> IngressSignal:
     """Recall familiarity: strong hits ⇒ less uncertainty; blankness ⇒ more."""
     for name in ("memory_facade", "episodic_memory"):
@@ -119,12 +141,22 @@ def _signal_memory(objective: str) -> IngressSignal:
                 continue
             count = len(hits) if isinstance(hits, (list, tuple)) else 0
             familiarity = min(1.0, count / 4.0)
+            recalled = ""
+            if count:
+                recalled = " ".join(
+                    fragment
+                    for fragment in (
+                        _hit_text(hit).strip() for hit in list(hits)[:2]
+                    )
+                    if fragment
+                )[:400]
             return IngressSignal(
                 source="memory",
                 present=True,
                 value=familiarity,
                 uncertainty_delta=(0.10 if count == 0 else -0.10 * familiarity),
                 detail=f"{name}.{method}: {count} hits",
+                context_text=recalled,
             )
     return IngressSignal(source="memory", present=False)
 
@@ -175,23 +207,57 @@ def _signal_goals(objective: str) -> IngressSignal:
             break
     if not goals_text:
         return IngressSignal(source="goals", present=False)
+    overlap, matched, method = _best_goal_similarity(objective, goals_text)
+    return IngressSignal(
+        source="goals",
+        present=True,
+        value=overlap,
+        stakes_delta=0.15 * overlap,
+        detail=f"best_{method}={overlap:.2f} goal={matched[:80]!r}",
+        context_text=matched[:400],
+    )
+
+
+def _best_goal_similarity(
+    objective: str, goals_text: list[str]
+) -> tuple[float, str, str]:
+    """Best goal match: embedding cosine when the vector organ is up,
+    lexical-overlap fallback otherwise.
+
+    Lexical overlap was the RSL gap-analysis defect ("stakes is prompt-shape
+    in disguise"): a goal phrased differently from the objective scored zero.
+    Embedding similarity measures MEANING overlap; the receipt names which
+    method actually ran.
+    """
+    vector = _get_service("vector_memory") or _get_service("vector_memory_engine")
+    embed = getattr(vector, "embed", None) if vector is not None else None
+    if callable(embed):
+        try:
+            objective_vec = embed(objective)
+            best_score, best_goal = 0.0, ""
+            for goal in goals_text:
+                goal_vec = embed(goal)
+                num = float((objective_vec * goal_vec).sum())
+                den = float(
+                    ((objective_vec**2).sum() ** 0.5)
+                    * ((goal_vec**2).sum() ** 0.5)
+                )
+                score = max(0.0, num / den) if den > 1e-9 else 0.0
+                if score > best_score:
+                    best_score, best_goal = score, goal
+            return min(1.0, best_score), best_goal, "embedding_cosine"
+        except Exception as exc:  # noqa: BLE001 - organ contract unknown; fall back
+            logger.debug("Goal embedding similarity unavailable: %s", exc)
     terms = _objective_terms(objective)
-    overlap = 0.0
-    matched = ""
+    overlap, matched = 0.0, ""
     for goal in goals_text:
         goal_terms = _objective_terms(goal)
         if not goal_terms:
             continue
         score = len(terms & goal_terms) / max(4, min(len(goal_terms), 12))
         if score > overlap:
-            overlap, matched = min(1.0, score), goal[:80]
-    return IngressSignal(
-        source="goals",
-        present=True,
-        value=overlap,
-        stakes_delta=0.15 * overlap,
-        detail=f"best_overlap={overlap:.2f} goal={matched!r}",
-    )
+            overlap, matched = min(1.0, score), goal
+    return overlap, matched, "lexical_overlap"
 
 
 def _signal_will(orchestrator: Any) -> IngressSignal:
@@ -249,6 +315,11 @@ def _signal_self_model(objective: str) -> IngressSignal:
         value=relevance if matched else None,
         stakes_delta=0.10 * relevance,
         detail=f"identity_terms={matched[:4]}" if matched else "",
+        context_text=(
+            "This question touches my own identity: " + ", ".join(matched[:4])
+            if matched
+            else ""
+        ),
     )
 
 
@@ -256,12 +327,23 @@ def _signal_world_model(orchestrator: Any) -> IngressSignal:
     service = _get_service("world_model") or _get_service("unified_world_model")
     if service is None:
         return IngressSignal(source="world_model", present=False)
+    summary = ""
+    for accessor in ("current_context_summary", "summarize_current", "summary"):
+        candidate = getattr(service, accessor, None)
+        try:
+            value = candidate() if callable(candidate) else candidate
+        except Exception:  # noqa: BLE001 - organ contract unknown; skip
+            continue
+        if isinstance(value, str) and value.strip():
+            summary = value.strip()[:400]
+            break
     return IngressSignal(
         source="world_model",
         present=True,
         value=1.0,
         uncertainty_delta=-0.05,
         detail="world model resident",
+        context_text=summary,
     )
 
 
@@ -290,9 +372,41 @@ def assemble_cognitive_ingress(
     )
 
 
+def cognitive_context_items(ingress: CognitiveIngress) -> list[dict[str, str]]:
+    """Slot-seeding items for the episode: organ CONTENT, not just budget.
+
+    Every item is (source, text) drawn from the organs that actually spoke —
+    memory recall, matched goal, world summary, self-model relevance — plus
+    one interoceptive line rendering the body/Will/affect scalars, so the
+    felt state itself becomes an identifiable, ablatable thought slot.
+    Bounded to 5 items x 400 chars (engine hard caps at 6).
+    """
+    items: list[dict[str, str]] = []
+    by_source = {signal.source: signal for signal in ingress.signals}
+    for source in ("memory", "goals", "world_model", "self_model"):
+        signal = by_source.get(source)
+        if signal is not None and signal.present and signal.context_text.strip():
+            items.append({"source": source, "text": signal.context_text[:400]})
+    felt: list[str] = []
+    for source, label in (
+        ("body", "body pressure"),
+        ("will", "deliberation preference"),
+        ("affect", "felt uncertainty"),
+    ):
+        signal = by_source.get(source)
+        if signal is not None and signal.present and signal.value is not None:
+            felt.append(f"{label} {float(signal.value):.2f}")
+    if felt:
+        items.append(
+            {"source": "interoception", "text": "Current felt state: " + "; ".join(felt)}
+        )
+    return items[:5]
+
+
 __all__ = [
     "COGNITIVE_INGRESS_SCHEMA",
     "CognitiveIngress",
     "IngressSignal",
     "assemble_cognitive_ingress",
+    "cognitive_context_items",
 ]

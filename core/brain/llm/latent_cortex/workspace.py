@@ -63,11 +63,21 @@ class LatentWorkspace:
     discipline. This separation keeps the workspace trivially testable.
     """
 
-    def __init__(self, z, roles: list[str], config: WorkspaceConfig) -> None:
+    def __init__(
+        self,
+        z,
+        roles: list[str],
+        config: WorkspaceConfig,
+        *,
+        context_slots: list[dict[str, Any]] | None = None,
+    ) -> None:
         self.z = z
         self.roles = list(roles)
         self.config = config
         self.seed_z = z  # immutable reference state for drift measurement
+        # Which slots were seeded from typed cognitive context (organ → slot),
+        # in receipt form: [{"slot": int, "source": str}].
+        self.context_slots = list(context_slots or [])
         self._ablations: list[SlotAblation] = []
 
     # ── Construction ────────────────────────────────────────────────────
@@ -78,6 +88,7 @@ class LatentWorkspace:
         config: WorkspaceConfig,
         *,
         branch_role: str | None = None,
+        context_seeds: list[tuple[str, Any]] | None = None,
     ) -> LatentWorkspace:
         """Seed M slots from the pooled prompt embedding + role anchors.
 
@@ -86,6 +97,14 @@ class LatentWorkspace:
         so the first prelude pass sees in-manifold inputs. ``branch_role``
         additionally rotates every anchor seed, giving branches distinct
         starting basins over identical weights.
+
+        ``context_seeds`` is the typed cognitive ingress into thought itself:
+        (source, embedding) pairs from the organs (memory recall, active
+        goal, world model, interoception, self-model). The LAST slots — never
+        the comm slot at index 0 — are seeded as an equal blend of prompt and
+        organ content plus their role anchor, so each organ's contribution is
+        an identifiable, individually ablatable sequence position rather than
+        a prompt decoration.
         """
         import mlx.core as mx
 
@@ -98,10 +117,23 @@ class LatentWorkspace:
         if branch_role:
             base_seed = _role_seed(branch_role, base_seed)
 
+        seeds = list(context_seeds or [])
+        # Cap: keep the comm slot (0) and at least one free thought slot.
+        max_context = max(0, min(len(seeds), m - 2, max(1, m // 4) if seeds else 0))
+        seeds = seeds[:max_context]
+        context_by_slot = {
+            m - 1 - j: (str(source), vector) for j, (source, vector) in enumerate(seeds)
+        }
+
         roles: list[str] = []
         anchors = []
         for i in range(m):
-            role = config.roles[i % len(config.roles)]
+            context_entry = context_by_slot.get(i)
+            role = (
+                f"context:{context_entry[0]}"
+                if context_entry is not None
+                else config.roles[i % len(config.roles)]
+            )
             roles.append(role)
             anchors.append(role_anchor(f"{role}#{i}", dim, base_seed))
         anchor_mat = mx.stack(anchors, axis=0)[None, :, :]  # (1,M,D)
@@ -109,10 +141,29 @@ class LatentWorkspace:
         z = mx.broadcast_to(pooled, (1, m, dim)) + (
             float(config.anchor_scale) * target_rms * anchor_mat
         )
+        if context_by_slot:
+            rows = []
+            for i in range(m):
+                entry = context_by_slot.get(i)
+                if entry is None:
+                    rows.append(z[:, i : i + 1, :])
+                    continue
+                vector = mx.reshape(entry[1], (1, 1, dim))
+                blended = 0.5 * pooled + 0.5 * vector + (
+                    float(config.anchor_scale)
+                    * target_rms
+                    * anchor_mat[:, i : i + 1, :]
+                )
+                rows.append(blended)
+            z = mx.concatenate(rows, axis=1)
         # RMS-match the seeds to the embedding norm distribution.
         z = z * (target_rms / mx.maximum(per_position_rms(z), 1e-6))
         mx.eval(z)
-        return cls(z, roles, config)
+        context_slots = [
+            {"slot": slot, "source": source}
+            for slot, (source, _vector) in sorted(context_by_slot.items())
+        ]
+        return cls(z, roles, config, context_slots=context_slots)
 
     # ── State management ────────────────────────────────────────────────
     def snapshot(self):

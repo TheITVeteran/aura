@@ -431,6 +431,11 @@ class EpisodeReceipt:
     input_tokens_sha256: str = ""
     input_token_count: int = 0
     input_context_compaction: dict[str, Any] = field(default_factory=dict)
+    # Typed cognitive ingress into the workspace itself: which slots were
+    # seeded from which organ (memory/goals/world model/interoception/...),
+    # so "the organs reached her thoughts" is receipted per slot and each
+    # seeded slot remains individually ablation-testable (Experiment 3).
+    cognitive_slots: list[dict[str, Any]] = field(default_factory=list)
     params_unchanged: bool | None = None
     fast_weights_erased: bool | None = None
     # Topology actually used.
@@ -536,6 +541,7 @@ class EpisodeReceipt:
             "input_tokens_sha256": self.input_tokens_sha256,
             "input_token_count": self.input_token_count,
             "input_context_compaction": dict(self.input_context_compaction),
+            "cognitive_slots": [dict(row) for row in self.cognitive_slots],
             "params_unchanged": self.params_unchanged,
             "fast_weights_erased": self.fast_weights_erased,
             "n_layers": self.n_layers,

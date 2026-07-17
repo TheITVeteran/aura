@@ -274,6 +274,67 @@ class LatentCortexEngine:
         mx.eval(logits)
         return logits
 
+    # ── Typed cognitive ingress into the workspace ──────────────────────
+    _MAX_COGNITIVE_CONTEXT_ITEMS = 6
+    _MAX_COGNITIVE_CONTEXT_CHARS = 400
+    _MAX_COGNITIVE_CONTEXT_TOKENS = 64
+
+    def _validate_cognitive_context(
+        self, cognitive_context: list | None
+    ) -> list[dict]:
+        if cognitive_context is None:
+            return []
+        if not isinstance(cognitive_context, list):
+            raise ValueError("cognitive_context must be a list")
+        items: list[dict] = []
+        for entry in cognitive_context[: self._MAX_COGNITIVE_CONTEXT_ITEMS]:
+            if not isinstance(entry, dict):
+                raise ValueError("cognitive_context entries must be mappings")
+            source = entry.get("source")
+            text = entry.get("text")
+            if not isinstance(source, str) or not source.strip():
+                raise ValueError("cognitive_context entry requires a source string")
+            if not isinstance(text, str) or not text.strip():
+                raise ValueError("cognitive_context entry requires a text string")
+            items.append(
+                {
+                    "source": source.strip()[:40],
+                    "text": text.strip()[: self._MAX_COGNITIVE_CONTEXT_CHARS],
+                }
+            )
+        return items
+
+    def _embed_cognitive_context(
+        self, items: list[dict]
+    ) -> list[tuple[str, "object"]]:
+        """Pooled embed_tokens vectors for each organ item — no layer passes.
+
+        Embedding lookup is table indexing, so the ingress costs no layer
+        applications; the seeded slots then ride every subsequent window pass
+        exactly like ordinary thought slots (charged as usual).
+        """
+        import mlx.core as mx
+
+        if not items or self.tokenizer is None:
+            return []
+        inner = self.model.model
+        seeds: list[tuple[str, object]] = []
+        for item in items:
+            try:
+                encoded = self.tokenizer.encode(
+                    item["text"], add_special_tokens=False
+                )
+            except TypeError:
+                encoded = self.tokenizer.encode(item["text"])
+            tokens = list(encoded)[: self._MAX_COGNITIVE_CONTEXT_TOKENS]
+            if not tokens:
+                continue
+            h = inner.embed_tokens(mx.array([tokens]))
+            pooled = mx.mean(h, axis=1, keepdims=True)  # (1,1,D)
+            mx.eval(pooled)
+            seeds.append((item["source"], pooled))
+        return seeds
+
     def _eos_ids(self) -> set[int]:
         if self.tokenizer is None:
             return set()
@@ -559,6 +620,7 @@ class LatentCortexEngine:
         decode_max_tokens: int | None = None,
         ablate_slot: int | None = None,
         ablate_mode: str = "zero",
+        cognitive_context: list | None = None,
         cancel_check: Callable[[], bool] | None = None,
         progress: Callable[[dict], None] | None = None,
     ) -> LatentReasoningResult:
@@ -573,6 +635,7 @@ class LatentCortexEngine:
                 raise TypeError("decode_max_tokens override must be an integer")
             if not 1 <= decode_max_tokens <= 8192:
                 raise ValueError("decode_max_tokens override outside [1, 8192]")
+        context_items = self._validate_cognitive_context(cognitive_context)
         tokens = self._encode(prompt, messages, token_ids)
         encoded_tokens = json.dumps(tokens, separators=(",", ":"), allow_nan=False).encode(
             "ascii"
@@ -605,6 +668,7 @@ class LatentCortexEngine:
                     decode_max_tokens,
                     ablate_slot=ablate_slot,
                     ablate_mode=ablate_mode,
+                    cognitive_context_items=context_items,
                     cancel_check=cancel_check,
                     progress=progress,
                     episode_started=episode_started,
@@ -746,6 +810,7 @@ class LatentCortexEngine:
         *,
         ablate_slot: int | None = None,
         ablate_mode: str = "zero",
+        cognitive_context_items: list[dict] | None = None,
         cancel_check: Callable[[], bool] | None = None,
         progress: Callable[[dict], None] | None = None,
         episode_started: float | None = None,
@@ -816,6 +881,9 @@ class LatentCortexEngine:
         receipt.n_slots = self.config.workspace.n_slots
         receipt.n_branches = self.config.branches.n_branches
 
+        context_seeds = self._embed_cognitive_context(
+            list(cognitive_context_items or [])
+        )
         ensemble = BranchEnsemble.seed(
             embeddings,
             self.config.workspace,
@@ -824,7 +892,28 @@ class LatentCortexEngine:
             runner,
             cache,
             self.prelude_end,
+            context_seeds=context_seeds,
         )
+        if ensemble.branches and ensemble.branches[0].workspace.context_slots:
+            seeded = ensemble.branches[0].workspace.context_slots
+            by_source = {
+                item["source"]: item for item in (cognitive_context_items or [])
+            }
+            receipt.cognitive_slots = [
+                {
+                    "slot": row["slot"],
+                    "source": row["source"],
+                    "text_chars": len(
+                        by_source.get(row["source"], {}).get("text", "")
+                    ),
+                    "text_sha256": hashlib.sha256(
+                        by_source.get(row["source"], {})
+                        .get("text", "")
+                        .encode("utf-8")
+                    ).hexdigest(),
+                }
+                for row in seeded
+            ]
         stage_started = self._stage_checkpoint(
             receipt=receipt,
             budget=budget,
@@ -835,6 +924,7 @@ class LatentCortexEngine:
             cancel_check=cancel_check,
             branches=len(ensemble.branches),
             slots=self.config.workspace.n_slots,
+            cognitive_slots=len(receipt.cognitive_slots),
         )
 
         # ── Recurrent computation under the schedule program ────────────
