@@ -23,6 +23,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 DEFAULT_LEDGER = ROOT / "artifacts" / "closeout" / "semantic_review" / "SEMANTIC_REVIEW_LEDGER.jsonl"
+SEMANTIC_CAMPAIGN_SCHEMA = "aura.closeout.semantic_review_campaign.v1"
 
 
 @dataclass(frozen=True)
@@ -443,6 +444,249 @@ def build_semantic_review_queue(
     }
 
 
+def _missing_spans(
+    line_count: int,
+    reviewed_spans: list[dict[str, Any]],
+) -> list[tuple[int, int]]:
+    if line_count <= 0:
+        return []
+    merged = _merge_spans(
+        [
+            (int(span.get("first_line", 0)), int(span.get("last_line", 0)))
+            for span in reviewed_spans
+        ]
+    )
+    missing: list[tuple[int, int]] = []
+    cursor = 1
+    for first, last in merged:
+        if first > cursor:
+            missing.append((cursor, first - 1))
+        cursor = max(cursor, last + 1)
+    if cursor <= line_count:
+        missing.append((cursor, line_count))
+    return missing
+
+
+def _semantic_subsystem(file_name: str) -> str:
+    parts = Path(file_name).parts
+    if not parts or len(parts) == 1:
+        return "root"
+    if parts[0] in {"core", "interface", "tools", "tests"}:
+        return "/".join(parts[:2])
+    return parts[0]
+
+
+def _campaign_sha256(payload: dict[str, Any]) -> str:
+    material = dict(payload)
+    material.pop("campaign_sha256", None)
+    encoded = json.dumps(
+        material,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode("utf-8")
+    return _sha256_bytes(encoded)
+
+
+def build_semantic_review_campaign(
+    *,
+    ledger_path: Path = DEFAULT_LEDGER,
+    tracked_paths: list[Path] | None = None,
+    root: Path = ROOT,
+    batch_line_budget: int = 12_000,
+    max_span_lines: int = 2_000,
+    source_commit: str | None = None,
+    source_clean: bool | None = None,
+) -> dict[str, Any]:
+    """Freeze every missing semantic span before remediation begins."""
+    if batch_line_budget <= 0 or max_span_lines <= 0:
+        raise ValueError("semantic campaign line budgets must be positive")
+    if max_span_lines > batch_line_budget:
+        raise ValueError("max_span_lines cannot exceed batch_line_budget")
+
+    resolved_paths = (
+        tracked_paths if tracked_paths is not None else _run_git_ls_files(root)
+    )
+    summary = summarize_semantic_reviews(
+        ledger_path=ledger_path,
+        tracked_paths=resolved_paths,
+        root=root,
+        unreviewed_limit=1_000_000,
+    )
+    current_by_path: dict[str, CurrentFile] = {}
+    for path in resolved_paths:
+        if not path.is_file():
+            continue
+        info = current_file(path, root=root)
+        if info.text:
+            current_by_path[info.path] = info
+
+    if source_commit is None or source_clean is None:
+        if root.resolve() == ROOT.resolve():
+            from tools.closeout.run_codebase_closeout_audit import git_status
+
+            git = git_status()
+            source_commit = source_commit or str(git.get("head") or "")
+            if source_clean is None:
+                source_clean = not bool(git.get("dirty"))
+        else:
+            source_commit = source_commit or "unversioned-test-snapshot"
+            source_clean = True if source_clean is None else source_clean
+
+    work_items: list[dict[str, Any]] = []
+    planned_files: set[str] = set()
+    for row in summary["unreviewed_files"]:
+        file_name = str(row["file"])
+        info = current_by_path[file_name]
+        reviewed = summary["reviewed_files"].get(file_name, {})
+        for missing_first, missing_last in _missing_spans(
+            info.line_count,
+            list(reviewed.get("spans") or []),
+        ):
+            first = missing_first
+            while first <= missing_last:
+                last = min(missing_last, first + max_span_lines - 1)
+                work_items.append(
+                    {
+                        "file": file_name,
+                        "file_sha256": info.sha256,
+                        "file_line_count": info.line_count,
+                        "first_line": first,
+                        "last_line": last,
+                        "line_count": last - first + 1,
+                        "span_sha256": span_sha256(info.lines, first, last),
+                        "code": info.code,
+                        "subsystem": _semantic_subsystem(file_name),
+                    }
+                )
+                planned_files.add(file_name)
+                first = last + 1
+
+    work_items.sort(
+        key=lambda item: (
+            not bool(item["code"]),
+            str(item["subsystem"]),
+            str(item["file"]),
+            int(item["first_line"]),
+        )
+    )
+    batches: list[dict[str, Any]] = []
+    for item in work_items:
+        needs_new_batch = bool(
+            not batches
+            or batches[-1]["subsystem"] != item["subsystem"]
+            or batches[-1]["line_count"] + item["line_count"]
+            > batch_line_budget
+        )
+        if needs_new_batch:
+            batches.append(
+                {
+                    "batch_id": f"semantic-batch-{len(batches) + 1:04d}",
+                    "subsystem": item["subsystem"],
+                    "line_count": 0,
+                    "spans": [],
+                }
+            )
+        batches[-1]["spans"].append(item)
+        batches[-1]["line_count"] += item["line_count"]
+
+    payload: dict[str, Any] = {
+        "schema": SEMANTIC_CAMPAIGN_SCHEMA,
+        "source_commit": source_commit,
+        "source_clean": bool(source_clean),
+        "ledger_path": str(ledger_path),
+        "review_mode": "read_only_inventory_then_grouped_remediation",
+        "edits_permitted_before_inventory_complete": False,
+        "batch_line_budget": batch_line_budget,
+        "max_span_lines": max_span_lines,
+        "tracked_text_file_count": summary["tracked_text_file_count"],
+        "tracked_text_line_count": summary["tracked_text_line_count"],
+        "fully_reviewed_text_file_count": summary[
+            "fully_reviewed_text_file_count"
+        ],
+        "planned_file_count": len(planned_files),
+        "planned_span_count": len(work_items),
+        "planned_line_count": sum(int(item["line_count"]) for item in work_items),
+        "batch_count": len(batches),
+        "stale_review_count": summary["stale_review_count"],
+        "orphan_review_count": summary["orphan_review_count"],
+        "batches": batches,
+        "completion_contract": {
+            "inventory_complete": "every planned span has a hash-bound review note",
+            "remediation_allowed": "inventory complete and campaign validation passes",
+            "semantic_credit": "current ledger receipt matches final file and span hashes",
+            "claim_not_supported": [
+                "semantic_review_from_mechanical_scanning_only",
+                "all_findings_fixed_before_grouped_remediation",
+                "full_closeout_complete",
+            ],
+        },
+    }
+    payload["campaign_sha256"] = _campaign_sha256(payload)
+    return payload
+
+
+def validate_semantic_review_campaign(
+    campaign: dict[str, Any],
+    *,
+    root: Path = ROOT,
+    source_commit: str | None = None,
+) -> dict[str, Any]:
+    issues: list[str] = []
+    if campaign.get("schema") != SEMANTIC_CAMPAIGN_SCHEMA:
+        issues.append("schema_invalid")
+    if campaign.get("campaign_sha256") != _campaign_sha256(campaign):
+        issues.append("campaign_hash_mismatch")
+    if source_commit is None and root.resolve() == ROOT.resolve():
+        from tools.closeout.run_codebase_closeout_audit import git_status
+
+        source_commit = str(git_status().get("head") or "")
+    if source_commit and campaign.get("source_commit") != source_commit:
+        issues.append("source_commit_changed")
+
+    current_cache: dict[str, CurrentFile] = {}
+    observed_spans = 0
+    observed_lines = 0
+    for batch in list(campaign.get("batches") or []):
+        for span in list(batch.get("spans") or []):
+            observed_spans += 1
+            file_name = str(span.get("file") or "")
+            try:
+                info = current_cache.get(file_name)
+                if info is None:
+                    info = current_file(root / file_name, root=root)
+                    current_cache[file_name] = info
+            except OSError:
+                issues.append(f"file_missing:{file_name}")
+                continue
+            if info.sha256 != span.get("file_sha256"):
+                issues.append(f"file_hash_changed:{file_name}")
+                continue
+            first = int(span.get("first_line", 0))
+            last = int(span.get("last_line", 0))
+            if first < 1 or last < first or last > info.line_count:
+                issues.append(f"span_invalid:{file_name}:{first}:{last}")
+                continue
+            if span_sha256(info.lines, first, last) != span.get("span_sha256"):
+                issues.append(f"span_hash_changed:{file_name}:{first}:{last}")
+                continue
+            observed_lines += last - first + 1
+    if observed_spans != int(campaign.get("planned_span_count", -1)):
+        issues.append("planned_span_count_mismatch")
+    if observed_lines != int(campaign.get("planned_line_count", -1)):
+        issues.append("planned_line_count_mismatch")
+    return {
+        "schema": "aura.closeout.semantic_review_campaign_validation.v1",
+        "passed": not issues,
+        "campaign_sha256": campaign.get("campaign_sha256", ""),
+        "source_commit": source_commit or "",
+        "observed_file_count": len(current_cache),
+        "observed_span_count": observed_spans,
+        "observed_line_count": observed_lines,
+        "issues": sorted(set(issues)),
+    }
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -467,6 +711,27 @@ def build_arg_parser() -> argparse.ArgumentParser:
     queue.add_argument("--ledger", default=os.environ.get("AURA_SEMANTIC_REVIEW_LEDGER", str(DEFAULT_LEDGER)))
     queue.add_argument("--limit", type=int, default=50)
     queue.add_argument("--code-only", action="store_true")
+
+    plan = subparsers.add_parser(
+        "plan",
+        help="Freeze all missing semantic spans into read-only review batches.",
+    )
+    plan.add_argument(
+        "--ledger",
+        default=os.environ.get(
+            "AURA_SEMANTIC_REVIEW_LEDGER",
+            str(DEFAULT_LEDGER),
+        ),
+    )
+    plan.add_argument("--batch-lines", type=int, default=12_000)
+    plan.add_argument("--span-lines", type=int, default=2_000)
+    plan.add_argument("--out", default="")
+
+    validate = subparsers.add_parser(
+        "validate-plan",
+        help="Verify a frozen semantic campaign against the current source.",
+    )
+    validate.add_argument("campaign")
     return parser
 
 
@@ -476,12 +741,25 @@ def main(argv: list[str] | None = None) -> int:
         payload = record_reviews_from_args(args)
     elif args.command == "status":
         payload = summarize_semantic_reviews(ledger_path=Path(args.ledger))
-    else:
+    elif args.command == "queue":
         payload = build_semantic_review_queue(
             ledger_path=Path(args.ledger),
             limit=args.limit,
             code_only=args.code_only,
         )
+    elif args.command == "plan":
+        payload = build_semantic_review_campaign(
+            ledger_path=Path(args.ledger),
+            batch_line_budget=args.batch_lines,
+            max_span_lines=args.span_lines,
+        )
+        if args.out:
+            from tools.closeout.run_codebase_closeout_audit import _write_json
+
+            _write_json(Path(args.out), payload)
+    else:
+        campaign = json.loads(Path(args.campaign).read_text(encoding="utf-8"))
+        payload = validate_semantic_review_campaign(campaign)
     try:
         sys.stdout.write(json.dumps(payload, indent=2, sort_keys=True, default=str))
         sys.stdout.write("\n")

@@ -6,13 +6,16 @@ import pytest
 
 from tools.closeout.run_codebase_closeout_audit import audit_file, build_closeout_audit
 from tools.closeout.semantic_review_ledger import (
+    SEMANTIC_CAMPAIGN_SCHEMA,
     append_entries,
     build_arg_parser,
     build_review_entry,
+    build_semantic_review_campaign,
     build_semantic_review_queue,
     main as semantic_review_main,
     record_reviews_from_args,
     summarize_semantic_reviews,
+    validate_semantic_review_campaign,
 )
 
 
@@ -239,3 +242,86 @@ def test_semantic_review_status_reports_code_coverage_and_unreviewed_queue(tmp_p
     assert summary["unreviewed_files"][0]["file"] == "large.py"
     assert summary["unreviewed_files"][0]["code"] is True
     assert queue["files"] == [summary["unreviewed_files"][0]]
+
+
+def test_semantic_campaign_freezes_every_missing_span_before_remediation(tmp_path):
+    reviewed = tmp_path / "core" / "reviewed.py"
+    reviewed.parent.mkdir(parents=True)
+    reviewed.write_text("a\nb\nc\nd\n", encoding="utf-8")
+    sibling = tmp_path / "core" / "sibling.py"
+    sibling.write_text("e\nf\ng\n", encoding="utf-8")
+    note = tmp_path / "docs" / "note.md"
+    note.parent.mkdir(parents=True)
+    note.write_text("h\ni\n", encoding="utf-8")
+    ledger = tmp_path / "ledger.jsonl"
+    append_entries(
+        ledger,
+        [
+            build_review_entry(
+                reviewed,
+                reviewer="codex",
+                checkpoint_id="partial",
+                first_line=1,
+                last_line=2,
+                root=tmp_path,
+            )
+        ],
+    )
+
+    campaign = build_semantic_review_campaign(
+        ledger_path=ledger,
+        tracked_paths=[reviewed, sibling, note],
+        root=tmp_path,
+        batch_line_budget=3,
+        max_span_lines=2,
+        source_commit="frozen-commit",
+        source_clean=True,
+    )
+
+    assert campaign["schema"] == SEMANTIC_CAMPAIGN_SCHEMA
+    assert campaign["source_commit"] == "frozen-commit"
+    assert campaign["edits_permitted_before_inventory_complete"] is False
+    assert campaign["planned_file_count"] == 3
+    assert campaign["planned_line_count"] == 7
+    assert campaign["planned_span_count"] == 4
+    assert campaign["batch_count"] == 3
+    spans = [span for batch in campaign["batches"] for span in batch["spans"]]
+    reviewed_spans = [
+        span for span in spans if span["file"] == "core/reviewed.py"
+    ]
+    assert [(span["first_line"], span["last_line"]) for span in reviewed_spans] == [
+        (3, 4)
+    ]
+    assert all(batch["line_count"] <= 3 for batch in campaign["batches"])
+    assert validate_semantic_review_campaign(
+        campaign,
+        root=tmp_path,
+        source_commit="frozen-commit",
+    )["passed"] is True
+
+
+def test_semantic_campaign_validation_detects_source_drift(tmp_path):
+    source = tmp_path / "core" / "service.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("stable\n", encoding="utf-8")
+    campaign = build_semantic_review_campaign(
+        ledger_path=tmp_path / "ledger.jsonl",
+        tracked_paths=[source],
+        root=tmp_path,
+        source_commit="before",
+        source_clean=True,
+    )
+
+    source.write_text("changed\n", encoding="utf-8")
+    validation = validate_semantic_review_campaign(
+        campaign,
+        root=tmp_path,
+        source_commit="after",
+    )
+
+    assert validation["passed"] is False
+    assert validation["issues"] == [
+        "file_hash_changed:core/service.py",
+        "planned_line_count_mismatch",
+        "source_commit_changed",
+    ]

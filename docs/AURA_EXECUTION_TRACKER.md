@@ -18436,3 +18436,48 @@ Bounded verification and next boundary:
   thinking, and large-Neural expansion checks at desktop/mobile viewports.
   Multi-hour and 24-72-hour soaks remain deferred until every shorter gate is
   green.
+
+## Checkpoint 2026-07-17-124: Hash-Bound Read-First Semantic Campaign
+
+Checkpoint 124 is the current source candidate in the `main` worktree. It
+advances `CLOSEOUT-001`, `SEMANTIC-REVIEW-001`, `TEST-DEPTH-001`, and
+`RELEASE-001` by turning the read-everything-before-remediation strategy into a
+machine-checkable campaign. It does not award semantic-review, source-repair,
+live-product, recurrence-gain, release, or soak credit.
+
+- The exact clean CP123 full closeout audit passes at commit `456159db`: 5,323
+  tracked files, 3,802,739 tracked text lines, every configured mechanical
+  gate green, and model-load ownership at 30 paths / 42 references / zero
+  findings. The semantic ledger is still a separate red gate; a mechanical
+  PASS is not evidence that unreviewed code was understood.
+- `semantic_review_ledger.py plan` now freezes every currently missing text
+  span before remediation. Each work item is bound to source commit, whole-file
+  SHA-256, exact line interval, span SHA-256, code/document class, and subsystem.
+  Spans are partitioned into deterministic subsystem-local batches with bounded
+  line counts, while existing current review receipts are subtracted rather
+  than reread or double-counted.
+- The campaign contract explicitly selects
+  `read_only_inventory_then_grouped_remediation`, forbids edits before inventory
+  completion, and defines the only eligible completion path: every planned span
+  has a hash-bound review note, the frozen campaign still validates, grouped
+  remediation is complete, and final semantic receipts match the resulting
+  file and span hashes. Mechanical scanners alone cannot earn semantic credit.
+- `semantic_review_ledger.py validate-plan` independently recomputes the
+  campaign hash and verifies source identity, every file hash, every span hash,
+  line bounds, planned span count, and planned line count. It fails closed on
+  source drift. The planner and drift contracts pass 12/12 closeout tests;
+  targeted `F`/`E9` lint and `git diff --check` pass.
+- The protected recurrence-native resident-32B trainer remains live and is not
+  evidence of gain. At this checkpoint it has produced resumable adapter and
+  receipt artifacts and reached step 90; no model-loading validation, live Aura
+  boot, adapter comparison, or soak is permitted while that single-owner run is
+  active.
+- Evidence-weighted completion remains 27%. This is checkpoint 124 of the
+  faithful 292-399 total forecast, leaving approximately 168-275 checkpoints.
+- Next: publish CP124 directly to `main`, run the planner from the exact clean
+  commit, validate and preserve its campaign hash, then complete every planned
+  read-only batch and findings ledger before grouped semantic repair begins.
+  In parallel, monitor `32b_r1` through its PID/log/receipt only. On trainer
+  exit, run the immutable preregistered adapter-on/off held-out evaluation; do
+  not infer intelligence gain from training loss. Multi-hour and 24-72-hour
+  soaks remain deferred until all shorter gates are green.
