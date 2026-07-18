@@ -128,6 +128,8 @@ def _launch(
     resume: bool = False,
     resume_contract: str = "none",
     resume_verifier: list[str] | None = None,
+    broker_policy: list[dict] | None = None,
+    cwd: Path | None = None,
 ) -> dict:
     resume_args = ["--resume"] if resume else []
     if resume_contract == "target_checkpoint" and resume_verifier is None:
@@ -135,6 +137,11 @@ def _launch(
     verifier_args = (
         ["--resume-verifier-json", json.dumps(resume_verifier)]
         if resume_verifier is not None
+        else []
+    )
+    broker_args = (
+        ["--broker-policy-json", json.dumps(broker_policy)]
+        if broker_policy is not None
         else []
     )
     result = subprocess.run(
@@ -147,12 +154,13 @@ def _launch(
             "--name",
             "test-step",
             "--cwd",
-            str(run_dir.parent),
+            str(cwd or run_dir.parent),
             "--timeout",
             str(timeout_s),
             "--resume-contract",
             resume_contract,
             *verifier_args,
+            *broker_args,
             *resume_args,
             "--",
             *command,
@@ -847,3 +855,332 @@ def test_stale_resume_verdict_cannot_authorize_later_attempt(
             resume_verifier=resume_verifier,
         )
     assert "verdict binding is invalid" in raised.value.stderr
+
+
+def test_exact_broker_policy_runs_worker_inside_strict_target_boundary(tmp_path: Path) -> None:
+    run_dir = tmp_path / "brokered-run"
+    worker_log = tmp_path / "broker-worker.log"
+    coordinator_result = tmp_path / "coordinator-result.txt"
+    repo_root = Path(detached.__file__).resolve().parent.parent
+    python = str(Path(sys.executable).resolve())
+    worker_command = [python, "-c", "print('broker-worker-ok', flush=True)"]
+    coordinator_code = (
+        "from pathlib import Path; "
+        "from core.runtime.detached_subprocess_broker import run_brokered_process; "
+        f"result=run_brokered_process({worker_command!r}, cwd=Path({str(repo_root)!r}), "
+        f"stdout_path=Path({str(worker_log)!r}), timeout_s=10.0); "
+        f"Path({str(coordinator_result)!r}).write_text(str(result.returncode))"
+    )
+    broker_policy = [
+        {
+            "command": worker_command,
+            "cwd": str(repo_root),
+            "stdout_path": str(worker_log),
+            "timeout_s_max": 10.0,
+            "max_invocations": 1,
+        }
+    ]
+
+    _launch(
+        run_dir,
+        [python, "-c", coordinator_code],
+        timeout_s=30.0,
+        broker_policy=broker_policy,
+        cwd=repo_root,
+    )
+    receipt = _wait_for(run_dir / detached.RECEIPT_FILE, timeout_s=20.0)
+    assert receipt["status"] == "passed"
+    assert receipt["containment_verified"] is True
+    assert coordinator_result.read_text(encoding="utf-8") == "0"
+    assert "broker-worker-ok" in worker_log.read_text(encoding="utf-8")
+    events = detached._read_attempts(run_dir)
+    event_types = [event["event"] for event in events]
+    assert event_types == [
+        "LAUNCHED",
+        "CONTROL_READY",
+        "TARGET_STARTED",
+        "BROKER_STARTED",
+        "BROKER_TERMINAL",
+        "TERMINAL",
+    ]
+    broker_terminal = next(event for event in events if event["event"] == "BROKER_TERMINAL")
+    assert broker_terminal["response"]["status"] == "passed"
+    assert broker_terminal["response"]["containment_verified"] is True
+    assert len(broker_terminal["response"]["response_hmac_sha256"]) == 64
+
+
+def test_broker_rejects_command_outside_frozen_policy(tmp_path: Path) -> None:
+    run_dir = tmp_path / "broker-rejection"
+    worker_log = tmp_path / "broker-rejection.log"
+    outcome = tmp_path / "broker-rejection.txt"
+    repo_root = Path(detached.__file__).resolve().parent.parent
+    python = str(Path(sys.executable).resolve())
+    allowed = [python, "-c", "print('allowed')"]
+    denied = [python, "-c", "print('denied')"]
+    coordinator_code = (
+        "from pathlib import Path\n"
+        "from core.runtime.detached_subprocess_broker import DetachedBrokerError, run_brokered_process\n"
+        "try:\n"
+        f"    run_brokered_process({denied!r}, cwd=Path({str(repo_root)!r}), "
+        f"stdout_path=Path({str(worker_log)!r}), timeout_s=5.0)\n"
+        "except DetachedBrokerError:\n"
+        f"    Path({str(outcome)!r}).write_text('rejected')\n"
+    )
+    policy = [{
+        "command": allowed,
+        "cwd": str(repo_root),
+        "stdout_path": str(worker_log),
+        "timeout_s_max": 5.0,
+        "max_invocations": 1,
+    }]
+
+    _launch(
+        run_dir,
+        [python, "-c", coordinator_code],
+        timeout_s=20.0,
+        broker_policy=policy,
+        cwd=repo_root,
+    )
+    receipt = _wait_for(run_dir / detached.RECEIPT_FILE, timeout_s=15.0)
+    assert receipt["status"] == "passed"
+    assert outcome.read_text(encoding="utf-8") == "rejected"
+    assert not any(
+        event["event"] == "BROKER_STARTED" for event in detached._read_attempts(run_dir)
+    )
+
+
+def test_broker_worker_cannot_fork_or_escape_its_identity(tmp_path: Path) -> None:
+    run_dir = tmp_path / "broker-worker-no-fork"
+    worker_log = tmp_path / "broker-worker-no-fork.log"
+    worker_outcome = tmp_path / "broker-worker-no-fork.txt"
+    coordinator_outcome = tmp_path / "broker-worker-coordinator.txt"
+    repo_root = Path(detached.__file__).resolve().parent.parent
+    python = str(Path(sys.executable).resolve())
+    worker_source = (
+        "from pathlib import Path\n"
+        "import subprocess, sys\n"
+        "try:\n"
+        "    subprocess.run([sys.executable, '-c', 'pass'], check=True)\n"
+        "except PermissionError:\n"
+        f"    Path({str(worker_outcome)!r}).write_text('kernel-denied')\n"
+    )
+    worker = [python, "-c", worker_source]
+    coordinator_code = (
+        "from pathlib import Path; "
+        "from core.runtime.detached_subprocess_broker import run_brokered_process; "
+        f"result=run_brokered_process({worker!r}, cwd=Path({str(repo_root)!r}), "
+        f"stdout_path=Path({str(worker_log)!r}), timeout_s=5.0); "
+        f"Path({str(coordinator_outcome)!r}).write_text(str(result.returncode))"
+    )
+    policy = [{
+        "command": worker,
+        "cwd": str(repo_root),
+        "stdout_path": str(worker_log),
+        "timeout_s_max": 5.0,
+        "max_invocations": 1,
+    }]
+
+    _launch(
+        run_dir,
+        [python, "-c", coordinator_code],
+        timeout_s=20.0,
+        broker_policy=policy,
+        cwd=repo_root,
+    )
+    receipt = _wait_for(run_dir / detached.RECEIPT_FILE, timeout_s=15.0)
+    assert receipt["status"] == "passed"
+    assert coordinator_outcome.read_text(encoding="utf-8") == "0"
+    assert worker_outcome.read_text(encoding="utf-8") == "kernel-denied"
+
+
+def test_broker_log_substitution_is_rejected_without_touching_victim(tmp_path: Path) -> None:
+    run_dir = tmp_path / "broker-log-substitution"
+    worker_log = tmp_path / "broker-log-substitution.log"
+    victim = tmp_path / "victim.txt"
+    victim.write_text("unchanged", encoding="utf-8")
+    repo_root = Path(detached.__file__).resolve().parent.parent
+    python = str(Path(sys.executable).resolve())
+    worker = [python, "-c", "print('must-not-run')"]
+    coordinator_code = (
+        "from pathlib import Path; import os; "
+        "from core.runtime.detached_subprocess_broker import run_brokered_process; "
+        f"os.symlink({str(victim)!r}, {str(worker_log)!r}); "
+        f"run_brokered_process({worker!r}, cwd=Path({str(repo_root)!r}), "
+        f"stdout_path=Path({str(worker_log)!r}), timeout_s=5.0)"
+    )
+    policy = [{
+        "command": worker,
+        "cwd": str(repo_root),
+        "stdout_path": str(worker_log),
+        "timeout_s_max": 5.0,
+        "max_invocations": 1,
+    }]
+
+    _launch(
+        run_dir,
+        [python, "-c", coordinator_code],
+        timeout_s=20.0,
+        broker_policy=policy,
+        cwd=repo_root,
+    )
+    receipt = _wait_for(run_dir / detached.RECEIPT_FILE, timeout_s=15.0)
+    assert receipt["status"] == "failed"
+    assert receipt["containment_verified"] is True
+    assert victim.read_text(encoding="utf-8") == "unchanged"
+    assert not any(
+        event["event"] == "BROKER_STARTED" for event in detached._read_attempts(run_dir)
+    )
+
+
+def test_broker_enforces_invocation_bound(tmp_path: Path) -> None:
+    run_dir = tmp_path / "broker-bound"
+    worker_log = tmp_path / "broker-bound.log"
+    outcome = tmp_path / "broker-bound.txt"
+    repo_root = Path(detached.__file__).resolve().parent.parent
+    python = str(Path(sys.executable).resolve())
+    worker = [python, "-c", "print('bounded')"]
+    coordinator_code = (
+        "from pathlib import Path\n"
+        "from core.runtime.detached_subprocess_broker import DetachedBrokerError, run_brokered_process\n"
+        f"command={worker!r}\n"
+        f"kwargs={{'cwd':Path({str(repo_root)!r}),'stdout_path':Path({str(worker_log)!r}),'timeout_s':5.0}}\n"
+        "first=run_brokered_process(command, **kwargs)\n"
+        "try:\n"
+        "    run_brokered_process(command, **kwargs)\n"
+        "except DetachedBrokerError:\n"
+        f"    Path({str(outcome)!r}).write_text(f'{{first.returncode}}:bounded')\n"
+    )
+    policy = [{
+        "command": worker,
+        "cwd": str(repo_root),
+        "stdout_path": str(worker_log),
+        "timeout_s_max": 5.0,
+        "max_invocations": 1,
+    }]
+
+    _launch(
+        run_dir,
+        [python, "-c", coordinator_code],
+        timeout_s=30.0,
+        broker_policy=policy,
+        cwd=repo_root,
+    )
+    receipt = _wait_for(run_dir / detached.RECEIPT_FILE, timeout_s=20.0)
+    assert receipt["status"] == "passed"
+    assert outcome.read_text(encoding="utf-8") == "0:bounded"
+    assert sum(
+        event["event"] == "BROKER_STARTED" for event in detached._read_attempts(run_dir)
+    ) == 1
+
+
+def test_broker_timeout_kills_worker_and_returns_bounded_result(tmp_path: Path) -> None:
+    run_dir = tmp_path / "broker-timeout"
+    worker_log = tmp_path / "broker-timeout.log"
+    outcome = tmp_path / "broker-timeout.txt"
+    worker_pid_path = tmp_path / "broker-timeout.pid"
+    repo_root = Path(detached.__file__).resolve().parent.parent
+    python = str(Path(sys.executable).resolve())
+    worker = [
+        python,
+        "-c",
+        f"import os,time; from pathlib import Path; Path({str(worker_pid_path)!r}).write_text(str(os.getpid())); time.sleep(30)",
+    ]
+    coordinator_code = (
+        "from pathlib import Path; "
+        "from core.runtime.detached_subprocess_broker import run_brokered_process; "
+        f"result=run_brokered_process({worker!r}, cwd=Path({str(repo_root)!r}), "
+        f"stdout_path=Path({str(worker_log)!r}), timeout_s=0.5); "
+        f"Path({str(outcome)!r}).write_text(f'{{result.returncode}}:{{result.timed_out}}')"
+    )
+    policy = [{
+        "command": worker,
+        "cwd": str(repo_root),
+        "stdout_path": str(worker_log),
+        "timeout_s_max": 0.5,
+        "max_invocations": 1,
+    }]
+
+    _launch(
+        run_dir,
+        [python, "-c", coordinator_code],
+        timeout_s=30.0,
+        broker_policy=policy,
+        cwd=repo_root,
+    )
+    receipt = _wait_for(run_dir / detached.RECEIPT_FILE, timeout_s=20.0)
+    assert receipt["status"] == "passed"
+    assert outcome.read_text(encoding="utf-8") == "124:True"
+    worker_pid = int(worker_pid_path.read_text(encoding="utf-8"))
+    assert detached._inspect_process(worker_pid).state == "dead"
+    terminal = next(
+        event for event in detached._read_attempts(run_dir) if event["event"] == "BROKER_TERMINAL"
+    )
+    assert terminal["response"]["status"] == "timed_out"
+    assert terminal["response"]["containment_verified"] is True
+
+
+def test_resume_reaps_broker_worker_after_supervisor_crash(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_dir = tmp_path / "broker-crash-resume"
+    worker_log = tmp_path / "broker-crash-resume.log"
+    worker_pid_path = tmp_path / "broker-crash-resume.pid"
+    outcome = tmp_path / "broker-crash-resume.txt"
+    repo_root = Path(detached.__file__).resolve().parent.parent
+    python = str(Path(sys.executable).resolve())
+    worker = [
+        python,
+        "-c",
+        f"import os,time; from pathlib import Path; Path({str(worker_pid_path)!r}).write_text(str(os.getpid())); time.sleep(30)",
+    ]
+    coordinator_code = (
+        "from pathlib import Path; "
+        "from core.runtime.detached_subprocess_broker import run_brokered_process; "
+        f"marker=Path({str(worker_pid_path)!r}); outcome=Path({str(outcome)!r}); "
+        f"run_brokered_process({worker!r}, cwd=Path({str(repo_root)!r}), "
+        f"stdout_path=Path({str(worker_log)!r}), timeout_s=20.0) if not marker.exists() else None; "
+        "outcome.write_text('resumed')"
+    )
+    policy = [{
+        "command": worker,
+        "cwd": str(repo_root),
+        "stdout_path": str(worker_log),
+        "timeout_s_max": 20.0,
+        "max_invocations": 1,
+    }]
+    monkeypatch.setenv("AURA_DETACHED_TEST_CRASH_POINT", "after_broker_release")
+    first = _launch(
+        run_dir,
+        [python, "-c", coordinator_code],
+        timeout_s=60.0,
+        resume_contract="target_checkpoint",
+        broker_policy=policy,
+        cwd=repo_root,
+    )
+    marker_deadline = time.time() + 8.0
+    while time.time() < marker_deadline and not worker_pid_path.is_file():
+        time.sleep(0.05)
+    assert worker_pid_path.is_file()
+    deadline = time.time() + 8.0
+    while time.time() < deadline and detached._pid_matches(
+        first["supervisor_pid"], first["supervisor_start_token"]
+    ):
+        time.sleep(0.05)
+    stale_worker_pid = int(worker_pid_path.read_text(encoding="utf-8"))
+    assert detached._inspect_process(stale_worker_pid).state == "alive"
+
+    monkeypatch.delenv("AURA_DETACHED_TEST_CRASH_POINT")
+    _launch(
+        run_dir,
+        [python, "-c", coordinator_code],
+        timeout_s=60.0,
+        resume=True,
+        resume_contract="target_checkpoint",
+        broker_policy=policy,
+        cwd=repo_root,
+    )
+    receipt = _wait_for(run_dir / detached.RECEIPT_FILE, timeout_s=20.0)
+    assert receipt["status"] == "passed"
+    assert outcome.read_text(encoding="utf-8") == "resumed"
+    assert detached._inspect_process(stale_worker_pid).state == "dead"

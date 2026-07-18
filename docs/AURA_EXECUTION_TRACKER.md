@@ -18961,3 +18961,60 @@ installed-app, semantic-review, release, or soak credit.
   campaign. After that, implement the runtime-aligned,
   schema-complete, scope-gated recurrence-native v2 objective and detached
   resumable training. Final multi-hour and 24-72-hour soaks remain deferred.
+
+## Checkpoint 2026-07-18-132: Exact-Command Sandboxed Worker Broker
+
+Checkpoint 132 closes the process-creation mismatch between CP131's strict
+no-fork coordinator boundary and the RLC campaign's legitimate isolated arm
+workers. It adds no reasoning-gain or frontier credit; it makes the next live
+resident campaign executable without weakening containment.
+
+- The detached plan can now freeze a bounded broker policy containing each
+  exact resolved worker argv, cwd, append-only log destination, maximum wall
+  time, invocation cap, command hash, and full execution-source manifest.
+  Duplicate commands, mutable or missing source, unsafe log parents, nonfinite
+  deadlines, and unbounded invocation counts fail plan creation.
+- The campaign coordinator remains under the kernel-enforced no-fork sandbox.
+  It receives a per-attempt broker socket and token, submits the exact frozen
+  worker command, and blocks for a bound response. Any command, cwd, log path,
+  timeout, request replay, or invocation count outside the plan is rejected;
+  the coordinator cannot fall back to direct `Popen` while a broker is active.
+- The supervisor alone creates a worker. Each worker has its own gated PID,
+  high-resolution start identity, process group, random lineage token, source
+  revalidation, no-fork sandbox, monotonic deadline, and secure no-follow log.
+  Broker tokens are not inherited by workers, so a worker cannot recursively
+  acquire process authority.
+- `BROKER_STARTED` and `BROKER_TERMINAL` are first-class hash-journal states.
+  Terminal responses bind request, policy, command, worker PID/start token,
+  return code, timeout, cleanup, and containment, then carry both a receipt hash
+  and per-attempt HMAC. Coordinator clients reject unkeyed or forged datagrams.
+  Parent completion is ineligible when any broker containment cannot be proven.
+- Resume audits unfinished broker states independently of the coordinator.
+  A crash immediately after worker release was reproduced live: the next
+  explicit target-checkpoint resume killed the stale coordinator and sandboxed
+  worker by their recorded identities before admitting a new attempt. No orphan
+  process survived and no implicit restart occurred.
+- Execution manifests now include nonignored untracked source/config files in
+  addition to tracked worktree content. This closes the development/recovery
+  case where a new imported Python module could otherwise execute outside the
+  frozen source identity.
+- The RLC paired-campaign runner emits its exact broker policy in plan-only
+  output and automatically uses the broker when present; worker mode receives
+  no broker credentials and executes the arm directly. Direct non-detached
+  campaign behavior remains unchanged.
+- The focused detached, resume, broker-client, and paired-runner suite passes
+  50/50. It covers exact execution, forged-response rejection, unauthorized
+  commands, invocation caps, hard worker timeout, worker process-fork denial,
+  log-path substitution, supervisor-crash cleanup/resume, source mutation,
+  stale verdicts, and the
+  preexisting CP131 lifecycle matrix. Focused Ruff, Python compilation, strict
+  mypy, and diff integrity pass. The adjacent adapter, journal, frontier-task,
+  paired-campaign, fast-weight, and model-load ownership regression set passes
+  195/195 in 170.30 seconds.
+- Evidence-weighted completion remains 27%. This is checkpoint 132 of the
+  faithful 292-399 total forecast, leaving approximately 160-267 checkpoints.
+- Next: publish CP132 to `main`; create the clean frozen full-stack pilot plan
+  and exact broker policy; launch the resident 32B base/adapter attribution
+  through CP131+CP132; preserve and independently replay the verdict. Then use
+  the result to specify recurrence-native v2 training. Final long soaks remain
+  deferred.

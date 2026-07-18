@@ -15,6 +15,7 @@ import argparse
 import ctypes
 import fcntl
 import hashlib
+import hmac
 import json
 import math
 import os
@@ -87,6 +88,24 @@ class ProcessObservation:
     executable: str = ""
 
 
+@dataclass
+class ActiveBrokerWorker:
+    request_id: str
+    policy_sha256: str
+    command_sha256: str
+    process: subprocess.Popen[Any]
+    process_group_id: int
+    start_token: str
+    containment_token: str
+    response_token: str
+    reply_path: Path
+    started_at: float
+    started_monotonic_ns: int
+    deadline_ns: int
+    log: Any
+    timed_out: bool = False
+
+
 class _ProcBSDInfo(ctypes.Structure):
     _fields_ = [
         ("pbi_flags", ctypes.c_uint32),
@@ -115,6 +134,10 @@ class _ProcBSDInfo(ctypes.Structure):
 
 
 class DetachedStepError(RuntimeError):
+    pass
+
+
+class BrokerRequestError(DetachedStepError):
     pass
 
 
@@ -177,16 +200,32 @@ def _git_root(cwd: Path) -> Path | None:
 
 def _git_tracked_paths(root: Path) -> list[Path]:
     try:
-        result = subprocess.run(
+        tracked_result = subprocess.run(
             ["/usr/bin/git", "-C", str(root), "ls-files", "-z", "--cached"],
+            check=True,
+            capture_output=True,
+            timeout=30.0,
+        )
+        untracked_result = subprocess.run(
+            [
+                "/usr/bin/git",
+                "-C",
+                str(root),
+                "ls-files",
+                "-z",
+                "--others",
+                "--exclude-standard",
+            ],
             check=True,
             capture_output=True,
             timeout=30.0,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         raise DetachedStepError(f"could not enumerate Git-tracked execution source: {root}") from exc
-    paths: list[Path] = []
-    for raw in result.stdout.split(b"\0"):
+    paths: set[Path] = set()
+    raw_paths = [(raw, True) for raw in tracked_result.stdout.split(b"\0")]
+    raw_paths.extend((raw, False) for raw in untracked_result.stdout.split(b"\0"))
+    for raw, tracked in raw_paths:
         if not raw:
             continue
         try:
@@ -195,7 +234,8 @@ def _git_tracked_paths(root: Path) -> list[Path]:
             raise DetachedStepError("Git-tracked execution path is not decodable") from exc
         if relative.is_absolute() or ".." in relative.parts:
             raise DetachedStepError(f"unsafe Git-tracked execution path: {relative}")
-        paths.append(relative)
+        if tracked or relative.suffix.lower() in _SOURCE_SUFFIXES:
+            paths.add(relative)
     return sorted(paths, key=lambda value: os.fsencode(value))
 
 
@@ -523,6 +563,8 @@ def _read_attempts(run_dir: Path) -> list[dict[str, Any]]:
     control_attempts: set[int] = set()
     target_attempts: set[int] = set()
     terminal_attempts: set[int] = set()
+    broker_started: set[tuple[int, str]] = set()
+    broker_terminal: set[tuple[int, str]] = set()
     for sequence, line in enumerate(raw_lines, start=1):
         if not line.strip():
             raise DetachedStepError(f"attempt journal contains an empty record: {path}")
@@ -575,6 +617,29 @@ def _read_attempts(run_dir: Path) -> list[dict[str, Any]]:
             ):
                 raise DetachedStepError(f"attempt journal has invalid target record: {path}")
             target_attempts.add(attempt)
+        elif event_type == "BROKER_STARTED":
+            request_id = str(event.get("request_id") or "")
+            key = (attempt, request_id)
+            if (
+                terminal_attempts
+                or attempt not in target_attempts
+                or attempt != max(launched_attempts)
+                or len(request_id) != 32
+                or key in broker_started
+            ):
+                raise DetachedStepError(f"attempt journal has invalid broker start: {path}")
+            broker_started.add(key)
+        elif event_type == "BROKER_TERMINAL":
+            request_id = str(event.get("request_id") or "")
+            key = (attempt, request_id)
+            if (
+                terminal_attempts
+                or key not in broker_started
+                or key in broker_terminal
+                or attempt != max(launched_attempts)
+            ):
+                raise DetachedStepError(f"attempt journal has invalid broker terminal: {path}")
+            broker_terminal.add(key)
         elif event_type == "TERMINAL":
             if (
                 attempt not in launched_attempts
@@ -944,6 +1009,35 @@ def _terminate_stale_target(target: dict[str, Any]) -> bool:
     return cleaned or lineage_cleanup_count > 0
 
 
+def _terminate_stale_broker_worker(started: dict[str, Any]) -> bool:
+    worker_pid = int(started.get("worker_pid") or 0)
+    worker_group = int(started.get("worker_process_group_id") or 0)
+    worker_start = str(started.get("worker_start_token") or "")
+    containment_token = str(started.get("containment_token") or "")
+    if len(containment_token) != 64:
+        raise DetachedStepError("stale broker worker containment token is invalid")
+    state = _identity_state(worker_pid, worker_start)
+    if state == "unknown":
+        raise DetachedStepError("stale broker worker identity is unobservable; refusing resume")
+    lineage_cleanup_count = _terminate_tagged_processes(containment_token)
+    state = _identity_state(worker_pid, worker_start)
+    if state == "dead":
+        if _process_group_exists(worker_group):
+            raise DetachedStepError("stale broker worker group survived lineage cleanup")
+        return lineage_cleanup_count > 0
+    observation = _inspect_process(worker_pid)
+    if (
+        worker_group <= 1
+        or observation.state != "alive"
+        or observation.process_group_id != worker_group
+    ):
+        raise DetachedStepError("stale broker worker process-group identity mismatch")
+    cleaned = _terminate_group_id(worker_group)
+    if not _wait_for_pid_exit(worker_pid, worker_start, _TERM_GRACE_S):
+        raise DetachedStepError("stale broker worker survived process-group termination")
+    return cleaned or lineage_cleanup_count > 0
+
+
 def _kill_group(process: subprocess.Popen[Any], sig: signal.Signals) -> None:
     try:
         os.killpg(os.getpgid(process.pid), sig)
@@ -951,12 +1045,15 @@ def _kill_group(process: subprocess.Popen[Any], sig: signal.Signals) -> None:
         pass
 
 
-def _executed_command(plan: dict[str, Any]) -> list[str]:
-    command = list(plan["command"])
+def _sandboxed_command(plan: dict[str, Any], command: list[str]) -> list[str]:
     sandbox = plan.get("execution_sandbox")
     if sandbox is None:
-        return command
+        return list(command)
     return [str(sandbox["path"]), "-p", str(sandbox["profile"]), *command]
+
+
+def _executed_command(plan: dict[str, Any]) -> list[str]:
+    return _sandboxed_command(plan, list(plan["command"]))
 
 
 def _start_power_assertion(child_pid: int, log: Any, plan: dict[str, Any]) -> subprocess.Popen[Any] | None:
@@ -1068,7 +1165,7 @@ def _create_control_socket(
     attempt: int,
     supervisor_pid: int,
     supervisor_start_token: str,
-) -> tuple[socket.socket, Path, str]:
+) -> tuple[socket.socket, Path, str, str]:
     filename = (
         f"{CONTROL_SOCKET_PREFIX}-{os.geteuid()}-{str(plan['plan_sha256'])[:16]}-{attempt}.sock"
     )
@@ -1082,6 +1179,7 @@ def _create_control_socket(
         os.chmod(socket_path, 0o600)
         control_socket.setblocking(False)
         control_token = secrets.token_hex(32)
+        broker_token = secrets.token_hex(32) if plan["broker_policy"] else ""
         _append_attempt_event(
             run_dir,
             {
@@ -1092,31 +1190,360 @@ def _create_control_socket(
                 "supervisor_start_token": supervisor_start_token,
                 "socket_path": str(socket_path),
                 "control_token": control_token,
+                "broker_token": broker_token,
+                "broker_enabled": bool(plan["broker_policy"]),
                 "recorded_at": time.time(),
             },
         )
-        return control_socket, socket_path, control_token
+        return control_socket, socket_path, control_token, broker_token
     except BaseException:
         control_socket.close()
         socket_path.unlink(missing_ok=True)
         raise
 
 
-def _poll_control_socket(control_socket: socket.socket, control_token: str) -> bool:
+def _poll_control_socket(control_socket: socket.socket) -> dict[str, Any] | None:
     try:
         payload = control_socket.recv(4096)
     except BlockingIOError:
-        return False
+        return None
     try:
         request = json.loads(payload)
     except (UnicodeDecodeError, json.JSONDecodeError):
-        return False
-    return (
-        isinstance(request, dict)
-        and request.get("action") == "stop"
-        and isinstance(request.get("control_token"), str)
-        and secrets.compare_digest(request["control_token"], control_token)
+        return None
+    return request if isinstance(request, dict) else None
+
+
+def _broker_reply_path(request: dict[str, Any], target_pid: int) -> Path:
+    reply_path = Path(str(request.get("reply_path") or ""))
+    expected_prefix = f"aura-broker-reply-{os.geteuid()}-{target_pid}-"
+    try:
+        reply_stat = reply_path.lstat()
+        expected_parent = Path("/tmp").resolve(strict=True)
+        actual_parent = reply_path.parent.resolve(strict=True)
+    except OSError as exc:
+        raise BrokerRequestError("broker reply socket is unavailable") from exc
+    if (
+        not reply_path.is_absolute()
+        or actual_parent != expected_parent
+        or not reply_path.name.startswith(expected_prefix)
+        or not stat.S_ISSOCK(reply_stat.st_mode)
+        or reply_stat.st_uid != os.geteuid()
+    ):
+        raise BrokerRequestError("broker reply socket identity is invalid")
+    return reply_path
+
+
+def _matching_broker_policy(plan: dict[str, Any], request: dict[str, Any]) -> dict[str, Any]:
+    command = request.get("command")
+    command_sha = str(request.get("command_sha256") or "")
+    timeout_s = request.get("timeout_s")
+    if (
+        request.get("schema") != f"{SCHEMA_PREFIX}.broker_request.v1"
+        or request.get("action") != "run"
+        or not isinstance(command, list)
+        or not command
+        or any(not isinstance(item, str) or not item for item in command)
+        or command_sha != _sha256(command)
+        or not isinstance(timeout_s, (int, float))
+        or isinstance(timeout_s, bool)
+        or not math.isfinite(float(timeout_s))
+        or float(timeout_s) <= 0.0
+    ):
+        raise BrokerRequestError("broker request binding is invalid")
+    policies = plan.get("broker_policy")
+    if not isinstance(policies, list):
+        raise DetachedStepError("broker policy is unavailable")
+    for policy_value in policies:
+        if not isinstance(policy_value, dict):
+            raise DetachedStepError("broker policy entry is invalid")
+        policy: dict[str, Any] = policy_value
+        if policy["command_sha256"] != command_sha:
+            continue
+        if (
+            policy["command"] != command
+            or request.get("cwd") != policy["cwd"]
+            or request.get("stdout_path") != policy["stdout_path"]
+            or float(timeout_s) > float(policy["timeout_s_max"])
+        ):
+            raise BrokerRequestError("broker request exceeds its frozen policy")
+        return policy
+    raise BrokerRequestError("broker command is not in the frozen policy")
+
+
+def _send_broker_rejection(
+    request: dict[str, Any],
+    target_pid: int,
+    error: BaseException,
+) -> None:
+    try:
+        reply_path = _broker_reply_path(request, target_pid)
+    except BrokerRequestError:
+        return
+    request_id = str(request.get("request_id") or "")
+    command_sha = str(request.get("command_sha256") or "")
+    body = {
+        "schema": f"{SCHEMA_PREFIX}.broker_response.v1",
+        "request_id": request_id,
+        "policy_sha256": None,
+        "command_sha256": command_sha,
+        "worker_pid": 0,
+        "worker_process_group_id": 0,
+        "worker_start_token": "",
+        "returncode": 70,
+        "timed_out": False,
+        "containment_verified": True,
+        "status": "rejected",
+        "error": f"{type(error).__name__}: {error}"[:1000],
+    }
+    signed = {**body, "receipt_sha256": _sha256(body)}
+    broker_token = str(request.get("broker_token") or "")
+    if len(broker_token) != 64:
+        return
+    response = {
+        **signed,
+        "response_hmac_sha256": hmac.new(
+            bytes.fromhex(broker_token),
+            _canonical_bytes(signed),
+            hashlib.sha256,
+        ).hexdigest(),
+    }
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as sender:
+            sender.sendto(_canonical_bytes(response), str(reply_path))
+    except OSError:
+        return
+
+
+def _start_broker_worker(
+    run_dir: Path,
+    plan: dict[str, Any],
+    attempt: int,
+    supervisor_pid: int,
+    supervisor_start_token: str,
+    target_pid: int,
+    request: dict[str, Any],
+) -> ActiveBrokerWorker:
+    request_id = str(request.get("request_id") or "")
+    if len(request_id) != 32 or any(character not in "0123456789abcdef" for character in request_id):
+        raise BrokerRequestError("broker request id is invalid")
+    policy = _matching_broker_policy(plan, request)
+    reply_path = _broker_reply_path(request, target_pid)
+    _verify_execution_manifest_current(policy["execution_manifest"])
+    log = _open_secure_log(Path(policy["stdout_path"]))
+    gate_write_fd: int | None = None
+    worker: subprocess.Popen[Any] | None = None
+    worker_start_token = ""
+    worker_group = 0
+    containment_token = secrets.token_hex(32)
+    try:
+        environment = dict(plan["execution_environment"])
+        environment["AURA_DETACHED_RUN_TOKEN"] = containment_token
+        worker, gate_write_fd = _spawn_gated_target(
+            _sandboxed_command(plan, list(policy["command"])),
+            cwd=policy["cwd"],
+            environment=environment,
+            log=log,
+        )
+        observation = _inspect_process(worker.pid)
+        if observation.state != "alive" or observation.process_group_id != worker.pid:
+            raise DetachedStepError("broker worker identity could not be established")
+        worker_start_token = observation.token
+        worker_group = observation.process_group_id
+        with _locked(run_dir):
+            events = _read_attempts(run_dir)
+            attempt_events = _events_by_attempt(events).get(attempt, {})
+            invocations = sum(
+                event.get("policy_sha256") == policy["policy_sha256"]
+                for event in _broker_events(attempt_events, "BROKER_STARTED")
+            )
+            if invocations >= int(policy["max_invocations"]):
+                raise BrokerRequestError("broker policy invocation bound is exhausted")
+            if any(
+                event.get("request_id") == request_id
+                for event in _broker_events(attempt_events, "BROKER_STARTED")
+            ):
+                raise BrokerRequestError("broker request id has already been used")
+            _append_attempt_event_locked(
+                run_dir,
+                {
+                    "event": "BROKER_STARTED",
+                    "attempt": attempt,
+                    "plan_sha256": plan["plan_sha256"],
+                    "supervisor_pid": supervisor_pid,
+                    "supervisor_start_token": supervisor_start_token,
+                    "request_id": request_id,
+                    "policy_sha256": policy["policy_sha256"],
+                    "command_sha256": policy["command_sha256"],
+                    "worker_pid": worker.pid,
+                    "worker_process_group_id": observation.process_group_id,
+                    "worker_start_token": observation.token,
+                    "containment_token": containment_token,
+                    "reply_path": str(reply_path),
+                    "timeout_s": float(request["timeout_s"]),
+                    "recorded_at": time.time(),
+                },
+            )
+        if os.write(gate_write_fd, b"G") != 1:
+            raise DetachedStepError("broker worker release gate failed")
+        os.close(gate_write_fd)
+        gate_write_fd = None
+        if (
+            os.environ.get("AURA_DETACHED_TEST_CRASH_POINT") == "after_broker_release"
+            and "PYTEST_CURRENT_TEST" in os.environ
+        ):
+            os._exit(95)
+        started_monotonic_ns = time.monotonic_ns()
+        return ActiveBrokerWorker(
+            request_id=request_id,
+            policy_sha256=str(policy["policy_sha256"]),
+            command_sha256=str(policy["command_sha256"]),
+            process=worker,
+            process_group_id=observation.process_group_id,
+            start_token=observation.token,
+            containment_token=containment_token,
+            response_token=str(request["broker_token"]),
+            reply_path=reply_path,
+            started_at=time.time(),
+            started_monotonic_ns=started_monotonic_ns,
+            deadline_ns=started_monotonic_ns + int(float(request["timeout_s"]) * 1_000_000_000),
+            log=log,
+        )
+    except BaseException as start_exc:
+        if gate_write_fd is not None:
+            os.close(gate_write_fd)
+        cleanup_exc: BaseException | None = None
+        if worker is not None:
+            try:
+                if worker_start_token and worker_group > 1:
+                    _cleanup_child_process(
+                        worker,
+                        worker_start_token,
+                        worker_group,
+                        containment_token,
+                    )
+                else:
+                    _kill_group(worker, signal.SIGKILL)
+                    worker.wait(timeout=_TERM_GRACE_S)
+                    if _process_group_exists(worker.pid):
+                        raise DetachedStepError("unidentified broker worker group survived cleanup")
+            except BaseException as exc:
+                cleanup_exc = exc
+        log.close()
+        if cleanup_exc is not None:
+            raise DetachedStepError(
+                f"broker start failed ({start_exc}); cleanup failed ({cleanup_exc})"
+            ) from cleanup_exc
+        raise
+
+
+def _broker_response_body(
+    worker: ActiveBrokerWorker,
+    *,
+    returncode: int,
+    containment_verified: bool,
+    cleanup_performed: bool,
+    cleanup_count: int,
+    error: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "schema": f"{SCHEMA_PREFIX}.broker_response.v1",
+        "request_id": worker.request_id,
+        "policy_sha256": worker.policy_sha256,
+        "command_sha256": worker.command_sha256,
+        "worker_pid": worker.process.pid,
+        "worker_process_group_id": worker.process_group_id,
+        "worker_start_token": worker.start_token,
+        "started_at": worker.started_at,
+        "finished_at": time.time(),
+        "duration_s": round(
+            max(0.0, (time.monotonic_ns() - worker.started_monotonic_ns) / 1_000_000_000),
+            6,
+        ),
+        "returncode": int(returncode),
+        "timed_out": worker.timed_out,
+        "cleanup_performed": cleanup_performed,
+        "lineage_cleanup_count": cleanup_count,
+        "containment_verified": containment_verified,
+        "status": (
+            "containment_failed"
+            if not containment_verified
+            else "timed_out"
+            if worker.timed_out
+            else "passed"
+            if returncode == 0
+            else "failed"
+        ),
+        "error": error,
+    }
+
+
+def _finish_broker_worker(
+    run_dir: Path,
+    plan: dict[str, Any],
+    attempt: int,
+    worker: ActiveBrokerWorker,
+    *,
+    force_returncode: int | None = None,
+) -> dict[str, Any]:
+    returncode = force_returncode
+    if returncode is None:
+        observed = worker.process.poll()
+        returncode = observed if observed is not None else 70
+    containment_verified = False
+    cleanup_performed = False
+    cleanup_count = 0
+    cleanup_error: str | None = None
+    try:
+        cleanup_performed, cleanup_count = _cleanup_child_process(
+            worker.process,
+            worker.start_token,
+            worker.process_group_id,
+            worker.containment_token,
+        )
+        containment_verified = True
+    except BaseException as exc:
+        returncode = 70
+        cleanup_error = f"{type(exc).__name__}: {exc}"[:1000]
+    finally:
+        worker.log.close()
+    body = _broker_response_body(
+        worker,
+        returncode=returncode,
+        containment_verified=containment_verified,
+        cleanup_performed=cleanup_performed,
+        cleanup_count=cleanup_count,
+        error=cleanup_error,
     )
+    signed = {**body, "receipt_sha256": _sha256(body)}
+    response = {
+        **signed,
+        "response_hmac_sha256": hmac.new(
+            bytes.fromhex(worker.response_token),
+            _canonical_bytes(signed),
+            hashlib.sha256,
+        ).hexdigest(),
+    }
+    _append_attempt_event(
+        run_dir,
+        {
+            "event": "BROKER_TERMINAL",
+            "attempt": attempt,
+            "plan_sha256": plan["plan_sha256"],
+            "request_id": worker.request_id,
+            "policy_sha256": worker.policy_sha256,
+            "response": response,
+            "recorded_at": time.time(),
+        },
+    )
+    try:
+        reply_stat = worker.reply_path.lstat()
+        if stat.S_ISSOCK(reply_stat.st_mode) and reply_stat.st_uid == os.geteuid():
+            with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as sender:
+                sender.sendto(_canonical_bytes(response), str(worker.reply_path))
+    except OSError:
+        pass
+    return response
 
 
 def _cleanup_stale_control(control: dict[str, Any] | None) -> None:
@@ -1338,7 +1765,10 @@ def _supervise(run_dir: Path, plan: dict[str, Any], attempt: int) -> None:
     control_socket: socket.socket | None = None
     control_socket_path: Path | None = None
     control_token = ""
+    broker_token = ""
     power_assertion: subprocess.Popen[Any] | None = None
+    active_broker: ActiveBrokerWorker | None = None
+    broker_containment_verified = True
 
     def request_stop(signum: int, _frame: object) -> None:
         nonlocal stop_signal
@@ -1348,7 +1778,7 @@ def _supervise(run_dir: Path, plan: dict[str, Any], attempt: int) -> None:
         signal.signal(watched, request_stop)
 
     try:
-        control_socket, control_socket_path, control_token = _create_control_socket(
+        control_socket, control_socket_path, control_token, broker_token = _create_control_socket(
             run_dir,
             plan,
             attempt,
@@ -1358,6 +1788,9 @@ def _supervise(run_dir: Path, plan: dict[str, Any], attempt: int) -> None:
         with _open_secure_log(log_path) as log:
             target_environment = dict(plan["execution_environment"])
             target_environment["AURA_DETACHED_RUN_TOKEN"] = containment_token
+            if broker_token:
+                target_environment["AURA_DETACHED_BROKER_SOCKET"] = str(control_socket_path)
+                target_environment["AURA_DETACHED_BROKER_TOKEN"] = broker_token
             child, gate_write_fd = _spawn_gated_target(
                 executed,
                 cwd=plan["cwd"],
@@ -1392,8 +1825,66 @@ def _supervise(run_dir: Path, plan: dict[str, Any], attempt: int) -> None:
             deadline_ns = started_monotonic_ns + int(float(plan["timeout_s"]) * 1_000_000_000)
         while returncode is None:
             sequence += 1
-            if control_socket is not None and _poll_control_socket(control_socket, control_token):
-                stop_signal = signal.SIGTERM
+            request = _poll_control_socket(control_socket) if control_socket is not None else None
+            if request is not None and request.get("action") == "stop":
+                provided = request.get("control_token")
+                if isinstance(provided, str) and secrets.compare_digest(provided, control_token):
+                    stop_signal = signal.SIGTERM
+            elif request is not None and request.get("action") == "run":
+                provided = request.get("broker_token")
+                if (
+                    broker_token
+                    and isinstance(provided, str)
+                    and secrets.compare_digest(provided, broker_token)
+                ):
+                    if active_broker is not None:
+                        _send_broker_rejection(
+                            request,
+                            child.pid,
+                            BrokerRequestError("broker already has an active worker"),
+                        )
+                    else:
+                        try:
+                            active_broker = _start_broker_worker(
+                                run_dir,
+                                plan,
+                                attempt,
+                                supervisor_pid,
+                                supervisor_start_token,
+                                child.pid,
+                                request,
+                            )
+                        except BrokerRequestError as broker_start_exc:
+                            _send_broker_rejection(request, child.pid, broker_start_exc)
+            if active_broker is not None:
+                broker_returncode = active_broker.process.poll()
+                if broker_returncode is not None:
+                    finished_broker = active_broker
+                    active_broker = None
+                    broker_response = _finish_broker_worker(
+                        run_dir,
+                        plan,
+                        attempt,
+                        finished_broker,
+                        force_returncode=broker_returncode,
+                    )
+                    if not broker_response["containment_verified"]:
+                        broker_containment_verified = False
+                        raise DetachedStepError("broker worker containment could not be verified")
+                elif time.monotonic_ns() >= active_broker.deadline_ns:
+                    active_broker.timed_out = True
+                    finished_broker = active_broker
+                    active_broker = None
+                    broker_response = _finish_broker_worker(
+                        run_dir,
+                        plan,
+                        attempt,
+                        finished_broker,
+                        force_returncode=124,
+                    )
+                    if not broker_response["containment_verified"]:
+                        broker_containment_verified = False
+                        raise DetachedStepError("timed-out broker worker containment failed")
             live_child = _inspect_process(child.pid)
             if (
                 live_child.state == "alive"
@@ -1450,6 +1941,23 @@ def _supervise(run_dir: Path, plan: dict[str, Any], attempt: int) -> None:
             except OSError:
                 pass
         if child is not None:
+            if active_broker is not None:
+                try:
+                    broker_response = _finish_broker_worker(
+                        run_dir,
+                        plan,
+                        attempt,
+                        active_broker,
+                        force_returncode=70,
+                    )
+                    broker_containment_verified = bool(
+                        broker_response["containment_verified"]
+                    ) and broker_containment_verified
+                except BaseException as broker_cleanup_exc:
+                    if supervisor_error is None:
+                        supervisor_error = broker_cleanup_exc
+                    returncode = 70
+                active_broker = None
             try:
                 descendant_cleanup_performed, lineage_cleanup_count = _cleanup_child_process(
                     child,
@@ -1457,7 +1965,10 @@ def _supervise(run_dir: Path, plan: dict[str, Any], attempt: int) -> None:
                     child_group,
                     containment_token,
                 )
-                containment_verified = plan.get("fork_policy") == "kernel_denied"
+                containment_verified = (
+                    plan.get("fork_policy") == "kernel_denied"
+                    and broker_containment_verified
+                )
             except BaseException as cleanup_exc:
                 if supervisor_error is None:
                     supervisor_error = cleanup_exc
@@ -1467,7 +1978,10 @@ def _supervise(run_dir: Path, plan: dict[str, Any], attempt: int) -> None:
                     )
                 returncode = 70
         else:
-            containment_verified = plan.get("fork_policy") == "kernel_denied"
+            containment_verified = (
+                plan.get("fork_policy") == "kernel_denied"
+                and broker_containment_verified
+            )
         try:
             _stop_power_assertion(power_assertion)
         except BaseException as assertion_cleanup_exc:
@@ -1670,6 +2184,75 @@ def _parse_optional_command_json(
     return value
 
 
+def _parse_broker_policy_json(
+    parser: argparse.ArgumentParser,
+    raw: str,
+) -> list[dict[str, Any]]:
+    if not raw:
+        return []
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError:
+        parser.error("--broker-policy-json must contain a JSON object array")
+    if not isinstance(value, list) or not value or any(not isinstance(item, dict) for item in value):
+        parser.error("--broker-policy-json must contain a non-empty JSON object array")
+    return value
+
+
+def _build_broker_policy(
+    specifications: list[dict[str, Any]],
+    environment: dict[str, str],
+) -> list[dict[str, Any]]:
+    policies: list[dict[str, Any]] = []
+    seen_commands: set[str] = set()
+    for specification in specifications:
+        command = specification.get("command")
+        if (
+            not isinstance(command, list)
+            or not command
+            or any(not isinstance(item, str) or not item for item in command)
+        ):
+            raise DetachedStepError("broker policy command must be a non-empty string array")
+        cwd = Path(str(specification.get("cwd") or "")).expanduser().resolve(strict=True)
+        if not cwd.is_dir():
+            raise DetachedStepError("broker policy cwd must be a directory")
+        resolved_command = _resolve_command(command, cwd, environment)
+        command_sha = _sha256(resolved_command)
+        if command_sha in seen_commands:
+            raise DetachedStepError("broker policy contains a duplicate command")
+        seen_commands.add(command_sha)
+        stdout_path = Path(str(specification.get("stdout_path") or "")).expanduser()
+        if not stdout_path.is_absolute():
+            stdout_path = cwd / stdout_path
+        stdout_path = stdout_path.resolve(strict=False)
+        if not stdout_path.parent.is_dir():
+            raise DetachedStepError("broker policy stdout parent must exist")
+        timeout_s_max = specification.get("timeout_s_max")
+        max_invocations = specification.get("max_invocations")
+        if (
+            not isinstance(timeout_s_max, (int, float))
+            or isinstance(timeout_s_max, bool)
+            or not math.isfinite(float(timeout_s_max))
+            or float(timeout_s_max) <= 0.0
+            or not isinstance(max_invocations, int)
+            or isinstance(max_invocations, bool)
+            or max_invocations <= 0
+            or max_invocations > 100
+        ):
+            raise DetachedStepError("broker policy timeout or invocation bound is invalid")
+        body = {
+            "command": resolved_command,
+            "command_sha256": command_sha,
+            "cwd": str(cwd),
+            "stdout_path": str(stdout_path),
+            "timeout_s_max": float(timeout_s_max),
+            "max_invocations": max_invocations,
+            "execution_manifest": _build_execution_manifest(resolved_command, cwd),
+        }
+        policies.append({**body, "policy_sha256": _sha256(body)})
+    return policies
+
+
 def _build_plan(
     name: str,
     command: list[str],
@@ -1677,6 +2260,7 @@ def _build_plan(
     timeout_s: float,
     resume_contract: str,
     resume_verifier: list[str] | None = None,
+    broker_policy_specs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     environment = _frozen_environment()
     resolved_command = _resolve_command(command, cwd, environment)
@@ -1710,6 +2294,7 @@ def _build_plan(
     verifier_execution_manifest = (
         _build_execution_manifest(resolved_verifier, cwd) if resolved_verifier else None
     )
+    broker_policy = _build_broker_policy(broker_policy_specs or [], environment)
     body = {
         "schema": f"{SCHEMA_PREFIX}.plan.v2",
         "name": name,
@@ -1727,6 +2312,8 @@ def _build_plan(
             _sha256_file(Path(resolved_verifier[0])) if resolved_verifier else None
         ),
         "resume_verifier_execution_manifest": verifier_execution_manifest,
+        "broker_policy": broker_policy,
+        "broker_policy_sha256": _sha256(broker_policy),
         "cwd": str(cwd),
         "timeout_s": float(timeout_s),
         "restart_policy": "never",
@@ -1766,6 +2353,8 @@ def _comparable_plan(plan: dict[str, Any]) -> dict[str, Any]:
             "resume_verifier_command_sha256",
             "resume_verifier_executable_sha256",
             "resume_verifier_execution_manifest",
+            "broker_policy",
+            "broker_policy_sha256",
             "cwd",
             "timeout_s",
             "restart_policy",
@@ -1849,6 +2438,43 @@ def _verify_plan(plan: dict[str, Any], path: Path) -> None:
         )
     ):
         raise DetachedStepError(f"detached plan has an unexpected resume verifier: {path}")
+    broker_policy = plan.get("broker_policy")
+    if (
+        not isinstance(broker_policy, list)
+        or plan.get("broker_policy_sha256") != _sha256(broker_policy)
+    ):
+        raise DetachedStepError(f"detached plan broker policy binding is invalid: {path}")
+    seen_broker_commands: set[str] = set()
+    for policy in broker_policy:
+        if not isinstance(policy, dict):
+            raise DetachedStepError(f"detached plan broker policy entry is invalid: {path}")
+        body = {key: value for key, value in policy.items() if key != "policy_sha256"}
+        command = policy.get("command")
+        command_sha = str(policy.get("command_sha256") or "")
+        cwd_value = Path(str(policy.get("cwd") or ""))
+        stdout_path = Path(str(policy.get("stdout_path") or ""))
+        timeout_max = policy.get("timeout_s_max")
+        max_invocations = policy.get("max_invocations")
+        if (
+            policy.get("policy_sha256") != _sha256(body)
+            or not isinstance(command, list)
+            or not command
+            or any(not isinstance(item, str) or not item for item in command)
+            or command_sha != _sha256(command)
+            or command_sha in seen_broker_commands
+            or not cwd_value.is_absolute()
+            or not stdout_path.is_absolute()
+            or not isinstance(timeout_max, (int, float))
+            or isinstance(timeout_max, bool)
+            or not math.isfinite(float(timeout_max))
+            or float(timeout_max) <= 0.0
+            or not isinstance(max_invocations, int)
+            or isinstance(max_invocations, bool)
+            or max_invocations <= 0
+        ):
+            raise DetachedStepError(f"detached plan broker policy entry binding is invalid: {path}")
+        _verify_execution_manifest_structure(policy.get("execution_manifest"))
+        seen_broker_commands.add(command_sha)
     if plan.get("session_escape_policy") != "prohibited":
         raise DetachedStepError(f"detached plan containment policy is invalid: {path}")
     if plan.get("fork_policy") != "kernel_denied" or (
@@ -1861,8 +2487,19 @@ def _verify_plan(plan: dict[str, Any], path: Path) -> None:
 def _events_by_attempt(events: list[dict[str, Any]]) -> dict[int, dict[str, dict[str, Any]]]:
     grouped: dict[int, dict[str, dict[str, Any]]] = {}
     for event in events:
-        grouped.setdefault(int(event["attempt"]), {})[str(event["event"])] = event
+        event_type = str(event["event"])
+        key = (
+            f"{event_type}:{event.get('request_id')}"
+            if event_type in {"BROKER_STARTED", "BROKER_TERMINAL"}
+            else event_type
+        )
+        grouped.setdefault(int(event["attempt"]), {})[key] = event
     return grouped
+
+
+def _broker_events(attempt_events: dict[str, dict[str, Any]], event_type: str) -> list[dict[str, Any]]:
+    prefix = f"{event_type}:"
+    return [event for key, event in attempt_events.items() if key.startswith(prefix)]
 
 
 def _materialize_terminal_receipt_locked(run_dir: Path, terminal: dict[str, Any]) -> dict[str, Any]:
@@ -1957,6 +2594,20 @@ def _verify_run_locked(
             or control.get("supervisor_start_token") != supervisor_token
             or not isinstance(control.get("socket_path"), str)
             or len(str(control.get("control_token") or "")) != 64
+            or any(
+                character not in "0123456789abcdef"
+                for character in str(control.get("control_token") or "")
+            )
+            or bool(control.get("broker_enabled")) != bool(plan["broker_policy"])
+            or (
+                len(str(control.get("broker_token") or "")) != 64
+                or any(
+                    character not in "0123456789abcdef"
+                    for character in str(control.get("broker_token") or "")
+                )
+                if plan["broker_policy"]
+                else bool(control.get("broker_token"))
+            )
         ):
             raise DetachedStepError("attempt journal control identity is invalid")
         target = attempt_events.get("TARGET_STARTED")
@@ -1972,6 +2623,85 @@ def _verify_run_locked(
                 or len(str(target.get("containment_token") or "")) != 64
             ):
                 raise DetachedStepError("attempt journal target identity is invalid")
+        policy_by_sha = {
+            str(policy["policy_sha256"]): policy for policy in plan["broker_policy"]
+        }
+        broker_starts = _broker_events(attempt_events, "BROKER_STARTED")
+        broker_terminals = {
+            str(event.get("request_id") or ""): event
+            for event in _broker_events(attempt_events, "BROKER_TERMINAL")
+        }
+        invocation_counts: dict[str, int] = {}
+        for broker_start in broker_starts:
+            request_id = str(broker_start.get("request_id") or "")
+            policy_sha = str(broker_start.get("policy_sha256") or "")
+            policy = policy_by_sha.get(policy_sha)
+            invocation_counts[policy_sha] = invocation_counts.get(policy_sha, 0) + 1
+            if (
+                target is None
+                or policy is None
+                or int(broker_start.get("supervisor_pid") or 0) != supervisor_pid
+                or broker_start.get("supervisor_start_token") != supervisor_token
+                or broker_start.get("command_sha256") != policy["command_sha256"]
+                or int(broker_start.get("worker_pid") or 0) <= 0
+                or int(broker_start.get("worker_process_group_id") or 0)
+                != int(broker_start.get("worker_pid") or 0)
+                or not broker_start.get("worker_start_token")
+                or len(str(broker_start.get("containment_token") or "")) != 64
+                or len(request_id) != 32
+            ):
+                raise DetachedStepError("attempt journal broker worker identity is invalid")
+            broker_terminal = broker_terminals.get(request_id)
+            if broker_terminal is None:
+                continue
+            response = broker_terminal.get("response")
+            if not isinstance(response, dict):
+                raise DetachedStepError("attempt journal broker response is invalid")
+            response_signed = {
+                key: value for key, value in response.items() if key != "response_hmac_sha256"
+            }
+            response_body = {
+                key: value for key, value in response_signed.items() if key != "receipt_sha256"
+            }
+            response_hmac = str(response.get("response_hmac_sha256") or "")
+            broker_token = str(control.get("broker_token") or "") if control is not None else ""
+            if (
+                broker_terminal.get("policy_sha256") != policy_sha
+                or response.get("receipt_sha256") != _sha256(response_body)
+                or len(response_hmac) != 64
+                or len(broker_token) != 64
+                or not hmac.compare_digest(
+                    response_hmac,
+                    hmac.new(
+                        bytes.fromhex(broker_token),
+                        _canonical_bytes(response_signed),
+                        hashlib.sha256,
+                    ).hexdigest(),
+                )
+                or response.get("schema") != f"{SCHEMA_PREFIX}.broker_response.v1"
+                or response.get("request_id") != request_id
+                or response.get("policy_sha256") != policy_sha
+                or response.get("command_sha256") != policy["command_sha256"]
+                or int(response.get("worker_pid") or 0)
+                != int(broker_start.get("worker_pid") or 0)
+                or response.get("worker_start_token") != broker_start.get("worker_start_token")
+                or not isinstance(response.get("containment_verified"), bool)
+                or (
+                    not response.get("containment_verified")
+                    and response.get("status") != "containment_failed"
+                )
+                or (
+                    response.get("containment_verified")
+                    and response.get("status") == "containment_failed"
+                )
+            ):
+                raise DetachedStepError("attempt journal broker terminal binding is invalid")
+        if any(
+            count > int(policy_by_sha[policy_sha]["max_invocations"])
+            for policy_sha, count in invocation_counts.items()
+            if policy_sha in policy_by_sha
+        ):
+            raise DetachedStepError("attempt journal broker invocation bound exceeded")
         terminal = attempt_events.get("TERMINAL")
         if terminal is not None:
             terminal_receipt = terminal["receipt"]
@@ -2000,6 +2730,8 @@ def _verify_run_locked(
                 or terminal_receipt.get("child_start_token") != target.get("child_start_token")
             ):
                 raise DetachedStepError("terminal receipt target binding mismatch")
+            if len(broker_terminals) != len(broker_starts):
+                raise DetachedStepError("terminal attempt has an unfinished broker worker")
     terminal_events = [event for event in events if event.get("event") == "TERMINAL"]
     receipt: dict[str, Any] | None = None
     if terminal_events:
@@ -2149,6 +2881,7 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict[s
     run_dir = Path(args.run_dir).expanduser().resolve(strict=False)
     receipt_path = run_dir / RECEIPT_FILE
     resume_verifier = _parse_optional_command_json(parser, args.resume_verifier_json)
+    broker_policy_specs = _parse_broker_policy_json(parser, args.broker_policy_json)
     requested_plan = _build_plan(
         args.name,
         command,
@@ -2156,6 +2889,7 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict[s
         args.timeout,
         args.resume_contract,
         resume_verifier,
+        broker_policy_specs,
     )
     recovered_stale_child = False
     prior_completion_indeterminate = False
@@ -2193,6 +2927,17 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict[s
                 target = latest.get("TARGET_STARTED")
                 if target is not None:
                     recovered_stale_child = _terminate_stale_target(target)
+                broker_terminal_ids = {
+                    str(event.get("request_id") or "")
+                    for event in _broker_events(latest, "BROKER_TERMINAL")
+                }
+                for broker_start in _broker_events(latest, "BROKER_STARTED"):
+                    if str(broker_start.get("request_id") or "") in broker_terminal_ids:
+                        continue
+                    recovered_stale_child = (
+                        _terminate_stale_broker_worker(broker_start)
+                        or recovered_stale_child
+                    )
                 prior_completion_indeterminate = True
             if grouped:
                 prior_attempt = max(grouped)
@@ -2448,6 +3193,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--resume-verifier-json",
         default="",
         help="JSON string array for the frozen target checkpoint verifier command",
+    )
+    launch.add_argument(
+        "--broker-policy-json",
+        default="",
+        help="JSON object array of exact bounded subprocess commands the target may broker",
     )
     launch.add_argument("--resume", action="store_true")
     launch.add_argument("command", nargs=argparse.REMAINDER)

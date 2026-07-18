@@ -3881,6 +3881,14 @@
       "scope": "<module>.ChatDeliveryJournal._initialize"
     },
     {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().delete_file",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/runtime/detached_subprocess_broker.py",
+      "scope": "<module>.run_brokered_process"
+    },
+    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_bytes",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -13946,6 +13954,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "42d2d93f02267d3b0f7430f8e36260f367d357414b1d2e5ca7958fcf9270fff3",
+  "inventory_sha256": "3a62bf1e9bd5b524a664ea5c89d2cc3cb15016330216a74bc3e87bdaf0608113",
   "schema_version": 1
 }

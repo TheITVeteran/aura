@@ -101,6 +101,63 @@ def test_worker_command_resolves_relative_campaign_directory(
     campaign_index = command.index("--campaign-dir") + 1
     assert command[campaign_index] == str((tmp_path / "relative-campaign").resolve())
 
+    policy = runner._detached_broker_policy(args)
+    assert len(policy) == len(runner.FULL_ARMS)
+    assert {entry["command"][-1] for entry in policy} == set(runner.FULL_ARMS)
+    assert all(entry["cwd"] == str(runner.REPO_ROOT) for entry in policy)
+    assert all(entry["max_invocations"] == 1 for entry in policy)
+
+
+def test_run_child_uses_detached_broker_when_available(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    args = SimpleNamespace(
+        campaign_dir=str(tmp_path),
+        campaign_name="test",
+        model="model",
+        adapter="adapter",
+        adapter_id="adapter-id",
+        seeds="1",
+        domains="mathematics",
+        difficulty=2,
+        profile="primary",
+        n_slots=4,
+        branches=2,
+        rlc_steps=2,
+        rlc_profile="resident_full_stack",
+        decode_max_tokens=64,
+        episode_timeout=10.0,
+        load_timeout=10.0,
+        warmup_timeout=10.0,
+        arm_timeout=20.0,
+        campaign_timeout=30.0,
+        equal_compute_max_samples=2,
+        max_infra_attempts=1,
+        confirmatory=False,
+        contamination_audit="",
+        contamination_trust_root="",
+    )
+    observed: dict[str, object] = {}
+
+    def fake_broker(command, *, cwd, stdout_path, timeout_s):
+        observed.update(
+            command=command,
+            cwd=cwd,
+            stdout_path=stdout_path,
+            timeout_s=timeout_s,
+        )
+        return SimpleNamespace(returncode=17)
+
+    monkeypatch.setattr(runner, "broker_available", lambda: True)
+    monkeypatch.setattr(runner, "run_brokered_process", fake_broker)
+
+    assert runner._run_child(args, runner.BASE_RLC, 12.5) == 17
+    assert observed["command"] == runner._worker_args(args, runner.BASE_RLC)
+    assert observed["cwd"] == runner.REPO_ROOT
+    assert observed["stdout_path"] == tmp_path / runner.LOG_FILE
+    assert observed["timeout_s"] == 12.5
+
 
 def test_claim_eligibility_requires_full_powered_seven_domain_protocol():
     args = SimpleNamespace(

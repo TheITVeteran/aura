@@ -60,6 +60,10 @@ from core.brain.llm.latent_cortex.runtime_identity import (  # noqa: E402
     build_worker_identity,
     logical_model_parameter_count,
 )
+from core.runtime.detached_subprocess_broker import (  # noqa: E402
+    broker_available,
+    run_brokered_process,
+)
 
 PLAN_FILE = "plan.json"
 JOURNAL_FILE = "campaign.jsonl"
@@ -1164,9 +1168,17 @@ def _arm_complete(campaign_dir: Path, plan: CampaignPlan, arm: str) -> bool:
 def _run_child(args: argparse.Namespace, arm: str, timeout_s: float) -> int:
     campaign_dir = Path(args.campaign_dir).expanduser().resolve()
     log_path = campaign_dir / LOG_FILE
+    command = _worker_args(args, arm)
+    if broker_available():
+        return run_brokered_process(
+            command,
+            cwd=REPO_ROOT,
+            stdout_path=log_path,
+            timeout_s=timeout_s,
+        ).returncode
     with log_path.open("ab", buffering=0) as log:
         process = subprocess.Popen(
-            _worker_args(args, arm),
+            command,
             cwd=REPO_ROOT,
             stdout=log,
             stderr=subprocess.STDOUT,
@@ -1182,6 +1194,20 @@ def _run_child(args: argparse.Namespace, arm: str, timeout_s: float) -> int:
                 os.killpg(process.pid, signal.SIGKILL)
                 process.wait(timeout=15)
             return 124
+
+
+def _detached_broker_policy(args: argparse.Namespace) -> list[dict[str, Any]]:
+    campaign_dir = Path(args.campaign_dir).expanduser().resolve()
+    return [
+        {
+            "command": _worker_args(args, arm),
+            "cwd": str(REPO_ROOT),
+            "stdout_path": str(campaign_dir / LOG_FILE),
+            "timeout_s_max": float(args.arm_timeout),
+            "max_invocations": int(args.max_infra_attempts),
+        }
+        for arm in _arms(args)
+    ]
 
 
 def _orchestrate(
@@ -1330,6 +1356,7 @@ def main() -> int:
                     "arms": document["metadata"]["arms"],
                     "claim_eligible": document["metadata"]["claim_eligible"],
                     "external_frontier_claim_eligible": False,
+                    "detached_broker_policy": _detached_broker_policy(args),
                 },
                 indent=2,
                 sort_keys=True,
