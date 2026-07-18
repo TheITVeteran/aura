@@ -18876,3 +18876,88 @@ adapter, frontier, installed-app, release, semantic-review, or soak credit.
   and resume bit-for-bit. Only after a positive pilot may the powered six-arm
   equal-compute, depth, no-regression, external-frontier, independent-trust,
   and exact installed-desktop campaigns begin. Final soaks remain deferred.
+
+## Checkpoint 2026-07-18-131: Crash-Observable One-Shot Execution Boundary
+
+Checkpoint 131 replaces the unsafe `launchctl submit` handoff with a bounded,
+one-shot detached execution protocol suitable for resident-model campaigns and
+future recurrence-native training. It closes process-lifecycle and evidence-
+publication prerequisites only; it does not award reasoning-gain, frontier,
+installed-app, semantic-review, release, or soak credit.
+
+- The launcher double-forks into an independently reparented supervisor and
+  uses a two-way release gate. The supervisor cannot start until its exact
+  macOS `proc_pidinfo` identity is hash-journaled, and the target cannot execute
+  until its PID, process group, containment token, and gated executable are
+  committed. A concurrent retry therefore sees a durable live reservation
+  before any target side effect is possible.
+- The immutable plan freezes the absolute interpreter/executable, the command,
+  working directory, finite timeout, restart policy, resume contract, and a
+  secret-free allowlisted execution environment. Content-addressed execution
+  manifests cover direct scripts/configuration and every Git-tracked source
+  file reachable from the working directory, script roots, and `PYTHONPATH`.
+  The supervisor replays that manifest immediately before both target and
+  checkpoint-verifier execution, so replacing an interpreted Python script or
+  imported project module cannot preserve the original plan identity. Targets
+  no longer inherit API keys or unrelated desktop-session credentials.
+  Timeouts and durations use monotonic time; wall time remains descriptive
+  evidence only.
+- The supervisor never restarts a target. It publishes atomic advisory status,
+  owns an authenticated per-attempt Unix datagram control channel, and handles
+  OS signals only by setting lifecycle state. Destructive cleanup is performed
+  in the supervised loop against strong process identity, avoiding the prior
+  check-then-signal path from an external PID.
+- Containment no longer trusts a removable environment marker. The gated PID
+  executes directly through a SHA-bound macOS `sandbox-exec` profile that
+  kernel-denies `process-fork`; the target therefore cannot create a child,
+  strip its environment, call `setsid()`, and escape observation. `caffeinate`
+  is a separate supervisor-owned wait assertion rather than a target wrapper,
+  preserving same-PID identity. Process identity/group cleanup and the lineage
+  marker remain defense in depth. A reproduced environment-stripping,
+  new-session descendant is denied before creation, and an unobservable or
+  incomplete cleanup emits `containment_failed` rather than claiming closure.
+- The attempt journal is an atomic, replayed hash-chain with explicit
+  `LAUNCHED`, `CONTROL_READY`, `TARGET_STARTED`, and authoritative `TERMINAL`
+  transitions. The terminal event contains the full receipt and is committed
+  before receipt materialization. If the supervisor dies in that boundary,
+  later inspection deterministically recreates the exact receipt rather than
+  rerunning work or accepting a half-state.
+- Generic incomplete commands are classified completion-indeterminate and
+  cannot resume. A `target_checkpoint` retry requires a source-frozen verifier
+  whose v2 verdict binds the plan, command, exact prior attempt, prior journal
+  head, checkpoint sequence, and checkpoint identity. The verifier must publish
+  an attempt-specific evidence artifact; the runner independently reads and
+  hashes it before accepting `safe_to_resume`. `already_completed`,
+  `indeterminate`, stale verdicts, missing evidence, and replay against a later
+  attempt all fail closed.
+- The RLC campaign verifier replays the frozen `CampaignPlan` and locked
+  campaign journal, distinguishes absent, safely incomplete, complete, and
+  inconsistent states, and validates complete manifest and grade bindings.
+  Independent replay of CP130 returns `already_completed` with plan file
+  `2a5f8533...8567`, journal `0e677b9b...0d74`, manifest
+  `65e90270...dd5`, and grade `977add1f...aec`.
+- The adversarial suite passes 30/30. It covers one-shot nonzero exit,
+  monotonic timeout, authenticated stop, duplicate refusal, high-resolution
+  identity, explicit resume, verifier refusal, completion-indeterminate
+  replay, crash-after-completion idempotency, pre-reservation and pre-release
+  launcher crashes, post-terminal-journal crash reconciliation, supervisor
+  failure after target release, forged status, journal tamper, log symlink,
+  frozen secret-free environment, kernel-denied TERM-ignoring descendants,
+  environment-stripping new-session escape, interpreted-script mutation, and
+  stale checkpoint-verdict replay. Focused Ruff, Python compilation, strict
+  mypy, governance ownership lint, and a real five-second detached macOS smoke
+  pass. The final smoke receipt records `fork_policy=kernel_denied`, exact
+  sandboxed command, 5.45-second monotonic duration, zero restarts, dead target
+  and supervisor identities, and verified empty containment. The adjacent RLC
+  adapter, journal, frontier-task, paired-campaign, fast-weight, and model-load
+  ownership regression set also passes 194/194 in 198.01 seconds.
+- Evidence-weighted completion remains 27%. This is checkpoint 131 of the
+  faithful 292-399 total forecast, leaving approximately 161-268 checkpoints.
+- Next: publish CP131 directly to `main`; add a supervisor broker for the RLC
+  coordinator's legitimate isolated arm workers so every worker remains a
+  separately sandboxed, identity-journaled no-fork process; then run the fresh
+  resident-full-stack pilot with a 512-token contract budget and preserve and
+  replay that verdict. Do not weaken the strict fork boundary merely to run the
+  campaign. After that, implement the runtime-aligned,
+  schema-complete, scope-gated recurrence-native v2 objective and detached
+  resumable training. Final multi-hour and 24-72-hour soaks remain deferred.
