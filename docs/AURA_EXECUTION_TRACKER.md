@@ -19060,3 +19060,66 @@ It does not claim soak, RLC-gain, or frontier credit.
   process exits. Evidence-weighted completion remains 27%; this is checkpoint
   133 of the faithful 292-399 forecast, leaving approximately 159-266
   checkpoints. The final long soaks remain deferred.
+
+## Checkpoint 2026-07-18-134: Recurrence-Only Adapter Isolation
+
+CP134 closes the first causal defect in recurrence-native v2: durable RLC
+weights can now exist on a resident model without silently changing prompt
+prefill, ordinary generation, bridge processing, or lexical answer decode. It
+is infrastructure and attribution credit only. It does not claim that a v2
+adapter has been trained, installed, or shown to improve reasoning.
+
+- `ScopedLoRALinear` is byte-compatible with the existing MLX LoRA tensor
+  topology but returns the wrapped base projection unless a task-local
+  recurrence scope is open. Outside that scope the delta is not part of the
+  result at all; a nonzero synthetic adapter is bit-exact to its base layer.
+- A scope can cover all live slot positions or an exact sequence slice. The
+  latter is the prerequisite for a differentiable teacher-forced executor in
+  which prompt, slots, bridge, and answer share their true causal positions but
+  only the slots receive recurrence-trained deltas. Invalid or out-of-range
+  spans fail closed, nested scopes restore exactly, and `ContextVar` isolates
+  concurrent requests.
+- `WindowRunner` is the automatic live activation boundary. Prompt prefill and
+  answer decode call layers directly and remain base-only; recurrent passes and
+  winner persistence call the runner and activate the delta. The cache-free
+  window pass used by in-episode fast-weight optimization is also explicitly
+  scoped. Every episode now exposes aggregate adapter call, adapted-position,
+  and observed-position evidence under
+  `aura.recurrence_adapter_activation.v1`.
+- The paired campaign preserves historical v1 behavior but selects the scoped
+  wrapper for an adapter whose bound objective is
+  `aura.recurrence_native_objective.v2`. This makes adapter-vanilla a real
+  ordinary-execution control rather than a second globally modified model.
+- The new wrapper contracts and adjacent recurrence, engine, and paired-runner
+  suites pass `68/68`. Python compilation, Ruff `F/E9/I`, diff integrity, and
+  governance ownership lint pass.
+- Two independent read-only audits confirm that v1 trained the wrong state:
+  the full lexical prompt-plus-answer sequence rather than role-seeded latent
+  slots against fixed prompt KV. They additionally found no live worker load
+  seam for the emitted adapter, incomplete effective-model identity, a
+  monotonic hinge whose shallow-loss gradient can reward regression,
+  non-resumable optimizer/sample state, missing winner-persistence/bridge/
+  decode credit, and no training alignment for branch exchange, selection,
+  halting, latent optimization, or fast-weight composition.
+- The scientific audit found that the current independent verifier replays
+  supplied success booleans instead of rescoring raw outputs, external-frontier
+  labels lack authenticated provider/build attestation, equal-compute uses an
+  approximate layer-app proxy, no-regression is not a non-inferiority test,
+  contamination is assertion-based, arm-block execution leaves order/thermal
+  confounding, task families are structurally narrow, and the campaign bypasses
+  the live desktop chat path. CP133 is therefore retained only as a
+  non-claim-eligible smoke pilot.
+- Evidence-weighted completion remains 27%. This is checkpoint 134 of the
+  faithful 292-399 forecast, leaving approximately 158-265 checkpoints. No
+  RLC-gain, frontier, live-product, release, or soak credit is awarded.
+- Next: implement a versioned execution spec shared by trainer, campaign,
+  worker, and receipts; add the live-path slot/branch/exchange/persistence/
+  bridge teacher-forced objective with detached shallow references; build
+  atomic optimizer/RNG/curriculum resume and training-time source/data/model
+  manifests; emit standard and strict recurrence-adapter artifacts; then add
+  the resident worker load/identity seam and certify or prohibit latent-opt and
+  fast-weight composition. Separately harden the proof system with independent
+  raw-output rescoring, externally anchored frontier identity, prospective
+  power and true non-inferiority, reproducible contamination scans, pinned FLOP
+  replay, per-task crossover, broader generators, and a live-desktop paired
+  producer. Final long soaks remain deferred.

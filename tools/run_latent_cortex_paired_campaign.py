@@ -664,11 +664,20 @@ def _load_adapter(model: Any, adapter_dir: Path, manifest: dict[str, Any]) -> in
     from mlx_lm.tuner.lora import LoRALinear
 
     from core.brain.llm.latent_cortex.fast_weights import _linear_dims
+    from core.brain.llm.latent_cortex.recurrence_adapter import ScopedLoRALinear
 
     rank = int(manifest["lora"]["rank"])
     targets = tuple(manifest["lora"]["targets"])
     expected = int(manifest["lora"]["wrapped_projection_count"])
     tensor_records = {record["key"]: record for record in manifest["tensors"]}
+    objective_name = str(
+        manifest["training_receipt"]["objective"].get("name") or ""
+    )
+    wrapper_type = (
+        ScopedLoRALinear
+        if objective_name == "aura.recurrence_native_objective.v2"
+        else LoRALinear
+    )
     projections = sorted(
         {
             key.removesuffix(".lora_a").removesuffix(".lora_b")
@@ -696,7 +705,7 @@ def _load_adapter(model: Any, adapter_dir: Path, manifest: dict[str, Any]) -> in
                     f"adapter tensor dimensions do not match projection: {projection}"
                 )
             originals.append((parent, leaf, original))
-            setattr(parent, leaf, LoRALinear.from_base(original, r=rank))
+            setattr(parent, leaf, wrapper_type.from_base(original, r=rank))
 
         weights_path = adapter_dir / manifest["adapter"]["path"]
         expected_adapter_sha256 = manifest["adapter"]["sha256"]

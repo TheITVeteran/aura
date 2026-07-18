@@ -1552,6 +1552,7 @@ class LatentCortexEngine:
         if fast_weights is not None and receipt.fast_weights_erased is not True:
             raise _FastWeightCleanupError("fast-weight cleanup proof did not pass")
 
+        receipt.recurrence_adapter = runner.adapter_receipt()
         receipt.latent_telemetry = telemetry.to_receipt()
         return out_tokens, receipt
 
@@ -1886,10 +1887,15 @@ class LatentCortexEngine:
 
     def _nocache_window_pass(self, z):
         """Window pass with no cache (grad-safe: zero side effects)."""
+        from core.brain.llm.latent_cortex.recurrence_adapter import (
+            recurrence_adapter_scope,
+        )
+
         inner = self.model.model
         h = z
-        for i in range(self.prelude_end, self.coda_start):
-            h = inner.layers[i](h, None, None)
+        with recurrence_adapter_scope():
+            for i in range(self.prelude_end, self.coda_start):
+                h = inner.layers[i](h, None, None)
         return h
 
     def _fw_probe(self, budget: ComputeBudget, *, cleanup: bool = False):

@@ -557,6 +557,9 @@ class EpisodeReceipt:
     branch_scores: list[float] = field(default_factory=list)
     selected_branch: int = 0
     exchanges: int = 0
+    # Scoped durable-adapter activation. Zero calls means no recurrence-native
+    # delta was resident; nonzero calls prove it was read only by slot windows.
+    recurrence_adapter: dict[str, Any] = field(default_factory=dict)
     # Optimization evidence.
     # Digest of the first-decode logits (next-token distribution conditioned
     # on [prompt; refined thoughts]) — the cheap causal audit surface: any
@@ -684,6 +687,7 @@ class EpisodeReceipt:
             "branch_scores": [round(s, 6) for s in self.branch_scores],
             "selected_branch": self.selected_branch,
             "exchanges": self.exchanges,
+            "recurrence_adapter": dict(self.recurrence_adapter),
             "latent_opt_applied": self.latent_opt_applied,
             "latent_opt_mode": self.latent_opt_mode,
             "latent_opt_loss_trail": [round(v, 6) for v in self.latent_opt_loss_trail],

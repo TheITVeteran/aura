@@ -157,6 +157,21 @@ class WindowRunner:
         self._inner = inner_model
         self._budget = budget
         self._mask_fn = mask_fn
+        self._adapter_calls = 0
+        self._adapter_adapted_positions = 0
+        self._adapter_observed_positions = 0
+
+    def adapter_receipt(self) -> dict[str, int | str | bool]:
+        """Aggregate proof that scoped weights ran only inside slot windows."""
+
+        return {
+            "schema": "aura.recurrence_adapter_activation.v1",
+            "scope": "latent_slots_only",
+            "calls": self._adapter_calls,
+            "adapted_positions": self._adapter_adapted_positions,
+            "observed_positions": self._adapter_observed_positions,
+            "active": self._adapter_calls > 0,
+        }
 
     def _mask(self, h, cache_slice):
         if self._mask_fn is not None:
@@ -169,6 +184,10 @@ class WindowRunner:
 
     def run(self, h, cache, start: int, end: int, *, persist: bool) -> Any:
         import mlx.core as mx
+
+        from core.brain.llm.latent_cortex.recurrence_adapter import (
+            recurrence_adapter_scope,
+        )
 
         tokens = int(h.shape[1])
         layers = end - start
@@ -183,12 +202,25 @@ class WindowRunner:
         snaps = None
         if not persist:
             snaps = _snapshot_recurrent_caches(cache, start, end)
+        adapter_activation = None
         try:
             mask = self._mask(h, cache[start:end])
-            for i in range(start, end):
-                h = self._inner.layers[i](h, mask, cache[i])
+            # A WindowRunner call is the live proof boundary that these inputs
+            # are thought slots. Recurrent adapters remain dark for all direct
+            # prompt, lexical decode, and unrelated model calls.
+            with recurrence_adapter_scope() as adapter_activation:
+                for i in range(start, end):
+                    h = self._inner.layers[i](h, mask, cache[i])
             mx.eval(h)
         finally:
+            if adapter_activation is not None:
+                self._adapter_calls += adapter_activation.calls
+                self._adapter_adapted_positions += (
+                    adapter_activation.adapted_positions
+                )
+                self._adapter_observed_positions += (
+                    adapter_activation.observed_positions
+                )
             if snaps is not None:
                 _restore_recurrent_caches(cache, start, end, snaps)
         return h
