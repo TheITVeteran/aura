@@ -18808,3 +18808,71 @@ release, or soak credit.
   equal-compute, external-frontier, independent-verification, and exact desktop
   campaigns. Re-freeze semantic review and carry unchanged CP126 evidence after
   source is clean. Multi-hour and 24-72-hour final soaks remain deferred.
+
+## Checkpoint 2026-07-18-130: Resident RLC Recurrence-Attribution Verdict
+
+Checkpoint 130 executes the first complete current-adapter resident-32B pilot
+over all seven frozen frontier-task domains and all four cells in the causal
+2x2. It is a valid negative diagnostic result. It does not award recurrence,
+adapter, frontier, installed-app, release, semantic-review, or soak credit.
+
+- The immutable plan `ecb597a3...638c` ran 28/28 planned cells over fresh seed
+  `940001`: base vanilla, base RLC, adapter vanilla, and adapter RLC for novel
+  algorithms, mathematics, coding, scientific inference, long-horizon
+  planning, calibration, and misleading-premise robustness. The hash-chained
+  journal finalized at 113 events with head `8ded087f...982e`, manifest
+  `dfe7e279...0fbf`, and grade `4e7b2cab...b311`.
+- Every worker independently admitted the same resident Qwen2 checkpoint:
+  64 layers, hidden width 5,120, 32,763,876,352 logical parameters, checkpoint
+  `8eae71e7...0fad`, runtime bundle `a4d75e2...0f67`, and implementation source
+  `c5c3120d...df18`. Adapter cells additionally revalidated all 64 wrapped
+  projections and composite adapter identity `1c1ad7a...57ae` across load.
+- Exact correctness was base vanilla `1/7`, base RLC `0/7`, adapter vanilla
+  `0/7`, and adapter RLC `0/7`. The only correct cell was base vanilla on the
+  misleading-premise task. The grader remained
+  `incomplete_underpowered / CONJECTURE`; no same-checkpoint or frontier claim
+  is eligible, and there is no positive adapter-under-RLC evidence.
+- The raw outputs establish a specific failure mechanism. Adapter vanilla
+  terminated in 1.30-2.72 seconds with scalar answers such as `11`, `0.4`,
+  `0`, `12`, and `6`. Adapter RLC likewise emitted only two or three tokens
+  such as ` 1`, ` 10`, or `1 2`. Base RLC instead produced long but corrupted
+  continuations. Branch summaries were effectively collapsed, with exchange
+  cosine approximately `1.0`, and adapter-RLC branch verifiers scored `0.0`.
+- The completed attribution audit shows that `32b_r1` optimized the wrong
+  computation. Its v1 objective recurs the complete token sequence during
+  training, while the live engine recurs synthetic workspace slots, branches
+  them, persists one winner into the prompt KV owner, and decodes through that
+  state. The trainer also teacher-forced only raw scalar answers from 576
+  khop/boolean/modular examples; `0` and `1` alone account for 237 examples.
+  It globally wrapped recurrent-window projections during ordinary decoding.
+  The resulting adapter learned the scalar target distribution and damaged
+  both vanilla and recurrent answer behavior. Extending this run cannot close
+  the mismatch.
+- Several base-vanilla failures were terminal-contract failures after the
+  256-token cap rather than proof of absent reasoning: the model spent the
+  budget explaining and was cut before `FINAL_ANSWER:`. They remain honest
+  failures in this frozen product contract. Subsequent campaigns must add a
+  common contract-aware decode control and enough bounded answer budget to
+  separate reasoning quality from envelope completion without rewriting model
+  answers or weakening the scorer.
+- The macOS `launchctl submit` handoff kept the campaign alive, but restarted
+  the completed command after its scientifically expected nonzero verdict and
+  overwrote the wrapper timing receipt. The campaign journal did not change
+  after finalization and remains independently replayable; the wrapper receipt
+  is excluded from preserved evidence. Before any retraining, build and prove
+  a one-shot detached supervisor with durable PID/status/log/terminal receipt,
+  no verdict-triggered restart, whole-process-group cancellation, and exact
+  crash-resume behavior.
+- Exact plan, journal, manifest, grade, and runner output are preserved under
+  `artifacts/closeout/latent_cortex/resident_32b_campaign_cp130_recurrence/`.
+  There are no remaining campaign, worker, model, or proof-wrapper processes.
+- Evidence-weighted completion remains 27%. This is checkpoint 130 of the
+  faithful 292-399 total forecast, leaving approximately 162-269 checkpoints.
+- Next: implement and test the one-shot detached supervisor; run the fresh
+  resident-full-stack pilot with a larger bounded decode budget; then replace
+  v1 with runtime-aligned, schema-complete, scope-gated recurrence-native v2
+  training. V2 must preserve vanilla behavior, train the actual slot/KV/readout
+  path and branch diversity, save optimizer/RNG/curriculum state atomically,
+  and resume bit-for-bit. Only after a positive pilot may the powered six-arm
+  equal-compute, depth, no-regression, external-frontier, independent-trust,
+  and exact installed-desktop campaigns begin. Final soaks remain deferred.
