@@ -10,11 +10,15 @@ from tools.closeout.semantic_review_ledger import (
     append_entries,
     build_arg_parser,
     build_review_entry,
+    build_semantic_inventory_batch,
+    build_semantic_inventory_entries,
     build_semantic_review_campaign,
     build_semantic_review_queue,
     main as semantic_review_main,
+    record_semantic_inventory_batch,
     record_reviews_from_args,
     semantic_campaign_receipt,
+    summarize_semantic_inventory,
     summarize_semantic_reviews,
     validate_semantic_review_campaign,
 )
@@ -245,6 +249,25 @@ def test_semantic_review_status_reports_code_coverage_and_unreviewed_queue(tmp_p
     assert queue["files"] == [summary["unreviewed_files"][0]]
 
 
+def test_semantic_review_excludes_its_mutating_ledger_from_source_coverage(tmp_path):
+    source = tmp_path / "core.py"
+    source.write_text("value = 1\n", encoding="utf-8")
+    ledger = tmp_path / "SEMANTIC_REVIEW_LEDGER.jsonl"
+    ledger.write_text("", encoding="utf-8")
+
+    summary = summarize_semantic_reviews(
+        ledger_path=ledger,
+        tracked_paths=[source, ledger],
+        root=tmp_path,
+    )
+
+    assert summary["tracked_text_file_count"] == 1
+    assert summary["excluded_mutable_evidence_file_count"] == 1
+    assert summary["excluded_mutable_evidence_files"] == [
+        "SEMANTIC_REVIEW_LEDGER.jsonl"
+    ]
+
+
 def test_semantic_campaign_freezes_every_missing_span_before_remediation(tmp_path):
     reviewed = tmp_path / "core" / "reviewed.py"
     reviewed.parent.mkdir(parents=True)
@@ -382,3 +405,168 @@ def test_semantic_campaign_receipt_is_bounded(tmp_path):
     assert receipt["campaign_sha256"] == "abc123"
     assert receipt["batch_count"] == 3
     assert "batches" not in receipt
+
+
+def test_semantic_inventory_records_complete_hash_bound_batch(tmp_path):
+    source = tmp_path / "core" / "service.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("one\ntwo\nthree\n", encoding="utf-8")
+    campaign = build_semantic_review_campaign(
+        ledger_path=tmp_path / "review-ledger.jsonl",
+        tracked_paths=[source],
+        root=tmp_path,
+        batch_line_budget=3,
+        max_span_lines=2,
+        source_commit="frozen",
+        source_clean=True,
+    )
+    batch_id = campaign["batches"][0]["batch_id"]
+    materialized = build_semantic_inventory_batch(
+        campaign,
+        batch_id=batch_id,
+        root=tmp_path,
+        source_commit="frozen",
+    )
+    assert [span["content"] for span in materialized["spans"]] == [
+        "one\ntwo",
+        "three",
+    ]
+    submission = {
+        "campaign_sha256": campaign["campaign_sha256"],
+        "batch_id": batch_id,
+        "reviews": [
+            {
+                "file": "core/service.py",
+                "first_line": 1,
+                "last_line": 2,
+                "verdict": "finding",
+                "summary": "The first span has one actionable correctness defect.",
+                "findings": [
+                    {
+                        "severity": "high",
+                        "category": "correctness",
+                        "title": "Unvalidated state transition",
+                        "description": "The transition is represented without validation.",
+                        "repair_group": "core-state-validation",
+                        "evidence_lines": [2],
+                    }
+                ],
+                "dependencies": [
+                    {"file": "core/model.py", "reason": "Defines the state contract."}
+                ],
+                "recommended_tests": ["pytest -q tests/test_state.py"],
+            },
+            {
+                "file": "core/service.py",
+                "first_line": 3,
+                "last_line": 3,
+                "verdict": "clean",
+                "summary": "The final line is internally consistent and needs no repair.",
+                "findings": [],
+            },
+        ],
+    }
+    inventory_path = tmp_path / "inventory.jsonl"
+
+    status = record_semantic_inventory_batch(
+        campaign,
+        batch_id=batch_id,
+        submission=submission,
+        inventory_path=inventory_path,
+        reviewer="codex",
+        root=tmp_path,
+        source_commit="frozen",
+    )
+
+    assert status["inventory_complete"] is True
+    assert status["edits_permitted"] is True
+    assert status["reviewed_span_count"] == 2
+    assert status["reviewed_line_count"] == 3
+    assert status["finding_count"] == 1
+    assert status["finding_severity_counts"]["high"] == 1
+
+
+def test_semantic_inventory_rejects_missing_span_note(tmp_path):
+    source = tmp_path / "service.py"
+    source.write_text("one\ntwo\n", encoding="utf-8")
+    campaign = build_semantic_review_campaign(
+        ledger_path=tmp_path / "review-ledger.jsonl",
+        tracked_paths=[source],
+        root=tmp_path,
+        batch_line_budget=2,
+        max_span_lines=1,
+        source_commit="frozen",
+        source_clean=True,
+    )
+    batch_id = campaign["batches"][0]["batch_id"]
+    submission = {
+        "campaign_sha256": campaign["campaign_sha256"],
+        "batch_id": batch_id,
+        "reviews": [
+            {
+                "file": "service.py",
+                "first_line": 1,
+                "last_line": 1,
+                "verdict": "clean",
+                "summary": "The first line has no actionable defect.",
+            }
+        ],
+    }
+
+    with pytest.raises(ValueError, match="missing 1 span"):
+        build_semantic_inventory_entries(
+            campaign,
+            batch_id=batch_id,
+            submission=submission,
+            reviewer="codex",
+        )
+
+
+def test_semantic_inventory_detects_note_tampering(tmp_path):
+    source = tmp_path / "service.py"
+    source.write_text("stable\n", encoding="utf-8")
+    campaign = build_semantic_review_campaign(
+        ledger_path=tmp_path / "review-ledger.jsonl",
+        tracked_paths=[source],
+        root=tmp_path,
+        source_commit="frozen",
+        source_clean=True,
+    )
+    batch_id = campaign["batches"][0]["batch_id"]
+    submission = {
+        "campaign_sha256": campaign["campaign_sha256"],
+        "batch_id": batch_id,
+        "reviews": [
+            {
+                "file": "service.py",
+                "first_line": 1,
+                "last_line": 1,
+                "verdict": "clean",
+                "summary": "The line is stable and contains no actionable defect.",
+            }
+        ],
+    }
+    inventory_path = tmp_path / "inventory.jsonl"
+    record_semantic_inventory_batch(
+        campaign,
+        batch_id=batch_id,
+        submission=submission,
+        inventory_path=inventory_path,
+        reviewer="codex",
+        root=tmp_path,
+        source_commit="frozen",
+    )
+    entry = json.loads(inventory_path.read_text(encoding="utf-8"))
+    entry["summary"] = "tampered after review"
+    inventory_path.write_text(json.dumps(entry) + "\n", encoding="utf-8")
+
+    status = summarize_semantic_inventory(
+        campaign,
+        inventory_path=inventory_path,
+        root=tmp_path,
+        source_commit="frozen",
+    )
+
+    assert status["inventory_complete"] is False
+    assert status["reviewed_span_count"] == 0
+    assert "inventory_line_1:entry_hash_mismatch" in status["issues"]

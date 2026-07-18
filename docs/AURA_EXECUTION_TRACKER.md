@@ -18520,3 +18520,52 @@ live-product, recurrence-gain, release, or soak credit.
   preserve the bounded receipt. Only then begin read-only semantic findings
   capture. Continue monitoring the protected `32b_r1` process without loading
   another model. Multi-hour and 24-72-hour soaks remain deferred.
+
+## Checkpoint 2026-07-17-126: Read-Only Semantic Inventory Ledger
+
+Checkpoint 126 is the current source candidate in the `main` worktree. It
+advances `CLOSEOUT-001`, `SEMANTIC-REVIEW-001`, `TEST-DEPTH-001`, and
+`RELEASE-001` by making the all-files read-first phase durable and by removing
+an impossible semantic-coverage fixed point. It does not award source-review,
+remediation, live-product, recurrence-gain, release, or soak credit.
+
+- The corrected CP125 dry-run plan validates with zero issues at source commit
+  `c15e40b6`: 4,827 files, 6,102 spans, 3,712,002 missing lines, and 526 bounded
+  subsystem batches. Batch fragmentation fell from 1,664 to 526 without
+  dropping a planned span. The campaign is a tooling proof only because CP126
+  necessarily changes the source before inventory begins.
+- Full-corpus inspection exposed an impossible fixed point: the tracked
+  append-only `SEMANTIC_REVIEW_LEDGER.jsonl` was itself included in semantic
+  source coverage. Appending the receipt that reviewed the ledger necessarily
+  changed its own file hash and invalidated that receipt. The exact active
+  ledger is now classified explicitly as mutable governed evidence and excluded
+  from source-coverage denominators. Its JSON/schema/hash integrity remains an
+  audit obligation; it is not silently counted as reviewed source.
+- `export-batch` validates the frozen campaign and materializes one exact batch
+  with source text, line intervals, whole-file hashes, span hashes, subsystem,
+  and a no-edits review contract. Persisted exports produce bounded receipts
+  rather than echoing source content to the terminal.
+- `record-inventory` accepts only a complete batch submission with exactly one
+  note per planned span. Every note must state a substantive `clean` or
+  `finding` verdict. Findings require severity, category, title, description,
+  repair group, and evidence lines inside the reviewed interval; cross-file
+  dependencies and recommended tests remain structured. Entries bind campaign,
+  source commit, batch, file, span, reviewer, and content hashes and receive an
+  independent entry hash.
+- `inventory-status` revalidates the campaign and every note, rejects unknown,
+  duplicate, metadata-drifted, or hash-tampered spans, and reports exact batch,
+  span, line, finding, and severity coverage. `edits_permitted` remains false
+  until every planned span is accepted and no validation issue remains. Read
+  notes support only pre-remediation inventory; final semantic credit still
+  requires post-repair file/span receipts.
+- The source-universe exclusion, exact batch export, complete-batch admission,
+  line-local finding evidence, missing-note refusal, and note-tamper detection
+  contracts pass 18/18 closeout tests. Python compilation, targeted `F`/`E9`
+  lint, and `git diff --check` pass.
+- Evidence-weighted completion remains 27%. This is checkpoint 126 of the
+  faithful 292-399 total forecast, leaving approximately 166-273 checkpoints.
+- Next: publish CP126 directly to `main`, run static and clean closeout gates,
+  generate and validate the final campaign from that clean commit, export the
+  first read-only batch, and begin hash-bound findings capture without editing
+  reviewed source. Continue monitoring `32b_r1` without another model load.
+  Multi-hour and 24-72-hour soaks remain deferred.
