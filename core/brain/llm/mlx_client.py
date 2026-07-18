@@ -116,14 +116,19 @@ _FOREGROUND_OWNER_ACQUIRED_AT = 0.0
 # Uses threading.Semaphore (loop-agnostic) because the singleton MLXLocalClient
 # is constructed from one event loop but called from another (Uvicorn thread).
 _GLOBAL_SPAWN_GATE = _threading.Semaphore(1)
-# Longest legitimate gate hold is a full 32B spawn+handshake (~300s budget);
-# waiters give up shortly after that and defer rather than pile up forever.
+# Gate holders may legitimately spend minutes loading the 32B, but waiters must
+# defer quickly. A waiter is not the load owner and must never consume a whole
+# foreground turn merely waiting for the mechanical single-spawn mutex.
 try:
     _SPAWN_GATE_ACQUIRE_TIMEOUT_S = max(
-        60.0, float(os.environ.get("AURA_SPAWN_GATE_ACQUIRE_TIMEOUT_S", "330"))
+        0.05, float(os.environ.get("AURA_SPAWN_GATE_ACQUIRE_TIMEOUT_S", "5"))
     )
 except (TypeError, ValueError):
-    _SPAWN_GATE_ACQUIRE_TIMEOUT_S = 330.0
+    _SPAWN_GATE_ACQUIRE_TIMEOUT_S = 5.0
+_GLOBAL_SPAWN_GATE_STATE_LOCK = _threading.Lock()
+_GLOBAL_SPAWN_GATE_TOKEN = ""
+_GLOBAL_SPAWN_GATE_OWNER = ""
+_GLOBAL_SPAWN_GATE_ACQUIRED_AT = 0.0
 _MLX_RUNTIME_PROBE_LOCK = _threading.Lock()
 _MLX_RUNTIME_PROBE: dict[str, Any] = {
     "ok": None,
@@ -675,6 +680,21 @@ def _model_load_admission_timeout_s(*, foreground_request: bool) -> float:
     return max(0.0, float(flag.value()))
 
 
+def _model_load_lease_ttl_s(client: Any) -> float:
+    """Cover the complete worker handshake, not only warmup precompile.
+
+    The primary lane allows a 300-second init handshake. The old 240-second
+    lease expired while that live load still held the spawn gate, admitting a
+    second load attempt behind it and creating the observed recovery cascade.
+    """
+
+    return max(
+        180.0,
+        float(client._warmup_timeout()) + 120.0,
+        float(client._handshake_timeout()) + 120.0,
+    )
+
+
 @contextlib.asynccontextmanager
 async def _model_load_admission_context(
     client: Any,
@@ -725,6 +745,7 @@ async def _model_load_admission_context(
     # soak deadlock, resource_timeout). At equal priority the load and the
     # fallback inference interleave FIFO, so the cortex finally comes up.
     is_primary_cortex = qos is QoSClass.GUARANTEED
+    model_load_lease_ttl_s = _model_load_lease_ttl_s(client)
     request = AdmissionRequest(
         owner=f"mlx.model_load:{os.path.basename(client.model_path)}",
         work_class=WorkClass.MODEL_LOAD,
@@ -735,7 +756,7 @@ async def _model_load_admission_context(
             else AdmissionPriority.BACKGROUND
         ),
         timeout_s=timeout_s,
-        lease_ttl_s=max(120.0, float(client._warmup_timeout()) + 60.0),
+        lease_ttl_s=model_load_lease_ttl_s,
         receipt_required=True,
         estimated_memory_mb=request_gb * 1024.0,
         metadata={
@@ -810,7 +831,7 @@ async def _model_load_admission_context(
         foreground=foreground_request,
         allow_disruptive_eviction=disruptive_deep_handoff,
         allow_last_warm_eviction=disruptive_deep_handoff,
-        reservation_ttl_s=max(120.0, float(client._warmup_timeout()) + 60.0),
+        reservation_ttl_s=model_load_lease_ttl_s,
         request_id=f"model-lane-{request.request_id}",
         metadata={
             "scheduling_lease_id": decision.lease_id,
@@ -1322,28 +1343,76 @@ def _coerce_timeout_seconds(value: Any) -> float | None:
     return max(0.1, timeout_s)
 
 
-@contextlib.asynccontextmanager
-async def _spawn_gate_context():
-    """Loop-agnostic async context manager for the global spawn gate.
+def _spawn_gate_snapshot() -> dict[str, Any]:
+    with _GLOBAL_SPAWN_GATE_STATE_LOCK:
+        owner = _GLOBAL_SPAWN_GATE_OWNER
+        acquired_at = _GLOBAL_SPAWN_GATE_ACQUIRED_AT
+        token = _GLOBAL_SPAWN_GATE_TOKEN
+    return {
+        "held": bool(token),
+        "owner": owner,
+        "acquired_at_monotonic": acquired_at,
+        "age_s": (
+            max(0.0, time.monotonic() - acquired_at)
+            if token and acquired_at > 0.0
+            else 0.0
+        ),
+    }
 
-    BOUNDED acquire. This used to block forever, and one wedged spawn
-    holding the gate froze every other lane's warmup coroutine inside
-    _ensure_worker_alive — the warmup's finally never ran, its
-    _warmup_in_flight flag stayed True, and admission blocked runtime-wide
-    (the nightcap-soak wedge; the watchdog dead-man clock recovers it at
-    300s, but the root is here). Past the bound, callers get TimeoutError
-    and defer honestly instead of joining the pileup.
+
+@contextlib.asynccontextmanager
+async def _spawn_gate_context(
+    *, owner: str = "unknown"
+) -> AsyncIterator[dict[str, Any]]:
+    """Cancellation-safe, bounded ownership of the global spawn gate.
+
+    A blocking ``Semaphore.acquire`` delegated with ``asyncio.to_thread`` is
+    not cancellation-safe: cancelling the coroutine does not stop its thread.
+    That abandoned thread can later acquire the semaphore with no surviving
+    context manager to release it. Foreground recovery's 15-second deadline
+    exercised exactly that path and leaked the gate for every later warmup.
+
+    Nonblocking acquisition on the event-loop thread is constant-time. Bounded
+    polling preserves cross-loop/thread compatibility while guaranteeing a
+    cancelled waiter can never acquire after its caller is gone.
     """
-    acquired = await asyncio.to_thread(
-        _GLOBAL_SPAWN_GATE.acquire, True, _SPAWN_GATE_ACQUIRE_TIMEOUT_S
-    )
-    if not acquired:
-        raise TimeoutError(
-            f"spawn_gate_timeout:{_SPAWN_GATE_ACQUIRE_TIMEOUT_S:.0f}s"
-        )
+
+    deadline = time.monotonic() + float(_SPAWN_GATE_ACQUIRE_TIMEOUT_S)
+    acquired = False
+    lease_token = uuid.uuid4().hex
+    while not acquired:
+        acquired = _GLOBAL_SPAWN_GATE.acquire(blocking=False)
+        if acquired:
+            break
+        remaining = deadline - time.monotonic()
+        if remaining <= 0.0:
+            holder = _spawn_gate_snapshot()
+            raise TimeoutError(
+                f"spawn_gate_timeout:{_SPAWN_GATE_ACQUIRE_TIMEOUT_S:.3f}s:"
+                f"holder={holder['owner'] or 'unknown'}:age={holder['age_s']:.3f}s"
+            )
+        await asyncio.sleep(min(0.05, remaining))
+
+    with _GLOBAL_SPAWN_GATE_STATE_LOCK:
+        global _GLOBAL_SPAWN_GATE_TOKEN
+        global _GLOBAL_SPAWN_GATE_OWNER
+        global _GLOBAL_SPAWN_GATE_ACQUIRED_AT
+        _GLOBAL_SPAWN_GATE_TOKEN = lease_token
+        _GLOBAL_SPAWN_GATE_OWNER = str(owner or "unknown")[:160]
+        _GLOBAL_SPAWN_GATE_ACQUIRED_AT = time.monotonic()
     try:
-        yield
+        yield _spawn_gate_snapshot()
     finally:
+        with _GLOBAL_SPAWN_GATE_STATE_LOCK:
+            if _GLOBAL_SPAWN_GATE_TOKEN == lease_token:
+                _GLOBAL_SPAWN_GATE_TOKEN = ""
+                _GLOBAL_SPAWN_GATE_OWNER = ""
+                _GLOBAL_SPAWN_GATE_ACQUIRED_AT = 0.0
+            else:
+                logger.critical(
+                    "Spawn gate ownership metadata changed before release owner=%s",
+                    owner,
+                )
         _GLOBAL_SPAWN_GATE.release()
 
 
@@ -3029,6 +3098,7 @@ class MLXLocalClient:
             "warmup_attempted": self._warmup_attempted,
             "warmup_in_flight": self._warmup_in_flight,
             "model_load_admission": self._model_load_admission_status(),
+            "spawn_gate": _spawn_gate_snapshot(),
             "active_generations": int(self._active_generations),
             "process_started_at": self._process_started_at,
             "current_request_started_at": self._current_request_started_at,
@@ -5026,7 +5096,10 @@ class MLXLocalClient:
                 self,
                 foreground_request=foreground_request,
             ):
-                async with _spawn_gate_context():
+                async with _spawn_gate_context(
+                    owner=f"{os.path.basename(self.model_path)}:"
+                    f"{'foreground' if foreground_request else 'background'}"
+                ):
                     return await self._ensure_worker_alive_inner(
                         request_is_background=request_is_background,
                         foreground_request=foreground_request,

@@ -1934,7 +1934,7 @@ class TestSpawnGateBoundedAcquire(unittest.IsolatedAsyncioTestCase):
         mc._SPAWN_GATE_ACQUIRE_TIMEOUT_S = 0.1
         try:
             with self.assertRaises(TimeoutError):
-                async with mc._spawn_gate_context():
+                async with mc._spawn_gate_context(owner="blocked-test"):
                     pass  # pragma: no cover - never reached
 
             client = MLXLocalClient(model_path=TEST_MODEL)
@@ -1951,8 +1951,43 @@ class TestSpawnGateBoundedAcquire(unittest.IsolatedAsyncioTestCase):
     async def test_gate_releases_after_normal_use(self):
         from core.brain.llm import mlx_client as mc
 
-        async with mc._spawn_gate_context():
-            pass
+        async with mc._spawn_gate_context(owner="normal-test"):
+            snapshot = mc._spawn_gate_snapshot()
+            self.assertTrue(snapshot["held"])
+            self.assertEqual(snapshot["owner"], "normal-test")
         # gate must be free again
+        self.assertFalse(mc._spawn_gate_snapshot()["held"])
+        self.assertTrue(mc._GLOBAL_SPAWN_GATE.acquire(blocking=False))
+        mc._GLOBAL_SPAWN_GATE.release()
+
+    async def test_cancelled_waiter_cannot_acquire_and_leak_gate_later(self):
+        """Regression for the live 330-second gate wedge.
+
+        Cancelling ``asyncio.to_thread(Semaphore.acquire)`` left its worker
+        thread alive. Once the real holder released, that abandoned thread
+        acquired the semaphore forever because no context manager remained.
+        """
+        from core.brain.llm import mlx_client as mc
+
+        self.assertTrue(mc._GLOBAL_SPAWN_GATE.acquire(blocking=False))
+        original = mc._SPAWN_GATE_ACQUIRE_TIMEOUT_S
+        mc._SPAWN_GATE_ACQUIRE_TIMEOUT_S = 1.0
+
+        async def _waiter():
+            async with mc._spawn_gate_context(owner="cancelled-test"):
+                self.fail("cancelled waiter must never enter the gate")
+
+        waiter = asyncio.create_task(_waiter())
+        try:
+            await asyncio.sleep(0.05)
+            waiter.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await waiter
+        finally:
+            mc._GLOBAL_SPAWN_GATE.release()
+            mc._SPAWN_GATE_ACQUIRE_TIMEOUT_S = original
+
+        await asyncio.sleep(0.1)
+        self.assertFalse(mc._spawn_gate_snapshot()["held"])
         self.assertTrue(mc._GLOBAL_SPAWN_GATE.acquire(blocking=False))
         mc._GLOBAL_SPAWN_GATE.release()

@@ -19018,3 +19018,45 @@ resident campaign executable without weakening containment.
   through CP131+CP132; preserve and independently replay the verdict. Then use
   the result to specify recurrence-native v2 training. Final long soaks remain
   deferred.
+
+## Checkpoint 2026-07-18-133: Cancellation-Safe Cortex Spawn Ownership
+
+CP133 is a bounded runtime correction discovered while the resident RLC pilot
+was frozen but the proof host was occupied by a protected endurance campaign.
+It does not claim soak, RLC-gain, or frontier credit.
+
+- Live endurance evidence from the non-current `fable-improvement-pass`
+  worktree reproduced 150-second foreground turns, repeated
+  `spawn_gate_timeout:330s`, an expired Cortex model-load lease, a dead primary
+  worker, and permanent recovery deferral despite ample host memory.
+- The mechanical global spawn gate used
+  `asyncio.to_thread(Semaphore.acquire)`. Cancelling a 15-second inline
+  recovery did not cancel that blocking thread; after the real holder released,
+  the abandoned thread could acquire the semaphore without any surviving
+  context manager to release it. Every later warmup then waited against a gate
+  with no owner.
+- Spawn acquisition now uses bounded nonblocking polling. Cancellation occurs
+  only at an await point before acquisition, so a cancelled waiter cannot later
+  steal the gate. Waiters defer after five seconds instead of consuming an
+  entire foreground budget, while the legitimate holder keeps its uninterrupted
+  single-model load.
+- Every holder publishes owner, monotonic acquisition time, and age in lane
+  status and timeout diagnostics. Release is token-bound so metadata from one
+  holder cannot clear another holder's receipt.
+- Model-load and durable lane reservation TTLs now cover the complete 32B
+  handshake ceiling plus cleanup margin (420 seconds for the resident primary),
+  rather than expiring at 240 seconds while a valid 300-second handshake still
+  owns the gate.
+- The MLX resilience, model-lane admission, runtime-contract, warmup-backoff,
+  no-kill loading, and reconciler matrix passes `175/175` in 91.31 seconds;
+  seven additional user-facing recovery/fallback cases pass `7/7`. The focused
+  cancellation regression proves a cancelled waiter cannot acquire later,
+  ownership is visible while held, release clears it, and the next caller can
+  acquire. Python compilation, Ruff `F/E9/I`, governance ownership (`1,698`
+  migration-debt calls, unchanged), and diff hygiene pass. Strict mypy has no
+  error in the new gate code; the whole legacy MLX client retains 46 existing
+  errors and is not falsely reported green.
+- Exact-main live restart proof remains required after the protected endurance
+  process exits. Evidence-weighted completion remains 27%; this is checkpoint
+  133 of the faithful 292-399 forecast, leaving approximately 159-266
+  checkpoints. The final long soaks remain deferred.

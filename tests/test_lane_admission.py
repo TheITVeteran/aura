@@ -283,6 +283,7 @@ class TestSpawnSeam:
 
         candidate = self._FakeClient("/m/Aura-32B-cortex")
         candidate._warmup_timeout = lambda: 60.0
+        candidate._handshake_timeout = lambda: 300.0
         candidate._process = SimpleNamespace(
             pid=os.getpid(),
             name="test-worker",
@@ -295,6 +296,8 @@ class TestSpawnSeam:
         ) as decision:
             assert decision.admitted is True
             assert controller.active_lease_count(WorkClass.MODEL_LOAD) == 1
+            lease = controller.status()["active_leases"][0]
+            assert lease["ttl_remaining_s"] >= 419.0
 
         assert controller.active_lease_count(WorkClass.MODEL_LOAD) == 0
         history = controller.status()["history"]
