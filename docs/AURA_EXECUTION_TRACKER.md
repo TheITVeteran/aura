@@ -19206,3 +19206,30 @@ improved, or that frontier/external/live-desktop proof has passed.
   replay, per-task counterbalanced crossover, broader generators, repeated
   replications, and the installed desktop `/api/chat` producer. Final long
   soaks remain deferred.
+
+## Checkpoint 2026-07-18-136: Idempotent Terminal Training Publication
+
+CP136 removes a storage and resume inefficiency before detached v2 training is
+allowed to execute. It is a bounded durability checkpoint and awards no model
+gain, frontier, live-product, release, or soak credit.
+
+- A periodic checkpoint at the terminal step is now reused for final adapter
+  publication instead of writing an identical second immutable generation.
+  Resumed invocations likewise reuse their loaded generation when no training
+  step advances. This avoids duplicating recurrence-adapter and AdamW state at
+  every terminal interval, which would be material disk churn on the 32B.
+- A nonempty final loss window is flushed into the durable loss trail before
+  terminal checkpointing. Because that changes checkpoint state even when the
+  step number is unchanged, it explicitly invalidates generation reuse and
+  publishes one new complete generation. Storage deduplication therefore never
+  drops the final observed losses or points `latest.json` at stale metadata.
+- The trainer and checkpoint-state matrix passes `10/10`; strict isolated
+  mypy, Python compilation, and Ruff `F/E9/I` pass.
+- Evidence-weighted completion remains 27%. This is checkpoint 136 of the
+  faithful 292-399 forecast, leaving approximately 156-263 checkpoints.
+- Next: after the protected pre-CP133 endurance process exits on its own,
+  launch the frozen current-main 1.5B two-step protocol under separate detached
+  supervisors: forced wall-clock partial publication, exact resume to
+  completion, strict bundle validation, then four-arm paired inference with
+  ordinary-generation isolation and scoped-activation receipts. Final long
+  soaks remain deferred.

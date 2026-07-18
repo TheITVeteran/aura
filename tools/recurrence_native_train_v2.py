@@ -436,6 +436,8 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
     prior_elapsed_s = 0.0
     invocation_count = 1
     loss_trail: list[dict[str, Any]] = []
+    last_checkpoint_step = -1
+    last_checkpoint_path: Path | None = None
     if args.resume:
         loaded = load_recurrence_checkpoint(
             out_dir,
@@ -458,6 +460,8 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
         prior_elapsed_s = float(state["elapsed_training_s"])
         invocation_count = int(state["invocation_count"]) + 1
         loss_trail = list(state.get("loss_trail") or [])
+        last_checkpoint_step = step
+        last_checkpoint_path = loaded.checkpoint_dir
         print(f"resumed exact checkpoint at step={step} epoch={epoch} cursor={cursor}", flush=True)
 
     def loss_fn(
@@ -483,9 +487,16 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
         return prior_elapsed_s + (time.monotonic() - started_monotonic)
 
     def checkpoint() -> Path:
+        nonlocal last_checkpoint_path, last_checkpoint_step
+        if (
+            last_checkpoint_step == step
+            and last_checkpoint_path is not None
+            and last_checkpoint_path.is_dir()
+        ):
+            return last_checkpoint_path
         adapter = dict(tree_flatten(model.trainable_parameters()))
         optimizer_tensors = dict(tree_flatten(optimizer.state))
-        return save_recurrence_checkpoint(
+        last_checkpoint_path = save_recurrence_checkpoint(
             out_dir,
             adapter_tensors=adapter,
             optimizer_tensors=optimizer_tensors,
@@ -502,6 +513,8 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
                 loss_trail=loss_trail,
             ),
         )
+        last_checkpoint_step = step
+        return last_checkpoint_path
 
     halt_reason = "wall_clock"
     interrupted = False
@@ -546,6 +559,17 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
         halt_reason = "interrupted"
         interrupted = True
 
+    if window_losses:
+        loss_trail.append(
+            {
+                "step": step,
+                "mean_loss": round(sum(window_losses) / len(window_losses), 6),
+                "window_steps": len(window_losses),
+                "partial_window": True,
+            }
+        )
+        window_losses.clear()
+        last_checkpoint_step = -1
     final_checkpoint = checkpoint()
     adapter_bytes = (final_checkpoint / "adapter.safetensors").read_bytes()
     atomic_write_bytes(out_dir / "adapters.safetensors", adapter_bytes)
