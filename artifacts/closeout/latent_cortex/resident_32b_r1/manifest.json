@@ -12,6 +12,7 @@
     "steps": 539,
     "halt_reason": "wall_clock",
     "receipt_sha256": "3b0cea0a331155ec4abf5c6289d8cbcf832b732c11e89941b419a395bf81da51",
+    "log_file": "training_log.txt",
     "log_sha256": "5d09a518f88fae554c13dc6fe5f129066b0ed22355c7782d70b9a1a0fc6b3718"
   },
   "evaluation": {

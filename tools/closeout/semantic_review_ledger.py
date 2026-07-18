@@ -9,10 +9,12 @@ hash and span hash so later audit runs can detect stale review evidence.
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
 import json
 import os
 import sys
+import tempfile
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -26,6 +28,7 @@ DEFAULT_LEDGER = ROOT / "artifacts" / "closeout" / "semantic_review" / "SEMANTIC
 DEFAULT_INVENTORY_LEDGER = ROOT / "artifacts" / "current" / "semantic_review_inventory.jsonl"
 SEMANTIC_CAMPAIGN_SCHEMA = "aura.closeout.semantic_review_campaign.v1"
 SEMANTIC_INVENTORY_ENTRY_SCHEMA = "aura.closeout.semantic_inventory_entry.v1"
+_MAX_SEMANTIC_ARTIFACT_BYTES = 512 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -184,17 +187,40 @@ def build_review_entry(
 
 
 def append_entries(ledger_path: Path, entries: list[dict[str, Any]]) -> None:
+    if ledger_path.suffix == ".gz":
+        raise ValueError("compressed semantic ledgers are immutable snapshots")
     ledger_path.parent.mkdir(parents=True, exist_ok=True)
     with ledger_path.open("a", encoding="utf-8") as handle:
         for entry in entries:
             handle.write(json.dumps(entry, sort_keys=True, default=str) + "\n")
 
 
+def _read_text_artifact(path: Path) -> str:
+    if path.suffix == ".gz":
+        with gzip.open(path, "rb") as handle:
+            data = handle.read(_MAX_SEMANTIC_ARTIFACT_BYTES + 1)
+    else:
+        data = path.read_bytes()
+    if len(data) > _MAX_SEMANTIC_ARTIFACT_BYTES:
+        raise ValueError(f"semantic artifact exceeds size limit: {path}")
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"semantic artifact is not UTF-8: {path}") from exc
+
+
+def _read_json_artifact(path: Path) -> Any:
+    try:
+        return json.loads(_read_text_artifact(path))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid JSON artifact: {path}") from exc
+
+
 def read_entries(ledger_path: Path) -> list[dict[str, Any]]:
     if not ledger_path.exists():
         return []
     entries = []
-    for line_no, raw in enumerate(ledger_path.read_text(encoding="utf-8").splitlines(), start=1):
+    for line_no, raw in enumerate(_read_text_artifact(ledger_path).splitlines(), start=1):
         if not raw.strip():
             continue
         try:
@@ -202,6 +228,36 @@ def read_entries(ledger_path: Path) -> list[dict[str, Any]]:
         except json.JSONDecodeError as exc:
             raise ValueError(f"invalid semantic review ledger JSON at {ledger_path}:{line_no}") from exc
     return entries
+
+
+def _write_entries_atomic(path: Path, entries: list[dict[str, Any]]) -> None:
+    """Create a new inventory atomically; never replace prior evidence."""
+    if path.exists() and path.stat().st_size:
+        raise ValueError(f"inventory output already exists and is nonempty: {path}")
+    if path.suffix == ".gz":
+        raise ValueError("active semantic inventory must be uncompressed JSONL")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, raw_tmp = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
+    tmp = Path(raw_tmp)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            for entry in entries:
+                handle.write(json.dumps(entry, sort_keys=True, default=str) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+        try:
+            directory_fd = os.open(path.parent, os.O_RDONLY)
+        except OSError:
+            directory_fd = -1
+        if directory_fd >= 0:
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+    finally:
+        if tmp.exists():
+            tmp.unlink()
 
 
 def _merge_spans(spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
@@ -815,10 +871,200 @@ def _campaign_batch(campaign: dict[str, Any], batch_id: str) -> dict[str, Any]:
     return matches[0]
 
 
+def _campaign_inventory_map(
+    campaign: dict[str, Any],
+) -> tuple[
+    dict[tuple[str, int, int], dict[str, Any]],
+    dict[str, set[tuple[str, int, int]]],
+]:
+    expected: dict[tuple[str, int, int], dict[str, Any]] = {}
+    batches: dict[str, set[tuple[str, int, int]]] = {}
+    for batch in list(campaign.get("batches") or []):
+        batch_id = str(batch.get("batch_id") or "")
+        keys: set[tuple[str, int, int]] = set()
+        for span in list(batch.get("spans") or []):
+            key = _inventory_span_key(span)
+            if key in expected:
+                raise ValueError(f"duplicate semantic campaign span: {key}")
+            expected[key] = {**span, "batch_id": batch_id}
+            keys.add(key)
+        batches[batch_id] = keys
+    return expected, batches
+
+
+def _validate_archived_campaign(campaign: dict[str, Any]) -> None:
+    """Validate a frozen campaign without consulting the now-changed checkout."""
+    if campaign.get("schema") != SEMANTIC_CAMPAIGN_SCHEMA:
+        raise ValueError("archived semantic campaign schema is invalid")
+    if campaign.get("campaign_sha256") != _campaign_sha256(campaign):
+        raise ValueError("archived semantic campaign hash mismatch")
+    if campaign.get("source_clean") is not True or not str(
+        campaign.get("source_commit") or ""
+    ):
+        raise ValueError("archived semantic campaign source identity is invalid")
+    expected, batches = _campaign_inventory_map(campaign)
+    raw_batches = list(campaign.get("batches") or [])
+    if len(raw_batches) != _campaign_int(campaign.get("batch_count")):
+        raise ValueError("archived semantic campaign batch count mismatch")
+    for index, batch in enumerate(raw_batches, start=1):
+        if batch.get("batch_id") != f"semantic-batch-{index:04d}":
+            raise ValueError("archived semantic campaign batch order is invalid")
+        actual_lines = sum(
+            _campaign_int(span.get("line_count"), 0)
+            for span in list(batch.get("spans") or [])
+        )
+        if actual_lines != _campaign_int(batch.get("line_count"), -1):
+            raise ValueError("archived semantic campaign batch lines mismatch")
+    if len(expected) != _campaign_int(campaign.get("planned_span_count")):
+        raise ValueError("archived semantic campaign span count mismatch")
+    if sum(_campaign_int(span.get("line_count"), 0) for span in expected.values()) != (
+        _campaign_int(campaign.get("planned_line_count"))
+    ):
+        raise ValueError("archived semantic campaign line count mismatch")
+    if len({key[0] for key in expected}) != _campaign_int(
+        campaign.get("planned_file_count")
+    ):
+        raise ValueError("archived semantic campaign file count mismatch")
+    if len(batches) != len(raw_batches):
+        raise ValueError("archived semantic campaign batch identifiers are invalid")
+
+
+def _validated_archived_inventory(
+    campaign: dict[str, Any], inventory_path: Path
+) -> dict[tuple[str, int, int], dict[str, Any]]:
+    _validate_archived_campaign(campaign)
+    expected, _ = _campaign_inventory_map(campaign)
+    accepted: dict[tuple[str, int, int], dict[str, Any]] = {}
+    for line_number, entry in enumerate(read_entries(inventory_path), start=1):
+        prefix = f"archived_inventory_line_{line_number}"
+        if entry.get("schema") != SEMANTIC_INVENTORY_ENTRY_SCHEMA:
+            raise ValueError(f"{prefix}:schema_invalid")
+        if entry.get("entry_sha256") != _inventory_entry_sha256(entry):
+            raise ValueError(f"{prefix}:entry_hash_mismatch")
+        if entry.get("campaign_sha256") != campaign.get("campaign_sha256"):
+            raise ValueError(f"{prefix}:campaign_hash_mismatch")
+        key = _inventory_span_key(entry)
+        planned = expected.get(key)
+        if planned is None:
+            raise ValueError(f"{prefix}:span_not_planned")
+        if key in accepted:
+            raise ValueError(f"{prefix}:duplicate_span")
+        required_matches = (
+            "batch_id",
+            "file_sha256",
+            "file_line_count",
+            "line_count",
+            "span_sha256",
+            "subsystem",
+        )
+        if any(entry.get(field) != planned.get(field) for field in required_matches):
+            raise ValueError(f"{prefix}:planned_metadata_mismatch")
+        accepted[key] = entry
+    return accepted
+
+
+def carry_semantic_inventory(
+    old_campaign: dict[str, Any],
+    *,
+    old_inventory_path: Path,
+    new_campaign: dict[str, Any],
+    output_path: Path,
+    root: Path = ROOT,
+    source_commit: str | None = None,
+) -> dict[str, Any]:
+    """Carry exact unchanged reviews into a newly frozen source campaign."""
+    validation = validate_semantic_review_campaign(
+        new_campaign,
+        root=root,
+        source_commit=source_commit,
+    )
+    if not validation["passed"]:
+        raise ValueError(
+            "new semantic campaign validation failed: "
+            + ", ".join(validation["issues"][:10])
+        )
+    old_entries = _validated_archived_inventory(old_campaign, old_inventory_path)
+    new_expected, _ = _campaign_inventory_map(new_campaign)
+    carried: list[dict[str, Any]] = []
+    changed = 0
+    no_longer_planned = 0
+    immutable_fields = (
+        "file_sha256",
+        "file_line_count",
+        "line_count",
+        "span_sha256",
+        "subsystem",
+    )
+    for key, target in new_expected.items():
+        previous = old_entries.get(key)
+        if previous is None:
+            continue
+        if any(previous.get(field) != target.get(field) for field in immutable_fields):
+            changed += 1
+            continue
+        entry = {
+            field: value
+            for field, value in previous.items()
+            if field not in {"entry_sha256", "recorded_at_unix", "carried_from"}
+        }
+        entry.update(
+            {
+                "recorded_at_unix": time.time(),
+                "campaign_sha256": new_campaign.get("campaign_sha256", ""),
+                "source_commit": new_campaign.get("source_commit", ""),
+                "batch_id": target.get("batch_id", ""),
+                "subsystem": target.get("subsystem", ""),
+                "carried_from": {
+                    "campaign_sha256": old_campaign.get("campaign_sha256", ""),
+                    "source_commit": old_campaign.get("source_commit", ""),
+                    "entry_sha256": previous.get("entry_sha256", ""),
+                },
+            }
+        )
+        entry["entry_sha256"] = _inventory_entry_sha256(entry)
+        carried.append(entry)
+    for key in old_entries:
+        if key not in new_expected:
+            no_longer_planned += 1
+    _write_entries_atomic(output_path, carried)
+    status = summarize_semantic_inventory(
+        new_campaign,
+        inventory_path=output_path,
+        root=root,
+        source_commit=source_commit,
+    )
+    if status["issues"]:
+        raise ValueError(
+            "carried semantic inventory failed validation: "
+            + ", ".join(status["issues"][:10])
+        )
+    return {
+        "schema": "aura.closeout.semantic_inventory_carry_forward_receipt.v1",
+        "old_campaign_sha256": old_campaign.get("campaign_sha256", ""),
+        "new_campaign_sha256": new_campaign.get("campaign_sha256", ""),
+        "output_path": str(output_path),
+        "old_reviewed_span_count": len(old_entries),
+        "carried_span_count": len(carried),
+        "changed_span_count": changed,
+        "no_longer_planned_span_count": no_longer_planned,
+        "pending_span_count": len(new_expected) - len(carried),
+        "status": status,
+        "claim_supported": "unchanged_hash_bound_semantic_inventory_carried_forward",
+        "claim_not_supported": [
+            "changed_span_review_current",
+            "finding_remediated",
+            "final_semantic_review_current",
+            "full_closeout_complete",
+        ],
+    }
+
+
 def build_semantic_inventory_batch(
     campaign: dict[str, Any],
     *,
     batch_id: str,
+    inventory_path: Path | None = None,
+    pending_only: bool = False,
     root: Path = ROOT,
     source_commit: str | None = None,
 ) -> dict[str, Any]:
@@ -834,10 +1080,33 @@ def build_semantic_inventory_batch(
             + ", ".join(validation["issues"][:10])
         )
     batch = _campaign_batch(campaign, batch_id)
+    accepted_keys: set[tuple[str, int, int]] = set()
+    if pending_only:
+        if inventory_path is None:
+            raise ValueError("pending-only export requires an inventory path")
+        status = summarize_semantic_inventory(
+            campaign,
+            inventory_path=inventory_path,
+            root=root,
+            source_commit=source_commit,
+        )
+        if status["issues"]:
+            raise ValueError(
+                "cannot export pending spans from invalid inventory: "
+                + ", ".join(status["issues"][:10])
+            )
+        accepted_keys = {
+            _inventory_span_key(entry)
+            for entry in read_entries(inventory_path)
+            if entry.get("campaign_sha256") == campaign.get("campaign_sha256")
+            and entry.get("entry_sha256") == _inventory_entry_sha256(entry)
+        }
     cache: dict[str, CurrentFile] = {}
     materialized: list[dict[str, Any]] = []
     for span in list(batch.get("spans") or []):
         file_name, first, last = _inventory_span_key(span)
+        if pending_only and (file_name, first, last) in accepted_keys:
+            continue
         info = cache.get(file_name)
         if info is None:
             info = current_file(root / file_name, root=root)
@@ -854,8 +1123,11 @@ def build_semantic_inventory_batch(
         "source_commit": campaign.get("source_commit", ""),
         "batch_id": batch_id,
         "subsystem": batch.get("subsystem", ""),
-        "line_count": batch.get("line_count", 0),
+        "line_count": sum(int(span.get("line_count") or 0) for span in materialized),
         "span_count": len(materialized),
+        "batch_total_line_count": batch.get("line_count", 0),
+        "batch_total_span_count": len(list(batch.get("spans") or [])),
+        "pending_only": pending_only,
         "review_contract": {
             "one_note_per_span": True,
             "allowed_verdicts": ["clean", "finding"],
@@ -889,6 +1161,7 @@ def build_semantic_inventory_entries(
     batch_id: str,
     submission: dict[str, Any],
     reviewer: str,
+    existing_keys: set[tuple[str, int, int]] | None = None,
 ) -> list[dict[str, Any]]:
     """Validate a complete human/agent review submission for one batch."""
     batch = _campaign_batch(campaign, batch_id)
@@ -899,6 +1172,10 @@ def build_semantic_inventory_entries(
     expected = {
         _inventory_span_key(span): span for span in list(batch.get("spans") or [])
     }
+    if existing_keys is not None:
+        expected = {
+            key: span for key, span in expected.items() if key not in existing_keys
+        }
     reviews = list(submission.get("reviews") or [])
     observed: dict[tuple[str, int, int], dict[str, Any]] = {}
     for review in reviews:
@@ -1106,6 +1383,7 @@ def record_semantic_inventory_batch(
     submission: dict[str, Any],
     inventory_path: Path,
     reviewer: str,
+    pending_only: bool = False,
     root: Path = ROOT,
     source_commit: str | None = None,
 ) -> dict[str, Any]:
@@ -1117,15 +1395,21 @@ def record_semantic_inventory_batch(
     )
     if not before["campaign_valid"]:
         raise ValueError("cannot record inventory against an invalid campaign")
+    if before["issues"]:
+        raise ValueError(
+            "cannot record inventory while prior evidence is invalid: "
+            + ", ".join(before["issues"][:10])
+        )
+    existing_keys = {
+        _inventory_span_key(entry) for entry in read_entries(inventory_path)
+    }
     entries = build_semantic_inventory_entries(
         campaign,
         batch_id=batch_id,
         submission=submission,
         reviewer=reviewer,
+        existing_keys=existing_keys if pending_only else None,
     )
-    existing_keys = {
-        _inventory_span_key(entry) for entry in read_entries(inventory_path)
-    }
     duplicates = [
         _inventory_span_key(entry)
         for entry in entries
@@ -1195,6 +1479,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     export_batch.add_argument("campaign")
     export_batch.add_argument("batch_id")
     export_batch.add_argument("--out", required=True)
+    export_batch.add_argument(
+        "--inventory",
+        default=str(DEFAULT_INVENTORY_LEDGER),
+    )
+    export_batch.add_argument("--pending-only", action="store_true")
 
     record_inventory = subparsers.add_parser(
         "record-inventory",
@@ -1211,6 +1500,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--reviewer",
         default=os.environ.get("AURA_REVIEWER", "codex"),
     )
+    record_inventory.add_argument("--pending-only", action="store_true")
+
+    carry_inventory = subparsers.add_parser(
+        "carry-inventory",
+        help="Carry exact unchanged review entries into a new frozen campaign.",
+    )
+    carry_inventory.add_argument("old_campaign")
+    carry_inventory.add_argument("old_inventory")
+    carry_inventory.add_argument("new_campaign")
+    carry_inventory.add_argument("--out", required=True)
 
     inventory_status = subparsers.add_parser(
         "inventory-status",
@@ -1249,13 +1548,15 @@ def main(argv: list[str] | None = None) -> int:
             _write_json(output_path, payload)
             payload = semantic_campaign_receipt(payload, output_path=output_path)
     elif args.command == "validate-plan":
-        campaign = json.loads(Path(args.campaign).read_text(encoding="utf-8"))
+        campaign = _read_json_artifact(Path(args.campaign))
         payload = validate_semantic_review_campaign(campaign)
     elif args.command == "export-batch":
-        campaign = json.loads(Path(args.campaign).read_text(encoding="utf-8"))
+        campaign = _read_json_artifact(Path(args.campaign))
         batch = build_semantic_inventory_batch(
             campaign,
             batch_id=args.batch_id,
+            inventory_path=Path(args.inventory),
+            pending_only=args.pending_only,
         )
         from tools.closeout.run_codebase_closeout_audit import _write_json
 
@@ -1263,17 +1564,27 @@ def main(argv: list[str] | None = None) -> int:
         _write_json(output_path, batch)
         payload = semantic_inventory_batch_receipt(batch, output_path=output_path)
     elif args.command == "record-inventory":
-        campaign = json.loads(Path(args.campaign).read_text(encoding="utf-8"))
-        submission = json.loads(Path(args.submission).read_text(encoding="utf-8"))
+        campaign = _read_json_artifact(Path(args.campaign))
+        submission = _read_json_artifact(Path(args.submission))
         payload = record_semantic_inventory_batch(
             campaign,
             batch_id=args.batch_id,
             submission=submission,
             inventory_path=Path(args.inventory),
             reviewer=args.reviewer,
+            pending_only=args.pending_only,
+        )
+    elif args.command == "carry-inventory":
+        old_campaign = _read_json_artifact(Path(args.old_campaign))
+        new_campaign = _read_json_artifact(Path(args.new_campaign))
+        payload = carry_semantic_inventory(
+            old_campaign,
+            old_inventory_path=Path(args.old_inventory),
+            new_campaign=new_campaign,
+            output_path=Path(args.out),
         )
     else:
-        campaign = json.loads(Path(args.campaign).read_text(encoding="utf-8"))
+        campaign = _read_json_artifact(Path(args.campaign))
         payload = summarize_semantic_inventory(
             campaign,
             inventory_path=Path(args.inventory),

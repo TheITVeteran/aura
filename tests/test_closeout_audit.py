@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gzip
 import json
 
 import pytest
@@ -14,6 +15,7 @@ from tools.closeout.semantic_review_ledger import (
     build_semantic_inventory_entries,
     build_semantic_review_campaign,
     build_semantic_review_queue,
+    carry_semantic_inventory,
     main as semantic_review_main,
     record_semantic_inventory_batch,
     record_reviews_from_args,
@@ -570,3 +572,166 @@ def test_semantic_inventory_detects_note_tampering(tmp_path):
     assert status["inventory_complete"] is False
     assert status["reviewed_span_count"] == 0
     assert "inventory_line_1:entry_hash_mismatch" in status["issues"]
+
+
+def test_semantic_inventory_carries_only_hash_identical_spans_and_records_pending(
+    tmp_path,
+):
+    first = tmp_path / "core" / "first.py"
+    first.parent.mkdir(parents=True)
+    first.write_text("stable = 1\n", encoding="utf-8")
+    second = tmp_path / "core" / "second.py"
+    second.write_text("version = 1\n", encoding="utf-8")
+    old_campaign = build_semantic_review_campaign(
+        ledger_path=tmp_path / "review-ledger.jsonl",
+        tracked_paths=[first, second],
+        root=tmp_path,
+        batch_line_budget=10,
+        max_span_lines=10,
+        source_commit="old-commit",
+        source_clean=True,
+    )
+    batch_id = old_campaign["batches"][0]["batch_id"]
+    old_submission = {
+        "campaign_sha256": old_campaign["campaign_sha256"],
+        "batch_id": batch_id,
+        "reviews": [
+            {
+                "file": span["file"],
+                "first_line": span["first_line"],
+                "last_line": span["last_line"],
+                "verdict": "clean",
+                "summary": f"The exact {span['file']} span has no actionable defect.",
+                "findings": [],
+            }
+            for span in old_campaign["batches"][0]["spans"]
+        ],
+    }
+    old_inventory = tmp_path / "old-inventory.jsonl"
+    record_semantic_inventory_batch(
+        old_campaign,
+        batch_id=batch_id,
+        submission=old_submission,
+        inventory_path=old_inventory,
+        reviewer="codex",
+        root=tmp_path,
+        source_commit="old-commit",
+    )
+    old_inventory_gz = tmp_path / "old-inventory.jsonl.gz"
+    old_inventory_gz.write_bytes(gzip.compress(old_inventory.read_bytes(), mtime=0))
+
+    second.write_text("version = 2\n", encoding="utf-8")
+    new_campaign = build_semantic_review_campaign(
+        ledger_path=tmp_path / "review-ledger.jsonl",
+        tracked_paths=[first, second],
+        root=tmp_path,
+        batch_line_budget=10,
+        max_span_lines=10,
+        source_commit="new-commit",
+        source_clean=True,
+    )
+    new_inventory = tmp_path / "new-inventory.jsonl"
+    receipt = carry_semantic_inventory(
+        old_campaign,
+        old_inventory_path=old_inventory_gz,
+        new_campaign=new_campaign,
+        output_path=new_inventory,
+        root=tmp_path,
+        source_commit="new-commit",
+    )
+
+    assert receipt["old_reviewed_span_count"] == 2
+    assert receipt["carried_span_count"] == 1
+    assert receipt["changed_span_count"] == 1
+    assert receipt["pending_span_count"] == 1
+    carried = json.loads(new_inventory.read_text(encoding="utf-8"))
+    assert carried["file"] == "core/first.py"
+    assert carried["carried_from"]["source_commit"] == "old-commit"
+
+    new_batch_id = new_campaign["batches"][0]["batch_id"]
+    pending = build_semantic_inventory_batch(
+        new_campaign,
+        batch_id=new_batch_id,
+        inventory_path=new_inventory,
+        pending_only=True,
+        root=tmp_path,
+        source_commit="new-commit",
+    )
+    assert pending["pending_only"] is True
+    assert pending["span_count"] == 1
+    assert pending["spans"][0]["file"] == "core/second.py"
+    pending_submission = {
+        "campaign_sha256": new_campaign["campaign_sha256"],
+        "batch_id": new_batch_id,
+        "reviews": [
+            {
+                "file": "core/second.py",
+                "first_line": 1,
+                "last_line": 1,
+                "verdict": "clean",
+                "summary": "The changed second-file span has been reviewed again.",
+                "findings": [],
+            }
+        ],
+    }
+    status = record_semantic_inventory_batch(
+        new_campaign,
+        batch_id=new_batch_id,
+        submission=pending_submission,
+        inventory_path=new_inventory,
+        reviewer="codex",
+        pending_only=True,
+        root=tmp_path,
+        source_commit="new-commit",
+    )
+    assert status["inventory_complete"] is True
+    assert status["edits_permitted"] is True
+
+
+def test_semantic_inventory_carry_rejects_tampered_archived_entry(tmp_path):
+    source = tmp_path / "service.py"
+    source.write_text("stable\n", encoding="utf-8")
+    campaign = build_semantic_review_campaign(
+        ledger_path=tmp_path / "review-ledger.jsonl",
+        tracked_paths=[source],
+        root=tmp_path,
+        source_commit="frozen",
+        source_clean=True,
+    )
+    batch_id = campaign["batches"][0]["batch_id"]
+    inventory = tmp_path / "inventory.jsonl"
+    record_semantic_inventory_batch(
+        campaign,
+        batch_id=batch_id,
+        submission={
+            "campaign_sha256": campaign["campaign_sha256"],
+            "batch_id": batch_id,
+            "reviews": [
+                {
+                    "file": "service.py",
+                    "first_line": 1,
+                    "last_line": 1,
+                    "verdict": "clean",
+                    "summary": "The stable line contains no actionable defect.",
+                    "findings": [],
+                }
+            ],
+        },
+        inventory_path=inventory,
+        reviewer="codex",
+        root=tmp_path,
+        source_commit="frozen",
+    )
+    entry = json.loads(inventory.read_text(encoding="utf-8"))
+    entry["summary"] = "tampered after archival"
+    inventory.write_text(json.dumps(entry) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="entry_hash_mismatch"):
+        carry_semantic_inventory(
+            campaign,
+            old_inventory_path=inventory,
+            new_campaign=campaign,
+            output_path=tmp_path / "new-inventory.jsonl",
+            root=tmp_path,
+            source_commit="frozen",
+        )

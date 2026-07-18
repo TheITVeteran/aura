@@ -18624,3 +18624,59 @@ product, release, or soak credit.
   failed gain gate. Re-freeze semantic review at the new clean source commit
   and carry forward unchanged CP126 spans. Multi-hour and 24-72-hour soaks
   remain deferred until shorter gates are green.
+
+## Checkpoint 2026-07-18-128: Hash-Exact Semantic Carry Forward
+
+Checkpoint 128 implements the controlled-thaw prerequisite from CP127. It
+allows the post-RLC source campaign to preserve CP126 review work without
+granting credit to any changed file or span. It also records the first complete
+live-path audit of the trained recurrence adapter. It does not award semantic
+remediation, recurrence gain, frontier, installed-app, release, or soak credit.
+
+- `semantic_review_ledger.py carry-inventory` accepts archived plain or
+  deterministic-gzip campaign and inventory evidence, validates the archived
+  campaign independently of the now-changed checkout, verifies every entry
+  hash and planned metadata field, validates the new campaign against its exact
+  clean source, and creates a new inventory atomically. Only entries whose
+  file, file-line-count, span, span-line-count, hash, and subsystem identities
+  are unchanged are transferred; changed or no-longer-planned spans remain
+  pending.
+- Active inventory output is size-bounded, UTF-8 strict, non-compressed,
+  create-only, file-fsynced, atomically renamed, and directory-fsynced.
+  Compressed evidence is read with a 512 MiB expansion ceiling and cannot be
+  appended to as if it were a mutable ledger.
+- `export-batch --pending-only --inventory ...` materializes only spans not
+  already accepted for the new campaign. `record-inventory --pending-only`
+  requires exactly those remaining notes. This closes the mixed-batch problem
+  where one changed span previously made an otherwise carried batch impossible
+  to complete without duplicating evidence.
+- The actual tracked CP126 gzip artifacts validate through the new path:
+  campaign hash `b66379ac...f5a`, all 604 archived entries, and every entry's
+  campaign, batch, file, span, and content identity pass. Tampered entries,
+  invalid prior evidence, duplicate spans, output replacement, and changed
+  content fail closed.
+- The resident-RLC live trace confirms the base checkpoint is exactly
+  compatible with `32b_r1`, but the adapter is not loaded by the production
+  worker. Live episode receipts and the existing frontier certificate do not
+  bind an adapter hash or training receipt, and the current installed-app
+  provenance predates the source checkpoint. A live RLC mechanics PASS could
+  therefore occur with the trained adapter absent; no gain claim is permitted.
+- The production implementation must add strict composite model identity,
+  immutable adapter-on/off worker boot modes, transactional activation and
+  rollback, adapter identity in worker/episode/route/certificate receipts, a
+  resumable paired campaign producer, and a final rebuilt installed-app proof.
+  The scientific campaign must separately prove same-checkpoint causal uplift,
+  external-frontier standing, and production validity; all three are required.
+- The closeout tests pass 20/20, including unchanged-only carry, compressed
+  archive validation, mixed-batch pending review, changed-span re-review, and
+  tamper rejection. Python compilation, focused `F`/`E9` lint, CLI help,
+  archive replay, and `git diff --check` pass.
+- Evidence-weighted completion remains 27%. This is checkpoint 128 of the
+  faithful 292-399 total forecast, leaving approximately 164-271 checkpoints.
+- Next: publish CP128 directly to `main`; build the append-only resumable
+  resident-32B campaign producer and strict recurrence-adapter identity path;
+  execute the current adapter's paired 2x2 attribution campaign; then, if the
+  evidence fails, replace the train/runtime-mismatched objective and launch
+  recurrence-native v2 training detached with durable PID, log, checkpoints,
+  resume state, and receipt. Re-freeze and carry semantic evidence after the
+  RLC repair source is clean. Multi-hour and 24-72-hour soaks remain deferred.
