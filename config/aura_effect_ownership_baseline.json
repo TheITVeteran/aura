@@ -1361,6 +1361,46 @@
       "scope": "<module>.export_preference_splits"
     },
     {
+      "callee": "core.runtime.atomic_writer.atomic_write_bytes",
+      "canonical_owner": true,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/learning/recurrence_training_state.py",
+      "scope": "<module>._write_safetensors"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.durable_unlink",
+      "canonical_owner": true,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/learning/recurrence_training_state.py",
+      "scope": "<module>._write_safetensors"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.atomic_write_bytes",
+      "canonical_owner": true,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/learning/recurrence_training_state.py",
+      "scope": "<module>.save_recurrence_checkpoint"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.atomic_write_text",
+      "canonical_owner": true,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/learning/recurrence_training_state.py",
+      "scope": "<module>.save_recurrence_checkpoint"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.ensure_private_directory",
+      "canonical_owner": true,
+      "category": "direct_atomic_file_write",
+      "count": 3,
+      "path": "core/learning/recurrence_training_state.py",
+      "scope": "<module>.save_recurrence_checkpoint"
+    },
+    {
       "callee": "core.runtime.atomic_writer.atomic_write_text",
       "canonical_owner": false,
       "category": "direct_atomic_file_write",
@@ -13954,6 +13994,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "3a62bf1e9bd5b524a664ea5c89d2cc3cb15016330216a74bc3e87bdaf0608113",
+  "inventory_sha256": "01a9ba06604ef958143580b8b2ce32399bf95540fe8f244ea16aec9040cb6e10",
   "schema_version": 1
 }

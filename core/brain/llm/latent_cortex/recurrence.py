@@ -130,12 +130,18 @@ class HaltingController:
             return HaltDecision(True, "budget_exhausted")
         if step + 1 >= self.config.max_steps:
             return HaltDecision(True, "max_steps")
-        if step + 1 >= self.config.min_steps and residual < self.config.convergence_eps:
+        if (
+            not self.config.fixed_depth
+            and step + 1 >= self.config.min_steps
+            and residual < self.config.convergence_eps
+        ):
             return HaltDecision(True, "converged")
         return HaltDecision(False)
 
     def final_state(self, z_last) -> tuple[Any, bool]:
         """Return (state to ship, reverted?) — best state if it beats last."""
+        if self.config.fixed_depth:
+            return z_last, False
         if self.best_state is not None and (
             not self.score_trail or self.best_step < len(self.score_trail) - 1
         ):

@@ -342,6 +342,8 @@ def _strict_result_row(
     runtime_identity = result.get("runtime_model_identity")
     runtime_bundle = model_identity.get("runtime_bundle")
     implementation_sha256 = execution_config.get("implementation_sha256")
+    planned_personality = model_identity.get("personality_adapter")
+    planned_effective_stack = model_identity.get("effective_stack_sha256")
     if (
         not isinstance(runtime_identity, Mapping)
         or not isinstance(runtime_bundle, Mapping)
@@ -362,6 +364,16 @@ def _strict_result_row(
         or runtime_identity.get("worker_load_boundary_verified") is not True
         or runtime_identity.get("worker_source_sha256")
         != implementation_sha256.get("tools/run_latent_cortex_paired_campaign.py")
+        or (
+            planned_personality is not None
+            and runtime_identity.get("worker_personality_adapter")
+            != planned_personality
+        )
+        or (
+            planned_effective_stack is not None
+            and runtime_identity.get("worker_effective_stack_sha256")
+            != planned_effective_stack
+        )
     ):
         _fail("campaign_runtime_model_identity_mismatch")
     adapter_receipt = adapter_identity.get("identity_receipt")

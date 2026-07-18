@@ -25,7 +25,7 @@ import uuid
 from collections import Counter
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
@@ -56,6 +56,14 @@ from core.brain.llm.latent_cortex.paired_campaign import (  # noqa: E402
     build_campaign_plan,
     grade_campaign,
 )
+from core.brain.llm.latent_cortex.recurrence_adapter_identity_v2 import (  # noqa: E402
+    MANIFEST_SCHEMA_V2,
+    model_behavior_bundle_identity,
+    personality_bundle_identity,
+    runtime_environment_identity,
+    strict_json_loads,
+    validate_v2_adapter_identity,
+)
 from core.brain.llm.latent_cortex.runtime_identity import (  # noqa: E402
     build_worker_identity,
     logical_model_parameter_count,
@@ -71,6 +79,7 @@ MANIFEST_FILE = "campaign_manifest.json"
 GRADE_FILE = "grade.json"
 LOG_FILE = "runner.log"
 OBJECTIVE_SOURCE = REPO_ROOT / "core/learning/recurrence_native_objective.py"
+V2_MANIFEST_FILE = "recurrence_adapter_manifest.json"
 CONTAMINATION_AUDIT_SCHEMA = "aura.latent_cortex.contamination_audit.v2"
 
 class CampaignProducerError(RuntimeError):
@@ -292,18 +301,243 @@ def _runtime_bundle_identity(
     return {**body, "bundle_sha256": _sha256_bytes(canonical_json_bytes(body))}
 
 
+def _contained_adapter_artifact(adapter_dir: Path, relative: Any) -> Path:
+    if (
+        not isinstance(relative, str)
+        or not relative
+        or relative.startswith("/")
+        or "\\" in relative
+        or "\x00" in relative
+    ):
+        raise CampaignProducerError("adapter artifact path is invalid")
+    root = adapter_dir.resolve(strict=True)
+    cursor = root
+    for part in Path(relative).parts:
+        cursor = cursor / part
+        if cursor.is_symlink():
+            raise CampaignProducerError("adapter artifact symlink is rejected")
+    try:
+        resolved = (root / relative).resolve(strict=True)
+    except (FileNotFoundError, OSError) as exc:
+        raise CampaignProducerError("adapter artifact is missing") from exc
+    if not resolved.is_relative_to(root) or resolved == root:
+        raise CampaignProducerError("adapter artifact escapes bundle root")
+    return resolved
+
+
+def _v2_manifest_bytes(adapter_dir: Path) -> bytes | None:
+    path = adapter_dir / V2_MANIFEST_FILE
+    if not path.exists():
+        return None
+    return _read_stable_bytes(path, max_bytes=16 * 1024 * 1024)
+
+
+def _v2_artifacts(adapter_dir: Path, manifest: dict[str, Any]) -> dict[str, bytes]:
+    artifacts: dict[str, bytes] = {}
+    bindings: list[tuple[str, Mapping[str, Any]]] = []
+    for role in (
+        "adapter",
+        "adapter_alias",
+        "loader_config",
+        "training_receipt",
+        "training_config",
+        "dataset_manifest",
+        "execution_spec",
+    ):
+        value = manifest.get(role)
+        if not isinstance(value, dict):
+            raise CampaignProducerError(f"v2 {role} binding is invalid")
+        bindings.append((role, value))
+    sources = manifest.get("sources")
+    if not isinstance(sources, dict):
+        raise CampaignProducerError("v2 source bindings are invalid")
+    for role, value in sources.items():
+        if not isinstance(role, str) or not isinstance(value, dict):
+            raise CampaignProducerError("v2 source binding is invalid")
+        bindings.append(
+            (
+                f"source_{role}",
+                {
+                    "path": value.get("snapshot_path"),
+                    "size_bytes": value.get("size_bytes"),
+                },
+            )
+        )
+    for role, binding in bindings:
+        relative = binding.get("path")
+        size = binding.get("size_bytes")
+        if type(size) is not int or size <= 0:
+            raise CampaignProducerError(f"v2 {role} size is invalid")
+        path = _contained_adapter_artifact(adapter_dir, relative)
+        if relative in artifacts:
+            raise CampaignProducerError("v2 artifact path is duplicated")
+        artifacts[str(relative)] = _read_stable_bytes(path, max_bytes=size)
+    completion = _contained_adapter_artifact(
+        adapter_dir, "training_completion.json"
+    )
+    artifacts["training_completion.json"] = _read_stable_bytes(
+        completion, max_bytes=1024 * 1024
+    )
+    return artifacts
+
+
+def _v2_training_config(
+    adapter_dir: Path,
+    manifest: dict[str, Any],
+) -> dict[str, Any]:
+    binding = manifest.get("training_config")
+    if not isinstance(binding, dict) or type(binding.get("size_bytes")) is not int:
+        raise CampaignProducerError("v2 training config binding is invalid")
+    path = _contained_adapter_artifact(adapter_dir, binding.get("path"))
+    payload = _read_stable_bytes(path, max_bytes=int(binding["size_bytes"]))
+    return strict_json_loads(payload, role="campaign_training_config")
+
+
+def _resolve_campaign_personality(
+    args: argparse.Namespace,
+    *,
+    model_path: Path,
+    adapter_dir: Path,
+    v2_manifest: dict[str, Any] | None,
+) -> str | None:
+    requested = str(getattr(args, "personality_adapter", "trained") or "trained").strip()
+    lowered = requested.lower()
+    if lowered == "trained":
+        if v2_manifest is None:
+            return None
+        configured = str(
+            _v2_training_config(adapter_dir, v2_manifest).get(
+                "personality_adapter_path", ""
+            )
+        ).strip()
+        requested = configured or "none"
+        lowered = requested.lower()
+    if lowered == "none":
+        return None
+    if lowered == "auto":
+        from core.brain.llm.model_registry import resolve_personality_adapter
+
+        resolved = resolve_personality_adapter(str(model_path), backend="mlx")
+        return str(Path(resolved).expanduser().resolve(strict=True)) if resolved else None
+    resolved = Path(requested).expanduser().resolve(strict=True)
+    if not resolved.is_dir():
+        raise CampaignProducerError("personality adapter must be a directory")
+    return str(resolved)
+
+
+def _effective_stack_sha256(
+    *,
+    weight_fingerprint: str,
+    runtime_bundle_sha256: str,
+    personality_identity: Mapping[str, Any],
+) -> str:
+    return _sha256_bytes(
+        canonical_json_bytes(
+            {
+                "schema": "aura.latent_cortex.effective_model_stack.v1",
+                "weight_fingerprint": weight_fingerprint,
+                "runtime_bundle_sha256": runtime_bundle_sha256,
+                "personality_adapter": dict(personality_identity),
+            }
+        )
+    )
+
+
+def _validate_v2_adapter_dir(
+    adapter_dir: Path,
+    manifest_bytes: bytes,
+    *,
+    adapter_id: str,
+    base_checkpoint: Mapping[str, Any],
+    model_behavior_bundle: Mapping[str, Any],
+    personality_identity: Mapping[str, Any],
+    runtime_environment: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    manifest = strict_json_loads(manifest_bytes, role="campaign_v2_manifest")
+    artifacts = _v2_artifacts(adapter_dir, manifest)
+    adapter_binding = manifest.get("adapter")
+    if not isinstance(adapter_binding, dict):
+        raise CampaignProducerError("v2 adapter binding is invalid")
+    adapter_path = _contained_adapter_artifact(adapter_dir, adapter_binding.get("path"))
+    receipt = validate_v2_adapter_identity(
+        manifest_bytes,
+        adapter_id=adapter_id,
+        actual_base_checkpoint=base_checkpoint,
+        actual_model_behavior_bundle=model_behavior_bundle,
+        actual_personality_adapter=personality_identity,
+        actual_runtime_environment=runtime_environment,
+        artifacts=artifacts,
+        tensor_metadata=inspect_mlx_tensor_metadata(adapter_path),
+    )
+    return manifest, receipt
+
+
 def _identity_material(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any]]:
     model_path = Path(args.model).expanduser().resolve(strict=True)
     adapter_dir = Path(args.adapter).expanduser().resolve(strict=True)
     weight_identity = _fresh_checkpoint_file_fingerprint(model_path)
+    model_behavior_identity = model_behavior_bundle_identity(model_path)
+    runtime_environment = runtime_environment_identity()
+    runtime_bundle = _runtime_bundle_identity(
+        model_path,
+        weight_identity=weight_identity,
+    )
+    v2_manifest_bytes = _v2_manifest_bytes(adapter_dir)
+    v2_manifest = (
+        strict_json_loads(v2_manifest_bytes, role="campaign_v2_manifest")
+        if v2_manifest_bytes is not None
+        else None
+    )
+    personality_path = _resolve_campaign_personality(
+        args,
+        model_path=model_path,
+        adapter_dir=adapter_dir,
+        v2_manifest=v2_manifest,
+    )
+    personality_identity = personality_bundle_identity(personality_path)
     model_identity = {
         "model_path": str(model_path),
         **weight_identity,
-        "runtime_bundle": _runtime_bundle_identity(
-            model_path,
-            weight_identity=weight_identity,
+        "runtime_bundle": runtime_bundle,
+        "model_behavior_bundle": model_behavior_identity,
+        "runtime_environment": runtime_environment,
+        "personality_adapter_path": personality_path or "",
+        "personality_adapter": personality_identity,
+        "effective_stack_sha256": _effective_stack_sha256(
+            weight_fingerprint=weight_identity["fingerprint"],
+            runtime_bundle_sha256=runtime_bundle["bundle_sha256"],
+            personality_identity=personality_identity,
         ),
     }
+    if v2_manifest_bytes is not None:
+        manifest, receipt = _validate_v2_adapter_dir(
+            adapter_dir,
+            v2_manifest_bytes,
+            adapter_id=args.adapter_id,
+            base_checkpoint=weight_identity,
+            model_behavior_bundle=model_behavior_identity,
+            personality_identity=personality_identity,
+            runtime_environment=runtime_environment,
+        )
+        execution_binding = manifest["execution_spec"]
+        execution_payload = _read_stable_bytes(
+            _contained_adapter_artifact(adapter_dir, execution_binding["path"]),
+            max_bytes=int(execution_binding["size_bytes"]),
+        )
+        adapter_identity = {
+            "adapter_dir": str(adapter_dir),
+            "format": MANIFEST_SCHEMA_V2,
+            "manifest": manifest,
+            "identity_receipt": receipt,
+            "execution_spec": strict_json_loads(
+                execution_payload, role="campaign_execution_spec"
+            ),
+        }
+        return model_identity, adapter_identity
+    if personality_path is not None:
+        raise CampaignProducerError(
+            "legacy recurrence adapter cannot be composed with an unbound personality adapter"
+        )
     manifest = build_legacy_v1_manifest(
         adapter_dir,
         adapter_id=args.adapter_id,
@@ -319,23 +553,39 @@ def _identity_material(args: argparse.Namespace) -> tuple[dict[str, Any], dict[s
     )
     adapter_identity = {
         "adapter_dir": str(adapter_dir),
+        "format": manifest.schema,
         "manifest": manifest.to_dict(),
         "identity_receipt": identity.to_dict(),
+        "execution_spec": None,
     }
     return model_identity, adapter_identity
 
 
-def _model_load_boundary_identity(model_path: Path) -> dict[str, Any]:
+def _model_load_boundary_identity(
+    model_path: Path,
+    personality_path: str | None,
+) -> dict[str, Any]:
     weight_identity = _fresh_checkpoint_file_fingerprint(model_path)
     runtime_bundle = _runtime_bundle_identity(
         model_path,
         weight_identity=weight_identity,
     )
+    personality_identity = personality_bundle_identity(personality_path)
+    model_behavior_identity = model_behavior_bundle_identity(model_path)
+    runtime_environment = runtime_environment_identity()
     return {
         "weight_fingerprint": weight_identity["fingerprint"],
         "weight_method": weight_identity["method"],
         "weight_file_count": weight_identity["files"],
         "runtime_bundle_sha256": runtime_bundle["bundle_sha256"],
+        "model_behavior_bundle": model_behavior_identity,
+        "runtime_environment": runtime_environment,
+        "personality_adapter": personality_identity,
+        "effective_stack_sha256": _effective_stack_sha256(
+            weight_fingerprint=weight_identity["fingerprint"],
+            runtime_bundle_sha256=runtime_bundle["bundle_sha256"],
+            personality_identity=personality_identity,
+        ),
     }
 
 
@@ -343,15 +593,36 @@ def _adapter_load_boundary_identity(
     adapter_dir: Path,
     manifest: dict[str, Any],
     *,
-    base_checkpoint_fingerprint: str,
+    adapter_id: str,
+    base_checkpoint: Mapping[str, Any],
+    model_behavior_bundle: Mapping[str, Any],
+    personality_identity: Mapping[str, Any],
+    runtime_environment: Mapping[str, Any],
 ) -> dict[str, Any]:
+    if manifest.get("schema") == MANIFEST_SCHEMA_V2:
+        manifest_bytes = _read_stable_bytes(
+            adapter_dir / V2_MANIFEST_FILE,
+            max_bytes=16 * 1024 * 1024,
+        )
+        _parsed, receipt = _validate_v2_adapter_dir(
+            adapter_dir,
+            manifest_bytes,
+            adapter_id=adapter_id,
+            base_checkpoint=base_checkpoint,
+            model_behavior_bundle=model_behavior_bundle,
+            personality_identity=personality_identity,
+            runtime_environment=runtime_environment,
+        )
+        if _parsed != manifest:
+            raise CampaignProducerError("v2 adapter manifest differs from frozen plan")
+        return receipt
     adapter_binding = manifest["adapter"]
     receipt_binding = manifest["training_receipt"]
     adapter_path = adapter_dir / adapter_binding["path"]
     receipt_path = adapter_dir / receipt_binding["path"]
     receipt = validate_adapter_identity(
         manifest,
-        actual_base_checkpoint_fingerprint=base_checkpoint_fingerprint,
+        actual_base_checkpoint_fingerprint=str(base_checkpoint["fingerprint"]),
         adapter_bytes=_read_stable_bytes(
             adapter_path,
             max_bytes=max(1, int(adapter_binding["size_bytes"])),
@@ -501,7 +772,10 @@ def _implementation_sha256() -> dict[str, str]:
     }
 
 
-def _build_rlc_config(args: argparse.Namespace) -> Any:
+def _build_rlc_config(
+    args: argparse.Namespace,
+    execution_spec: Mapping[str, Any] | None = None,
+) -> Any:
     from core.brain.llm.latent_cortex.types import (
         BranchConfig,
         CortexConfig,
@@ -511,6 +785,47 @@ def _build_rlc_config(args: argparse.Namespace) -> Any:
         WorkspaceConfig,
     )
 
+    if execution_spec is not None:
+        from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec
+
+        spec = RLCExecutionSpec.from_dict(execution_spec)
+        return CortexConfig(
+            workspace=WorkspaceConfig(
+                n_slots=spec.n_slots,
+                seed=spec.slot_seed,
+                roles=spec.slot_roles,
+                anchor_scale=spec.anchor_scale,
+            ),
+            recurrence=RecurrenceConfig(
+                max_steps=spec.recurrent_steps,
+                min_steps=spec.recurrent_steps,
+                alpha=spec.alpha,
+                alpha_schedule=spec.alpha_schedule,
+                rms_clip_ratio=spec.rms_clip_ratio,
+                fixed_depth=not spec.adaptive_halting,
+            ),
+            branches=BranchConfig(
+                n_branches=len(spec.branch_roles),
+                exchange_interval=spec.exchange_interval,
+                exchange_gamma=spec.exchange_gamma,
+                comm_slot=spec.comm_slot,
+                collapse_cos_threshold=spec.collapse_cos_threshold,
+                jitter_scale=spec.jitter_scale,
+                roles=spec.branch_roles,
+            ),
+            prelude_frac=spec.prelude_frac,
+            coda_frac=spec.coda_frac,
+            decode_max_tokens=args.decode_max_tokens,
+            decode_bridge_policy=(
+                "assistant_answer_v3"
+                if spec.decode_bridge_policy == "assistant_answer"
+                else "none"
+            ),
+            decode_repetition_penalty=1.25,
+            decode_repetition_window=72,
+            allow_vanilla_fallback=False,
+            escape={"enabled": False},
+        )
     if args.rlc_profile == "resident_full_stack":
         return CortexConfig(
             workspace=WorkspaceConfig(n_slots=4, seed=0),
@@ -545,8 +860,14 @@ def _build_rlc_config(args: argparse.Namespace) -> Any:
     )
 
 
-def _execution_config(args: argparse.Namespace) -> dict[str, Any]:
-    effective = _build_rlc_config(args)
+def _execution_config(
+    args: argparse.Namespace,
+    adapter_identity: Mapping[str, Any],
+) -> dict[str, Any]:
+    execution_spec = adapter_identity.get("execution_spec")
+    if execution_spec is not None and not isinstance(execution_spec, Mapping):
+        raise CampaignProducerError("adapter execution spec is invalid")
+    effective = _build_rlc_config(args, execution_spec)
     return {
         "profile": args.profile,
         "difficulty": args.difficulty,
@@ -561,6 +882,9 @@ def _execution_config(args: argparse.Namespace) -> dict[str, Any]:
             "rlc_steps": args.rlc_steps,
         },
         "effective_rlc_config": asdict(effective),
+        "adapter_execution_spec": (
+            dict(execution_spec) if isinstance(execution_spec, Mapping) else None
+        ),
         "rlc_profile": args.rlc_profile,
         "decode_max_tokens": args.decode_max_tokens,
         "episode_timeout_s": args.episode_timeout,
@@ -585,7 +909,7 @@ def _expected_plan(args: argparse.Namespace) -> tuple[CampaignPlan, tuple[Fronti
         tasks,
         model_identity=model_identity,
         adapter_identity=adapter_identity,
-        execution_config=_execution_config(args),
+        execution_config=_execution_config(args, adapter_identity),
         contamination_audit=contamination_audit,
         arms=_arms(args),
         claim_eligible=claim_eligible,
@@ -668,10 +992,17 @@ def _load_adapter(model: Any, adapter_dir: Path, manifest: dict[str, Any]) -> in
 
     rank = int(manifest["lora"]["rank"])
     targets = tuple(manifest["lora"]["targets"])
-    expected = int(manifest["lora"]["wrapped_projection_count"])
+    is_v2 = manifest.get("schema") == MANIFEST_SCHEMA_V2
+    expected = int(
+        manifest["lora"][
+            "wrapped_projections" if is_v2 else "wrapped_projection_count"
+        ]
+    )
     tensor_records = {record["key"]: record for record in manifest["tensors"]}
-    objective_name = str(
-        manifest["training_receipt"]["objective"].get("name") or ""
+    objective_name = (
+        "aura.recurrence_native_objective.v2"
+        if is_v2
+        else str(manifest["training_receipt"]["objective"].get("name") or "")
     )
     wrapper_type = (
         ScopedLoRALinear
@@ -684,6 +1015,8 @@ def _load_adapter(model: Any, adapter_dir: Path, manifest: dict[str, Any]) -> in
             for key in tensor_records
         }
     )
+    if is_v2 and projections != sorted(manifest["lora"]["projection_paths"]):
+        raise CampaignProducerError("v2 adapter projection inventory differs")
     if len(projections) != expected:
         raise CampaignProducerError(
             f"adapter topology mismatch: planned {len(projections)}, expected {expected}"
@@ -830,9 +1163,14 @@ def _equal_compute(
     return _majority_output(outputs), spent, len(outputs)
 
 
-def _make_rlc_engine(model: Any, tokenizer: Any, args: argparse.Namespace) -> Any:
+def _make_rlc_engine(
+    model: Any,
+    tokenizer: Any,
+    args: argparse.Namespace,
+    execution_spec: Mapping[str, Any] | None,
+) -> Any:
     from core.brain.llm.latent_cortex.engine import LatentCortexEngine
-    config = _build_rlc_config(args)
+    config = _build_rlc_config(args, execution_spec)
 
     return LatentCortexEngine(
         model,
@@ -904,13 +1242,26 @@ def _execute_worker(
         with _deadline_alarm(args.load_timeout, "model_load"):
             planned_model = metadata["model_identity"]
             planned_runtime = planned_model["runtime_bundle"]
+            personality_path = str(
+                planned_model.get("personality_adapter_path") or ""
+            ) or None
             planned_load_boundary = {
                 "weight_fingerprint": planned_model["fingerprint"],
                 "weight_method": planned_model["method"],
                 "weight_file_count": planned_model["files"],
                 "runtime_bundle_sha256": planned_runtime["bundle_sha256"],
+                "model_behavior_bundle": planned_model[
+                    "model_behavior_bundle"
+                ],
+                "runtime_environment": planned_model["runtime_environment"],
+                "personality_adapter": planned_model["personality_adapter"],
+                "effective_stack_sha256": planned_model[
+                    "effective_stack_sha256"
+                ],
             }
-            pre_load_boundary = _model_load_boundary_identity(model_dir)
+            pre_load_boundary = _model_load_boundary_identity(
+                model_dir, personality_path
+            )
             if pre_load_boundary != planned_load_boundary:
                 raise CampaignProducerError(
                     "model bytes differ from frozen plan before load"
@@ -920,7 +1271,17 @@ def _execute_worker(
                 actual_adapter_identity = _adapter_load_boundary_identity(
                     adapter_dir,
                     manifest,
-                    base_checkpoint_fingerprint=planned_model["fingerprint"],
+                    adapter_id=args.adapter_id,
+                    base_checkpoint={
+                        "fingerprint": planned_model["fingerprint"],
+                        "method": planned_model["method"],
+                        "files": planned_model["files"],
+                    },
+                    model_behavior_bundle=planned_model[
+                        "model_behavior_bundle"
+                    ],
+                    personality_identity=planned_model["personality_adapter"],
+                    runtime_environment=planned_model["runtime_environment"],
                 )
                 if actual_adapter_identity != metadata["adapter_identity"][
                     "identity_receipt"
@@ -928,20 +1289,35 @@ def _execute_worker(
                     raise CampaignProducerError(
                         "adapter bytes differ from frozen plan before load"
                     )
-            model, tokenizer = load(model_path)
+            load_kwargs = (
+                {"adapter_path": personality_path} if personality_path else {}
+            )
+            model, tokenizer = load(model_path, **load_kwargs)
             wrapped = 0
             if arm.startswith("adapter_"):
                 wrapped = _load_adapter(model, adapter_dir, manifest)
                 post_adapter_identity = _adapter_load_boundary_identity(
                     adapter_dir,
                     manifest,
-                    base_checkpoint_fingerprint=planned_model["fingerprint"],
+                    adapter_id=args.adapter_id,
+                    base_checkpoint={
+                        "fingerprint": planned_model["fingerprint"],
+                        "method": planned_model["method"],
+                        "files": planned_model["files"],
+                    },
+                    model_behavior_bundle=planned_model[
+                        "model_behavior_bundle"
+                    ],
+                    personality_identity=planned_model["personality_adapter"],
+                    runtime_environment=planned_model["runtime_environment"],
                 )
                 if post_adapter_identity != actual_adapter_identity:
                     raise CampaignProducerError(
                         "adapter identity changed across load boundary"
                     )
-            post_load_boundary = _model_load_boundary_identity(model_dir)
+            post_load_boundary = _model_load_boundary_identity(
+                model_dir, personality_path
+            )
             if post_load_boundary != pre_load_boundary:
                 raise CampaignProducerError(
                     "model identity changed across load boundary"
@@ -965,6 +1341,12 @@ def _execute_worker(
                     ],
                     "worker_runtime_bundle_sha256": post_load_boundary[
                         "runtime_bundle_sha256"
+                    ],
+                    "worker_personality_adapter": post_load_boundary[
+                        "personality_adapter"
+                    ],
+                    "worker_effective_stack_sha256": post_load_boundary[
+                        "effective_stack_sha256"
                     ],
                     "worker_load_boundary_verified": True,
                 }
@@ -997,7 +1379,19 @@ def _execute_worker(
                 f"warmup exceeded budget: {warm_elapsed:.3f}s > {args.warmup_timeout:.3f}s"
             )
 
-        rlc_engine = _make_rlc_engine(model, tokenizer, args) if arm.endswith("_rlc") else None
+        raw_execution_spec = metadata["execution_config"].get(
+            "adapter_execution_spec"
+        )
+        execution_spec = (
+            raw_execution_spec
+            if isinstance(raw_execution_spec, Mapping)
+            else None
+        )
+        rlc_engine = (
+            _make_rlc_engine(model, tokenizer, args, execution_spec)
+            if arm.endswith("_rlc")
+            else None
+        )
         campaign_dir = Path(args.campaign_dir).expanduser().resolve()
         with CampaignJournal(campaign_dir / JOURNAL_FILE, plan) as journal:
             costs = _prior_rlc_costs(journal)
@@ -1122,6 +1516,8 @@ def _worker_args(args: argparse.Namespace, arm: str) -> list[str]:
         args.adapter,
         "--adapter-id",
         args.adapter_id,
+        "--personality-adapter",
+        str(getattr(args, "personality_adapter", "trained")),
         "--seeds",
         args.seeds,
         "--domains",
@@ -1297,6 +1693,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--model", required=True)
     parser.add_argument("--adapter", required=True)
     parser.add_argument("--adapter-id", default="resident-32b-r1")
+    parser.add_argument(
+        "--personality-adapter",
+        default="trained",
+        help="trained, none, auto, or an explicit MLX personality-adapter directory",
+    )
     parser.add_argument("--seeds", default="7001,7002,7003,7004")
     parser.add_argument("--domains", default=",".join(FRONTIER_DOMAINS))
     parser.add_argument("--difficulty", type=int, choices=(1, 2, 3), default=2)

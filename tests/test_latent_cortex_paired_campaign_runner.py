@@ -13,6 +13,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from core.brain.llm.latent_cortex.campaign_journal import canonical_json_bytes
+from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec
 from core.brain.llm.latent_cortex.frontier_tasks import generate_task_battery
 from tools import run_latent_cortex_paired_campaign as runner
 
@@ -258,6 +259,34 @@ def test_effective_full_stack_shape_is_frozen_not_cli_placeholder():
     assert effective.recurrence.max_steps == 2
     assert effective.latent_opt.enabled is True
     assert effective.fast_weights.enabled is True
+
+
+def test_v2_execution_spec_overrides_cli_and_preserves_training_graph():
+    args = SimpleNamespace(
+        rlc_profile="resident_full_stack",
+        n_slots=99,
+        branches=7,
+        rlc_steps=19,
+        decode_max_tokens=128,
+    )
+    spec = RLCExecutionSpec(
+        n_slots=6,
+        branch_roles=("constructive_solution", "counterexample_search"),
+        recurrent_steps=4,
+        exchange_interval=1,
+        alpha=0.4,
+    )
+
+    effective = runner._build_rlc_config(args, spec.to_dict())
+
+    assert effective.workspace.n_slots == 6
+    assert effective.branches.roles == spec.branch_roles
+    assert effective.recurrence.max_steps == 4
+    assert effective.recurrence.min_steps == 4
+    assert effective.recurrence.fixed_depth is True
+    assert effective.latent_opt.enabled is False
+    assert effective.fast_weights.enabled is False
+    assert effective.escape == {"enabled": False}
 
 
 def test_projection_resolution_is_exact_and_rejects_missing_owner():

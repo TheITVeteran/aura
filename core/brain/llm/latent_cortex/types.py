@@ -66,6 +66,9 @@ class RecurrenceConfig:
     # Divergence guard: mean-RMS growth beyond this factor of the post-seed
     # state (or any non-finite value) ⇒ halt and revert to best state.
     divergence_ratio: float = 10.0
+    # Training-parity mode retains divergence and budget guards, but does not
+    # stop on convergence or substitute an earlier state after fixed steps.
+    fixed_depth: bool = False
 
 
 @dataclass
@@ -331,6 +334,8 @@ class CortexConfig:
             problems.append("convergence_eps must be finite and inside (0, 1]")
         if not finite(self.recurrence.divergence_ratio) or not 1.0 < self.recurrence.divergence_ratio <= 1000.0:
             problems.append("divergence_ratio must be finite and inside (1, 1000]")
+        if type(self.recurrence.fixed_depth) is not bool:
+            problems.append("fixed_depth must be boolean")
         if not integer_in(self.branches.n_branches, 1, ABSOLUTE_MAX_BRANCHES):
             problems.append(
                 f"n_branches {self.branches.n_branches} outside [1, {ABSOLUTE_MAX_BRANCHES}]"

@@ -328,7 +328,16 @@ def test_search_is_deterministic_and_finds_planted_optimum():
 # ── Branch ensemble ─────────────────────────────────────────────────────
 
 
-def _ensemble(model, cache, n_branches=3, budget=None, exchange_interval=2):
+def _ensemble(
+    model,
+    cache,
+    n_branches=3,
+    budget=None,
+    exchange_interval=2,
+    *,
+    max_steps=8,
+    fixed_depth=False,
+):
     inner = model.model
     emb = inner.embed_tokens(mx.array(PROMPT))
     budget = budget or ComputeBudget()
@@ -337,7 +346,12 @@ def _ensemble(model, cache, n_branches=3, budget=None, exchange_interval=2):
         emb,
         WorkspaceConfig(n_slots=4, seed=3),
         BranchConfig(n_branches=n_branches, exchange_interval=exchange_interval),
-        RecurrenceConfig(max_steps=8, convergence_eps=0.02, min_steps=2),
+        RecurrenceConfig(
+            max_steps=max_steps,
+            convergence_eps=0.02,
+            min_steps=min(2, max_steps),
+            fixed_depth=fixed_depth,
+        ),
         runner,
         cache,
         P_END,
@@ -370,6 +384,25 @@ def test_branches_step_exchange_and_halt(tiny_model):
     receipt = ensemble.to_receipt()
     assert receipt["n_branches"] == 3
     assert all(b["halt_reason"] for b in receipt["branches"])
+
+
+def test_fixed_depth_performs_terminal_exchange_before_halting(tiny_model):
+    cache = _prefill(tiny_model)
+    ensemble, runner, budget = _ensemble(
+        tiny_model,
+        cache,
+        n_branches=2,
+        exchange_interval=1,
+        max_steps=2,
+        fixed_depth=True,
+    )
+
+    assert ensemble.step_all(runner, cache, P_END, C_START, budget=budget)
+    assert ensemble.exchanges == 1
+    assert not ensemble.all_halted()
+    assert ensemble.step_all(runner, cache, P_END, C_START, budget=budget)
+    assert ensemble.exchanges == 2
+    assert ensemble.all_halted()
 
 
 def test_exchange_blends_comm_slot_only(tiny_model):

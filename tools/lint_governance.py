@@ -130,6 +130,10 @@ CANONICAL_PRIMITIVE_OWNERS: dict[str, frozenset[str]] = {
     "direct_atomic_file_write": frozenset(
         {
             "core/memory/memory_write_gateway.py",
+            # Immutable recurrence-training generations are a purpose-built
+            # atomic evidence store, analogous to campaign_journal. It owns no
+            # arbitrary user path and advances only a digest-bound pointer.
+            "core/learning/recurrence_training_state.py",
             "core/runtime/atomic_writer.py",
             "core/runtime/file_write_gateway.py",
             "core/runtime/post_action_receipt.py",

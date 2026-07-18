@@ -95,12 +95,9 @@ class ScopedLoRALinear(LoRALinear):  # type: ignore[misc]
     ) -> ScopedLoRALinear:
         """Wrap ``linear`` without the base class factory erasing our subtype."""
 
-        import mlx.nn as nn
+        from core.brain.llm.latent_cortex.fast_weights import _linear_dims
 
-        output_dims, input_dims = linear.weight.shape
-        quantized_linear = getattr(nn, "QuantizedLinear", ())
-        if isinstance(linear, quantized_linear):
-            input_dims = input_dims * 32 // linear.bits
+        output_dims, input_dims = _linear_dims(linear)
         scoped = cls(
             input_dims=input_dims,
             output_dims=output_dims,

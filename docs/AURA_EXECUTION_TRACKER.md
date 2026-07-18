@@ -19123,3 +19123,86 @@ adapter has been trained, installed, or shown to improve reasoning.
   power and true non-inferiority, reproducible contamination scans, pinned FLOP
   replay, per-task crossover, broader generators, and a live-desktop paired
   producer. Final long soaks remain deferred.
+
+## Checkpoint 2026-07-18-135: Runtime-Aligned Recurrence Training Contract
+
+CP135 replaces the non-resumable lexical-sequence v1 trainer with a
+load-eligible v2 training and execution contract. It closes the implementation
+path from frozen training inputs through a scoped resident-worker load. It does
+not claim that training has completed on the resident 32B, that reasoning has
+improved, or that frontier/external/live-desktop proof has passed.
+
+- `RLCExecutionSpec` is the versioned causal contract shared by training,
+  campaign planning, worker execution, and receipts. It binds prompt/slot layer
+  boundaries, workspace roles and seed, branch roles, consensus exchange and
+  anti-collapse behavior, fixed recurrence depth and schedule, RMS stability,
+  decode bridge, and the latent-slot-only adapter scope. Adaptive halting,
+  latent optimization, and episode fast weights are explicitly prohibited in
+  v2 rather than silently training one graph and evaluating another.
+- The differentiable v2 objective executes the live causal layout: prompt
+  prefill, role-seeded latent slots, recurrence only over those slots against a
+  fixed causal prompt prefix, multi-branch exchange/diversity, winner-position
+  persistence through the real layer window, and teacher-forced answer readout.
+  Its monotonic depth hinge detaches the shallow reference, preventing the v1
+  objective from reducing its penalty by damaging shallow performance. Tiny
+  real-Qwen cache/no-cache parity is exact for recurrent slot state and within
+  `0.01` maximum logit error for the MLX cached versus full-sequence kernels.
+- Live fixed-depth execution now preserves the scheduled terminal state and
+  performs the final branch exchange before halting. It retains nonfinite,
+  divergence, and compute-budget guards, but convergence and best-state
+  substitution cannot make the successful live graph differ from the training
+  graph. The campaign derives its effective RLC configuration from the adapter
+  execution spec; command-line placeholder depth/width values cannot override
+  a trained graph.
+- `recurrence_native_train_v2.py` loads the effective base plus optional frozen
+  personality adapter, wraps only recurrent-window targets in
+  `ScopedLoRALinear`, and rejects any trainable parameter outside the new outer
+  recurrence LoRA. It trains exact prompt/answer token IDs over deterministic
+  stateless epoch permutations and a depth curriculum whose deepest depth is
+  the frozen execution depth. A wall-clock stop publishes a resumable partial
+  checkpoint with non-success exit `75`; only exact `max_steps` completion can
+  emit a load-eligible success.
+- Every checkpoint generation is immutable. Adapter tensors, AdamW moments,
+  epoch, cursor, exact sample order, elapsed training time, invocation count,
+  and loss trail are durable before an atomic digest-bound `latest.json`
+  pointer advances. Torn, orphaned, path-escaping, tampered, or identity-stale
+  generations fail closed. Interrupted/resumed two-step training is bit-exact
+  to uninterrupted adapter and optimizer state.
+- The v2 adapter identity is created at training time rather than reconstructed
+  later. It full-hashes all base weight shards, tokenizer/config behavior
+  files, any personality adapter, MLX/Python/platform versions, exact dataset,
+  execution spec, loader config, primary and standard alias adapter bytes,
+  completion receipt, tensor topology, and archived sources for the trainer,
+  objective, execution spec, adapter scope, recurrence, branches, workspace,
+  and task generator. Partial training, source/data/runtime/tokenizer drift,
+  wrong base/personality composition, malformed LoRA topology, generic global
+  loading, and any artifact or completion mismatch are rejected before model
+  mutation.
+- The resident paired campaign now loads v2 adapters through that strict
+  boundary. The same frozen personality stack, if any, is loaded in every arm;
+  its exact bundle and the effective model-stack digest are checked before and
+  after model load and replayed by the grader. Adapter arms install the scoped
+  outer LoRA over the frozen base/personality projection, while adapter-vanilla
+  remains bit-identical to the corresponding base stack outside a live slot
+  window. Legacy v1 remains replayable but cannot acquire an unbound
+  personality composition.
+- The combined objective, identity, trainer/resume, recurrence, branch,
+  adapter-isolation, campaign-runner, and campaign-grader matrix passes
+  `100/100` in 113.53 seconds. Strict isolated mypy passes all five new v2
+  modules; Python compilation, Ruff `F/E9/I`, diff integrity, and governance
+  ownership pass at `1,863` recognized calls / `1,749` buckets / `1,698`
+  migration-debt calls.
+- Evidence-weighted completion remains 27%. This is checkpoint 135 of the
+  faithful 292-399 forecast, leaving approximately 157-264 checkpoints. No
+  RLC-gain, frontier, live-product, release, or soak credit is awarded.
+- Next: after the protected pre-CP133 endurance driver exits on its own, run a
+  bounded current-main 1.5B v2 training, interruption/resume, artifact
+  validation, ordinary-generation isolation, and paired inference smoke. Then
+  freeze and launch detached resident-32B v2 training and evaluate the same
+  resident checkpoint under base-vanilla/base-RLC/adapter-vanilla/adapter-RLC
+  plus equal-compute controls. The proof system still requires independent raw
+  output rescoring, authenticated frontier/provider roots, prospective power,
+  true domain non-inferiority, reproducible contamination scans, pinned FLOP
+  replay, per-task counterbalanced crossover, broader generators, repeated
+  replications, and the installed desktop `/api/chat` producer. Final long
+  soaks remain deferred.

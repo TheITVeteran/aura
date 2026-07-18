@@ -192,6 +192,7 @@ class BranchEnsemble:
         round_cost = sum(int(branch.z.shape[1]) * (end - start) for branch in active)
         if round_cost + reserve_layer_apps > budget.remaining_layer_apps:
             return False
+        deferred_fixed_depth_halts: list[tuple[BranchState, str]] = []
         for branch in active:
             z_next = recurrence_step(
                 branch.z,
@@ -217,6 +218,9 @@ class BranchEnsemble:
                     branch.index, branch.z, branch.anchor, residual
                 )
             if decision.should_halt:
+                if self.recurrence.fixed_depth and decision.reason == "max_steps":
+                    deferred_fixed_depth_halts.append((branch, decision.reason))
+                    continue
                 # Divergence gets a second life through the escape ladder;
                 # legitimate halts (converged / max_steps / budget) do not.
                 if (
@@ -243,6 +247,8 @@ class BranchEnsemble:
         ):
             self.exchange()
             self.maintain_diversity()
+        for branch, reason in deferred_fixed_depth_halts:
+            self._halt(branch, reason)
         return True
 
     # ── Neural-bytecode instructions ────────────────────────────────────

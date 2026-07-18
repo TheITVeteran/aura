@@ -222,6 +222,27 @@ def test_overthinking_revert_returns_best_state():
     assert float(final[0, 0, 0]) == 2.0, "must revert to the peak-score state"
 
 
+def test_fixed_depth_preserves_scheduled_final_state_without_convergence_revert():
+    cfg = RecurrenceConfig(
+        max_steps=3,
+        min_steps=1,
+        convergence_eps=1.0,
+        fixed_depth=True,
+    )
+    halting = HaltingController(config=cfg, baseline_rms=1.0)
+    states = [mx.full((1, 2, 4), float(index + 1)) for index in range(3)]
+    decisions = [
+        halting.observe(step, state, residual=0.0, score=1.0 - step)
+        for step, state in enumerate(states)
+    ]
+
+    assert [decision.should_halt for decision in decisions] == [False, False, True]
+    assert decisions[-1].reason == "max_steps"
+    final, reverted = halting.final_state(states[-1])
+    assert reverted is False
+    assert bool(mx.array_equal(final, states[-1]))
+
+
 def test_alpha_cosine_schedule_decays():
     cfg = RecurrenceConfig(max_steps=10, alpha=0.6, alpha_schedule="cosine")
     values = [alpha_at(cfg, t) for t in range(10)]
