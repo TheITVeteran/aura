@@ -1,0 +1,84 @@
+{
+  "schema": "aura.closeout.resident_32b_campaign_evidence.v1",
+  "checkpoint": 129,
+  "source_parent_commit": "1b7dedaabd7da1d517a73ef6b1ee80eebd69cc15",
+  "plan": {
+    "path": "plan.json",
+    "size_bytes": 25643,
+    "file_sha256": "5f898a135acfc9c857a90d4b80704662e94868fafd5b79faf8ce76d7febc22c0",
+    "plan_sha256": "d5e1507923cb694a0443e666a291470c7df4d30f660ff348fdef0108ee7ac4fe",
+    "claim_eligible": false,
+    "contamination_audit_present": false,
+    "task_id": "rlc_frontier:mathematics:33db3c8ccda667cb8bfccdc8c74073785d09fca0c9685032f36386422f22b3e4"
+  },
+  "journal": {
+    "path": "campaign.jsonl",
+    "size_bytes": 50549,
+    "file_sha256": "e1c82e3e0db4ec7a55eed4d91ec5f0ce8503e0e1033440bdc8830b91b20878b5",
+    "terminal_event_sha256": "4868c7d67cade74cc27705f1b4e42c2a97af42c879e7f33a6860504ac1b10b1c",
+    "committed_cells": 2,
+    "runnable_cells": 4,
+    "incomplete_cells": 0,
+    "replay_verdict": "incomplete"
+  },
+  "model": {
+    "fingerprint": "8eae71e73a14d1228a942d4faf84690d70b62148f25b0f924435535f7c550fad",
+    "parameter_class": "resident-32b",
+    "model_type": "qwen2",
+    "hidden_layers": 64,
+    "hidden_size": 5120,
+    "logical_parameter_count": 32763876352,
+    "logical_parameter_count_basis": "architecture_config_logical",
+    "runtime_bundle_sha256": "a4d75e2a96b0423add1db44dc625b3c90ba7b3eba7c007bfcff1a9c873ca0f67",
+    "load_boundary_verified": true,
+    "worker_source_sha256": "c5c3120d2b22b4539cfc6a726e47d2b8df0af16174c66f68756c476f7205df18"
+  },
+  "adapter": {
+    "adapter_sha256": "ef04e4b6f661a37cde46e8cc009826bd05fc2530cbe28ce95ec1074ba91ecece",
+    "composite_identity_sha256": "1c1ad7a946bbcd17bd0783f910f288b6eea61cfda613cce9626c24ae13e357ae",
+    "wrapped_projection_count": 64
+  },
+  "cells": [
+    {
+      "arm": "base_rlc",
+      "correct": false,
+      "latency_s": 133.718259,
+      "layer_apps": 63552,
+      "params_unchanged": true,
+      "fast_weights_applied": true,
+      "fast_weights_erased": true,
+      "latent_opt_applied": true,
+      "decode_termination": "eos",
+      "honest_flags": [],
+      "score_reason": "incorrect_or_schema_mismatch"
+    },
+    {
+      "arm": "adapter_rlc",
+      "correct": false,
+      "latency_s": 76.795713,
+      "layer_apps": 48256,
+      "params_unchanged": true,
+      "fast_weights_applied": true,
+      "fast_weights_erased": true,
+      "latent_opt_applied": true,
+      "decode_termination": "eos",
+      "honest_flags": [],
+      "score_reason": "final_answer_marker_count_invalid"
+    }
+  ],
+  "verdict": {
+    "lora_fast_weight_composition": "mechanically_proven_on_resident_32b",
+    "actual_worker_identity": "verified_against_frozen_plan",
+    "answer_scoring": "independently_replayed_from_committed_output",
+    "same_checkpoint_gain": "not_tested_by_two_cell_repair_smoke",
+    "frontier_gain": "not_proven",
+    "release_credit": false,
+    "forbidden_claims": [
+      "recurrence improves resident-32b reasoning",
+      "the recurrence adapter improves resident-32b reasoning",
+      "Aura has frontier-level reasoning",
+      "the campaign is statistically powered",
+      "the installed desktop runtime passed"
+    ]
+  }
+}

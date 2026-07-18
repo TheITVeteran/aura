@@ -23,7 +23,11 @@ pytest.importorskip("mlx_lm")
 from mlx_lm.models.cache import KVCache  # noqa: E402
 from mlx_lm.models.qwen2 import Model, ModelArgs  # noqa: E402
 
-from core.brain.llm.latent_cortex.fast_weights import EpisodicFastWeights  # noqa: E402
+from core.brain.llm.latent_cortex.fast_weights import (  # noqa: E402
+    EpisodicDeltaLinear,
+    EpisodicFastWeights,
+    _linear_dims,
+)
 from core.brain.llm.latent_cortex.latent_opt import (  # noqa: E402
     LatentOptimizer,
     build_proxy_loss,
@@ -355,6 +359,85 @@ def test_fast_weights_identity_at_attach(tiny_model):
         assert bool(mx.allclose(attached_out, baseline)), "V=0 attach must be exact identity"
     finally:
         fw.detach()
+
+
+def test_fast_weight_dimensions_follow_composite_linear_without_bypassing_it():
+    class CompositeLinear:
+        def __init__(self):
+            self.linear = SimpleNamespace(
+                weight=mx.zeros((13, 5)),
+            )
+            self.calls = 0
+
+        def __call__(self, x):
+            self.calls += 1
+            return x @ self.linear.weight.T + 3.0
+
+    composite = CompositeLinear()
+    wrapper = EpisodicDeltaLinear(
+        composite,
+        rank=2,
+        scale=1.0,
+        seed_stat=0.4,
+        tag="composite-linear",
+    )
+    x = mx.ones((2, 5))
+
+    assert _linear_dims(composite) == (13, 5)
+    assert bool(mx.array_equal(wrapper(x), composite(x)))
+    assert composite.calls == 2, "episodic wrapper must call the outer composite"
+
+
+def test_fast_weights_compose_with_real_lora_and_restore_exact_module(tiny_model):
+    import mlx.nn as nn
+    from mlx_lm.tuner.lora import LoRALinear
+
+    layer = tiny_model.model.layers[P_END]
+    original = layer.self_attn.o_proj
+    lora = LoRALinear.from_base(original, r=2, scale=4.0)
+    layer.self_attn.o_proj = lora
+    x = mx.random.normal((2, 3, 64))
+    baseline = lora(x)
+    mx.eval(baseline)
+    fw = EpisodicFastWeights(
+        FastWeightsConfig(
+            enabled=True,
+            rank=2,
+            target="o_proj",
+            max_wrapped_layers=1,
+        )
+    )
+    try:
+        assert isinstance(lora.linear, nn.Linear)
+        assert _linear_dims(lora) == (64, 64)
+        assert fw.attach(
+            tiny_model.model,
+            (P_END, P_END + 1),
+            seed_stat=0.4,
+            episode_id="ep-lora-composition",
+        ) == 1
+        assert fw.handles[0].original is lora
+        assert fw.handles[0].wrapper.base is lora
+        attached = layer.self_attn.o_proj(x)
+        mx.eval(attached)
+        assert bool(mx.array_equal(attached, baseline))
+    finally:
+        fw.detach()
+        assert layer.self_attn.o_proj is lora
+        layer.self_attn.o_proj = original
+    assert fw.lifecycle.erased is True
+    assert fw.handles == []
+
+
+def test_fast_weight_dimensions_follow_quantized_lora_base():
+    import mlx.nn as nn
+    from mlx_lm.tuner.lora import LoRALinear
+
+    base = nn.Linear(64, 32, bias=False)
+    quantized = nn.QuantizedLinear.from_linear(base, group_size=32, bits=4)
+    lora = LoRALinear.from_base(quantized, r=2)
+
+    assert _linear_dims(lora) == (32, 64)
 
 
 def test_fast_weight_attach_is_transactional(tiny_model, monkeypatch):
@@ -767,7 +850,7 @@ def test_fast_weight_verifier_absent_without_verifier(monkeypatch):
 # ── Retrieval-to-fast-weight compilation ────────────────────────────────
 
 
-def test_retrieval_seeds_span_leading_U_columns(tiny_model):
+def test_retrieval_seeds_span_leading_u_columns(tiny_model):
     layer = tiny_model.model.layers[3].self_attn.o_proj
     hidden = 64
     seeds = mx.stack(

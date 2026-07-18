@@ -46,14 +46,45 @@ _TARGET_ATTRS = {
 }
 
 
+def _linear_dimension_source(module):
+    """Find the projection that owns shape metadata without bypassing wrappers.
+
+    MLX LoRA modules intentionally expose their frozen base projection as
+    ``.linear`` and do not duplicate ``.weight``.  Fast weights must inspect
+    that nested projection for dimensions while continuing to invoke the
+    outer module, otherwise attaching an episodic delta would either crash or
+    silently bypass the durable adapter.
+    """
+    current = module
+    seen: set[int] = set()
+    while True:
+        identity = id(current)
+        if identity in seen:
+            raise TypeError("linear wrapper cycle while resolving dimensions")
+        seen.add(identity)
+        if hasattr(current, "weight"):
+            return current
+        nested = getattr(current, "linear", None)
+        if nested is None:
+            raise TypeError(
+                f"{type(module).__name__} has no weight-bearing linear projection"
+            )
+        current = nested
+
+
 def _linear_dims(module) -> tuple[int, int]:
-    """(out_features, in_features) for Linear or QuantizedLinear."""
-    weight = module.weight
-    if hasattr(module, "scales"):  # QuantizedLinear packs weights
+    """Return ``(out_features, in_features)`` for wrapped or bare linears."""
+    source = _linear_dimension_source(module)
+    weight = source.weight
+    if getattr(weight, "ndim", None) != 2:
+        raise TypeError("linear projection weight must be two-dimensional")
+    if hasattr(source, "scales"):  # QuantizedLinear packs weights
         out_features = weight.shape[0]
-        bits = int(getattr(module, "bits", 4))
+        bits = int(getattr(source, "bits", 4))
+        if bits <= 0 or 32 % bits:
+            raise TypeError(f"unsupported quantized linear bit width: {bits}")
         in_features = weight.shape[1] * (32 // bits)
-        return out_features, in_features
+        return int(out_features), int(in_features)
     return int(weight.shape[0]), int(weight.shape[1])
 
 

@@ -119,6 +119,7 @@ CANONICAL_PRIMITIVE_OWNERS: dict[str, frozenset[str]] = {
     "raw_file_mutation": frozenset(
         {
             "core/runtime/atomic_writer.py",
+            "core/brain/llm/latent_cortex/campaign_journal.py",
             "core/runtime/file_read_gateway.py",
             "core/runtime/file_write_gateway.py",
             "core/runtime/shutdown_artifact_store.py",

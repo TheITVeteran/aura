@@ -15,9 +15,9 @@ def test_repository_model_load_inventory_is_complete() -> None:
     assert report["passed"] is True
     # reasoning_background no longer loads a second Cortex in-process. The
     # resident MLX worker owns non-parametric key generation instead.
-    assert report["inventory_entries"] == 30
-    assert report["owned_paths"] == 30
-    assert report["load_references"] == 42
+    assert report["inventory_entries"] == 31
+    assert report["owned_paths"] == 31
+    assert report["load_references"] == 43
     assert report["source_paths_scanned"] >= 2_000
 
 

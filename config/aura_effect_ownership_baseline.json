@@ -6769,6 +6769,62 @@
       "scope": "<module>.DailyRateLimiter._save_state"
     },
     {
+      "callee": "self.path.parent.mkdir",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/llm/latent_cortex/campaign_journal.py",
+      "scope": "<module>.CampaignJournal.__init__"
+    },
+    {
+      "callee": "os.open",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/llm/latent_cortex/campaign_journal.py",
+      "scope": "<module>.CampaignJournal._acquire_lock"
+    },
+    {
+      "callee": "os.open",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/llm/latent_cortex/campaign_journal.py",
+      "scope": "<module>.CampaignJournal._atomic_publish"
+    },
+    {
+      "callee": "os.replace",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/llm/latent_cortex/campaign_journal.py",
+      "scope": "<module>.CampaignJournal._atomic_publish"
+    },
+    {
+      "callee": "os.unlink",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/llm/latent_cortex/campaign_journal.py",
+      "scope": "<module>.CampaignJournal._atomic_publish"
+    },
+    {
+      "callee": "target.parent.mkdir",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/llm/latent_cortex/campaign_journal.py",
+      "scope": "<module>.CampaignJournal._atomic_publish"
+    },
+    {
+      "callee": "os.open",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/llm/latent_cortex/campaign_journal.py",
+      "scope": "<module>.CampaignJournal._open_regular_append_file"
+    },
+    {
       "callee": "lock_dir.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -13890,6 +13946,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "6e83c9f04b7f9cb6251a094a13a3115e699cabcfd39db4420ddecd439f9ea66d",
+  "inventory_sha256": "42d2d93f02267d3b0f7430f8e36260f367d357414b1d2e5ca7958fcf9270fff3",
   "schema_version": 1
 }

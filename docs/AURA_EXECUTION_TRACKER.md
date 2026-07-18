@@ -16,10 +16,12 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **Checkpoint 120 is the current
-  source candidate in the `main` worktree; related resident-32B consolidation
-  and image-generation checkpoints are pushed through `86d27cf0`, and exact
-  rebuilt-app public-output proof remains open after CP120**. Checkpoint 80
+- Current bounded implementation milestone: **Checkpoint 129 is the current
+  source candidate in the `main` worktree; checkpoints through CP128 are
+  pushed, and matched source-bound base-plus-adapter resident-32B full-stack
+  RLC cells now complete without the prior LoRA/fast-weight crash. Both answers
+  were wrong, so same-checkpoint reasoning gain, external-frontier standing,
+  and exact rebuilt-app proof all remain open after CP129**. Checkpoint 80
   made cached
   readiness truthful and fast,
   removed synchronous Phi/Eternal maintenance from the foreground cycle, and
@@ -238,7 +240,7 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   release, and causal-proof obligations remain open unless their rows
   explicitly close.
 - Overall completion percentage: **27% evidence-weighted planning estimate at
-  Checkpoint 120**. The exact
+  Checkpoint 129**. The exact
   Checkpoint 80 app earns bounded live credit for readiness, health, base boot,
   and one-attempt chat latency, but not output quality, sustained load, GUI
   frame SLO, portability, semantic review, release, or soak. The newly
@@ -250,8 +252,9 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   `PROGRESS-CONTROL-001` and `SCOPE-001` must replace the manual estimate with a
   generated denominator; new obligations increase it, regressions reopen it,
   and source-green/live-open work never receives full closure credit.
-  CP92-120 close bounded evidence-integrity, runtime-convergence, and initial
-  latent ownership/lifecycle work already present in the denominator. The full
+  CP92-129 close bounded evidence-integrity, runtime-convergence, semantic
+  carry-forward, and initial latent ownership/lifecycle work already present
+  in the denominator. The full
   Anima Rationis program adds causal ingress, consolidation, anti-interference,
   equal-compute science, live 32B, and independent certification obligations;
   source mechanics do not receive capability credit. CP120 has no exact
@@ -259,7 +262,7 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   release, or soak credit yet and therefore does not move the rounded
   percentage.
 - Total checkpoint forecast: **approximately 292-399 total checkpoints for the
-  expanded program, with 120 checkpoints and approximately 172-279 remaining before
+  expanded program, with 129 checkpoints and approximately 163-270 remaining before
   final soak/release closure**. The Recursive Latent Cortex / Anima Rationis
   requirement adds **40-56 total checkpoints** for independent foundation
   review; seven-mechanism hardening; exact compute and lifecycle accounting;
@@ -18680,3 +18683,128 @@ remediation, recurrence gain, frontier, installed-app, release, or soak credit.
   recurrence-native v2 training detached with durable PID, log, checkpoints,
   resume state, and receipt. Re-freeze and carry semantic evidence after the
   RLC repair source is clean. Multi-hour and 24-72-hour soaks remain deferred.
+
+## Checkpoint 2026-07-18-129: Resumable Resident RLC Attribution Foundation
+
+Checkpoint 129 implements the strict identity, durable execution, blinded task,
+and paired-analysis foundation required before another resident-32B gain claim.
+It also repairs the concrete LoRA/fast-weight composition defect exposed by the
+first production-like adapter cell. It earns mechanics and evidence-integrity
+credit only; it does not award recurrence, adapter, frontier, installed-app,
+release, or soak credit.
+
+- The versioned adapter manifest binds the exact base checkpoint, adapter and
+  training-receipt bytes, objective source, LoRA topology, and every tensor's
+  key, shape, and dtype. The real `32b_r1` identity resolves to model
+  `8eae71e...fad`, adapter `ef04e4b...ecece`, training receipt
+  `3b0cea0a...da51`, and composite identity `1c1ad7a...57ae`; all 128 tensors
+  and 64 wrapped projections validate. Legacy evidence is retained honestly as
+  post-hoc source binding rather than relabeled native provenance.
+- The append-only campaign journal freezes deterministic task/cell/attempt IDs,
+  fsyncs a canonical hash chain under an interprocess lock, rejects torn,
+  reordered, duplicated, or tampered records, and resumes only infrastructure
+  failures. Wrong model answers are immutable outcomes. A final manifest is
+  possible only when the exact planned cell set is committed.
+- The fresh-task registry generates hash-bound blinded tasks across novel
+  algorithms, mathematics, coding, scientific inference, long-horizon
+  planning, calibration, and misleading-premise robustness. Its typed scorers
+  require a strict terminal `FINAL_ANSWER:` JSON contract and retain generator,
+  prompt, normalized-prompt, and token-fivegram contamination fingerprints.
+- The paired grader freezes base/adapter by vanilla/RLC cells plus base and
+  adapter equal-compute controls. It requires complete coverage and computes
+  exact paired per-domain tests with Holm correction, bootstrap intervals,
+  weakest-domain evidence, and a 2x2 difference-in-differences interaction.
+  Local producer evidence is structurally ineligible for an external-frontier
+  claim, and underpowered campaigns fail as underpowered rather than pass.
+- The executable producer launches one isolated resident model process per arm,
+  freezes exact model/adapter/task/settings and implementation-source hashes,
+  enforces load, warmup, episode, arm, and campaign deadlines, journals each
+  cell immediately, kills timed-out process groups, and resumes from committed
+  evidence. `recurrence_attribution` isolates recurrence; `resident_full_stack`
+  mirrors the live stack with branching, exchange, latent optimization,
+  fast weights, verifier guidance, bridge v3, repetition control, and no silent
+  vanilla fallback.
+- Three adversarial review passes then closed seventeen proof-integrity defects
+  before publish.
+  Tensor identity now requires exact two-dimensional MLX LoRA orientation and
+  runtime-addressable projection paths; activation wraps the exact manifest
+  projections, checks live base dimensions, rejects unknown file or parameter
+  keys, reads every loaded tensor back identically, and rolls back partial
+  activation. Grading now accepts the immutable plan rather than caller counts,
+  verifies cell definitions, task/scorer/answer commitments, output hashes, and
+  complete result/verification commitments, and cannot emit `gain_proven`
+  unless the frozen campaign is confirmatory, six-arm, all-seven-domain, and
+  adequately powered. Positive but ineligible evidence remains conjectural.
+- Campaign paths are canonicalized before child launch. The plan freezes a
+  dependency-safe randomized arm-block order and a deterministic per-arm task
+  order, and the producer executes those exact ordinals. Constant-interaction
+  sign tests retain a nonzero exact p-value, and the scorer now enforces that
+  the sole `FINAL_ANSWER:` marker starts the final nonempty line. These
+  contracts have direct mutation, eligibility, ordering, path, and grammar
+  regressions.
+- Grading no longer trusts a producer-provided correctness bit: it reconstructs
+  each hidden issuer task and re-runs the typed scorer over the committed output
+  before analysis. The plan freezes the effective full-stack configuration
+  actually executed (`4` slots, `2` branches, `2` recurrent steps), not the
+  larger CLI placeholders. Model identity binds the Qwen2 architecture, 64
+  layers, 5,120 hidden width, exact logical parameter count, runtime versions,
+  platform, tokenizer/config bytes, and the worker's observed boot/source
+  identity. A claim-eligible plan also requires a separately supplied,
+  task-manifest-bound, externally signed zero-overlap contamination audit;
+  absence remains explicit and ineligible.
+- The final review rejected assertion-only trust and architecture-only runtime
+  checks. Contamination audits now use an Ed25519 signature over canonical audit
+  bytes, verified against an explicitly supplied external PEM trust root; the
+  normalized plan carries the public-key fingerprint, signed-payload digest,
+  and signature for independent replay. Worker admission full-hashes every
+  model shard and the complete behavior/runtime bundle before and after model
+  load. Adapter arms independently revalidate adapter bytes, training receipt,
+  tensor inventory, loaded tensor readback, and the composite receipt across
+  the load boundary. The grader requires these observed digests exactly rather
+  than accepting planned identity labels.
+- The first real adapter full-stack attempt exposed a valid implementation
+  defect: MLX `LoRALinear` stores its base projection under `.linear`, while the
+  episodic fast-weight dimension probe assumed `.weight` existed on the outer
+  module. Fast weights now inspect nested shape metadata while invoking and
+  restoring the exact outer LoRA object, preserving the durable adapter and its
+  delta. Synthetic, real MLX LoRA, quantized-LoRA, identity, transactional
+  attach, optimization, canary, cleanup, and engine contracts pass.
+- A fresh hash-bound resident plan (`d5e15079...c4fe`) then committed matched
+  base-RLC and adapter-RLC repair-smoke cells on the same unseen mathematics
+  task. It binds every latent-cortex Python source file plus the producer, not
+  only selected owners. Base completed in 133.72 seconds with 63,552 layer
+  applications; adapter completed in 76.80 seconds with 48,256. Both proved
+  unchanged base parameters, applied latent optimization and fast weights, and
+  proved erase. Both workers reported Qwen2/64-layer/32,763,876,352-logical-
+  parameter identity and source hash `c5c3120d...df18` against the frozen plan.
+  The adapter loaded all 64 projections, used composite identity
+  `1c1ad7a...57ae`, reached EOS, and emitted no honesty flags. The exact plan,
+  journal, hashes, outputs, receipts, and forbidden claims are preserved under
+  `artifacts/closeout/latent_cortex/resident_32b_campaign_cp129/`.
+- Both answers were wrong and failed the terminal answer contract; this is
+  negative capability evidence, not a gain. The two-cell repair smoke is not
+  statistically powered and contains no vanilla, equal-compute, external
+  comparator, independent trust-root, installed-app, or broad-domain verdict.
+  Frontier reasoning therefore remains unproven.
+- The focused campaign, certificate, engine, fast-weight, and canary gate passes
+  300/300 tests. Focused Ruff, Python compilation, strict mypy for the four new
+  typed source modules, and `git diff --check` pass. Repository-wide strict
+  typing remains an existing closeout gate and receives no implied credit.
+- The staged repository audit exposed two ownership omissions and they were
+  closed rather than baselined as debt. The paired runner is now an inventoried
+  standalone model-lane owner (`31` paths, `43` load references, zero model-load
+  findings), and the journal is an explicit canonical owner for its locked,
+  fsynced append/atomic-publication primitives. The effect-ownership baseline
+  now matches with those seven calls marked canonical; no migration-debt count
+  was added for the journal.
+- Evidence-weighted completion remains 27%. This is checkpoint 129 of the
+  faithful 292-399 total forecast, leaving approximately 163-270 checkpoints.
+- Next: publish CP129 directly to `main`; run a bounded paired current-adapter
+  pilot across all seven domains under both RLC profiles; repair any producer,
+  decode, or task defects it exposes; and use that evidence to decide whether
+  recurrence-native v2 training is required. Any training must run detached
+  with a durable PID, log, atomic checkpoints, resumable state, and terminal
+  receipt. After a positive internal attribution result, run powered held-out
+  equal-compute, external-frontier, independent-verification, and exact desktop
+  campaigns. Re-freeze semantic review and carry unchanged CP126 evidence after
+  source is clean. Multi-hour and 24-72-hour final soaks remain deferred.
