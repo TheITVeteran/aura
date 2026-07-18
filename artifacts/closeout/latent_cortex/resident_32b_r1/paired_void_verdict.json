@@ -1,0 +1,100 @@
+{
+  "schema": "aura.latent_cortex.paired_evaluation_verdict.v1",
+  "recorded_at": "2026-07-18T04:52:57Z",
+  "preregistration": {
+    "path": "artifacts/current/latent_posttrain_eval_prereg_20260718.json",
+    "task_seed": 20260718,
+    "experiments": [
+      "1",
+      "A"
+    ],
+    "per_cell": 8,
+    "max_minutes_per_arm": 60
+  },
+  "arms": {
+    "adapter_on": {
+      "path": "artifacts/current/latent_posttrain_32b_adapter_on.json",
+      "sha256": "13e3e17d65177b935dfb5f94befcc385a2f8a1a418204d55dc207fff20358352",
+      "deadline_exceeded": true,
+      "incomplete_reason": "lab wall-clock bound reached during episode",
+      "result_keys": [],
+      "frontier_claim_eligible": false
+    },
+    "adapter_off": {
+      "path": "artifacts/current/latent_posttrain_32b_adapter_off.json",
+      "sha256": "e9ecda7a255d4cc060919803b84550552ffc71356dff29c96dbb34cef21da10f",
+      "deadline_exceeded": true,
+      "incomplete_reason": "lab wall-clock bound reached during episode",
+      "result_keys": [
+        "exp1"
+      ],
+      "frontier_claim_eligible": false,
+      "partial_exp1": {
+        "claim_tier": "CONJECTURE",
+        "monotone_gain": false,
+        "equal_compute_baseline_missing": true,
+        "curve": [
+          {
+            "recurrence_steps": 1,
+            "successes": 18,
+            "n": 72,
+            "accuracy": 0.25,
+            "wilson_lb": 0.1762,
+            "wilson_ub": 0.342
+          },
+          {
+            "recurrence_steps": 2,
+            "successes": 22,
+            "n": 72,
+            "accuracy": 0.3056,
+            "wilson_lb": 0.2247,
+            "wilson_ub": 0.4005
+          },
+          {
+            "recurrence_steps": 4,
+            "successes": 23,
+            "n": 72,
+            "accuracy": 0.3194,
+            "wilson_lb": 0.237,
+            "wilson_ub": 0.415
+          },
+          {
+            "recurrence_steps": 8,
+            "successes": 21,
+            "n": 72,
+            "accuracy": 0.2917,
+            "wilson_lb": 0.2124,
+            "wilson_ub": 0.386
+          }
+        ]
+      }
+    }
+  },
+  "verdict": "void_incomplete_no_paired_score",
+  "scientific_interpretation": [
+    "The adapter-on arm produced no completed experiment result before its campaign deadline.",
+    "The adapter-off arm completed Experiment 1 internally but did not complete the preregistered factorial experiment before its campaign deadline.",
+    "The adapter-off recurrence curve is non-monotone and lacks an equal-compute baseline, so it is not evidence of a recurrence gain even in isolation.",
+    "Because the arms do not contain the same completed paired cells, no adapter effect, frontier gain, regression, or equivalence estimate is valid."
+  ],
+  "forbidden_claims": [
+    "recurrence_native_adapter_improves_resident_32b",
+    "recurrence_native_adapter_regresses_resident_32b",
+    "recursive_latent_cortex_reaches_frontier_reasoning",
+    "recursive_latent_cortex_has_no_regressions",
+    "resident_32b_frontier_certificate_complete"
+  ],
+  "required_next_gate": {
+    "name": "resumable_paired_resident_32b_evaluation",
+    "requirements": [
+      "append-only per-task outcomes with immutable task identifiers",
+      "atomic resumable cells with idempotent completion manifests",
+      "separate load, warmup, episode, cell, and campaign deadlines",
+      "preflight wall-clock and compute-budget feasibility estimates",
+      "adapter-on and exact adapter-off jobs with identical paired manifests",
+      "vanilla and equal-compute strong controls completed independently of recurrence sweep",
+      "repeated seeds, multiplicity correction, weakest-domain non-regression, contamination checks, and live-desktop regression gates",
+      "independent verification against immutable external task roots"
+    ]
+  }
+}

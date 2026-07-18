@@ -1,0 +1,32 @@
+{
+  "schema": "aura.latent_cortex.resident_32b_training_evidence_snapshot.v1",
+  "source_commit": "b7bc66f2c87e6a24cd7b8280db6912714b5700c1",
+  "checkpoint_fingerprint": "8eae71e73a14d1228a942d4faf84690d70b62148f25b0f924435535f7c550fad",
+  "adapter": {
+    "path": "data/latent_cortex/recurrence_native/32b_r1/adapter_final.safetensors",
+    "sha256": "ef04e4b6f661a37cde46e8cc009826bd05fc2530cbe28ce95ec1074ba91ecece",
+    "size_bytes": 16791152,
+    "tracked_in_git": false
+  },
+  "training": {
+    "steps": 539,
+    "halt_reason": "wall_clock",
+    "receipt_sha256": "3b0cea0a331155ec4abf5c6289d8cbcf832b732c11e89941b419a395bf81da51",
+    "log_sha256": "5d09a518f88fae554c13dc6fe5f129066b0ed22355c7782d70b9a1a0fc6b3718"
+  },
+  "evaluation": {
+    "adapter_on_sha256": "13e3e17d65177b935dfb5f94befcc385a2f8a1a418204d55dc207fff20358352",
+    "adapter_off_sha256": "e9ecda7a255d4cc060919803b84550552ffc71356dff29c96dbb34cef21da10f",
+    "paired_verdict_sha256": "607d1f175d6a7c30726c86fb58b76865504632776ebecf9df800582cd902870d",
+    "infrastructure_review_sha256": "5be031dc34ecf986abcf04f7445369784013d06082c0a2cc293a7699752e1173",
+    "verdict": "void_incomplete_no_paired_score"
+  },
+  "claim_supported": "resident_32b_training_completed_and_first_evaluation_attempt_is_void",
+  "claim_not_supported": [
+    "adapter_gain",
+    "adapter_regression",
+    "recurrence_gain",
+    "frontier_reasoning_gain",
+    "resident_desktop_gain"
+  ]
+}

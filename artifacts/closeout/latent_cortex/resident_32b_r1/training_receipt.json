@@ -1,0 +1,258 @@
+{
+ "alpha": 0.5,
+ "checkpoint": {
+  "files": 4,
+  "fingerprint": "8eae71e73a14d1228a942d4faf84690d70b62148f25b0f924435535f7c550fad",
+  "method": "sha256"
+ },
+ "curriculum_depths": [
+  1,
+  2,
+  4
+ ],
+ "families": [
+  "khop",
+  "boolean",
+  "modular"
+ ],
+ "finished_at": 1784341835.7152278,
+ "halt_reason": "wall_clock",
+ "learning_rate": 0.0001,
+ "lora": {
+  "rank": 8,
+  "targets": [
+   "o_proj",
+   "v_proj"
+  ],
+  "trainable_params": 4194304,
+  "wrapped_projections": 64
+ },
+ "loss_trail": [
+  {
+   "mean_loss": 1.06411,
+   "step": 10
+  },
+  {
+   "mean_loss": 1.45929,
+   "step": 20
+  },
+  {
+   "mean_loss": 0.96849,
+   "step": 30
+  },
+  {
+   "mean_loss": 1.3951,
+   "step": 40
+  },
+  {
+   "mean_loss": 0.82131,
+   "step": 50
+  },
+  {
+   "mean_loss": 1.17274,
+   "step": 60
+  },
+  {
+   "mean_loss": 1.18511,
+   "step": 70
+  },
+  {
+   "mean_loss": 1.2316,
+   "step": 80
+  },
+  {
+   "mean_loss": 1.11332,
+   "step": 90
+  },
+  {
+   "mean_loss": 0.69622,
+   "step": 100
+  },
+  {
+   "mean_loss": 0.76211,
+   "step": 110
+  },
+  {
+   "mean_loss": 0.8066,
+   "step": 120
+  },
+  {
+   "mean_loss": 0.95378,
+   "step": 130
+  },
+  {
+   "mean_loss": 0.69284,
+   "step": 140
+  },
+  {
+   "mean_loss": 0.64076,
+   "step": 150
+  },
+  {
+   "mean_loss": 0.78698,
+   "step": 160
+  },
+  {
+   "mean_loss": 0.6026,
+   "step": 170
+  },
+  {
+   "mean_loss": 0.8056,
+   "step": 180
+  },
+  {
+   "mean_loss": 1.01033,
+   "step": 190
+  },
+  {
+   "mean_loss": 1.25534,
+   "step": 200
+  },
+  {
+   "mean_loss": 0.96979,
+   "step": 210
+  },
+  {
+   "mean_loss": 0.92023,
+   "step": 220
+  },
+  {
+   "mean_loss": 0.92695,
+   "step": 230
+  },
+  {
+   "mean_loss": 0.88759,
+   "step": 240
+  },
+  {
+   "mean_loss": 0.99015,
+   "step": 250
+  },
+  {
+   "mean_loss": 1.01013,
+   "step": 260
+  },
+  {
+   "mean_loss": 0.91671,
+   "step": 270
+  },
+  {
+   "mean_loss": 0.70942,
+   "step": 280
+  },
+  {
+   "mean_loss": 0.91224,
+   "step": 290
+  },
+  {
+   "mean_loss": 0.97062,
+   "step": 300
+  },
+  {
+   "mean_loss": 0.79436,
+   "step": 310
+  },
+  {
+   "mean_loss": 0.87235,
+   "step": 320
+  },
+  {
+   "mean_loss": 0.70516,
+   "step": 330
+  },
+  {
+   "mean_loss": 0.87318,
+   "step": 340
+  },
+  {
+   "mean_loss": 0.62578,
+   "step": 350
+  },
+  {
+   "mean_loss": 1.04874,
+   "step": 360
+  },
+  {
+   "mean_loss": 1.08911,
+   "step": 370
+  },
+  {
+   "mean_loss": 0.84401,
+   "step": 380
+  },
+  {
+   "mean_loss": 0.81714,
+   "step": 390
+  },
+  {
+   "mean_loss": 0.66931,
+   "step": 400
+  },
+  {
+   "mean_loss": 1.01241,
+   "step": 410
+  },
+  {
+   "mean_loss": 0.64831,
+   "step": 420
+  },
+  {
+   "mean_loss": 1.0441,
+   "step": 430
+  },
+  {
+   "mean_loss": 0.95373,
+   "step": 440
+  },
+  {
+   "mean_loss": 0.83212,
+   "step": 450
+  },
+  {
+   "mean_loss": 0.9872,
+   "step": 460
+  },
+  {
+   "mean_loss": 0.6283,
+   "step": 470
+  },
+  {
+   "mean_loss": 0.75638,
+   "step": 480
+  },
+  {
+   "mean_loss": 0.84106,
+   "step": 490
+  },
+  {
+   "mean_loss": 0.91385,
+   "step": 500
+  },
+  {
+   "mean_loss": 0.69479,
+   "step": 510
+  },
+  {
+   "mean_loss": 1.07253,
+   "step": 520
+  },
+  {
+   "mean_loss": 0.94644,
+   "step": 530
+  }
+ ],
+ "model": "training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118",
+ "monotonicity_weight": 0.5,
+ "objective_schema": "aura.recurrence_native_objective.v1",
+ "resumed_from_step": 0,
+ "saved_at": 1784341835.743547,
+ "schema": "aura.recurrence_native_train.v1",
+ "started_at": 1784331020.4569201,
+ "steps": 539,
+ "task_depths": [
+  2,
+  4,
+  8
+ ],
+ "train_seed": 777
+}

@@ -1,0 +1,60 @@
+{
+  "schema": "aura.latent_posttrain_eval_infrastructure_review.v1",
+  "campaign": "resident-32b-recurrence-native-20260718",
+  "source_commit": "b7bc66f2c87e6a24cd7b8280db6912714b5700c1",
+  "task_seed": 20260718,
+  "adapter_on_artifact": "artifacts/current/latent_posttrain_32b_adapter_on.json",
+  "adapter_on_verdict": "void_incomplete_no_score",
+  "adapter_on_observed": {
+    "deadline_exceeded": true,
+    "incomplete_reason": "lab wall-clock bound reached during episode",
+    "result_count": 0,
+    "frontier_claim_eligible": false
+  },
+  "not_supported": [
+    "adapter_gain",
+    "adapter_regression",
+    "recurrence_gain",
+    "frontier_reasoning_gain",
+    "resident_desktop_gain"
+  ],
+  "infrastructure_findings": [
+    {
+      "id": "RLC-EVAL-RESUME-001",
+      "severity": "critical",
+      "finding": "Experiment 1 commits its report only after the entire recurrence sweep returns, so a deadline during any episode discards all completed tasks and cells."
+    },
+    {
+      "id": "RLC-EVAL-BUDGET-001",
+      "severity": "critical",
+      "finding": "The preregistered battery requires 72 tasks times four recurrence depths before factorial ablations, but all experiments share one 60-minute deadline."
+    },
+    {
+      "id": "RLC-EVAL-LOAD-001",
+      "severity": "high",
+      "finding": "The deadline begins before checkpoint and adapter load, while report.started_at is recorded after load, so available evaluation time and reported elapsed time use different boundaries."
+    },
+    {
+      "id": "RLC-EVAL-CELL-001",
+      "severity": "critical",
+      "finding": "There is no per-task or per-cell append-only result, idempotency key, deterministic resume cursor, or completed-cell manifest."
+    },
+    {
+      "id": "RLC-EVAL-CONTROL-001",
+      "severity": "high",
+      "finding": "Experiment 1 was invoked without its equal-compute vanilla baseline; the requested factorial experiment contains a vanilla arm but cannot run if Experiment 1 exhausts the shared deadline."
+    }
+  ],
+  "required_before_replacement_preregistration": [
+    "append-only task-level outcome records bound to checkpoint, adapter, task, arm, seed, config, and verifier version",
+    "atomic resumable cell manifests with duplicate refusal and complete-cell validation",
+    "separate model-load, warmup, per-episode, per-cell, and campaign deadlines",
+    "preflight runtime estimate proving the requested battery fits the campaign bound",
+    "separate immutable experiment jobs rather than one shared deadline for Experiment 1 and factorial ablations",
+    "paired adapter-on and adapter-off manifests with identical external task roots and task ordering",
+    "strong matched-compute vanilla controls in the same claim-producing experiment",
+    "blinded scoring, contamination checks, regression suites, repeated seeds, and independent certificate verification",
+    "live installed-app resident-32B activation and rollback proof after offline gain is established"
+  ],
+  "replacement_run_policy": "Do not rescore or selectively rerun the failed arm. Repair the harness, publish a new preregistration before execution, retain this void artifact, and rerun both arms from the same immutable task roots."
+}

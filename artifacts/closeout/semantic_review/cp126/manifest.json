@@ -1,0 +1,30 @@
+{
+  "schema": "aura.closeout.semantic_inventory_snapshot.v1",
+  "source_commit": "b7bc66f2c87e6a24cd7b8280db6912714b5700c1",
+  "campaign_sha256": "b66379acea167c6af85e99e84a638e6ee56ce978ec90214dd6fc294d418e4f5a",
+  "campaign_file_sha256": "ed6cf990f33d94347e76c7fe10e3a2cdd2c250a4af40c32c4ff9e3fc2b2c5935",
+  "campaign_archive_sha256": "05de86eb7f1206a3b93be28a9f7ed105c545721445f102a8bbe816ea93092295",
+  "inventory_file_sha256": "8888a573fd62e22ff6741e3e30f1498bcef8ecf00e36c27cf97595809682dbd6",
+  "inventory_archive_sha256": "4b98315dcacebf0c3c3d734a0ea2510df070a99dd72c80101adfaa6e24ef6562",
+  "complete_batch_count": 37,
+  "expected_batch_count": 526,
+  "reviewed_span_count": 604,
+  "expected_span_count": 6101,
+  "reviewed_line_count": 209241,
+  "expected_line_count": 3711179,
+  "finding_count": 5197,
+  "finding_severity_counts": {
+    "critical": 1901,
+    "high": 2778,
+    "medium": 497,
+    "low": 20,
+    "info": 1
+  },
+  "campaign_issues": [],
+  "claim_supported": "read_only_semantic_inventory_progress_at_cp126",
+  "claim_not_supported": [
+    "finding_remediated",
+    "final_semantic_review_current",
+    "full_closeout_complete"
+  ]
+}

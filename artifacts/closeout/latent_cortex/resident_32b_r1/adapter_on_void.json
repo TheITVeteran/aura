@@ -1,0 +1,49 @@
+{
+ "checkpoint": {
+  "files": 4,
+  "fingerprint": "8eae71e73a14d1228a942d4faf84690d70b62148f25b0f924435535f7c550fad",
+  "method": "sha256"
+ },
+ "claim_scope": "offline mechanism and scaling evidence only; exact installed-app resident-32B frontier certification is a separate required run",
+ "deadline_exceeded": true,
+ "finished_at": 1784346311.930166,
+ "frontier_claim_eligible": false,
+ "incomplete_reason": "lab wall-clock bound reached during episode",
+ "model": "training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118",
+ "recurrence_native_adapter": {
+  "adapter_dir": "data/latent_cortex/recurrence_native/32b_r1",
+  "objective_schema": "aura.recurrence_native_objective.v1",
+  "rank": 8,
+  "targets": [
+   "o_proj",
+   "v_proj"
+  ],
+  "train_seed": 777,
+  "trained_on_checkpoint": "8eae71e73a14d1228a942d4faf84690d70b62148f25b0f924435535f7c550fad",
+  "trained_steps": 539,
+  "weights_file": "adapter_final.safetensors",
+  "wrapped_projections": 64
+ },
+ "requested_experiments": [
+  "1",
+  "A"
+ ],
+ "results": {},
+ "settings": {
+  "adapter": "data/latent_cortex/recurrence_native/32b_r1",
+  "branches": 2,
+  "depths": "2,4,8",
+  "experiments": "1,A",
+  "families": "khop,boolean,modular",
+  "max_minutes": 60.0,
+  "model": "training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118",
+  "n_slots": 16,
+  "out": "artifacts/current/latent_posttrain_32b_adapter_on.json",
+  "per_cell": 8,
+  "record_foundry": false,
+  "steps": "1,2,4,8",
+  "task_seed": 20260718,
+  "vanilla_baseline": false
+ },
+ "started_at": 1784342721.510527
+}

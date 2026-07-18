@@ -1,0 +1,126 @@
+{
+ "checkpoint": {
+  "files": 4,
+  "fingerprint": "8eae71e73a14d1228a942d4faf84690d70b62148f25b0f924435535f7c550fad",
+  "method": "sha256"
+ },
+ "claim_scope": "offline mechanism and scaling evidence only; exact installed-app resident-32B frontier certification is a separate required run",
+ "deadline_exceeded": true,
+ "finished_at": 1784350068.321146,
+ "frontier_claim_eligible": false,
+ "incomplete_reason": "lab wall-clock bound reached during episode",
+ "model": "training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118",
+ "recurrence_native_adapter": null,
+ "requested_experiments": [
+  "1",
+  "A"
+ ],
+ "results": {
+  "exp1": {
+   "claim": {
+    "evidence": {
+     "curve": [
+      {
+       "accuracy": 0.25,
+       "layer_apps": 752192,
+       "n": 72,
+       "name": "steps=1",
+       "successes": 18,
+       "wilson_lb": 0.1762,
+       "wilson_ub": 0.342
+      },
+      {
+       "accuracy": 0.3056,
+       "layer_apps": 822976,
+       "n": 72,
+       "name": "steps=2",
+       "successes": 22,
+       "wilson_lb": 0.2247,
+       "wilson_ub": 0.4005
+      },
+      {
+       "accuracy": 0.3194,
+       "layer_apps": 969728,
+       "n": 72,
+       "name": "steps=4",
+       "successes": 23,
+       "wilson_lb": 0.237,
+       "wilson_ub": 0.415
+      },
+      {
+       "accuracy": 0.2917,
+       "layer_apps": 1242048,
+       "n": 72,
+       "name": "steps=8",
+       "successes": 21,
+       "wilson_lb": 0.2124,
+       "wilson_ub": 0.386
+      }
+     ],
+     "limitation": "equal-compute baseline missing",
+     "n_tasks": 72
+    },
+    "experiment": "exp1_recurrence_sweep",
+    "graded_at": 1784348967.2114182,
+    "statement": "additional recurrent steps improve equal-compute accuracy",
+    "tier": "CONJECTURE"
+   },
+   "curve": [
+    {
+     "accuracy": 0.25,
+     "layer_apps": 752192,
+     "n": 72,
+     "name": "steps=1",
+     "successes": 18,
+     "wilson_lb": 0.1762,
+     "wilson_ub": 0.342
+    },
+    {
+     "accuracy": 0.3056,
+     "layer_apps": 822976,
+     "n": 72,
+     "name": "steps=2",
+     "successes": 22,
+     "wilson_lb": 0.2247,
+     "wilson_ub": 0.4005
+    },
+    {
+     "accuracy": 0.3194,
+     "layer_apps": 969728,
+     "n": 72,
+     "name": "steps=4",
+     "successes": 23,
+     "wilson_lb": 0.237,
+     "wilson_ub": 0.415
+    },
+    {
+     "accuracy": 0.2917,
+     "layer_apps": 1242048,
+     "n": 72,
+     "name": "steps=8",
+     "successes": 21,
+     "wilson_lb": 0.2124,
+     "wilson_ub": 0.386
+    }
+   ],
+   "monotone_gain": false
+  }
+ },
+ "settings": {
+  "adapter": "",
+  "branches": 2,
+  "depths": "2,4,8",
+  "experiments": "1,A",
+  "families": "khop,boolean,modular",
+  "max_minutes": 60.0,
+  "model": "training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118",
+  "n_slots": 16,
+  "out": "artifacts/current/latent_posttrain_32b_adapter_off.json",
+  "per_cell": 8,
+  "record_foundry": false,
+  "steps": "1,2,4,8",
+  "task_seed": 20260718,
+  "vanilla_baseline": false
+ },
+ "started_at": 1784346478.944451
+}

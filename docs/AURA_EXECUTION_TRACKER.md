@@ -18569,3 +18569,58 @@ remediation, live-product, recurrence-gain, release, or soak credit.
   first read-only batch, and begin hash-bound findings capture without editing
   reviewed source. Continue monitoring `32b_r1` without another model load.
   Multi-hour and 24-72-hour soaks remain deferred.
+
+## Checkpoint 2026-07-18-127: Semantic Evidence Preserve and RLC Controlled Thaw
+
+Checkpoint 127 is the controlled boundary between CP126's read-first semantic
+campaign and the user-prioritized resident-32B RLC intelligence proof. It
+preserves all completed semantic work before any source repair and retains the
+failed first post-training evaluation as binding negative infrastructure
+evidence. It does not award remediation, recurrence-gain, frontier, live-
+product, release, or soak credit.
+
+- The CP126 campaign remains valid with zero issues through batch 0037:
+  37/526 complete batches, 604/6,101 exact spans, 209,241/3,711,179 lines,
+  and 5,197 findings (1,901 critical, 2,778 high, 497 medium, 20 low, and
+  one informational). The exact campaign and append-only inventory are stored
+  as deterministic gzip archives with their uncompressed and archive hashes in
+  `artifacts/closeout/semantic_review/cp126/manifest.json`.
+- The resident 32B recurrence-native run completed 539 steps and produced
+  adapter hash `ef04e4b6...ecece`. Its paired adapter-on/off campaign exceeded
+  the monolithic deadline, did not produce matched completed cells, and remains
+  `void_incomplete_no_paired_score`. The exact receipts, partial reports,
+  verdict, hashes, and forbidden claims are preserved under
+  `artifacts/closeout/latent_cortex/resident_32b_r1/`.
+- Source inspection identified a probable train/inference mismatch that the
+  repaired campaign must falsify directly: v1 trains full token sequences
+  through a repeated layer window on only khop, boolean, and modular tasks,
+  while live RLC inference recurs over latent slots with branching, verifier
+  arbitration, adaptive execution, and temporary weights. Training completion
+  and loss therefore remain mechanism evidence, not intelligence evidence.
+- The controlled thaw must first add hash-exact inventory carry-forward and
+  pending-span batch support. A post-repair campaign may reuse only entries
+  whose complete file and span hashes are unchanged; every changed span must be
+  reviewed again. This preserves CP126 work without pretending old findings
+  are current after source edits.
+- The replacement RLC proof harness must persist append-only task outcomes and
+  atomic resumable cells; separate load, warmup, episode, cell, and campaign
+  deadlines; reject duplicate or selectively rerun cells; prove preflight
+  feasibility; bind adapter-on/off and equal-compute controls to identical task
+  roots; and require repeated seeds, multiplicity correction, weakest-domain,
+  contamination, latency, safety, identity, ordinary-chat, rollback, and live
+  installed-app gates.
+- Frontier-level credit requires broad preregistered held-out tasks, a pinned
+  external frontier reference under equal information and tool access, exact
+  resident checkpoint/adapter/runtime identity, blinded scoring, and an
+  independently accepted certificate. The harness must return a failing or
+  incomplete verdict when any requirement is absent; a positive result is not
+  assumed in advance.
+- Evidence-weighted completion remains 27%. This is checkpoint 127 of the
+  faithful 292-399 total forecast, leaving approximately 165-272 checkpoints.
+- Next: validate and publish this preservation checkpoint directly to `main`;
+  implement and test inventory carry-forward; rebuild the resumable paired RLC
+  harness; run the current adapter to a definitive paired result; then repair
+  the recurrence-native objective, curriculum, and live activation path for any
+  failed gain gate. Re-freeze semantic review at the new clean source commit
+  and carry forward unchanged CP126 spans. Multi-hour and 24-72-hour soaks
+  remain deferred until shorter gates are green.
