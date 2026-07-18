@@ -471,7 +471,7 @@ def _semantic_subsystem(file_name: str) -> str:
     parts = Path(file_name).parts
     if not parts or len(parts) == 1:
         return "root"
-    if parts[0] in {"core", "interface", "tools", "tests"}:
+    if parts[0] in {"core", "interface", "tools", "tests"} and len(parts) >= 3:
         return "/".join(parts[:2])
     return parts[0]
 
@@ -486,6 +486,32 @@ def _campaign_sha256(payload: dict[str, Any]) -> str:
         default=str,
     ).encode("utf-8")
     return _sha256_bytes(encoded)
+
+
+def _campaign_int(value: Any, default: int = -1) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def semantic_campaign_receipt(
+    campaign: dict[str, Any],
+    *,
+    output_path: Path,
+) -> dict[str, Any]:
+    """Return bounded stdout evidence for a campaign written to disk."""
+    return {
+        "schema": "aura.closeout.semantic_review_campaign_receipt.v1",
+        "output_path": str(output_path),
+        "campaign_sha256": campaign.get("campaign_sha256", ""),
+        "source_commit": campaign.get("source_commit", ""),
+        "source_clean": campaign.get("source_clean", False),
+        "planned_file_count": campaign.get("planned_file_count", 0),
+        "planned_span_count": campaign.get("planned_span_count", 0),
+        "planned_line_count": campaign.get("planned_line_count", 0),
+        "batch_count": campaign.get("batch_count", 0),
+    }
 
 
 def build_semantic_review_campaign(
@@ -637,24 +663,66 @@ def validate_semantic_review_campaign(
         issues.append("schema_invalid")
     if campaign.get("campaign_sha256") != _campaign_sha256(campaign):
         issues.append("campaign_hash_mismatch")
+    if campaign.get("source_clean") is not True:
+        issues.append("campaign_source_not_clean")
     if source_commit is None and root.resolve() == ROOT.resolve():
         from tools.closeout.run_codebase_closeout_audit import git_status
 
-        source_commit = str(git_status().get("head") or "")
+        git = git_status()
+        source_commit = str(git.get("head") or "")
+        if git.get("dirty"):
+            issues.append("source_worktree_dirty")
     if source_commit and campaign.get("source_commit") != source_commit:
         issues.append("source_commit_changed")
 
     current_cache: dict[str, CurrentFile] = {}
+    planned_files: set[str] = set()
+    seen_spans: set[tuple[str, int, int]] = set()
     observed_spans = 0
     observed_lines = 0
-    for batch in list(campaign.get("batches") or []):
+    batches = list(campaign.get("batches") or [])
+    if len(batches) != _campaign_int(campaign.get("batch_count")):
+        issues.append("batch_count_mismatch")
+    batch_line_budget = _campaign_int(campaign.get("batch_line_budget"), 0)
+    root_resolved = root.resolve()
+    for batch_index, batch in enumerate(batches, start=1):
+        batch_id = str(batch.get("batch_id") or "")
+        expected_batch_id = f"semantic-batch-{batch_index:04d}"
+        if batch_id != expected_batch_id:
+            issues.append(f"batch_id_invalid:{batch_id or '<missing>'}")
+        batch_subsystem = str(batch.get("subsystem") or "")
+        actual_batch_lines = 0
         for span in list(batch.get("spans") or []):
             observed_spans += 1
             file_name = str(span.get("file") or "")
+            planned_files.add(file_name)
+            try:
+                first = int(span.get("first_line", 0))
+                last = int(span.get("last_line", 0))
+            except (TypeError, ValueError):
+                issues.append(f"span_invalid:{file_name}:non_integer")
+                continue
+            declared_span_lines = _campaign_int(span.get("line_count"))
+            actual_span_lines = last - first + 1
+            actual_batch_lines += max(actual_span_lines, 0)
+            if declared_span_lines != actual_span_lines:
+                issues.append(f"span_line_count_mismatch:{file_name}:{first}:{last}")
+            if str(span.get("subsystem") or "") != batch_subsystem:
+                issues.append(f"span_subsystem_mismatch:{file_name}")
+            span_key = (file_name, first, last)
+            if span_key in seen_spans:
+                issues.append(f"duplicate_span:{file_name}:{first}:{last}")
+            seen_spans.add(span_key)
+            candidate = (root_resolved / file_name).resolve()
+            try:
+                candidate.relative_to(root_resolved)
+            except ValueError:
+                issues.append(f"file_outside_root:{file_name}")
+                continue
             try:
                 info = current_cache.get(file_name)
                 if info is None:
-                    info = current_file(root / file_name, root=root)
+                    info = current_file(candidate, root=root)
                     current_cache[file_name] = info
             except OSError:
                 issues.append(f"file_missing:{file_name}")
@@ -662,8 +730,6 @@ def validate_semantic_review_campaign(
             if info.sha256 != span.get("file_sha256"):
                 issues.append(f"file_hash_changed:{file_name}")
                 continue
-            first = int(span.get("first_line", 0))
-            last = int(span.get("last_line", 0))
             if first < 1 or last < first or last > info.line_count:
                 issues.append(f"span_invalid:{file_name}:{first}:{last}")
                 continue
@@ -671,10 +737,16 @@ def validate_semantic_review_campaign(
                 issues.append(f"span_hash_changed:{file_name}:{first}:{last}")
                 continue
             observed_lines += last - first + 1
-    if observed_spans != int(campaign.get("planned_span_count", -1)):
+        if actual_batch_lines != _campaign_int(batch.get("line_count")):
+            issues.append(f"batch_line_count_mismatch:{batch_id or '<missing>'}")
+        if batch_line_budget <= 0 or actual_batch_lines > batch_line_budget:
+            issues.append(f"batch_line_budget_exceeded:{batch_id or '<missing>'}")
+    if observed_spans != _campaign_int(campaign.get("planned_span_count")):
         issues.append("planned_span_count_mismatch")
-    if observed_lines != int(campaign.get("planned_line_count", -1)):
+    if observed_lines != _campaign_int(campaign.get("planned_line_count")):
         issues.append("planned_line_count_mismatch")
+    if len(planned_files) != _campaign_int(campaign.get("planned_file_count")):
+        issues.append("planned_file_count_mismatch")
     return {
         "schema": "aura.closeout.semantic_review_campaign_validation.v1",
         "passed": not issues,
@@ -756,7 +828,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.out:
             from tools.closeout.run_codebase_closeout_audit import _write_json
 
-            _write_json(Path(args.out), payload)
+            output_path = Path(args.out)
+            _write_json(output_path, payload)
+            payload = semantic_campaign_receipt(payload, output_path=output_path)
     else:
         campaign = json.loads(Path(args.campaign).read_text(encoding="utf-8"))
         payload = validate_semantic_review_campaign(campaign)

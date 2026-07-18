@@ -18481,3 +18481,42 @@ live-product, recurrence-gain, release, or soak credit.
   exit, run the immutable preregistered adapter-on/off held-out evaluation; do
   not infer intelligence gain from training loss. Multi-hour and 24-72-hour
   soaks remain deferred until all shorter gates are green.
+
+## Checkpoint 2026-07-17-125: Semantic Campaign Scale Correction
+
+Checkpoint 125 is the current source candidate in the `main` worktree. It
+advances `CLOSEOUT-001`, `SEMANTIC-REVIEW-001`, `TEST-DEPTH-001`, and
+`RELEASE-001` by correcting defects found only when CP124's planner was run
+against the complete corpus. It does not award semantic-review, remediation,
+live-product, recurrence-gain, release, or soak credit.
+
+- The first exact CP124 plan faithfully found 4,827 unreviewed files, 6,102
+  missing spans, and 3,711,832 unreviewed lines, but split them into 1,664
+  batches across 1,401 nominal subsystems. Root-level files such as
+  `tests/test_closeout_audit.py` were incorrectly classified by filename as
+  separate subsystems. The resulting manifest was hash-valid but operationally
+  fragmented, so it is retained only as negative planner evidence and is not
+  eligible for semantic inventory credit.
+- Root-level files under `core`, `interface`, `tools`, and `tests` now group by
+  their real top-level subsystem; nested files still group by their first two
+  path components. The same deterministic line and span budgets apply without
+  converting each root-level file into a separate batch.
+- `plan --out` now writes the complete campaign to the requested governed
+  artifact path but prints only a bounded receipt containing its path, source
+  identity, campaign hash, and aggregate counts. The prior command emitted a
+  multi-megabyte manifest to stdout despite already persisting it.
+- Independent validation now also rejects a dirty source snapshot, a dirty
+  current source worktree, malformed or duplicate spans, path escape, batch-ID
+  drift, subsystem mismatch, per-span or per-batch line-count drift, exceeded
+  budgets, and aggregate file/batch/count tampering. Malformed external integer
+  fields fail closed as findings instead of crashing the validator.
+- The corrected grouping, compact receipt, source-drift, and structural-tamper
+  contracts pass 14/14 closeout tests. Python compilation, targeted `F`/`E9`
+  lint, and `git diff --check` pass.
+- Evidence-weighted completion remains 27%. This is checkpoint 125 of the
+  faithful 292-399 total forecast, leaving approximately 167-274 checkpoints.
+- Next: publish CP125 directly to `main`, regenerate the authoritative full
+  campaign from the exact clean commit, validate its hashes and structure, and
+  preserve the bounded receipt. Only then begin read-only semantic findings
+  capture. Continue monitoring the protected `32b_r1` process without loading
+  another model. Multi-hour and 24-72-hour soaks remain deferred.

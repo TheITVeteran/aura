@@ -14,6 +14,7 @@ from tools.closeout.semantic_review_ledger import (
     build_semantic_review_queue,
     main as semantic_review_main,
     record_reviews_from_args,
+    semantic_campaign_receipt,
     summarize_semantic_reviews,
     validate_semantic_review_campaign,
 )
@@ -285,6 +286,11 @@ def test_semantic_campaign_freezes_every_missing_span_before_remediation(tmp_pat
     assert campaign["planned_line_count"] == 7
     assert campaign["planned_span_count"] == 4
     assert campaign["batch_count"] == 3
+    assert [batch["subsystem"] for batch in campaign["batches"]] == [
+        "core",
+        "core",
+        "docs",
+    ]
     spans = [span for batch in campaign["batches"] for span in batch["spans"]]
     reviewed_spans = [
         span for span in spans if span["file"] == "core/reviewed.py"
@@ -325,3 +331,54 @@ def test_semantic_campaign_validation_detects_source_drift(tmp_path):
         "planned_line_count_mismatch",
         "source_commit_changed",
     ]
+
+
+def test_semantic_campaign_validation_rejects_structural_tampering(tmp_path):
+    source = tmp_path / "core" / "service.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("one\ntwo\n", encoding="utf-8")
+    campaign = build_semantic_review_campaign(
+        ledger_path=tmp_path / "ledger.jsonl",
+        tracked_paths=[source],
+        root=tmp_path,
+        batch_line_budget=2,
+        max_span_lines=2,
+        source_commit="frozen",
+        source_clean=True,
+    )
+    campaign["batches"][0]["line_count"] = 1
+    campaign["planned_file_count"] = 2
+
+    validation = validate_semantic_review_campaign(
+        campaign,
+        root=tmp_path,
+        source_commit="frozen",
+    )
+
+    assert validation["passed"] is False
+    assert "campaign_hash_mismatch" in validation["issues"]
+    assert "batch_line_count_mismatch:semantic-batch-0001" in validation["issues"]
+    assert "planned_file_count_mismatch" in validation["issues"]
+
+
+def test_semantic_campaign_receipt_is_bounded(tmp_path):
+    campaign = {
+        "campaign_sha256": "abc123",
+        "source_commit": "frozen",
+        "source_clean": True,
+        "planned_file_count": 10,
+        "planned_span_count": 12,
+        "planned_line_count": 9000,
+        "batch_count": 3,
+        "batches": [{"large": "payload"}],
+    }
+
+    receipt = semantic_campaign_receipt(
+        campaign,
+        output_path=tmp_path / "campaign.json",
+    )
+
+    assert receipt["schema"] == "aura.closeout.semantic_review_campaign_receipt.v1"
+    assert receipt["campaign_sha256"] == "abc123"
+    assert receipt["batch_count"] == 3
+    assert "batches" not in receipt
