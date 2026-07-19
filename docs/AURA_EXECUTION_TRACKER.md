@@ -16,8 +16,8 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **Checkpoint 148 is the current
-  reviewed source candidate in the `main` worktree; checkpoints through CP147
+- Current bounded implementation milestone: **Checkpoint 149 is the current
+  reviewed source candidate in the `main` worktree; checkpoints through CP148
   are pushed. The corrected resident-32B path completed clean one-, two-, and
   five-step calibrations with finite durable checkpoints, exact source identity,
   no memory ratchet, and a 48-GiB MLX wired-residency limit. The full detached
@@ -19705,4 +19705,36 @@ Evidence-weighted completion remains 27%; this is checkpoint 148 of the faithful
 run monitored without competing model workloads, implement authenticated
 pre-pinned role-separated trust roots, validate the final step-576 bundle, freeze
 fresh pilot seeds, and run the preregistered paired pilot. Final soaks remain
+deferred.
+
+## Checkpoint 2026-07-18-149: Externally Rooted Campaign Roles
+
+`core/brain/llm/latent_cortex/campaign_trust.py` establishes the cryptographic
+primitive needed to stop a campaign evidence bundle from selecting its own
+reviewers. A caller must supply an Ed25519 root public key independently. That
+root authenticates a strict, time-bounded policy which pins task issuer,
+campaign runner, contamination auditor, and evidence verifier identities,
+organizations, public keys, implementation digests, and release digests before
+inference. Every role must use a distinct signer identity, organization, and key;
+the root key cannot double as a campaign role.
+
+Role attestations sign canonical JSON containing the policy digest, exact role,
+signer identity, timestamp, and stage payload. Verification requires exact
+payload equality, a policy-valid timestamp, optional stage-order bounds, the
+pre-pinned role key, and a matching canonical digest. A different private key,
+an evidence-controlled root, a modified payload, a changed role or policy, key
+reuse, organization reuse, or an expired/not-yet-valid policy all fail closed
+with stable errors.
+
+Thirteen focused adversarial tests pass, together with Ruff and Python
+compilation. This checkpoint proves only the trust primitive. Confirmatory and
+external-frontier eligibility remain closed until the paired runner and
+independent verifier require this policy, bind pre-inference issuer/runner/audit
+attestations, and verify a post-evidence verifier attestation.
+
+Evidence-weighted completion remains 27%; this is checkpoint 149 of the faithful
+292-399 forecast, leaving approximately 143-250 checkpoints. Next: wire the
+policy through campaign planning, worker replay, contamination admission,
+runner finalization, and independent-verifier output without weakening pilot
+replay. The active resident training run remains isolated and final soaks remain
 deferred.
