@@ -536,33 +536,19 @@ def import_verified_worker_stage(
         imported: list[dict[str, Any]] = []
         for record in verified_stage.records:
             result_origin_sha256 = record["result"]["worker_origin"]["origin_sha256"]
-            verification = {
-                "schema": "aura.latent_cortex.worker_stage_import_verification.v1",
-                "stage_manifest_sha256": manifest["manifest_sha256"],
-                "result_origin_sha256": result_origin_sha256,
-                "stage_verification": record["verification"],
-            }
-            commit = {
-                "schema": "aura.latent_cortex.worker_stage_import_commit.v1",
-                "import_intent_sha256": intent["intent_sha256"],
-                "stage_manifest_sha256": manifest["manifest_sha256"],
-                "stage_commit": record["commit"],
-            }
-            imported_receipt = canonical.import_committed_cell(
+            imported_receipt = canonical.import_staged_arm_result(
                 record["cell_id"],
                 expected_attempt_id=record["attempt_id"],
                 result=record["result"],
-                verification=verification,
-                commit=commit,
             )
             imported.append(
                 {
                     "cell_id": record["cell_id"],
                     "attempt_id": imported_receipt["attempt_id"],
                     "arm_result_event_sha256": imported_receipt["arm_result_event_sha256"],
-                    "verified_event_sha256": imported_receipt["verified_event_sha256"],
-                    "commit_event_sha256": imported_receipt["commit_event_sha256"],
                     "result_origin_sha256": result_origin_sha256,
+                    "stage_verification_sha256": _sha256(record["verification"]),
+                    "stage_commit_sha256": _sha256(record["commit"]),
                 }
             )
         final_head = canonical.resume().journal_head_sha256

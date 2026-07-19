@@ -329,8 +329,10 @@ def test_complete_worker_stage_verifies_and_imports_idempotently(
     assert intent_path.stat().st_mode & 0o777 == 0o600
     assert receipt_path.stat().st_mode & 0o777 == 0o600
     with CampaignJournal(journal_path, plan) as journal:
-        assert journal.resume().committed_cell_ids == plan.cell_ids
-        assert tuple(record["result"] for record in journal.committed_records()) == tuple(
+        snapshot = journal.resume()
+        assert snapshot.committed_cell_ids == ()
+        assert snapshot.sealed_cell_ids == plan.cell_ids
+        assert tuple(record["result"] for record in journal.result_records()) == tuple(
             record["result"] for record in verified.records
         )
 

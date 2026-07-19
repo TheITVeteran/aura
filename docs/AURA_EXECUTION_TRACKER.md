@@ -20540,3 +20540,45 @@ Evidence-weighted completion remains 27%; this is checkpoint 165 of the faithful
 292-399 forecast, leaving approximately 127-234 checkpoints. No reasoning-gain,
 frontier, external-custody campaign, live-app, release, or soak credit is
 awarded. Final soaks remain deferred.
+
+## Checkpoint 2026-07-19-166: Blinded Staged-Import Boundary
+
+CP166 corrects a protocol-ordering defect found while integrating CP165 with
+the real paired-campaign scorer.
+
+- A detached worker stage remains fully verified and committed as transport
+  evidence, but canonical import now stops at the fsync-sealed `ARM_RESULT`
+  boundary. It cannot mark a campaign cell statistically verified or committed
+  before the task issuer's answer reveal.
+- `CampaignJournal.import_staged_arm_result()` preserves the stage's exact
+  deterministic attempt and result identity, resumes idempotently from
+  `STARTED`, recognizes the same result at `ARM_RESULT`, `VERIFIED`, or
+  `COMMITTED`, and rejects result, attempt, or committed-cell conflicts without
+  replacing evidence.
+- The worker-stage import receipt now binds the stage verification and commit
+  digests as transport provenance while binding the canonical ARM_RESULT event
+  separately. This prevents transport completion from masquerading as a
+  correctness grade.
+- The existing top-level ordering remains authoritative: all outputs are sealed,
+  the issuer reveals committed answers, the scorer records task verification,
+  and only then does the canonical journal commit each cell.
+
+Validation is green: all 57 focused worker-stage, campaign-journal,
+detached-origin, and broker-client tests pass in 25.92 seconds. New regressions
+prove that staged import leaves canonical cells sealed but uncommitted, exact
+replay is stable, post-reveal verification can still commit, and conflicting
+result or attempt identities fail before mutation. Focused Ruff, formatting,
+bytecode compilation, and diff checks pass.
+
+The independent-verifier audit confirms that the remaining migration must be
+atomic at the evidence-contract level: replace the three legacy
+producer-key/launch/key-erasure manifests with one detached worker-execution
+manifest, replay outer detached plan/journal/broker/lifecycle/quarantine
+evidence, and version sealed-output, grade, final-run, verdict, and final
+verifier payloads together. Legacy v2 evidence may remain readable for history
+but must be claim-ineligible.
+
+Evidence-weighted completion remains 27%; this is checkpoint 166 of the faithful
+292-399 forecast, leaving approximately 126-233 checkpoints. No reasoning-gain,
+frontier, external-custody campaign, live-app, release, or soak credit is
+awarded. Final soaks remain deferred.

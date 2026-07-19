@@ -162,9 +162,7 @@ def test_fsync_sealed_result_can_be_verified_after_worker_exit(tmp_path: Path) -
         assert records[0]["state"] == ARM_RESULT
         assert records[0]["arm_result_event_sha256"] == event_sha256
         assert records[0]["result"] == {"text": "candidate output"}
-        verifier.record_verified(
-            plan.cell_ids[0], attempt_id, {"accepted": True}
-        )
+        verifier.record_verified(plan.cell_ids[0], attempt_id, {"accepted": True})
         verifier.commit_cell(plan.cell_ids[0], attempt_id)
         assert verifier.resume().committed_cell_ids == plan.cell_ids
 
@@ -271,6 +269,80 @@ def test_preverified_cell_import_rejects_conflicts_without_overwriting(
         )
         assert empty.resume().journal_head_sha256 == head_before
         assert empty.resume().incomplete_cell_ids == ()
+
+
+def test_import_staged_arm_result_preserves_post_reveal_scoring_boundary(
+    tmp_path: Path,
+) -> None:
+    plan = _plan(1)
+    cell_id = plan.cell_ids[0]
+    stage_path = tmp_path / "stage-result.jsonl"
+    with CampaignJournal(stage_path, plan) as stage:
+        attempt_id = stage.start_cell(cell_id)
+        result = {"text": "sealed before answer reveal"}
+        stage.record_arm_result(cell_id, attempt_id, result)
+
+    canonical_path = tmp_path / "canonical-result.jsonl"
+    with CampaignJournal(canonical_path, plan) as canonical:
+        first = canonical.import_staged_arm_result(
+            cell_id,
+            expected_attempt_id=attempt_id,
+            result=result,
+        )
+        second = canonical.import_staged_arm_result(
+            cell_id,
+            expected_attempt_id=attempt_id,
+            result=result,
+        )
+        assert first == second
+        assert canonical.resume().sealed_cell_ids == (cell_id,)
+        assert canonical.resume().committed_cell_ids == ()
+
+        verification = {"correct": True, "revealed": True}
+        canonical.record_verified(cell_id, attempt_id, verification)
+        canonical.commit_cell(cell_id, attempt_id, {"post_reveal": True})
+        after_commit = canonical.import_staged_arm_result(
+            cell_id,
+            expected_attempt_id=attempt_id,
+            result=result,
+        )
+        assert after_commit["canonical_state"] == COMMITTED
+
+
+def test_import_staged_arm_result_rejects_result_and_attempt_conflicts(
+    tmp_path: Path,
+) -> None:
+    plan = _plan(1)
+    cell_id = plan.cell_ids[0]
+    stage_path = tmp_path / "stage-conflict.jsonl"
+    with CampaignJournal(stage_path, plan) as stage:
+        attempt_id = stage.start_cell(cell_id)
+
+    with CampaignJournal(tmp_path / "canonical-conflict.jsonl", plan) as canonical:
+        canonical.import_staged_arm_result(
+            cell_id,
+            expected_attempt_id=attempt_id,
+            result={"value": "first"},
+        )
+        _assert_code(
+            "import_arm_result_conflict",
+            lambda: canonical.import_staged_arm_result(
+                cell_id,
+                expected_attempt_id=attempt_id,
+                result={"value": "different"},
+            ),
+        )
+
+    with CampaignJournal(tmp_path / "attempt-conflict.jsonl", plan) as canonical:
+        _assert_code(
+            "import_attempt_id_conflict",
+            lambda: canonical.import_staged_arm_result(
+                cell_id,
+                expected_attempt_id="different-attempt",
+                result={"value": "first"},
+            ),
+        )
+        assert canonical.resume().incomplete_cell_ids == ()
 
 
 @pytest.mark.parametrize(

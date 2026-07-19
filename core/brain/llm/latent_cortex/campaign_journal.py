@@ -671,9 +671,7 @@ class CampaignJournal:
                 cell_id in self._state.committed_by_cell
                 or (
                     cell_id in self._state.active_by_cell
-                    and self._state.attempts[
-                        self._state.active_by_cell[cell_id]
-                    ].state
+                    and self._state.attempts[self._state.active_by_cell[cell_id]].state
                     in {ARM_RESULT, VERIFIED}
                 )
             )
@@ -896,10 +894,7 @@ class CampaignJournal:
             active_attempt_id,
             normalized_commit,
         )
-        if (
-            attempt.arm_result_event_sha256 is None
-            or attempt.verified_event_sha256 is None
-        ):
+        if attempt.arm_result_event_sha256 is None or attempt.verified_event_sha256 is None:
             _fail("import_receipt_incomplete")
         return {
             "attempt_id": active_attempt_id,
@@ -908,6 +903,73 @@ class CampaignJournal:
             "commit_event_sha256": commit_event_sha256,
             "resumed_from_state": resumed_from_state,
             "already_committed": False,
+        }
+
+    def import_staged_arm_result(
+        self,
+        cell_id: str,
+        *,
+        expected_attempt_id: str,
+        result: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Idempotently import transport evidence without scoring it early."""
+
+        self._assert_open()
+        if cell_id not in self.plan.cell_ids:
+            _fail("unknown_cell")
+        if not isinstance(expected_attempt_id, str) or not expected_attempt_id:
+            _fail("import_attempt_id_invalid")
+        normalized_result = _normalize_json(result)
+        if not isinstance(normalized_result, dict):
+            _fail("import_payload_invalid")
+
+        committed_attempt_id = self._state.committed_by_cell.get(cell_id)
+        if committed_attempt_id is not None:
+            attempt = self._state.attempts[committed_attempt_id]
+            if (
+                committed_attempt_id != expected_attempt_id
+                or attempt.arm_result != normalized_result
+                or attempt.arm_result_event_sha256 is None
+            ):
+                _fail("import_committed_cell_conflict")
+            return {
+                "attempt_id": committed_attempt_id,
+                "arm_result_event_sha256": attempt.arm_result_event_sha256,
+                "canonical_state": COMMITTED,
+            }
+
+        active_attempt_id = self._state.active_by_cell.get(cell_id)
+        if active_attempt_id is None:
+            next_attempt_number = self._state.start_counts.get(cell_id, 0) + 1
+            derived_attempt_id = _attempt_id(
+                self.plan.plan_sha256,
+                cell_id,
+                next_attempt_number,
+            )
+            if derived_attempt_id != expected_attempt_id:
+                _fail("import_attempt_id_conflict")
+            active_attempt_id = self.start_cell(cell_id)
+        elif active_attempt_id != expected_attempt_id:
+            _fail("import_attempt_id_conflict")
+
+        attempt = self._state.attempts[active_attempt_id]
+        if attempt.state == STARTED:
+            self.record_arm_result(
+                cell_id,
+                active_attempt_id,
+                normalized_result,
+            )
+        elif attempt.state in {ARM_RESULT, VERIFIED}:
+            if attempt.arm_result != normalized_result:
+                _fail("import_arm_result_conflict")
+        else:
+            _fail("import_state_invalid")
+        if attempt.arm_result_event_sha256 is None:
+            _fail("import_arm_result_missing")
+        return {
+            "attempt_id": active_attempt_id,
+            "arm_result_event_sha256": attempt.arm_result_event_sha256,
+            "canonical_state": attempt.state,
         }
 
     def committed_records(self) -> tuple[dict[str, Any], ...]:
