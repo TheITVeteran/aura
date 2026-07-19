@@ -723,6 +723,34 @@ def test_unobservable_process_identity_fails_closed(monkeypatch: pytest.MonkeyPa
     assert detached._identity_state(123, "token") == "unknown"
 
 
+def test_reaped_direct_child_does_not_depend_on_libproc_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    containment_token = "a" * 64
+    child = subprocess.Popen(
+        [sys.executable, "-c", "pass"],
+        start_new_session=True,
+    )
+    child_token = detached._process_start_token(child.pid)
+    process_group_id = child.pid
+    assert child.wait(timeout=5.0) == 0
+
+    monkeypatch.setattr(
+        detached,
+        "_inspect_process",
+        lambda _pid: detached.ProcessObservation("unknown"),
+    )
+    cleanup_performed, lineage_cleanup_count = detached._cleanup_child_process(
+        child,
+        child_token,
+        process_group_id,
+        containment_token,
+    )
+
+    assert cleanup_performed is False
+    assert lineage_cleanup_count == 0
+
+
 def test_attempt_journal_tampering_is_rejected(tmp_path: Path) -> None:
     run_dir = tmp_path / "tampered-journal"
     _launch(run_dir, [sys.executable, "-c", "pass"])

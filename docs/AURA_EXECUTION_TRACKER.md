@@ -19423,3 +19423,28 @@ changed, and no model was loaded before this correction. Evidence-weighted
 completion remains 27%; this is checkpoint 140 of the faithful 292-399
 forecast, leaving approximately 152-259 checkpoints. Final soaks remain
 deferred.
+
+## Checkpoint 2026-07-18-141: Detached Direct-Child Exit Proof Repair
+
+The first forced resident invocation completed its intended one gradient step
+and published an exact resumable checkpoint, but the detached supervisor
+misclassified the successful trainer handoff as a containment failure. macOS
+can briefly make `proc_pidpath` unavailable for an exited direct child before
+the supervisor reaps it; the old order consulted libproc before authoritative
+`waitpid` state and produced `target process identity became unobservable`.
+
+- The supervisor now polls/reaps its direct child before libproc inspection and
+  retries the direct-child reap when libproc races with exit. `waitpid` only
+  proves the owned child exit; containment still requires the declared process
+  group and inherited-token lineage to be empty under the kernel no-fork
+  policy.
+- Cleanup has the same authoritative reaped-child path and fails closed if an
+  exited target leaves either a tagged process or a live process group.
+- The full detached-supervisor contract suite passes `37/37`, including a new
+  regression that forces libproc to remain unobservable after a direct child
+  has been reaped. Focused Ruff, Python compilation, and diff integrity pass.
+- The failed supervisor receipt and one-step adapter are diagnostic evidence,
+  not training credit. A clean forced partial must be rerun under CP141 before
+  exact resident resume launches. Evidence-weighted completion remains 27%;
+  this is checkpoint 141 of the faithful 292-399 forecast, leaving
+  approximately 151-258 checkpoints. Final soaks remain deferred.

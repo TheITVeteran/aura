@@ -1053,6 +1053,18 @@ def _cleanup_child_process(
     process_group_id: int,
     containment_token: str,
 ) -> tuple[bool, int]:
+    # waitpid is authoritative for a direct child. On Darwin, proc_pidpath can
+    # disappear during the short zombie window before waitpid reaps the child,
+    # which makes libproc observation indeterminate even though the supervisor
+    # can prove that its own child exited.
+    if child.poll() is not None:
+        lineage_cleanup_count = _terminate_tagged_processes(containment_token)
+        if _tagged_processes(containment_token):
+            raise DetachedStepError("tagged target lineage is not empty")
+        if _process_group_exists(process_group_id):
+            raise DetachedStepError("exited target process group is not empty")
+        return lineage_cleanup_count > 0, lineage_cleanup_count
+
     observation = _inspect_process(child.pid)
     groups = {process_group_id}
     if observation.state == "alive" and observation.token == child_token:
@@ -1996,6 +2008,16 @@ def _supervise(run_dir: Path, plan: dict[str, Any], attempt: int) -> None:
                     if not broker_response["containment_verified"]:
                         broker_containment_verified = False
                         raise DetachedStepError("timed-out broker worker containment failed")
+            direct_returncode = child.poll()
+            if direct_returncode is not None:
+                returncode = direct_returncode
+                if (
+                    os.environ.get("AURA_DETACHED_TEST_CRASH_POINT")
+                    == "after_target_exit"
+                    and "PYTEST_CURRENT_TEST" in os.environ
+                ):
+                    os._exit(91)
+                break
             live_child = _inspect_process(child.pid)
             if (
                 live_child.state == "alive"
@@ -2004,6 +2026,19 @@ def _supervise(run_dir: Path, plan: dict[str, Any], attempt: int) -> None:
             ):
                 raise DetachedStepError("target escaped its declared process-group containment")
             if live_child.state == "unknown":
+                # The process may have exited between poll() and libproc. Reap
+                # once more before treating an unobservable live child as a
+                # containment failure.
+                direct_returncode = child.poll()
+                if direct_returncode is not None:
+                    returncode = direct_returncode
+                    if (
+                        os.environ.get("AURA_DETACHED_TEST_CRASH_POINT")
+                        == "after_target_exit"
+                        and "PYTEST_CURRENT_TEST" in os.environ
+                    ):
+                        os._exit(91)
+                    break
                 raise DetachedStepError("target process identity became unobservable")
             _publish_status(
                 run_dir,
