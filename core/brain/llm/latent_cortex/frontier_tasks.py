@@ -16,6 +16,7 @@ import random
 import re
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from fractions import Fraction
 from types import MappingProxyType
@@ -31,6 +32,7 @@ TASK_MANIFEST_SCHEMA = "aura.latent_cortex.frontier_task_manifest.v1"
 TASK_COMMITMENT_SCHEMA = "aura.latent_cortex.frontier_task_commitment.v1"
 SCORE_RESULT_SCHEMA = "aura.latent_cortex.frontier_score_result.v1"
 REGISTRY_VERSION = "2026.07.18.1"
+CURRENT_REGISTRY_VERSION = "2026.07.18.2"
 SCORER_VERSION = "1"
 
 FRONTIER_DOMAINS = (
@@ -43,6 +45,30 @@ FRONTIER_DOMAINS = (
     "misleading_premise",
 )
 EXCLUDED_TRAINING_FAMILIES = ("boolean", "khop", "modular")
+CURRENT_EXCLUDED_TRAINING_FAMILIES = (
+    "khop",
+    "boolean",
+    "modular",
+    "register_trace",
+    "stack_trace",
+    "constraint_order",
+    "causal_intervention",
+    "bayes_update",
+    "budget_plan",
+    "symbolic_rewrite",
+    "premise_audit",
+    "code_trace",
+)
+SUPPORTED_REGISTRY_EXCLUSIONS: Mapping[str, tuple[str, ...]] = MappingProxyType(
+    {
+        REGISTRY_VERSION: EXCLUDED_TRAINING_FAMILIES,
+        CURRENT_REGISTRY_VERSION: CURRENT_EXCLUDED_TRAINING_FAMILIES,
+    }
+)
+_ACTIVE_REGISTRY_VERSION: ContextVar[str] = ContextVar(
+    "aura_frontier_registry_version",
+    default=REGISTRY_VERSION,
+)
 
 FINAL_ANSWER_MARKER = "FINAL_ANSWER:"
 MAX_PROMPT_BYTES = 12_000
@@ -108,6 +134,17 @@ def _require_difficulty(difficulty: object) -> int:
     return difficulty
 
 
+def _require_registry_version(version: object) -> str:
+    if not isinstance(version, str) or version not in SUPPORTED_REGISTRY_EXCLUSIONS:
+        _fail("registry_version_unsupported")
+    return version
+
+
+def _active_registry_contract() -> tuple[str, tuple[str, ...]]:
+    version = _require_registry_version(_ACTIVE_REGISTRY_VERSION.get())
+    return version, SUPPORTED_REGISTRY_EXCLUSIONS[version]
+
+
 def _require_prompt(prompt: object) -> str:
     if (
         not isinstance(prompt, str)
@@ -121,9 +158,10 @@ def _require_prompt(prompt: object) -> str:
 
 
 def _seeded_rng(domain: str, seed: int, difficulty: int, *, stream: str) -> random.Random:
+    registry_version, _exclusions = _active_registry_contract()
     material = canonical_json_bytes(
         {
-            "registry_version": REGISTRY_VERSION,
+            "registry_version": registry_version,
             "domain": domain,
             "seed": seed,
             "difficulty": difficulty,
@@ -300,8 +338,9 @@ class PublicTaskRecord:
     excluded_training_families: tuple[str, ...]
 
     def __post_init__(self) -> None:
-        if self.schema != PUBLIC_TASK_SCHEMA or self.registry_version != REGISTRY_VERSION:
+        if self.schema != PUBLIC_TASK_SCHEMA:
             _fail("public_task_schema_invalid")
+        registry_version = _require_registry_version(self.registry_version)
         if self.domain not in FRONTIER_DOMAINS:
             _fail("public_task_domain_invalid")
         _require_identifier(self.generator_id, field="generator_id")
@@ -322,7 +361,7 @@ class PublicTaskRecord:
             != tuple(sorted(self.contamination_fingerprints, key=lambda item: item.method))
         ):
             _fail("contamination_fingerprints_invalid")
-        if self.excluded_training_families != EXCLUDED_TRAINING_FAMILIES:
+        if self.excluded_training_families != SUPPORTED_REGISTRY_EXCLUSIONS[registry_version]:
             _fail("training_family_exclusions_invalid")
         if _sha256_json(self._body()) != self.task_payload_sha256:
             _fail("task_payload_hash_mismatch")
@@ -418,13 +457,16 @@ class TaskManifest:
     manifest_sha256: str
 
     def __post_init__(self) -> None:
-        if self.schema != TASK_MANIFEST_SCHEMA or self.registry_version != REGISTRY_VERSION:
+        if self.schema != TASK_MANIFEST_SCHEMA:
             _fail("task_manifest_schema_invalid")
+        _require_registry_version(self.registry_version)
         if not self.tasks or len(self.tasks) > MAX_MANIFEST_TASKS:
             _fail("task_manifest_size_invalid")
         task_ids = [task.task_id for task in self.tasks]
         if task_ids != sorted(task_ids) or len(set(task_ids)) != len(task_ids):
             _fail("task_manifest_task_order_invalid")
+        if any(task.registry_version != self.registry_version for task in self.tasks):
+            _fail("task_manifest_registry_version_mismatch")
         _require_sha256(self.manifest_sha256, field="manifest_sha256")
         if _sha256_json(self._body()) != self.manifest_sha256:
             _fail("task_manifest_hash_mismatch")
@@ -458,8 +500,9 @@ class TaskCommitment:
     commitment_sha256: str
 
     def __post_init__(self) -> None:
-        if self.schema != TASK_COMMITMENT_SCHEMA or self.registry_version != REGISTRY_VERSION:
+        if self.schema != TASK_COMMITMENT_SCHEMA:
             _fail("task_commitment_schema_invalid")
+        _require_registry_version(self.registry_version)
         if type(self.task_count) is not int or self.task_count <= 0:
             _fail("task_commitment_count_invalid")
         if (
@@ -508,6 +551,7 @@ def _normalized_prompt(prompt: str) -> str:
 def _contamination_fingerprints(
     *, domain: str, generator_id: str, generator_version: str, prompt: str
 ) -> tuple[ContaminationFingerprint, ...]:
+    registry_version, exclusions = _active_registry_contract()
     normalized = _normalized_prompt(prompt)
     tokens = normalized.split()
     shingles = [" ".join(tokens[index : index + 5]) for index in range(max(0, len(tokens) - 4))]
@@ -519,11 +563,11 @@ def _contamination_fingerprints(
             "generator_lineage",
             _sha256_json(
                 {
-                    "registry_version": REGISTRY_VERSION,
+                    "registry_version": registry_version,
                     "domain": domain,
                     "generator_id": generator_id,
                     "generator_version": generator_version,
-                    "excluded_training_families": list(EXCLUDED_TRAINING_FAMILIES),
+                    "excluded_training_families": list(exclusions),
                 }
             ),
         ),
@@ -542,6 +586,7 @@ def _make_task(
     response_contract: str,
     expected: Mapping[str, Any],
 ) -> FrontierTask:
+    registry_version, exclusions = _active_registry_contract()
     _require_seed(seed)
     _require_difficulty(difficulty)
     _require_prompt(prompt)
@@ -552,7 +597,7 @@ def _make_task(
     blind_nonce = _sha256_json(
         {
             "purpose": "answer_blind",
-            "registry_version": REGISTRY_VERSION,
+            "registry_version": registry_version,
             "domain": domain,
             "seed": seed,
             "difficulty": difficulty,
@@ -561,7 +606,7 @@ def _make_task(
     )
     private_body = {
         "schema": ANSWER_PAYLOAD_SCHEMA,
-        "registry_version": REGISTRY_VERSION,
+        "registry_version": registry_version,
         "domain": domain,
         "generator_id": generator_id,
         "generator_version": generator_version,
@@ -584,7 +629,7 @@ def _make_task(
     )
     body = {
         "schema": PUBLIC_TASK_SCHEMA,
-        "registry_version": REGISTRY_VERSION,
+        "registry_version": registry_version,
         "domain": domain,
         "generator_id": generator_id,
         "generator_version": generator_version,
@@ -595,12 +640,12 @@ def _make_task(
         "scorer_version": SCORER_VERSION,
         "answer_commitment_sha256": blinded.commitment_sha256,
         "contamination_fingerprints": [item.to_dict() for item in fingerprints],
-        "excluded_training_families": list(EXCLUDED_TRAINING_FAMILIES),
+        "excluded_training_families": list(exclusions),
     }
     task_hash = _sha256_json(body)
     public = PublicTaskRecord(
         schema=PUBLIC_TASK_SCHEMA,
-        registry_version=REGISTRY_VERSION,
+        registry_version=registry_version,
         task_id=f"rlc_frontier:{domain}:{task_hash}",
         task_payload_sha256=task_hash,
         domain=domain,
@@ -613,7 +658,7 @@ def _make_task(
         scorer_version=SCORER_VERSION,
         answer_commitment_sha256=blinded.commitment_sha256,
         contamination_fingerprints=fingerprints,
-        excluded_training_families=EXCLUDED_TRAINING_FAMILIES,
+        excluded_training_families=exclusions,
     )
     return FrontierTask(schema=TASK_SCHEMA, public=public, blinded_answer=blinded)
 
@@ -630,16 +675,20 @@ def build_task_manifest(tasks: Iterable[FrontierTask]) -> TaskManifest:
     ):
         _fail("task_manifest_size_invalid")
     records = tuple(sorted((task.public for task in bounded_tasks), key=lambda item: item.task_id))
+    versions = {record.registry_version for record in records}
+    if len(versions) != 1:
+        _fail("task_manifest_registry_version_mismatch")
+    registry_version = versions.pop()
     body = {
         "schema": TASK_MANIFEST_SCHEMA,
-        "registry_version": REGISTRY_VERSION,
+        "registry_version": registry_version,
         "task_count": len(records),
         "domains": sorted({task.domain for task in records}),
         "tasks": [task.to_dict() for task in records],
     }
     return TaskManifest(
         schema=TASK_MANIFEST_SCHEMA,
-        registry_version=REGISTRY_VERSION,
+        registry_version=registry_version,
         tasks=records,
         manifest_sha256=_sha256_json(body),
     )
@@ -664,7 +713,7 @@ def build_task_commitment(manifest: TaskManifest) -> TaskCommitment:
     )
     body = {
         "schema": TASK_COMMITMENT_SCHEMA,
-        "registry_version": REGISTRY_VERSION,
+        "registry_version": manifest.registry_version,
         "manifest_sha256": manifest.manifest_sha256,
         "task_count": len(manifest.tasks),
         "domain_counts": [{"domain": domain, "count": count} for domain, count in counts],
@@ -674,7 +723,7 @@ def build_task_commitment(manifest: TaskManifest) -> TaskCommitment:
     }
     return TaskCommitment(
         schema=TASK_COMMITMENT_SCHEMA,
-        registry_version=REGISTRY_VERSION,
+        registry_version=manifest.registry_version,
         manifest_sha256=manifest.manifest_sha256,
         task_count=len(manifest.tasks),
         domain_counts=counts,
@@ -1088,7 +1137,7 @@ def _expected_payload(task: FrontierTask) -> dict[str, Any]:
         _fail("answer_payload_schema_invalid")
     if (
         payload["schema"] != ANSWER_PAYLOAD_SCHEMA
-        or payload["registry_version"] != REGISTRY_VERSION
+        or payload["registry_version"] != task.public.registry_version
         or payload["domain"] != task.domain
         or payload["generator_id"] != task.public.generator_id
         or payload["generator_version"] != task.public.generator_version
@@ -1258,15 +1307,23 @@ class FrontierTaskRegistry:
     domains: tuple[str, ...] = FRONTIER_DOMAINS
 
     def __post_init__(self) -> None:
-        if self.schema != REGISTRY_SCHEMA or self.version != REGISTRY_VERSION:
+        if self.schema != REGISTRY_SCHEMA:
             _fail("registry_schema_invalid")
+        _require_registry_version(self.version)
         if self.domains != FRONTIER_DOMAINS:
             _fail("registry_domains_invalid")
 
     def generate(self, domain: str, *, seed: int, difficulty: int = 2) -> FrontierTask:
         if not isinstance(domain, str) or domain not in DOMAIN_GENERATORS:
             _fail("domain_unknown")
-        return DOMAIN_GENERATORS[domain](_require_seed(seed), _require_difficulty(difficulty))
+        token = _ACTIVE_REGISTRY_VERSION.set(self.version)
+        try:
+            return DOMAIN_GENERATORS[domain](
+                _require_seed(seed),
+                _require_difficulty(difficulty),
+            )
+        finally:
+            _ACTIVE_REGISTRY_VERSION.reset(token)
 
     def battery(
         self,
@@ -1306,10 +1363,22 @@ class FrontierTaskRegistry:
 
 
 DEFAULT_REGISTRY = FrontierTaskRegistry()
+CURRENT_REGISTRY = FrontierTaskRegistry(version=CURRENT_REGISTRY_VERSION)
 
 
-def generate_task(domain: str, *, seed: int, difficulty: int = 2) -> FrontierTask:
-    return DEFAULT_REGISTRY.generate(domain, seed=seed, difficulty=difficulty)
+def _registry(version: str) -> FrontierTaskRegistry:
+    normalized = _require_registry_version(version)
+    return CURRENT_REGISTRY if normalized == CURRENT_REGISTRY_VERSION else DEFAULT_REGISTRY
+
+
+def generate_task(
+    domain: str,
+    *,
+    seed: int,
+    difficulty: int = 2,
+    registry_version: str = REGISTRY_VERSION,
+) -> FrontierTask:
+    return _registry(registry_version).generate(domain, seed=seed, difficulty=difficulty)
 
 
 def generate_task_battery(
@@ -1317,14 +1386,22 @@ def generate_task_battery(
     *,
     domains: Sequence[str] = FRONTIER_DOMAINS,
     difficulty: int = 2,
+    registry_version: str = REGISTRY_VERSION,
 ) -> tuple[FrontierTask, ...]:
-    return DEFAULT_REGISTRY.battery(seeds, domains=domains, difficulty=difficulty)
+    return _registry(registry_version).battery(
+        seeds,
+        domains=domains,
+        difficulty=difficulty,
+    )
 
 
 __all__ = [
     "ANSWER_PAYLOAD_SCHEMA",
     "BlindedAnswerPayload",
     "ContaminationFingerprint",
+    "CURRENT_EXCLUDED_TRAINING_FAMILIES",
+    "CURRENT_REGISTRY",
+    "CURRENT_REGISTRY_VERSION",
     "DEFAULT_REGISTRY",
     "DOMAIN_GENERATORS",
     "EXCLUDED_TRAINING_FAMILIES",
@@ -1339,6 +1416,7 @@ __all__ = [
     "REGISTRY_VERSION",
     "SCORE_RESULT_SCHEMA",
     "ScoreResult",
+    "SUPPORTED_REGISTRY_EXCLUSIONS",
     "TASK_COMMITMENT_SCHEMA",
     "TASK_MANIFEST_SCHEMA",
     "TASK_SCHEMA",

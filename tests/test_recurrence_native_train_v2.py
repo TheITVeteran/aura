@@ -1,4 +1,5 @@
 """Trainer-v2 determinism, composition, and exact-resume contracts."""
+
 from __future__ import annotations
 
 from argparse import Namespace
@@ -99,6 +100,34 @@ def test_window_wrapper_is_scoped_and_only_lora_is_trainable():
     keys = [key for key, _value in tree_flatten(model.trainable_parameters())]
     assert keys
     assert all(key.endswith((".lora_a", ".lora_b")) for key in keys)
+
+
+def test_fresh_adapter_initialization_is_reproducible_from_training_seed():
+    first = _model()
+    second = _model()
+    mx.random.seed(1777)
+    _wrap_window_layers(
+        first,
+        rank=2,
+        targets=("o_proj",),
+        prelude_frac=0.25,
+        coda_frac=0.25,
+    )
+    mx.random.seed(1777)
+    _wrap_window_layers(
+        second,
+        rank=2,
+        targets=("o_proj",),
+        prelude_frac=0.25,
+        coda_frac=0.25,
+    )
+    first_params = dict(tree_flatten(first.trainable_parameters()))
+    second_params = dict(tree_flatten(second.trainable_parameters()))
+    assert set(first_params) == set(second_params)
+    assert all(
+        bool(mx.array_equal(first_params[key], second_params[key]))
+        for key in first_params
+    )
 
 
 def test_scoped_adapter_composes_over_frozen_personality_lora():

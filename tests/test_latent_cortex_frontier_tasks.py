@@ -12,6 +12,8 @@ import pytest
 from core.brain.frontier_evidence_v5 import canonical_json_bytes
 from core.brain.llm.latent_cortex.frontier_tasks import (
     ANSWER_PAYLOAD_SCHEMA,
+    CURRENT_EXCLUDED_TRAINING_FAMILIES,
+    CURRENT_REGISTRY_VERSION,
     DOMAIN_GENERATORS,
     EXCLUDED_TRAINING_FAMILIES,
     FINAL_ANSWER_MARKER,
@@ -28,6 +30,7 @@ from core.brain.llm.latent_cortex.frontier_tasks import (
     generate_task_battery,
     parse_final_answer,
 )
+from core.learning.recurrence_curriculum import RECURRENCE_TRAINING_FAMILIES
 
 _SNAPSHOT_EXPECTED = {
     "novel_algorithms": {
@@ -117,6 +120,44 @@ def test_registry_covers_exact_required_domains_and_is_read_only():
         DOMAIN_GENERATORS["khop"] = lambda _seed, _difficulty: None
 
 
+def test_current_registry_truthfully_declares_full_training_lineage():
+    assert CURRENT_EXCLUDED_TRAINING_FAMILIES == RECURRENCE_TRAINING_FAMILIES
+    legacy = generate_task("calibration", seed=817_231, difficulty=2)
+    current = generate_task(
+        "calibration",
+        seed=817_231,
+        difficulty=2,
+        registry_version=CURRENT_REGISTRY_VERSION,
+    )
+    assert legacy.public.registry_version == REGISTRY_VERSION
+    assert legacy.public.excluded_training_families == EXCLUDED_TRAINING_FAMILIES
+    assert current.public.registry_version == CURRENT_REGISTRY_VERSION
+    assert current.public.excluded_training_families == RECURRENCE_TRAINING_FAMILIES
+    assert current.task_id != legacy.task_id
+    assert current.public.prompt != legacy.public.prompt
+    assert _expected(current) != {}
+
+
+def test_versioned_manifests_reject_mixed_registry_lineage():
+    current = generate_task_battery(
+        [11, 12],
+        domains=("coding",),
+        registry_version=CURRENT_REGISTRY_VERSION,
+    )
+    manifest = build_task_manifest(current)
+    commitment = build_task_commitment(manifest)
+    assert manifest.registry_version == CURRENT_REGISTRY_VERSION
+    assert commitment.registry_version == CURRENT_REGISTRY_VERSION
+    legacy = generate_task("coding", seed=13)
+    with pytest.raises(FrontierTaskError, match="registry_version_mismatch"):
+        build_task_manifest((*current, legacy))
+
+
+def test_unsupported_registry_version_fails_closed():
+    with pytest.raises(FrontierTaskError, match="registry_version_unsupported"):
+        generate_task("coding", seed=1, registry_version="2099.01.01.1")
+
+
 @pytest.mark.parametrize("domain", FRONTIER_DOMAINS)
 @pytest.mark.parametrize("difficulty", [1, 2, 3])
 def test_generators_are_deterministic_bounded_and_seed_sensitive(domain, difficulty):
@@ -150,7 +191,8 @@ def test_every_domain_scorer_accepts_only_the_exact_typed_answer(domain):
 
     wrong = _incorrect_answer(domain, _expected(task))
     rejected = task.score(
-        f"{FINAL_ANSWER_MARKER} " + json.dumps(wrong, sort_keys=True, separators=(",", ":"))
+        f"{FINAL_ANSWER_MARKER} "
+        + json.dumps(wrong, sort_keys=True, separators=(",", ":"))
     )
     assert rejected.parsed is True
     assert rejected.correct is False
@@ -235,7 +277,9 @@ def test_manifest_and_commitment_are_canonical_reproducible_and_complete():
 
     with pytest.raises(FrontierTaskError, match="task_manifest_task_order_invalid"):
         replace(manifest, tasks=tuple(reversed(manifest.tasks)))
-    with pytest.raises(FrontierTaskError, match="task_commitment_domain_counts_invalid"):
+    with pytest.raises(
+        FrontierTaskError, match="task_commitment_domain_counts_invalid"
+    ):
         replace(commitment, domain_counts=tuple(reversed(commitment.domain_counts)))
 
 
@@ -267,7 +311,9 @@ def test_contamination_fingerprints_are_stable_complete_and_answer_free():
     }
     assert all(len(item.sha256) == 64 for item in fingerprints)
     assert task.public.excluded_training_families == EXCLUDED_TRAINING_FAMILIES
-    assert task.public.answer_commitment_sha256 not in {item.sha256 for item in fingerprints}
+    assert task.public.answer_commitment_sha256 not in {
+        item.sha256 for item in fingerprints
+    }
 
 
 @pytest.mark.parametrize("domain", FRONTIER_DOMAINS)
@@ -304,7 +350,9 @@ def test_prompts_are_materially_disjoint_from_legacy_training_templates(domain):
         ('FINAL_ANSWER: {"x":1}\ntrailing', "final_answer_not_terminal_line"),
     ],
 )
-def test_final_answer_parser_rejects_ambiguous_or_adversarial_payloads(response, reason):
+def test_final_answer_parser_rejects_ambiguous_or_adversarial_payloads(
+    response, reason
+):
     task = generate_task("mathematics", seed=2, difficulty=1)
     result = task.score(response)
     assert result.parsed is False

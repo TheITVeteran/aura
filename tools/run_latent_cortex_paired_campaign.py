@@ -41,7 +41,9 @@ from core.brain.llm.latent_cortex.campaign_journal import (  # noqa: E402
     canonical_json_bytes,
 )
 from core.brain.llm.latent_cortex.frontier_tasks import (  # noqa: E402
+    CURRENT_REGISTRY_VERSION,
     FRONTIER_DOMAINS,
+    REGISTRY_VERSION,
     FrontierTask,
     build_task_manifest,
     generate_task_battery,
@@ -81,6 +83,7 @@ LOG_FILE = "runner.log"
 OBJECTIVE_SOURCE = REPO_ROOT / "core/learning/recurrence_native_objective.py"
 V2_MANIFEST_FILE = "recurrence_adapter_manifest.json"
 CONTAMINATION_AUDIT_SCHEMA = "aura.latent_cortex.contamination_audit.v2"
+
 
 class CampaignProducerError(RuntimeError):
     pass
@@ -125,7 +128,11 @@ def _csv_ints(parser: argparse.ArgumentParser, raw: str, role: str) -> tuple[int
         values = tuple(int(item.strip()) for item in raw.split(",") if item.strip())
     except ValueError:
         parser.error(f"{role} must be comma-separated integers")
-    if not values or len(set(values)) != len(values) or any(value < 0 for value in values):
+    if (
+        not values
+        or len(set(values)) != len(values)
+        or any(value < 0 for value in values)
+    ):
         parser.error(f"{role} must contain unique non-negative integers")
     return values
 
@@ -203,7 +210,11 @@ def _fresh_checkpoint_file_fingerprint(model_path: Path) -> dict[str, Any]:
         ):
             raise CampaignProducerError(f"model weight changed while hashing: {path}")
         combined.update(f"{path.name}:{digest.hexdigest()};".encode())
-    return {"fingerprint": combined.hexdigest(), "method": "sha256", "files": len(files)}
+    return {
+        "fingerprint": combined.hexdigest(),
+        "method": "sha256",
+        "files": len(files),
+    }
 
 
 def _atomic_create_or_verify(path: Path, payload: bytes) -> None:
@@ -248,7 +259,11 @@ def _runtime_bundle_identity(
 ) -> dict[str, Any]:
     behavior_files: list[dict[str, Any]] = []
     for path in sorted(model_path.iterdir(), key=lambda item: item.name):
-        if not path.is_file() or path.name == "README.md" or path.suffix == ".safetensors":
+        if (
+            not path.is_file()
+            or path.name == "README.md"
+            or path.suffix == ".safetensors"
+        ):
             continue
         if path.is_symlink():
             raise CampaignProducerError(f"model bundle symlink rejected: {path}")
@@ -372,9 +387,7 @@ def _v2_artifacts(adapter_dir: Path, manifest: dict[str, Any]) -> dict[str, byte
         if relative in artifacts:
             raise CampaignProducerError("v2 artifact path is duplicated")
         artifacts[str(relative)] = _read_stable_bytes(path, max_bytes=size)
-    completion = _contained_adapter_artifact(
-        adapter_dir, "training_completion.json"
-    )
+    completion = _contained_adapter_artifact(adapter_dir, "training_completion.json")
     artifacts["training_completion.json"] = _read_stable_bytes(
         completion, max_bytes=1024 * 1024
     )
@@ -400,7 +413,9 @@ def _resolve_campaign_personality(
     adapter_dir: Path,
     v2_manifest: dict[str, Any] | None,
 ) -> str | None:
-    requested = str(getattr(args, "personality_adapter", "trained") or "trained").strip()
+    requested = str(
+        getattr(args, "personality_adapter", "trained") or "trained"
+    ).strip()
     lowered = requested.lower()
     if lowered == "trained":
         if v2_manifest is None:
@@ -418,7 +433,9 @@ def _resolve_campaign_personality(
         from core.brain.llm.model_registry import resolve_personality_adapter
 
         resolved = resolve_personality_adapter(str(model_path), backend="mlx")
-        return str(Path(resolved).expanduser().resolve(strict=True)) if resolved else None
+        return (
+            str(Path(resolved).expanduser().resolve(strict=True)) if resolved else None
+        )
     resolved = Path(requested).expanduser().resolve(strict=True)
     if not resolved.is_dir():
         raise CampaignProducerError("personality adapter must be a directory")
@@ -472,7 +489,9 @@ def _validate_v2_adapter_dir(
     return manifest, receipt
 
 
-def _identity_material(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any]]:
+def _identity_material(
+    args: argparse.Namespace,
+) -> tuple[dict[str, Any], dict[str, Any]]:
     model_path = Path(args.model).expanduser().resolve(strict=True)
     adapter_dir = Path(args.adapter).expanduser().resolve(strict=True)
     weight_identity = _fresh_checkpoint_file_fingerprint(model_path)
@@ -548,8 +567,12 @@ def _identity_material(args: argparse.Namespace) -> tuple[dict[str, Any], dict[s
         manifest,
         actual_base_checkpoint_fingerprint=model_identity["fingerprint"],
         adapter_bytes=(adapter_dir / manifest.adapter.path).read_bytes(),
-        training_receipt_bytes=(adapter_dir / manifest.training_receipt.path).read_bytes(),
-        tensor_metadata=inspect_mlx_tensor_metadata(adapter_dir / manifest.adapter.path),
+        training_receipt_bytes=(
+            adapter_dir / manifest.training_receipt.path
+        ).read_bytes(),
+        tensor_metadata=inspect_mlx_tensor_metadata(
+            adapter_dir / manifest.adapter.path
+        ),
     )
     adapter_identity = {
         "adapter_dir": str(adapter_dir),
@@ -641,6 +664,7 @@ def _tasks(args: argparse.Namespace) -> tuple[FrontierTask, ...]:
         args.seed_values,
         domains=args.domain_values,
         difficulty=args.difficulty,
+        registry_version=getattr(args, "task_registry_version", REGISTRY_VERSION),
     )
 
 
@@ -653,7 +677,9 @@ def _load_contamination_trust_root(path_value: str) -> tuple[Any, bytes, str]:
     try:
         public_key = serialization.load_pem_public_key(trust_bytes)
     except ValueError as exc:
-        raise CampaignProducerError("contamination audit trust root is invalid") from exc
+        raise CampaignProducerError(
+            "contamination audit trust root is invalid"
+        ) from exc
     if not isinstance(public_key, Ed25519PublicKey):
         raise CampaignProducerError("contamination audit trust root is not Ed25519")
     public_der = public_key.public_bytes(
@@ -677,9 +703,7 @@ def _contamination_audit(
         audit = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise CampaignProducerError("contamination audit artifact is invalid") from exc
-    trust_root_path = str(
-        getattr(args, "contamination_trust_root", "") or ""
-    ).strip()
+    trust_root_path = str(getattr(args, "contamination_trust_root", "") or "").strip()
     if not trust_root_path:
         raise CampaignProducerError("contamination audit trust root is required")
     required = {
@@ -732,16 +756,21 @@ def _contamination_audit(
     except (KeyError, ValueError) as exc:
         raise CampaignProducerError("contamination audit signature is invalid") from exc
     from cryptography.exceptions import InvalidSignature
+
     public_key, public_der, trust_root_sha256 = _load_contamination_trust_root(
         trust_root_path
     )
     if signature.get("key_id") != trust_root_sha256:
-        raise CampaignProducerError("contamination audit signer does not match trust root")
+        raise CampaignProducerError(
+            "contamination audit signer does not match trust root"
+        )
     signed_payload = canonical_json_bytes(body)
     try:
         public_key.verify(signature_bytes, signed_payload)
     except InvalidSignature as exc:
-        raise CampaignProducerError("contamination audit signature verification failed") from exc
+        raise CampaignProducerError(
+            "contamination audit signature verification failed"
+        ) from exc
     return {
         **body,
         "signature": {
@@ -871,6 +900,11 @@ def _execution_config(
     return {
         "profile": args.profile,
         "difficulty": args.difficulty,
+        "task_registry_version": getattr(
+            args,
+            "task_registry_version",
+            REGISTRY_VERSION,
+        ),
         "generation_seeds": list(args.seed_values),
         "domains": list(args.domain_values),
         "n_slots": effective.workspace.n_slots,
@@ -899,7 +933,9 @@ def _execution_config(
     }
 
 
-def _expected_plan(args: argparse.Namespace) -> tuple[CampaignPlan, tuple[FrontierTask, ...]]:
+def _expected_plan(
+    args: argparse.Namespace,
+) -> tuple[CampaignPlan, tuple[FrontierTask, ...]]:
     tasks = _tasks(args)
     model_identity, adapter_identity = _identity_material(args)
     contamination_audit = _contamination_audit(args, tasks)
@@ -994,9 +1030,7 @@ def _load_adapter(model: Any, adapter_dir: Path, manifest: dict[str, Any]) -> in
     targets = tuple(manifest["lora"]["targets"])
     is_v2 = manifest.get("schema") == MANIFEST_SCHEMA_V2
     expected = int(
-        manifest["lora"][
-            "wrapped_projections" if is_v2 else "wrapped_projection_count"
-        ]
+        manifest["lora"]["wrapped_projections" if is_v2 else "wrapped_projection_count"]
     )
     tensor_records = {record["key"]: record for record in manifest["tensors"]}
     objective_name = (
@@ -1010,10 +1044,7 @@ def _load_adapter(model: Any, adapter_dir: Path, manifest: dict[str, Any]) -> in
         else LoRALinear
     )
     projections = sorted(
-        {
-            key.removesuffix(".lora_a").removesuffix(".lora_b")
-            for key in tensor_records
-        }
+        {key.removesuffix(".lora_a").removesuffix(".lora_b") for key in tensor_records}
     )
     if is_v2 and projections != sorted(manifest["lora"]["projection_paths"]):
         raise CampaignProducerError("v2 adapter projection inventory differs")
@@ -1066,8 +1097,7 @@ def _load_adapter(model: Any, adapter_dir: Path, manifest: dict[str, Any]) -> in
         loaded = dict(tree_flatten(model.parameters()))
         mx.eval(*(loaded[key] for key in sorted(expected_keys)))
         if any(
-            not bool(mx.array_equal(loaded[key], weights[key]))
-            for key in expected_keys
+            not bool(mx.array_equal(loaded[key], weights[key])) for key in expected_keys
         ):
             raise CampaignProducerError("adapter weight readback mismatch")
         after_load = _read_stable_bytes(
@@ -1170,6 +1200,7 @@ def _make_rlc_engine(
     execution_spec: Mapping[str, Any] | None,
 ) -> Any:
     from core.brain.llm.latent_cortex.engine import LatentCortexEngine
+
     config = _build_rlc_config(args, execution_spec)
 
     return LatentCortexEngine(
@@ -1242,22 +1273,18 @@ def _execute_worker(
         with _deadline_alarm(args.load_timeout, "model_load"):
             planned_model = metadata["model_identity"]
             planned_runtime = planned_model["runtime_bundle"]
-            personality_path = str(
-                planned_model.get("personality_adapter_path") or ""
-            ) or None
+            personality_path = (
+                str(planned_model.get("personality_adapter_path") or "") or None
+            )
             planned_load_boundary = {
                 "weight_fingerprint": planned_model["fingerprint"],
                 "weight_method": planned_model["method"],
                 "weight_file_count": planned_model["files"],
                 "runtime_bundle_sha256": planned_runtime["bundle_sha256"],
-                "model_behavior_bundle": planned_model[
-                    "model_behavior_bundle"
-                ],
+                "model_behavior_bundle": planned_model["model_behavior_bundle"],
                 "runtime_environment": planned_model["runtime_environment"],
                 "personality_adapter": planned_model["personality_adapter"],
-                "effective_stack_sha256": planned_model[
-                    "effective_stack_sha256"
-                ],
+                "effective_stack_sha256": planned_model["effective_stack_sha256"],
             }
             pre_load_boundary = _model_load_boundary_identity(
                 model_dir, personality_path
@@ -1277,21 +1304,18 @@ def _execute_worker(
                         "method": planned_model["method"],
                         "files": planned_model["files"],
                     },
-                    model_behavior_bundle=planned_model[
-                        "model_behavior_bundle"
-                    ],
+                    model_behavior_bundle=planned_model["model_behavior_bundle"],
                     personality_identity=planned_model["personality_adapter"],
                     runtime_environment=planned_model["runtime_environment"],
                 )
-                if actual_adapter_identity != metadata["adapter_identity"][
-                    "identity_receipt"
-                ]:
+                if (
+                    actual_adapter_identity
+                    != metadata["adapter_identity"]["identity_receipt"]
+                ):
                     raise CampaignProducerError(
                         "adapter bytes differ from frozen plan before load"
                     )
-            load_kwargs = (
-                {"adapter_path": personality_path} if personality_path else {}
-            )
+            load_kwargs = {"adapter_path": personality_path} if personality_path else {}
             model, tokenizer = load(model_path, **load_kwargs)
             wrapped = 0
             if arm.startswith("adapter_"):
@@ -1305,9 +1329,7 @@ def _execute_worker(
                         "method": planned_model["method"],
                         "files": planned_model["files"],
                     },
-                    model_behavior_bundle=planned_model[
-                        "model_behavior_bundle"
-                    ],
+                    model_behavior_bundle=planned_model["model_behavior_bundle"],
                     personality_identity=planned_model["personality_adapter"],
                     runtime_environment=planned_model["runtime_environment"],
                 )
@@ -1336,9 +1358,7 @@ def _execute_worker(
                     "worker_weight_fingerprint_method": post_load_boundary[
                         "weight_method"
                     ],
-                    "worker_weight_file_count": post_load_boundary[
-                        "weight_file_count"
-                    ],
+                    "worker_weight_file_count": post_load_boundary["weight_file_count"],
                     "worker_runtime_bundle_sha256": post_load_boundary[
                         "runtime_bundle_sha256"
                     ],
@@ -1357,7 +1377,9 @@ def _execute_worker(
                 or worker_identity["worker_model_parameter_count_basis"]
                 != planned_runtime["logical_parameter_count_basis"]
             ):
-                raise CampaignProducerError("loaded model identity differs from frozen plan")
+                raise CampaignProducerError(
+                    "loaded model identity differs from frozen plan"
+                )
         load_elapsed = time.monotonic() - load_started
         if load_elapsed > args.load_timeout:
             raise CampaignProducerError(
@@ -1379,13 +1401,9 @@ def _execute_worker(
                 f"warmup exceeded budget: {warm_elapsed:.3f}s > {args.warmup_timeout:.3f}s"
             )
 
-        raw_execution_spec = metadata["execution_config"].get(
-            "adapter_execution_spec"
-        )
+        raw_execution_spec = metadata["execution_config"].get("adapter_execution_spec")
         execution_spec = (
-            raw_execution_spec
-            if isinstance(raw_execution_spec, Mapping)
-            else None
+            raw_execution_spec if isinstance(raw_execution_spec, Mapping) else None
         )
         rlc_engine = (
             _make_rlc_engine(model, tokenizer, args, execution_spec)
@@ -1417,10 +1435,14 @@ def _execute_worker(
                         if arm.endswith("_rlc"):
                             text, layer_apps, receipt = _run_rlc(rlc_engine, task, args)
                         elif arm.endswith("_equal_compute"):
-                            source_arm = BASE_RLC if arm == BASE_EQUAL_COMPUTE else ADAPTER_RLC
+                            source_arm = (
+                                BASE_RLC if arm == BASE_EQUAL_COMPUTE else ADAPTER_RLC
+                            )
                             target = costs.get((task.task_id, source_arm))
                             if target is None:
-                                raise CampaignProducerError("equal-compute prerequisite missing")
+                                raise CampaignProducerError(
+                                    "equal-compute prerequisite missing"
+                                )
                             text, layer_apps, samples = _equal_compute(
                                 model,
                                 tokenizer,
@@ -1454,9 +1476,9 @@ def _execute_worker(
                         "model_load_s": round(load_elapsed, 6),
                         "warmup_s": round(warm_elapsed, 6),
                         "adapter_wrapped_projections": wrapped,
-                        "adapter_identity_sha256": metadata["adapter_identity"]["identity_receipt"][
-                            "composite_identity_sha256"
-                        ]
+                        "adapter_identity_sha256": metadata["adapter_identity"][
+                            "identity_receipt"
+                        ]["composite_identity_sha256"]
                         if arm.startswith("adapter_")
                         else None,
                         "runtime_adapter_identity": actual_adapter_identity,
@@ -1477,7 +1499,9 @@ def _execute_worker(
                         cell_id,
                         attempt_id,
                         {
-                            "result_sha256": _sha256_bytes(canonical_json_bytes(result)),
+                            "result_sha256": _sha256_bytes(
+                                canonical_json_bytes(result)
+                            ),
                             "verification_sha256": _sha256_bytes(
                                 canonical_json_bytes(verification)
                             ),
@@ -1524,6 +1548,8 @@ def _worker_args(args: argparse.Namespace, arm: str) -> list[str]:
         args.domains,
         "--difficulty",
         str(args.difficulty),
+        "--task-registry-version",
+        str(getattr(args, "task_registry_version", REGISTRY_VERSION)),
         "--profile",
         args.profile,
         "--n-slots",
@@ -1557,16 +1583,18 @@ def _worker_args(args: argparse.Namespace, arm: str) -> list[str]:
         command.append("--confirmatory")
     if args.contamination_audit:
         command.extend(["--contamination-audit", args.contamination_audit])
-        command.extend(
-            ["--contamination-trust-root", args.contamination_trust_root]
-        )
+        command.extend(["--contamination-trust-root", args.contamination_trust_root])
     return command
 
 
 def _arm_complete(campaign_dir: Path, plan: CampaignPlan, arm: str) -> bool:
     with CampaignJournal(campaign_dir / JOURNAL_FILE, plan) as journal:
         committed = set(journal.resume().committed_cell_ids)
-    expected = {cell_id for cell_id in plan.cell_ids if plan.cell_definition(cell_id)["arm"] == arm}
+    expected = {
+        cell_id
+        for cell_id in plan.cell_ids
+        if plan.cell_definition(cell_id)["arm"] == arm
+    }
     return expected.issubset(committed)
 
 
@@ -1633,7 +1661,10 @@ def _orchestrate(
         while not _arm_complete(campaign_dir, plan, arm):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                print("campaign deadline exceeded; resumable evidence preserved", flush=True)
+                print(
+                    "campaign deadline exceeded; resumable evidence preserved",
+                    flush=True,
+                )
                 return 3
             attempts += 1
             if attempts > args.max_infra_attempts:
@@ -1664,7 +1695,9 @@ def _orchestrate(
         **final_material,
         "grade_sha256": _sha256_bytes(canonical_json_bytes(final_material)),
     }
-    _atomic_create_or_verify(campaign_dir / GRADE_FILE, canonical_json_bytes(final) + b"\n")
+    _atomic_create_or_verify(
+        campaign_dir / GRADE_FILE, canonical_json_bytes(final) + b"\n"
+    )
     print(
         json.dumps(
             {
@@ -1701,6 +1734,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--seeds", default="7001,7002,7003,7004")
     parser.add_argument("--domains", default=",".join(FRONTIER_DOMAINS))
     parser.add_argument("--difficulty", type=int, choices=(1, 2, 3), default=2)
+    parser.add_argument(
+        "--task-registry-version",
+        choices=(REGISTRY_VERSION, CURRENT_REGISTRY_VERSION),
+        default=REGISTRY_VERSION,
+        help="versioned task lineage; legacy remains the replay-safe default",
+    )
     parser.add_argument("--profile", choices=("primary", "full"), default="primary")
     parser.add_argument("--confirmatory", action="store_true")
     parser.add_argument("--contamination-audit", default="")
@@ -1722,7 +1761,9 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--equal-compute-max-samples", type=_positive_int, default=8)
     parser.add_argument("--max-infra-attempts", type=_positive_int, default=3)
     parser.add_argument("--plan-only", action="store_true")
-    parser.add_argument("--worker-arm", choices=FULL_ARMS, default="", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--worker-arm", choices=FULL_ARMS, default="", help=argparse.SUPPRESS
+    )
     return parser
 
 
@@ -1745,9 +1786,7 @@ def main() -> int:
             Path(args.contamination_trust_root).expanduser().resolve(strict=True)
         )
     elif args.contamination_trust_root:
-        parser.error(
-            "--contamination-trust-root requires --contamination-audit"
-        )
+        parser.error("--contamination-trust-root requires --contamination-audit")
     campaign_dir.mkdir(parents=True, exist_ok=True)
     expected, tasks = _expected_plan(args)
     _persist_plan(campaign_dir, expected)

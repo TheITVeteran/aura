@@ -19296,3 +19296,72 @@ credit.
   independent raw-output rescoring and external trust roots accept it, broad
   domains show no regression, and the installed desktop producer reproduces
   the effect. Final long soaks remain deferred.
+
+## Checkpoint 2026-07-18-138: Broad Curriculum Admission Certificate
+
+CP138 closes the bounded data, provenance, and evaluation-lineage prerequisites
+for resident recurrence-native v2 training. It does not award reasoning-gain,
+resident-32B, frontier, installed-app, release, or soak credit.
+
+- Recurrence training now uses twelve deterministic, independently solvable
+  families rather than only khop/boolean/modular: register and list state
+  tracing, total-order constraints, structural interventions, exact rational
+  updating, resource optimization, symbolic rewrites, premise auditing, and
+  code tracing. All twelve emit one terminal `FINAL_ANSWER` JSON object. This
+  removes the mixed scalar/structured target grammar that contributed to the
+  CP130 scalar-collapse failure.
+- Sample identity is a hash of root seed, family, depth, cell, and collision
+  attempt; it no longer depends on requested family order. Per-family/depth
+  deterministic rejection prevents duplicate prompts through the default
+  64-cell corpus, cross-cell collisions fail closed, depth is bounded, and the
+  generator registry is immutable. Independent tests recompute every answer
+  from its published prompt and exercise order/subset invariance, duplicate
+  resistance, coordinate rejection, and registry immutability.
+- The trainer captures the curriculum through a no-follow, bounded regular-file
+  descriptor before model loading, executes exactly those captured bytes, and
+  uses those same bytes for dataset identity and the source snapshot. A source
+  edit during a long model load can no longer make in-memory task code differ
+  from the source claimed by the adapter certificate. The parser/default wiring
+  and byte-execution boundary now have non-MLX tests, so CI does not silently
+  skip them when MLX is unavailable.
+- Frontier task registry `2026.07.18.1` remains the legacy default for exact
+  historical replay. Explicit registry `2026.07.18.2` changes task identity and
+  truthfully records all twelve training-family lineages. Mixed-version task
+  manifests fail closed, and the paired campaign propagates the selected
+  registry into every isolated worker and its execution contract. These
+  internally generated tasks are fresh, answer-blinded, and generator-disjoint,
+  but several test related skills seen during training; they are not evidence
+  of unseen-domain generalization or external frontier performance. Those
+  stronger claims still require the independent external trust-root campaign.
+- An adversarial independent review plus exact rerun found nine corpus/proof
+  defects: stale
+  exclusion metadata, related-domain overclaim risk, generator TOCTOU, order-
+  dependent samples, duplicate prompts, mixed completion grammar, a mutable
+  registry, MLX-skipped source-binding coverage, and unseeded fresh LoRA
+  initialization. The implementation above closes each engineering defect and
+  narrows the scientific claim rather than hiding the related-domain
+  limitation. Two clean 12-step runs now reproduce every loss exactly and emit
+  the identical final adapter hash despite independent checkpoint generations.
+- The corrected real Qwen2.5-1.5B admission run consumed one sample from every
+  family, completed `12/12` gradient steps, and published immutable generations
+  at steps 6 and 12. Its adapter SHA-256 is
+  `cb3974fc99f218e263ec83c8d2996a02df406d210a3dc3f4d8f51110176c759d`.
+  The strict v2 plan-only loader accepted the complete bundle and froze a
+  `2026.07.18.2` task plan at
+  `b9c83c0e3ba3a43d14a11105c134564f54a18bca6943efd47de27a08be654a3a`.
+  This is training admission evidence only; no capability result was measured.
+- The combined curriculum, source binding, trainer, adapter identity, frontier
+  registry, paired campaign, and runner matrix passes `161/161`. Focused Ruff
+  `F/E9/I`, Python compilation, strict mypy for the new
+  curriculum/trainer and versioned registry modules, diff integrity, and exact
+  artifact/source hashes pass. The runner retains pre-existing repository-wide
+  strict-typing debt and receives no implied typing-closeout credit.
+- Evidence-weighted completion remains 27%. This is checkpoint 138 of the
+  faithful 292-399 forecast, leaving approximately 154-261 checkpoints.
+- Next: freeze and publish the exact resident fused-32B training command,
+  dataset size, wall-clock budget, checkpoint cadence, pilot decision rule, and
+  prospective powered campaign before launch. Run it through the one-shot
+  detached supervisor with exact resume. While training owns the model lane,
+  build the signed contamination-corpus producer and independent raw-output/
+  compute verifier without loading another model. Final long soaks remain
+  deferred.
