@@ -9,12 +9,12 @@ Trusts nothing but raw disk artifacts and deterministic regeneration:
    must equal the plan's — a doctored plan cannot smuggle different tasks.
 2. campaign.jsonl is replayed read-only through the hash-chained journal;
    every committed record is chain-verified on read.
-3. grade_campaign() is re-run HERE, on the replayed records, against the
-   independently regenerated blinded answers — raw outputs are re-parsed
-   and re-scored; compute accounting and equal-compute controls are
-   re-derived; absent cells are never inferred.
-4. The recomputed grade must byte-agree with the published grade.json
-   (verdict, claim tier, grade_sha256, campaign manifest binding).
+3. The production grade is recomputed, then a separate kernel that imports
+   none of the production parser, scorer, or statistics code independently
+   reconstructs answers, effects, compute controls, and the 2x2 interaction.
+4. Both implementations must agree, and the complete recomputed production
+   grade must byte-agree with grade.json, including all comparison evidence,
+   statistics, eligibility fields, hashes, and campaign-manifest binding.
 
 Exit 0: every check agrees. Exit 1: any disagreement, with reasons.
 
@@ -48,6 +48,9 @@ from core.brain.llm.latent_cortex.frontier_tasks import (  # noqa: E402
 )
 from core.brain.llm.latent_cortex.paired_campaign import (  # noqa: E402
     grade_campaign,
+)
+from tools.independent_paired_campaign_scoring import (  # noqa: E402
+    independent_grade_campaign,
 )
 
 PLAN_FILE = "plan.json"
@@ -157,7 +160,9 @@ def verify_campaign_evidence(
         records = journal.committed_records()
     detail["committed_records"] = len(records)
 
-    # 3. Independent regrade from raw evidence.
+    # 3. Regrade through both the production implementation and a separately
+    # implemented parser/scorer/statistics kernel.  Neither result can certify
+    # the campaign alone; disagreement is a proof failure.
     trusted_root = (
         _trust_root_sha256(contamination_trust_root)
         if contamination_trust_root
@@ -169,21 +174,64 @@ def verify_campaign_evidence(
         issuer_tasks=tasks,
         trusted_contamination_root_sha256=trusted_root,
     )
+    independent_grade = independent_grade_campaign(
+        records,
+        plan=plan,
+        issuer_tasks=tasks,
+    )
     detail["recomputed_verdict"] = grade.get("verdict")
     detail["recomputed_claim_tier"] = grade.get("claim_tier")
+    detail["independent_verdict"] = independent_grade.get("verdict")
+    detail["independent_claim_tier"] = independent_grade.get("claim_tier")
+    detail["independent_implementation_sha256"] = independent_grade.get(
+        "implementation_sha256"
+    )
+    for key in (
+        "verdict",
+        "claim_tier",
+        "observed_task_count",
+        "observed_cell_count",
+        "domain_counts",
+    ):
+        if grade.get(key) != independent_grade.get(key):
+            failures.append(
+                f"production grade {key}={grade.get(key)!r} disagrees with "
+                f"independent kernel {independent_grade.get(key)!r}"
+            )
+    production_comparisons = grade.get("comparisons")
+    independent_comparisons = independent_grade.get("comparisons")
+    if isinstance(production_comparisons, dict) and isinstance(
+        independent_comparisons, dict
+    ):
+        if set(production_comparisons) != set(independent_comparisons):
+            failures.append("production and independent comparison sets disagree")
+        else:
+            for name in sorted(production_comparisons):
+                production_claim = production_comparisons[name]
+                independent_claim = independent_comparisons[name]
+                production_tier = (
+                    production_claim.get("tier")
+                    if isinstance(production_claim, dict)
+                    else None
+                )
+                independent_tier = (
+                    independent_claim.get("tier")
+                    if isinstance(independent_claim, dict)
+                    else None
+                )
+                if production_tier != independent_tier:
+                    failures.append(
+                        f"comparison {name} tier disagrees: production "
+                        f"{production_tier!r}, independent {independent_tier!r}"
+                    )
+    else:
+        failures.append("production or independent comparisons are invalid")
 
     # 4. Agreement with the published grade, if one exists.
     grade_path = campaign_dir / GRADE_FILE
     if grade_path.exists():
         published = json.loads(grade_path.read_bytes())
         detail["published_verdict"] = published.get("verdict")
-        for key in ("verdict", "claim_tier", "observed_task_count",
-                    "observed_cell_count"):
-            if published.get(key) != grade.get(key):
-                failures.append(
-                    f"published grade {key}={published.get(key)!r} disagrees "
-                    f"with independent recomputation {grade.get(key)!r}"
-                )
         manifest_path = campaign_dir / MANIFEST_FILE
         if manifest_path.exists():
             manifest = json.loads(manifest_path.read_bytes())
@@ -191,6 +239,22 @@ def verify_campaign_evidence(
                 "manifest_sha256"
             ):
                 failures.append("published grade is not bound to the manifest")
+            expected_material = dict(grade)
+            expected_material.pop("grade_sha256", None)
+            expected_material["campaign_manifest_sha256"] = manifest.get(
+                "manifest_sha256"
+            )
+            expected_grade = {
+                **expected_material,
+                "grade_sha256": _sha256_bytes(
+                    canonical_json_bytes(expected_material)
+                ),
+            }
+            if published != expected_grade:
+                failures.append(
+                    "published grade does not fully agree with raw-evidence "
+                    "recomputation"
+                )
         else:
             failures.append("campaign manifest missing beside published grade")
         recomputed_material = dict(published)

@@ -16,12 +16,15 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **Checkpoint 129 is the current
-  source candidate in the `main` worktree; checkpoints through CP128 are
-  pushed, and matched source-bound base-plus-adapter resident-32B full-stack
-  RLC cells now complete without the prior LoRA/fast-weight crash. Both answers
-  were wrong, so same-checkpoint reasoning gain, external-frontier standing,
-  and exact rebuilt-app proof all remain open after CP129**. Checkpoint 80
+- Current bounded implementation milestone: **Checkpoint 145 is the current
+  reviewed source candidate in the `main` worktree; checkpoints through CP144
+  are pushed. The exact resident-32B recurrence-native resume is detached and
+  has advanced from its bound step-one checkpoint through the first logged
+  step-five window under the 40/2-GiB MLX envelope. No reasoning-gain or
+  frontier claim exists yet. CP145 adds a separately implemented campaign
+  scorer/statistics kernel and complete-grade comparison; authenticated role
+  roots, completed training, the paired pilot, external-frontier comparison,
+  and exact rebuilt-app proof remain open**. Checkpoint 80
   made cached
   readiness truthful and fast,
   removed synchronous Phi/Eternal maintenance from the foreground cycle, and
@@ -19555,3 +19558,43 @@ faithful 292-399 forecast, leaving approximately 148-255 checkpoints. Next:
 publish CP144, restore the bound step-one checkpoint to the operative adapter
 path, and launch the 575-step detached resume under the 40/2-GiB envelope.
 Final soaks remain deferred.
+
+## Checkpoint 2026-07-18-145: Independent Campaign Scoring Kernel
+
+CP145 closes the CP142 common-mode grader defect without awarding capability
+credit. The resident-32B training process remained the sole local model owner
+while this model-free proof surface was implemented and tested.
+
+- `tools/independent_paired_campaign_scoring.py` independently parses terminal
+  answers, reveals the frozen issuer answer key, uses type-strict equality, rebuilds
+  task/arm rows from committed raw evidence, verifies result and verification
+  commitments, recomputes paired effects, exact McNemar/binomial tails, Holm
+  correction, compute matching, and an exact 2x2 sign-flip test. An AST contract
+  rejects imports from the production campaign grader, experiment statistics,
+  or task scorer.
+- `tools/verify_paired_campaign_evidence.py` now requires the production and
+  independent implementations to agree on verdict, claim tier, coverage,
+  domains, comparison set, and every comparison tier. A published `grade.json`
+  must equal the complete raw-evidence recomputation, including comparisons,
+  intervals, p-values, compute controls, reasons, eligibility, plan and
+  manifest bindings, rather than merely four headline fields plus a self-hash.
+- Adversarial regressions prove that a rehashed forged comparison and a
+  deliberately divergent production grader both fail. The focused campaign,
+  contamination, and evidence-verifier surface passes `34/34`; focused Ruff,
+  Python compilation, and import-boundary checks pass.
+- This does not establish an independent organization, an external task
+  issuer, or external-frontier performance. The current contamination key's
+  path outside the repository proves storage separation only. A pre-pinned
+  role trust policy, non-reused task-issuer/auditor/verifier keys, signed role
+  envelopes, revocation/expiry, and independently held credentials remain
+  mandatory before confirmatory claim credit.
+- The detached resident run reached `step=5` with finite mean loss `3.15588`
+  under the CP144 envelope. That proves training progress, not improved
+  reasoning. A warm-window ETA and any required multi-segment continuation are
+  withheld until the step-ten timing point.
+
+Evidence-weighted completion remains 27%; this is checkpoint 145 of the
+faithful 292-399 forecast, leaving approximately 147-254 checkpoints. The next
+RLC gates are continued exact training, authenticated trust roles, frozen fresh
+pilot seeds, the four-arm directional pilot, and only then any eligible
+confirmatory or external-frontier campaign. Final soaks remain deferred.

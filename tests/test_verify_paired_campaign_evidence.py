@@ -9,6 +9,7 @@ forged grades.
 """
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 from pathlib import Path
@@ -30,6 +31,10 @@ from core.brain.llm.latent_cortex.paired_campaign import (
     BASE_VANILLA,
     build_campaign_plan,
     grade_campaign,
+)
+from tools import verify_paired_campaign_evidence as verifier_module
+from tools.independent_paired_campaign_scoring import (
+    independent_grade_campaign,
 )
 from tools.verify_paired_campaign_evidence import (
     GRADE_FILE,
@@ -307,8 +312,68 @@ def test_forged_grade_verdict_is_caught(tmp_path: Path):
     )
     verdict = verify_campaign_evidence(campaign_dir)
     assert not verdict["passed"]
-    assert any("disagrees" in f for f in verdict["failures"])
+    assert any("fully agree" in f for f in verdict["failures"])
     assert any("grade_sha256" in f for f in verdict["failures"])
+
+
+def test_rehashed_forged_comparison_detail_is_caught(tmp_path: Path):
+    """A self-consistent grade hash cannot hide altered evidence fields."""
+
+    campaign_dir, plan, tasks, records, manifest = _build_campaign_dir(tmp_path)
+    published = _publish_grade(campaign_dir, plan, tasks, records, manifest)
+    forged = json.loads(json.dumps(published))
+    forged["comparisons"]["adapter_rlc_gain"]["evidence"]["pooled"][
+        "treatment_wins"
+    ] += 1
+    forged.pop("grade_sha256")
+    forged["grade_sha256"] = hashlib.sha256(
+        canonical_json_bytes(forged)
+    ).hexdigest()
+    (campaign_dir / GRADE_FILE).write_bytes(
+        canonical_json_bytes(forged) + b"\n"
+    )
+
+    verdict = verify_campaign_evidence(campaign_dir)
+
+    assert not verdict["passed"]
+    assert any("fully agree" in failure for failure in verdict["failures"])
+
+
+def test_production_grader_divergence_is_caught_by_independent_kernel(
+    tmp_path: Path,
+    monkeypatch,
+):
+    campaign_dir, plan, tasks, records, manifest = _build_campaign_dir(
+        tmp_path, gain=False
+    )
+    _publish_grade(campaign_dir, plan, tasks, records, manifest)
+    broken = grade_campaign(records, plan=plan, issuer_tasks=tasks)
+    broken["verdict"] = "gain_proven"
+    broken["claim_tier"] = "PROVEN"
+    monkeypatch.setattr(verifier_module, "grade_campaign", lambda *a, **k: broken)
+
+    verdict = verify_campaign_evidence(campaign_dir)
+
+    assert not verdict["passed"]
+    assert any(
+        "independent kernel" in failure for failure in verdict["failures"]
+    )
+
+
+def test_independent_kernel_has_no_production_grading_imports():
+    source_path = Path(independent_grade_campaign.__code__.co_filename)
+    tree = ast.parse(source_path.read_text(encoding="utf-8"))
+    forbidden = {
+        "core.brain.llm.latent_cortex.paired_campaign",
+        "core.brain.llm.latent_cortex.experiments",
+        "core.brain.llm.latent_cortex.frontier_tasks",
+    }
+    imported = {
+        node.module
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module
+    }
+    assert not (imported & forbidden)
 
 
 def test_tampered_journal_fails_closed(tmp_path: Path):
