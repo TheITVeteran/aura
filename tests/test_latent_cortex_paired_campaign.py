@@ -131,7 +131,7 @@ def _grade_plan(*, claim_eligible: bool = False):
             "decode_max_tokens": 256,
             "worker_task_material": "public_manifest_only",
             "answer_reveal_protocol": "sealed_outputs_then_issuer_reveal_v1",
-            "worker_origin_protocol": "preauthorized_ephemeral_chain_v2",
+            "worker_origin_protocol": "detached_supervisor_staged_arm_import_v3",
             "worker_origin_attempt_slots": 3,
             "generation_seed_count": 20,
             "generation_seed_min_entropy_bits": 60,
@@ -601,7 +601,7 @@ def test_claim_eligible_plan_rejects_exact_but_underpowered_receipt():
     execution_config = {
         "worker_task_material": "public_manifest_only",
         "answer_reveal_protocol": "sealed_outputs_then_issuer_reveal_v1",
-        "worker_origin_protocol": "preauthorized_ephemeral_chain_v2",
+        "worker_origin_protocol": "detached_supervisor_staged_arm_import_v3",
         "worker_origin_attempt_slots": 3,
         "generation_seed_count": 20,
         "generation_seed_min_entropy_bits": 60,

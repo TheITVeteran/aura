@@ -120,6 +120,11 @@ CANONICAL_PRIMITIVE_OWNERS: dict[str, frozenset[str]] = {
         {
             "core/runtime/atomic_writer.py",
             "core/brain/llm/latent_cortex/campaign_journal.py",
+            # Detached campaign evidence is an immutable, no-follow verifier
+            # and staged import is the sole transactional owner of its bounded
+            # private arm artifacts. Neither accepts arbitrary user paths.
+            "core/brain/llm/latent_cortex/detached_campaign_evidence.py",
+            "core/brain/llm/latent_cortex/worker_attempt_import.py",
             "core/runtime/file_read_gateway.py",
             "core/runtime/file_write_gateway.py",
             "core/runtime/shutdown_artifact_store.py",

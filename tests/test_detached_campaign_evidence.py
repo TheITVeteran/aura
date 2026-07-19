@@ -574,8 +574,54 @@ def test_success_replays_without_mutating_evidence(tmp_path: Path) -> None:
     assert verified.request["request_id"] == result.request_id
     assert verified.terminal_event["response"]["receipt_sha256"] == result.receipt_sha256
     assert verified.policy["policy_sha256"] == result.policy_sha256
+    assert verified.classification_head_sha256 == verified.terminal_event["event_sha256"]
+    assert len(verified.terminal_summaries) == 1
+    assert verified.terminal_summaries[0].claim_eligible is True
+    assert verified.terminal_summaries[0].request_id == result.request_id
     assert len(verified.quarantine_summaries) == 1
     assert verified.quarantine_summaries[0].session_id == "2" * 32
+
+
+def test_failed_terminal_can_be_verified_only_as_excluded_evidence(
+    tmp_path: Path,
+) -> None:
+    run_dir, _plan_value, bodies, _result = _fixture(tmp_path)
+    terminal = next(body for body in bodies if body["event"] == "BROKER_TERMINAL")
+    control = next(body for body in bodies if body["event"] == "CONTROL_READY")
+    response = terminal["response"]
+    response.update(
+        {
+            "returncode": 17,
+            "status": "failed",
+            "error": "worker exited 17",
+        }
+    )
+    response["worker_origin_lifecycle"].update(
+        {
+            "event_type": "abandoned",
+            "result_count": 0,
+        }
+    )
+    _resign_response(response, control["broker_token"])
+    _write_events(run_dir, bodies)
+    result = _broker_result(response)
+
+    _assert_error(
+        "detached_broker_result_not_claim_eligible",
+        lambda: verify_detached_broker_evidence(
+            run_dir=run_dir,
+            broker_result=result,
+        ),
+    )
+    verified = verify_detached_broker_evidence(
+        run_dir=run_dir,
+        broker_result=result,
+        require_claim_eligible=False,
+    )
+
+    assert len(verified.terminal_summaries) == 1
+    assert verified.terminal_summaries[0].claim_eligible is False
+    assert verified.terminal_summaries[0].status == "failed"
 
 
 def test_journal_hash_tamper_is_rejected(tmp_path: Path) -> None:

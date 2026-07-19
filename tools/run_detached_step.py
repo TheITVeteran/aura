@@ -2628,7 +2628,16 @@ def _supervise(run_dir: Path, plan: dict[str, Any], attempt: int) -> None:
         )
         with _open_secure_log(log_path) as log:
             target_environment = dict(plan["execution_environment"])
-            target_environment["AURA_DETACHED_RUN_TOKEN"] = containment_token
+            target_environment.update(
+                {
+                    "AURA_DETACHED_RUN_TOKEN": containment_token,
+                    "AURA_DETACHED_RUN_DIR": str(run_dir),
+                    "AURA_DETACHED_PLAN_PATH": str(run_dir / PLAN_FILE),
+                    "AURA_DETACHED_ATTEMPTS_PATH": str(run_dir / ATTEMPTS_FILE),
+                    "AURA_DETACHED_PLAN_SHA256": str(plan["plan_sha256"]),
+                    "AURA_DETACHED_SUPERVISOR_ATTEMPT": str(attempt),
+                }
+            )
             if broker_token:
                 target_environment["AURA_DETACHED_BROKER_SOCKET"] = str(control_socket_path)
                 target_environment["AURA_DETACHED_BROKER_TOKEN"] = broker_token

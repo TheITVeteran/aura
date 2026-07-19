@@ -59,6 +59,7 @@ ADAPTER_EQUAL_COMPUTE = "adapter_equal_compute"
 
 PRIMARY_ARMS = (BASE_VANILLA, BASE_RLC, ADAPTER_VANILLA, ADAPTER_RLC)
 FULL_ARMS = (*PRIMARY_ARMS, BASE_EQUAL_COMPUTE, ADAPTER_EQUAL_COMPUTE)
+WORKER_ORIGIN_PROTOCOL = "detached_supervisor_staged_arm_import_v3"
 
 _MIN_DOMAIN_TRIALS = 20
 
@@ -339,7 +340,7 @@ def build_campaign_plan(
         or execution_config.get("answer_reveal_protocol")
         != "sealed_outputs_then_issuer_reveal_v1"
         or execution_config.get("worker_origin_protocol")
-        != "preauthorized_ephemeral_chain_v2"
+        != WORKER_ORIGIN_PROTOCOL
         or type(execution_config.get("worker_origin_attempt_slots")) is not int
         or execution_config.get("worker_origin_attempt_slots", 0) <= 0
         or execution_config.get("generation_seed_disclosure")
@@ -670,7 +671,7 @@ def grade_campaign(
         _fail("campaign_claim_eligibility_invalid")
     if claim_eligible and (
         execution_config.get("worker_origin_protocol")
-        != "preauthorized_ephemeral_chain_v2"
+        != WORKER_ORIGIN_PROTOCOL
         or type(execution_config.get("worker_origin_attempt_slots")) is not int
         or execution_config.get("worker_origin_attempt_slots", 0) <= 0
     ):

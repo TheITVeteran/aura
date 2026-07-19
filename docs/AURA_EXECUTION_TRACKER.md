@@ -16,12 +16,12 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **Checkpoint 164 is the current
-  reviewed source candidate in the `main` worktree; checkpoints through CP163
+- Current bounded implementation milestone: **Checkpoint 168 is the current
+  reviewed source candidate in the `main` worktree; checkpoints through CP167
   are pushed. The corrected resident-32B path completed clean one-, two-, and
   five-step calibrations with finite durable checkpoints, exact source identity,
   no memory ratchet, and a 48-GiB MLX wired-residency limit. The full detached
-  576-step run is active from exact pushed CP147 source at step 450/576 with
+  576-step run is active from exact pushed CP147 source at step 485/576 with
   finite losses and durable five-step checkpoints; it remains governed by the
   24-hour training deadline and 26-hour containment timeout. No
   reasoning-gain or frontier claim exists yet. Completed training,
@@ -246,7 +246,7 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   release, and causal-proof obligations remain open unless their rows
   explicitly close.
 - Overall completion percentage: **27% evidence-weighted planning estimate at
-  Checkpoint 162**. The exact
+  Checkpoint 168**. The exact
   Checkpoint 80 app earns bounded live credit for readiness, health, base boot,
   and one-attempt chat latency, but not output quality, sustained load, GUI
   frame SLO, portability, semantic review, release, or soak. The newly
@@ -20580,5 +20580,101 @@ but must be claim-ineligible.
 
 Evidence-weighted completion remains 27%; this is checkpoint 166 of the faithful
 292-399 forecast, leaving approximately 126-233 checkpoints. No reasoning-gain,
+frontier, external-custody campaign, live-app, release, or soak credit is
+awarded. Final soaks remain deferred.
+
+## Checkpoint 2026-07-19-167: Detached Campaign Evidence Replay
+
+CP167 adds an independent, read-only proof kernel for the outer detached
+supervisor boundary instead of trusting campaign-produced custody summaries.
+
+- The verifier reopens owned, single-link, private, canonical detached plan and
+  attempt-journal artifacts; reconstructs their complete hash chains; and
+  validates frozen launchers, source manifests, sandbox identity, environment,
+  exact broker policies, invocation bounds, and worker-origin contracts.
+- Every broker start must have exactly one authenticated terminal or durable
+  hard-death quarantine classification. Orphans, duplicates, mixed terminal and
+  quarantine states, unfinished sessions, late events after outer termination,
+  forged response HMACs, and altered quarantine claims fail closed.
+- A supplied broker result must match the exact journaled request, process and
+  process-group identities, timing, status, containment verdict, lifecycle,
+  receipt, and HMAC. The verifier does not mutate or normalize evidence while
+  deciding whether it is admissible.
+- Adversarial tests cover hash, policy, response, lifecycle, quarantine,
+  storage, duplicate-key, non-finite-number, and broker-result substitution.
+
+Validation is green: 14 initial adversarial replay tests and 25 adjacent
+broker/import tests passed before publication as commit `804d84ba`. CP168 adds
+the stable broker-classification-prefix representation and a fifteenth test for
+authenticated failed-terminal evidence without promoting it to claim-eligible.
+
+This checkpoint proves detached evidence replay, not campaign publication. The
+campaign runner, aggregate worker-execution manifest, higher-level envelopes,
+and independent final verifier still had to adopt the replay result.
+
+Evidence-weighted completion remains 27%; this is checkpoint 167 of the faithful
+292-399 forecast, leaving approximately 125-232 checkpoints. No reasoning-gain,
+frontier, external-custody campaign, live-app, release, or soak credit is
+awarded. Final soaks remain deferred.
+
+## Checkpoint 2026-07-19-168: Detached Worker Campaign Migration
+
+CP168 migrates the production paired campaign off producer-held worker signing
+keys and onto supervisor-owned, externally authorized, staged arm execution.
+
+- Claim workers receive only an inherited result-only origin channel, exact
+  attempt slot, and deterministic private stage path. Producer private-key
+  generation, key argv, preauthorization manifests, producer launch/exit
+  receipts, key-erasure state machines, and all callable legacy producer-key
+  code are removed from the active runner.
+- Each exact arm/attempt command has a single-use detached broker policy binding
+  its external trust policy/root, allowed ordered cells, model and adapter
+  identity, stage directory, timeout, and supervisor-owned authority contract.
+  Missing external authorization is retried within the original deadline
+  without consuming the broker invocation or attempt slot.
+- A worker writes and transport-commits one isolated complete arm stage. The
+  coordinator accepts only an authenticated, contained, successful terminal,
+  independently replays the outer detached evidence, verifies the terminal
+  stage, and transactionally imports only canonical `ARM_RESULT` events. Answer
+  reveal, statistical verification, and canonical commit remain later phases.
+- The worker-execution manifest binds every imported and excluded terminal,
+  every quarantine, broker request/receipt/HMAC and lifecycle summary, the
+  detached plan, stable broker-classification prefix, stage and origin-chain
+  heads, import intents/receipts, canonical origin set, and separate import,
+  exclusion, and complete-classification hashes. Duplicate arm imports,
+  omitted activity, mixed detached snapshots, and excluded origins in canonical
+  evidence fail closed.
+- Sealed-output, published-grade, and final-run payloads are versioned to the v4
+  detached-worker contract and bind the execution manifest, detached plan,
+  stable classification evidence, imports, and exclusions. Detached targets
+  receive exact immutable run/plan/journal identity paths from the supervisor.
+- Production plan construction and the independent semantic scorer now require
+  `detached_supervisor_staged_arm_import_v3`; the old protocol literal cannot
+  produce a current claim.
+
+Validation is green: 135 campaign-journal, stage-import, worker-origin,
+broker-client, campaign-runner, production-grade, and independent-semantic
+tests pass in 60.47 seconds; all 43 detached-supervisor tests pass in 92.23
+seconds; focused Ruff, bytecode compilation, formatting, and diff checks pass.
+The reviewed effect-ownership inventory also matches after registering the two
+bounded immutable evidence stores as canonical owners. The whole-repository
+closeout audit remains red, as required, for the dirty candidate plus two
+pre-existing model-load-ownership and two resource-observation findings; this
+checkpoint does not convert those broader open findings into a pass.
+The detached resident-32B trainer remained healthy and reached finite
+checkpoint 485/576 during validation.
+
+This checkpoint closes production execution and aggregation, not independent
+final certification. CP169+ must independently reconstruct the v4
+worker-execution manifest and every raw stage/import/canonical binding, version
+the verifier verdict and final attestation payload together, make historical v2
+producer-key evidence readable but permanently claim-ineligible, and add full
+success/tamper/quarantine/mixed-version tests. Separately administered
+production credentials, security review, compute reconstruction and ablations,
+accepted resident-32B pilot/powered/frontier evidence, installed-app proof,
+release gates, and final soaks remain open.
+
+Evidence-weighted completion remains 27%; this is checkpoint 168 of the faithful
+292-399 forecast, leaving approximately 124-231 checkpoints. No reasoning-gain,
 frontier, external-custody campaign, live-app, release, or soak credit is
 awarded. Final soaks remain deferred.

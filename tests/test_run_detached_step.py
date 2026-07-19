@@ -1006,6 +1006,37 @@ def test_plan_freezes_absolute_executable_and_secret_free_environment(
     assert "must-not-cross-boundary" not in json.dumps(plan)
 
 
+def test_target_receives_exact_detached_evidence_paths_and_identity(tmp_path: Path) -> None:
+    run_dir = tmp_path / "evidence-environment"
+    observed_path = tmp_path / "observed-environment.json"
+    keys = [
+        "AURA_DETACHED_RUN_DIR",
+        "AURA_DETACHED_PLAN_PATH",
+        "AURA_DETACHED_ATTEMPTS_PATH",
+        "AURA_DETACHED_PLAN_SHA256",
+        "AURA_DETACHED_SUPERVISOR_ATTEMPT",
+    ]
+    script = (
+        "import json,os,pathlib; "
+        f"keys={keys!r}; "
+        f"pathlib.Path({str(observed_path)!r}).write_text("
+        "json.dumps({key:os.environ[key] for key in keys},sort_keys=True))"
+    )
+
+    _launch(run_dir, [sys.executable, "-c", script])
+    _wait_for(run_dir / detached.RECEIPT_FILE)
+    observed = json.loads(observed_path.read_text(encoding="utf-8"))
+    plan = json.loads((run_dir / detached.PLAN_FILE).read_text(encoding="utf-8"))
+
+    assert observed == {
+        "AURA_DETACHED_RUN_DIR": str(run_dir),
+        "AURA_DETACHED_PLAN_PATH": str(run_dir / detached.PLAN_FILE),
+        "AURA_DETACHED_ATTEMPTS_PATH": str(run_dir / detached.ATTEMPTS_FILE),
+        "AURA_DETACHED_PLAN_SHA256": plan["plan_sha256"],
+        "AURA_DETACHED_SUPERVISOR_ATTEMPT": "1",
+    }
+
+
 def test_command_resolution_preserves_virtualenv_launcher(tmp_path: Path) -> None:
     environment = detached._frozen_environment()
     environment["PATH"] = str(tmp_path / "venv" / "bin")

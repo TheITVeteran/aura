@@ -275,7 +275,7 @@ def _claim_plan_and_tasks(power_receipt):
             "decode_max_tokens": 256,
             "worker_task_material": "public_manifest_only",
             "answer_reveal_protocol": "sealed_outputs_then_issuer_reveal_v1",
-            "worker_origin_protocol": "preauthorized_ephemeral_chain_v2",
+            "worker_origin_protocol": "detached_supervisor_staged_arm_import_v3",
             "worker_origin_attempt_slots": 3,
             "generation_seed_count": 1,
             "generation_seed_min_entropy_bits": 60,

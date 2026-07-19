@@ -658,7 +658,7 @@ def _extract_rows(
         audit = metadata.get("contamination_audit")
         if (
             execution_config.get("worker_origin_protocol")
-            != "preauthorized_ephemeral_chain_v2"
+            != "detached_supervisor_staged_arm_import_v3"
             or type(execution_config.get("worker_origin_attempt_slots")) is not int
             or execution_config.get("worker_origin_attempt_slots", 0) <= 0
             or not isinstance(campaign_trust, Mapping)

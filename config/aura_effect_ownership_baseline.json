@@ -6905,6 +6905,54 @@
       "scope": "<module>.CampaignJournal._open_regular_append_file"
     },
     {
+      "callee": "os.open",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/llm/latent_cortex/detached_campaign_evidence.py",
+      "scope": "<module>._read_owned_bytes"
+    },
+    {
+      "callee": "os.link",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/llm/latent_cortex/worker_attempt_import.py",
+      "scope": "<module>._atomic_create_or_verify"
+    },
+    {
+      "callee": "os.open",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 2,
+      "path": "core/brain/llm/latent_cortex/worker_attempt_import.py",
+      "scope": "<module>._atomic_create_or_verify"
+    },
+    {
+      "callee": "path.parent.mkdir",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/llm/latent_cortex/worker_attempt_import.py",
+      "scope": "<module>._atomic_create_or_verify"
+    },
+    {
+      "callee": "temporary.unlink",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/llm/latent_cortex/worker_attempt_import.py",
+      "scope": "<module>._atomic_create_or_verify"
+    },
+    {
+      "callee": "os.open",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/llm/latent_cortex/worker_attempt_import.py",
+      "scope": "<module>._read_private_bytes"
+    },
+    {
       "callee": "lock_dir.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -14034,6 +14082,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "2dec4bc698ed31b53b20ef57543ec4a08f7d28dec6d33a19e3a4fd78ace23a5f",
+  "inventory_sha256": "f637514f5f611fabe09de68250a3304e4e87667956d60f3a2b5d9b78e30cbda5",
   "schema_version": 1
 }

@@ -50,6 +50,11 @@ from core.brain.llm.latent_cortex.campaign_trust import (  # noqa: E402
     validate_campaign_trust_policy,
     verify_role_attestation,
 )
+from core.brain.llm.latent_cortex.detached_campaign_evidence import (  # noqa: E402
+    DetachedCampaignEvidenceError,
+    VerifiedDetachedBrokerEvidence,
+    verify_detached_broker_evidence,
+)
 from core.brain.llm.latent_cortex.exact_paired_grade import (  # noqa: E402
     exact_campaign_power_plan,
 )
@@ -71,6 +76,7 @@ from core.brain.llm.latent_cortex.paired_campaign import (  # noqa: E402
     BASE_RLC,
     FULL_ARMS,
     PRIMARY_ARMS,
+    WORKER_ORIGIN_PROTOCOL,
     build_campaign_plan,
     grade_campaign,
 )
@@ -86,19 +92,19 @@ from core.brain.llm.latent_cortex.runtime_identity import (  # noqa: E402
     build_worker_identity,
     logical_model_parameter_count,
 )
-from core.brain.llm.latent_cortex.worker_origin import (  # noqa: E402
-    WORKER_KEY_CUSTODY_PRODUCER_SOFTWARE,
-    ZERO_SHA256,
-)
-from core.brain.llm.latent_cortex.worker_origin_legacy import (  # noqa: E402
-    build_legacy_worker_authorization_payload,
-    build_legacy_worker_result_origin,
-    verify_legacy_worker_authorization,
-    verify_legacy_worker_result_origin,
+from core.brain.llm.latent_cortex.worker_attempt_import import (  # noqa: E402
+    PAIRED_CAMPAIGN_CELL_TYPE,
+    import_verified_worker_stage,
+    verify_terminal_worker_stage,
 )
 from core.runtime.detached_subprocess_broker import (  # noqa: E402
+    BrokeredProcessResult,
+    DetachedBrokerError,
     broker_available,
     run_brokered_process,
+)
+from core.runtime.detached_worker_origin_channel import (  # noqa: E402
+    DetachedWorkerOriginChannelClient,
 )
 
 PLAN_FILE = "plan.json"
@@ -111,24 +117,22 @@ ANSWER_REVEAL_REQUEST_FILE = "answer_reveal_request.json"
 ANSWER_REVEAL_FILE = "answer_reveal.json"
 FINAL_RUN_REQUEST_FILE = "final_run_request.json"
 FINAL_RUN_ENVELOPE_FILE = "final_run_envelope.json"
-WORKER_ORIGIN_DIR = "worker_origins"
-WORKER_AUTHORIZATION_MANIFEST_FILE = "worker_authorization_manifest.json"
-WORKER_LIFECYCLE_MANIFEST_FILE = "worker_lifecycle_manifest.json"
-WORKER_KEY_ERASURE_MANIFEST_FILE = "worker_key_erasure_manifest.json"
+WORKER_ATTEMPT_DIR = "worker_attempts"
+WORKER_EXECUTION_MANIFEST_FILE = "worker_execution_manifest.json"
 OBJECTIVE_SOURCE = REPO_ROOT / "core/learning/recurrence_native_objective.py"
 V2_MANIFEST_FILE = "recurrence_adapter_manifest.json"
 CONTAMINATION_AUDIT_SCHEMA = "aura.latent_cortex.contamination_audit.v2"
 TASK_ISSUER_PAYLOAD_SCHEMA = "aura.latent_cortex.task_issuer_prelaunch.v1"
 CAMPAIGN_RUNNER_PAYLOAD_SCHEMA = "aura.latent_cortex.runner_prelaunch.v1"
-SEALED_OUTPUT_MANIFEST_SCHEMA = "aura.latent_cortex.sealed_output_manifest.v3"
+SEALED_OUTPUT_MANIFEST_SCHEMA = "aura.latent_cortex.sealed_output_manifest.v4"
 ANSWER_REVEAL_PAYLOAD_SCHEMA = "aura.latent_cortex.answer_reveal_payload.v1"
-FINAL_RUN_PAYLOAD_SCHEMA = "aura.latent_cortex.final_run_payload.v3"
-WORKER_AUTHORIZATION_MANIFEST_SCHEMA = (
-    "aura.latent_cortex.worker_authorization_manifest.v1"
-)
-WORKER_LIFECYCLE_MANIFEST_SCHEMA = (
-    "aura.latent_cortex.worker_lifecycle_manifest.v1"
-)
+FINAL_RUN_PAYLOAD_SCHEMA = "aura.latent_cortex.final_run_payload.v4"
+WORKER_EXECUTION_MANIFEST_SCHEMA = "aura.latent_cortex.worker_execution_manifest.v1"
+DETACHED_RUN_DIR_ENV = "AURA_DETACHED_RUN_DIR"
+DETACHED_PLAN_PATH_ENV = "AURA_DETACHED_PLAN_PATH"
+DETACHED_ATTEMPTS_PATH_ENV = "AURA_DETACHED_ATTEMPTS_PATH"
+DETACHED_PLAN_SHA256_ENV = "AURA_DETACHED_PLAN_SHA256"
+DETACHED_SUPERVISOR_ATTEMPT_ENV = "AURA_DETACHED_SUPERVISOR_ATTEMPT"
 
 
 class CampaignProducerError(RuntimeError):
@@ -302,23 +306,6 @@ def _atomic_create_or_verify(path: Path, payload: bytes) -> None:
         os.close(directory_fd)
 
 
-def _secure_worker_origin_dir(campaign_dir: Path) -> Path:
-    path = campaign_dir / WORKER_ORIGIN_DIR
-    try:
-        path.mkdir(mode=0o700)
-    except FileExistsError:
-        pass
-    observed = path.lstat()
-    if (
-        not stat.S_ISDIR(observed.st_mode)
-        or path.is_symlink()
-        or observed.st_uid != os.geteuid()
-        or stat.S_IMODE(observed.st_mode) & 0o077
-    ):
-        raise CampaignProducerError("worker origin directory is not private")
-    return path
-
-
 def _worker_slot_stem(arm: str, attempt_slot: int) -> str:
     if arm not in FULL_ARMS:
         raise CampaignProducerError("worker authorization arm is invalid")
@@ -331,128 +318,43 @@ def _worker_slot_stem(arm: str, attempt_slot: int) -> str:
     return f"{arm}.attempt-{attempt_slot:02d}"
 
 
-def _worker_origin_paths(
+def _secure_worker_attempt_dir(
+    campaign_dir: Path,
+    arm: str,
+    attempt_slot: int,
+) -> Path:
+    root = campaign_dir / WORKER_ATTEMPT_DIR
+    for path in (root, root / _worker_slot_stem(arm, attempt_slot)):
+        try:
+            path.mkdir(mode=0o700)
+        except FileExistsError:
+            pass
+        observed = path.lstat()
+        if (
+            not stat.S_ISDIR(observed.st_mode)
+            or path.is_symlink()
+            or observed.st_uid != os.geteuid()
+            or stat.S_IMODE(observed.st_mode) & 0o077
+        ):
+            raise CampaignProducerError("worker attempt directory is not private")
+    return root / _worker_slot_stem(arm, attempt_slot)
+
+
+def _worker_attempt_paths(
     campaign_dir: Path,
     arm: str,
     attempt_slot: int,
 ) -> dict[str, Path]:
-    root = _secure_worker_origin_dir(campaign_dir)
-    stem = _worker_slot_stem(arm, attempt_slot)
+    root = _secure_worker_attempt_dir(campaign_dir, arm, attempt_slot)
     return {
-        "private_key": root / f".{stem}.private-key.raw",
-        "request": root / f"{stem}.request.json",
-        "attestation": root / f"{stem}.attestation.json",
-        "launch": root / f"{stem}.launch.json",
-        "exit": root / f"{stem}.exit.json",
-        "erasure_intent": root / f"{stem}.erasure-intent.json",
-        "erasure": root / f"{stem}.erasure.json",
+        "root": root,
+        "stage": root / "stage.jsonl",
+        "origin_dir": root / "supervisor-origin",
+        "broker_result": root / "broker-result.json",
+        "verified_stage": root / "verified-stage.json",
+        "import_intent": root / "import-intent.json",
+        "import_receipt": root / "import-receipt.json",
     }
-
-
-def _load_worker_private_key(path: Path) -> Any:
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-
-    if not path.exists():
-        raise CampaignProducerError("worker private key is missing")
-    observed = path.lstat()
-    if (
-        not stat.S_ISREG(observed.st_mode)
-        or path.is_symlink()
-        or observed.st_uid != os.geteuid()
-        or stat.S_IMODE(observed.st_mode) & 0o077
-        or observed.st_size != 32
-    ):
-        raise CampaignProducerError("worker private key storage is invalid")
-    raw = _read_stable_bytes(path, max_bytes=32)
-    try:
-        return Ed25519PrivateKey.from_private_bytes(raw)
-    except ValueError as exc:
-        raise CampaignProducerError("worker private key is invalid") from exc
-
-
-def _load_or_create_worker_private_key(path: Path) -> Any:
-    if not path.exists():
-        from cryptography.hazmat.primitives import serialization
-        from cryptography.hazmat.primitives.asymmetric.ed25519 import (
-            Ed25519PrivateKey,
-        )
-
-        private_key = Ed25519PrivateKey.generate()
-        raw = private_key.private_bytes(
-            encoding=serialization.Encoding.Raw,
-            format=serialization.PrivateFormat.Raw,
-            encryption_algorithm=serialization.NoEncryption(),
-        )
-        _atomic_create_or_verify(path, raw)
-    return _load_worker_private_key(path)
-
-
-def _worker_public_key_raw(private_key: Any) -> bytes:
-    from cryptography.hazmat.primitives import serialization
-
-    return private_key.public_key().public_bytes(
-        encoding=serialization.Encoding.Raw,
-        format=serialization.PublicFormat.Raw,
-    )
-
-
-def _worker_boot_id(private_key: Any) -> str:
-    return _sha256_bytes(_worker_public_key_raw(private_key) + b":worker-boot")[:32]
-
-
-def _worker_authorization_payload(
-    args: argparse.Namespace,
-    plan: CampaignPlan,
-    policy: Any,
-    *,
-    arm: str,
-    attempt_slot: int,
-    worker_public_key_raw: bytes,
-    worker_boot_id: str,
-) -> dict[str, Any]:
-    metadata = plan.to_dict()["metadata"]
-    execution = metadata.get("execution_config")
-    implementation = (
-        execution.get("implementation_sha256")
-        if isinstance(execution, dict)
-        else None
-    )
-    source_key = "tools/run_latent_cortex_paired_campaign.py"
-    source_sha256 = (
-        implementation.get(source_key)
-        if isinstance(implementation, dict)
-        else None
-    )
-    actual_source_sha256 = _sha256_bytes(Path(__file__).resolve().read_bytes())
-    if source_sha256 != actual_source_sha256:
-        raise CampaignProducerError(
-            "worker source differs from the frozen plan implementation"
-        )
-    command = _worker_args(
-        args,
-        arm,
-        worker_attempt_slot=attempt_slot,
-        worker_boot_id=worker_boot_id,
-    )
-    return build_legacy_worker_authorization_payload(
-        campaign_name=plan.campaign_name,
-        policy_sha256=policy.policy_sha256,
-        protocol_sha256=_campaign_protocol_sha256(),
-        plan_sha256=plan.plan_sha256,
-        arm=arm,
-        worker_attempt_slot=attempt_slot,
-        worker_boot_id=worker_boot_id,
-        worker_key_custody=WORKER_KEY_CUSTODY_PRODUCER_SOFTWARE,
-        worker_source_sha256=actual_source_sha256,
-        worker_command=command,
-        model_identity_sha256=_sha256_bytes(
-            canonical_json_bytes(metadata["model_identity"])
-        ),
-        adapter_identity_sha256=_sha256_bytes(
-            canonical_json_bytes(metadata["adapter_identity"])
-        ),
-        worker_public_key_raw=worker_public_key_raw,
-    )
 
 
 def _runtime_bundle_identity(
@@ -1433,7 +1335,7 @@ def _execution_config(
         "adapter_process_isolation": True,
         "worker_task_material": "public_manifest_only",
         "answer_reveal_protocol": "sealed_outputs_then_issuer_reveal_v1",
-        "worker_origin_protocol": "preauthorized_ephemeral_chain_v2",
+        "worker_origin_protocol": WORKER_ORIGIN_PROTOCOL,
         "worker_origin_attempt_slots": args.max_infra_attempts,
         "vanilla_fallback_allowed": False,
         "exact_statistical_power": _statistical_power_plan(args),
@@ -1873,12 +1775,8 @@ def _worker_origin_context(
     plan: CampaignPlan,
 ) -> dict[str, Any] | None:
     claim_required = plan.to_dict()["metadata"].get("claim_eligible") is True
-    supplied = bool(
-        args.worker_attempt_slot
-        and args.worker_boot_id
-        and args.worker_private_key
-        and args.worker_authorization
-    )
+    stage_value = str(getattr(args, "worker_stage_journal", "") or "")
+    supplied = bool(args.worker_attempt_slot and stage_value)
     if not claim_required:
         if supplied:
             raise CampaignProducerError(
@@ -1886,171 +1784,22 @@ def _worker_origin_context(
             )
         return None
     if not supplied:
-        raise CampaignProducerError("claim worker origin credentials are required")
+        raise CampaignProducerError("claim worker stage and origin channel are required")
     campaign_dir = Path(args.campaign_dir).expanduser().resolve()
-    paths = _worker_origin_paths(
+    paths = _worker_attempt_paths(
         campaign_dir,
         args.worker_arm,
         args.worker_attempt_slot,
     )
-    if (
-        Path(args.worker_private_key) != paths["private_key"]
-        or Path(args.worker_authorization) != paths["attestation"]
-    ):
-        raise CampaignProducerError("worker origin credential path substitution")
-    private_key = _load_worker_private_key(paths["private_key"])
-    if args.worker_boot_id != _worker_boot_id(private_key):
-        raise CampaignProducerError("worker boot identity differs from private key")
-    policy = _load_campaign_trust_policy(args, require_current=True)
-    if policy is None:
-        raise CampaignProducerError("claim worker has no trusted policy")
-    payload = _worker_authorization_payload(
-        args,
-        plan,
-        policy,
-        arm=args.worker_arm,
-        attempt_slot=args.worker_attempt_slot,
-        worker_public_key_raw=_worker_public_key_raw(private_key),
-        worker_boot_id=_worker_boot_id(private_key),
-    )
-    attestation = _read_canonical_json_artifact(
-        paths["attestation"], role="worker authorization attestation"
-    )
-    request = _read_canonical_json_artifact(
-        paths["request"], role="worker authorization request"
-    )
-    signed = verify_legacy_worker_authorization(
-        policy,
-        attestation,
-        expected_payload=payload,
-        not_after_unix=int(time.time()),
-    )
-    if signed != request.get("signed_payload"):
-        raise CampaignProducerError(
-            "worker authorization differs from its issued request"
-        )
-    authorization_manifest = _read_canonical_json_artifact(
-        campaign_dir / WORKER_AUTHORIZATION_MANIFEST_FILE,
-        role="worker authorization manifest",
-    )
-    authorization_manifest = _validate_worker_authorization_manifest(
-        args,
-        plan,
-        policy,
-        authorization_manifest,
-    )
+    if Path(stage_value).expanduser().resolve(strict=False) != paths["stage"]:
+        raise CampaignProducerError("worker stage path substitution")
+    if paths["stage"].exists() or paths["stage"].is_symlink():
+        raise CampaignProducerError("worker stage attempt was already consumed")
+    client = DetachedWorkerOriginChannelClient.from_environment()
     return {
-        "policy": policy,
-        "payload": payload,
-        "attestation": attestation,
-        "private_key": private_key,
+        "client": client,
         "paths": paths,
-        "authorization_manifest": authorization_manifest,
     }
-
-
-def _verify_existing_arm_origin_chain(
-    args: argparse.Namespace,
-    plan: CampaignPlan,
-    *,
-    arm: str,
-    policy: Any,
-    authorization_manifest: Mapping[str, Any],
-    records: tuple[dict[str, Any], ...],
-) -> tuple[int, str, int]:
-    ordered = [
-        record
-        for record in records
-        if record["definition"].get("arm") == arm
-    ]
-    ordered.sort(
-        key=lambda record: int(
-            record["definition"]["execution_ordinal_within_arm"]
-        )
-    )
-    sequence = 0
-    previous = ZERO_SHA256
-    latest_slot = 0
-    entries = authorization_manifest.get("entries")
-    if not isinstance(entries, list):
-        raise CampaignProducerError("worker authorization entries are invalid")
-    for record in ordered:
-        result = record.get("result")
-        origin = result.get("worker_origin") if isinstance(result, dict) else None
-        signed_payload = (
-            origin.get("signed_payload") if isinstance(origin, dict) else None
-        )
-        attempt_slot = (
-            signed_payload.get("worker_attempt_slot")
-            if isinstance(signed_payload, dict)
-            else None
-        )
-        if (
-            isinstance(attempt_slot, bool)
-            or not isinstance(attempt_slot, int)
-            or attempt_slot < latest_slot
-            or attempt_slot <= 0
-            or attempt_slot > args.max_infra_attempts
-        ):
-            raise CampaignProducerError("worker result attempt-slot order is invalid")
-        entry = next(
-            (
-                candidate
-                for candidate in entries
-                if isinstance(candidate, dict)
-                and candidate.get("arm") == arm
-                and candidate.get("attempt_slot") == attempt_slot
-            ),
-            None,
-        )
-        authorization_payload = (
-            entry.get("authorization_payload")
-            if isinstance(entry, dict)
-            else None
-        )
-        public_b64 = (
-            authorization_payload.get("worker_public_key_b64")
-            if isinstance(authorization_payload, dict)
-            else None
-        )
-        try:
-            public_raw = base64.b64decode(public_b64, validate=True)
-        except (TypeError, ValueError) as exc:
-            raise CampaignProducerError(
-                "worker chain authorization key is invalid"
-            ) from exc
-        authorization = _worker_authorization_payload(
-            args,
-            plan,
-            policy,
-            arm=arm,
-            attempt_slot=attempt_slot,
-            worker_public_key_raw=public_raw,
-            worker_boot_id=str(entry.get("worker_boot_id") or ""),
-        )
-        if authorization != authorization_payload:
-            raise CampaignProducerError(
-                "worker chain authorization differs from reconstruction"
-            )
-        campaign_dir = Path(args.campaign_dir).expanduser().resolve()
-        paths = _worker_origin_paths(campaign_dir, arm, attempt_slot)
-        attestation = _read_canonical_json_artifact(
-            paths["attestation"], role="prior worker authorization"
-        )
-        sequence += 1
-        verify_legacy_worker_result_origin(
-            policy,
-            authorization_attestation=attestation,
-            expected_authorization_payload=authorization,
-            result=result,
-            expected_cell_id=record["cell_id"],
-            expected_attempt_id=record["attempt_id"],
-            expected_sequence=sequence,
-            expected_previous_origin_sha256=previous,
-        )
-        previous = origin["origin_sha256"]
-        latest_slot = attempt_slot
-    return sequence, previous, latest_slot
 
 
 def _execute_worker(
@@ -2073,13 +1822,19 @@ def _execute_worker(
 
     from core.runtime.model_lane_control import standalone_model_lane
 
-    with standalone_model_lane(
-        owner_id=f"rlc-paired:{arm}:{os.getpid()}",
-        model_path=model_path,
-        purpose="benchmark",
-        preemptible=False,
-        metadata={"tool": "run_latent_cortex_paired_campaign", "arm": arm},
-    ):
+    cleanup = contextlib.ExitStack()
+    if origin_context is not None:
+        cleanup.callback(origin_context["client"].close)
+    cleanup.enter_context(
+        standalone_model_lane(
+            owner_id=f"rlc-paired:{arm}:{os.getpid()}",
+            model_path=model_path,
+            purpose="benchmark",
+            preemptible=False,
+            metadata={"tool": "run_latent_cortex_paired_campaign", "arm": arm},
+        )
+    )
+    with cleanup:
         load_started = time.monotonic()
         with _deadline_alarm(args.load_timeout, "model_load"):
             planned_model = metadata["model_identity"]
@@ -2159,7 +1914,7 @@ def _execute_worker(
                 model,
                 model_path=model_path,
                 worker_boot_id=(
-                    origin_context["payload"]["worker_boot_id"]
+                    origin_context["client"].session_id
                     if origin_context is not None
                     else uuid.uuid4().hex
                 ),
@@ -2226,29 +1981,15 @@ def _execute_worker(
             else None
         )
         campaign_dir = Path(args.campaign_dir).expanduser().resolve()
-        with CampaignJournal(campaign_dir / JOURNAL_FILE, plan) as journal:
-            costs = _prior_rlc_costs(journal)
-            origin_sequence = 0
-            previous_origin_sha256 = ZERO_SHA256
-            if origin_context is not None:
-                (
-                    origin_sequence,
-                    previous_origin_sha256,
-                    latest_attempt_slot,
-                ) = _verify_existing_arm_origin_chain(
-                    args,
-                    plan,
-                    arm=arm,
-                    policy=origin_context["policy"],
-                    authorization_manifest=origin_context[
-                        "authorization_manifest"
-                    ],
-                    records=journal.result_records(),
-                )
-                if args.worker_attempt_slot < latest_attempt_slot:
-                    raise CampaignProducerError(
-                        "worker attempt slot regresses the signed result chain"
-                    )
+        canonical_journal_path = campaign_dir / JOURNAL_FILE
+        with CampaignJournal(canonical_journal_path, plan) as canonical:
+            costs = _prior_rlc_costs(canonical)
+        worker_journal_path = (
+            origin_context["paths"]["stage"]
+            if origin_context is not None
+            else canonical_journal_path
+        )
+        with CampaignJournal(worker_journal_path, plan) as journal:
             sealed = set(journal.resume().sealed_cell_ids)
             pending = [
                 cell_id
@@ -2324,22 +2065,34 @@ def _execute_worker(
                         "episode_receipt": receipt,
                     }
                     if origin_context is not None:
-                        origin_sequence += 1
-                        result["worker_origin"] = build_legacy_worker_result_origin(
-                            authorization_attestation=origin_context["attestation"],
-                            authorization_payload=origin_context["payload"],
-                            private_key=origin_context["private_key"],
-                            result_body=result,
+                        result = origin_context["client"].record_result(
+                            result,
                             cell_id=cell_id,
+                            cell_type=PAIRED_CAMPAIGN_CELL_TYPE,
                             attempt_id=attempt_id,
-                            worker_boot_id=worker_identity["worker_boot_id"],
-                            sequence=origin_sequence,
-                            previous_origin_sha256=previous_origin_sha256,
                         )
-                        previous_origin_sha256 = result["worker_origin"][
-                            "origin_sha256"
-                        ]
                     journal.record_arm_result(cell_id, attempt_id, result)
+                    if origin_context is not None:
+                        journal.record_verified(
+                            cell_id,
+                            attempt_id,
+                            {
+                                "schema": "aura.latent_cortex.worker_stage_transport_verification.v1",
+                                "result_origin_sha256": result["worker_origin"][
+                                    "origin_sha256"
+                                ],
+                            },
+                        )
+                        journal.commit_cell(
+                            cell_id,
+                            attempt_id,
+                            {
+                                "schema": "aura.latent_cortex.worker_stage_transport_commit.v1",
+                                "result_sha256": _sha256_bytes(
+                                    canonical_json_bytes(result)
+                                ),
+                            },
+                        )
                     print(
                         f"[{arm}] sealed {task.task_id} "
                         f"latency={elapsed:.2f}s layer_apps={layer_apps}",
@@ -2368,7 +2121,6 @@ def _worker_args(
     arm: str,
     *,
     worker_attempt_slot: int | None = None,
-    worker_boot_id: str | None = None,
 ) -> list[str]:
     if str(getattr(args, "worker_arm", "") or ""):
         seed_count = int(args.seed_count)
@@ -2439,20 +2191,13 @@ def _worker_args(
     ]
     if worker_attempt_slot is not None:
         campaign_dir = Path(args.campaign_dir).expanduser().resolve()
-        paths = _worker_origin_paths(campaign_dir, arm, worker_attempt_slot)
-        if worker_boot_id is None:
-            private_key = _load_or_create_worker_private_key(paths["private_key"])
-            worker_boot_id = _worker_boot_id(private_key)
+        paths = _worker_attempt_paths(campaign_dir, arm, worker_attempt_slot)
         command.extend(
             [
                 "--worker-attempt-slot",
                 str(worker_attempt_slot),
-                "--worker-boot-id",
-                worker_boot_id,
-                "--worker-private-key",
-                str(paths["private_key"]),
-                "--worker-authorization",
-                str(paths["attestation"]),
+                "--worker-stage-journal",
+                str(paths["stage"]),
             ]
         )
     if args.confirmatory:
@@ -2483,233 +2228,11 @@ def _arm_outputs_sealed(campaign_dir: Path, plan: CampaignPlan, arm: str) -> boo
     return expected.issubset(sealed)
 
 
-def _verify_worker_origin_chains(
-    args: argparse.Namespace,
-    plan: CampaignPlan,
-) -> dict[str, Any] | None:
-    if plan.to_dict()["metadata"].get("claim_eligible") is not True:
-        return None
-    policy = _load_campaign_trust_policy(args, require_current=True)
-    if policy is None:
-        raise CampaignProducerError("worker result chains have no trusted policy")
-    campaign_dir = Path(args.campaign_dir).expanduser().resolve()
-    authorization_manifest = _read_canonical_json_artifact(
-        campaign_dir / WORKER_AUTHORIZATION_MANIFEST_FILE,
-        role="worker authorization manifest",
-    )
-    authorization_manifest = _validate_worker_authorization_manifest(
-        args,
-        plan,
-        policy,
-        authorization_manifest,
-    )
-    with CampaignJournal(campaign_dir / JOURNAL_FILE, plan) as journal:
-        records = journal.result_records()
-    if len(records) != len(plan.cell_ids):
-        raise CampaignProducerError("worker result chain set is incomplete")
-    chains: list[dict[str, Any]] = []
-    for arm in _arms(args):
-        sequence, chain_head, latest_slot = _verify_existing_arm_origin_chain(
-            args,
-            plan,
-            arm=arm,
-            policy=policy,
-            authorization_manifest=authorization_manifest,
-            records=records,
-        )
-        expected_count = sum(
-            plan.cell_definition(cell_id)["arm"] == arm
-            for cell_id in plan.cell_ids
-        )
-        if sequence != expected_count or latest_slot <= 0:
-            raise CampaignProducerError(f"worker result chain is incomplete: {arm}")
-        chains.append(
-            {
-                "arm": arm,
-                "result_count": sequence,
-                "latest_attempt_slot": latest_slot,
-                "chain_head_sha256": chain_head,
-            }
-        )
-    material = {
-        "schema": "aura.latent_cortex.worker_origin_chains.v1",
-        "policy_sha256": policy.policy_sha256,
-        "plan_sha256": plan.plan_sha256,
-        "chains": chains,
-    }
-    return {
-        **material,
-        "chains_sha256": _sha256_bytes(canonical_json_bytes(material)),
-    }
-
-
-def _worker_lifecycle_entry(
-    campaign_dir: Path,
-    authorization: Mapping[str, Any],
-) -> dict[str, Any]:
-    arm = authorization["arm"]
-    attempt_slot = authorization["attempt_slot"]
-    payload = authorization["authorization_payload"]
-    paths = _worker_origin_paths(campaign_dir, arm, attempt_slot)
-    launch = _read_canonical_json_artifact(
-        paths["launch"], role="worker launch receipt"
-    )
-    if (
-        set(launch)
-        != {
-            "schema",
-            "arm",
-            "attempt_slot",
-            "worker_boot_id",
-            "worker_key_id",
-            "worker_command_sha256",
-            "authorization_request_sha256",
-            "authorization_attestation_sha256",
-            "launched_at_unix_ns",
-        }
-        or launch.get("schema") != "aura.latent_cortex.worker_launch.v1"
-        or launch.get("arm") != arm
-        or launch.get("attempt_slot") != attempt_slot
-        or launch.get("worker_boot_id") != payload["worker_boot_id"]
-        or launch.get("worker_key_id") != payload["worker_key_id"]
-        or launch.get("worker_command_sha256")
-        != payload["worker_command_sha256"]
-        or launch.get("authorization_request_sha256")
-        != authorization["request_sha256"]
-        or launch.get("authorization_attestation_sha256")
-        != authorization["attestation_sha256"]
-        or type(launch.get("launched_at_unix_ns")) is not int
-        or launch["launched_at_unix_ns"] <= 0
-    ):
-        raise CampaignProducerError("worker launch receipt differs")
-    exit_receipt = _read_canonical_json_artifact(
-        paths["exit"], role="worker exit receipt"
-    )
-    exit_material = dict(exit_receipt)
-    exit_sha256 = exit_material.pop("receipt_sha256", None)
-    if (
-        set(exit_receipt)
-        != {
-            "schema",
-            "launch_sha256",
-            "outcome",
-            "returncode",
-            "error_type",
-            "exited_at_unix_ns",
-            "receipt_sha256",
-        }
-        or exit_receipt.get("schema") != "aura.latent_cortex.worker_exit.v2"
-        or exit_receipt.get("launch_sha256")
-        != _sha256_bytes(canonical_json_bytes(launch))
-        or type(exit_receipt.get("exited_at_unix_ns")) is not int
-        or exit_receipt["exited_at_unix_ns"] < launch["launched_at_unix_ns"]
-        or exit_sha256 != _sha256_bytes(canonical_json_bytes(exit_material))
-    ):
-        raise CampaignProducerError("worker exit receipt differs")
-    outcome = exit_receipt.get("outcome")
-    if outcome == "process_exit":
-        if (
-            type(exit_receipt.get("returncode")) is not int
-            or exit_receipt.get("error_type") is not None
-        ):
-            raise CampaignProducerError("worker process exit receipt differs")
-    elif outcome == "launcher_failure":
-        if (
-            exit_receipt.get("returncode") is not None
-            or not isinstance(exit_receipt.get("error_type"), str)
-            or not exit_receipt["error_type"]
-        ):
-            raise CampaignProducerError("worker launcher failure receipt differs")
-    else:
-        raise CampaignProducerError("worker exit outcome differs")
-    material = {
-        "arm": arm,
-        "attempt_slot": attempt_slot,
-        "launch": launch,
-        "exit": exit_receipt,
-    }
-    return {
-        **material,
-        "entry_sha256": _sha256_bytes(canonical_json_bytes(material)),
-    }
-
-
-def _build_worker_lifecycle_manifest(
-    args: argparse.Namespace,
-    plan: CampaignPlan,
-    *,
-    authorization_manifest: Mapping[str, Any],
-) -> dict[str, Any] | None:
-    if plan.to_dict()["metadata"].get("claim_eligible") is not True:
-        return None
-    campaign_dir = Path(args.campaign_dir).expanduser().resolve()
-    authorizations = authorization_manifest.get("entries")
-    if not isinstance(authorizations, list):
-        raise CampaignProducerError("worker lifecycle authorizations are invalid")
-    entries: list[dict[str, Any]] = []
-    consumed_positions: set[tuple[str, int]] = set()
-    for authorization in authorizations:
-        arm = authorization["arm"]
-        attempt_slot = authorization["attempt_slot"]
-        paths = _worker_origin_paths(campaign_dir, arm, attempt_slot)
-        launch_exists = paths["launch"].exists()
-        exit_exists = paths["exit"].exists()
-        if not launch_exists:
-            if paths["launch"].is_symlink() or exit_exists or paths["exit"].is_symlink():
-                raise CampaignProducerError(
-                    "worker lifecycle has an exit without a launch"
-                )
-            continue
-        if not exit_exists:
-            raise CampaignProducerError(
-                "worker lifecycle launch has no terminal receipt"
-            )
-        entries.append(_worker_lifecycle_entry(campaign_dir, authorization))
-        consumed_positions.add((arm, attempt_slot))
-    with CampaignJournal(campaign_dir / JOURNAL_FILE, plan) as journal:
-        records = journal.result_records()
-    used_positions = {
-        (
-            record["definition"]["arm"],
-            record["result"]["worker_origin"]["signed_payload"][
-                "worker_attempt_slot"
-            ],
-        )
-        for record in records
-    }
-    if not used_positions.issubset(consumed_positions):
-        raise CampaignProducerError(
-            "worker result has no complete lifecycle transaction"
-        )
-    if set(_arms(args)) != {arm for arm, _slot in used_positions}:
-        raise CampaignProducerError("worker lifecycle arm coverage is incomplete")
-    material = {
-        "schema": WORKER_LIFECYCLE_MANIFEST_SCHEMA,
-        "policy_sha256": authorization_manifest["policy_sha256"],
-        "plan_sha256": plan.plan_sha256,
-        "worker_authorization_manifest_sha256": authorization_manifest[
-            "manifest_sha256"
-        ],
-        "entry_count": len(entries),
-        "entries": entries,
-    }
-    manifest = {
-        **material,
-        "manifest_sha256": _sha256_bytes(canonical_json_bytes(material)),
-    }
-    _atomic_create_or_verify(
-        campaign_dir / WORKER_LIFECYCLE_MANIFEST_FILE,
-        canonical_json_bytes(manifest) + b"\n",
-    )
-    return manifest
-
-
 def _seal_output_manifest(
     campaign_dir: Path,
     plan: CampaignPlan,
     *,
-    worker_origin_chains: Mapping[str, Any] | None = None,
-    worker_lifecycle: Mapping[str, Any] | None = None,
+    worker_execution: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     with CampaignJournal(campaign_dir / JOURNAL_FILE, plan) as journal:
         records = journal.result_records()
@@ -2737,12 +2260,27 @@ def _seal_output_manifest(
         "cell_count": len(cells),
         "cells": cells,
     }
-    if worker_origin_chains is not None:
-        material["worker_origin_chains"] = dict(worker_origin_chains)
-    if worker_lifecycle is not None:
-        material["worker_lifecycle_manifest_sha256"] = worker_lifecycle[
-            "manifest_sha256"
-        ]
+    if worker_execution is not None:
+        material.update(
+            {
+                "worker_execution_manifest_sha256": worker_execution[
+                    "manifest_sha256"
+                ],
+                "detached_plan_sha256": worker_execution[
+                    "detached_plan_sha256"
+                ],
+                "detached_classification_head_sha256": worker_execution[
+                    "detached_classification_head_sha256"
+                ],
+                "detached_classifications_sha256": worker_execution[
+                    "detached_classifications_sha256"
+                ],
+                "worker_imports_sha256": worker_execution["imports_sha256"],
+                "worker_excluded_attempts_sha256": worker_execution[
+                    "excluded_attempts_sha256"
+                ],
+            }
+        )
     manifest = {
         **material,
         "manifest_sha256": _sha256_bytes(canonical_json_bytes(material)),
@@ -2752,353 +2290,6 @@ def _seal_output_manifest(
         canonical_json_bytes(manifest) + b"\n",
     )
     return manifest
-
-
-def _validate_worker_key_erasure_intent(
-    campaign_dir: Path,
-    plan: CampaignPlan,
-    *,
-    authorization_manifest: Mapping[str, Any],
-    sealed_outputs: Mapping[str, Any],
-    entry: Mapping[str, Any],
-    intent: Mapping[str, Any],
-) -> dict[str, Any]:
-    material = dict(intent)
-    intent_sha256 = material.pop("intent_sha256", None)
-    if (
-        set(intent)
-        != {
-            "schema",
-            "policy_sha256",
-            "plan_sha256",
-            "worker_authorization_manifest_sha256",
-            "sealed_output_manifest_sha256",
-            "arm",
-            "attempt_slot",
-            "worker_boot_id",
-            "worker_key_id",
-            "method",
-            "intent_at_unix_ns",
-            "intent_sha256",
-        }
-        or intent.get("schema")
-        != "aura.latent_cortex.worker_key_erasure_intent.v1"
-        or intent.get("policy_sha256")
-        != authorization_manifest["policy_sha256"]
-        or intent.get("plan_sha256") != plan.plan_sha256
-        or intent.get("worker_authorization_manifest_sha256")
-        != authorization_manifest["manifest_sha256"]
-        or intent.get("sealed_output_manifest_sha256")
-        != sealed_outputs["manifest_sha256"]
-        or intent.get("arm") != entry["arm"]
-        or intent.get("attempt_slot") != entry["attempt_slot"]
-        or intent.get("worker_boot_id") != entry["worker_boot_id"]
-        or intent.get("worker_key_id") != entry["worker_key_id"]
-        or intent.get("method")
-        != "write_ahead_intent_then_unlink_and_parent_directory_fsync"
-        or type(intent.get("intent_at_unix_ns")) is not int
-        or intent["intent_at_unix_ns"] <= 0
-        or intent_sha256 != _sha256_bytes(canonical_json_bytes(material))
-    ):
-        raise CampaignProducerError("worker key erasure intent differs")
-    paths = _worker_origin_paths(
-        campaign_dir,
-        entry["arm"],
-        entry["attempt_slot"],
-    )
-    if paths["erasure_intent"].is_symlink():
-        raise CampaignProducerError("worker key erasure intent is a symlink")
-    return dict(intent)
-
-
-def _load_or_create_worker_key_erasure_intent(
-    campaign_dir: Path,
-    plan: CampaignPlan,
-    *,
-    authorization_manifest: Mapping[str, Any],
-    sealed_outputs: Mapping[str, Any],
-    entry: Mapping[str, Any],
-) -> dict[str, Any]:
-    paths = _worker_origin_paths(
-        campaign_dir,
-        entry["arm"],
-        entry["attempt_slot"],
-    )
-    if paths["erasure_intent"].exists():
-        intent = _read_canonical_json_artifact(
-            paths["erasure_intent"], role="worker key erasure intent"
-        )
-        return _validate_worker_key_erasure_intent(
-            campaign_dir,
-            plan,
-            authorization_manifest=authorization_manifest,
-            sealed_outputs=sealed_outputs,
-            entry=entry,
-            intent=intent,
-        )
-    if paths["erasure_intent"].is_symlink():
-        raise CampaignProducerError("worker key erasure intent is a symlink")
-    material = {
-        "schema": "aura.latent_cortex.worker_key_erasure_intent.v1",
-        "policy_sha256": authorization_manifest["policy_sha256"],
-        "plan_sha256": plan.plan_sha256,
-        "worker_authorization_manifest_sha256": authorization_manifest[
-            "manifest_sha256"
-        ],
-        "sealed_output_manifest_sha256": sealed_outputs["manifest_sha256"],
-        "arm": entry["arm"],
-        "attempt_slot": entry["attempt_slot"],
-        "worker_boot_id": entry["worker_boot_id"],
-        "worker_key_id": entry["worker_key_id"],
-        "method": "write_ahead_intent_then_unlink_and_parent_directory_fsync",
-        "intent_at_unix_ns": time.time_ns(),
-    }
-    intent = {
-        **material,
-        "intent_sha256": _sha256_bytes(canonical_json_bytes(material)),
-    }
-    _atomic_create_or_verify(
-        paths["erasure_intent"], canonical_json_bytes(intent) + b"\n"
-    )
-    return intent
-
-
-def _validate_worker_key_erasure_manifest(
-    campaign_dir: Path,
-    plan: CampaignPlan,
-    *,
-    authorization_manifest: Mapping[str, Any],
-    sealed_outputs: Mapping[str, Any],
-    aggregate: Mapping[str, Any],
-) -> dict[str, Any]:
-    entries = authorization_manifest.get("entries")
-    if not isinstance(entries, list):
-        raise CampaignProducerError("worker erasure authorization set is invalid")
-    material = dict(aggregate)
-    manifest_sha256 = material.pop("manifest_sha256", None)
-    receipts = aggregate.get("receipts")
-    if (
-        set(aggregate)
-        != {
-            "schema",
-            "policy_sha256",
-            "plan_sha256",
-            "worker_authorization_manifest_sha256",
-            "sealed_output_manifest_sha256",
-            "receipt_count",
-            "receipts",
-            "all_private_paths_absent",
-            "copy_exclusion_claimed",
-            "manifest_sha256",
-        }
-        or aggregate.get("schema")
-        != "aura.latent_cortex.worker_key_erasure_manifest.v2"
-        or aggregate.get("policy_sha256")
-        != authorization_manifest["policy_sha256"]
-        or aggregate.get("plan_sha256") != plan.plan_sha256
-        or aggregate.get("worker_authorization_manifest_sha256")
-        != authorization_manifest["manifest_sha256"]
-        or aggregate.get("sealed_output_manifest_sha256")
-        != sealed_outputs["manifest_sha256"]
-        or aggregate.get("receipt_count") != len(entries)
-        or not isinstance(receipts, list)
-        or len(receipts) != len(entries)
-        or aggregate.get("all_private_paths_absent") is not True
-        or aggregate.get("copy_exclusion_claimed") is not False
-        or manifest_sha256 != _sha256_bytes(canonical_json_bytes(material))
-    ):
-        raise CampaignProducerError("worker key erasure manifest is invalid")
-    for receipt, entry in zip(receipts, entries, strict=True):
-        arm = entry["arm"]
-        attempt_slot = entry["attempt_slot"]
-        paths = _worker_origin_paths(campaign_dir, arm, attempt_slot)
-        if paths["private_key"].exists() or paths["private_key"].is_symlink():
-            raise CampaignProducerError(
-                "worker private key reappeared after erasure"
-            )
-        intent = _read_canonical_json_artifact(
-            paths["erasure_intent"], role="worker key erasure intent"
-        )
-        intent = _validate_worker_key_erasure_intent(
-            campaign_dir,
-            plan,
-            authorization_manifest=authorization_manifest,
-            sealed_outputs=sealed_outputs,
-            entry=entry,
-            intent=intent,
-        )
-        disk_receipt = _read_canonical_json_artifact(
-            paths["erasure"], role="worker key erasure receipt"
-        )
-        receipt_material = dict(disk_receipt)
-        receipt_sha256 = receipt_material.pop("receipt_sha256", None)
-        if (
-            receipt != disk_receipt
-            or set(disk_receipt)
-            != {
-                "schema",
-                "intent_sha256",
-                "policy_sha256",
-                "plan_sha256",
-                "sealed_output_manifest_sha256",
-                "arm",
-                "attempt_slot",
-                "worker_boot_id",
-                "worker_key_id",
-                "absence_observed_at_unix_ns",
-                "method",
-                "absence_verified",
-                "copy_exclusion_claimed",
-                "receipt_sha256",
-            }
-            or disk_receipt.get("schema")
-            != "aura.latent_cortex.worker_key_erasure.v2"
-            or disk_receipt.get("intent_sha256") != intent["intent_sha256"]
-            or disk_receipt.get("policy_sha256")
-            != authorization_manifest["policy_sha256"]
-            or disk_receipt.get("plan_sha256") != plan.plan_sha256
-            or disk_receipt.get("sealed_output_manifest_sha256")
-            != sealed_outputs["manifest_sha256"]
-            or disk_receipt.get("arm") != arm
-            or disk_receipt.get("attempt_slot") != attempt_slot
-            or disk_receipt.get("worker_boot_id") != entry["worker_boot_id"]
-            or disk_receipt.get("worker_key_id") != entry["worker_key_id"]
-            or type(disk_receipt.get("absence_observed_at_unix_ns")) is not int
-            or disk_receipt["absence_observed_at_unix_ns"]
-            < intent["intent_at_unix_ns"]
-            or disk_receipt.get("method")
-            != "write_ahead_intent_then_unlink_and_parent_directory_fsync"
-            or disk_receipt.get("absence_verified") is not True
-            or disk_receipt.get("copy_exclusion_claimed") is not False
-            or receipt_sha256
-            != _sha256_bytes(canonical_json_bytes(receipt_material))
-        ):
-            raise CampaignProducerError("worker key erasure receipt differs")
-    return dict(aggregate)
-
-
-def _erase_worker_private_keys(
-    args: argparse.Namespace,
-    plan: CampaignPlan,
-    *,
-    authorization_manifest: Mapping[str, Any],
-    sealed_outputs: Mapping[str, Any],
-) -> dict[str, Any] | None:
-    if plan.to_dict()["metadata"].get("claim_eligible") is not True:
-        return None
-    campaign_dir = Path(args.campaign_dir).expanduser().resolve()
-    aggregate_path = campaign_dir / WORKER_KEY_ERASURE_MANIFEST_FILE
-    entries = authorization_manifest.get("entries")
-    if not isinstance(entries, list):
-        raise CampaignProducerError("worker erasure authorization set is invalid")
-    if aggregate_path.exists():
-        aggregate = _read_canonical_json_artifact(
-            aggregate_path, role="worker key erasure manifest"
-        )
-        return _validate_worker_key_erasure_manifest(
-            campaign_dir,
-            plan,
-            authorization_manifest=authorization_manifest,
-            sealed_outputs=sealed_outputs,
-            aggregate=aggregate,
-        )
-    receipts: list[dict[str, Any]] = []
-    origin_dir = _secure_worker_origin_dir(campaign_dir)
-    for entry in entries:
-        arm = entry["arm"]
-        attempt_slot = entry["attempt_slot"]
-        paths = _worker_origin_paths(campaign_dir, arm, attempt_slot)
-        intent = _load_or_create_worker_key_erasure_intent(
-            campaign_dir,
-            plan,
-            authorization_manifest=authorization_manifest,
-            sealed_outputs=sealed_outputs,
-            entry=entry,
-        )
-        if paths["erasure"].exists():
-            if paths["private_key"].exists():
-                raise CampaignProducerError(
-                    "worker key and erasure receipt coexist"
-                )
-            receipt = _read_canonical_json_artifact(
-                paths["erasure"], role="worker key erasure receipt"
-            )
-            receipts.append(receipt)
-            continue
-        if paths["private_key"].exists():
-            private_key = _load_worker_private_key(paths["private_key"])
-            public_raw = _worker_public_key_raw(private_key)
-            if _sha256_bytes(public_raw) != entry.get("worker_key_id"):
-                raise CampaignProducerError(
-                    "worker private key differs from authorization before erasure"
-                )
-            paths["private_key"].unlink()
-            directory_fd = os.open(
-                origin_dir, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
-            )
-            try:
-                os.fsync(directory_fd)
-            finally:
-                os.close(directory_fd)
-        elif paths["private_key"].is_symlink():
-            raise CampaignProducerError("worker private key is a symlink")
-        material = {
-            "schema": "aura.latent_cortex.worker_key_erasure.v2",
-            "intent_sha256": intent["intent_sha256"],
-            "policy_sha256": authorization_manifest["policy_sha256"],
-            "plan_sha256": plan.plan_sha256,
-            "sealed_output_manifest_sha256": sealed_outputs["manifest_sha256"],
-            "arm": arm,
-            "attempt_slot": attempt_slot,
-            "worker_boot_id": entry["worker_boot_id"],
-            "worker_key_id": entry["worker_key_id"],
-            "absence_observed_at_unix_ns": time.time_ns(),
-            "method": "write_ahead_intent_then_unlink_and_parent_directory_fsync",
-            "absence_verified": not paths["private_key"].exists(),
-            "copy_exclusion_claimed": False,
-        }
-        receipt = {
-            **material,
-            "receipt_sha256": _sha256_bytes(canonical_json_bytes(material)),
-        }
-        _atomic_create_or_verify(
-            paths["erasure"], canonical_json_bytes(receipt) + b"\n"
-        )
-        receipts.append(receipt)
-    material = {
-        "schema": "aura.latent_cortex.worker_key_erasure_manifest.v2",
-        "policy_sha256": authorization_manifest["policy_sha256"],
-        "plan_sha256": plan.plan_sha256,
-        "worker_authorization_manifest_sha256": authorization_manifest[
-            "manifest_sha256"
-        ],
-        "sealed_output_manifest_sha256": sealed_outputs["manifest_sha256"],
-        "receipt_count": len(receipts),
-        "receipts": receipts,
-        "all_private_paths_absent": all(
-            not _worker_origin_paths(
-                campaign_dir,
-                entry["arm"],
-                entry["attempt_slot"],
-            )["private_key"].exists()
-            for entry in entries
-        ),
-        "copy_exclusion_claimed": False,
-    }
-    aggregate = {
-        **material,
-        "manifest_sha256": _sha256_bytes(canonical_json_bytes(material)),
-    }
-    _atomic_create_or_verify(
-        aggregate_path, canonical_json_bytes(aggregate) + b"\n"
-    )
-    return _validate_worker_key_erasure_manifest(
-        campaign_dir,
-        plan,
-        authorization_manifest=authorization_manifest,
-        sealed_outputs=sealed_outputs,
-        aggregate=aggregate,
-    )
 
 
 def _answer_reveal_payload(
@@ -3189,253 +2380,6 @@ def _read_canonical_json_artifact(path: Path, *, role: str) -> dict[str, Any]:
     ):
         raise CampaignProducerError(f"{role} is not canonical JSON")
     return document
-
-
-def _validate_worker_authorization_manifest(
-    args: argparse.Namespace,
-    plan: CampaignPlan,
-    policy: Any,
-    manifest: Mapping[str, Any],
-) -> dict[str, Any]:
-    material = dict(manifest)
-    manifest_sha256 = material.pop("manifest_sha256", None)
-    if (
-        set(manifest)
-        != {
-            "schema",
-            "claim_required",
-            "campaign_name",
-            "policy_sha256",
-            "protocol_sha256",
-            "plan_sha256",
-            "attempt_slots_per_arm",
-            "entries",
-            "manifest_sha256",
-        }
-        or manifest.get("schema") != WORKER_AUTHORIZATION_MANIFEST_SCHEMA
-        or manifest.get("claim_required") is not True
-        or manifest.get("campaign_name") != plan.campaign_name
-        or manifest.get("policy_sha256") != policy.policy_sha256
-        or manifest.get("protocol_sha256") != _campaign_protocol_sha256()
-        or manifest.get("plan_sha256") != plan.plan_sha256
-        or manifest.get("attempt_slots_per_arm") != args.max_infra_attempts
-        or manifest_sha256 != _sha256_bytes(canonical_json_bytes(material))
-        or not isinstance(manifest.get("entries"), list)
-    ):
-        raise CampaignProducerError("worker authorization manifest is invalid")
-    expected_positions = [
-        (arm, attempt_slot)
-        for arm in _arms(args)
-        for attempt_slot in range(1, args.max_infra_attempts + 1)
-    ]
-    entries = manifest["entries"]
-    if len(entries) != len(expected_positions):
-        raise CampaignProducerError("worker authorization manifest is incomplete")
-    campaign_dir = Path(args.campaign_dir).expanduser().resolve()
-    for entry, (arm, attempt_slot) in zip(entries, expected_positions, strict=True):
-        if (
-            not isinstance(entry, dict)
-            or set(entry)
-            != {
-                "arm",
-                "attempt_slot",
-                "worker_boot_id",
-                "worker_key_id",
-                "authorization_payload",
-                "request_sha256",
-                "attestation_sha256",
-            }
-            or entry.get("arm") != arm
-            or entry.get("attempt_slot") != attempt_slot
-        ):
-            raise CampaignProducerError(
-                "worker authorization manifest entry is invalid"
-            )
-        payload = entry.get("authorization_payload")
-        public_b64 = (
-            payload.get("worker_public_key_b64")
-            if isinstance(payload, dict)
-            else None
-        )
-        try:
-            public_raw = base64.b64decode(public_b64, validate=True)
-        except (TypeError, ValueError) as exc:
-            raise CampaignProducerError(
-                "worker authorization public key is invalid"
-            ) from exc
-        expected_payload = _worker_authorization_payload(
-            args,
-            plan,
-            policy,
-            arm=arm,
-            attempt_slot=attempt_slot,
-            worker_public_key_raw=public_raw,
-            worker_boot_id=str(entry.get("worker_boot_id") or ""),
-        )
-        if (
-            payload != expected_payload
-            or entry.get("worker_key_id") != payload.get("worker_key_id")
-        ):
-            raise CampaignProducerError(
-                "worker authorization payload differs from reconstruction"
-            )
-        paths = _worker_origin_paths(campaign_dir, arm, attempt_slot)
-        request = _read_canonical_json_artifact(
-            paths["request"], role="worker authorization request"
-        )
-        attestation = _read_canonical_json_artifact(
-            paths["attestation"], role="worker authorization attestation"
-        )
-        try:
-            signed = verify_legacy_worker_authorization(
-                policy,
-                attestation,
-                expected_payload=expected_payload,
-                not_after_unix=int(time.time()),
-            )
-        except ValueError as exc:
-            raise CampaignProducerError(
-                "worker authorization attestation is invalid"
-            ) from exc
-        if (
-            request.get("request_sha256") != entry.get("request_sha256")
-            or signed != request.get("signed_payload")
-            or _sha256_bytes(canonical_json_bytes(attestation))
-            != entry.get("attestation_sha256")
-        ):
-            raise CampaignProducerError(
-                "worker authorization evidence differs from its manifest"
-            )
-    return dict(manifest)
-
-
-def _admit_worker_authorizations(
-    args: argparse.Namespace,
-    plan: CampaignPlan,
-) -> dict[str, Any] | None:
-    metadata = plan.to_dict()["metadata"]
-    if metadata.get("claim_eligible") is not True:
-        return {
-            "schema": WORKER_AUTHORIZATION_MANIFEST_SCHEMA,
-            "claim_required": False,
-        }
-    policy = _load_campaign_trust_policy(args, require_current=True)
-    trust = metadata.get("campaign_trust")
-    if (
-        policy is None
-        or not isinstance(trust, dict)
-        or trust.get("policy_sha256") != policy.policy_sha256
-    ):
-        raise CampaignProducerError("worker authorization has no trusted policy")
-    campaign_dir = Path(args.campaign_dir).expanduser().resolve()
-    manifest_path = campaign_dir / WORKER_AUTHORIZATION_MANIFEST_FILE
-    if manifest_path.exists():
-        manifest = _read_canonical_json_artifact(
-            manifest_path, role="worker authorization manifest"
-        )
-        return _validate_worker_authorization_manifest(
-            args,
-            plan,
-            policy,
-            manifest,
-        )
-    entries: list[dict[str, Any]] = []
-    missing: list[dict[str, Any]] = []
-    for arm in _arms(args):
-        for attempt_slot in range(1, args.max_infra_attempts + 1):
-            paths = _worker_origin_paths(campaign_dir, arm, attempt_slot)
-            private_key = _load_or_create_worker_private_key(paths["private_key"])
-            payload = _worker_authorization_payload(
-                args,
-                plan,
-                policy,
-                arm=arm,
-                attempt_slot=attempt_slot,
-                worker_public_key_raw=_worker_public_key_raw(private_key),
-                worker_boot_id=_worker_boot_id(private_key),
-            )
-            request = _load_or_prepare_role_request(
-                paths["request"],
-                policy=policy,
-                role=CAMPAIGN_RUNNER,
-                payload=payload,
-            )
-            if not paths["attestation"].exists():
-                missing.append(
-                    {
-                        "arm": arm,
-                        "attempt_slot": attempt_slot,
-                        "request_path": str(paths["request"]),
-                        "request_sha256": request["request_sha256"],
-                        "attestation_path": str(paths["attestation"]),
-                    }
-                )
-                continue
-            attestation = _read_canonical_json_artifact(
-                paths["attestation"],
-                role=f"{arm} attempt {attempt_slot} worker authorization",
-            )
-            try:
-                signed = verify_legacy_worker_authorization(
-                    policy,
-                    attestation,
-                    expected_payload=payload,
-                    not_after_unix=int(time.time()),
-                )
-            except ValueError as exc:
-                raise CampaignProducerError(
-                    "worker authorization attestation is invalid"
-                ) from exc
-            if signed != request["signed_payload"]:
-                raise CampaignProducerError(
-                    "worker authorization does not sign the issued request"
-                )
-            entries.append(
-                {
-                    "arm": arm,
-                    "attempt_slot": attempt_slot,
-                    "worker_boot_id": payload["worker_boot_id"],
-                    "worker_key_id": payload["worker_key_id"],
-                    "authorization_payload": payload,
-                    "request_sha256": request["request_sha256"],
-                    "attestation_sha256": _sha256_bytes(
-                        canonical_json_bytes(attestation)
-                    ),
-                }
-            )
-    if missing:
-        print(
-            json.dumps(
-                {
-                    "state": "worker_authorization_signatures_required",
-                    "missing_count": len(missing),
-                    "requests": missing,
-                },
-                indent=2,
-                sort_keys=True,
-            ),
-            flush=True,
-        )
-        return None
-    material = {
-        "schema": WORKER_AUTHORIZATION_MANIFEST_SCHEMA,
-        "claim_required": True,
-        "campaign_name": plan.campaign_name,
-        "policy_sha256": policy.policy_sha256,
-        "protocol_sha256": _campaign_protocol_sha256(),
-        "plan_sha256": plan.plan_sha256,
-        "attempt_slots_per_arm": args.max_infra_attempts,
-        "entries": entries,
-    }
-    manifest = {
-        **material,
-        "manifest_sha256": _sha256_bytes(canonical_json_bytes(material)),
-    }
-    _atomic_create_or_verify(
-        manifest_path,
-        canonical_json_bytes(manifest) + b"\n",
-    )
-    return manifest
 
 
 def _admit_answer_reveal(
@@ -3570,13 +2514,11 @@ def _admit_final_run_envelope(
     answer_reveal: Mapping[str, Any],
     campaign_manifest: Mapping[str, Any],
     grade: Mapping[str, Any],
-    worker_authorizations: Mapping[str, Any] | None = None,
-    worker_lifecycle: Mapping[str, Any] | None = None,
-    worker_key_erasure: Mapping[str, Any] | None = None,
+    worker_execution: Mapping[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     if plan.to_dict()["metadata"].get("claim_eligible") is not True:
         return {
-            "schema": "aura.latent_cortex.final_run_envelope.v3",
+            "schema": "aura.latent_cortex.final_run_envelope.v4",
             "claim_required": False,
         }
     campaign_dir = Path(args.campaign_dir).expanduser().resolve()
@@ -3588,24 +2530,11 @@ def _admit_final_run_envelope(
         or trust.get("policy_sha256") != policy.policy_sha256
     ):
         raise CampaignProducerError("final run has no trusted runner policy")
-    if (
-        worker_authorizations is None
-        or worker_lifecycle is None
-        or worker_key_erasure is None
-    ):
-        raise CampaignProducerError(
-            "final run is missing worker authorization, lifecycle, or key "
-            "erasure evidence"
-        )
-    if worker_authorizations != _read_canonical_json_artifact(
-        campaign_dir / WORKER_AUTHORIZATION_MANIFEST_FILE,
-        role="worker authorization manifest",
-    ) or worker_lifecycle != _read_canonical_json_artifact(
-        campaign_dir / WORKER_LIFECYCLE_MANIFEST_FILE,
-        role="worker lifecycle manifest",
-    ) or worker_key_erasure != _read_canonical_json_artifact(
-        campaign_dir / WORKER_KEY_ERASURE_MANIFEST_FILE,
-        role="worker key erasure manifest",
+    if worker_execution is None:
+        raise CampaignProducerError("final run is missing worker execution evidence")
+    if worker_execution != _read_canonical_json_artifact(
+        campaign_dir / WORKER_EXECUTION_MANIFEST_FILE,
+        role="worker execution manifest",
     ):
         raise CampaignProducerError(
             "final run worker evidence differs from canonical disk artifacts"
@@ -3621,14 +2550,19 @@ def _admit_final_run_envelope(
         "campaign_manifest_sha256": campaign_manifest["manifest_sha256"],
         "journal_head_sha256": campaign_manifest["journal_head_sha256"],
         "published_grade_sha256": grade["grade_sha256"],
-        "worker_authorization_manifest_sha256": worker_authorizations[
+        "worker_execution_manifest_sha256": worker_execution[
             "manifest_sha256"
         ],
-        "worker_lifecycle_manifest_sha256": worker_lifecycle[
-            "manifest_sha256"
+        "detached_plan_sha256": worker_execution["detached_plan_sha256"],
+        "detached_classification_head_sha256": worker_execution[
+            "detached_classification_head_sha256"
         ],
-        "worker_key_erasure_manifest_sha256": worker_key_erasure[
-            "manifest_sha256"
+        "detached_classifications_sha256": worker_execution[
+            "detached_classifications_sha256"
+        ],
+        "worker_imports_sha256": worker_execution["imports_sha256"],
+        "worker_excluded_attempts_sha256": worker_execution[
+            "excluded_attempts_sha256"
         ],
     }
     request = _load_or_prepare_role_request(
@@ -3674,7 +2608,7 @@ def _admit_final_run_envelope(
         "campaign_runner_attestation": attestation,
     }
     envelope = {
-        "schema": "aura.latent_cortex.final_run_envelope.v3",
+        "schema": "aura.latent_cortex.final_run_envelope.v4",
         **material,
         "envelope_sha256": _sha256_bytes(canonical_json_bytes(material)),
     }
@@ -3692,78 +2626,416 @@ def _next_worker_attempt_slot(
     maximum: int,
 ) -> int | None:
     for attempt_slot in range(1, maximum + 1):
-        paths = _worker_origin_paths(campaign_dir, arm, attempt_slot)
-        if not paths["launch"].exists():
+        paths = _worker_attempt_paths(campaign_dir, arm, attempt_slot)
+        lifecycle_exists = paths["origin_dir"].is_dir() and any(
+            paths["origin_dir"].glob("*.lifecycle.json")
+        )
+        consumed = any(
+            path.exists() or path.is_symlink()
+            for path in (
+                paths["stage"],
+                paths["broker_result"],
+                paths["import_receipt"],
+            )
+        )
+        if not lifecycle_exists and not consumed:
             return attempt_slot
     return None
 
 
-def _record_worker_launch(
+def _persist_brokered_worker_result(
+    paths: Mapping[str, Path],
+    result: BrokeredProcessResult,
+) -> dict[str, Any]:
+    body = {
+        "schema": "aura.latent_cortex.brokered_worker_result.v1",
+        **asdict(result),
+    }
+    artifact = {
+        **body,
+        "artifact_sha256": _sha256_bytes(canonical_json_bytes(body)),
+    }
+    _atomic_create_or_verify(
+        paths["broker_result"],
+        canonical_json_bytes(artifact) + b"\n",
+    )
+    return artifact
+
+
+def _load_brokered_worker_result(path: Path) -> tuple[BrokeredProcessResult, dict[str, Any]]:
+    artifact = _read_canonical_json_artifact(path, role="brokered worker result")
+    body = {key: value for key, value in artifact.items() if key != "artifact_sha256"}
+    field_names = set(BrokeredProcessResult.__dataclass_fields__)
+    if (
+        set(artifact) != {"schema", *field_names, "artifact_sha256"}
+        or artifact.get("schema")
+        != "aura.latent_cortex.brokered_worker_result.v1"
+        or artifact.get("artifact_sha256")
+        != _sha256_bytes(canonical_json_bytes(body))
+    ):
+        raise CampaignProducerError("brokered worker result artifact is invalid")
+    return (
+        BrokeredProcessResult(
+            **{field: artifact[field] for field in field_names}
+        ),
+        artifact,
+    )
+
+
+def _verify_detached_worker_broker_result(
+    result: BrokeredProcessResult,
+    *,
+    require_claim_eligible: bool,
+) -> VerifiedDetachedBrokerEvidence:
+    run_value = str(os.environ.get(DETACHED_RUN_DIR_ENV, "") or "")
+    plan_value = str(os.environ.get(DETACHED_PLAN_PATH_ENV, "") or "")
+    attempts_value = str(os.environ.get(DETACHED_ATTEMPTS_PATH_ENV, "") or "")
+    plan_sha256 = str(os.environ.get(DETACHED_PLAN_SHA256_ENV, "") or "")
+    attempt_value = str(os.environ.get(DETACHED_SUPERVISOR_ATTEMPT_ENV, "") or "")
+    if not all((run_value, plan_value, attempts_value, plan_sha256, attempt_value)):
+        raise CampaignProducerError("detached supervisor evidence environment is incomplete")
+    try:
+        run_dir = Path(run_value).expanduser().resolve(strict=True)
+        plan_path = Path(plan_value).expanduser().resolve(strict=True)
+        attempts_path = Path(attempts_value).expanduser().resolve(strict=True)
+        supervisor_attempt = int(attempt_value)
+    except (OSError, ValueError) as exc:
+        raise CampaignProducerError(
+            "detached supervisor evidence environment is invalid"
+        ) from exc
+    if (
+        plan_path != run_dir / "detached_plan.json"
+        or attempts_path != run_dir / "detached_attempts.jsonl"
+        or len(plan_sha256) != 64
+        or any(character not in "0123456789abcdef" for character in plan_sha256)
+        or supervisor_attempt <= 0
+    ):
+        raise CampaignProducerError(
+            "detached supervisor evidence environment is inconsistent"
+        )
+    try:
+        verified = verify_detached_broker_evidence(
+            run_dir=run_dir,
+            broker_result=result,
+            require_claim_eligible=require_claim_eligible,
+        )
+    except DetachedCampaignEvidenceError as exc:
+        raise CampaignProducerError(
+            f"detached supervisor evidence rejected: {exc.code}"
+        ) from exc
+    if (
+        verified.plan.get("plan_sha256") != plan_sha256
+        or verified.attempt != supervisor_attempt
+    ):
+        raise CampaignProducerError("detached supervisor evidence identity differs")
+    return verified
+
+
+def _import_brokered_worker_attempt(
     args: argparse.Namespace,
+    plan: CampaignPlan,
+    *,
     arm: str,
     attempt_slot: int,
-    command: list[str],
-) -> tuple[dict[str, Any], dict[str, Path]]:
+    result: BrokeredProcessResult,
+) -> dict[str, Any] | None:
     campaign_dir = Path(args.campaign_dir).expanduser().resolve()
-    paths = _worker_origin_paths(campaign_dir, arm, attempt_slot)
-    private_key = _load_worker_private_key(paths["private_key"])
-    request = _read_canonical_json_artifact(
-        paths["request"], role="worker authorization request"
+    paths = _worker_attempt_paths(campaign_dir, arm, attempt_slot)
+    _persist_brokered_worker_result(paths, result)
+    if result.returncode != 0 or result.status != "passed":
+        return None
+    summary = result.worker_origin_lifecycle
+    lifecycle_value = (
+        summary.get("artifact_path") if isinstance(summary, Mapping) else None
     )
-    attestation = _read_canonical_json_artifact(
-        paths["attestation"], role="worker authorization attestation"
+    if not isinstance(lifecycle_value, str) or not lifecycle_value:
+        raise CampaignProducerError("brokered worker has no terminal lifecycle")
+    lifecycle_path = Path(lifecycle_value).expanduser().resolve(strict=True)
+    if lifecycle_path.parent != paths["origin_dir"].resolve(strict=True):
+        raise CampaignProducerError("brokered worker lifecycle path substitution")
+    lifecycle = _read_canonical_json_artifact(
+        lifecycle_path,
+        role="brokered worker lifecycle",
     )
-    launch = {
-        "schema": "aura.latent_cortex.worker_launch.v1",
-        "arm": arm,
-        "attempt_slot": attempt_slot,
-        "worker_boot_id": _worker_boot_id(private_key),
-        "worker_key_id": _sha256_bytes(_worker_public_key_raw(private_key)),
-        "worker_command_sha256": _sha256_bytes(canonical_json_bytes(command)),
-        "authorization_request_sha256": request["request_sha256"],
-        "authorization_attestation_sha256": _sha256_bytes(
-            canonical_json_bytes(attestation)
+    authorization = lifecycle.get("authorization_payload")
+    detached_plan_sha256 = (
+        authorization.get("detached_plan_sha256")
+        if isinstance(authorization, Mapping)
+        else None
+    )
+    if not isinstance(detached_plan_sha256, str):
+        raise CampaignProducerError("brokered worker detached plan is missing")
+    detached_evidence = _verify_detached_worker_broker_result(
+        result,
+        require_claim_eligible=True,
+    )
+    if detached_evidence.plan["plan_sha256"] != detached_plan_sha256:
+        raise CampaignProducerError("brokered worker detached plan differs")
+    policy = _load_campaign_trust_policy(args, require_current=True)
+    if policy is None:
+        raise CampaignProducerError("brokered worker has no trusted policy")
+    metadata = plan.to_dict()["metadata"]
+    verified = verify_terminal_worker_stage(
+        stage_path=paths["stage"],
+        lifecycle_path=lifecycle_path,
+        plan=plan,
+        policy=policy,
+        broker_result=result,
+        arm=arm,
+        worker_attempt_slot=attempt_slot,
+        expected_protocol_sha256=_campaign_protocol_sha256(),
+        expected_detached_plan_sha256=detached_plan_sha256,
+        expected_broker_policy_sha256=result.policy_sha256,
+        expected_model_identity_sha256=_sha256_bytes(
+            canonical_json_bytes(metadata["model_identity"])
         ),
-        "launched_at_unix_ns": time.time_ns(),
-    }
-    if paths["launch"].exists():
-        raise CampaignProducerError("worker attempt slot was already consumed")
-    _atomic_create_or_verify(
-        paths["launch"], canonical_json_bytes(launch) + b"\n"
+        expected_adapter_identity_sha256=_sha256_bytes(
+            canonical_json_bytes(metadata["adapter_identity"])
+        ),
     )
-    return launch, paths
+    _atomic_create_or_verify(
+        paths["verified_stage"],
+        canonical_json_bytes(verified.manifest) + b"\n",
+    )
+    return import_verified_worker_stage(
+        canonical_journal_path=campaign_dir / JOURNAL_FILE,
+        intent_path=paths["import_intent"],
+        receipt_path=paths["import_receipt"],
+        plan=plan,
+        verified_stage=verified,
+    )
 
 
-def _record_worker_exit(
-    paths: Mapping[str, Path],
-    launch: Mapping[str, Any],
-    *,
-    returncode: int | None,
-    outcome: str = "process_exit",
-    error_type: str | None = None,
-) -> None:
-    if outcome not in {"process_exit", "launcher_failure"}:
-        raise CampaignProducerError("worker exit outcome is invalid")
-    if outcome == "process_exit":
-        if type(returncode) is not int or error_type is not None:
-            raise CampaignProducerError("worker process exit receipt is invalid")
-    elif returncode is not None or not error_type:
-        raise CampaignProducerError("worker launcher failure receipt is invalid")
+def _build_worker_execution_manifest(
+    args: argparse.Namespace,
+    plan: CampaignPlan,
+) -> dict[str, Any] | None:
+    if plan.to_dict()["metadata"].get("claim_eligible") is not True:
+        return None
+    campaign_dir = Path(args.campaign_dir).expanduser().resolve()
+    policy = _load_campaign_trust_policy(args, require_current=True)
+    if policy is None:
+        raise CampaignProducerError("worker execution has no trusted policy")
+    imports: list[dict[str, Any]] = []
+    excluded: list[dict[str, Any]] = []
+    successful_arms: set[str] = set()
+    detached_plan_sha256: str | None = None
+    detached_classification_head_sha256: str | None = None
+    detached_terminals: list[dict[str, Any]] | None = None
+    detached_quarantines: list[dict[str, Any]] | None = None
+
+    for arm in _arms(args):
+        for attempt_slot in range(1, args.max_infra_attempts + 1):
+            paths = _worker_attempt_paths(campaign_dir, arm, attempt_slot)
+            if not paths["broker_result"].exists():
+                origin_activity = paths["origin_dir"].is_dir() and any(
+                    paths["origin_dir"].iterdir()
+                )
+                if origin_activity or paths["stage"].exists():
+                    raise CampaignProducerError(
+                        "worker attempt has activity without broker evidence"
+                    )
+                continue
+            broker_result, broker_artifact = _load_brokered_worker_result(
+                paths["broker_result"]
+            )
+            summary = broker_result.worker_origin_lifecycle
+            if not isinstance(summary, dict):
+                raise CampaignProducerError(
+                    "worker broker evidence has no lifecycle classification"
+                )
+            detached_evidence = _verify_detached_worker_broker_result(
+                broker_result,
+                require_claim_eligible=False,
+            )
+            current_detached_plan = detached_evidence.plan["plan_sha256"]
+            current_terminals = [
+                asdict(terminal) for terminal in detached_evidence.terminal_summaries
+            ]
+            current_quarantines = [
+                asdict(quarantine)
+                for quarantine in detached_evidence.quarantine_summaries
+            ]
+            if detached_plan_sha256 is None:
+                detached_plan_sha256 = current_detached_plan
+                detached_classification_head_sha256 = (
+                    detached_evidence.classification_head_sha256
+                )
+                detached_terminals = current_terminals
+                detached_quarantines = current_quarantines
+            elif (
+                detached_plan_sha256 != current_detached_plan
+                or detached_classification_head_sha256
+                != detached_evidence.classification_head_sha256
+                or detached_terminals != current_terminals
+                or detached_quarantines != current_quarantines
+            ):
+                raise CampaignProducerError(
+                    "worker attempts do not share one detached evidence snapshot"
+                )
+            matching_terminals = [
+                terminal
+                for terminal in current_terminals
+                if terminal["request_id"] == broker_result.request_id
+            ]
+            if len(matching_terminals) != 1:
+                raise CampaignProducerError(
+                    "worker broker result has no unique detached terminal"
+                )
+            detached_terminal = matching_terminals[0]
+            expected_claim_eligible = bool(
+                broker_result.returncode == 0 and broker_result.status == "passed"
+            )
+            if detached_terminal["claim_eligible"] is not expected_claim_eligible:
+                raise CampaignProducerError(
+                    "worker broker result eligibility differs from detached evidence"
+                )
+            common = {
+                "arm": arm,
+                "worker_attempt_slot": attempt_slot,
+                "broker_result_artifact_sha256": broker_artifact[
+                    "artifact_sha256"
+                ],
+                "broker_policy_sha256": broker_result.policy_sha256,
+                "broker_request_id": broker_result.request_id,
+                "broker_receipt_sha256": broker_result.receipt_sha256,
+                "broker_response_hmac_sha256": broker_result.response_hmac_sha256,
+                "worker_origin_lifecycle": summary,
+                "detached_supervisor_attempt": detached_evidence.attempt,
+                "detached_terminal_event_sha256": detached_terminal["event_sha256"],
+                "detached_classification_head_sha256": (
+                    detached_evidence.classification_head_sha256
+                ),
+            }
+            if broker_result.returncode != 0 or broker_result.status != "passed":
+                excluded.append(
+                    {
+                        **common,
+                        "classification": "terminal_excluded",
+                        "status": broker_result.status,
+                        "returncode": broker_result.returncode,
+                        "reason": broker_result.error,
+                    }
+                )
+                continue
+            if arm in successful_arms:
+                raise CampaignProducerError(
+                    "worker execution has multiple imported attempts for one arm"
+                )
+            receipt = _import_brokered_worker_attempt(
+                args,
+                plan,
+                arm=arm,
+                attempt_slot=attempt_slot,
+                result=broker_result,
+            )
+            if receipt is None:
+                raise CampaignProducerError("passed worker attempt was not imported")
+            verified_stage = _read_canonical_json_artifact(
+                paths["verified_stage"], role="verified worker stage"
+            )
+            import_intent = _read_canonical_json_artifact(
+                paths["import_intent"], role="worker import intent"
+            )
+            import_receipt = _read_canonical_json_artifact(
+                paths["import_receipt"], role="worker import receipt"
+            )
+            if import_receipt != receipt:
+                raise CampaignProducerError("worker import receipt differs")
+            stage_detached_plan = verified_stage.get("detached_plan_sha256")
+            if not isinstance(stage_detached_plan, str):
+                raise CampaignProducerError("worker stage detached plan is invalid")
+            if detached_plan_sha256 != stage_detached_plan:
+                raise CampaignProducerError(
+                    "worker attempts span different detached plans"
+                )
+            imports.append(
+                {
+                    **common,
+                    "classification": "terminal_imported",
+                    "session_id": summary["session_id"],
+                    "detached_plan_sha256": stage_detached_plan,
+                    "verified_stage_manifest_sha256": verified_stage[
+                        "manifest_sha256"
+                    ],
+                    "stage_sha256": verified_stage["stage_sha256"],
+                    "stage_journal_head_sha256": verified_stage[
+                        "stage_journal_head_sha256"
+                    ],
+                    "result_chain_head_sha256": verified_stage[
+                        "result_chain_head_sha256"
+                    ],
+                    "cell_ids": verified_stage["cell_ids"],
+                    "import_intent_sha256": import_intent["intent_sha256"],
+                    "import_receipt_sha256": import_receipt["receipt_sha256"],
+                    "canonical_imports": import_receipt["imported"],
+                }
+            )
+            successful_arms.add(arm)
+
+    if (
+        successful_arms != set(_arms(args))
+        or detached_plan_sha256 is None
+        or detached_classification_head_sha256 is None
+        or detached_terminals is None
+        or detached_quarantines is None
+    ):
+        raise CampaignProducerError("worker execution arm coverage is incomplete")
+    with CampaignJournal(campaign_dir / JOURNAL_FILE, plan) as journal:
+        canonical_records = journal.result_records()
+    canonical_origins = {
+        record["result"]["worker_origin"]["origin_sha256"]
+        for record in canonical_records
+    }
+    imported_origins = {
+        cell["result_origin_sha256"]
+        for entry in imports
+        for cell in entry["canonical_imports"]
+    }
+    if canonical_origins != imported_origins or len(canonical_records) != len(
+        plan.cell_ids
+    ):
+        raise CampaignProducerError(
+            "canonical worker origins differ from terminal imports"
+        )
+    detached_classifications = {
+        "terminal_count": len(detached_terminals),
+        "terminals": detached_terminals,
+        "quarantine_count": len(detached_quarantines),
+        "quarantines": detached_quarantines,
+    }
     material = {
-        "schema": "aura.latent_cortex.worker_exit.v2",
-        "launch_sha256": _sha256_bytes(canonical_json_bytes(launch)),
-        "outcome": outcome,
-        "returncode": returncode,
-        "error_type": error_type,
-        "exited_at_unix_ns": time.time_ns(),
+        "schema": WORKER_EXECUTION_MANIFEST_SCHEMA,
+        "campaign_name": plan.campaign_name,
+        "policy_sha256": policy.policy_sha256,
+        "protocol_sha256": _campaign_protocol_sha256(),
+        "plan_sha256": plan.plan_sha256,
+        "detached_plan_sha256": detached_plan_sha256,
+        "detached_classification_head_sha256": (
+            detached_classification_head_sha256
+        ),
+        "detached_classifications": detached_classifications,
+        "detached_classifications_sha256": _sha256_bytes(
+            canonical_json_bytes(detached_classifications)
+        ),
+        "import_count": len(imports),
+        "imports": imports,
+        "imports_sha256": _sha256_bytes(canonical_json_bytes(imports)),
+        "excluded_count": len(excluded),
+        "excluded_attempts": excluded,
+        "excluded_attempts_sha256": _sha256_bytes(
+            canonical_json_bytes(excluded)
+        ),
     }
-    receipt = {
+    manifest = {
         **material,
-        "receipt_sha256": _sha256_bytes(canonical_json_bytes(material)),
+        "manifest_sha256": _sha256_bytes(canonical_json_bytes(material)),
     }
     _atomic_create_or_verify(
-        paths["exit"], canonical_json_bytes(receipt) + b"\n"
+        campaign_dir / WORKER_EXECUTION_MANIFEST_FILE,
+        canonical_json_bytes(manifest) + b"\n",
     )
+    return manifest
 
 
 def _run_child(
@@ -3772,7 +3044,7 @@ def _run_child(
     timeout_s: float,
     *,
     worker_attempt_slot: int | None = None,
-) -> int:
+) -> int | BrokeredProcessResult:
     campaign_dir = Path(args.campaign_dir).expanduser().resolve()
     log_path = campaign_dir / LOG_FILE
     command = _worker_args(
@@ -3780,60 +3052,131 @@ def _run_child(
         arm,
         worker_attempt_slot=worker_attempt_slot,
     )
-    launch: dict[str, Any] | None = None
-    paths: dict[str, Path] | None = None
-    if worker_attempt_slot is not None:
-        launch, paths = _record_worker_launch(
-            args,
-            arm,
-            worker_attempt_slot,
-            command,
-        )
-    try:
-        if broker_available():
-            returncode = run_brokered_process(
-                command,
-                cwd=REPO_ROOT,
-                stdout_path=log_path,
-                timeout_s=timeout_s,
-            ).returncode
-        else:
-            with log_path.open("ab", buffering=0) as log:
-                process = subprocess.Popen(
+    if broker_available():
+        deadline = time.monotonic() + timeout_s
+        authorization_announced = False
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0.0:
+                return 124
+            try:
+                return run_brokered_process(
                     command,
                     cwd=REPO_ROOT,
-                    stdout=log,
-                    stderr=subprocess.STDOUT,
-                    start_new_session=True,
+                    stdout_path=log_path,
+                    timeout_s=remaining,
                 )
-                try:
-                    returncode = process.wait(timeout=timeout_s)
-                except subprocess.TimeoutExpired:
-                    os.killpg(process.pid, signal.SIGTERM)
-                    try:
-                        process.wait(timeout=15)
-                    except subprocess.TimeoutExpired:
-                        os.killpg(process.pid, signal.SIGKILL)
-                        process.wait(timeout=15)
-                    returncode = 124
-    except BaseException as exc:
-        if launch is not None and paths is not None:
-            _record_worker_exit(
-                paths,
-                launch,
-                returncode=None,
-                outcome="launcher_failure",
-                error_type=type(exc).__name__,
-            )
-        raise
-    if launch is not None and paths is not None:
-        _record_worker_exit(paths, launch, returncode=returncode)
+            except DetachedBrokerError as exc:
+                message = str(exc)
+                marker = "worker-origin external authorization required at "
+                if worker_attempt_slot is None or marker not in message:
+                    raise
+                attestation_path = message.split(marker, 1)[1].strip()
+                if not authorization_announced:
+                    print(
+                        json.dumps(
+                            {
+                                "state": "worker_origin_signature_required",
+                                "arm": arm,
+                                "worker_attempt_slot": worker_attempt_slot,
+                                "attestation_path": attestation_path,
+                            },
+                            indent=2,
+                            sort_keys=True,
+                        ),
+                        flush=True,
+                    )
+                    authorization_announced = True
+                time.sleep(min(0.5, max(0.01, remaining)))
+    if worker_attempt_slot is not None:
+        raise CampaignProducerError(
+            "claim worker requires the detached supervisor broker"
+        )
+    with log_path.open("ab", buffering=0) as log:
+        process = subprocess.Popen(
+            command,
+            cwd=REPO_ROOT,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        try:
+            returncode = process.wait(timeout=timeout_s)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGTERM)
+            try:
+                process.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.wait(timeout=15)
+            returncode = 124
     return returncode
 
 
-def _detached_broker_policy(args: argparse.Namespace) -> list[dict[str, Any]]:
+def _detached_worker_origin_policy(
+    args: argparse.Namespace,
+    plan: CampaignPlan,
+    *,
+    arm: str,
+    attempt_slot: int,
+) -> dict[str, Any]:
+    metadata = plan.to_dict()["metadata"]
+    cells = [
+        {
+            "cell_id": cell_id,
+            "cell_type": PAIRED_CAMPAIGN_CELL_TYPE,
+        }
+        for cell_id in plan.cell_ids
+        if plan.cell_definition(cell_id).get("arm") == arm
+    ]
+    cells.sort(
+        key=lambda cell: int(
+            plan.cell_definition(cell["cell_id"])[
+                "execution_ordinal_within_arm"
+            ]
+        )
+    )
+    if not cells:
+        raise CampaignProducerError("worker-origin arm has no planned cells")
+    campaign_dir = Path(args.campaign_dir).expanduser().resolve()
+    paths = _worker_attempt_paths(campaign_dir, arm, attempt_slot)
+    return {
+        "schema": "aura.detached_step.worker_origin_policy.v1",
+        "campaign_name": plan.campaign_name,
+        "protocol_sha256": _campaign_protocol_sha256(),
+        "trust_policy_path": str(
+            Path(args.campaign_trust_policy).expanduser().resolve(strict=True)
+        ),
+        "trust_root_path": str(
+            Path(args.campaign_trust_root).expanduser().resolve(strict=True)
+        ),
+        "artifact_dir": str(paths["origin_dir"]),
+        "arm": arm,
+        "worker_attempt_slot": attempt_slot,
+        "allowed_cells": cells,
+        "model_identity_sha256": _sha256_bytes(
+            canonical_json_bytes(metadata["model_identity"])
+        ),
+        "adapter_identity_sha256": _sha256_bytes(
+            canonical_json_bytes(metadata["adapter_identity"])
+        ),
+        "authorization_ttl_seconds": min(
+            7 * 24 * 60 * 60,
+            max(60, int(math.ceil(float(args.arm_timeout)))),
+        ),
+    }
+
+
+def _detached_broker_policy(
+    args: argparse.Namespace,
+    plan: CampaignPlan | None = None,
+) -> list[dict[str, Any]]:
     campaign_dir = Path(args.campaign_dir).expanduser().resolve()
     if args.confirmatory:
+        if plan is None:
+            raise CampaignProducerError(
+                "claim broker policy requires the frozen campaign plan"
+            )
         return [
             {
                 "command": _worker_args(
@@ -3845,6 +3188,12 @@ def _detached_broker_policy(args: argparse.Namespace) -> list[dict[str, Any]]:
                 "stdout_path": str(campaign_dir / LOG_FILE),
                 "timeout_s_max": float(args.arm_timeout),
                 "max_invocations": 1,
+                "worker_origin": _detached_worker_origin_policy(
+                    args,
+                    plan,
+                    arm=arm,
+                    attempt_slot=attempt_slot,
+                ),
             }
             for arm in _arms(args)
             for attempt_slot in range(1, args.max_infra_attempts + 1)
@@ -3869,10 +3218,7 @@ def _orchestrate(
     campaign_dir = Path(args.campaign_dir).expanduser().resolve()
     deadline = time.monotonic() + args.campaign_timeout
     metadata = plan.to_dict()["metadata"]
-    worker_authorizations = _admit_worker_authorizations(args, plan)
-    if worker_authorizations is None:
-        return 7
-    worker_origin_required = worker_authorizations.get("claim_required") is True
+    worker_origin_required = metadata.get("claim_eligible") is True
     arm_execution_order = tuple(metadata["arm_execution_order"])
     if set(arm_execution_order) != set(_arms(args)):
         raise CampaignProducerError("frozen arm execution order is invalid")
@@ -3905,33 +3251,44 @@ def _orchestrate(
                         flush=True,
                     )
                     return 4
-            code = _run_child(
+            outcome = _run_child(
                 args,
                 arm,
                 min(args.arm_timeout, remaining),
                 worker_attempt_slot=worker_attempt_slot,
             )
+            code = (
+                outcome.returncode
+                if isinstance(outcome, BrokeredProcessResult)
+                else outcome
+            )
+            if worker_origin_required:
+                if not isinstance(outcome, BrokeredProcessResult):
+                    if code == 124:
+                        print(
+                            f"arm {arm} authorization or execution timed out",
+                            flush=True,
+                        )
+                        return code
+                    raise CampaignProducerError(
+                        "claim worker has no authenticated broker result"
+                    )
+                _import_brokered_worker_attempt(
+                    args,
+                    plan,
+                    arm=arm,
+                    attempt_slot=int(worker_attempt_slot),
+                    result=outcome,
+                )
             print(f"arm {arm} process exit={code} attempt={attempts}", flush=True)
             if code != 0 and attempts >= args.max_infra_attempts:
                 return code or 4
 
-    worker_origin_chains = _verify_worker_origin_chains(args, plan)
-    worker_lifecycle = _build_worker_lifecycle_manifest(
-        args,
-        plan,
-        authorization_manifest=worker_authorizations,
-    )
+    worker_execution = _build_worker_execution_manifest(args, plan)
     sealed_outputs = _seal_output_manifest(
         campaign_dir,
         plan,
-        worker_origin_chains=worker_origin_chains,
-        worker_lifecycle=worker_lifecycle,
-    )
-    worker_key_erasure = _erase_worker_private_keys(
-        args,
-        plan,
-        authorization_manifest=worker_authorizations,
-        sealed_outputs=sealed_outputs,
+        worker_execution=worker_execution,
     )
     answer_reveal = _admit_answer_reveal(args, plan, tasks, sealed_outputs)
     if answer_reveal is None:
@@ -3962,20 +3319,27 @@ def _orchestrate(
         "manifest_sha256"
     ]
     final_material["answer_reveal_sha256"] = answer_reveal["reveal_sha256"]
-    if worker_authorizations.get("claim_required") is True:
-        if worker_key_erasure is None:
-            raise CampaignProducerError("worker key erasure evidence is missing")
-        final_material["worker_authorization_manifest_sha256"] = (
-            worker_authorizations["manifest_sha256"]
-        )
-        if worker_lifecycle is None:
-            raise CampaignProducerError("worker lifecycle evidence is missing")
-        final_material["worker_lifecycle_manifest_sha256"] = worker_lifecycle[
+    if worker_origin_required:
+        if worker_execution is None:
+            raise CampaignProducerError("worker execution evidence is missing")
+        final_material["worker_execution_manifest_sha256"] = worker_execution[
             "manifest_sha256"
         ]
-        final_material["worker_key_erasure_manifest_sha256"] = (
-            worker_key_erasure["manifest_sha256"]
-        )
+        final_material["detached_plan_sha256"] = worker_execution[
+            "detached_plan_sha256"
+        ]
+        final_material["detached_classification_head_sha256"] = worker_execution[
+            "detached_classification_head_sha256"
+        ]
+        final_material["detached_classifications_sha256"] = worker_execution[
+            "detached_classifications_sha256"
+        ]
+        final_material["worker_imports_sha256"] = worker_execution[
+            "imports_sha256"
+        ]
+        final_material["worker_excluded_attempts_sha256"] = worker_execution[
+            "excluded_attempts_sha256"
+        ]
     final = {
         **final_material,
         "grade_sha256": _sha256_bytes(canonical_json_bytes(final_material)),
@@ -3990,9 +3354,7 @@ def _orchestrate(
         answer_reveal=answer_reveal,
         campaign_manifest=manifest,
         grade=final,
-        worker_authorizations=worker_authorizations,
-        worker_lifecycle=worker_lifecycle,
-        worker_key_erasure=worker_key_erasure,
+        worker_execution=worker_execution,
     )
     if final_run_envelope is None:
         return 6
@@ -4131,9 +3493,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--worker-attempt-slot", type=_positive_int, default=0, help=argparse.SUPPRESS
     )
-    parser.add_argument("--worker-boot-id", default="", help=argparse.SUPPRESS)
-    parser.add_argument("--worker-private-key", default="", help=argparse.SUPPRESS)
-    parser.add_argument("--worker-authorization", default="", help=argparse.SUPPRESS)
+    parser.add_argument("--worker-stage-journal", default="", help=argparse.SUPPRESS)
     return parser
 
 
@@ -4148,9 +3508,7 @@ def main() -> int:
     args.domain_values = _csv_domains(parser, args.domains)
     worker_origin_values = (
         args.worker_attempt_slot,
-        args.worker_boot_id,
-        args.worker_private_key,
-        args.worker_authorization,
+        args.worker_stage_journal,
     )
     if args.worker_arm:
         if any(worker_origin_values) and not all(worker_origin_values):
@@ -4168,12 +3526,9 @@ def main() -> int:
         )
     campaign_dir = Path(args.campaign_dir).expanduser().resolve()
     args.campaign_dir = str(campaign_dir)
-    if args.worker_private_key:
-        args.worker_private_key = str(
-            Path(args.worker_private_key).expanduser().resolve(strict=True)
-        )
-        args.worker_authorization = str(
-            Path(args.worker_authorization).expanduser().resolve(strict=True)
+    if args.worker_stage_journal:
+        args.worker_stage_journal = str(
+            Path(args.worker_stage_journal).expanduser().resolve(strict=False)
         )
     if args.contamination_audit:
         args.contamination_audit = str(
@@ -4256,7 +3611,7 @@ def main() -> int:
                     "arms": document["metadata"]["arms"],
                     "claim_eligible": document["metadata"]["claim_eligible"],
                     "external_frontier_claim_eligible": False,
-                    "detached_broker_policy": _detached_broker_policy(args),
+                    "detached_broker_policy": _detached_broker_policy(args, expected),
                 },
                 indent=2,
                 sort_keys=True,

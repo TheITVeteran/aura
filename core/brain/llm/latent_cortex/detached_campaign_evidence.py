@@ -808,13 +808,29 @@ class VerifiedDetachedQuarantine:
 
 
 @dataclass(frozen=True)
+class VerifiedDetachedTerminal:
+    attempt: int
+    request_id: str
+    policy_sha256: str
+    session_id: str
+    event_sha256: str
+    receipt_sha256: str
+    response_hmac_sha256: str
+    status: str
+    returncode: int
+    claim_eligible: bool
+
+
+@dataclass(frozen=True)
 class VerifiedDetachedBrokerEvidence:
     plan: dict[str, Any]
     journal_head_sha256: str
+    classification_head_sha256: str
     attempt: int
     terminal_event: dict[str, Any]
     policy: dict[str, Any]
     request: dict[str, Any]
+    terminal_summaries: tuple[VerifiedDetachedTerminal, ...]
     quarantine_summaries: tuple[VerifiedDetachedQuarantine, ...]
 
 
@@ -822,6 +838,7 @@ def verify_detached_broker_evidence(
     *,
     run_dir: Path,
     broker_result: BrokeredProcessResult,
+    require_claim_eligible: bool = True,
 ) -> VerifiedDetachedBrokerEvidence:
     """Replay one detached run and bind ``broker_result`` to its exact terminal event."""
 
@@ -836,7 +853,9 @@ def verify_detached_broker_evidence(
     classifications: dict[str, tuple[str, dict[str, Any]]] = {}
     sessions: set[str] = set()
     invocation_counts: dict[tuple[int, str], int] = {}
+    terminals: list[VerifiedDetachedTerminal] = []
     quarantines: list[VerifiedDetachedQuarantine] = []
+    classification_head_sha256 = ""
     outer_terminal_seen = False
     target: tuple[dict[str, Any], dict[str, Any], dict[str, Any]] | None = None
 
@@ -958,6 +977,34 @@ def verify_detached_broker_evidence(
                     policy=policy,
                     contract=contract,
                 )
+                start_origin = start.get("worker_origin")
+                session_id = (
+                    start_origin.get("session_id")
+                    if isinstance(start_origin, dict)
+                    else ""
+                )
+                claim_eligible = bool(
+                    response["returncode"] == 0
+                    and response["status"] == "passed"
+                    and not response["timed_out"]
+                    and response["containment_verified"]
+                    and response["error"] is None
+                    and response["worker_origin_lifecycle"] is not None
+                )
+                terminals.append(
+                    VerifiedDetachedTerminal(
+                        attempt=attempt,
+                        request_id=request_id,
+                        policy_sha256=policy["policy_sha256"],
+                        session_id=str(session_id),
+                        event_sha256=event["event_sha256"],
+                        receipt_sha256=response["receipt_sha256"],
+                        response_hmac_sha256=response["response_hmac_sha256"],
+                        status=response["status"],
+                        returncode=response["returncode"],
+                        claim_eligible=claim_eligible,
+                    )
+                )
                 classifications[request_id] = ("terminal", event)
                 if request_id == broker_result.request_id:
                     if target is not None or not _matches_broker_result(response, broker_result):
@@ -973,6 +1020,7 @@ def verify_detached_broker_evidence(
                 )
                 quarantines.append(quarantine)
                 classifications[request_id] = ("quarantine", event)
+            classification_head_sha256 = event["event_sha256"]
         elif event_type == "TERMINAL":
             receipt = event.get("receipt")
             receipt_body = (
@@ -1005,23 +1053,26 @@ def verify_detached_broker_evidence(
         _fail("detached_broker_result_not_found")
     start, terminal, policy = target
     response = terminal["response"]
-    if (
-        broker_result.policy_sha256 != policy["policy_sha256"]
-        or broker_result.returncode != 0
-        or broker_result.status != "passed"
-        or broker_result.timed_out
-        or not broker_result.containment_verified
-        or broker_result.error is not None
-        or response.get("worker_origin_lifecycle") is None
-    ):
+    target_claim_eligible = bool(
+        broker_result.policy_sha256 == policy["policy_sha256"]
+        and broker_result.returncode == 0
+        and broker_result.status == "passed"
+        and not broker_result.timed_out
+        and broker_result.containment_verified
+        and broker_result.error is None
+        and response.get("worker_origin_lifecycle") is not None
+    )
+    if require_claim_eligible and not target_claim_eligible:
         _fail("detached_broker_result_not_claim_eligible")
     return VerifiedDetachedBrokerEvidence(
         plan=json.loads(canonical_json_bytes(plan)),
         journal_head_sha256=events[-1]["event_sha256"],
+        classification_head_sha256=classification_head_sha256,
         attempt=start["attempt"],
         terminal_event=json.loads(canonical_json_bytes(terminal)),
         policy=json.loads(canonical_json_bytes(policy)),
         request=json.loads(canonical_json_bytes(start)),
+        terminal_summaries=tuple(terminals),
         quarantine_summaries=tuple(quarantines),
     )
 
@@ -1033,6 +1084,7 @@ __all__ = [
     "PLAN_SCHEMA",
     "VerifiedDetachedBrokerEvidence",
     "VerifiedDetachedQuarantine",
+    "VerifiedDetachedTerminal",
     "WORKER_ORIGIN_POLICY_SCHEMA",
     "WORKER_ORIGIN_QUARANTINE_RECEIPT_SCHEMA",
     "verify_detached_broker_evidence",
