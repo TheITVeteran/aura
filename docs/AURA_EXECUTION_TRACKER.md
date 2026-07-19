@@ -19410,3 +19410,16 @@ training, gain, frontier, installed-app, release, or soak credit.
   launch exact detached resume. Continue lightweight verifier and contamination
   infrastructure while the model lane is occupied. Final long soaks remain
   deferred.
+
+## Checkpoint 2026-07-18-140: Resident Protocol Launch-State Correction
+
+CP140 corrects one impossible precondition in the published CP139 protocol.
+CP139 required `origin/main` to equal its CP138 parent even though committing
+the protocol necessarily advanced `origin/main`. The corrected contract binds
+CP138 as the implementation commit, records it as the protocol parent, requires
+clean `main == origin/main` at launch, and delegates the exact launch HEAD/tree
+binding to the detached execution manifest. No training or evidence parameter
+changed, and no model was loaded before this correction. Evidence-weighted
+completion remains 27%; this is checkpoint 140 of the faithful 292-399
+forecast, leaving approximately 152-259 checkpoints. Final soaks remain
+deferred.

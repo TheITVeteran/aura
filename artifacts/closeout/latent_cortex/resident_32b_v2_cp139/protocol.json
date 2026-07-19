@@ -16,8 +16,10 @@
   },
   "source": {
     "branch": "main",
-    "commit": "f13692afb22e7e0d074c2967025c2bd161a65545",
-    "required_origin_main": "f13692afb22e7e0d074c2967025c2bd161a65545"
+    "implementation_commit": "f13692afb22e7e0d074c2967025c2bd161a65545",
+    "protocol_parent_commit": "f13692afb22e7e0d074c2967025c2bd161a65545",
+    "launch_state_contract": "clean_main_head_equals_origin_main",
+    "launch_head_is_bound_by_detached_execution_manifest": true
   },
   "model": {
     "active_manifest": "training/fused-model/active.json",
