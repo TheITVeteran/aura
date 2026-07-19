@@ -7,16 +7,29 @@
   "model": {
     "path": "training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118",
     "fingerprint_sha256": "8eae71e73a14d1228a942d4faf84690d70b62148f25b0f924435535f7c550fad",
-    "role": "the resident desktop checkpoint — the only model whose improvement counts"
+    "role": "the resident desktop checkpoint \u2014 the only model whose improvement counts"
   },
   "dataset": {
     "task_registry_version": "2026.07.18.2",
     "families": [
-      "khop", "boolean", "modular", "register_trace", "stack_trace",
-      "constraint_order", "causal_intervention", "bayes_update",
-      "budget_plan", "symbolic_rewrite", "premise_audit", "code_trace"
+      "khop",
+      "boolean",
+      "modular",
+      "register_trace",
+      "stack_trace",
+      "constraint_order",
+      "causal_intervention",
+      "bayes_update",
+      "budget_plan",
+      "symbolic_rewrite",
+      "premise_audit",
+      "code_trace"
     ],
-    "task_depths": [2, 4, 8],
+    "task_depths": [
+      2,
+      4,
+      8
+    ],
     "per_cell": 16,
     "per_cell_fallback": 8,
     "total_samples_primary": 576,
@@ -26,15 +39,25 @@
   "execution_shape": {
     "rationale": "train under the shape the runtime actually executes, with curriculum depth beyond the live 2-step profile so additional thought is trained to help (monotonicity hinge)",
     "n_slots": 4,
-    "branch_roles": ["constructive_solution", "counterexample_search"],
+    "branch_roles": [
+      "constructive_solution",
+      "counterexample_search"
+    ],
     "exchange_interval": 1,
     "alpha": 0.5,
     "alpha_schedule": "constant",
-    "curriculum_depths": [1, 2, 4]
+    "curriculum_depths": [
+      1,
+      2,
+      4
+    ]
   },
   "optimization": {
     "lora_rank": 8,
-    "lora_targets": ["o_proj", "v_proj"],
+    "lora_targets": [
+      "o_proj",
+      "v_proj"
+    ],
     "learning_rate": 0.0001,
     "monotonicity_weight": 0.5,
     "adapter_id": "resident-recurrence-v2",
@@ -60,28 +83,50 @@
     "log_every_steps": 10
   },
   "training_command_argv": [
-    ".venv/bin/python", "tools/recurrence_native_train_v2.py",
-    "--model", "training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118",
-    "--out-dir", "data/latent_cortex/recurrence_native/32b_v2_r1",
-    "--adapter-id", "resident-recurrence-v2",
-    "--personality-adapter", "auto",
-    "--train-seed", "1777",
-    "--families", "khop,boolean,modular,register_trace,stack_trace,constraint_order,causal_intervention,bayes_update,budget_plan,symbolic_rewrite,premise_audit,code_trace",
-    "--task-depths", "2,4,8",
-    "--per-cell", "<16 or 8 per the frozen preflight rule>",
-    "--curriculum-depths", "1,2,4",
-    "--n-slots", "4",
-    "--branch-roles", "constructive_solution,counterexample_search",
-    "--exchange-interval", "1",
-    "--alpha", "0.5",
-    "--alpha-schedule", "constant",
-    "--lora-rank", "8",
-    "--lora-targets", "o_proj,v_proj",
-    "--learning-rate", "1e-4",
-    "--monotonicity-weight", "0.5",
-    "--max-minutes", "232",
-    "--checkpoint-every", "25",
-    "--log-every", "10"
+    ".venv/bin/python",
+    "tools/recurrence_native_train_v2.py",
+    "--model",
+    "training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118",
+    "--out-dir",
+    "data/latent_cortex/recurrence_native/32b_v2_r1",
+    "--adapter-id",
+    "resident-recurrence-v2",
+    "--personality-adapter",
+    "auto",
+    "--train-seed",
+    "1777",
+    "--families",
+    "khop,boolean,modular,register_trace,stack_trace,constraint_order,causal_intervention,bayes_update,budget_plan,symbolic_rewrite,premise_audit,code_trace",
+    "--task-depths",
+    "2,4,8",
+    "--per-cell",
+    "<16 or 8 per the frozen preflight rule>",
+    "--curriculum-depths",
+    "1,2,4",
+    "--n-slots",
+    "4",
+    "--branch-roles",
+    "constructive_solution,counterexample_search",
+    "--exchange-interval",
+    "1",
+    "--alpha",
+    "0.5",
+    "--alpha-schedule",
+    "constant",
+    "--lora-rank",
+    "8",
+    "--lora-targets",
+    "o_proj,v_proj",
+    "--learning-rate",
+    "1e-4",
+    "--monotonicity-weight",
+    "0.5",
+    "--max-minutes",
+    "232",
+    "--checkpoint-every",
+    "25",
+    "--log-every",
+    "10"
   ],
   "supervisor": {
     "launcher": "tools/run_detached_step.py launch",
@@ -110,7 +155,9 @@
       "profile": "primary",
       "confirmatory": false,
       "task_registry_version": "2026.07.18.2",
-      "seeds": [20260719],
+      "seeds": [
+        20260719
+      ],
       "difficulty": 2,
       "rlc_profile": "recurrence_attribution",
       "adapter": "data/latent_cortex/recurrence_native/32b_v2_r1"
@@ -141,5 +188,8 @@
     "recurrence_native_adapter_regresses_resident_32b",
     "recursive_latent_cortex_reaches_frontier_reasoning",
     "resident_32b_frontier_certificate_complete"
-  ]
+  ],
+  "status": "WITHDRAWN_NEVER_LAUNCHED",
+  "withdrawn_at": "2026-07-18T20:40:00-07:00",
+  "withdrawal_reason": "A parallel session froze and launched the operative resident-32B v2 protocol (artifacts/closeout/latent_cortex/resident_32b_v2_cp139/protocol.json, commits 56ba0b56+1cf6df27) minutes before this preregistration could launch. Exactly one protocol may govern the run; this one never loaded a model, spent no compute, and is withdrawn in favor of the launched protocol. No training or evaluation may cite this document."
 }
