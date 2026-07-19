@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import os
 import signal
@@ -9,7 +11,22 @@ import time
 from pathlib import Path
 
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from core.brain.llm.latent_cortex.campaign_journal import canonical_json_bytes
+from core.brain.llm.latent_cortex.campaign_trust import (
+    CAMPAIGN_RUNNER,
+    CAMPAIGN_TRUST_POLICY_SCHEMA,
+    CAMPAIGN_TRUST_ROLES,
+    VerifiedCampaignTrustPolicy,
+    assemble_role_attestation,
+    validate_campaign_trust_policy,
+)
+from core.brain.llm.latent_cortex.worker_origin import (
+    ZERO_SHA256,
+    verify_worker_result_origin,
+)
 from tools import run_detached_step as detached
 
 pytestmark = pytest.mark.skipif(sys.platform != "darwin", reason="strong containment requires macOS")
@@ -118,6 +135,107 @@ def _wait_for_state(path: Path, expected: str, timeout_s: float = 8.0) -> dict:
                 return value
         time.sleep(0.05)
     raise AssertionError(f"timed out waiting for {path} state {expected!r}")
+
+
+def _wait_for_glob(directory: Path, pattern: str, timeout_s: float = 8.0) -> Path:
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        matches = list(directory.glob(pattern))
+        if len(matches) == 1 and matches[0].is_file():
+            return matches[0]
+        time.sleep(0.05)
+    raise AssertionError(f"timed out waiting for {directory / pattern}")
+
+
+def _public_raw(key: Ed25519PrivateKey) -> bytes:
+    return key.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+
+
+def _campaign_role_pin(
+    role: str,
+    key: Ed25519PrivateKey,
+) -> dict[str, str]:
+    raw = _public_raw(key)
+    return {
+        "signer_id": f"{role}-signer",
+        "organization_id": f"{role}-organization",
+        "public_key_b64": base64.b64encode(raw).decode("ascii"),
+        "key_id": hashlib.sha256(raw).hexdigest(),
+        "implementation_sha256": hashlib.sha256(
+            f"{role}:implementation".encode()
+        ).hexdigest(),
+        "release_sha256": hashlib.sha256(
+            f"{role}:release".encode()
+        ).hexdigest(),
+        "custody_class": "test_fixture",
+        "custody_evidence_sha256": hashlib.sha256(
+            f"{role}:custody".encode()
+        ).hexdigest(),
+    }
+
+
+def _worker_origin_trust_fixture(
+    directory: Path,
+) -> tuple[
+    Path,
+    Path,
+    VerifiedCampaignTrustPolicy,
+    Ed25519PrivateKey,
+]:
+    directory.mkdir(mode=0o700)
+    root = Ed25519PrivateKey.generate()
+    role_keys = {
+        role: Ed25519PrivateKey.generate() for role in CAMPAIGN_TRUST_ROLES
+    }
+    now = int(time.time())
+    body = {
+        "schema": CAMPAIGN_TRUST_POLICY_SCHEMA,
+        "policy_id": "detached-worker-origin-test",
+        "policy_revision": 1,
+        "campaign_name": "detached-worker-origin-test",
+        "protocol_sha256": "1" * 64,
+        "previous_policy_sha256": None,
+        "revoked_key_ids": [],
+        "issued_at_unix": now - 120,
+        "not_before_unix": now - 60,
+        "expires_at_unix": now + 3600,
+        "roles": {
+            role: _campaign_role_pin(role, role_keys[role])
+            for role in CAMPAIGN_TRUST_ROLES
+        },
+    }
+    signed = canonical_json_bytes(body)
+    root_raw = _public_raw(root)
+    document = {
+        **body,
+        "root_signature": {
+            "algorithm": "Ed25519",
+            "key_id": hashlib.sha256(root_raw).hexdigest(),
+            "signature_b64": base64.b64encode(root.sign(signed)).decode(
+                "ascii"
+            ),
+            "signed_payload_sha256": hashlib.sha256(signed).hexdigest(),
+        },
+    }
+    policy_path = directory / "campaign-policy.json"
+    root_path = directory / "campaign-root.pem"
+    detached._atomic_write(policy_path, document, replace=False)
+    root_path.write_bytes(
+        root.public_key().public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+    )
+    root_path.chmod(0o600)
+    policy = validate_campaign_trust_policy(
+        document,
+        trusted_root_public_key_pem=root_path.read_bytes(),
+        now_unix=now,
+    )
+    return policy_path, root_path, policy, role_keys[CAMPAIGN_RUNNER]
 
 
 def _launch(
@@ -472,12 +590,17 @@ def test_terminal_journal_crash_boundary_reconciles_receipt(
     launch = _launch(
         run_dir,
         [sys.executable, "-c", "import time; time.sleep(0.2)"],
+        timeout_s=15.0,
     )
-    deadline = time.time() + 5.0
+    deadline = time.time() + 20.0
     while time.time() < deadline and detached._pid_matches(
         launch["supervisor_pid"], launch["supervisor_start_token"]
     ):
         time.sleep(0.05)
+    assert not detached._pid_matches(
+        launch["supervisor_pid"],
+        launch["supervisor_start_token"],
+    )
     assert not (run_dir / detached.RECEIPT_FILE).exists()
     terminal = [
         event for event in detached._read_attempts(run_dir) if event["event"] == "TERMINAL"
@@ -908,6 +1031,46 @@ def test_execution_manifest_allows_bound_run_artifacts_but_not_other_source(
     (repository / "late_source.py").write_text("raise SystemExit(1)\n", encoding="utf-8")
     with pytest.raises(detached.DetachedStepError, match="execution source changed"):
         detached._verify_execution_manifest_current(plan["target_execution_manifest"])
+
+
+def test_execution_manifest_ignores_unrelated_runtime_json_but_binds_explicit_input(
+    tmp_path: Path,
+) -> None:
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
+    script = repository / "target.py"
+    script.write_text("print('stable')\n", encoding="utf-8")
+    subprocess.run(["git", "add", "target.py"], cwd=repository, check=True)
+    live_status = repository / "detached_status.json"
+    live_status.write_text('{"heartbeat":1}\n', encoding="utf-8")
+
+    unrelated_plan = detached._build_plan(
+        "runtime-json-exclusion",
+        [sys.executable, str(script)],
+        repository,
+        5.0,
+        "none",
+    )
+    live_status.write_text('{"heartbeat":2}\n', encoding="utf-8")
+    detached._verify_execution_manifest_current(
+        unrelated_plan["target_execution_manifest"]
+    )
+
+    explicit_config = repository / "explicit-config.json"
+    explicit_config.write_text('{"mode":"first"}\n', encoding="utf-8")
+    explicit_plan = detached._build_plan(
+        "explicit-json-binding",
+        [sys.executable, str(script), str(explicit_config)],
+        repository,
+        5.0,
+        "none",
+    )
+    explicit_config.write_text('{"mode":"other"}\n', encoding="utf-8")
+    with pytest.raises(detached.DetachedStepError, match="execution source changed"):
+        detached._verify_execution_manifest_current(
+            explicit_plan["target_execution_manifest"]
+        )
 
 
 def test_execution_manifest_rejects_excluding_tracked_source(tmp_path: Path) -> None:
@@ -1341,3 +1504,229 @@ def test_resume_reaps_broker_worker_after_supervisor_crash(
     assert receipt["status"] == "passed"
     assert outcome.read_text(encoding="utf-8") == "resumed"
     assert detached._inspect_process(stale_worker_pid).state == "dead"
+
+
+def test_broker_worker_origin_is_externally_authorized_and_supervisor_signed(
+    tmp_path: Path,
+) -> None:
+    tmp_path.chmod(0o700)
+    repo_root = Path(detached.__file__).resolve().parent.parent
+    python = str(Path(sys.executable))
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(mode=0o700)
+    subprocess.run(["git", "init", "-q"], cwd=workspace, check=True)
+
+    result_path = tmp_path / "signed-result.json"
+    worker_log = tmp_path / "worker.log"
+    coordinator_outcome = tmp_path / "coordinator.outcome"
+    authorization_wait = tmp_path / "authorization.wait"
+    worker_script = workspace / "worker.py"
+    coordinator_script = workspace / "coordinator.py"
+    worker_script.write_text(
+        "\n".join(
+            [
+                "import json",
+                "import os",
+                "import pathlib",
+                "import sys",
+                f"sys.path.insert(0, {str(repo_root)!r})",
+                (
+                    "from core.runtime.detached_worker_origin_channel "
+                    "import DetachedWorkerOriginChannelClient"
+                ),
+                (
+                    "visible = {key: value for key, value in os.environ.items() "
+                    "if key.startswith('AURA_DETACHED_WORKER_ORIGIN_')}"
+                ),
+                (
+                    "assert set(visible) == "
+                    "{'AURA_DETACHED_WORKER_ORIGIN_FD', "
+                    "'AURA_DETACHED_WORKER_ORIGIN_SESSION'}"
+                ),
+                "assert not any('PRIVATE' in key or 'SIGNING' in key for key in visible)",
+                "with DetachedWorkerOriginChannelClient.from_environment() as client:",
+                (
+                    "    result = client.record_result("
+                    "{'answer': '42'}, cell_id='cell-0001', "
+                    "cell_type='reasoning', attempt_id='attempt-0001')"
+                ),
+                (
+                    f"pathlib.Path({str(result_path)!r}).write_text("
+                    "json.dumps(result, sort_keys=True, separators=(',', ':')) + "
+                    "'\\n', encoding='utf-8')"
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    worker_command = [python, str(worker_script)]
+    coordinator_script.write_text(
+        "\n".join(
+            [
+                "import pathlib",
+                "import sys",
+                "import time",
+                f"sys.path.insert(0, {str(repo_root)!r})",
+                (
+                    "from core.runtime.detached_subprocess_broker "
+                    "import DetachedBrokerError, run_brokered_process"
+                ),
+                f"command = {worker_command!r}",
+                "rejections = 0",
+                "while True:",
+                "    try:",
+                (
+                    "        result = run_brokered_process("
+                    f"command, cwd=pathlib.Path({str(workspace)!r}), "
+                    f"stdout_path=pathlib.Path({str(worker_log)!r}), "
+                    "timeout_s=10.0)"
+                ),
+                "    except DetachedBrokerError as exc:",
+                "        if 'external authorization required at ' not in str(exc):",
+                "            raise",
+                "        rejections += 1",
+                (
+                    f"        pathlib.Path({str(authorization_wait)!r}).write_text("
+                    "str(exc), encoding='utf-8')"
+                ),
+                "        time.sleep(0.05)",
+                "        continue",
+                "    break",
+                (
+                    f"pathlib.Path({str(coordinator_outcome)!r}).write_text("
+                    "f'{rejections}:{result.returncode}', encoding='utf-8')"
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    subprocess.run(
+        ["git", "add", "worker.py", "coordinator.py"],
+        cwd=workspace,
+        check=True,
+    )
+
+    trust_policy_path, trust_root_path, trust_policy, runner_key = (
+        _worker_origin_trust_fixture(tmp_path / "trust")
+    )
+    origin_dir = tmp_path / "origins"
+    run_dir = tmp_path / "run"
+    broker_policy = [
+        {
+            "command": worker_command,
+            "cwd": str(workspace),
+            "stdout_path": str(worker_log),
+            "timeout_s_max": 10.0,
+            "max_invocations": 1,
+            "worker_origin": {
+                "schema": detached.WORKER_ORIGIN_POLICY_SCHEMA,
+                "campaign_name": "detached-worker-origin-test",
+                "protocol_sha256": "1" * 64,
+                "trust_policy_path": str(trust_policy_path),
+                "trust_root_path": str(trust_root_path),
+                "artifact_dir": str(origin_dir),
+                "arm": "adapter_rlc",
+                "worker_attempt_slot": 1,
+                "allowed_cells": [
+                    {
+                        "cell_id": "cell-0001",
+                        "cell_type": "reasoning",
+                    }
+                ],
+                "model_identity_sha256": "8" * 64,
+                "adapter_identity_sha256": "9" * 64,
+                "authorization_ttl_seconds": 300,
+            },
+        }
+    ]
+
+    _launch(
+        run_dir,
+        [python, str(coordinator_script)],
+        timeout_s=30.0,
+        broker_policy=broker_policy,
+        cwd=workspace,
+    )
+    request_path = _wait_for_glob(
+        origin_dir,
+        "*.request.json",
+        timeout_s=15.0,
+    )
+    _wait_for_glob(tmp_path, authorization_wait.name, timeout_s=5.0)
+    request = json.loads(request_path.read_text(encoding="utf-8"))
+    signature = runner_key.sign(
+        base64.b64decode(request["signed_payload_b64"], validate=True)
+    )
+    attestation = assemble_role_attestation(
+        trust_policy,
+        request,
+        signature_b64=base64.b64encode(signature).decode("ascii"),
+        role=CAMPAIGN_RUNNER,
+    )
+    attestation_path = request_path.with_name(
+        request_path.name.replace(".request.json", ".attestation.json")
+    )
+    detached._atomic_write(attestation_path, attestation, replace=False)
+
+    receipt = _wait_for(run_dir / detached.RECEIPT_FILE, timeout_s=30.0)
+    assert receipt["status"] == "passed"
+    assert coordinator_outcome.read_text(encoding="utf-8") == "1:0"
+    events = detached._read_attempts(run_dir)
+    assert sum(event["event"] == "BROKER_STARTED" for event in events) == 1
+    broker_start = next(
+        event for event in events if event["event"] == "BROKER_STARTED"
+    )
+    broker_terminal = next(
+        event for event in events if event["event"] == "BROKER_TERMINAL"
+    )
+    response = broker_terminal["response"]
+    assert response["status"] == "passed"
+    assert response["worker_origin_lifecycle"]["event_type"] == "terminal"
+    assert response["worker_origin_lifecycle"]["result_count"] == 1
+
+    signed_result = json.loads(result_path.read_text(encoding="utf-8"))
+    lifecycle_path = Path(
+        response["worker_origin_lifecycle"]["artifact_path"]
+    )
+    lifecycle = json.loads(lifecycle_path.read_text(encoding="utf-8"))
+    authorization = lifecycle["authorization_payload"]
+    verified_result = verify_worker_result_origin(
+        trust_policy,
+        authorization_attestation=attestation,
+        expected_authorization_payload=authorization,
+        result=signed_result,
+        expected_cell_id="cell-0001",
+        expected_cell_type="reasoning",
+        expected_attempt_id="attempt-0001",
+        expected_sequence=1,
+        expected_previous_origin_sha256=ZERO_SHA256,
+        authorization_not_before_unix=request["signed_payload"][
+            "signed_at_unix"
+        ],
+        authorization_not_after_unix=request["signed_payload"][
+            "signed_at_unix"
+        ],
+    )
+    assert verified_result["session_id"] == broker_start["worker_origin"][
+        "session_id"
+    ]
+    assert detached._status(run_dir)["terminal"] is True
+
+    signature_b64 = lifecycle["event_origin"]["signature_b64"]
+    lifecycle["event_origin"]["signature_b64"] = (
+        ("A" if signature_b64[0] != "A" else "B") + signature_b64[1:]
+    )
+    lifecycle_body = {
+        key: value
+        for key, value in lifecycle.items()
+        if key != "artifact_sha256"
+    }
+    lifecycle["artifact_sha256"] = detached._sha256(lifecycle_body)
+    detached._atomic_write(lifecycle_path, lifecycle)
+    with pytest.raises(
+        detached.DetachedStepError,
+        match="lifecycle signature is invalid",
+    ):
+        detached._status(run_dir)

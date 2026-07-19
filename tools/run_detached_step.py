@@ -12,6 +12,7 @@ results to inspect, not conditions that should silently create another run.
 from __future__ import annotations
 
 import argparse
+import base64
 import ctypes
 import fcntl
 import hashlib
@@ -34,6 +35,43 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from core.brain.llm.latent_cortex.campaign_journal import (  # noqa: E402
+    CampaignJournalError,
+    canonical_json_bytes,
+)
+from core.brain.llm.latent_cortex.campaign_trust import (  # noqa: E402
+    CAMPAIGN_RUNNER,
+    CampaignTrustError,
+    VerifiedCampaignTrustPolicy,
+    prepare_role_signature_request,
+    validate_campaign_trust_policy,
+)
+from core.brain.llm.latent_cortex.worker_origin import (  # noqa: E402
+    WORKER_KEY_CUSTODY_DETACHED_SUPERVISOR,
+    ZERO_SHA256,
+    WorkerOriginError,
+    compute_allowed_cell_digest,
+    validate_worker_authorization_payload,
+    verify_worker_authorization,
+    verify_worker_lifecycle_event_origin,
+)
+from core.runtime.detached_worker_origin import (  # noqa: E402
+    DetachedWorkerOriginAuthority,
+    DetachedWorkerOriginError,
+    DetachedWorkerOriginState,
+)
+from core.runtime.detached_worker_origin_channel import (  # noqa: E402
+    WORKER_ORIGIN_FD_ENV,
+    WORKER_ORIGIN_SESSION_ENV,
+    DetachedWorkerOriginChannelError,
+    DetachedWorkerOriginChannelServer,
+    create_worker_origin_socketpair,
+)
+
 SCHEMA_PREFIX = "aura.detached_step"
 PLAN_FILE = "detached_plan.json"
 STATUS_FILE = "detached_status.json"
@@ -42,6 +80,13 @@ ATTEMPTS_FILE = "detached_attempts.jsonl"
 LOG_FILE = "detached.log"
 LOCK_FILE = ".detached.lock"
 CONTROL_SOCKET_PREFIX = "aura-detached-control"
+WORKER_ORIGIN_POLICY_SCHEMA = f"{SCHEMA_PREFIX}.worker_origin_policy.v1"
+WORKER_ORIGIN_LIFECYCLE_ARTIFACT_SCHEMA = (
+    f"{SCHEMA_PREFIX}.worker_origin_lifecycle_artifact.v1"
+)
+_MAX_WORKER_ORIGIN_CELLS = 16_384
+_MAX_WORKER_ORIGIN_TRUST_POLICY_BYTES = 1024 * 1024
+_MAX_WORKER_ORIGIN_TRUST_ROOT_BYTES = 64 * 1024
 _POLL_S = 1.0
 _TERM_GRACE_S = 5.0
 _IDENTITY_GRACE_S = 10.0
@@ -104,7 +149,23 @@ class ActiveBrokerWorker:
     started_monotonic_ns: int
     deadline_ns: int
     log: Any
+    worker_origin: PreparedBrokerWorkerOrigin | None = None
+    worker_origin_server: DetachedWorkerOriginChannelServer | None = None
     timed_out: bool = False
+
+
+@dataclass
+class PreparedBrokerWorkerOrigin:
+    policy_sha256: str
+    authority: DetachedWorkerOriginAuthority
+    request: dict[str, Any]
+    request_path: Path
+    payload_path: Path
+    attestation_path: Path
+    lifecycle_path: Path
+    policy: VerifiedCampaignTrustPolicy
+    authorized: bool = False
+    finalized: bool = False
 
 
 class _ProcBSDInfo(ctypes.Structure):
@@ -260,7 +321,7 @@ def _git_tracked_paths(
                     "execution exclusion contains Git-tracked source"
                 )
             continue
-        if tracked or relative.suffix.lower() in _SOURCE_SUFFIXES:
+        if tracked or relative.suffix.lower() in _EXECUTABLE_SOURCE_SUFFIXES:
             paths.add(relative)
     return sorted(paths, key=lambda value: os.fsencode(value))
 
@@ -396,11 +457,14 @@ def _build_execution_manifest(
         )
     source_tree_roots: set[Path] = set()
     for source_path in source_paths:
-        if any(source_path.is_relative_to(root) for root in git_roots):
-            continue
         if source_path.suffix.lower() in _EXECUTABLE_SOURCE_SUFFIXES:
+            if any(source_path.is_relative_to(root) for root in git_roots):
+                continue
             source_tree_roots.add(source_path.parent)
         else:
+            # Untracked data/config artifacts are not executable source and
+            # must not make unrelated live evidence writers invalidate the
+            # whole repository. Explicit command inputs remain exact-bound.
             roots.append(_fingerprint_file(source_path))
     for source_root in sorted(source_tree_roots, key=lambda value: os.fsencode(value)):
         roots.append(
@@ -657,6 +721,127 @@ def _read_json_artifact_with_digest(path: Path, *, max_bytes: int) -> tuple[dict
     if not isinstance(value, dict):
         raise DetachedStepError(f"evidence artifact must contain an object: {path}")
     return value, hashlib.sha256(payload).hexdigest()
+
+
+def _strict_json_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    for key, item in pairs:
+        if key in value:
+            raise DetachedStepError("canonical JSON artifact contains a duplicate key")
+        value[key] = item
+    return value
+
+
+def _read_stable_private_bytes(path: Path, *, max_bytes: int, role: str) -> bytes:
+    if path.is_symlink() or not path.is_file():
+        raise DetachedStepError(f"{role} is unavailable: {path}")
+    before = path.stat()
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or before.st_uid != os.geteuid()
+        or before.st_nlink != 1
+        or before.st_mode & 0o022
+        or before.st_size <= 0
+        or before.st_size > max_bytes
+    ):
+        raise DetachedStepError(f"{role} ownership, mode, or size is invalid: {path}")
+    payload = path.read_bytes()
+    after = path.stat()
+    if (
+        before.st_dev,
+        before.st_ino,
+        before.st_size,
+        before.st_mtime_ns,
+        before.st_ctime_ns,
+    ) != (
+        after.st_dev,
+        after.st_ino,
+        after.st_size,
+        after.st_mtime_ns,
+        after.st_ctime_ns,
+    ):
+        raise DetachedStepError(f"{role} changed while reading: {path}")
+    return payload
+
+
+def _read_canonical_private_json(
+    path: Path,
+    *,
+    max_bytes: int,
+    role: str,
+) -> dict[str, Any]:
+    payload = _read_stable_private_bytes(path, max_bytes=max_bytes, role=role)
+
+    def reject_constant(_value: str) -> None:
+        raise DetachedStepError(f"{role} contains a non-finite number")
+
+    try:
+        value = json.loads(
+            payload,
+            object_pairs_hook=_strict_json_pairs,
+            parse_constant=reject_constant,
+        )
+    except DetachedStepError:
+        raise
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
+        raise DetachedStepError(f"{role} is invalid JSON: {path}") from exc
+    if not isinstance(value, dict):
+        raise DetachedStepError(f"{role} must contain an object: {path}")
+    try:
+        canonical = canonical_json_bytes(value)
+    except CampaignJournalError as exc:
+        raise DetachedStepError(f"{role} is not canonical JSON: {path}") from exc
+    if payload not in {canonical, canonical + b"\n"}:
+        raise DetachedStepError(f"{role} bytes are not canonical: {path}")
+    return value
+
+
+def _sha256_identifier(value: Any, *, role: str) -> str:
+    if (
+        not isinstance(value, str)
+        or len(value) != 64
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise DetachedStepError(f"{role} must be a lowercase SHA-256 identifier")
+    return value
+
+
+def _positive_integer(value: Any, *, role: str, maximum: int | None = None) -> int:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or value <= 0
+        or (maximum is not None and value > maximum)
+    ):
+        raise DetachedStepError(f"{role} must be a bounded positive integer")
+    return value
+
+
+def _ensure_private_directory(path: Path) -> None:
+    if path.exists() or path.is_symlink():
+        if path.is_symlink() or not path.is_dir():
+            raise DetachedStepError(f"worker-origin artifact directory is invalid: {path}")
+    else:
+        parent = path.parent
+        if parent.is_symlink() or not parent.is_dir():
+            raise DetachedStepError(
+                f"worker-origin artifact parent is unavailable: {parent}"
+            )
+        parent_stat = parent.stat()
+        if parent_stat.st_uid != os.geteuid() or parent_stat.st_mode & 0o022:
+            raise DetachedStepError(
+                f"worker-origin artifact parent permissions are unsafe: {parent}"
+            )
+        path.mkdir(mode=0o700)
+        _fsync_directory(parent)
+    directory_stat = path.stat()
+    if (
+        directory_stat.st_uid != os.geteuid()
+        or directory_stat.st_mode & 0o077
+    ):
+        raise DetachedStepError(
+            f"worker-origin artifact directory is not private: {path}"
+        )
 
 
 def _read_attempts(run_dir: Path) -> list[dict[str, Any]]:
@@ -1290,6 +1475,7 @@ def _spawn_gated_target(
     cwd: str,
     environment: dict[str, str],
     log: Any,
+    inherited_fds: tuple[int, ...] = (),
 ) -> tuple[subprocess.Popen[Any], int]:
     gate_read_fd, gate_write_fd = os.pipe()
     wrapper = [sys.executable, str(Path(__file__).resolve()), "_exec_gate", str(gate_read_fd), *command]
@@ -1302,7 +1488,7 @@ def _spawn_gated_target(
             stderr=subprocess.STDOUT,
             start_new_session=True,
             close_fds=True,
-            pass_fds=(gate_read_fd,),
+            pass_fds=(gate_read_fd, *inherited_fds),
             env=environment,
         )
     except BaseException:  # noqa: BLE001 - fd cleanup on any exit; original re-raised
@@ -1433,6 +1619,185 @@ def _matching_broker_policy(plan: dict[str, Any], request: dict[str, Any]) -> di
     raise BrokerRequestError("broker command is not in the frozen policy")
 
 
+def _worker_origin_artifact_paths(
+    contract: dict[str, Any],
+    *,
+    supervisor_attempt: int,
+    broker_policy_sha256: str,
+) -> dict[str, Path]:
+    artifact_dir = Path(contract["artifact_dir"])
+    prefix = (
+        f"worker-origin-attempt-{supervisor_attempt:04d}-"
+        f"slot-{int(contract['worker_attempt_slot']):04d}-"
+        f"{broker_policy_sha256[:16]}"
+    )
+    return {
+        "payload": artifact_dir / f"{prefix}.payload.json",
+        "request": artifact_dir / f"{prefix}.request.json",
+        "attestation": artifact_dir / f"{prefix}.attestation.json",
+        "lifecycle": artifact_dir / f"{prefix}.lifecycle.json",
+    }
+
+
+def _prepare_broker_worker_origin(
+    plan: dict[str, Any],
+    broker_policy: dict[str, Any],
+    *,
+    supervisor_attempt: int,
+) -> PreparedBrokerWorkerOrigin | None:
+    contract = _verify_worker_origin_policy(
+        broker_policy.get("worker_origin"),
+        require_current=True,
+    )
+    if contract is None:
+        return None
+    _ensure_private_directory(Path(contract["artifact_dir"]))
+    paths = _worker_origin_artifact_paths(
+        contract,
+        supervisor_attempt=supervisor_attempt,
+        broker_policy_sha256=broker_policy["policy_sha256"],
+    )
+    if any(path.exists() or path.is_symlink() for path in paths.values()):
+        raise BrokerRequestError("worker-origin artifact slot already exists")
+    try:
+        trust_root_pem = base64.b64decode(
+            contract["trust_root_public_key_pem_b64"],
+            validate=True,
+        )
+        verified_policy = validate_campaign_trust_policy(
+            contract["trust_policy_document"],
+            trusted_root_public_key_pem=trust_root_pem,
+            expected_campaign_name=contract["campaign_name"],
+            expected_policy_sha256=contract["trust_policy_sha256"],
+            expected_protocol_sha256=contract["protocol_sha256"],
+            now_unix=int(time.time()),
+        )
+        authority = DetachedWorkerOriginAuthority(
+            policy=verified_policy,
+            campaign_name=contract["campaign_name"],
+            protocol_sha256=contract["protocol_sha256"],
+            detached_plan_sha256=plan["plan_sha256"],
+            broker_policy_sha256=broker_policy["policy_sha256"],
+            executable_binding_sha256=broker_policy["executable_binding"][
+                "binding_sha256"
+            ],
+            environment_sha256=plan["execution_environment_sha256"],
+            sandbox_sha256=_sha256(plan["execution_sandbox"]),
+            source_manifest_sha256=broker_policy["execution_manifest"][
+                "manifest_sha256"
+            ],
+            session_id=secrets.token_hex(16),
+            supervisor_attempt=supervisor_attempt,
+            arm=contract["arm"],
+            worker_attempt_slot=contract["worker_attempt_slot"],
+            allowed_cells=contract["allowed_cells"],
+            model_identity_sha256=contract["model_identity_sha256"],
+            adapter_identity_sha256=contract["adapter_identity_sha256"],
+            authorization_ttl_seconds=contract["authorization_ttl_seconds"],
+        )
+        request = authority.request_authorization(signed_at_unix=int(time.time()))
+    except (CampaignTrustError, DetachedWorkerOriginError, ValueError) as exc:
+        raise BrokerRequestError(
+            f"worker-origin authority preparation failed: {exc}"
+        ) from exc
+    _atomic_write(paths["payload"], authority.authorization_payload, replace=False)
+    _atomic_write(paths["request"], request, replace=False)
+    return PreparedBrokerWorkerOrigin(
+        policy_sha256=broker_policy["policy_sha256"],
+        authority=authority,
+        request=request,
+        request_path=paths["request"],
+        payload_path=paths["payload"],
+        attestation_path=paths["attestation"],
+        lifecycle_path=paths["lifecycle"],
+        policy=verified_policy,
+    )
+
+
+def _admit_broker_worker_origin(
+    prepared: PreparedBrokerWorkerOrigin | None,
+) -> None:
+    if prepared is None or prepared.authorized:
+        return
+    if not prepared.attestation_path.is_file():
+        raise BrokerRequestError(
+            "worker-origin external authorization required at "
+            f"{prepared.attestation_path}"
+        )
+    attestation = _read_canonical_private_json(
+        prepared.attestation_path,
+        max_bytes=_MAX_WORKER_ORIGIN_TRUST_POLICY_BYTES,
+        role="worker-origin authorization attestation",
+    )
+    try:
+        prepared.authority.accept_authorization(
+            attestation,
+            now_unix=int(time.time()),
+        )
+    except DetachedWorkerOriginError as exc:
+        raise BrokerRequestError(
+            f"worker-origin authorization rejected: {exc.code}"
+        ) from exc
+    prepared.authorized = True
+
+
+def _finalize_broker_worker_origin(
+    prepared: PreparedBrokerWorkerOrigin,
+    *,
+    successful: bool,
+    occurred_at_unix: int,
+    reason: str,
+) -> dict[str, Any]:
+    if prepared.finalized:
+        return _read_canonical_private_json(
+            prepared.lifecycle_path,
+            max_bytes=_MAX_WORKER_ORIGIN_TRUST_POLICY_BYTES,
+            role="worker-origin lifecycle artifact",
+        )
+    event_origin: dict[str, Any]
+    completion_error: str | None = None
+    if prepared.authority.state in {
+        DetachedWorkerOriginState.TERMINAL,
+        DetachedWorkerOriginState.ABANDONED,
+    }:
+        existing_receipt = prepared.authority.lifecycle_receipt
+        if existing_receipt is None:
+            raise DetachedStepError(
+                "finalized worker-origin authority has no lifecycle receipt"
+            )
+        event_origin = existing_receipt
+    elif successful:
+        try:
+            event_origin = prepared.authority.complete(
+                occurred_at_unix=occurred_at_unix,
+                return_code=0,
+            )
+        except DetachedWorkerOriginError as exc:
+            completion_error = exc.code
+            event_origin = prepared.authority.abandon(
+                reason=f"completion_rejected:{exc.code}",
+                occurred_at_unix=occurred_at_unix,
+            )
+    else:
+        event_origin = prepared.authority.abandon(
+            reason=reason[:2048],
+            occurred_at_unix=occurred_at_unix,
+        )
+    body = {
+        "schema": WORKER_ORIGIN_LIFECYCLE_ARTIFACT_SCHEMA,
+        "broker_policy_sha256": prepared.policy_sha256,
+        "authorization_payload": prepared.authority.authorization_payload,
+        "authorization_request": prepared.request,
+        "authorization_attestation": prepared.authority.authorization_attestation,
+        "event_origin": event_origin,
+        "completion_error": completion_error,
+    }
+    artifact = {**body, "artifact_sha256": _sha256(body)}
+    _atomic_write(prepared.lifecycle_path, artifact, replace=False)
+    prepared.finalized = True
+    return artifact
+
+
 def _send_broker_rejection(
     request: dict[str, Any],
     target_pid: int,
@@ -1485,11 +1850,23 @@ def _start_broker_worker(
     supervisor_start_token: str,
     target_pid: int,
     request: dict[str, Any],
+    prepared_origins: dict[str, PreparedBrokerWorkerOrigin],
 ) -> ActiveBrokerWorker:
     request_id = str(request.get("request_id") or "")
     if len(request_id) != 32 or any(character not in "0123456789abcdef" for character in request_id):
         raise BrokerRequestError("broker request id is invalid")
     policy = _matching_broker_policy(plan, request)
+    prepared_origin = prepared_origins.get(policy["policy_sha256"])
+    if prepared_origin is None and policy.get("worker_origin") is not None:
+        prepared_origin = _prepare_broker_worker_origin(
+            plan,
+            policy,
+            supervisor_attempt=attempt,
+        )
+        if prepared_origin is None:
+            raise DetachedStepError("worker-origin preparation returned no authority")
+        prepared_origins[policy["policy_sha256"]] = prepared_origin
+    _admit_broker_worker_origin(prepared_origin)
     reply_path = _broker_reply_path(request, target_pid)
     _verify_execution_manifest_current(policy["execution_manifest"])
     log = _open_secure_log(Path(policy["stdout_path"]))
@@ -1498,15 +1875,34 @@ def _start_broker_worker(
     worker_start_token = ""
     worker_group = 0
     containment_token = secrets.token_hex(32)
+    origin_server: DetachedWorkerOriginChannelServer | None = None
+    origin_supervisor_socket: socket.socket | None = None
+    origin_worker_socket: socket.socket | None = None
     try:
         environment = dict(plan["execution_environment"])
         environment["AURA_DETACHED_RUN_TOKEN"] = containment_token
+        inherited_fds: tuple[int, ...] = ()
+        if prepared_origin is not None:
+            origin_supervisor_socket, origin_worker_socket = (
+                create_worker_origin_socketpair()
+            )
+            origin_server = DetachedWorkerOriginChannelServer(
+                origin_supervisor_socket,
+                prepared_origin.authority,
+            )
+            environment[WORKER_ORIGIN_FD_ENV] = str(origin_worker_socket.fileno())
+            environment[WORKER_ORIGIN_SESSION_ENV] = origin_server.session_id
+            inherited_fds = (origin_worker_socket.fileno(),)
         worker, gate_write_fd = _spawn_gated_target(
             _sandboxed_command(plan, list(policy["command"])),
             cwd=policy["cwd"],
             environment=environment,
             log=log,
+            inherited_fds=inherited_fds,
         )
+        if origin_worker_socket is not None:
+            origin_worker_socket.close()
+            origin_worker_socket = None
         observation = _inspect_process(worker.pid)
         if observation.state != "alive" or observation.process_group_id != worker.pid:
             raise DetachedStepError("broker worker identity could not be established")
@@ -1543,9 +1939,34 @@ def _start_broker_worker(
                     "containment_token": containment_token,
                     "reply_path": str(reply_path),
                     "timeout_s": float(request["timeout_s"]),
+                    "worker_origin": (
+                        {
+                            "contract_sha256": policy["worker_origin"][
+                                "contract_sha256"
+                            ],
+                            "session_id": origin_server.session_id,
+                            "authorization_payload": prepared_origin.authority.authorization_payload,
+                            "authorization_request_sha256": prepared_origin.request[
+                                "request_sha256"
+                            ],
+                            "authorization_attestation_sha256": hashlib.sha256(
+                                canonical_json_bytes(
+                                    prepared_origin.authority.authorization_attestation
+                                )
+                            ).hexdigest(),
+                            "request_path": str(prepared_origin.request_path),
+                            "payload_path": str(prepared_origin.payload_path),
+                            "attestation_path": str(prepared_origin.attestation_path),
+                            "lifecycle_path": str(prepared_origin.lifecycle_path),
+                        }
+                        if prepared_origin is not None and origin_server is not None
+                        else None
+                    ),
                     "recorded_at": time.time(),
                 },
             )
+        if prepared_origin is not None:
+            prepared_origin.authority.start()
         if os.write(gate_write_fd, b"G") != 1:
             raise DetachedStepError("broker worker release gate failed")
         os.close(gate_write_fd)
@@ -1570,6 +1991,8 @@ def _start_broker_worker(
             started_monotonic_ns=started_monotonic_ns,
             deadline_ns=started_monotonic_ns + int(float(request["timeout_s"]) * 1_000_000_000),
             log=log,
+            worker_origin=prepared_origin,
+            worker_origin_server=origin_server,
         )
     except BaseException as start_exc:  # noqa: BLE001 - start-failure cleanup; strongest error re-raised
         if gate_write_fd is not None:
@@ -1591,6 +2014,22 @@ def _start_broker_worker(
                         raise DetachedStepError("unidentified broker worker group survived cleanup")
             except BaseException as exc:  # noqa: BLE001 - cleanup error captured for the receipt, never masked
                 cleanup_exc = exc
+        if origin_worker_socket is not None:
+            origin_worker_socket.close()
+        if origin_server is not None:
+            origin_server.close()
+        elif origin_supervisor_socket is not None:
+            origin_supervisor_socket.close()
+        if prepared_origin is not None and not prepared_origin.finalized:
+            try:
+                _finalize_broker_worker_origin(
+                    prepared_origin,
+                    successful=False,
+                    occurred_at_unix=int(time.time()),
+                    reason=f"worker_start_failed:{type(start_exc).__name__}",
+                )
+            except BaseException as exc:  # noqa: BLE001 - preserve strongest cleanup failure below
+                cleanup_exc = cleanup_exc or exc
         log.close()
         if cleanup_exc is not None:
             raise DetachedStepError(
@@ -1607,6 +2046,7 @@ def _broker_response_body(
     cleanup_performed: bool,
     cleanup_count: int,
     error: str | None = None,
+    worker_origin_lifecycle: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "schema": f"{SCHEMA_PREFIX}.broker_response.v1",
@@ -1637,6 +2077,7 @@ def _broker_response_body(
             else "failed"
         ),
         "error": error,
+        "worker_origin_lifecycle": worker_origin_lifecycle,
     }
 
 
@@ -1649,6 +2090,14 @@ def _finish_broker_worker(
     force_returncode: int | None = None,
 ) -> dict[str, Any]:
     returncode = force_returncode
+    origin_channel_error: str | None = None
+    if worker.worker_origin_server is not None:
+        try:
+            while worker.worker_origin_server.poll_once():
+                pass
+        except DetachedWorkerOriginChannelError as exc:
+            returncode = 70
+            origin_channel_error = exc.code
     if returncode is None:
         observed = worker.process.poll()
         returncode = observed if observed is not None else 70
@@ -1656,6 +2105,7 @@ def _finish_broker_worker(
     cleanup_performed = False
     cleanup_count = 0
     cleanup_error: str | None = None
+    worker_origin_summary: dict[str, Any] | None = None
     try:
         cleanup_performed, cleanup_count = _cleanup_child_process(
             worker.process,
@@ -1669,6 +2119,54 @@ def _finish_broker_worker(
         cleanup_error = f"{type(exc).__name__}: {exc}"[:1000]
     finally:
         worker.log.close()
+    if origin_channel_error is not None:
+        origin_detail = f"worker-origin channel failed: {origin_channel_error}"
+        cleanup_error = (
+            f"{cleanup_error}; {origin_detail}" if cleanup_error else origin_detail
+        )
+    if worker.worker_origin is not None:
+        try:
+            lifecycle = _finalize_broker_worker_origin(
+                worker.worker_origin,
+                successful=(
+                    returncode == 0
+                    and containment_verified
+                    and not worker.timed_out
+                    and cleanup_error is None
+                ),
+                occurred_at_unix=int(time.time()),
+                reason=(
+                    "worker_timed_out"
+                    if worker.timed_out
+                    else "worker_containment_failed"
+                    if not containment_verified
+                    else f"worker_exit_{returncode}"
+                ),
+            )
+            event_origin = lifecycle["event_origin"]
+            signed_payload = event_origin["signed_payload"]
+            worker_origin_summary = {
+                "artifact_path": str(worker.worker_origin.lifecycle_path),
+                "artifact_sha256": lifecycle["artifact_sha256"],
+                "event_type": signed_payload["event_type"],
+                "event_sha256": event_origin["event_sha256"],
+                "result_count": signed_payload["result_count"],
+                "session_id": signed_payload["session_id"],
+            }
+            if lifecycle.get("completion_error") is not None:
+                returncode = 70
+                cleanup_error = (
+                    f"worker-origin completion rejected: "
+                    f"{lifecycle['completion_error']}"
+                )
+        except BaseException as exc:  # noqa: BLE001 - origin finalization is part of the broker verdict
+            returncode = 70
+            cleanup_error = (
+                f"worker-origin finalization failed: {type(exc).__name__}: {exc}"
+            )[:1000]
+        finally:
+            if worker.worker_origin_server is not None:
+                worker.worker_origin_server.close()
     body = _broker_response_body(
         worker,
         returncode=returncode,
@@ -1676,6 +2174,7 @@ def _finish_broker_worker(
         cleanup_performed=cleanup_performed,
         cleanup_count=cleanup_count,
         error=cleanup_error,
+        worker_origin_lifecycle=worker_origin_summary,
     )
     signed = {**body, "receipt_sha256": _sha256(body)}
     response = {
@@ -1930,6 +2429,7 @@ def _supervise(run_dir: Path, plan: dict[str, Any], attempt: int) -> None:
     broker_token = ""
     power_assertion: subprocess.Popen[Any] | None = None
     active_broker: ActiveBrokerWorker | None = None
+    prepared_origins: dict[str, PreparedBrokerWorkerOrigin] = {}
     broker_containment_verified = True
 
     def request_stop(signum: int, _frame: object) -> None:
@@ -2015,9 +2515,31 @@ def _supervise(run_dir: Path, plan: dict[str, Any], attempt: int) -> None:
                                 supervisor_start_token,
                                 child.pid,
                                 request,
+                                prepared_origins,
                             )
                         except BrokerRequestError as broker_start_exc:
                             _send_broker_rejection(request, child.pid, broker_start_exc)
+            if (
+                active_broker is not None
+                and active_broker.worker_origin_server is not None
+            ):
+                try:
+                    active_broker.worker_origin_server.poll_once()
+                except DetachedWorkerOriginChannelError as origin_channel_exc:
+                    finished_broker = active_broker
+                    active_broker = None
+                    broker_response = _finish_broker_worker(
+                        run_dir,
+                        plan,
+                        attempt,
+                        finished_broker,
+                        force_returncode=70,
+                    )
+                    if not broker_response["containment_verified"]:
+                        broker_containment_verified = False
+                        raise DetachedStepError(
+                            "malformed worker-origin channel containment failed"
+                        ) from origin_channel_exc
             if active_broker is not None:
                 broker_returncode = active_broker.process.poll()
                 if broker_returncode is not None:
@@ -2103,7 +2625,18 @@ def _supervise(run_dir: Path, plan: dict[str, Any], attempt: int) -> None:
                 returncode = 124
                 break
             try:
-                returncode = child.wait(timeout=min(_POLL_S, remaining_ns / 1_000_000_000))
+                poll_interval = (
+                    0.01
+                    if active_broker is not None
+                    and active_broker.worker_origin_server is not None
+                    else _POLL_S
+                )
+                returncode = child.wait(
+                    timeout=min(
+                        poll_interval,
+                        remaining_ns / 1_000_000_000,
+                    )
+                )
                 if (
                     returncode is not None
                     and os.environ.get("AURA_DETACHED_TEST_CRASH_POINT") == "after_target_exit"
@@ -2140,6 +2673,20 @@ def _supervise(run_dir: Path, plan: dict[str, Any], attempt: int) -> None:
                         supervisor_error = broker_cleanup_exc
                     returncode = 70
                 active_broker = None
+            for prepared_origin in prepared_origins.values():
+                if prepared_origin.finalized:
+                    continue
+                try:
+                    _finalize_broker_worker_origin(
+                        prepared_origin,
+                        successful=False,
+                        occurred_at_unix=int(time.time()),
+                        reason="detached_supervisor_shutdown",
+                    )
+                except BaseException as origin_cleanup_exc:  # noqa: BLE001 - authority cleanup is part of containment
+                    if supervisor_error is None:
+                        supervisor_error = origin_cleanup_exc
+                    returncode = 70
             try:
                 descendant_cleanup_performed, lineage_cleanup_count = _cleanup_child_process(
                     child,
@@ -2381,6 +2928,634 @@ def _parse_broker_policy_json(
     return value
 
 
+def _build_worker_origin_policy(value: Any) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    expected_keys = {
+        "schema",
+        "campaign_name",
+        "protocol_sha256",
+        "trust_policy_path",
+        "trust_root_path",
+        "artifact_dir",
+        "arm",
+        "worker_attempt_slot",
+        "allowed_cells",
+        "model_identity_sha256",
+        "adapter_identity_sha256",
+        "authorization_ttl_seconds",
+    }
+    if (
+        not isinstance(value, dict)
+        or set(value) != expected_keys
+        or value.get("schema") != WORKER_ORIGIN_POLICY_SCHEMA
+    ):
+        raise DetachedStepError("worker-origin policy specification is invalid")
+    campaign_name = str(value.get("campaign_name") or "")
+    arm = str(value.get("arm") or "")
+    if (
+        not campaign_name
+        or campaign_name != campaign_name.strip()
+        or len(campaign_name) > 200
+        or not arm
+        or arm != arm.strip()
+        or len(arm) > 200
+    ):
+        raise DetachedStepError("worker-origin campaign or arm identity is invalid")
+    protocol_sha = _sha256_identifier(
+        value.get("protocol_sha256"),
+        role="worker-origin protocol",
+    )
+    model_identity_sha = _sha256_identifier(
+        value.get("model_identity_sha256"),
+        role="worker-origin model identity",
+    )
+    adapter_identity_sha = _sha256_identifier(
+        value.get("adapter_identity_sha256"),
+        role="worker-origin adapter identity",
+    )
+    attempt_slot = _positive_integer(
+        value.get("worker_attempt_slot"),
+        role="worker-origin attempt slot",
+    )
+    authorization_ttl = _positive_integer(
+        value.get("authorization_ttl_seconds"),
+        role="worker-origin authorization TTL",
+        maximum=7 * 24 * 60 * 60,
+    )
+    allowed_cells = value.get("allowed_cells")
+    if (
+        not isinstance(allowed_cells, list)
+        or not allowed_cells
+        or len(allowed_cells) > _MAX_WORKER_ORIGIN_CELLS
+    ):
+        raise DetachedStepError("worker-origin allowed cells are invalid")
+    try:
+        normalized_cells = json.loads(canonical_json_bytes(allowed_cells))
+        allowed_cell_digest = compute_allowed_cell_digest(normalized_cells)
+    except (CampaignJournalError, WorkerOriginError) as exc:
+        raise DetachedStepError("worker-origin allowed cells are invalid") from exc
+
+    trust_policy_path = (
+        Path(str(value.get("trust_policy_path") or ""))
+        .expanduser()
+        .resolve(strict=True)
+    )
+    trust_root_path = (
+        Path(str(value.get("trust_root_path") or ""))
+        .expanduser()
+        .resolve(strict=True)
+    )
+    trust_policy_document = _read_canonical_private_json(
+        trust_policy_path,
+        max_bytes=_MAX_WORKER_ORIGIN_TRUST_POLICY_BYTES,
+        role="worker-origin trust policy",
+    )
+    trust_root_pem = _read_stable_private_bytes(
+        trust_root_path,
+        max_bytes=_MAX_WORKER_ORIGIN_TRUST_ROOT_BYTES,
+        role="worker-origin trust root",
+    )
+    try:
+        verified_policy = validate_campaign_trust_policy(
+            trust_policy_document,
+            trusted_root_public_key_pem=trust_root_pem,
+            expected_campaign_name=campaign_name,
+            expected_protocol_sha256=protocol_sha,
+            now_unix=int(time.time()),
+        )
+    except CampaignTrustError as exc:
+        raise DetachedStepError(
+            f"worker-origin trust policy is not admissible: {exc.code}"
+        ) from exc
+
+    artifact_dir = (
+        Path(str(value.get("artifact_dir") or "")).expanduser().resolve(strict=False)
+    )
+    if (
+        not artifact_dir.is_absolute()
+        or artifact_dir == artifact_dir.parent
+        or artifact_dir.parent.is_symlink()
+        or not artifact_dir.parent.is_dir()
+    ):
+        raise DetachedStepError("worker-origin artifact directory is invalid")
+    body = {
+        "schema": WORKER_ORIGIN_POLICY_SCHEMA,
+        "campaign_name": campaign_name,
+        "protocol_sha256": protocol_sha,
+        "trust_policy_path": str(trust_policy_path),
+        "trust_policy_binding": _fingerprint_file(trust_policy_path),
+        "trust_policy_document": verified_policy.document,
+        "trust_policy_sha256": verified_policy.policy_sha256,
+        "trust_root_path": str(trust_root_path),
+        "trust_root_binding": _fingerprint_file(trust_root_path),
+        "trust_root_public_key_pem_b64": base64.b64encode(trust_root_pem).decode(
+            "ascii"
+        ),
+        "trust_root_key_id": verified_policy.root_key_id,
+        "artifact_dir": str(artifact_dir),
+        "arm": arm,
+        "worker_attempt_slot": attempt_slot,
+        "allowed_cells": normalized_cells,
+        "allowed_cell_digest": allowed_cell_digest,
+        "model_identity_sha256": model_identity_sha,
+        "adapter_identity_sha256": adapter_identity_sha,
+        "authorization_ttl_seconds": authorization_ttl,
+    }
+    return {**body, "contract_sha256": _sha256(body)}
+
+
+def _verify_worker_origin_policy(value: Any, *, require_current: bool) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    expected_keys = {
+        "schema",
+        "campaign_name",
+        "protocol_sha256",
+        "trust_policy_path",
+        "trust_policy_binding",
+        "trust_policy_document",
+        "trust_policy_sha256",
+        "trust_root_path",
+        "trust_root_binding",
+        "trust_root_public_key_pem_b64",
+        "trust_root_key_id",
+        "artifact_dir",
+        "arm",
+        "worker_attempt_slot",
+        "allowed_cells",
+        "allowed_cell_digest",
+        "model_identity_sha256",
+        "adapter_identity_sha256",
+        "authorization_ttl_seconds",
+        "contract_sha256",
+    }
+    if (
+        not isinstance(value, dict)
+        or set(value) != expected_keys
+        or value.get("schema") != WORKER_ORIGIN_POLICY_SCHEMA
+    ):
+        raise DetachedStepError("detached worker-origin contract is invalid")
+    body = {key: item for key, item in value.items() if key != "contract_sha256"}
+    if value.get("contract_sha256") != _sha256(body):
+        raise DetachedStepError("detached worker-origin contract hash is invalid")
+    for role in (
+        "protocol_sha256",
+        "trust_policy_sha256",
+        "allowed_cell_digest",
+        "model_identity_sha256",
+        "adapter_identity_sha256",
+        "contract_sha256",
+    ):
+        _sha256_identifier(value.get(role), role=f"worker-origin {role}")
+    _positive_integer(
+        value.get("worker_attempt_slot"),
+        role="worker-origin attempt slot",
+    )
+    _positive_integer(
+        value.get("authorization_ttl_seconds"),
+        role="worker-origin authorization TTL",
+        maximum=7 * 24 * 60 * 60,
+    )
+    allowed_cells = value.get("allowed_cells")
+    if (
+        not isinstance(allowed_cells, list)
+        or not allowed_cells
+        or len(allowed_cells) > _MAX_WORKER_ORIGIN_CELLS
+    ):
+        raise DetachedStepError("detached worker-origin allowed cells are invalid")
+    try:
+        if compute_allowed_cell_digest(allowed_cells) != value["allowed_cell_digest"]:
+            raise DetachedStepError(
+                "detached worker-origin allowed-cell digest is invalid"
+            )
+    except WorkerOriginError as exc:
+        raise DetachedStepError(
+            "detached worker-origin allowed cells are invalid"
+        ) from exc
+    try:
+        trust_root_pem = base64.b64decode(
+            value.get("trust_root_public_key_pem_b64"),
+            validate=True,
+        )
+    except (TypeError, ValueError) as exc:
+        raise DetachedStepError("detached worker-origin trust root is invalid") from exc
+    try:
+        policy = validate_campaign_trust_policy(
+            value.get("trust_policy_document"),
+            trusted_root_public_key_pem=trust_root_pem,
+            expected_campaign_name=str(value.get("campaign_name") or ""),
+            expected_policy_sha256=str(value.get("trust_policy_sha256") or ""),
+            expected_protocol_sha256=str(value.get("protocol_sha256") or ""),
+            now_unix=int(time.time()) if require_current else None,
+        )
+    except CampaignTrustError as exc:
+        raise DetachedStepError(
+            f"detached worker-origin trust policy is invalid: {exc.code}"
+        ) from exc
+    if policy.root_key_id != value.get("trust_root_key_id"):
+        raise DetachedStepError("detached worker-origin trust-root identity drifted")
+    trust_policy_path = Path(str(value.get("trust_policy_path") or ""))
+    trust_root_path = Path(str(value.get("trust_root_path") or ""))
+    current_policy_document = _read_canonical_private_json(
+        trust_policy_path,
+        max_bytes=_MAX_WORKER_ORIGIN_TRUST_POLICY_BYTES,
+        role="worker-origin trust policy",
+    )
+    current_trust_root = _read_stable_private_bytes(
+        trust_root_path,
+        max_bytes=_MAX_WORKER_ORIGIN_TRUST_ROOT_BYTES,
+        role="worker-origin trust root",
+    )
+    if (
+        current_policy_document != value.get("trust_policy_document")
+        or current_trust_root != trust_root_pem
+        or value.get("trust_policy_binding")
+        != _fingerprint_file(trust_policy_path)
+        or value.get("trust_root_binding") != _fingerprint_file(trust_root_path)
+    ):
+        raise DetachedStepError("detached worker-origin trust files changed")
+    artifact_dir = Path(str(value.get("artifact_dir") or ""))
+    if (
+        not artifact_dir.is_absolute()
+        or artifact_dir == artifact_dir.parent
+        or not isinstance(value.get("arm"), str)
+        or not value["arm"]
+    ):
+        raise DetachedStepError("detached worker-origin execution identity is invalid")
+    if artifact_dir.exists() or artifact_dir.is_symlink():
+        if artifact_dir.is_symlink() or not artifact_dir.is_dir():
+            raise DetachedStepError(
+                "detached worker-origin artifact directory is invalid"
+            )
+        artifact_dir_stat = artifact_dir.stat()
+        if (
+            artifact_dir_stat.st_uid != os.geteuid()
+            or artifact_dir_stat.st_mode & 0o077
+        ):
+            raise DetachedStepError(
+                "detached worker-origin artifact directory is not private"
+            )
+    return value
+
+
+def _verify_persisted_worker_origin_bundle(
+    plan: dict[str, Any],
+    policy: dict[str, Any],
+    *,
+    attempt: int,
+    broker_start: dict[str, Any] | None,
+    broker_response: dict[str, Any] | None,
+    attempt_terminal: bool,
+) -> None:
+    contract = _verify_worker_origin_policy(
+        policy.get("worker_origin"),
+        require_current=False,
+    )
+    start_origin = broker_start.get("worker_origin") if broker_start else None
+    response_origin = (
+        broker_response.get("worker_origin_lifecycle")
+        if broker_response is not None
+        else None
+    )
+    if contract is None:
+        if start_origin is not None or response_origin is not None:
+            raise DetachedStepError(
+                "broker journal asserts worker-origin custody without a contract"
+            )
+        return
+
+    paths = _worker_origin_artifact_paths(
+        contract,
+        supervisor_attempt=attempt,
+        broker_policy_sha256=policy["policy_sha256"],
+    )
+    present = {
+        role: path.exists() or path.is_symlink() for role, path in paths.items()
+    }
+    if not any(present.values()):
+        if broker_start is not None:
+            raise DetachedStepError("broker worker-origin artifacts are missing")
+        return
+    if not present["payload"] or not present["request"]:
+        raise DetachedStepError("worker-origin authority artifacts are incomplete")
+
+    payload = _read_canonical_private_json(
+        paths["payload"],
+        max_bytes=_MAX_WORKER_ORIGIN_TRUST_POLICY_BYTES,
+        role="worker-origin authorization payload",
+    )
+    request = _read_canonical_private_json(
+        paths["request"],
+        max_bytes=_MAX_WORKER_ORIGIN_TRUST_POLICY_BYTES,
+        role="worker-origin authorization request",
+    )
+    try:
+        authorization = validate_worker_authorization_payload(payload)
+        trust_root_pem = base64.b64decode(
+            contract["trust_root_public_key_pem_b64"],
+            validate=True,
+        )
+        verified_policy = validate_campaign_trust_policy(
+            contract["trust_policy_document"],
+            trusted_root_public_key_pem=trust_root_pem,
+            expected_campaign_name=contract["campaign_name"],
+            expected_policy_sha256=contract["trust_policy_sha256"],
+            expected_protocol_sha256=contract["protocol_sha256"],
+        )
+    except (CampaignTrustError, WorkerOriginError, TypeError, ValueError) as exc:
+        raise DetachedStepError(
+            "persisted worker-origin authorization is invalid"
+        ) from exc
+
+    expected_authorization = {
+        "campaign_name": contract["campaign_name"],
+        "policy_sha256": contract["trust_policy_sha256"],
+        "protocol_sha256": contract["protocol_sha256"],
+        "detached_plan_sha256": plan["plan_sha256"],
+        "broker_policy_sha256": policy["policy_sha256"],
+        "executable_binding_sha256": policy["executable_binding"][
+            "binding_sha256"
+        ],
+        "environment_sha256": plan["execution_environment_sha256"],
+        "sandbox_sha256": _sha256(plan["execution_sandbox"]),
+        "source_manifest_sha256": policy["execution_manifest"][
+            "manifest_sha256"
+        ],
+        "supervisor_attempt": attempt,
+        "arm": contract["arm"],
+        "worker_attempt_slot": contract["worker_attempt_slot"],
+        "allowed_cell_digest": contract["allowed_cell_digest"],
+        "model_identity_sha256": contract["model_identity_sha256"],
+        "adapter_identity_sha256": contract["adapter_identity_sha256"],
+        "worker_key_custody": WORKER_KEY_CUSTODY_DETACHED_SUPERVISOR,
+    }
+    if any(
+        authorization.get(key) != value
+        for key, value in expected_authorization.items()
+    ):
+        raise DetachedStepError(
+            "persisted worker-origin authorization binding is invalid"
+        )
+
+    signed_payload = request.get("signed_payload")
+    signed_at_unix = (
+        signed_payload.get("signed_at_unix")
+        if isinstance(signed_payload, dict)
+        else None
+    )
+    if isinstance(signed_at_unix, bool) or not isinstance(signed_at_unix, int):
+        raise DetachedStepError("worker-origin authorization request time is invalid")
+    try:
+        expected_request = prepare_role_signature_request(
+            verified_policy,
+            role=CAMPAIGN_RUNNER,
+            payload=authorization,
+            signed_at_unix=signed_at_unix,
+        )
+    except ValueError as exc:
+        raise DetachedStepError(
+            "worker-origin authorization request is invalid"
+        ) from exc
+    if request != expected_request:
+        raise DetachedStepError(
+            "worker-origin authorization request binding is invalid"
+        )
+
+    attestation: dict[str, Any] | None = None
+    if present["attestation"]:
+        attestation = _read_canonical_private_json(
+            paths["attestation"],
+            max_bytes=_MAX_WORKER_ORIGIN_TRUST_POLICY_BYTES,
+            role="worker-origin authorization attestation",
+        )
+        try:
+            verify_worker_authorization(
+                verified_policy,
+                attestation,
+                expected_payload=authorization,
+                not_before_unix=signed_at_unix,
+                not_after_unix=signed_at_unix,
+            )
+        except WorkerOriginError as exc:
+            raise DetachedStepError(
+                "persisted worker-origin attestation is invalid"
+            ) from exc
+    if broker_start is not None:
+        expected_start_keys = {
+            "contract_sha256",
+            "session_id",
+            "authorization_payload",
+            "authorization_request_sha256",
+            "authorization_attestation_sha256",
+            "request_path",
+            "payload_path",
+            "attestation_path",
+            "lifecycle_path",
+        }
+        if (
+            not isinstance(start_origin, dict)
+            or set(start_origin) != expected_start_keys
+            or attestation is None
+            or start_origin.get("contract_sha256")
+            != contract["contract_sha256"]
+            or start_origin.get("session_id") != authorization["session_id"]
+            or start_origin.get("authorization_payload") != authorization
+            or start_origin.get("authorization_request_sha256")
+            != request["request_sha256"]
+            or start_origin.get("authorization_attestation_sha256")
+            != hashlib.sha256(canonical_json_bytes(attestation)).hexdigest()
+            or start_origin.get("request_path") != str(paths["request"])
+            or start_origin.get("payload_path") != str(paths["payload"])
+            or start_origin.get("attestation_path") != str(paths["attestation"])
+            or start_origin.get("lifecycle_path") != str(paths["lifecycle"])
+        ):
+            raise DetachedStepError(
+                "attempt journal worker-origin start binding is invalid"
+            )
+    elif start_origin is not None:
+        raise DetachedStepError("orphaned worker-origin start metadata")
+
+    if not present["lifecycle"]:
+        if broker_response is not None or attempt_terminal:
+            raise DetachedStepError("worker-origin lifecycle artifact is missing")
+        if response_origin is not None:
+            raise DetachedStepError("worker-origin lifecycle summary is orphaned")
+        return
+
+    lifecycle = _read_canonical_private_json(
+        paths["lifecycle"],
+        max_bytes=_MAX_WORKER_ORIGIN_TRUST_POLICY_BYTES,
+        role="worker-origin lifecycle artifact",
+    )
+    lifecycle_keys = {
+        "schema",
+        "broker_policy_sha256",
+        "authorization_payload",
+        "authorization_request",
+        "authorization_attestation",
+        "event_origin",
+        "completion_error",
+        "artifact_sha256",
+    }
+    lifecycle_body = {
+        key: value for key, value in lifecycle.items() if key != "artifact_sha256"
+    }
+    event_origin = lifecycle.get("event_origin")
+    lifecycle_signed = (
+        event_origin.get("signed_payload")
+        if isinstance(event_origin, dict)
+        else None
+    )
+    if (
+        set(lifecycle) != lifecycle_keys
+        or lifecycle.get("schema")
+        != WORKER_ORIGIN_LIFECYCLE_ARTIFACT_SCHEMA
+        or lifecycle.get("broker_policy_sha256") != policy["policy_sha256"]
+        or lifecycle.get("authorization_payload") != authorization
+        or lifecycle.get("authorization_request") != request
+        or lifecycle.get("authorization_attestation") != attestation
+        or lifecycle.get("artifact_sha256") != _sha256(lifecycle_body)
+        or not isinstance(lifecycle_signed, dict)
+    ):
+        raise DetachedStepError("worker-origin lifecycle artifact binding is invalid")
+
+    broker_passed = (
+        broker_response is not None
+        and broker_response.get("status") == "passed"
+        and broker_response.get("returncode") == 0
+        and broker_response.get("containment_verified") is True
+        and broker_response.get("timed_out") is False
+    )
+    persisted_event_type = lifecycle_signed.get("event_type")
+    expected_event_type = (
+        "terminal"
+        if broker_passed
+        else "abandoned"
+        if broker_response is not None
+        else persisted_event_type
+    )
+    if expected_event_type not in {"terminal", "abandoned"}:
+        raise DetachedStepError("worker-origin lifecycle event type is invalid")
+    result_count = lifecycle_signed.get("result_count")
+    occurred_at_unix = lifecycle_signed.get("occurred_at_unix")
+    previous_origin_sha256 = lifecycle_signed.get("previous_origin_sha256")
+    if (
+        isinstance(result_count, bool)
+        or not isinstance(result_count, int)
+        or result_count < 0
+        or result_count > len(contract["allowed_cells"])
+        or isinstance(occurred_at_unix, bool)
+        or not isinstance(occurred_at_unix, int)
+        or occurred_at_unix < signed_at_unix
+        or not isinstance(previous_origin_sha256, str)
+        or len(previous_origin_sha256) != 64
+    ):
+        raise DetachedStepError("worker-origin lifecycle state is invalid")
+    if broker_response is not None:
+        started_at = broker_response.get("started_at")
+        finished_at = broker_response.get("finished_at")
+        if (
+            isinstance(started_at, bool)
+            or not isinstance(started_at, (int, float))
+            or not math.isfinite(float(started_at))
+            or isinstance(finished_at, bool)
+            or not isinstance(finished_at, (int, float))
+            or not math.isfinite(float(finished_at))
+            or float(finished_at) < float(started_at)
+            or occurred_at_unix < int(float(started_at)) - 1
+            or occurred_at_unix > int(float(finished_at)) + 1
+        ):
+            raise DetachedStepError(
+                "worker-origin lifecycle time binding is invalid"
+            )
+    if (
+        (
+            expected_event_type == "terminal"
+            and result_count != len(contract["allowed_cells"])
+        )
+        or (result_count == 0 and previous_origin_sha256 != ZERO_SHA256)
+        or (result_count > 0 and previous_origin_sha256 == ZERO_SHA256)
+        or (broker_start is None and result_count != 0)
+    ):
+        raise DetachedStepError("worker-origin lifecycle result binding is invalid")
+    expected_prior_state = (
+        "running"
+        if broker_start is not None
+        else "authorized"
+        if attestation is not None
+        else "awaiting_external_signature"
+    )
+    expected_return_code = 0 if expected_event_type == "terminal" else None
+    expected_reason = (
+        None
+        if expected_event_type == "terminal"
+        else lifecycle_signed.get("reason")
+    )
+    completion_error = lifecycle.get("completion_error")
+    if (
+        expected_event_type == "terminal"
+        and completion_error is not None
+    ) or (
+        expected_event_type == "abandoned"
+        and (
+            (
+                completion_error is not None
+                and (
+                    not isinstance(completion_error, str)
+                    or expected_reason
+                    != f"completion_rejected:{completion_error}"
+                )
+            )
+            or (
+                completion_error is None
+                and isinstance(expected_reason, str)
+                and expected_reason.startswith("completion_rejected:")
+            )
+        )
+    ):
+        raise DetachedStepError(
+            "worker-origin lifecycle completion binding is invalid"
+        )
+    try:
+        verify_worker_lifecycle_event_origin(
+            policy=verified_policy if attestation is not None else None,
+            authorization_payload=authorization,
+            authorization_attestation=attestation,
+            event_origin=event_origin,
+            expected_event_type=expected_event_type,
+            expected_prior_state=expected_prior_state,
+            expected_result_count=result_count,
+            expected_previous_origin_sha256=previous_origin_sha256,
+            expected_completed_cell_ids=[
+                cell["cell_id"]
+                for cell in contract["allowed_cells"][:result_count]
+            ],
+            expected_occurred_at_unix=occurred_at_unix,
+            expected_return_code=expected_return_code,
+            expected_reason=expected_reason,
+        )
+    except WorkerOriginError as exc:
+        raise DetachedStepError(
+            "worker-origin lifecycle signature is invalid"
+        ) from exc
+
+    expected_summary = {
+        "artifact_path": str(paths["lifecycle"]),
+        "artifact_sha256": lifecycle["artifact_sha256"],
+        "event_type": expected_event_type,
+        "event_sha256": event_origin["event_sha256"],
+        "result_count": result_count,
+        "session_id": authorization["session_id"],
+    }
+    if broker_response is not None and response_origin != expected_summary:
+        raise DetachedStepError(
+            "attempt journal worker-origin lifecycle summary is invalid"
+        )
+    if broker_response is None and response_origin is not None:
+        raise DetachedStepError("orphaned worker-origin lifecycle summary")
+
+
 def _build_broker_policy(
     specifications: list[dict[str, Any]],
     environment: dict[str, str],
@@ -2413,6 +3588,9 @@ def _build_broker_policy(
             raise DetachedStepError("broker policy stdout parent must exist")
         timeout_s_max = specification.get("timeout_s_max")
         max_invocations = specification.get("max_invocations")
+        worker_origin = _build_worker_origin_policy(
+            specification.get("worker_origin")
+        )
         if (
             not isinstance(timeout_s_max, (int, float))
             or isinstance(timeout_s_max, bool)
@@ -2422,6 +3600,7 @@ def _build_broker_policy(
             or isinstance(max_invocations, bool)
             or max_invocations <= 0
             or max_invocations > 100
+            or (worker_origin is not None and max_invocations != 1)
         ):
             raise DetachedStepError("broker policy timeout or invocation bound is invalid")
         body = {
@@ -2437,6 +3616,7 @@ def _build_broker_policy(
                 cwd,
                 excluded_roots=execution_exclusion_roots,
             ),
+            "worker_origin": worker_origin,
         }
         policies.append({**body, "policy_sha256": _sha256(body)})
     return policies
@@ -2677,6 +3857,7 @@ def _verify_plan(plan: dict[str, Any], path: Path) -> None:
         stdout_path = Path(str(policy.get("stdout_path") or ""))
         timeout_max = policy.get("timeout_s_max")
         max_invocations = policy.get("max_invocations")
+        worker_origin = policy.get("worker_origin")
         if (
             policy.get("policy_sha256") != _sha256(body)
             or not isinstance(command, list)
@@ -2693,12 +3874,14 @@ def _verify_plan(plan: dict[str, Any], path: Path) -> None:
             or not isinstance(max_invocations, int)
             or isinstance(max_invocations, bool)
             or max_invocations <= 0
+            or (worker_origin is not None and max_invocations != 1)
         ):
             raise DetachedStepError(f"detached plan broker policy entry binding is invalid: {path}")
         _verify_launcher_binding(
             policy.get("executable_binding"), Path(command[0])
         )
         _verify_execution_manifest_structure(policy.get("execution_manifest"))
+        _verify_worker_origin_policy(worker_origin, require_current=False)
         seen_broker_commands.add(command_sha)
     if plan.get("session_escape_policy") != "prohibited":
         raise DetachedStepError(f"detached plan containment policy is invalid: {path}")
@@ -2856,6 +4039,7 @@ def _verify_run_locked(
             str(event.get("request_id") or ""): event
             for event in _broker_events(attempt_events, "BROKER_TERMINAL")
         }
+        attempt_terminal = attempt_events.get("TERMINAL") is not None
         invocation_counts: dict[str, int] = {}
         for broker_start in broker_starts:
             request_id = str(broker_start.get("request_id") or "")
@@ -2878,6 +4062,14 @@ def _verify_run_locked(
                 raise DetachedStepError("attempt journal broker worker identity is invalid")
             broker_terminal = broker_terminals.get(request_id)
             if broker_terminal is None:
+                _verify_persisted_worker_origin_bundle(
+                    plan,
+                    policy,
+                    attempt=attempt,
+                    broker_start=broker_start,
+                    broker_response=None,
+                    attempt_terminal=attempt_terminal,
+                )
                 continue
             response = broker_terminal.get("response")
             if not isinstance(response, dict):
@@ -2921,6 +4113,24 @@ def _verify_run_locked(
                 )
             ):
                 raise DetachedStepError("attempt journal broker terminal binding is invalid")
+            _verify_persisted_worker_origin_bundle(
+                plan,
+                policy,
+                attempt=attempt,
+                broker_start=broker_start,
+                broker_response=response,
+                attempt_terminal=attempt_terminal,
+            )
+        for policy_sha, policy in policy_by_sha.items():
+            if invocation_counts.get(policy_sha, 0) == 0:
+                _verify_persisted_worker_origin_bundle(
+                    plan,
+                    policy,
+                    attempt=attempt,
+                    broker_start=None,
+                    broker_response=None,
+                    attempt_terminal=attempt_terminal,
+                )
         if any(
             count > int(policy_by_sha[policy_sha]["max_invocations"])
             for policy_sha, count in invocation_counts.items()

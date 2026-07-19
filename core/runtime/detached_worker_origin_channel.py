@@ -234,6 +234,21 @@ def _recv_frame_nonblocking(
     maximum: int,
     role: str,
 ) -> bytes | None:
+    def extract_complete_frame() -> bytes | None:
+        if len(buffer) < _FRAME_HEADER_BYTES:
+            return None
+        length = int.from_bytes(buffer[:_FRAME_HEADER_BYTES], "big")
+        if length <= 0 or length > maximum:
+            _fail(f"{role}_size_invalid")
+        frame_end = _FRAME_HEADER_BYTES + length
+        if len(buffer) < frame_end:
+            return None
+        if len(buffer) != frame_end:
+            _fail(f"{role}_pipelining_prohibited")
+        payload = bytes(buffer[_FRAME_HEADER_BYTES:frame_end])
+        buffer.clear()
+        return payload
+
     while True:
         try:
             chunk = channel.recv(64 * 1024)
@@ -246,19 +261,9 @@ def _recv_frame_nonblocking(
         buffer.extend(chunk)
         if len(buffer) > maximum + _FRAME_HEADER_BYTES:
             _fail(f"{role}_size_invalid")
-    if len(buffer) < _FRAME_HEADER_BYTES:
-        return None
-    length = int.from_bytes(buffer[:_FRAME_HEADER_BYTES], "big")
-    if length <= 0 or length > maximum:
-        _fail(f"{role}_size_invalid")
-    frame_end = _FRAME_HEADER_BYTES + length
-    if len(buffer) < frame_end:
-        return None
-    if len(buffer) != frame_end:
-        _fail(f"{role}_pipelining_prohibited")
-    payload = bytes(buffer[_FRAME_HEADER_BYTES:frame_end])
-    buffer.clear()
-    return payload
+        if (payload := extract_complete_frame()) is not None:
+            return payload
+    return extract_complete_frame()
 
 
 class DetachedWorkerOriginChannelServer:
