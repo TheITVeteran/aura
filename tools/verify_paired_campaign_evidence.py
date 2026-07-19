@@ -70,12 +70,15 @@ GRADE_FILE = "grade.json"
 SEALED_OUTPUT_MANIFEST_FILE = "sealed_output_manifest.json"
 ANSWER_REVEAL_REQUEST_FILE = "answer_reveal_request.json"
 ANSWER_REVEAL_FILE = "answer_reveal.json"
+FINAL_RUN_REQUEST_FILE = "final_run_request.json"
+FINAL_RUN_ENVELOPE_FILE = "final_run_envelope.json"
 VERDICT_SCHEMA = "aura.latent_cortex.independent_evidence_verdict.v1"
 TASK_ISSUER_PAYLOAD_SCHEMA = "aura.latent_cortex.task_issuer_prelaunch.v1"
 CAMPAIGN_RUNNER_PAYLOAD_SCHEMA = "aura.latent_cortex.runner_prelaunch.v1"
 FINAL_VERIFIER_PAYLOAD_SCHEMA = "aura.latent_cortex.final_verifier_payload.v1"
 SEALED_OUTPUT_MANIFEST_SCHEMA = "aura.latent_cortex.sealed_output_manifest.v1"
 ANSWER_REVEAL_PAYLOAD_SCHEMA = "aura.latent_cortex.answer_reveal_payload.v1"
+FINAL_RUN_PAYLOAD_SCHEMA = "aura.latent_cortex.final_run_payload.v1"
 
 
 def _sha256_bytes(payload: bytes) -> str:
@@ -572,6 +575,111 @@ def _verify_sealed_output_reveal(
     }
 
 
+def _verify_final_run_envelope(
+    campaign_dir: Path,
+    *,
+    plan: CampaignPlan,
+    trusted_policy: Any | None,
+) -> tuple[list[str], dict[str, Any]]:
+    if plan.to_dict()["metadata"].get("claim_eligible") is not True:
+        return [], {"required": False, "verified": False}
+    if trusted_policy is None:
+        return ["final run has no independently trusted runner"], {
+            "required": True,
+            "verified": False,
+        }
+    envelope = _canonical_artifact(
+        campaign_dir / FINAL_RUN_ENVELOPE_FILE,
+        role="final run envelope",
+    )
+    if set(envelope) != {
+        "schema",
+        "payload",
+        "request_sha256",
+        "campaign_runner_attestation",
+        "envelope_sha256",
+    } or envelope.get("schema") != "aura.latent_cortex.final_run_envelope.v1":
+        return ["final run envelope schema is invalid"], {
+            "required": True,
+            "verified": False,
+        }
+    material = {
+        key: envelope[key]
+        for key in ("payload", "request_sha256", "campaign_runner_attestation")
+    }
+    failures: list[str] = []
+    if envelope.get("envelope_sha256") != _sha256_bytes(
+        canonical_json_bytes(material)
+    ):
+        failures.append("final run envelope digest is invalid")
+    sealed = _canonical_artifact(
+        campaign_dir / SEALED_OUTPUT_MANIFEST_FILE,
+        role="sealed output manifest",
+    )
+    reveal = _canonical_artifact(campaign_dir / ANSWER_REVEAL_FILE, role="answer reveal")
+    manifest = _canonical_artifact(
+        campaign_dir / MANIFEST_FILE,
+        role="campaign manifest",
+    )
+    grade = _canonical_artifact(campaign_dir / GRADE_FILE, role="published grade")
+    expected_payload = {
+        "schema": FINAL_RUN_PAYLOAD_SCHEMA,
+        "campaign_name": plan.campaign_name,
+        "policy_sha256": trusted_policy.policy_sha256,
+        "protocol_sha256": _campaign_protocol_sha256(),
+        "plan_sha256": plan.plan_sha256,
+        "sealed_output_manifest_sha256": sealed["manifest_sha256"],
+        "answer_reveal_sha256": reveal["reveal_sha256"],
+        "campaign_manifest_sha256": manifest["manifest_sha256"],
+        "journal_head_sha256": manifest["journal_head_sha256"],
+        "published_grade_sha256": grade["grade_sha256"],
+    }
+    if envelope.get("payload") != expected_payload:
+        failures.append("final run payload differs from independent reconstruction")
+    request = _canonical_artifact(
+        campaign_dir / FINAL_RUN_REQUEST_FILE,
+        role="final run request",
+    )
+    signed_payload = request.get("signed_payload")
+    signed_at = (
+        signed_payload.get("signed_at_unix")
+        if isinstance(signed_payload, dict)
+        else None
+    )
+    if type(signed_at) is not int:
+        failures.append("final run request timestamp is invalid")
+    else:
+        expected_request = prepare_role_signature_request(
+            trusted_policy,
+            role=CAMPAIGN_RUNNER,
+            payload=expected_payload,
+            signed_at_unix=signed_at,
+        )
+        if request != expected_request:
+            failures.append("final run request is not canonical")
+        if envelope.get("request_sha256") != request.get("request_sha256"):
+            failures.append("final run request digest is not bound")
+        try:
+            verified = verify_role_attestation(
+                trusted_policy,
+                envelope.get("campaign_runner_attestation"),
+                role=CAMPAIGN_RUNNER,
+                expected_payload=expected_payload,
+                not_before_unix=signed_at,
+            )
+        except ValueError:
+            failures.append("final run attestation is invalid")
+        else:
+            if verified != request.get("signed_payload"):
+                failures.append("final run attestation differs from request")
+    return failures, {
+        "required": True,
+        "verified": not failures,
+        "envelope_sha256": envelope.get("envelope_sha256"),
+        "request_sha256": envelope.get("request_sha256"),
+    }
+
+
 def verify_campaign_evidence(
     campaign_dir: Path,
     *,
@@ -777,6 +885,18 @@ def verify_campaign_evidence(
     else:
         detail["published_verdict"] = None
 
+    try:
+        final_run_failures, final_run_detail = _verify_final_run_envelope(
+            campaign_dir,
+            plan=plan,
+            trusted_policy=trusted_policy,
+        )
+    except (OSError, TypeError, ValueError, KeyError) as exc:
+        final_run_failures = [f"final run envelope validation failed: {exc}"]
+        final_run_detail = {"required": True, "verified": False}
+    failures.extend(final_run_failures)
+    detail["final_run"] = final_run_detail
+
     metadata = plan.to_dict()["metadata"]
     final_attestation_verified = False
     if metadata.get("claim_eligible") is True:
@@ -833,6 +953,9 @@ def verify_campaign_evidence(
                 "plan_sha256": plan.plan_sha256,
                 "campaign_manifest_sha256": campaign_manifest_sha256,
                 "published_grade_sha256": published_grade_sha256,
+                "final_run_envelope_sha256": final_run_detail.get(
+                    "envelope_sha256"
+                ),
                 "production_protocol_sha256": _campaign_protocol_sha256(),
                 "production_grade_implementation_sha256": production_grade_sha256,
                 "independent_scoring_implementation_sha256": (

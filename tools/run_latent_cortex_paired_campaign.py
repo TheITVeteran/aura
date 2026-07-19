@@ -94,6 +94,8 @@ LOG_FILE = "runner.log"
 SEALED_OUTPUT_MANIFEST_FILE = "sealed_output_manifest.json"
 ANSWER_REVEAL_REQUEST_FILE = "answer_reveal_request.json"
 ANSWER_REVEAL_FILE = "answer_reveal.json"
+FINAL_RUN_REQUEST_FILE = "final_run_request.json"
+FINAL_RUN_ENVELOPE_FILE = "final_run_envelope.json"
 OBJECTIVE_SOURCE = REPO_ROOT / "core/learning/recurrence_native_objective.py"
 V2_MANIFEST_FILE = "recurrence_adapter_manifest.json"
 CONTAMINATION_AUDIT_SCHEMA = "aura.latent_cortex.contamination_audit.v2"
@@ -101,6 +103,7 @@ TASK_ISSUER_PAYLOAD_SCHEMA = "aura.latent_cortex.task_issuer_prelaunch.v1"
 CAMPAIGN_RUNNER_PAYLOAD_SCHEMA = "aura.latent_cortex.runner_prelaunch.v1"
 SEALED_OUTPUT_MANIFEST_SCHEMA = "aura.latent_cortex.sealed_output_manifest.v1"
 ANSWER_REVEAL_PAYLOAD_SCHEMA = "aura.latent_cortex.answer_reveal_payload.v1"
+FINAL_RUN_PAYLOAD_SCHEMA = "aura.latent_cortex.final_run_payload.v1"
 
 
 class CampaignProducerError(RuntimeError):
@@ -2094,15 +2097,15 @@ def _answer_reveal_payload(
     }
 
 
-def _load_or_prepare_reveal_request(
-    campaign_dir: Path,
+def _load_or_prepare_role_request(
+    path: Path,
     *,
     policy: Any,
+    role: str,
     payload: Mapping[str, Any],
 ) -> dict[str, Any]:
-    path = campaign_dir / ANSWER_REVEAL_REQUEST_FILE
     if path.exists():
-        request = _read_json_artifact(str(path), role="answer reveal request")
+        request = _read_json_artifact(str(path), role=f"{role} signature request")
         signed_payload = request.get("signed_payload")
         signed_at = (
             signed_payload.get("signed_at_unix")
@@ -2110,19 +2113,21 @@ def _load_or_prepare_reveal_request(
             else None
         )
         if type(signed_at) is not int:
-            raise CampaignProducerError("answer reveal request timestamp is invalid")
+            raise CampaignProducerError(f"{role} request timestamp is invalid")
         expected = prepare_role_signature_request(
             policy,
-            role=TASK_ISSUER,
+            role=role,
             payload=payload,
             signed_at_unix=signed_at,
         )
         if request != expected:
-            raise CampaignProducerError("answer reveal request differs from sealed outputs")
+            raise CampaignProducerError(
+                f"{role} request differs from the current payload"
+            )
         return request
     request = prepare_role_signature_request(
         policy,
-        role=TASK_ISSUER,
+        role=role,
         payload=payload,
         signed_at_unix=int(time.time()),
     )
@@ -2150,9 +2155,10 @@ def _admit_answer_reveal(
             or trust.get("policy_sha256") != policy.policy_sha256
         ):
             raise CampaignProducerError("answer reveal has no trusted issuer policy")
-        request = _load_or_prepare_reveal_request(
-            campaign_dir,
+        request = _load_or_prepare_role_request(
+            campaign_dir / ANSWER_REVEAL_REQUEST_FILE,
             policy=policy,
+            role=TASK_ISSUER,
             payload=payload,
         )
         request_sha256 = request["request_sha256"]
@@ -2251,6 +2257,95 @@ def _score_sealed_outputs(
                     ),
                 },
             )
+
+
+def _admit_final_run_envelope(
+    args: argparse.Namespace,
+    plan: CampaignPlan,
+    *,
+    sealed_outputs: Mapping[str, Any],
+    answer_reveal: Mapping[str, Any],
+    campaign_manifest: Mapping[str, Any],
+    grade: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    if plan.to_dict()["metadata"].get("claim_eligible") is not True:
+        return {
+            "schema": "aura.latent_cortex.final_run_envelope.v1",
+            "claim_required": False,
+        }
+    campaign_dir = Path(args.campaign_dir).expanduser().resolve()
+    policy = _load_campaign_trust_policy(args, require_current=True)
+    trust = plan.to_dict()["metadata"].get("campaign_trust")
+    if (
+        policy is None
+        or not isinstance(trust, dict)
+        or trust.get("policy_sha256") != policy.policy_sha256
+    ):
+        raise CampaignProducerError("final run has no trusted runner policy")
+    payload = {
+        "schema": FINAL_RUN_PAYLOAD_SCHEMA,
+        "campaign_name": plan.campaign_name,
+        "policy_sha256": policy.policy_sha256,
+        "protocol_sha256": _campaign_protocol_sha256(),
+        "plan_sha256": plan.plan_sha256,
+        "sealed_output_manifest_sha256": sealed_outputs["manifest_sha256"],
+        "answer_reveal_sha256": answer_reveal["reveal_sha256"],
+        "campaign_manifest_sha256": campaign_manifest["manifest_sha256"],
+        "journal_head_sha256": campaign_manifest["journal_head_sha256"],
+        "published_grade_sha256": grade["grade_sha256"],
+    }
+    request = _load_or_prepare_role_request(
+        campaign_dir / FINAL_RUN_REQUEST_FILE,
+        policy=policy,
+        role=CAMPAIGN_RUNNER,
+        payload=payload,
+    )
+    attestation_path = str(
+        getattr(args, "final_run_attestation", "") or ""
+    ).strip()
+    if not attestation_path:
+        print(
+            json.dumps(
+                {
+                    "state": "final_run_signature_required",
+                    "request_path": str(campaign_dir / FINAL_RUN_REQUEST_FILE),
+                    "request_sha256": request["request_sha256"],
+                },
+                indent=2,
+                sort_keys=True,
+            ),
+            flush=True,
+        )
+        return None
+    attestation = _read_json_artifact(
+        attestation_path, role="final run attestation"
+    )
+    signed = verify_role_attestation(
+        policy,
+        attestation,
+        role=CAMPAIGN_RUNNER,
+        expected_payload=payload,
+        not_before_unix=request["signed_payload"]["signed_at_unix"],
+    )
+    if signed != request["signed_payload"]:
+        raise CampaignProducerError(
+            "final run attestation does not sign the issued request"
+        )
+    material = {
+        "payload": payload,
+        "request_sha256": request["request_sha256"],
+        "campaign_runner_attestation": attestation,
+    }
+    envelope = {
+        "schema": "aura.latent_cortex.final_run_envelope.v1",
+        **material,
+        "envelope_sha256": _sha256_bytes(canonical_json_bytes(material)),
+    }
+    _atomic_create_or_verify(
+        campaign_dir / FINAL_RUN_ENVELOPE_FILE,
+        canonical_json_bytes(envelope) + b"\n",
+    )
+    return envelope
 
 
 def _run_child(args: argparse.Namespace, arm: str, timeout_s: float) -> int:
@@ -2367,6 +2462,16 @@ def _orchestrate(
     _atomic_create_or_verify(
         campaign_dir / GRADE_FILE, canonical_json_bytes(final) + b"\n"
     )
+    final_run_envelope = _admit_final_run_envelope(
+        args,
+        plan,
+        sealed_outputs=sealed_outputs,
+        answer_reveal=answer_reveal,
+        campaign_manifest=manifest,
+        grade=final,
+    )
+    if final_run_envelope is None:
+        return 6
     print(
         json.dumps(
             {
@@ -2378,6 +2483,9 @@ def _orchestrate(
                 "observed_cell_count": final["observed_cell_count"],
                 "reasons": final["reasons"],
                 "frontier_claim_eligible": False,
+                "final_run_envelope_sha256": final_run_envelope.get(
+                    "envelope_sha256"
+                ),
                 "grade_path": str(campaign_dir / GRADE_FILE),
             },
             indent=2,
@@ -2470,6 +2578,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--task-issuer-attestation", default="")
     parser.add_argument("--runner-attestation", default="")
     parser.add_argument("--answer-reveal-attestation", default="")
+    parser.add_argument("--final-run-attestation", default="")
     parser.add_argument(
         "--prepare-trust",
         action="store_true",
@@ -2557,6 +2666,7 @@ def main() -> int:
         "task_issuer_attestation",
         "runner_attestation",
         "answer_reveal_attestation",
+        "final_run_attestation",
     ):
         value = str(getattr(args, attribute, "") or "").strip()
         if value:

@@ -1,11 +1,11 @@
 {
-  "content_sha256": "d94c147354b0e52782cd2218778178dc4a3aadc6748c301ae934d446c642e2e2",
+  "content_sha256": "64ce6127f282f2ce53cf3274823c395b3b3c0ed37930c6a17c539c253cfc56c1",
   "generated_from": {
     "migration_rules_version": 2,
-    "tracker_extraction_sha256": "e2da3f030cfc61c51fedcfc49a27d4366d78913bd90648f54ab803299e9abc1d",
+    "tracker_extraction_sha256": "afd9899441047bd8843fa0be49d86234044f2de5c763afb378d7de41be461a87",
     "tracker_path": "docs/AURA_EXECUTION_TRACKER.md"
   },
-  "registry_revision": 8,
+  "registry_revision": 9,
   "requirements": [
     {
       "acceptance": [
@@ -9085,7 +9085,7 @@
     },
     {
       "acceptance": [
-        "Produce a standalone verifier implementation and reproducible evidence bundle; have an independent process/reviewer recompute hashes, task lineage, compute matching, statistics, ablations, and claim tier from raw outputs. CP95 rejects missing trust roots, wrong keys, signature tampering, producer/verifier or issuer/producer role collision, unbound producer identity, stale chronology, and divergent signed evidence. CP96 adds a model-free CLI, strict duplicate-key/non-finite JSON decoding, externally supplied role/key pins, a separately pinned local verification-kernel digest, six bounded canonical JSONL stores, exact raw-byte and structured-receipt rebinding, no-follow stable reads, complete raw-directory membership, deterministic certificates, and an unsigned-bundle preverification request for an externally held Ed25519 key. CP145 independently reimplements terminal parsing, type-strict task scoring, comparison statistics, exact sign-flip interaction testing, and full published-grade comparison without importing the production scorer. CP149-150 add an externally rooted, revisioned, time-bounded four-role policy; distinct identity/key/organization and custody declarations; pre-inference issuer/runner attestations; policy-pinned contamination auditing over the adapter's exact dataset manifest; source-bound role implementations; independent plan reconstruction; and a required post-evidence verifier signature over the sealed manifest, published grade, and both scoring kernels. CP151 adds canonical policy and role signature requests plus detached-signature assembly, so production private keys can remain inside separately operated services/HSMs and Aura has no private-key/keygen interface. CP152 removes answers and generation seeds from worker-visible plans/argv; reconstructs only hash-validated public tasks; fsync-seals every raw arm output before scoring; requires a post-seal issuer signature for claim runs; and independently replays output/reveal/seed commitments. Real separately administered/HSM credentials, OS/container worker isolation, signed worker-origin/final-run envelopes, operation-level compute reconstruction, complete ablations, and accepted live resident-32B evidence remain open."
+        "Produce a standalone verifier implementation and reproducible evidence bundle; have an independent process/reviewer recompute hashes, task lineage, compute matching, statistics, ablations, and claim tier from raw outputs. CP95 rejects missing trust roots, wrong keys, signature tampering, producer/verifier or issuer/producer role collision, unbound producer identity, stale chronology, and divergent signed evidence. CP96 adds a model-free CLI, strict duplicate-key/non-finite JSON decoding, externally supplied role/key pins, a separately pinned local verification-kernel digest, six bounded canonical JSONL stores, exact raw-byte and structured-receipt rebinding, no-follow stable reads, complete raw-directory membership, deterministic certificates, and an unsigned-bundle preverification request for an externally held Ed25519 key. CP145 independently reimplements terminal parsing, type-strict task scoring, comparison statistics, exact sign-flip interaction testing, and full published-grade comparison without importing the production scorer. CP149-150 add an externally rooted, revisioned, time-bounded four-role policy; distinct identity/key/organization and custody declarations; pre-inference issuer/runner attestations; policy-pinned contamination auditing over the adapter's exact dataset manifest; source-bound role implementations; independent plan reconstruction; and a required post-evidence verifier signature over the sealed manifest, published grade, and both scoring kernels. CP151 adds canonical policy and role signature requests plus detached-signature assembly, so production private keys can remain inside separately operated services/HSMs and Aura has no private-key/keygen interface. CP152 removes answers and generation seeds from worker-visible plans/argv; reconstructs only hash-validated public tasks; fsync-seals every raw arm output before scoring; requires a post-seal issuer signature for claim runs; and independently replays output/reveal/seed commitments. CP153 requires a distinct post-grade runner signature over the exact protocol, plan, output seal, reveal, completed journal, manifest, and grade; the final evidence-verifier request binds that runner envelope. Real separately administered/HSM credentials, OS/container worker isolation, signed per-worker origin, operation-level compute reconstruction, complete ablations, and accepted live resident-32B evidence remain open."
       ],
       "closure_requires": [],
       "depends_on": [
@@ -9105,7 +9105,7 @@
       "non_claims": [
         "A provider, architecture, or model label is never proof: capability parity claims require contamination-resistant matched sealed evaluations."
       ],
-      "notes": "refs: `RLC-FRONTIER-001`, `RELEASE-CONTRACT-001`; CP95-96, CP145, CP149-152",
+      "notes": "refs: `RLC-FRONTIER-001`, `RELEASE-CONTRACT-001`; CP95-96, CP145, CP149-153",
       "owner": "unassigned",
       "parent": null,
       "proof_weight": 1.0,
@@ -9119,7 +9119,7 @@
       ],
       "state": "in_progress",
       "status_date": "2026-07-19",
-      "status_detail": "IN PROGRESS (INDEPENDENT SCORE/STATS + DETACHED SIGNING + TWO-PHASE ANSWER ISOLATION SOURCE GREEN; REAL EXTERNAL CUSTODY/WORKER ORIGIN OPEN) 2026-07-19",
+      "status_detail": "IN PROGRESS (INDEPENDENT SCORE/STATS + DETACHED SIGNING + TWO-PHASE ANSWER ISOLATION + SIGNED FINAL RUN SOURCE GREEN; REAL EXTERNAL CUSTODY/WORKER ORIGIN OPEN) 2026-07-19",
       "title": "Produce a standalone verifier implementation and reproducible evidence bundle; have an independent process/reviewer recompute hashes, task lineage, compute mat\u2026",
       "weight_provenance": "default"
     },

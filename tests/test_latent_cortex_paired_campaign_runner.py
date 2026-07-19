@@ -26,6 +26,7 @@ from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec
 from core.brain.llm.latent_cortex.frontier_tasks import generate_task_battery
 from core.brain.llm.latent_cortex.paired_campaign import build_campaign_plan
 from tools import run_latent_cortex_paired_campaign as runner
+from tools import verify_paired_campaign_evidence as evidence_verifier
 
 
 def _external_policy_fixture(campaign_name: str, now: int):
@@ -343,6 +344,70 @@ def test_claim_reveal_pauses_for_exact_external_issuer_signature(
     assert reveal is not None
     assert reveal["request_sha256"] == request["request_sha256"]
     assert reveal["task_issuer_attestation"] == attestation
+
+    runner._score_sealed_outputs(campaign_dir, plan, tasks)
+    with runner.CampaignJournal(campaign_dir / runner.JOURNAL_FILE, plan) as journal:
+        campaign_manifest = journal.finalize(campaign_dir / runner.MANIFEST_FILE)
+    args.final_run_attestation = ""
+    grade = {"grade_sha256": "e" * 64}
+    assert (
+        runner._admit_final_run_envelope(
+            args,
+            plan,
+            sealed_outputs=sealed,
+            answer_reveal=reveal,
+            campaign_manifest=campaign_manifest,
+            grade=grade,
+        )
+        is None
+    )
+    final_request = json.loads(
+        (campaign_dir / runner.FINAL_RUN_REQUEST_FILE).read_bytes()
+    )
+    final_attestation = build_role_attestation(
+        policy,
+        role=CAMPAIGN_RUNNER,
+        payload=final_request["signed_payload"]["payload"],
+        signed_at_unix=final_request["signed_payload"]["signed_at_unix"],
+        private_key=role_keys[CAMPAIGN_RUNNER],
+    )
+    final_attestation_path = tmp_path / "final-run-attestation.json"
+    final_attestation_path.write_bytes(
+        canonical_json_bytes(final_attestation) + b"\n"
+    )
+    args.final_run_attestation = str(final_attestation_path)
+
+    final_envelope = runner._admit_final_run_envelope(
+        args,
+        plan,
+        sealed_outputs=sealed,
+        answer_reveal=reveal,
+        campaign_manifest=campaign_manifest,
+        grade=grade,
+    )
+    assert final_envelope is not None
+    assert final_envelope["request_sha256"] == final_request["request_sha256"]
+    assert final_envelope["campaign_runner_attestation"] == final_attestation
+    (campaign_dir / runner.GRADE_FILE).write_bytes(
+        canonical_json_bytes(grade) + b"\n"
+    )
+    failures, detail = evidence_verifier._verify_final_run_envelope(
+        campaign_dir,
+        plan=plan,
+        trusted_policy=policy,
+    )
+    assert failures == []
+    assert detail["verified"] is True
+    (campaign_dir / runner.GRADE_FILE).write_bytes(
+        canonical_json_bytes({"grade_sha256": "f" * 64}) + b"\n"
+    )
+    failures, detail = evidence_verifier._verify_final_run_envelope(
+        campaign_dir,
+        plan=plan,
+        trusted_policy=policy,
+    )
+    assert "final run payload differs from independent reconstruction" in failures
+    assert detail["verified"] is False
 
 
 def test_atomic_plan_artifact_is_create_or_exact_verify(tmp_path: Path):
