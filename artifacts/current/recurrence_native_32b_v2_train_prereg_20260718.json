@@ -1,0 +1,145 @@
+{
+  "schema": "aura.recurrence_native_train_prereg.v1",
+  "preregistered_at": "2026-07-18T20:30:00-07:00",
+  "frozen_before_launch": true,
+  "run_id": "32b_v2_r1",
+  "purpose": "Train the resident fused 32B's recurrent-window operator under the CP138 broad curriculum (12 families, registry 2026.07.18.2) through the exact live latent-slot execution graph, so the frozen-loop refutation (vanilla beats untrained recurrence) is answered by a recurrence-NATIVE operator rather than a clever frozen runtime.",
+  "model": {
+    "path": "training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118",
+    "fingerprint_sha256": "8eae71e73a14d1228a942d4faf84690d70b62148f25b0f924435535f7c550fad",
+    "role": "the resident desktop checkpoint — the only model whose improvement counts"
+  },
+  "dataset": {
+    "task_registry_version": "2026.07.18.2",
+    "families": [
+      "khop", "boolean", "modular", "register_trace", "stack_trace",
+      "constraint_order", "causal_intervention", "bayes_update",
+      "budget_plan", "symbolic_rewrite", "premise_audit", "code_trace"
+    ],
+    "task_depths": [2, 4, 8],
+    "per_cell": 16,
+    "per_cell_fallback": 8,
+    "total_samples_primary": 576,
+    "train_seed": 1777,
+    "seed_disjointness": "train seed 1777 is disjoint from every eval seed (20260717, 20260718, 20260719, 20260801-20260820)"
+  },
+  "execution_shape": {
+    "rationale": "train under the shape the runtime actually executes, with curriculum depth beyond the live 2-step profile so additional thought is trained to help (monotonicity hinge)",
+    "n_slots": 4,
+    "branch_roles": ["constructive_solution", "counterexample_search"],
+    "exchange_interval": 1,
+    "alpha": 0.5,
+    "alpha_schedule": "constant",
+    "curriculum_depths": [1, 2, 4]
+  },
+  "optimization": {
+    "lora_rank": 8,
+    "lora_targets": ["o_proj", "v_proj"],
+    "learning_rate": 0.0001,
+    "monotonicity_weight": 0.5,
+    "adapter_id": "resident-recurrence-v2",
+    "personality_adapter": "auto"
+  },
+  "budget": {
+    "preflight": {
+      "purpose": "infrastructure feasibility ONLY (required by the void verdict's 'preflight wall-clock and compute-budget feasibility estimates'); never capability evidence",
+      "out_dir": "data/latent_cortex/recurrence_native/32b_v2_preflight",
+      "max_steps": 3,
+      "max_minutes": 45,
+      "frozen_rule": "median seconds-per-step over the 3 preflight steps > 75 implies per_cell drops to the fallback 8 (288 samples); otherwise per_cell stays 16 (576 samples). No other parameter may change in response to the preflight."
+    },
+    "sessions": {
+      "max_minutes_per_session": 232,
+      "supervisor_timeout_s_per_session": 15000,
+      "max_sessions": 3,
+      "session_1": "fresh start",
+      "sessions_2_3": "explicit --resume relaunches of the identical command in a fresh supervisor run-dir (supervisor never restarts on its own; the trainer owns durable exact-resume state)",
+      "hard_stop": "after session 3 the adapter is whatever the last durable checkpoint holds; no further training may be attributed to this preregistration"
+    },
+    "checkpoint_every_steps": 25,
+    "log_every_steps": 10
+  },
+  "training_command_argv": [
+    ".venv/bin/python", "tools/recurrence_native_train_v2.py",
+    "--model", "training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118",
+    "--out-dir", "data/latent_cortex/recurrence_native/32b_v2_r1",
+    "--adapter-id", "resident-recurrence-v2",
+    "--personality-adapter", "auto",
+    "--train-seed", "1777",
+    "--families", "khop,boolean,modular,register_trace,stack_trace,constraint_order,causal_intervention,bayes_update,budget_plan,symbolic_rewrite,premise_audit,code_trace",
+    "--task-depths", "2,4,8",
+    "--per-cell", "<16 or 8 per the frozen preflight rule>",
+    "--curriculum-depths", "1,2,4",
+    "--n-slots", "4",
+    "--branch-roles", "constructive_solution,counterexample_search",
+    "--exchange-interval", "1",
+    "--alpha", "0.5",
+    "--alpha-schedule", "constant",
+    "--lora-rank", "8",
+    "--lora-targets", "o_proj,v_proj",
+    "--learning-rate", "1e-4",
+    "--monotonicity-weight", "0.5",
+    "--max-minutes", "232",
+    "--checkpoint-every", "25",
+    "--log-every", "10"
+  ],
+  "supervisor": {
+    "launcher": "tools/run_detached_step.py launch",
+    "run_dir_pattern": "data/latent_cortex/recurrence_native/32b_v2_r1/supervisor_session_<N>",
+    "name_pattern": "recurrence-native-32b-v2-r1-session-<N>",
+    "resume_contract": "none (explicit relaunch with the trainer's own --resume; the supervisor never restarts a failed target)",
+    "certified_by": "CP137 detached v2 mechanics (commit 89df1de1): sandbox_no_fork, process-group containment, atomic heartbeat/status, exactly one terminal receipt"
+  },
+  "memory_safety": {
+    "rule": "the live Aura desktop app must be DOWN for the entire run; one 32B process maximum on the 64GB host",
+    "verified_at_prereg": "no aura_main process, port 8000 dead, 23.0 GB free"
+  },
+  "mechanical_admission": {
+    "requirements": [
+      "terminal state is training_completion (complete) OR halt_reason wall_clock with >= 200 total steps",
+      "every logged mean_loss finite",
+      "adapter + optimizer + completion records durable (latest.json advanced only after all three)",
+      "strict v2 plan-only loader accepts the bundle"
+    ],
+    "on_failure": "REFUTED-mechanics; no evaluation compute is spent on the adapter"
+  },
+  "pilot_decision_rule": {
+    "pilot_campaign": {
+      "tool": "tools/run_latent_cortex_paired_campaign.py",
+      "campaign_name": "pilot_32b_v2_r1",
+      "profile": "primary",
+      "confirmatory": false,
+      "task_registry_version": "2026.07.18.2",
+      "seeds": [20260719],
+      "difficulty": 2,
+      "rlc_profile": "recurrence_attribution",
+      "adapter": "data/latent_cortex/recurrence_native/32b_v2_r1"
+    },
+    "proceed_to_powered_iff": [
+      "paired effect of adapter-on(RLC-on) versus adapter-off(RLC-on) on the pilot's primary endpoint is >= 0",
+      "zero checkpoint-invariant or identity failures across all arms",
+      "weakest-family paired effect > -0.15 (no family collapses)"
+    ],
+    "otherwise": "record the honest pilot verdict, shelve the adapter, and do NOT run the powered campaign under this preregistration"
+  },
+  "prospective_powered_campaign": {
+    "tool": "tools/run_latent_cortex_paired_campaign.py",
+    "campaign_name": "powered_32b_v2_r1",
+    "profile": "full",
+    "confirmatory": true,
+    "task_registry_version": "2026.07.18.2",
+    "seeds": "20260801 through 20260820 inclusive (20 seeds)",
+    "domains": "all seven frontier domains",
+    "prerequisites": [
+      "signed contamination audit with status passed_zero_overlap and verified signature",
+      "contamination trust root independent of this repository's writable state"
+    ],
+    "claim_gate": "only this campaign may award or refute recurrence_native_adapter_improves_resident_32b"
+  },
+  "forbidden_claims_until_powered_campaign": [
+    "recurrence_native_adapter_improves_resident_32b",
+    "recurrence_native_adapter_regresses_resident_32b",
+    "recursive_latent_cortex_reaches_frontier_reasoning",
+    "resident_32b_frontier_certificate_complete"
+  ]
+}
