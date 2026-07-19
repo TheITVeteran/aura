@@ -16,12 +16,12 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **Checkpoint 169 is the current
-  reviewed source candidate in the `main` worktree; checkpoints through CP168
+- Current bounded implementation milestone: **Checkpoint 170 is the current
+  reviewed source candidate in the `main` worktree; checkpoints through CP169
   are pushed. The corrected resident-32B path completed clean one-, two-, and
   five-step calibrations with finite durable checkpoints, exact source identity,
   no memory ratchet, and a 48-GiB MLX wired-residency limit. The full detached
-  576-step run is active from exact pushed CP147 source at step 500/576 with
+  576-step run is active from exact pushed CP147 source at step 520/576 with
   finite losses and durable five-step checkpoints; it remains governed by the
   24-hour training deadline and 26-hour containment timeout. No
   reasoning-gain or frontier claim exists yet. Completed training,
@@ -20737,5 +20737,68 @@ does not impersonate that powered result.
 
 Evidence-weighted completion remains 27%; this is checkpoint 169 of the faithful
 292-399 forecast, leaving approximately 123-230 checkpoints. No reasoning-gain,
+frontier, external-custody campaign, live-app, release, or soak credit is
+awarded. Final soaks remain deferred.
+
+## Checkpoint 2026-07-19-170: Frozen Adapter and Signed Launch Preflight
+
+CP170 closes the mutable-training-directory and stdout-only trust-preparation
+gaps between a completed recurrence adapter and a claim-eligible paired
+campaign.
+
+- A recurrence-v2 adapter can now be copied into a manifest-bounded snapshot
+  containing only the adapter, alias, loader/configuration, training receipt,
+  dataset, execution specification, completion receipt, and archived source
+  artifacts transitively named by the training manifest. Every source file is
+  read through a stable no-follow descriptor, copied with a streaming digest,
+  cross-checked against the manifest, and published as a read-only generation.
+- The freeze certificate binds the exact artifact inventory/content root, the
+  strict v2 identity receipt, effective resident model stack, training-time
+  source and tensor identity, and the validator implementations. Incomplete
+  training, alias or completion mismatch, source replacement, path escape,
+  symlink, special file, unplanned artifact, writable sealed file/directory,
+  duplicate path, or content mutation fails closed without replacing an
+  existing destination.
+- A new private-key-free operator CLI replays the real paired runner's
+  `--prepare-trust` path and persists the exact launch argv, protocol, unsigned
+  plan, frozen adapter, independent policy/root, contamination evidence, task
+  issuer payload, campaign runner payload, and both detached signature
+  requests in one content-addressed prelaunch bundle. Required paths must be
+  absolute and canonical; the campaign directory must not exist or overlap the
+  frozen adapter.
+- Admission requires externally custodied policy roles, exact issuer and runner
+  implementation pins, a current independently rooted policy, and real
+  Ed25519 attestations over the persisted requests. Before issuing launch argv,
+  it revalidates every dependency, the Python and campaign producer bytes, the
+  frozen adapter, the absent campaign directory, and a fresh byte-equivalent
+  replay of trust preparation. Admission is idempotent after an interrupted
+  artifact write and never reads or generates a private key.
+- The resulting launch packet binds the two attestations, prelaunch manifest,
+  freeze certificate, working directory, campaign directory, and exact argv.
+  Independent inspection rechecks storage, dependencies, policy signatures,
+  role signatures, implementation identities, freeze identity, and argv rather
+  than trusting the packet's self-digest.
+
+Validation is green: seven focused model-free tests use a separate producer
+process, real external-root policy, and real detached role signatures while
+covering exact freeze/admission and idempotent replay plus symlink, mutable
+dependency, changed producer, wrong signature, and unplanned-artifact attacks.
+The expanded recurrence identity, campaign trust, detached trust CLI, paired
+runner, independent worker evidence, and final verifier set passes 83/83 in
+41.27 seconds. Repository lint passes; the governance inventory matches its
+baseline at 1,875 recognized calls in 1,760 buckets with no new debt; and the
+closeout rubric remains 20/20. Semantic closeout remains explicitly open at
+426 fully reviewed code files and 3,927 unreviewed of 4,384 tracked code files.
+
+This checkpoint provides the deterministic freeze and prelaunch admission
+machinery; it does not freeze the still-running resident adapter or supply
+production credentials. After terminal training, CP171+ must freeze and smoke-
+verify the real adapter, preregister fresh pilot seeds, obtain separately
+administered policy and role signatures, execute the pilot, carry post-seal
+answer-reveal and post-grade final-run signature phases through independent
+verification, then run the powered and external-frontier campaigns.
+
+Evidence-weighted completion remains 27%; this is checkpoint 170 of the faithful
+292-399 forecast, leaving approximately 122-229 checkpoints. No reasoning-gain,
 frontier, external-custody campaign, live-app, release, or soak credit is
 awarded. Final soaks remain deferred.
