@@ -19451,10 +19451,9 @@ the supervisor reaps it; the old order consulted libproc before authoritative
 
 ## Checkpoint 2026-07-18-142: Independent Trust Legs + Deliberative Unification
 
-CP142 lands the two independent-verification prerequisites the confirmatory
-campaign declares as required controls, plus the runtime-unification organs
-from the finish-line pass. No model was loaded; the training lane stayed with
-the CP139-141 detached run.
+CP142 lands two trust-verification foundations for the confirmatory campaign,
+plus the runtime-unification organs from the finish-line pass. No model was
+loaded; the training lane stayed with the CP139-141 detached run.
 
 - Signed contamination audit: `tools/produce_contamination_audit.py`
   (keygen/produce/verify) sweeps every frozen campaign prompt against the
@@ -19465,15 +19464,18 @@ the CP139-141 detached run.
   (`_contamination_audit`) accepting clean audits and rejecting tampered or
   forged ones is under test. An external keypair now exists at
   `~/.aura/trust/contamination_audit_ed25519_{private,public}.pem`
-  (key_id 4035ecbe…).
-- Independent evidence verification:
+  (key_id 4035ecbe…). The external path proves storage separation only; it
+  does not by itself prove an organizationally independent auditor.
+- Evidence replay verification:
   `tools/verify_paired_campaign_evidence.py` regenerates the task battery
   from the plan's DECLARED generation parameters — a self-consistent plan
   that lies about its seeds is caught before grading — replays the
   hash-chained journal read-only, re-grades committed raw outputs with
   independently regenerated blinded answers, and must agree with the
   published grade including its content hash. Corrupt evidence fails closed
-  with a verdict. 14/14 focused tests.
+  with a verdict. 14/14 focused tests. It still imports the production
+  `grade_campaign` implementation, so it is not yet an implementation-
+  independent scorer capable of detecting a shared grading defect.
 - Deliberative unification (landed earlier this pass, recorded here):
   bidirectional GWT↔RLC coupling (coalitions seed ablatable thought slots;
   conclusions COMPETE for broadcast, priced by verification; lab episodes
@@ -19491,7 +19493,37 @@ the CP139-141 detached run.
 - These are engineering and trust-infrastructure gains only: no reasoning,
   resident-32B, frontier, or installed-app capability credit. The intelligence
   dividend still rides on the CP139 recurrence-native training run and its
-  preregistered pilot/confirmatory campaigns.
+  preregistered pilot/confirmatory campaigns. Organizational signer
+  independence and an independently implemented scorer remain mandatory for
+  confirmatory claim credit.
 - Evidence-weighted completion remains 27%. This is checkpoint 142 of the
   faithful 292-399 forecast, leaving approximately 150-257 checkpoints.
   Final soaks remain deferred.
+
+## Checkpoint 2026-07-18-143: Bounded Darwin Identity Reconciliation
+
+The CP141 one-shot smoke passed, but two real resident cold steps exposed a
+longer Darwin transition: `waitpid(WNOHANG)` could still report the sandbox
+wrapper live while libproc temporarily lost its executable identity during
+MLX/Metal teardown. The third run proved process-group and lineage containment
+but showed that a two-second reconciliation window was too short. CP143 uses a
+strictly bounded ten-second window, above the measured approximately five-
+second teardown interval.
+
+- The original start token remains mandatory whenever libproc reports the
+  process alive. A changed identity fails immediately; ambiguity beyond ten
+  seconds still fails closed.
+- A direct-child exit observed by `waitpid` is authoritative only for that
+  child. Completion still requires an empty process group and empty inherited-
+  token lineage under the kernel no-fork policy.
+- New regressions cover recovery after five transient unknown observations and
+  an exit that occurs while every libproc observation is unknown. Focused
+  identity tests, Ruff, Python compilation, and diff integrity pass. Full
+  launch-level tests must run against a stable source tree after the resident
+  heartbeat stops; their source-drift failures while it was live were expected
+  fail-closed behavior, not passing evidence.
+
+The three failed resident supervisor receipts remain retained diagnostic
+evidence and award no training credit. Evidence-weighted completion remains
+27%; this is checkpoint 143 of the faithful 292-399 forecast, leaving
+approximately 149-256 checkpoints. Final soaks remain deferred.

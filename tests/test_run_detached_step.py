@@ -751,6 +751,64 @@ def test_reaped_direct_child_does_not_depend_on_libproc_identity(
     assert lineage_cleanup_count == 0
 
 
+def test_direct_child_observation_tolerates_transient_libproc_gap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    child = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(2)"],
+        start_new_session=True,
+    )
+    original_inspect = detached._inspect_process
+    child_token = detached._process_start_token(child.pid)
+    calls = 0
+
+    def transient_observation(pid: int) -> detached.ProcessObservation:
+        nonlocal calls
+        if pid == child.pid and calls < 5:
+            calls += 1
+            return detached.ProcessObservation("unknown")
+        return original_inspect(pid)
+
+    monkeypatch.setattr(detached, "_inspect_process", transient_observation)
+    try:
+        observation, returncode = detached._observe_direct_child(
+            child,
+            child_token,
+            1.0,
+        )
+        assert observation.state == "alive"
+        assert observation.token == child_token
+        assert returncode is None
+        assert calls == 5
+    finally:
+        child.terminate()
+        child.wait(timeout=5.0)
+
+
+def test_direct_child_exit_during_libproc_gap_is_reaped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    child = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(0.05)"],
+        start_new_session=True,
+    )
+    child_token = detached._process_start_token(child.pid)
+    monkeypatch.setattr(
+        detached,
+        "_inspect_process",
+        lambda _pid: detached.ProcessObservation("unknown"),
+    )
+
+    observation, returncode = detached._observe_direct_child(
+        child,
+        child_token,
+        1.0,
+    )
+
+    assert observation.state == "dead"
+    assert returncode == 0
+
+
 def test_attempt_journal_tampering_is_rejected(tmp_path: Path) -> None:
     run_dir = tmp_path / "tampered-journal"
     _launch(run_dir, [sys.executable, "-c", "pass"])
