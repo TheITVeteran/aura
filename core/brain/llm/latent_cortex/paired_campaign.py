@@ -28,6 +28,8 @@ from core.brain.llm.latent_cortex.experiments import (
 from core.brain.llm.latent_cortex.frontier_tasks import (
     FRONTIER_DOMAINS,
     FrontierTask,
+    PublicTaskRecord,
+    build_public_task_manifest,
     build_task_commitment,
     build_task_manifest,
 )
@@ -205,7 +207,7 @@ def _arm_execution_order(campaign_name: str, arms: tuple[str, ...]) -> tuple[str
 
 def build_campaign_plan(
     campaign_name: str,
-    tasks: Sequence[FrontierTask],
+    tasks: Sequence[FrontierTask | PublicTaskRecord],
     *,
     model_identity: Mapping[str, Any],
     adapter_identity: Mapping[str, Any],
@@ -217,7 +219,15 @@ def build_campaign_plan(
 ) -> CampaignPlan:
     """Freeze all public tasks and arm cells before model execution."""
 
-    if not tasks or not all(isinstance(task, FrontierTask) for task in tasks):
+    if not tasks:
+        _fail("campaign_tasks_invalid")
+    if all(isinstance(task, FrontierTask) for task in tasks):
+        public_tasks = tuple(cast(FrontierTask, task).public for task in tasks)
+        manifest = build_task_manifest(cast(Sequence[FrontierTask], tasks))
+    elif all(isinstance(task, PublicTaskRecord) for task in tasks):
+        public_tasks = tuple(cast(PublicTaskRecord, task) for task in tasks)
+        manifest = build_public_task_manifest(public_tasks)
+    else:
         _fail("campaign_tasks_invalid")
     normalized_arms = tuple(arms)
     if (
@@ -230,7 +240,6 @@ def build_campaign_plan(
     if type(claim_eligible) is not bool:
         _fail("campaign_claim_eligibility_invalid")
 
-    manifest = build_task_manifest(tasks)
     commitment = build_task_commitment(manifest)
     audit = {} if contamination_audit is None else dict(contamination_audit)
     audit_valid = _contamination_audit_valid(
@@ -250,7 +259,23 @@ def build_campaign_plan(
         or not _is_sha256(normalized_campaign_trust.get("unsigned_plan_sha256"))
     ):
         _fail("campaign_prelaunch_trust_required")
-    task_by_id = {task.task_id: task for task in tasks}
+    if claim_eligible and (
+        "generation_seeds" in execution_config
+        or execution_config.get("worker_task_material")
+        != "public_manifest_only"
+        or execution_config.get("answer_reveal_protocol")
+        != "sealed_outputs_then_issuer_reveal_v1"
+        or execution_config.get("generation_seed_disclosure")
+        != "post_seal_answer_reveal"
+        or execution_config.get("generation_seed_policy")
+        != "external_issuer_uniform_63bit"
+        or type(execution_config.get("generation_seed_count")) is not int
+        or execution_config.get("generation_seed_count", 0) <= 0
+        or type(execution_config.get("generation_seed_min_entropy_bits")) is not int
+        or execution_config.get("generation_seed_min_entropy_bits", 0) < 60
+    ):
+        _fail("campaign_answer_blinding_required")
+    task_by_id = {task.task_id: task for task in public_tasks}
     ordered_tasks = [task_by_id[record.task_id] for record in manifest.tasks]
     execution_order = _arm_execution_order(campaign_name, normalized_arms)
     task_execution_ordinals: dict[tuple[str, str], int] = {}
@@ -279,7 +304,7 @@ def build_campaign_plan(
                     ],
                     "task_id": task.task_id,
                     "task_ordinal": task_ordinal,
-                    "task_payload_sha256": task.public.task_payload_sha256,
+                    "task_payload_sha256": task.task_payload_sha256,
                 }
             )
     metadata = {

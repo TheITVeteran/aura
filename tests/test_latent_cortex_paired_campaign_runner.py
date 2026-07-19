@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 import signal
 import time
 from pathlib import Path
@@ -27,12 +28,321 @@ from core.brain.llm.latent_cortex.paired_campaign import build_campaign_plan
 from tools import run_latent_cortex_paired_campaign as runner
 
 
+def _external_policy_fixture(campaign_name: str, now: int):
+    root = Ed25519PrivateKey.generate()
+    role_keys = {
+        role: Ed25519PrivateKey.generate() for role in CAMPAIGN_TRUST_ROLES
+    }
+    roles = {}
+    for role, key in role_keys.items():
+        raw = key.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
+        roles[role] = {
+            "signer_id": f"{role}-signer",
+            "organization_id": f"{role}-organization",
+            "public_key_b64": base64.b64encode(raw).decode("ascii"),
+            "key_id": hashlib.sha256(raw).hexdigest(),
+            "implementation_sha256": hashlib.sha256(f"{role}:impl".encode()).hexdigest(),
+            "release_sha256": hashlib.sha256(f"{role}:release".encode()).hexdigest(),
+            "custody_class": "remote_hsm",
+            "custody_evidence_sha256": hashlib.sha256(
+                f"{role}:custody".encode()
+            ).hexdigest(),
+        }
+    body = {
+        "schema": CAMPAIGN_TRUST_POLICY_SCHEMA,
+        "policy_id": f"{campaign_name}-policy",
+        "policy_revision": 1,
+        "campaign_name": campaign_name,
+        "protocol_sha256": runner._campaign_protocol_sha256(),
+        "previous_policy_sha256": None,
+        "revoked_key_ids": [],
+        "issued_at_unix": now - 10,
+        "not_before_unix": now - 5,
+        "expires_at_unix": now + 3600,
+        "roles": roles,
+    }
+    root_raw = root.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    signed = canonical_json_bytes(body)
+    document = {
+        **body,
+        "root_signature": {
+            "algorithm": "Ed25519",
+            "key_id": hashlib.sha256(root_raw).hexdigest(),
+            "signature_b64": base64.b64encode(root.sign(signed)).decode("ascii"),
+            "signed_payload_sha256": hashlib.sha256(signed).hexdigest(),
+        },
+    }
+    root_pem = root.public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    return (
+        validate_campaign_trust_policy(
+            document,
+            trusted_root_public_key_pem=root_pem,
+            now_unix=now,
+        ),
+        role_keys,
+    )
+
+
 def test_majority_output_uses_parsed_answer_without_gold_access():
     first = 'reasoning\nFINAL_ANSWER: {"count":2,"witness":[1,5]}'
     second = 'different\nFINAL_ANSWER: {"witness":[1,5],"count":2}'
     wrong = 'FINAL_ANSWER: {"count":9,"witness":[]}'
 
     assert runner._majority_output([first, wrong, second]) == first
+
+
+def test_worker_reconstructs_public_tasks_without_answer_payloads():
+    tasks = generate_task_battery([7], domains=("mathematics",), difficulty=1)
+    plan = build_campaign_plan(
+        "public-worker-test",
+        tasks,
+        model_identity={"model": "sealed"},
+        adapter_identity={"adapter": "sealed"},
+        execution_config={"difficulty": 1},
+    )
+
+    public_tasks = runner._public_tasks_from_plan(plan)
+    rebuilt = build_campaign_plan(
+        "public-worker-test",
+        public_tasks,
+        model_identity={"model": "sealed"},
+        adapter_identity={"adapter": "sealed"},
+        execution_config={"difficulty": 1},
+    )
+
+    assert rebuilt.to_dict() == plan.to_dict()
+    assert all(not hasattr(task, "blinded_answer") for task in public_tasks)
+    assert all(not hasattr(task, "score") for task in public_tasks)
+
+
+def test_expected_worker_plan_never_invokes_answer_bearing_generator(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    tasks = generate_task_battery([7], domains=("mathematics",), difficulty=1)
+    model_identity = {"model": "sealed"}
+    adapter_identity = {"adapter": "sealed"}
+    execution_config = {"difficulty": 1}
+    plan = build_campaign_plan(
+        "generator-isolation-test",
+        tasks,
+        model_identity=model_identity,
+        adapter_identity=adapter_identity,
+        execution_config=execution_config,
+    )
+    args = SimpleNamespace(campaign_name="generator-isolation-test")
+    monkeypatch.setattr(
+        runner,
+        "generate_task_battery",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("answer-bearing generator entered worker path")
+        ),
+    )
+    monkeypatch.setattr(
+        runner, "_identity_material", lambda _args: (model_identity, adapter_identity)
+    )
+    monkeypatch.setattr(runner, "_contamination_audit", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(runner, "_execution_config", lambda *_args: execution_config)
+    monkeypatch.setattr(runner, "_verified_campaign_trust", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(runner, "_claim_eligible", lambda *_args: False)
+    monkeypatch.setattr(runner, "_arms", lambda _args: runner.FULL_ARMS)
+
+    rebuilt, public_tasks = runner._expected_worker_plan(args, plan)
+
+    assert rebuilt.to_dict() == plan.to_dict()
+    assert all(not hasattr(task, "blinded_answer") for task in public_tasks)
+
+
+def test_outputs_are_sealed_before_answer_reveal_and_scoring(tmp_path: Path):
+    tasks = generate_task_battery([7], domains=("mathematics",), difficulty=1)
+    plan = build_campaign_plan(
+        "two-phase-preflight",
+        tasks,
+        model_identity={"model": "sealed"},
+        adapter_identity={"adapter": "sealed"},
+        execution_config={
+            "difficulty": 1,
+            "answer_reveal_protocol": "sealed_outputs_then_issuer_reveal_v1",
+        },
+    )
+    campaign_dir = tmp_path / "campaign"
+    campaign_dir.mkdir()
+    runner._persist_plan(campaign_dir, plan)
+    task_by_id = {task.task_id: task for task in tasks}
+    with runner.CampaignJournal(campaign_dir / runner.JOURNAL_FILE, plan) as journal:
+        for cell_id in plan.cell_ids:
+            definition = plan.cell_definition(cell_id)
+            task = task_by_id[definition["task_id"]]
+            text = "FINAL_ANSWER: " + json.dumps(
+                task.reveal_for_verifier()["expected"],
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            attempt_id = journal.start_cell(cell_id)
+            journal.record_arm_result(
+                cell_id,
+                attempt_id,
+                {
+                    "arm": definition["arm"],
+                    "text": text,
+                    "layer_apps": 1,
+                },
+            )
+        assert journal.resume().committed_cell_ids == ()
+        assert journal.resume().sealed_cell_ids == plan.cell_ids
+
+    assert all(
+        runner._arm_outputs_sealed(campaign_dir, plan, arm)
+        for arm in runner.FULL_ARMS
+    )
+    sealed = runner._seal_output_manifest(campaign_dir, plan)
+    reveal = runner._admit_answer_reveal(
+        SimpleNamespace(
+            campaign_dir=str(campaign_dir),
+            answer_reveal_attestation="",
+        ),
+        plan,
+        tasks,
+        sealed,
+    )
+    assert reveal is not None
+    assert (campaign_dir / runner.SEALED_OUTPUT_MANIFEST_FILE).exists()
+    assert (campaign_dir / runner.ANSWER_REVEAL_FILE).exists()
+    assert not (campaign_dir / runner.ANSWER_REVEAL_REQUEST_FILE).exists()
+    with runner.CampaignJournal(campaign_dir / runner.JOURNAL_FILE, plan) as journal:
+        assert journal.resume().committed_cell_ids == ()
+
+    runner._score_sealed_outputs(campaign_dir, plan, tasks)
+    with runner.CampaignJournal(campaign_dir / runner.JOURNAL_FILE, plan) as journal:
+        assert journal.resume().committed_cell_ids == plan.cell_ids
+        assert all(
+            record["verification"]["correct"] is True
+            for record in journal.committed_records()
+        )
+
+
+def test_claim_reveal_pauses_for_exact_external_issuer_signature(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    now = int(time.time())
+    campaign_name = "signed-reveal-test"
+    policy, role_keys = _external_policy_fixture(campaign_name, now)
+    tasks = generate_task_battery([9], domains=("mathematics",), difficulty=1)
+    manifest = runner.build_task_manifest(tasks)
+    auditor = Ed25519PrivateKey.generate()
+    auditor_der = auditor.public_key().public_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    audit_body = {
+        "schema": runner.CONTAMINATION_AUDIT_SCHEMA,
+        "task_manifest_sha256": manifest.manifest_sha256,
+        "status": "passed_zero_overlap",
+        "overlap_count": 0,
+        "auditor_independence": "external",
+        "corpora": [{"name": "training", "snapshot_sha256": "d" * 64}],
+        "methods": ["exact_prompt", "normalized_prompt", "token_fivegram"],
+    }
+    audit_bytes = canonical_json_bytes(audit_body)
+    audit_sha = hashlib.sha256(auditor_der).hexdigest()
+    audit = {
+        **audit_body,
+        "signature": {
+            "algorithm": "ed25519",
+            "key_id": audit_sha,
+            "signature_b64": base64.b64encode(auditor.sign(audit_bytes)).decode(
+                "ascii"
+            ),
+            "signed_payload_sha256": hashlib.sha256(audit_bytes).hexdigest(),
+            "public_key_der_b64": base64.b64encode(auditor_der).decode("ascii"),
+            "trust_root_sha256": audit_sha,
+            "verified": True,
+        },
+    }
+    model_identity = {"model": "sealed"}
+    adapter_identity = {"adapter": "sealed"}
+    execution_config = {
+        "difficulty": 1,
+        "worker_task_material": "public_manifest_only",
+        "answer_reveal_protocol": "sealed_outputs_then_issuer_reveal_v1",
+        "generation_seed_count": 1,
+        "generation_seed_min_entropy_bits": 60,
+        "generation_seed_policy": "external_issuer_uniform_63bit",
+        "generation_seed_disclosure": "post_seal_answer_reveal",
+    }
+    unsigned = build_campaign_plan(
+        campaign_name,
+        tasks,
+        model_identity=model_identity,
+        adapter_identity=adapter_identity,
+        execution_config=execution_config,
+        contamination_audit=audit,
+        claim_eligible=False,
+    )
+    trust = {
+        "prelaunch_verified": True,
+        "externally_custodied": True,
+        "policy_sha256": policy.policy_sha256,
+        "unsigned_plan_sha256": unsigned.plan_sha256,
+    }
+    plan = build_campaign_plan(
+        campaign_name,
+        tasks,
+        model_identity=model_identity,
+        adapter_identity=adapter_identity,
+        execution_config=execution_config,
+        contamination_audit=audit,
+        campaign_trust=trust,
+        claim_eligible=True,
+    )
+    campaign_dir = tmp_path / "campaign"
+    campaign_dir.mkdir()
+    runner._persist_plan(campaign_dir, plan)
+    with runner.CampaignJournal(campaign_dir / runner.JOURNAL_FILE, plan) as journal:
+        for cell_id in plan.cell_ids:
+            definition = plan.cell_definition(cell_id)
+            attempt = journal.start_cell(cell_id)
+            journal.record_arm_result(
+                cell_id,
+                attempt,
+                {"arm": definition["arm"], "text": "candidate", "layer_apps": 1},
+            )
+    sealed = runner._seal_output_manifest(campaign_dir, plan)
+    monkeypatch.setattr(
+        runner, "_load_campaign_trust_policy", lambda *_args, **_kwargs: policy
+    )
+    args = SimpleNamespace(
+        campaign_dir=str(campaign_dir),
+        answer_reveal_attestation="",
+    )
+
+    assert runner._admit_answer_reveal(args, plan, tasks, sealed) is None
+    request = json.loads(
+        (campaign_dir / runner.ANSWER_REVEAL_REQUEST_FILE).read_bytes()
+    )
+    attestation = build_role_attestation(
+        policy,
+        role=TASK_ISSUER,
+        payload=request["signed_payload"]["payload"],
+        signed_at_unix=request["signed_payload"]["signed_at_unix"],
+        private_key=role_keys[TASK_ISSUER],
+    )
+    attestation_path = tmp_path / "answer-reveal-attestation.json"
+    attestation_path.write_bytes(canonical_json_bytes(attestation) + b"\n")
+    args.answer_reveal_attestation = str(attestation_path)
+
+    reveal = runner._admit_answer_reveal(args, plan, tasks, sealed)
+    assert reveal is not None
+    assert reveal["request_sha256"] == request["request_sha256"]
+    assert reveal["task_issuer_attestation"] == attestation
 
 
 def test_atomic_plan_artifact_is_create_or_exact_verify(tmp_path: Path):
@@ -45,6 +355,32 @@ def test_atomic_plan_artifact_is_create_or_exact_verify(tmp_path: Path):
     assert path.read_bytes() == payload
     with pytest.raises(runner.CampaignProducerError, match="existing artifact differs"):
         runner._atomic_create_or_verify(path, b'{"plan":2}\n')
+
+
+def test_atomic_artifact_rejects_concurrent_symlink_substitution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    destination = tmp_path / "reveal.json"
+    victim = tmp_path / "victim.json"
+    victim.write_bytes(b'{"trusted":true}\n')
+
+    def racing_link(
+        _source: os.PathLike[str] | str,
+        target: os.PathLike[str] | str,
+        *,
+        follow_symlinks: bool,
+    ) -> None:
+        assert follow_symlinks is False
+        Path(target).symlink_to(victim)
+        raise FileExistsError
+
+    monkeypatch.setattr(os, "link", racing_link)
+    with pytest.raises(runner.CampaignProducerError, match="symlink artifact rejected"):
+        runner._atomic_create_or_verify(destination, victim.read_bytes())
+
+    assert victim.read_bytes() == b'{"trusted":true}\n'
+    assert destination.is_symlink()
+    assert not list(tmp_path.glob(".*.tmp"))
 
 
 def test_implementation_identity_covers_complete_latent_cortex_source():
@@ -110,6 +446,8 @@ def test_worker_command_resolves_relative_campaign_directory(
 
     campaign_index = command.index("--campaign-dir") + 1
     assert command[campaign_index] == str((tmp_path / "relative-campaign").resolve())
+    assert "--seeds" not in command
+    assert command[command.index("--seed-count") + 1] == "1"
 
     policy = runner._detached_broker_policy(args)
     assert len(policy) == len(runner.FULL_ARMS)
@@ -172,7 +510,7 @@ def test_run_child_uses_detached_broker_when_available(
 def test_claim_eligibility_requires_full_powered_seven_domain_protocol():
     args = SimpleNamespace(
         confirmatory=True,
-        seed_values=tuple(range(20)),
+        seed_values=tuple((1 << 60) + value for value in range(20)),
         profile="full",
         domain_values=runner.FRONTIER_DOMAINS,
     )
@@ -203,14 +541,14 @@ def test_claim_eligibility_requires_full_powered_seven_domain_protocol():
         is False
     )
     args.domain_values = runner.FRONTIER_DOMAINS
-    args.seed_values = tuple(range(19))
+    args.seed_values = tuple((1 << 60) + value for value in range(19))
     assert (
         runner._claim_eligible(
             args, model_identity, adapter_identity, audit, trust
         )
         is False
     )
-    args.seed_values = tuple(range(20))
+    args.seed_values = tuple((1 << 60) + value for value in range(20))
     assert (
         runner._claim_eligible(
             args, model_identity, adapter_identity, {}, trust
@@ -220,6 +558,13 @@ def test_claim_eligibility_requires_full_powered_seven_domain_protocol():
     assert (
         runner._claim_eligible(
             args, model_identity, adapter_identity, audit, None
+        )
+        is False
+    )
+    args.seed_values = tuple(range(20))
+    assert (
+        runner._claim_eligible(
+            args, model_identity, adapter_identity, audit, trust
         )
         is False
     )

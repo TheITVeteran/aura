@@ -338,6 +338,66 @@ class PublicTaskRecord:
     contamination_fingerprints: tuple[ContaminationFingerprint, ...]
     excluded_training_families: tuple[str, ...]
 
+    @classmethod
+    def from_dict(cls, raw: Mapping[str, Any]) -> PublicTaskRecord:
+        """Reconstruct one candidate-safe task without materializing its answer."""
+
+        expected = {
+            "schema",
+            "registry_version",
+            "task_id",
+            "task_payload_sha256",
+            "domain",
+            "generator_id",
+            "generator_version",
+            "difficulty",
+            "prompt",
+            "response_contract",
+            "scorer_id",
+            "scorer_version",
+            "answer_commitment_sha256",
+            "contamination_fingerprints",
+            "excluded_training_families",
+        }
+        if not isinstance(raw, Mapping) or set(raw) != expected:
+            _fail("public_task_document_invalid")
+        fingerprints = raw.get("contamination_fingerprints")
+        exclusions = raw.get("excluded_training_families")
+        if (
+            not isinstance(fingerprints, list)
+            or any(
+                not isinstance(item, Mapping)
+                or set(item) != {"method", "sha256"}
+                for item in fingerprints
+            )
+            or not isinstance(exclusions, list)
+            or any(not isinstance(item, str) for item in exclusions)
+        ):
+            _fail("public_task_document_invalid")
+        return cls(
+            schema=raw["schema"],
+            registry_version=raw["registry_version"],
+            task_id=raw["task_id"],
+            task_payload_sha256=raw["task_payload_sha256"],
+            domain=raw["domain"],
+            generator_id=raw["generator_id"],
+            generator_version=raw["generator_version"],
+            difficulty=raw["difficulty"],
+            prompt=raw["prompt"],
+            response_contract=raw["response_contract"],
+            scorer_id=raw["scorer_id"],
+            scorer_version=raw["scorer_version"],
+            answer_commitment_sha256=raw["answer_commitment_sha256"],
+            contamination_fingerprints=tuple(
+                ContaminationFingerprint(
+                    method=cast(str, item["method"]),
+                    sha256=cast(str, item["sha256"]),
+                )
+                for item in fingerprints
+            ),
+            excluded_training_families=tuple(exclusions),
+        )
+
     def __post_init__(self) -> None:
         if self.schema != PUBLIC_TASK_SCHEMA:
             _fail("public_task_schema_invalid")
@@ -664,7 +724,9 @@ def _make_task(
     return FrontierTask(schema=TASK_SCHEMA, public=public, blinded_answer=blinded)
 
 
-def build_task_manifest(tasks: Iterable[FrontierTask]) -> TaskManifest:
+def build_public_task_manifest(tasks: Iterable[PublicTaskRecord]) -> TaskManifest:
+    """Build a manifest using only candidate-visible task material."""
+
     try:
         bounded_tasks = tuple(itertools.islice(iter(tasks), MAX_MANIFEST_TASKS + 1))
     except TypeError:
@@ -672,10 +734,10 @@ def build_task_manifest(tasks: Iterable[FrontierTask]) -> TaskManifest:
     if (
         not bounded_tasks
         or len(bounded_tasks) > MAX_MANIFEST_TASKS
-        or any(not isinstance(task, FrontierTask) for task in bounded_tasks)
+        or any(not isinstance(task, PublicTaskRecord) for task in bounded_tasks)
     ):
         _fail("task_manifest_size_invalid")
-    records = tuple(sorted((task.public for task in bounded_tasks), key=lambda item: item.task_id))
+    records = tuple(sorted(bounded_tasks, key=lambda item: item.task_id))
     versions = {record.registry_version for record in records}
     if len(versions) != 1:
         _fail("task_manifest_registry_version_mismatch")
@@ -693,6 +755,20 @@ def build_task_manifest(tasks: Iterable[FrontierTask]) -> TaskManifest:
         tasks=records,
         manifest_sha256=_sha256_json(body),
     )
+
+
+def build_task_manifest(tasks: Iterable[FrontierTask]) -> TaskManifest:
+    try:
+        bounded_tasks = tuple(itertools.islice(iter(tasks), MAX_MANIFEST_TASKS + 1))
+    except TypeError:
+        _fail("task_manifest_input_invalid")
+    if (
+        not bounded_tasks
+        or len(bounded_tasks) > MAX_MANIFEST_TASKS
+        or any(not isinstance(task, FrontierTask) for task in bounded_tasks)
+    ):
+        _fail("task_manifest_size_invalid")
+    return build_public_task_manifest(task.public for task in bounded_tasks)
 
 
 def build_task_commitment(manifest: TaskManifest) -> TaskCommitment:
@@ -1425,6 +1501,7 @@ __all__ = [
     "TaskCommitment",
     "TaskManifest",
     "build_task_commitment",
+    "build_public_task_manifest",
     "build_task_manifest",
     "generate_task",
     "generate_task_battery",

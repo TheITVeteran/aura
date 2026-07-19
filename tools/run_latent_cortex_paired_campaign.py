@@ -45,6 +45,7 @@ from core.brain.llm.latent_cortex.campaign_trust import (  # noqa: E402
     CAMPAIGN_RUNNER,
     TASK_ISSUER,
     externally_custodied_roles,
+    prepare_role_signature_request,
     validate_campaign_trust_policy,
     verify_role_attestation,
 )
@@ -53,6 +54,8 @@ from core.brain.llm.latent_cortex.frontier_tasks import (  # noqa: E402
     FRONTIER_DOMAINS,
     REGISTRY_VERSION,
     FrontierTask,
+    PublicTaskRecord,
+    build_public_task_manifest,
     build_task_manifest,
     generate_task_battery,
     parse_final_answer,
@@ -88,11 +91,16 @@ JOURNAL_FILE = "campaign.jsonl"
 MANIFEST_FILE = "campaign_manifest.json"
 GRADE_FILE = "grade.json"
 LOG_FILE = "runner.log"
+SEALED_OUTPUT_MANIFEST_FILE = "sealed_output_manifest.json"
+ANSWER_REVEAL_REQUEST_FILE = "answer_reveal_request.json"
+ANSWER_REVEAL_FILE = "answer_reveal.json"
 OBJECTIVE_SOURCE = REPO_ROOT / "core/learning/recurrence_native_objective.py"
 V2_MANIFEST_FILE = "recurrence_adapter_manifest.json"
 CONTAMINATION_AUDIT_SCHEMA = "aura.latent_cortex.contamination_audit.v2"
 TASK_ISSUER_PAYLOAD_SCHEMA = "aura.latent_cortex.task_issuer_prelaunch.v1"
 CAMPAIGN_RUNNER_PAYLOAD_SCHEMA = "aura.latent_cortex.runner_prelaunch.v1"
+SEALED_OUTPUT_MANIFEST_SCHEMA = "aura.latent_cortex.sealed_output_manifest.v1"
+ANSWER_REVEAL_PAYLOAD_SCHEMA = "aura.latent_cortex.answer_reveal_payload.v1"
 
 
 class CampaignProducerError(RuntimeError):
@@ -233,27 +241,30 @@ def _atomic_create_or_verify(path: Path, payload: bytes) -> None:
     if path.is_symlink():
         raise CampaignProducerError(f"symlink output rejected: {path}")
     if path.exists():
-        if path.read_bytes() != payload:
+        if _read_stable_bytes(path, max_bytes=max(1, len(payload))) != payload:
             raise CampaignProducerError(f"existing artifact differs: {path}")
         return
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0)
     fd = os.open(temporary, flags, 0o600)
     try:
-        view = memoryview(payload)
-        while view:
-            written = os.write(fd, view)
-            if written <= 0:
-                raise CampaignProducerError(f"short write: {temporary}")
-            view = view[written:]
-        os.fsync(fd)
-    finally:
-        os.close(fd)
-    try:
-        os.link(temporary, path)
-    except FileExistsError as exc:
-        if path.read_bytes() != payload:
-            raise CampaignProducerError(f"concurrent artifact differs: {path}") from exc
+        try:
+            view = memoryview(payload)
+            while view:
+                written = os.write(fd, view)
+                if written <= 0:
+                    raise CampaignProducerError(f"short write: {temporary}")
+                view = view[written:]
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        try:
+            os.link(temporary, path, follow_symlinks=False)
+        except FileExistsError as exc:
+            if _read_stable_bytes(path, max_bytes=max(1, len(payload))) != payload:
+                raise CampaignProducerError(
+                    f"concurrent artifact differs: {path}"
+                ) from exc
     finally:
         temporary.unlink(missing_ok=True)
     directory_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
@@ -679,6 +690,40 @@ def _tasks(args: argparse.Namespace) -> tuple[FrontierTask, ...]:
     )
 
 
+def _public_tasks_from_plan(plan: CampaignPlan) -> tuple[PublicTaskRecord, ...]:
+    """Load only candidate-visible task records from a hash-validated plan."""
+
+    metadata = plan.to_dict().get("metadata")
+    manifest = metadata.get("task_manifest") if isinstance(metadata, dict) else None
+    raw_tasks = manifest.get("tasks") if isinstance(manifest, dict) else None
+    if not isinstance(raw_tasks, list) or not raw_tasks:
+        raise CampaignProducerError("persisted plan has no public task manifest")
+    try:
+        tasks = tuple(PublicTaskRecord.from_dict(raw) for raw in raw_tasks)
+        rebuilt = build_public_task_manifest(tasks).to_dict()
+    except (TypeError, ValueError) as exc:
+        raise CampaignProducerError("persisted public task manifest is invalid") from exc
+    if rebuilt != manifest:
+        raise CampaignProducerError("persisted public task manifest hash mismatch")
+    task_ids = {task.task_id for task in tasks}
+    if any(
+        plan.cell_definition(cell_id).get("task_id") not in task_ids
+        for cell_id in plan.cell_ids
+    ):
+        raise CampaignProducerError("persisted plan cell references an unknown task")
+    return tasks
+
+
+def _manifest_for_tasks(
+    tasks: tuple[FrontierTask, ...] | tuple[PublicTaskRecord, ...],
+):
+    if all(isinstance(task, FrontierTask) for task in tasks):
+        return build_task_manifest(tasks)
+    if all(isinstance(task, PublicTaskRecord) for task in tasks):
+        return build_public_task_manifest(tasks)
+    raise CampaignProducerError("campaign task types are inconsistent")
+
+
 def _load_contamination_trust_root(path_value: str) -> tuple[Any, bytes, str]:
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -721,7 +766,7 @@ def _adapter_dataset_manifest_sha256(
 
 def _contamination_audit(
     args: argparse.Namespace,
-    tasks: tuple[FrontierTask, ...],
+    tasks: tuple[FrontierTask, ...] | tuple[PublicTaskRecord, ...],
     *,
     expected_training_corpus_sha256: str | None = None,
 ) -> dict[str, Any]:
@@ -750,7 +795,7 @@ def _contamination_audit(
     }
     if not isinstance(audit, dict) or set(audit) != required:
         raise CampaignProducerError("contamination audit schema is invalid")
-    manifest = build_task_manifest(tasks)
+    manifest = _manifest_for_tasks(tasks)
     body = dict(audit)
     signature = body.pop("signature")
     methods = audit["methods"]
@@ -911,6 +956,28 @@ def _prelaunch_payloads(
     task_manifest = metadata["task_manifest"]
     task_commitment = metadata["task_commitment"]
     execution_config = metadata["execution_config"]
+    generation_config = {
+        "difficulty": execution_config["difficulty"],
+        "domains": execution_config["domains"],
+        "task_registry_version": execution_config["task_registry_version"],
+    }
+    if "generation_seeds" in execution_config:
+        generation_config["generation_seeds"] = execution_config[
+            "generation_seeds"
+        ]
+    else:
+        generation_config["generation_seed_count"] = execution_config[
+            "generation_seed_count"
+        ]
+        generation_config["generation_seed_min_entropy_bits"] = execution_config[
+            "generation_seed_min_entropy_bits"
+        ]
+        generation_config["generation_seed_policy"] = execution_config[
+            "generation_seed_policy"
+        ]
+        generation_config["generation_seed_disclosure"] = execution_config[
+            "generation_seed_disclosure"
+        ]
     return {
         TASK_ISSUER: {
             "schema": TASK_ISSUER_PAYLOAD_SCHEMA,
@@ -920,16 +987,7 @@ def _prelaunch_payloads(
             "task_manifest_sha256": task_manifest["manifest_sha256"],
             "task_commitment_sha256": task_commitment["commitment_sha256"],
             "generation_config_sha256": _sha256_bytes(
-                canonical_json_bytes(
-                    {
-                        "difficulty": execution_config["difficulty"],
-                        "domains": execution_config["domains"],
-                        "generation_seeds": execution_config["generation_seeds"],
-                        "task_registry_version": execution_config[
-                            "task_registry_version"
-                        ],
-                    }
-                )
+                canonical_json_bytes(generation_config)
             ),
         },
         CAMPAIGN_RUNNER: {
@@ -1161,7 +1219,15 @@ def _execution_config(
             "task_registry_version",
             REGISTRY_VERSION,
         ),
-        "generation_seeds": list(args.seed_values),
+        "generation_seed_count": int(
+            getattr(args, "seed_count", 0) or len(args.seed_values)
+        ),
+        "generation_seed_min_entropy_bits": int(
+            getattr(args, "seed_entropy_bits", 0)
+            or min(value.bit_length() for value in args.seed_values)
+        ),
+        "generation_seed_policy": "external_issuer_uniform_63bit",
+        "generation_seed_disclosure": "post_seal_answer_reveal",
         "domains": list(args.domain_values),
         "n_slots": effective.workspace.n_slots,
         "branches": effective.branches.n_branches,
@@ -1184,6 +1250,8 @@ def _execution_config(
         "campaign_timeout_s": args.campaign_timeout,
         "equal_compute_max_samples": args.equal_compute_max_samples,
         "adapter_process_isolation": True,
+        "worker_task_material": "public_manifest_only",
+        "answer_reveal_protocol": "sealed_outputs_then_issuer_reveal_v1",
         "vanilla_fallback_allowed": False,
         "implementation_sha256": _implementation_sha256(),
     }
@@ -1237,6 +1305,58 @@ def _expected_plan(
     return plan, tasks
 
 
+def _expected_worker_plan(
+    args: argparse.Namespace,
+    persisted: CampaignPlan,
+) -> tuple[CampaignPlan, tuple[PublicTaskRecord, ...]]:
+    """Rebuild the worker contract without invoking answer-bearing generators."""
+
+    tasks = _public_tasks_from_plan(persisted)
+    model_identity, adapter_identity = _identity_material(args)
+    contamination_audit = _contamination_audit(
+        args,
+        tasks,
+        expected_training_corpus_sha256=_adapter_dataset_manifest_sha256(
+            adapter_identity
+        ),
+    )
+    execution_config = _execution_config(args, adapter_identity)
+    unsigned_plan = build_campaign_plan(
+        args.campaign_name,
+        tasks,
+        model_identity=model_identity,
+        adapter_identity=adapter_identity,
+        execution_config=execution_config,
+        contamination_audit=contamination_audit,
+        arms=_arms(args),
+        claim_eligible=False,
+    )
+    campaign_trust = _verified_campaign_trust(
+        args,
+        unsigned_plan=unsigned_plan,
+        contamination_audit=contamination_audit,
+    )
+    claim_eligible = _claim_eligible(
+        args,
+        model_identity,
+        adapter_identity,
+        contamination_audit,
+        campaign_trust,
+    )
+    plan = build_campaign_plan(
+        args.campaign_name,
+        tasks,
+        model_identity=model_identity,
+        adapter_identity=adapter_identity,
+        execution_config=execution_config,
+        contamination_audit=contamination_audit,
+        campaign_trust=campaign_trust,
+        arms=_arms(args),
+        claim_eligible=claim_eligible,
+    )
+    return plan, tasks
+
+
 def _claim_eligible(
     args: argparse.Namespace,
     model_identity: dict[str, Any],
@@ -1244,11 +1364,16 @@ def _claim_eligible(
     contamination_audit: dict[str, Any],
     campaign_trust: Mapping[str, Any] | None,
 ) -> bool:
-    per_domain = len(args.seed_values)
+    per_domain = int(getattr(args, "seed_count", 0) or len(args.seed_values))
+    seed_entropy_bits = int(
+        getattr(args, "seed_entropy_bits", 0)
+        or min(value.bit_length() for value in args.seed_values)
+    )
     runtime_bundle = model_identity.get("runtime_bundle")
     return bool(
         args.confirmatory
         and per_domain >= 20
+        and seed_entropy_bits >= 60
         and args.profile == "full"
         and set(args.domain_values) == set(FRONTIER_DOMAINS)
         and isinstance(runtime_bundle, dict)
@@ -1404,9 +1529,9 @@ def _load_adapter(model: Any, adapter_dir: Path, manifest: dict[str, Any]) -> in
     return len(originals)
 
 
-def _render_prompt(tokenizer: Any, task: FrontierTask) -> str:
+def _render_prompt(tokenizer: Any, task: PublicTaskRecord) -> str:
     return tokenizer.apply_chat_template(
-        [{"role": "user", "content": task.public.prompt}],
+        [{"role": "user", "content": task.prompt}],
         add_generation_prompt=True,
         tokenize=False,
     )
@@ -1415,7 +1540,7 @@ def _render_prompt(tokenizer: Any, task: FrontierTask) -> str:
 def _vanilla_once(
     model: Any,
     tokenizer: Any,
-    task: FrontierTask,
+    task: PublicTaskRecord,
     *,
     max_tokens: int,
     sample_seed: int | None = None,
@@ -1459,7 +1584,7 @@ def _majority_output(outputs: list[str]) -> str:
 def _equal_compute(
     model: Any,
     tokenizer: Any,
-    task: FrontierTask,
+    task: PublicTaskRecord,
     *,
     target_layer_apps: int,
     max_tokens: int,
@@ -1467,7 +1592,7 @@ def _equal_compute(
 ) -> tuple[str, int, int]:
     outputs: list[str] = []
     spent = 0
-    seed_base = int(task.public.task_payload_sha256[:16], 16)
+    seed_base = int(task.task_payload_sha256[:16], 16)
     for sample_index in range(max_samples):
         text, cost = _vanilla_once(
             model,
@@ -1503,16 +1628,16 @@ def _make_rlc_engine(
 
 def _run_rlc(
     engine: Any,
-    task: FrontierTask,
+    task: PublicTaskRecord,
     args: argparse.Namespace,
 ) -> tuple[str, int, dict[str, Any]]:
     from core.brain.llm.latent_cortex.task_verifiers import EpisodeTaskVerifier
     from core.brain.llm.latent_cortex.types import ComputeBudget
 
-    verifier = EpisodeTaskVerifier(task.public.prompt)
+    verifier = EpisodeTaskVerifier(task.prompt)
     budget = ComputeBudget(wall_clock_s=args.episode_timeout)
     result = engine.reason(
-        messages=[{"role": "user", "content": task.public.prompt}],
+        messages=[{"role": "user", "content": task.prompt}],
         budget=budget,
         verifier=verifier,
         domain=task.domain,
@@ -1527,7 +1652,7 @@ def _run_rlc(
 
 def _prior_rlc_costs(journal: CampaignJournal) -> dict[tuple[str, str], int]:
     costs: dict[tuple[str, str], int] = {}
-    for record in journal.committed_records():
+    for record in journal.result_records():
         definition = record["definition"]
         arm = definition["arm"]
         if arm in {BASE_RLC, ADAPTER_RLC}:
@@ -1536,7 +1661,9 @@ def _prior_rlc_costs(journal: CampaignJournal) -> dict[tuple[str, str], int]:
 
 
 def _execute_worker(
-    args: argparse.Namespace, plan: CampaignPlan, tasks: tuple[FrontierTask, ...]
+    args: argparse.Namespace,
+    plan: CampaignPlan,
+    tasks: tuple[PublicTaskRecord, ...],
 ) -> int:
     arm = args.worker_arm
     if arm not in _arms(args):
@@ -1703,10 +1830,12 @@ def _execute_worker(
         campaign_dir = Path(args.campaign_dir).expanduser().resolve()
         with CampaignJournal(campaign_dir / JOURNAL_FILE, plan) as journal:
             costs = _prior_rlc_costs(journal)
+            sealed = set(journal.resume().sealed_cell_ids)
             pending = [
                 cell_id
                 for cell_id in journal.resume().runnable_cell_ids
                 if plan.cell_definition(cell_id)["arm"] == arm
+                and cell_id not in sealed
             ]
             pending.sort(
                 key=lambda cell_id: int(
@@ -1775,30 +1904,9 @@ def _execute_worker(
                         "runtime_model_identity": worker_identity,
                         "episode_receipt": receipt,
                     }
-                    score = task.score(text).to_dict()
-                    verification = {
-                        "correct": score["correct"],
-                        "score_receipt": score,
-                        "answer_commitment_sha256": (
-                            task.public.answer_commitment_sha256
-                        ),
-                    }
                     journal.record_arm_result(cell_id, attempt_id, result)
-                    journal.record_verified(cell_id, attempt_id, verification)
-                    journal.commit_cell(
-                        cell_id,
-                        attempt_id,
-                        {
-                            "result_sha256": _sha256_bytes(
-                                canonical_json_bytes(result)
-                            ),
-                            "verification_sha256": _sha256_bytes(
-                                canonical_json_bytes(verification)
-                            ),
-                        },
-                    )
                     print(
-                        f"[{arm}] committed {task.task_id} correct={score['correct']} "
+                        f"[{arm}] sealed {task.task_id} "
                         f"latency={elapsed:.2f}s layer_apps={layer_apps}",
                         flush=True,
                     )
@@ -1821,6 +1929,13 @@ def _execute_worker(
 
 
 def _worker_args(args: argparse.Namespace, arm: str) -> list[str]:
+    seed_values = tuple(
+        getattr(
+            args,
+            "seed_values",
+            tuple(int(value) for value in str(args.seeds).split(",") if value),
+        )
+    )
     command = [
         sys.executable,
         str(Path(__file__).resolve()),
@@ -1836,8 +1951,10 @@ def _worker_args(args: argparse.Namespace, arm: str) -> list[str]:
         args.adapter_id,
         "--personality-adapter",
         str(getattr(args, "personality_adapter", "trained")),
-        "--seeds",
-        args.seeds,
+        "--seed-count",
+        str(len(seed_values)),
+        "--seed-entropy-bits",
+        str(min(value.bit_length() for value in seed_values)),
         "--domains",
         args.domains,
         "--difficulty",
@@ -1890,15 +2007,250 @@ def _worker_args(args: argparse.Namespace, arm: str) -> list[str]:
     return command
 
 
-def _arm_complete(campaign_dir: Path, plan: CampaignPlan, arm: str) -> bool:
+def _arm_outputs_sealed(campaign_dir: Path, plan: CampaignPlan, arm: str) -> bool:
     with CampaignJournal(campaign_dir / JOURNAL_FILE, plan) as journal:
-        committed = set(journal.resume().committed_cell_ids)
+        sealed = set(journal.resume().sealed_cell_ids)
     expected = {
         cell_id
         for cell_id in plan.cell_ids
         if plan.cell_definition(cell_id)["arm"] == arm
     }
-    return expected.issubset(committed)
+    return expected.issubset(sealed)
+
+
+def _seal_output_manifest(campaign_dir: Path, plan: CampaignPlan) -> dict[str, Any]:
+    with CampaignJournal(campaign_dir / JOURNAL_FILE, plan) as journal:
+        records = journal.result_records()
+    if len(records) != len(plan.cell_ids):
+        raise CampaignProducerError("cannot seal an incomplete output set")
+    by_cell = {record["cell_id"]: record for record in records}
+    if set(by_cell) != set(plan.cell_ids):
+        raise CampaignProducerError("sealed output set differs from the frozen plan")
+    cells = [
+        {
+            "cell_id": cell_id,
+            "attempt_id": by_cell[cell_id]["attempt_id"],
+            "arm_result_event_sha256": by_cell[cell_id][
+                "arm_result_event_sha256"
+            ],
+            "result_sha256": _sha256_bytes(
+                canonical_json_bytes(by_cell[cell_id]["result"])
+            ),
+        }
+        for cell_id in plan.cell_ids
+    ]
+    material = {
+        "schema": SEALED_OUTPUT_MANIFEST_SCHEMA,
+        "plan_sha256": plan.plan_sha256,
+        "cell_count": len(cells),
+        "cells": cells,
+    }
+    manifest = {
+        **material,
+        "manifest_sha256": _sha256_bytes(canonical_json_bytes(material)),
+    }
+    _atomic_create_or_verify(
+        campaign_dir / SEALED_OUTPUT_MANIFEST_FILE,
+        canonical_json_bytes(manifest) + b"\n",
+    )
+    return manifest
+
+
+def _answer_reveal_payload(
+    plan: CampaignPlan,
+    tasks: tuple[FrontierTask, ...],
+    sealed_outputs: Mapping[str, Any],
+) -> dict[str, Any]:
+    by_id = {task.task_id: task for task in tasks}
+    task_manifest = plan.to_dict()["metadata"]["task_manifest"]
+    answers: list[dict[str, Any]] = []
+    for public in task_manifest["tasks"]:
+        task = by_id.get(public["task_id"])
+        if task is None:
+            raise CampaignProducerError("answer reveal task is absent from issuer set")
+        payload = task.reveal_for_verifier()
+        if _sha256_bytes(canonical_json_bytes(payload)) != public[
+            "answer_commitment_sha256"
+        ]:
+            raise CampaignProducerError("answer reveal differs from prelaunch commitment")
+        answers.append(
+            {
+                "task_id": task.task_id,
+                "answer_commitment_sha256": public[
+                    "answer_commitment_sha256"
+                ],
+                "answer_payload": payload,
+            }
+        )
+    return {
+        "schema": ANSWER_REVEAL_PAYLOAD_SCHEMA,
+        "campaign_name": plan.campaign_name,
+        "plan_sha256": plan.plan_sha256,
+        "sealed_output_manifest_sha256": sealed_outputs["manifest_sha256"],
+        "task_commitment_sha256": plan.to_dict()["metadata"]["task_commitment"][
+            "commitment_sha256"
+        ],
+        "answers": answers,
+    }
+
+
+def _load_or_prepare_reveal_request(
+    campaign_dir: Path,
+    *,
+    policy: Any,
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    path = campaign_dir / ANSWER_REVEAL_REQUEST_FILE
+    if path.exists():
+        request = _read_json_artifact(str(path), role="answer reveal request")
+        signed_payload = request.get("signed_payload")
+        signed_at = (
+            signed_payload.get("signed_at_unix")
+            if isinstance(signed_payload, dict)
+            else None
+        )
+        if type(signed_at) is not int:
+            raise CampaignProducerError("answer reveal request timestamp is invalid")
+        expected = prepare_role_signature_request(
+            policy,
+            role=TASK_ISSUER,
+            payload=payload,
+            signed_at_unix=signed_at,
+        )
+        if request != expected:
+            raise CampaignProducerError("answer reveal request differs from sealed outputs")
+        return request
+    request = prepare_role_signature_request(
+        policy,
+        role=TASK_ISSUER,
+        payload=payload,
+        signed_at_unix=int(time.time()),
+    )
+    _atomic_create_or_verify(path, canonical_json_bytes(request) + b"\n")
+    return request
+
+
+def _admit_answer_reveal(
+    args: argparse.Namespace,
+    plan: CampaignPlan,
+    tasks: tuple[FrontierTask, ...],
+    sealed_outputs: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    campaign_dir = Path(args.campaign_dir).expanduser().resolve()
+    payload = _answer_reveal_payload(plan, tasks, sealed_outputs)
+    metadata = plan.to_dict()["metadata"]
+    attestation: dict[str, Any] | None = None
+    request_sha256: str | None = None
+    if metadata.get("claim_eligible") is True:
+        policy = _load_campaign_trust_policy(args, require_current=True)
+        trust = metadata.get("campaign_trust")
+        if (
+            policy is None
+            or not isinstance(trust, dict)
+            or trust.get("policy_sha256") != policy.policy_sha256
+        ):
+            raise CampaignProducerError("answer reveal has no trusted issuer policy")
+        request = _load_or_prepare_reveal_request(
+            campaign_dir,
+            policy=policy,
+            payload=payload,
+        )
+        request_sha256 = request["request_sha256"]
+        attestation_path = str(
+            getattr(args, "answer_reveal_attestation", "") or ""
+        ).strip()
+        if not attestation_path:
+            print(
+                json.dumps(
+                    {
+                        "state": "answer_reveal_signature_required",
+                        "request_path": str(
+                            campaign_dir / ANSWER_REVEAL_REQUEST_FILE
+                        ),
+                        "request_sha256": request_sha256,
+                    },
+                    indent=2,
+                    sort_keys=True,
+                ),
+                flush=True,
+            )
+            return None
+        attestation = _read_json_artifact(
+            attestation_path, role="answer reveal attestation"
+        )
+        signed = verify_role_attestation(
+            policy,
+            attestation,
+            role=TASK_ISSUER,
+            expected_payload=payload,
+            not_before_unix=request["signed_payload"]["signed_at_unix"],
+        )
+        if signed != request["signed_payload"]:
+            raise CampaignProducerError(
+                "answer reveal attestation does not sign the issued request"
+            )
+    reveal_material = {
+        "payload": payload,
+        "request_sha256": request_sha256,
+        "task_issuer_attestation": attestation,
+    }
+    reveal = {
+        "schema": "aura.latent_cortex.answer_reveal.v1",
+        **reveal_material,
+        "reveal_sha256": _sha256_bytes(canonical_json_bytes(reveal_material)),
+    }
+    _atomic_create_or_verify(
+        campaign_dir / ANSWER_REVEAL_FILE,
+        canonical_json_bytes(reveal) + b"\n",
+    )
+    return reveal
+
+
+def _score_sealed_outputs(
+    campaign_dir: Path,
+    plan: CampaignPlan,
+    tasks: tuple[FrontierTask, ...],
+) -> None:
+    task_by_id = {task.task_id: task for task in tasks}
+    with CampaignJournal(campaign_dir / JOURNAL_FILE, plan) as journal:
+        for record in journal.result_records():
+            state = record["state"]
+            if state == "COMMITTED":
+                continue
+            task = task_by_id.get(record["definition"]["task_id"])
+            text = record["result"].get("text")
+            if task is None or not isinstance(text, str):
+                raise CampaignProducerError("sealed output cannot be scored")
+            score = task.score(text).to_dict()
+            verification = {
+                "correct": score["correct"],
+                "score_receipt": score,
+                "answer_commitment_sha256": (
+                    task.public.answer_commitment_sha256
+                ),
+            }
+            if state == "ARM_RESULT":
+                journal.record_verified(
+                    record["cell_id"], record["attempt_id"], verification
+                )
+            elif state == "VERIFIED" and record["verification"] != verification:
+                raise CampaignProducerError(
+                    "persisted verification differs from post-seal scoring"
+                )
+            elif state != "VERIFIED":
+                raise CampaignProducerError("sealed output state is invalid")
+            journal.commit_cell(
+                record["cell_id"],
+                record["attempt_id"],
+                {
+                    "result_sha256": _sha256_bytes(
+                        canonical_json_bytes(record["result"])
+                    ),
+                    "verification_sha256": _sha256_bytes(
+                        canonical_json_bytes(verification)
+                    ),
+                },
+            )
 
 
 def _run_child(args: argparse.Namespace, arm: str, timeout_s: float) -> int:
@@ -1961,7 +2313,7 @@ def _orchestrate(
         if arm not in _arms(args):
             continue
         attempts = 0
-        while not _arm_complete(campaign_dir, plan, arm):
+        while not _arm_outputs_sealed(campaign_dir, plan, arm):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 print(
@@ -1978,6 +2330,11 @@ def _orchestrate(
             if code != 0 and attempts >= args.max_infra_attempts:
                 return code or 4
 
+    sealed_outputs = _seal_output_manifest(campaign_dir, plan)
+    answer_reveal = _admit_answer_reveal(args, plan, tasks, sealed_outputs)
+    if answer_reveal is None:
+        return 5
+    _score_sealed_outputs(campaign_dir, plan, tasks)
     with CampaignJournal(campaign_dir / JOURNAL_FILE, plan) as journal:
         records = journal.committed_records()
         manifest = journal.finalize(campaign_dir / MANIFEST_FILE)
@@ -1999,6 +2356,10 @@ def _orchestrate(
     final_material = dict(grade)
     final_material.pop("grade_sha256", None)
     final_material["campaign_manifest_sha256"] = manifest["manifest_sha256"]
+    final_material["sealed_output_manifest_sha256"] = sealed_outputs[
+        "manifest_sha256"
+    ]
+    final_material["answer_reveal_sha256"] = answer_reveal["reveal_sha256"]
     final = {
         **final_material,
         "grade_sha256": _sha256_bytes(canonical_json_bytes(final_material)),
@@ -2083,7 +2444,15 @@ def _parser() -> argparse.ArgumentParser:
         default="trained",
         help="trained, none, auto, or an explicit MLX personality-adapter directory",
     )
-    parser.add_argument("--seeds", default="7001,7002,7003,7004")
+    parser.add_argument(
+        "--seeds",
+        default="",
+        help="issuer-only generation seeds; required outside isolated worker mode",
+    )
+    parser.add_argument("--seed-count", type=int, default=0, help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--seed-entropy-bits", type=int, default=0, help=argparse.SUPPRESS
+    )
     parser.add_argument("--domains", default=",".join(FRONTIER_DOMAINS))
     parser.add_argument("--difficulty", type=int, choices=(1, 2, 3), default=2)
     parser.add_argument(
@@ -2100,6 +2469,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--campaign-trust-root", default="")
     parser.add_argument("--task-issuer-attestation", default="")
     parser.add_argument("--runner-attestation", default="")
+    parser.add_argument("--answer-reveal-attestation", default="")
     parser.add_argument(
         "--prepare-trust",
         action="store_true",
@@ -2131,8 +2501,21 @@ def _parser() -> argparse.ArgumentParser:
 def main() -> int:
     parser = _parser()
     args = parser.parse_args()
-    args.seed_values = _csv_ints(parser, args.seeds, "--seeds")
+    if args.worker_arm:
+        args.seeds = ""
+        args.seed_values = ()
+    else:
+        args.seed_values = _csv_ints(parser, args.seeds, "--seeds")
     args.domain_values = _csv_domains(parser, args.domains)
+    if args.worker_arm:
+        if args.seed_count <= 0 or not 1 <= args.seed_entropy_bits <= 63:
+            parser.error(
+                "worker process requires public seed count and entropy bounds"
+            )
+    elif args.seed_count != 0 or args.seed_entropy_bits != 0:
+        parser.error(
+            "--seed-count/--seed-entropy-bits are reserved for isolated workers"
+        )
     campaign_dir = Path(args.campaign_dir).expanduser().resolve()
     args.campaign_dir = str(campaign_dir)
     if args.contamination_audit:
@@ -2173,6 +2556,7 @@ def main() -> int:
         "campaign_trust_root",
         "task_issuer_attestation",
         "runner_attestation",
+        "answer_reveal_attestation",
     ):
         value = str(getattr(args, attribute, "") or "").strip()
         if value:
@@ -2189,6 +2573,14 @@ def main() -> int:
         print(json.dumps(_prepare_trust_requests(args), indent=2, sort_keys=True))
         return 0
     campaign_dir.mkdir(parents=True, exist_ok=True)
+    if args.worker_arm:
+        persisted = _load_persisted_plan(campaign_dir)
+        expected, public_tasks = _expected_worker_plan(args, persisted)
+        if persisted.to_dict() != expected.to_dict():
+            raise CampaignProducerError(
+                "persisted plan does not match requested worker campaign"
+            )
+        return _execute_worker(args, persisted, public_tasks)
     expected, tasks = _expected_plan(args)
     _persist_plan(campaign_dir, expected)
     persisted = _load_persisted_plan(campaign_dir)
@@ -2213,8 +2605,6 @@ def main() -> int:
             )
         )
         return 0
-    if args.worker_arm:
-        return _execute_worker(args, persisted, tasks)
     return _orchestrate(args, persisted, tasks)
 
 

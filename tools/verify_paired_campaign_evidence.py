@@ -47,6 +47,7 @@ from core.brain.llm.latent_cortex.campaign_trust import (  # noqa: E402
     CAMPAIGN_RUNNER,
     EVIDENCE_VERIFIER,
     TASK_ISSUER,
+    prepare_role_signature_request,
     validate_campaign_trust_policy,
     verify_role_attestation,
 )
@@ -66,10 +67,15 @@ PLAN_FILE = "plan.json"
 JOURNAL_FILE = "campaign.jsonl"
 MANIFEST_FILE = "campaign_manifest.json"
 GRADE_FILE = "grade.json"
+SEALED_OUTPUT_MANIFEST_FILE = "sealed_output_manifest.json"
+ANSWER_REVEAL_REQUEST_FILE = "answer_reveal_request.json"
+ANSWER_REVEAL_FILE = "answer_reveal.json"
 VERDICT_SCHEMA = "aura.latent_cortex.independent_evidence_verdict.v1"
 TASK_ISSUER_PAYLOAD_SCHEMA = "aura.latent_cortex.task_issuer_prelaunch.v1"
 CAMPAIGN_RUNNER_PAYLOAD_SCHEMA = "aura.latent_cortex.runner_prelaunch.v1"
 FINAL_VERIFIER_PAYLOAD_SCHEMA = "aura.latent_cortex.final_verifier_payload.v1"
+SEALED_OUTPUT_MANIFEST_SCHEMA = "aura.latent_cortex.sealed_output_manifest.v1"
+ANSWER_REVEAL_PAYLOAD_SCHEMA = "aura.latent_cortex.answer_reveal_payload.v1"
 
 
 def _sha256_bytes(payload: bytes) -> str:
@@ -95,12 +101,71 @@ def _open_journal_readonly(path: Path, plan: CampaignPlan):
                 lock_path.unlink()
 
 
-def _regenerate_tasks(plan: CampaignPlan):
+def _regenerate_tasks(plan: CampaignPlan, campaign_dir: Path):
     metadata = plan.to_dict()["metadata"]
     execution_config = metadata.get("execution_config")
     if not isinstance(execution_config, dict):
         raise SystemExit("plan has no execution_config")
-    seeds = tuple(int(v) for v in execution_config["generation_seeds"])
+    if "generation_seeds" in execution_config:
+        if metadata.get("claim_eligible") is True:
+            raise ValueError("claim-eligible plan disclosed generation seeds prelaunch")
+        seeds = tuple(int(v) for v in execution_config["generation_seeds"])
+        seed_source = "legacy_prelaunch_plan"
+    else:
+        reveal = _canonical_artifact(
+            campaign_dir / ANSWER_REVEAL_FILE,
+            role="answer reveal",
+        )
+        payload = reveal.get("payload")
+        answers = payload.get("answers") if isinstance(payload, dict) else None
+        public_tasks = metadata.get("task_manifest", {}).get("tasks")
+        if not isinstance(answers, list) or not isinstance(public_tasks, list):
+            raise ValueError("answer reveal cannot supply regeneration seeds")
+        commitments = {
+            record.get("task_id"): record.get("answer_commitment_sha256")
+            for record in public_tasks
+            if isinstance(record, dict)
+        }
+        revealed_seeds: set[int] = set()
+        seen_tasks: set[str] = set()
+        for answer in answers:
+            if not isinstance(answer, dict) or set(answer) != {
+                "task_id",
+                "answer_commitment_sha256",
+                "answer_payload",
+            }:
+                raise ValueError("answer reveal entry is invalid")
+            task_id = answer["task_id"]
+            answer_payload = answer["answer_payload"]
+            commitment = commitments.get(task_id)
+            if (
+                not isinstance(task_id, str)
+                or task_id in seen_tasks
+                or not isinstance(answer_payload, dict)
+                or answer.get("answer_commitment_sha256") != commitment
+                or _sha256_bytes(canonical_json_bytes(answer_payload)) != commitment
+                or type(answer_payload.get("generation_seed")) is not int
+            ):
+                raise ValueError("answer reveal commitment is invalid")
+            seen_tasks.add(task_id)
+            revealed_seeds.add(answer_payload["generation_seed"])
+        if seen_tasks != set(commitments) or len(revealed_seeds) != execution_config.get(
+            "generation_seed_count"
+        ):
+            raise ValueError("answer reveal seed set is incomplete")
+        seeds = tuple(sorted(revealed_seeds))
+        if (
+            execution_config.get("generation_seed_policy")
+            != "external_issuer_uniform_63bit"
+            or min(seed.bit_length() for seed in seeds)
+            != execution_config.get("generation_seed_min_entropy_bits")
+            or (
+                metadata.get("claim_eligible") is True
+                and min(seed.bit_length() for seed in seeds) < 60
+            )
+        ):
+            raise ValueError("answer reveal seed entropy contract is invalid")
+        seed_source = "post_seal_answer_reveal"
     domains = tuple(str(v) for v in execution_config["domains"])
     difficulty = int(execution_config["difficulty"])
     registry_version = str(execution_config["task_registry_version"])
@@ -115,6 +180,7 @@ def _regenerate_tasks(plan: CampaignPlan):
         "domains": list(domains),
         "difficulty": difficulty,
         "registry_version": registry_version,
+        "seed_source": seed_source,
     }
 
 
@@ -248,6 +314,28 @@ def _verify_prelaunch_trust(
     task_manifest = unsigned_metadata["task_manifest"]
     task_commitment = unsigned_metadata["task_commitment"]
     execution_config = unsigned_metadata["execution_config"]
+    generation_config = {
+        "difficulty": execution_config["difficulty"],
+        "domains": execution_config["domains"],
+        "task_registry_version": execution_config["task_registry_version"],
+    }
+    if "generation_seeds" in execution_config:
+        generation_config["generation_seeds"] = execution_config[
+            "generation_seeds"
+        ]
+    else:
+        generation_config["generation_seed_count"] = execution_config[
+            "generation_seed_count"
+        ]
+        generation_config["generation_seed_min_entropy_bits"] = execution_config[
+            "generation_seed_min_entropy_bits"
+        ]
+        generation_config["generation_seed_policy"] = execution_config[
+            "generation_seed_policy"
+        ]
+        generation_config["generation_seed_disclosure"] = execution_config[
+            "generation_seed_disclosure"
+        ]
     issuer_payload = {
         "schema": TASK_ISSUER_PAYLOAD_SCHEMA,
         "campaign_name": plan.campaign_name,
@@ -256,16 +344,7 @@ def _verify_prelaunch_trust(
         "task_manifest_sha256": task_manifest["manifest_sha256"],
         "task_commitment_sha256": task_commitment["commitment_sha256"],
         "generation_config_sha256": _sha256_bytes(
-            canonical_json_bytes(
-                {
-                    "difficulty": execution_config["difficulty"],
-                    "domains": execution_config["domains"],
-                    "generation_seeds": execution_config["generation_seeds"],
-                    "task_registry_version": execution_config[
-                        "task_registry_version"
-                    ],
-                }
-            )
+            canonical_json_bytes(generation_config)
         ),
     }
     runner_payload = {
@@ -319,6 +398,180 @@ def _verify_prelaunch_trust(
     }
 
 
+def _canonical_artifact(path: Path, *, role: str) -> dict[str, Any]:
+    raw = read_stable_bytes(path, max_bytes=64 * 1024 * 1024)
+    try:
+        document = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"{role} is not valid JSON") from exc
+    if not isinstance(document, dict) or raw != canonical_json_bytes(document) + b"\n":
+        raise ValueError(f"{role} is not canonical JSON")
+    return document
+
+
+def _verify_sealed_output_reveal(
+    campaign_dir: Path,
+    *,
+    plan: CampaignPlan,
+    tasks: tuple[Any, ...],
+    result_records: tuple[dict[str, Any], ...],
+    trusted_policy: Any | None,
+) -> tuple[list[str], dict[str, Any]]:
+    execution = plan.to_dict()["metadata"].get("execution_config")
+    if not isinstance(execution, dict) or execution.get(
+        "answer_reveal_protocol"
+    ) != "sealed_outputs_then_issuer_reveal_v1":
+        return [], {"required": False, "verified": False}
+    failures: list[str] = []
+    sealed = _canonical_artifact(
+        campaign_dir / SEALED_OUTPUT_MANIFEST_FILE,
+        role="sealed output manifest",
+    )
+    sealed_material = dict(sealed)
+    sealed_sha = sealed_material.pop("manifest_sha256", None)
+    if (
+        sealed.get("schema") != SEALED_OUTPUT_MANIFEST_SCHEMA
+        or sealed.get("plan_sha256") != plan.plan_sha256
+        or sealed_sha != _sha256_bytes(canonical_json_bytes(sealed_material))
+        or sealed.get("cell_count") != len(plan.cell_ids)
+        or not isinstance(sealed.get("cells"), list)
+    ):
+        failures.append("sealed output manifest is invalid")
+    result_by_cell = {record["cell_id"]: record for record in result_records}
+    sealed_cells = sealed.get("cells") if isinstance(sealed.get("cells"), list) else []
+    if len(sealed_cells) != len(plan.cell_ids):
+        failures.append("sealed output manifest cell set is incomplete")
+    else:
+        for ordinal, cell_id in enumerate(plan.cell_ids):
+            cell = sealed_cells[ordinal]
+            record = result_by_cell.get(cell_id)
+            if (
+                not isinstance(cell, dict)
+                or set(cell)
+                != {
+                    "cell_id",
+                    "attempt_id",
+                    "arm_result_event_sha256",
+                    "result_sha256",
+                }
+                or record is None
+                or cell.get("cell_id") != cell_id
+                or cell.get("attempt_id") != record.get("attempt_id")
+                or cell.get("arm_result_event_sha256")
+                != record.get("arm_result_event_sha256")
+                or cell.get("result_sha256")
+                != _sha256_bytes(canonical_json_bytes(record.get("result")))
+            ):
+                failures.append(f"sealed output binding differs for {cell_id}")
+
+    reveal = _canonical_artifact(campaign_dir / ANSWER_REVEAL_FILE, role="answer reveal")
+    if set(reveal) != {
+        "schema",
+        "payload",
+        "request_sha256",
+        "task_issuer_attestation",
+        "reveal_sha256",
+    } or reveal.get("schema") != "aura.latent_cortex.answer_reveal.v1":
+        failures.append("answer reveal envelope is invalid")
+        return failures, {
+            "required": True,
+            "verified": False,
+            "sealed_output_manifest_sha256": sealed_sha,
+        }
+    reveal_material = {
+        key: reveal[key]
+        for key in ("payload", "request_sha256", "task_issuer_attestation")
+    }
+    if reveal.get("reveal_sha256") != _sha256_bytes(
+        canonical_json_bytes(reveal_material)
+    ):
+        failures.append("answer reveal digest is invalid")
+    payload = reveal.get("payload")
+    task_commitment = plan.to_dict()["metadata"]["task_commitment"]
+    if (
+        not isinstance(payload, dict)
+        or set(payload)
+        != {
+            "schema",
+            "campaign_name",
+            "plan_sha256",
+            "sealed_output_manifest_sha256",
+            "task_commitment_sha256",
+            "answers",
+        }
+        or payload.get("schema") != ANSWER_REVEAL_PAYLOAD_SCHEMA
+        or payload.get("campaign_name") != plan.campaign_name
+        or payload.get("plan_sha256") != plan.plan_sha256
+        or payload.get("sealed_output_manifest_sha256") != sealed_sha
+        or payload.get("task_commitment_sha256")
+        != task_commitment["commitment_sha256"]
+        or not isinstance(payload.get("answers"), list)
+    ):
+        failures.append("answer reveal payload is invalid")
+    else:
+        expected_answers = [
+            {
+                "task_id": task.task_id,
+                "answer_commitment_sha256": task.public.answer_commitment_sha256,
+                "answer_payload": task.reveal_for_verifier(),
+            }
+            for task in sorted(tasks, key=lambda item: item.task_id)
+        ]
+        if payload["answers"] != expected_answers:
+            failures.append("answer reveal differs from independent task regeneration")
+
+    claim_eligible = plan.to_dict()["metadata"].get("claim_eligible") is True
+    if claim_eligible:
+        if trusted_policy is None:
+            failures.append("answer reveal has no independently trusted issuer")
+        else:
+            request = _canonical_artifact(
+                campaign_dir / ANSWER_REVEAL_REQUEST_FILE,
+                role="answer reveal request",
+            )
+            signed_payload = request.get("signed_payload")
+            signed_at = (
+                signed_payload.get("signed_at_unix")
+                if isinstance(signed_payload, dict)
+                else None
+            )
+            if type(signed_at) is not int:
+                failures.append("answer reveal request timestamp is invalid")
+            else:
+                expected_request = prepare_role_signature_request(
+                    trusted_policy,
+                    role=TASK_ISSUER,
+                    payload=payload,
+                    signed_at_unix=signed_at,
+                )
+                if request != expected_request:
+                    failures.append("answer reveal request is not canonical")
+                if reveal.get("request_sha256") != request.get("request_sha256"):
+                    failures.append("answer reveal request digest is not bound")
+                attestation = reveal.get("task_issuer_attestation")
+                verified = verify_role_attestation(
+                    trusted_policy,
+                    attestation,
+                    role=TASK_ISSUER,
+                    expected_payload=payload,
+                    not_before_unix=signed_at,
+                )
+                if verified != request.get("signed_payload"):
+                    failures.append("answer reveal attestation differs from request")
+    elif (
+        reveal.get("request_sha256") is not None
+        or reveal.get("task_issuer_attestation") is not None
+    ):
+        failures.append("preflight answer reveal contains untrusted claim material")
+    return failures, {
+        "required": True,
+        "verified": not failures,
+        "sealed_output_manifest_sha256": sealed_sha,
+        "answer_reveal_sha256": reveal.get("reveal_sha256"),
+        "issuer_attested": reveal.get("task_issuer_attestation") is not None,
+    }
+
+
 def verify_campaign_evidence(
     campaign_dir: Path,
     *,
@@ -350,7 +603,17 @@ def verify_campaign_evidence(
         }
 
     # 1. Independent task regeneration binds the plan to real tasks.
-    tasks, generation = _regenerate_tasks(plan)
+    try:
+        tasks, generation = _regenerate_tasks(plan, campaign_dir)
+    except (OSError, TypeError, ValueError, KeyError) as exc:
+        failures.append(f"answer reveal task regeneration failed: {exc}")
+        return {
+            "schema": VERDICT_SCHEMA,
+            "campaign_dir": str(campaign_dir),
+            "passed": False,
+            "failures": failures,
+            **detail,
+        }
     detail["generation"] = generation
     regenerated_manifest = build_task_manifest(tasks)
     plan_manifest = plan.to_dict()["metadata"].get("task_manifest") or {}
@@ -377,7 +640,21 @@ def verify_campaign_evidence(
     # 2. Chain-verified replay of every committed outcome.
     with _open_journal_readonly(campaign_dir / JOURNAL_FILE, plan) as journal:
         records = journal.committed_records()
+        result_records = journal.result_records()
     detail["committed_records"] = len(records)
+    try:
+        reveal_failures, reveal_detail = _verify_sealed_output_reveal(
+            campaign_dir,
+            plan=plan,
+            tasks=tasks,
+            result_records=result_records,
+            trusted_policy=trusted_policy,
+        )
+    except (OSError, TypeError, ValueError, KeyError) as exc:
+        reveal_failures = [f"sealed output or answer reveal validation failed: {exc}"]
+        reveal_detail = {"required": True, "verified": False}
+    failures.extend(reveal_failures)
+    detail["answer_reveal"] = reveal_detail
 
     # 3. Regrade through both the production implementation and a separately
     # implemented parser/scorer/statistics kernel.  Neither result can certify
@@ -470,6 +747,13 @@ def verify_campaign_evidence(
             expected_material["campaign_manifest_sha256"] = manifest.get(
                 "manifest_sha256"
             )
+            if reveal_detail.get("required") is True:
+                expected_material["sealed_output_manifest_sha256"] = (
+                    reveal_detail.get("sealed_output_manifest_sha256")
+                )
+                expected_material["answer_reveal_sha256"] = reveal_detail.get(
+                    "answer_reveal_sha256"
+                )
             expected_grade = {
                 **expected_material,
                 "grade_sha256": _sha256_bytes(

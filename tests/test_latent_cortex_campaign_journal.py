@@ -140,6 +140,30 @@ def test_journal_replay_returns_only_committed_cells(tmp_path: Path) -> None:
     ]
 
 
+def test_fsync_sealed_result_can_be_verified_after_worker_exit(tmp_path: Path) -> None:
+    plan = _plan(1)
+    path = tmp_path / "campaign.jsonl"
+    with CampaignJournal(path, plan) as worker:
+        attempt_id = worker.start_cell(plan.cell_ids[0])
+        event_sha256 = worker.record_arm_result(
+            plan.cell_ids[0], attempt_id, {"text": "candidate output"}
+        )
+        assert worker.resume().sealed_cell_ids == plan.cell_ids
+        assert worker.resume().committed_cell_ids == ()
+
+    with CampaignJournal(path, plan) as verifier:
+        records = verifier.result_records()
+        assert len(records) == 1
+        assert records[0]["state"] == ARM_RESULT
+        assert records[0]["arm_result_event_sha256"] == event_sha256
+        assert records[0]["result"] == {"text": "candidate output"}
+        verifier.record_verified(
+            plan.cell_ids[0], attempt_id, {"accepted": True}
+        )
+        verifier.commit_cell(plan.cell_ids[0], attempt_id)
+        assert verifier.resume().committed_cell_ids == plan.cell_ids
+
+
 @pytest.mark.parametrize(
     "boundary",
     [None, STARTED, ARM_RESULT, VERIFIED, FAILED, COMMITTED],

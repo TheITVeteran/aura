@@ -476,6 +476,50 @@ def test_claim_eligible_plan_requires_prelaunch_role_trust():
         )
 
 
+def test_claim_eligible_plan_rejects_worker_visible_generation_seeds():
+    tasks = generate_task_battery([7], domains=("mathematics",), difficulty=1)
+    manifest = build_task_manifest(tasks)
+    audit = _signed_contamination_audit(manifest.manifest_sha256)
+    execution_config = {
+        "worker_task_material": "public_manifest_only",
+        "answer_reveal_protocol": "sealed_outputs_then_issuer_reveal_v1",
+        "generation_seeds": [7],
+        "generation_seed_count": 1,
+        "generation_seed_min_entropy_bits": 60,
+        "generation_seed_policy": "external_issuer_uniform_63bit",
+        "generation_seed_disclosure": "post_seal_answer_reveal",
+    }
+    unsigned = build_campaign_plan(
+        "seed-leak",
+        tasks,
+        model_identity={"checkpoint_fingerprint": "a" * 64},
+        adapter_identity={"composite_identity_sha256": "b" * 64},
+        execution_config=execution_config,
+        contamination_audit=audit,
+        claim_eligible=False,
+    )
+    trust = {
+        "prelaunch_verified": True,
+        "externally_custodied": True,
+        "policy_sha256": "c" * 64,
+        "unsigned_plan_sha256": unsigned.plan_sha256,
+    }
+
+    with pytest.raises(
+        PairedCampaignError, match="campaign_answer_blinding_required"
+    ):
+        build_campaign_plan(
+            "seed-leak",
+            tasks,
+            model_identity={"checkpoint_fingerprint": "a" * 64},
+            adapter_identity={"composite_identity_sha256": "b" * 64},
+            execution_config=execution_config,
+            contamination_audit=audit,
+            campaign_trust=trust,
+            claim_eligible=True,
+        )
+
+
 def test_claim_grade_requires_out_of_band_campaign_policy_pin():
     plan, tasks = _grade_plan()
 

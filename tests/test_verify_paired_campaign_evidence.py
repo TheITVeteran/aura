@@ -64,7 +64,7 @@ def _tasks():
     )
 
 
-def _plan(tasks):
+def _plan(tasks, *, answer_reveal: bool = False):
     return build_campaign_plan(
         "independent-verify-test",
         tasks,
@@ -90,11 +90,24 @@ def _plan(tasks):
             "decode_max_tokens": 256,
             "difficulty": DIFFICULTY,
             "task_registry_version": CURRENT_REGISTRY_VERSION,
-            "generation_seeds": list(SEEDS),
             "domains": list(DOMAINS),
             "implementation_sha256": {
                 "tools/run_latent_cortex_paired_campaign.py": RUNNER_SHA256,
             },
+            **(
+                {
+                    "worker_task_material": "public_manifest_only",
+                    "answer_reveal_protocol": "sealed_outputs_then_issuer_reveal_v1",
+                    "generation_seed_count": len(SEEDS),
+                    "generation_seed_min_entropy_bits": min(
+                        seed.bit_length() for seed in SEEDS
+                    ),
+                    "generation_seed_policy": "external_issuer_uniform_63bit",
+                    "generation_seed_disclosure": "post_seal_answer_reveal",
+                }
+                if answer_reveal
+                else {"generation_seeds": list(SEEDS)}
+            ),
         },
     )
 
@@ -168,9 +181,11 @@ def _record_material(plan, tasks, cell_id, *, gain: bool = True):
     return result, verification, commit
 
 
-def _build_campaign_dir(tmp_path: Path, *, gain: bool = True):
+def _build_campaign_dir(
+    tmp_path: Path, *, gain: bool = True, answer_reveal: bool = False
+):
     tasks = _tasks()
-    plan = _plan(tasks)
+    plan = _plan(tasks, answer_reveal=answer_reveal)
     campaign_dir = tmp_path / "campaign"
     campaign_dir.mkdir()
     (campaign_dir / PLAN_FILE).write_bytes(
@@ -187,6 +202,22 @@ def _build_campaign_dir(tmp_path: Path, *, gain: bool = True):
             journal.commit_cell(cell_id, attempt_id, commit)
         records = journal.committed_records()
         manifest = journal.finalize(campaign_dir / MANIFEST_FILE)
+    if answer_reveal:
+        sealed = campaign_runner_module._seal_output_manifest(campaign_dir, plan)
+        reveal = campaign_runner_module._admit_answer_reveal(
+            type(
+                "Args",
+                (),
+                {
+                    "campaign_dir": str(campaign_dir),
+                    "answer_reveal_attestation": "",
+                },
+            )(),
+            plan,
+            tasks,
+            sealed,
+        )
+        assert reveal is not None
     return campaign_dir, plan, tasks, records, manifest
 
 
@@ -195,6 +226,15 @@ def _publish_grade(campaign_dir, plan, tasks, records, manifest) -> dict:
     material = dict(grade)
     material.pop("grade_sha256", None)
     material["campaign_manifest_sha256"] = manifest["manifest_sha256"]
+    sealed_path = campaign_dir / campaign_runner_module.SEALED_OUTPUT_MANIFEST_FILE
+    reveal_path = campaign_dir / campaign_runner_module.ANSWER_REVEAL_FILE
+    if sealed_path.exists() and reveal_path.exists():
+        material["sealed_output_manifest_sha256"] = json.loads(
+            sealed_path.read_bytes()
+        )["manifest_sha256"]
+        material["answer_reveal_sha256"] = json.loads(reveal_path.read_bytes())[
+            "reveal_sha256"
+        ]
     final = {
         **material,
         "grade_sha256": hashlib.sha256(
@@ -215,6 +255,39 @@ def test_honest_campaign_passes_independent_verification(tmp_path: Path):
     assert verdict["recomputed_verdict"] == published["verdict"]
     assert verdict["committed_records"] == len(plan.cell_ids)
     assert verdict["task_count"] == len(tasks)
+
+
+def test_two_phase_output_and_answer_reveal_pass_independent_verification(
+    tmp_path: Path,
+):
+    campaign_dir, plan, tasks, records, manifest = _build_campaign_dir(
+        tmp_path, answer_reveal=True
+    )
+    _publish_grade(campaign_dir, plan, tasks, records, manifest)
+
+    verdict = verify_campaign_evidence(campaign_dir)
+
+    assert verdict["passed"], verdict["failures"]
+    assert "generation_seeds" not in plan.to_dict()["metadata"]["execution_config"]
+    assert verdict["generation"]["seed_source"] == "post_seal_answer_reveal"
+    assert verdict["answer_reveal"]["verified"] is True
+    assert verdict["answer_reveal"]["issuer_attested"] is False
+
+
+def test_two_phase_verifier_rejects_changed_post_seal_answer(tmp_path: Path):
+    campaign_dir, plan, tasks, records, manifest = _build_campaign_dir(
+        tmp_path, answer_reveal=True
+    )
+    _publish_grade(campaign_dir, plan, tasks, records, manifest)
+    reveal_path = campaign_dir / campaign_runner_module.ANSWER_REVEAL_FILE
+    reveal = json.loads(reveal_path.read_bytes())
+    reveal["payload"]["answers"][0]["answer_payload"]["expected"] = {}
+    reveal_path.write_bytes(canonical_json_bytes(reveal) + b"\n")
+
+    verdict = verify_campaign_evidence(campaign_dir)
+
+    assert verdict["passed"] is False
+    assert any("answer reveal" in reason for reason in verdict["failures"])
 
 
 def test_independent_verifier_reconstructs_runner_protocol_identity():

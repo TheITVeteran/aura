@@ -284,6 +284,7 @@ class ResumeSnapshot:
     committed_cell_ids: tuple[str, ...]
     runnable_cell_ids: tuple[str, ...]
     incomplete_cell_ids: tuple[str, ...]
+    sealed_cell_ids: tuple[str, ...]
     journal_head_sha256: str
 
 
@@ -638,8 +639,28 @@ class CampaignJournal:
         incomplete = tuple(
             cell_id for cell_id in self.plan.cell_ids if cell_id in self._state.active_by_cell
         )
+        sealed = tuple(
+            cell_id
+            for cell_id in self.plan.cell_ids
+            if (
+                cell_id in self._state.committed_by_cell
+                or (
+                    cell_id in self._state.active_by_cell
+                    and self._state.attempts[
+                        self._state.active_by_cell[cell_id]
+                    ].state
+                    in {ARM_RESULT, VERIFIED}
+                )
+            )
+        )
         runnable = tuple(cell_id for cell_id in self.plan.cell_ids if cell_id not in committed)
-        return ResumeSnapshot(committed, runnable, incomplete, self._state.head_sha256)
+        return ResumeSnapshot(
+            committed,
+            runnable,
+            incomplete,
+            sealed,
+            self._state.head_sha256,
+        )
 
     def start_cell(self, cell_id: str) -> str:
         """Start a cell, explicitly failing a crash-recovered partial attempt first."""
@@ -774,6 +795,38 @@ class CampaignJournal:
                         "result": attempt.arm_result,
                         "verification": attempt.verification,
                         "commit": attempt.commit,
+                    }
+                )
+            )
+        return tuple(records)
+
+    def result_records(self) -> tuple[dict[str, Any], ...]:
+        """Return current fsync-sealed results, including pre-verification cells."""
+
+        self._assert_open()
+        replayed = self._replay()
+        records: list[dict[str, Any]] = []
+        for cell_id in self.plan.cell_ids:
+            attempt_id = replayed.committed_by_cell.get(cell_id)
+            if attempt_id is None:
+                attempt_id = replayed.active_by_cell.get(cell_id)
+            if attempt_id is None:
+                continue
+            attempt = replayed.attempts[attempt_id]
+            if attempt.state not in {ARM_RESULT, VERIFIED, COMMITTED}:
+                continue
+            if attempt.arm_result is None or attempt.arm_result_event_sha256 is None:
+                _fail("campaign_result_evidence_incomplete")
+            records.append(
+                _normalize_json(
+                    {
+                        "arm_result_event_sha256": attempt.arm_result_event_sha256,
+                        "attempt_id": attempt_id,
+                        "cell_id": cell_id,
+                        "definition": self.plan.cell_definition(cell_id),
+                        "result": attempt.arm_result,
+                        "state": attempt.state,
+                        "verification": attempt.verification,
                     }
                 )
             )

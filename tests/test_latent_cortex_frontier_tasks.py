@@ -24,6 +24,8 @@ from core.brain.llm.latent_cortex.frontier_tasks import (
     REGISTRY_VERSION,
     BlindedAnswerPayload,
     FrontierTaskError,
+    PublicTaskRecord,
+    build_public_task_manifest,
     build_task_commitment,
     build_task_manifest,
     generate_task,
@@ -281,6 +283,30 @@ def test_manifest_and_commitment_are_canonical_reproducible_and_complete():
         FrontierTaskError, match="task_commitment_domain_counts_invalid"
     ):
         replace(commitment, domain_counts=tuple(reversed(commitment.domain_counts)))
+
+
+def test_public_task_round_trip_rebuilds_manifest_without_answer_material():
+    tasks = generate_task_battery(
+        [11, 12], domains=("mathematics", "coding"), difficulty=2
+    )
+    full_manifest = build_task_manifest(tasks)
+    public_tasks = tuple(
+        PublicTaskRecord.from_dict(record.to_dict())
+        for record in full_manifest.tasks
+    )
+
+    assert build_public_task_manifest(public_tasks).to_dict() == full_manifest.to_dict()
+    assert all(not hasattr(task, "blinded_answer") for task in public_tasks)
+    assert all("expected" not in repr(task) for task in public_tasks)
+
+
+def test_public_task_reconstruction_rejects_changed_commitment():
+    task = generate_task("mathematics", seed=17, difficulty=1)
+    attacked = task.public.to_dict()
+    attacked["answer_commitment_sha256"] = "0" * 64
+
+    with pytest.raises(FrontierTaskError, match="task_payload_hash_mismatch"):
+        PublicTaskRecord.from_dict(attacked)
 
 
 def test_verifier_answer_payload_rejects_noncanonical_equivalent_json():
