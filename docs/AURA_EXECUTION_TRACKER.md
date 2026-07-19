@@ -16,12 +16,12 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **Checkpoint 170 is the current
-  reviewed source candidate in the `main` worktree; checkpoints through CP169
+- Current bounded implementation milestone: **Checkpoint 171 is the current
+  reviewed source candidate in the `main` worktree; checkpoints through CP170
   are pushed. The corrected resident-32B path completed clean one-, two-, and
   five-step calibrations with finite durable checkpoints, exact source identity,
   no memory ratchet, and a 48-GiB MLX wired-residency limit. The full detached
-  576-step run is active from exact pushed CP147 source at step 520/576 with
+  576-step run is active from exact pushed CP147 source at step 525/576 with
   finite losses and durable five-step checkpoints; it remains governed by the
   24-hour training deadline and 26-hour containment timeout. No
   reasoning-gain or frontier claim exists yet. Completed training,
@@ -20800,5 +20800,60 @@ verification, then run the powered and external-frontier campaigns.
 
 Evidence-weighted completion remains 27%; this is checkpoint 170 of the faithful
 292-399 forecast, leaving approximately 122-229 checkpoints. No reasoning-gain,
+frontier, external-custody campaign, live-app, release, or soak credit is
+awarded. Final soaks remain deferred.
+
+## Checkpoint 2026-07-19-171: Restart-Safe Post-Inference Trust Phases
+
+CP171 closes the manual handoff gap after a claim campaign has performed its
+expensive inference. The paired runner's existing post-seal issuer signature
+and post-grade runner signature checks now have a non-executing, restart-safe
+operator coordinator instead of requiring hand-edited resume commands.
+
+- Read-only phase status verifies the CP170 prelaunch packet and reports one
+  explicit state: awaiting prelaunch signatures, ready for inference,
+  inference active/resumable, awaiting answer-reveal signature, post-reveal
+  scoring/resume, awaiting final-run signature, ready for a sealed final
+  envelope, or sealed campaign evidence. It does not infer that a process is
+  absent and never launches a duplicate campaign automatically.
+- At the answer boundary, the coordinator independently parses the frozen
+  `CampaignPlan`, verifies the sealed-output manifest, reconstructs the exact
+  issuer signature request, and proves that every revealed answer maps exactly
+  once to a planned task and hashes to its pre-inference commitment. A request
+  that merely has a valid issuer key but reveals different answers is rejected.
+- At the final boundary, it verifies the embedded issuer reveal and signature,
+  campaign manifest and journal head, exact published grade, detached worker-
+  execution manifest, detached plan/classification/import/exclusion roots, and
+  reconstructed runner request. The final detached signature must sign those
+  exact bytes before a resume packet is issued.
+- Answer and final resume packets hash-chain to the prelaunch packet and bind
+  canonical request, attestation, campaign-evidence, working-directory,
+  campaign-directory, and argv identities. Partial admission is idempotently
+  recoverable. Every later status read rehashes every bound file and rejects a
+  changed signature, argv, request, or evidence artifact even after the
+  campaign advances to another phase.
+- A final envelope is cryptographically and causally checked against the final
+  request and runner attestation, but the state is deliberately named
+  `campaign_evidence_sealed`; independent-verifier acceptance and the
+  scientific gain verdict remain separate mandatory gates.
+
+Validation is green: 11 focused phase/freeze tests cover full external-root and
+detached-signature traversal, repeated admission, interruption recovery,
+answer-commitment substitution, post-request grade mutation, persisted
+attestation mutation, source/dependency replacement, and unplanned artifacts.
+The expanded recurrence identity, trust, runner, independent worker, and final
+verifier stack passes 87/87 in 31.39 seconds. Repository lint passes and the
+governance ownership inventory remains at its exact 1,875-call/1,760-bucket
+baseline with no new migration debt.
+
+This checkpoint completes the code path for all three campaign signature
+phases, not a live campaign. The resident-32B trainer remains active at finite
+checkpoint 525/576. CP172+ must validate terminal training, freeze and smoke-
+test its exact adapter, produce fresh pilot commitments and independently
+administered production credentials, execute and independently grade the
+pilot, and only then advance to powered and external-frontier campaigns.
+
+Evidence-weighted completion remains 27%; this is checkpoint 171 of the faithful
+292-399 forecast, leaving approximately 121-228 checkpoints. No reasoning-gain,
 frontier, external-custody campaign, live-app, release, or soak credit is
 awarded. Final soaks remain deferred.

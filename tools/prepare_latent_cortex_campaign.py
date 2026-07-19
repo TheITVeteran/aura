@@ -682,6 +682,10 @@ def _verify_bundle_artifacts(bundle_dir: Path) -> tuple[dict[str, Any], dict[str
         _ISSUER_ATTESTATION_FILE,
         _RUNNER_ATTESTATION_FILE,
         LAUNCH_PACKET_FILE,
+        "answer_reveal_attestation.json",
+        "answer_reveal_resume_packet.json",
+        "final_run_attestation.json",
+        "final_run_resume_packet.json",
     }
     if not observed_files.issubset(seen | {PRELAUNCH_MANIFEST_FILE} | allowed_runtime):
         _fail("prelaunch_unplanned_artifact")

@@ -10,7 +10,10 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from core.brain.llm.latent_cortex.campaign_journal import canonical_json_bytes
+from core.brain.llm.latent_cortex.campaign_journal import (
+    CampaignPlan,
+    canonical_json_bytes,
+)
 from core.brain.llm.latent_cortex.campaign_launch_bundle import (
     ADAPTER_FREEZE_FILE,
     LAUNCH_PACKET_FILE,
@@ -26,8 +29,10 @@ from core.brain.llm.latent_cortex.campaign_trust import (
     TASK_ISSUER,
     CampaignTrustError,
     build_role_attestation,
+    prepare_role_signature_request,
     validate_campaign_trust_policy,
 )
+from tools import advance_latent_cortex_campaign as advancement
 from tools import prepare_latent_cortex_campaign as preparation
 
 
@@ -321,11 +326,110 @@ def _launch_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
         "verified_policy": verified,
         "role_keys": role_keys,
         "payloads": payloads,
+        "campaign_dir": campaign_dir,
+        "campaign_name": campaign_name,
         "dependencies": {
             "contamination_audit": contamination_audit,
             "fake_runner": fake_runner,
         },
     }
+
+
+def _admit_prelaunch(fixture: dict, tmp_path: Path) -> None:
+    issuer = build_role_attestation(
+        fixture["verified_policy"],
+        role=TASK_ISSUER,
+        payload=fixture["payloads"][TASK_ISSUER],
+        signed_at_unix=1_900_000_150,
+        private_key=fixture["role_keys"][TASK_ISSUER],
+    )
+    runner = build_role_attestation(
+        fixture["verified_policy"],
+        role=CAMPAIGN_RUNNER,
+        payload=fixture["payloads"][CAMPAIGN_RUNNER],
+        signed_at_unix=1_900_000_150,
+        private_key=fixture["role_keys"][CAMPAIGN_RUNNER],
+    )
+    issuer_path = tmp_path / "phase-prelaunch-issuer.json"
+    runner_path = tmp_path / "phase-prelaunch-runner.json"
+    _write_json(issuer_path, issuer)
+    _write_json(runner_path, runner)
+    preparation.admit_bundle(
+        Namespace(
+            bundle_dir=fixture["bundle"],
+            task_issuer_attestation=issuer_path,
+            runner_attestation=runner_path,
+            prepare_timeout=20.0,
+            observed_at=1_900_000_200,
+        )
+    )
+
+
+def _hashed(document: dict, key: str) -> dict:
+    material = {name: value for name, value in document.items() if name != key}
+    return {**material, key: hashlib.sha256(canonical_json_bytes(material)).hexdigest()}
+
+
+def _post_inference_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
+    fixture = _launch_fixture(tmp_path, monkeypatch)
+    _admit_prelaunch(fixture, tmp_path)
+    campaign_dir = fixture["campaign_dir"]
+    campaign_dir.mkdir()
+    answer_payload = {"expected": {"value": 42}}
+    answer_commitment = hashlib.sha256(canonical_json_bytes(answer_payload)).hexdigest()
+    task_commitment = "d" * 64
+    plan = CampaignPlan.build(
+        fixture["campaign_name"],
+        [{"arm": "adapter_rlc", "task_id": "task-1"}],
+        metadata={
+            "task_manifest": {
+                "tasks": [
+                    {
+                        "task_id": "task-1",
+                        "answer_commitment_sha256": answer_commitment,
+                    }
+                ]
+            },
+            "task_commitment": {"commitment_sha256": task_commitment},
+        },
+    )
+    _write_json(campaign_dir / "plan.json", plan.to_dict())
+    sealed = _hashed(
+        {
+            "schema": "aura.latent_cortex.sealed_output_manifest.v4",
+            "cell_count": 1,
+        },
+        "manifest_sha256",
+    )
+    _write_json(campaign_dir / "sealed_output_manifest.json", sealed)
+    reveal_payload = {
+        "schema": "aura.latent_cortex.answer_reveal_payload.v1",
+        "campaign_name": fixture["campaign_name"],
+        "plan_sha256": plan.plan_sha256,
+        "sealed_output_manifest_sha256": sealed["manifest_sha256"],
+        "task_commitment_sha256": task_commitment,
+        "answers": [
+            {
+                "task_id": "task-1",
+                "answer_commitment_sha256": answer_commitment,
+                "answer_payload": answer_payload,
+            }
+        ],
+    }
+    answer_request = prepare_role_signature_request(
+        fixture["verified_policy"],
+        role=TASK_ISSUER,
+        payload=reveal_payload,
+        signed_at_unix=1_900_000_250,
+    )
+    _write_json(campaign_dir / "answer_reveal_request.json", answer_request)
+    fixture.update(
+        plan=plan,
+        sealed=sealed,
+        reveal_payload=reveal_payload,
+        answer_request=answer_request,
+    )
+    return fixture
 
 
 def test_adapter_snapshot_is_exact_read_only_and_tamper_evident(tmp_path: Path):
@@ -479,5 +583,244 @@ def test_launch_admission_rejects_changed_dependencies_keys_or_producer(
                     observed_at=1_900_000_200,
                 )
             )
+    finally:
+        _make_writable(fixture["freeze"])
+
+
+def _admit_answer_phase(fixture: dict, tmp_path: Path) -> tuple[dict, dict]:
+    attestation = build_role_attestation(
+        fixture["verified_policy"],
+        role=TASK_ISSUER,
+        payload=fixture["reveal_payload"],
+        signed_at_unix=1_900_000_250,
+        private_key=fixture["role_keys"][TASK_ISSUER],
+    )
+    path = tmp_path / "external-answer-reveal-attestation.json"
+    _write_json(path, attestation)
+    result = advancement.admit(
+        Namespace(
+            bundle_dir=fixture["bundle"],
+            attestation=path,
+            observed_at=1_900_000_300,
+        )
+    )
+    return attestation, result
+
+
+def _publish_final_request(fixture: dict, issuer_attestation: dict) -> dict:
+    campaign_dir = fixture["campaign_dir"]
+    reveal_material = {
+        "payload": fixture["reveal_payload"],
+        "request_sha256": fixture["answer_request"]["request_sha256"],
+        "task_issuer_attestation": issuer_attestation,
+    }
+    reveal = {
+        "schema": "aura.latent_cortex.answer_reveal.v1",
+        **reveal_material,
+        "reveal_sha256": hashlib.sha256(
+            canonical_json_bytes(reveal_material)
+        ).hexdigest(),
+    }
+    _write_json(campaign_dir / "answer_reveal.json", reveal)
+    campaign_manifest = _hashed(
+        {
+            "schema": "aura.latent_cortex.campaign_manifest.v1",
+            "journal_head_sha256": "1" * 64,
+        },
+        "manifest_sha256",
+    )
+    grade = _hashed(
+        {"schema": "aura.latent_cortex.paired_campaign_grade.v2", "verdict": "gain_proven"},
+        "grade_sha256",
+    )
+    worker = _hashed(
+        {
+            "schema": "aura.latent_cortex.worker_execution_manifest.v1",
+            "detached_plan_sha256": "2" * 64,
+            "detached_classification_head_sha256": "3" * 64,
+            "detached_classifications_sha256": "4" * 64,
+            "imports_sha256": "5" * 64,
+            "excluded_attempts_sha256": "6" * 64,
+        },
+        "manifest_sha256",
+    )
+    _write_json(campaign_dir / "campaign_manifest.json", campaign_manifest)
+    _write_json(campaign_dir / "grade.json", grade)
+    _write_json(campaign_dir / "worker_execution_manifest.json", worker)
+    payload = {
+        "schema": "aura.latent_cortex.final_run_payload.v4",
+        "campaign_name": fixture["campaign_name"],
+        "policy_sha256": fixture["verified_policy"].policy_sha256,
+        "protocol_sha256": fixture["verified_policy"].document["protocol_sha256"],
+        "plan_sha256": fixture["plan"].plan_sha256,
+        "sealed_output_manifest_sha256": fixture["sealed"]["manifest_sha256"],
+        "answer_reveal_sha256": reveal["reveal_sha256"],
+        "campaign_manifest_sha256": campaign_manifest["manifest_sha256"],
+        "journal_head_sha256": campaign_manifest["journal_head_sha256"],
+        "published_grade_sha256": grade["grade_sha256"],
+        "worker_execution_manifest_sha256": worker["manifest_sha256"],
+        "detached_plan_sha256": worker["detached_plan_sha256"],
+        "detached_classification_head_sha256": worker[
+            "detached_classification_head_sha256"
+        ],
+        "detached_classifications_sha256": worker[
+            "detached_classifications_sha256"
+        ],
+        "worker_imports_sha256": worker["imports_sha256"],
+        "worker_excluded_attempts_sha256": worker["excluded_attempts_sha256"],
+    }
+    request = prepare_role_signature_request(
+        fixture["verified_policy"],
+        role=CAMPAIGN_RUNNER,
+        payload=payload,
+        signed_at_unix=1_900_000_350,
+    )
+    _write_json(campaign_dir / "final_run_request.json", request)
+    fixture.update(
+        reveal=reveal,
+        campaign_manifest=campaign_manifest,
+        grade=grade,
+        worker=worker,
+        final_payload=payload,
+        final_request=request,
+    )
+    return request
+
+
+def test_post_inference_phase_packets_bind_real_reveal_and_final_signatures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fixture = _post_inference_fixture(tmp_path, monkeypatch)
+    try:
+        status = advancement.status(Namespace(bundle_dir=fixture["bundle"]))
+        assert status["phase"] == "awaiting_answer_reveal_signature"
+        issuer_attestation, answer_result = _admit_answer_phase(fixture, tmp_path)
+        assert answer_result["phase"] == "ready_for_answer_reveal"
+        assert answer_result["argv"][-2:] == [
+            "--answer-reveal-attestation",
+            str(fixture["bundle"] / advancement.ANSWER_ATTESTATION_FILE),
+        ]
+        repeated = _admit_answer_phase(fixture, tmp_path)[1]
+        assert repeated["packet_sha256"] == answer_result["packet_sha256"]
+
+        _publish_final_request(fixture, issuer_attestation)
+        status = advancement.status(Namespace(bundle_dir=fixture["bundle"]))
+        assert status["phase"] == "awaiting_final_run_signature"
+        final_attestation = build_role_attestation(
+            fixture["verified_policy"],
+            role=CAMPAIGN_RUNNER,
+            payload=fixture["final_payload"],
+            signed_at_unix=1_900_000_350,
+            private_key=fixture["role_keys"][CAMPAIGN_RUNNER],
+        )
+        final_path = tmp_path / "external-final-run-attestation.json"
+        _write_json(final_path, final_attestation)
+        final_result = advancement.admit(
+            Namespace(
+                bundle_dir=fixture["bundle"],
+                attestation=final_path,
+                observed_at=1_900_000_400,
+            )
+        )
+        assert final_result["phase"] == "ready_for_final_envelope"
+        assert final_result["argv"][-4:] == [
+            "--answer-reveal-attestation",
+            str(fixture["bundle"] / advancement.ANSWER_ATTESTATION_FILE),
+            "--final-run-attestation",
+            str(fixture["bundle"] / advancement.FINAL_ATTESTATION_FILE),
+        ]
+
+        envelope_material = {
+            "payload": fixture["final_payload"],
+            "request_sha256": fixture["final_request"]["request_sha256"],
+            "campaign_runner_attestation": final_attestation,
+        }
+        envelope = {
+            "schema": "aura.latent_cortex.final_run_envelope.v4",
+            **envelope_material,
+            "envelope_sha256": hashlib.sha256(
+                canonical_json_bytes(envelope_material)
+            ).hexdigest(),
+        }
+        _write_json(fixture["campaign_dir"] / "final_run_envelope.json", envelope)
+        assert advancement.status(Namespace(bundle_dir=fixture["bundle"]))[
+            "phase"
+        ] == "campaign_evidence_sealed"
+    finally:
+        _make_writable(fixture["freeze"])
+
+
+def test_answer_phase_rejects_recommitted_wrong_answer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fixture = _post_inference_fixture(tmp_path, monkeypatch)
+    try:
+        attacked = dict(fixture["reveal_payload"])
+        attacked["answers"] = [dict(fixture["reveal_payload"]["answers"][0])]
+        attacked["answers"][0]["answer_payload"] = {"expected": {"value": 99}}
+        request = prepare_role_signature_request(
+            fixture["verified_policy"],
+            role=TASK_ISSUER,
+            payload=attacked,
+            signed_at_unix=1_900_000_250,
+        )
+        _write_json(fixture["campaign_dir"] / "answer_reveal_request.json", request)
+
+        with pytest.raises(
+            advancement.CampaignAdvanceError,
+            match="answer_reveal_commitment_invalid",
+        ):
+            advancement.status(Namespace(bundle_dir=fixture["bundle"]))
+    finally:
+        _make_writable(fixture["freeze"])
+
+
+def test_final_phase_rejects_grade_changed_after_signature_request(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fixture = _post_inference_fixture(tmp_path, monkeypatch)
+    try:
+        issuer_attestation, _result = _admit_answer_phase(fixture, tmp_path)
+        _publish_final_request(fixture, issuer_attestation)
+        changed_grade = _hashed(
+            {
+                "schema": "aura.latent_cortex.paired_campaign_grade.v2",
+                "verdict": "no_gain",
+            },
+            "grade_sha256",
+        )
+        _write_json(fixture["campaign_dir"] / "grade.json", changed_grade)
+
+        with pytest.raises(
+            advancement.CampaignAdvanceError,
+            match="final_run_payload_binding_invalid",
+        ):
+            advancement.status(Namespace(bundle_dir=fixture["bundle"]))
+    finally:
+        _make_writable(fixture["freeze"])
+
+
+def test_phase_status_rejects_attestation_changed_after_resume_packet(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fixture = _post_inference_fixture(tmp_path, monkeypatch)
+    try:
+        _issuer, _result = _admit_answer_phase(fixture, tmp_path)
+        persisted = fixture["bundle"] / advancement.ANSWER_ATTESTATION_FILE
+        attacked = read_canonical_json(persisted, role="test_answer_attestation")
+        attacked["signature_b64"] = base64.b64encode(b"z" * 64).decode("ascii")
+        persisted.chmod(0o600)
+        persisted.write_bytes(canonical_json_bytes(attacked) + b"\n")
+        persisted.chmod(0o400)
+
+        with pytest.raises(
+            advancement.CampaignAdvanceError,
+            match="ready_for_answer_reveal_attestation_0_changed",
+        ):
+            advancement.status(Namespace(bundle_dir=fixture["bundle"]))
     finally:
         _make_writable(fixture["freeze"])
