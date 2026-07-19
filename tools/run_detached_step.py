@@ -84,6 +84,9 @@ WORKER_ORIGIN_POLICY_SCHEMA = f"{SCHEMA_PREFIX}.worker_origin_policy.v1"
 WORKER_ORIGIN_LIFECYCLE_ARTIFACT_SCHEMA = (
     f"{SCHEMA_PREFIX}.worker_origin_lifecycle_artifact.v1"
 )
+WORKER_ORIGIN_QUARANTINE_RECEIPT_SCHEMA = (
+    f"{SCHEMA_PREFIX}.worker_origin_quarantine_receipt.v1"
+)
 _MAX_WORKER_ORIGIN_CELLS = 16_384
 _MAX_WORKER_ORIGIN_TRUST_POLICY_BYTES = 1024 * 1024
 _MAX_WORKER_ORIGIN_TRUST_ROOT_BYTES = 64 * 1024
@@ -862,6 +865,7 @@ def _read_attempts(run_dir: Path) -> list[dict[str, Any]]:
     terminal_attempts: set[int] = set()
     broker_started: set[tuple[int, str]] = set()
     broker_terminal: set[tuple[int, str]] = set()
+    broker_origin_quarantined: set[tuple[int, str]] = set()
     for sequence, line in enumerate(raw_lines, start=1):
         if not line.strip():
             raise DetachedStepError(f"attempt journal contains an empty record: {path}")
@@ -933,10 +937,36 @@ def _read_attempts(run_dir: Path) -> list[dict[str, Any]]:
                 terminal_attempts
                 or key not in broker_started
                 or key in broker_terminal
+                or key in broker_origin_quarantined
                 or attempt != max(launched_attempts)
             ):
                 raise DetachedStepError(f"attempt journal has invalid broker terminal: {path}")
             broker_terminal.add(key)
+        elif event_type == "BROKER_ORIGIN_QUARANTINED":
+            request_id = str(event.get("request_id") or "")
+            key = (attempt, request_id)
+            receipt = event.get("quarantine_receipt")
+            if (
+                terminal_attempts
+                or key not in broker_started
+                or key in broker_terminal
+                or key in broker_origin_quarantined
+                or attempt != max(launched_attempts)
+                or not isinstance(receipt, dict)
+            ):
+                raise DetachedStepError(
+                    f"attempt journal has invalid worker-origin quarantine: {path}"
+                )
+            receipt_body = {
+                key: value
+                for key, value in receipt.items()
+                if key != "receipt_sha256"
+            }
+            if receipt.get("receipt_sha256") != _sha256(receipt_body):
+                raise DetachedStepError(
+                    f"attempt journal worker-origin quarantine hash mismatch: {path}"
+                )
+            broker_origin_quarantined.add(key)
         elif event_type == "TERMINAL":
             if (
                 attempt not in launched_attempts
@@ -1637,6 +1667,155 @@ def _worker_origin_artifact_paths(
         "attestation": artifact_dir / f"{prefix}.attestation.json",
         "lifecycle": artifact_dir / f"{prefix}.lifecycle.json",
     }
+
+
+def _record_worker_origin_quarantine_locked(
+    run_dir: Path,
+    plan: dict[str, Any],
+    *,
+    attempt: int,
+    launched: dict[str, Any],
+    broker_start: dict[str, Any],
+    cleanup_action_performed: bool,
+) -> dict[str, Any] | None:
+    policy_sha256 = str(broker_start.get("policy_sha256") or "")
+    policy = next(
+        (
+            candidate
+            for candidate in plan["broker_policy"]
+            if candidate["policy_sha256"] == policy_sha256
+        ),
+        None,
+    )
+    if policy is None:
+        raise DetachedStepError("worker-origin quarantine policy is unavailable")
+    contract = _verify_worker_origin_policy(
+        policy.get("worker_origin"),
+        require_current=False,
+    )
+    if contract is None:
+        return None
+
+    request_id = str(broker_start.get("request_id") or "")
+    events = _read_attempts(run_dir)
+    attempt_events = _events_by_attempt(events).get(attempt, {})
+    existing = [
+        event
+        for event in _broker_events(
+            attempt_events,
+            "BROKER_ORIGIN_QUARANTINED",
+        )
+        if event.get("request_id") == request_id
+    ]
+    if existing:
+        if len(existing) != 1:
+            raise DetachedStepError("duplicate worker-origin quarantine records")
+        return existing[0]
+    if any(
+        event.get("request_id") == request_id
+        for event in _broker_events(attempt_events, "BROKER_TERMINAL")
+    ):
+        raise DetachedStepError("cannot quarantine a terminal broker origin")
+
+    supervisor_pid = int(launched.get("supervisor_pid") or 0)
+    supervisor_start_token = str(launched.get("supervisor_start_token") or "")
+    worker_pid = int(broker_start.get("worker_pid") or 0)
+    worker_start_token = str(broker_start.get("worker_start_token") or "")
+    worker_process_group_id = int(
+        broker_start.get("worker_process_group_id") or 0
+    )
+    if _identity_state(supervisor_pid, supervisor_start_token) != "dead":
+        raise DetachedStepError(
+            "worker-origin quarantine requires a dead prior supervisor"
+        )
+    if _identity_state(worker_pid, worker_start_token) != "dead":
+        raise DetachedStepError(
+            "worker-origin quarantine requires a contained worker"
+        )
+    if _process_group_exists(worker_process_group_id):
+        raise DetachedStepError(
+            "worker-origin quarantine requires an empty worker process group"
+        )
+
+    start_origin = broker_start.get("worker_origin")
+    if not isinstance(start_origin, dict):
+        raise DetachedStepError(
+            "worker-origin quarantine start metadata is unavailable"
+        )
+    paths = _worker_origin_artifact_paths(
+        contract,
+        supervisor_attempt=attempt,
+        broker_policy_sha256=policy_sha256,
+    )
+    lifecycle_sha256: str | None = None
+    if paths["lifecycle"].exists() or paths["lifecycle"].is_symlink():
+        lifecycle = _read_canonical_private_json(
+            paths["lifecycle"],
+            max_bytes=_MAX_WORKER_ORIGIN_TRUST_POLICY_BYTES,
+            role="worker-origin lifecycle artifact",
+        )
+        lifecycle_sha256 = str(lifecycle.get("artifact_sha256") or "")
+        if len(lifecycle_sha256) != 64:
+            raise DetachedStepError(
+                "worker-origin quarantine lifecycle digest is invalid"
+            )
+
+    prior_journal_head_sha256 = (
+        str(events[-1]["event_sha256"]) if events else ""
+    )
+    quarantined_at_unix = int(time.time())
+    receipt_body = {
+        "schema": WORKER_ORIGIN_QUARANTINE_RECEIPT_SCHEMA,
+        "plan_sha256": plan["plan_sha256"],
+        "broker_policy_sha256": policy_sha256,
+        "request_id": request_id,
+        "supervisor_attempt": attempt,
+        "supervisor_pid": supervisor_pid,
+        "supervisor_start_token": supervisor_start_token,
+        "worker_pid": worker_pid,
+        "worker_process_group_id": worker_process_group_id,
+        "worker_start_token": worker_start_token,
+        "containment_token": broker_start["containment_token"],
+        "worker_origin_contract_sha256": contract["contract_sha256"],
+        "session_id": start_origin["session_id"],
+        "authorization_request_sha256": start_origin[
+            "authorization_request_sha256"
+        ],
+        "authorization_attestation_sha256": start_origin[
+            "authorization_attestation_sha256"
+        ],
+        "payload_path": start_origin["payload_path"],
+        "request_path": start_origin["request_path"],
+        "attestation_path": start_origin["attestation_path"],
+        "lifecycle_path": start_origin["lifecycle_path"],
+        "lifecycle_artifact_sha256": lifecycle_sha256,
+        "prior_journal_head_sha256": prior_journal_head_sha256,
+        "supervisor_identity_observed": "dead",
+        "worker_identity_observed": "dead",
+        "worker_process_group_empty": True,
+        "cleanup_action_performed": bool(cleanup_action_performed),
+        "authority_key_recoverable": False,
+        "lifecycle_recoverable": False,
+        "claim_eligible": False,
+        "reason": "supervisor_ephemeral_authority_lost",
+        "quarantined_at_unix": quarantined_at_unix,
+    }
+    receipt = {
+        **receipt_body,
+        "receipt_sha256": _sha256(receipt_body),
+    }
+    return _append_attempt_event_locked(
+        run_dir,
+        {
+            "event": "BROKER_ORIGIN_QUARANTINED",
+            "attempt": attempt,
+            "plan_sha256": plan["plan_sha256"],
+            "request_id": request_id,
+            "policy_sha256": policy_sha256,
+            "quarantine_receipt": receipt,
+            "recorded_at": float(quarantined_at_unix),
+        },
+    )
 
 
 def _prepare_broker_worker_origin(
@@ -3199,6 +3378,119 @@ def _verify_worker_origin_policy(value: Any, *, require_current: bool) -> dict[s
     return value
 
 
+def _verify_persisted_worker_origin_quarantine(
+    *,
+    plan: dict[str, Any],
+    policy: dict[str, Any],
+    contract: dict[str, Any],
+    attempt: int,
+    broker_start: dict[str, Any],
+    quarantine_event: dict[str, Any] | None,
+    authorization: dict[str, Any],
+    paths: dict[str, Path],
+    lifecycle_artifact_sha256: str | None,
+) -> None:
+    if quarantine_event is None:
+        return
+    receipt = quarantine_event.get("quarantine_receipt")
+    start_origin = broker_start.get("worker_origin")
+    if not isinstance(receipt, dict) or not isinstance(start_origin, dict):
+        raise DetachedStepError("worker-origin quarantine receipt is invalid")
+    receipt_keys = {
+        "schema",
+        "plan_sha256",
+        "broker_policy_sha256",
+        "request_id",
+        "supervisor_attempt",
+        "supervisor_pid",
+        "supervisor_start_token",
+        "worker_pid",
+        "worker_process_group_id",
+        "worker_start_token",
+        "containment_token",
+        "worker_origin_contract_sha256",
+        "session_id",
+        "authorization_request_sha256",
+        "authorization_attestation_sha256",
+        "payload_path",
+        "request_path",
+        "attestation_path",
+        "lifecycle_path",
+        "lifecycle_artifact_sha256",
+        "prior_journal_head_sha256",
+        "supervisor_identity_observed",
+        "worker_identity_observed",
+        "worker_process_group_empty",
+        "cleanup_action_performed",
+        "authority_key_recoverable",
+        "lifecycle_recoverable",
+        "claim_eligible",
+        "reason",
+        "quarantined_at_unix",
+        "receipt_sha256",
+    }
+    receipt_body = {
+        key: value for key, value in receipt.items() if key != "receipt_sha256"
+    }
+    quarantined_at = receipt.get("quarantined_at_unix")
+    started_at = broker_start.get("recorded_at")
+    if (
+        set(receipt) != receipt_keys
+        or receipt.get("schema") != WORKER_ORIGIN_QUARANTINE_RECEIPT_SCHEMA
+        or receipt.get("receipt_sha256") != _sha256(receipt_body)
+        or quarantine_event.get("request_id") != broker_start.get("request_id")
+        or quarantine_event.get("policy_sha256") != policy["policy_sha256"]
+        or receipt.get("plan_sha256") != plan["plan_sha256"]
+        or receipt.get("broker_policy_sha256") != policy["policy_sha256"]
+        or receipt.get("request_id") != broker_start.get("request_id")
+        or int(receipt.get("supervisor_attempt") or 0) != attempt
+        or int(receipt.get("supervisor_pid") or 0)
+        != int(broker_start.get("supervisor_pid") or 0)
+        or receipt.get("supervisor_start_token")
+        != broker_start.get("supervisor_start_token")
+        or int(receipt.get("worker_pid") or 0)
+        != int(broker_start.get("worker_pid") or 0)
+        or int(receipt.get("worker_process_group_id") or 0)
+        != int(broker_start.get("worker_process_group_id") or 0)
+        or receipt.get("worker_start_token")
+        != broker_start.get("worker_start_token")
+        or receipt.get("containment_token")
+        != broker_start.get("containment_token")
+        or receipt.get("worker_origin_contract_sha256")
+        != contract["contract_sha256"]
+        or receipt.get("session_id") != authorization["session_id"]
+        or receipt.get("authorization_request_sha256")
+        != start_origin.get("authorization_request_sha256")
+        or receipt.get("authorization_attestation_sha256")
+        != start_origin.get("authorization_attestation_sha256")
+        or receipt.get("payload_path") != str(paths["payload"])
+        or receipt.get("request_path") != str(paths["request"])
+        or receipt.get("attestation_path") != str(paths["attestation"])
+        or receipt.get("lifecycle_path") != str(paths["lifecycle"])
+        or receipt.get("lifecycle_artifact_sha256")
+        != lifecycle_artifact_sha256
+        or receipt.get("prior_journal_head_sha256")
+        != quarantine_event.get("previous_event_sha256")
+        or receipt.get("supervisor_identity_observed") != "dead"
+        or receipt.get("worker_identity_observed") != "dead"
+        or receipt.get("worker_process_group_empty") is not True
+        or not isinstance(receipt.get("cleanup_action_performed"), bool)
+        or receipt.get("authority_key_recoverable") is not False
+        or receipt.get("lifecycle_recoverable") is not False
+        or receipt.get("claim_eligible") is not False
+        or receipt.get("reason") != "supervisor_ephemeral_authority_lost"
+        or isinstance(quarantined_at, bool)
+        or not isinstance(quarantined_at, int)
+        or isinstance(started_at, bool)
+        or not isinstance(started_at, (int, float))
+        or quarantined_at < int(float(started_at))
+        or quarantine_event.get("recorded_at") != float(quarantined_at)
+    ):
+        raise DetachedStepError(
+            "worker-origin quarantine receipt binding is invalid"
+        )
+
+
 def _verify_persisted_worker_origin_bundle(
     plan: dict[str, Any],
     policy: dict[str, Any],
@@ -3206,6 +3498,7 @@ def _verify_persisted_worker_origin_bundle(
     attempt: int,
     broker_start: dict[str, Any] | None,
     broker_response: dict[str, Any] | None,
+    broker_quarantine: dict[str, Any] | None,
     attempt_terminal: bool,
 ) -> None:
     contract = _verify_worker_origin_policy(
@@ -3219,7 +3512,11 @@ def _verify_persisted_worker_origin_bundle(
         else None
     )
     if contract is None:
-        if start_origin is not None or response_origin is not None:
+        if (
+            start_origin is not None
+            or response_origin is not None
+            or broker_quarantine is not None
+        ):
             raise DetachedStepError(
                 "broker journal asserts worker-origin custody without a contract"
             )
@@ -3377,6 +3674,17 @@ def _verify_persisted_worker_origin_bundle(
         raise DetachedStepError("orphaned worker-origin start metadata")
 
     if not present["lifecycle"]:
+        _verify_persisted_worker_origin_quarantine(
+            plan=plan,
+            policy=policy,
+            contract=contract,
+            attempt=attempt,
+            broker_start=broker_start,
+            quarantine_event=broker_quarantine,
+            authorization=authorization,
+            paths=paths,
+            lifecycle_artifact_sha256=None,
+        )
         if broker_response is not None or attempt_terminal:
             raise DetachedStepError("worker-origin lifecycle artifact is missing")
         if response_origin is not None:
@@ -3419,6 +3727,17 @@ def _verify_persisted_worker_origin_bundle(
         or not isinstance(lifecycle_signed, dict)
     ):
         raise DetachedStepError("worker-origin lifecycle artifact binding is invalid")
+    _verify_persisted_worker_origin_quarantine(
+        plan=plan,
+        policy=policy,
+        contract=contract,
+        attempt=attempt,
+        broker_start=broker_start,
+        quarantine_event=broker_quarantine,
+        authorization=authorization,
+        paths=paths,
+        lifecycle_artifact_sha256=str(lifecycle["artifact_sha256"]),
+    )
 
     broker_passed = (
         broker_response is not None
@@ -3898,7 +4217,12 @@ def _events_by_attempt(events: list[dict[str, Any]]) -> dict[int, dict[str, dict
         event_type = str(event["event"])
         key = (
             f"{event_type}:{event.get('request_id')}"
-            if event_type in {"BROKER_STARTED", "BROKER_TERMINAL"}
+            if event_type
+            in {
+                "BROKER_STARTED",
+                "BROKER_TERMINAL",
+                "BROKER_ORIGIN_QUARANTINED",
+            }
             else event_type
         )
         grouped.setdefault(int(event["attempt"]), {})[key] = event
@@ -3983,6 +4307,7 @@ def _verify_run_locked(
     _verify_plan(plan, plan_path)
     events = _read_attempts(run_dir)
     grouped = _events_by_attempt(events)
+    latest_attempt = max(grouped, default=0)
     plan_sha = plan["plan_sha256"]
     for attempt, attempt_events in grouped.items():
         launched = attempt_events.get("LAUNCHED")
@@ -4039,6 +4364,13 @@ def _verify_run_locked(
             str(event.get("request_id") or ""): event
             for event in _broker_events(attempt_events, "BROKER_TERMINAL")
         }
+        broker_quarantines = {
+            str(event.get("request_id") or ""): event
+            for event in _broker_events(
+                attempt_events,
+                "BROKER_ORIGIN_QUARANTINED",
+            )
+        }
         attempt_terminal = attempt_events.get("TERMINAL") is not None
         invocation_counts: dict[str, int] = {}
         for broker_start in broker_starts:
@@ -4061,6 +4393,7 @@ def _verify_run_locked(
             ):
                 raise DetachedStepError("attempt journal broker worker identity is invalid")
             broker_terminal = broker_terminals.get(request_id)
+            broker_quarantine = broker_quarantines.get(request_id)
             if broker_terminal is None:
                 _verify_persisted_worker_origin_bundle(
                     plan,
@@ -4068,8 +4401,17 @@ def _verify_run_locked(
                     attempt=attempt,
                     broker_start=broker_start,
                     broker_response=None,
+                    broker_quarantine=broker_quarantine,
                     attempt_terminal=attempt_terminal,
                 )
+                if (
+                    policy.get("worker_origin") is not None
+                    and attempt < latest_attempt
+                    and broker_quarantine is None
+                ):
+                    raise DetachedStepError(
+                        "historical unfinished worker-origin slot is not quarantined"
+                    )
                 continue
             response = broker_terminal.get("response")
             if not isinstance(response, dict):
@@ -4119,6 +4461,7 @@ def _verify_run_locked(
                 attempt=attempt,
                 broker_start=broker_start,
                 broker_response=response,
+                broker_quarantine=broker_quarantine,
                 attempt_terminal=attempt_terminal,
             )
         for policy_sha, policy in policy_by_sha.items():
@@ -4129,6 +4472,7 @@ def _verify_run_locked(
                     attempt=attempt,
                     broker_start=None,
                     broker_response=None,
+                    broker_quarantine=None,
                     attempt_terminal=attempt_terminal,
                 )
         if any(
@@ -4370,13 +4714,30 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict[s
                 for broker_start in _broker_events(latest, "BROKER_STARTED"):
                     if str(broker_start.get("request_id") or "") in broker_terminal_ids:
                         continue
-                    recovered_stale_child = (
-                        _terminate_stale_broker_worker(broker_start)
-                        or recovered_stale_child
+                    worker_cleanup_performed = _terminate_stale_broker_worker(
+                        broker_start
                     )
+                    recovered_stale_child = (
+                        worker_cleanup_performed or recovered_stale_child
+                    )
+                    _record_worker_origin_quarantine_locked(
+                        run_dir,
+                        plan,
+                        attempt=latest_attempt,
+                        launched=launched,
+                        broker_start=broker_start,
+                        cleanup_action_performed=worker_cleanup_performed,
+                    )
+                if (
+                    os.environ.get("AURA_DETACHED_TEST_CRASH_POINT")
+                    == "after_worker_origin_quarantine"
+                    and "PYTEST_CURRENT_TEST" in os.environ
+                ):
+                    os._exit(95)
                 prior_completion_indeterminate = True
             if grouped:
                 prior_attempt = max(grouped)
+                attempts = _read_attempts(run_dir)
                 prior_journal_head_sha256 = attempts[-1]["event_sha256"]
                 resume_verdict = _run_resume_verifier(
                     plan,

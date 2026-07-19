@@ -238,6 +238,46 @@ def _worker_origin_trust_fixture(
     return policy_path, root_path, policy, role_keys[CAMPAIGN_RUNNER]
 
 
+def _worker_origin_policy(
+    *,
+    command: list[str],
+    cwd: Path,
+    stdout_path: Path,
+    trust_policy_path: Path,
+    trust_root_path: Path,
+    artifact_dir: Path,
+    timeout_s: float,
+) -> list[dict]:
+    return [
+        {
+            "command": command,
+            "cwd": str(cwd),
+            "stdout_path": str(stdout_path),
+            "timeout_s_max": timeout_s,
+            "max_invocations": 1,
+            "worker_origin": {
+                "schema": detached.WORKER_ORIGIN_POLICY_SCHEMA,
+                "campaign_name": "detached-worker-origin-test",
+                "protocol_sha256": "1" * 64,
+                "trust_policy_path": str(trust_policy_path),
+                "trust_root_path": str(trust_root_path),
+                "artifact_dir": str(artifact_dir),
+                "arm": "adapter_rlc",
+                "worker_attempt_slot": 1,
+                "allowed_cells": [
+                    {
+                        "cell_id": "cell-0001",
+                        "cell_type": "reasoning",
+                    }
+                ],
+                "model_identity_sha256": "8" * 64,
+                "adapter_identity_sha256": "9" * 64,
+                "authorization_ttl_seconds": 300,
+            },
+        }
+    ]
+
+
 def _launch(
     run_dir: Path,
     command: list[str],
@@ -1504,6 +1544,249 @@ def test_resume_reaps_broker_worker_after_supervisor_crash(
     assert receipt["status"] == "passed"
     assert outcome.read_text(encoding="utf-8") == "resumed"
     assert detached._inspect_process(stale_worker_pid).state == "dead"
+
+
+def test_resume_quarantines_worker_origin_after_supervisor_crash(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path.chmod(0o700)
+    repo_root = Path(detached.__file__).resolve().parent.parent
+    python = str(Path(sys.executable).resolve())
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(mode=0o700)
+    subprocess.run(["git", "init", "-q"], cwd=workspace, check=True)
+
+    worker_pid_path = tmp_path / "worker.pid"
+    worker_log = tmp_path / "worker.log"
+    coordinator_outcome = tmp_path / "coordinator.outcome"
+    authorization_wait = tmp_path / "authorization.wait"
+    worker_script = workspace / "worker.py"
+    coordinator_script = workspace / "coordinator.py"
+    worker_script.write_text(
+        "\n".join(
+            [
+                "import os",
+                "import pathlib",
+                "import time",
+                f"pathlib.Path({str(worker_pid_path)!r}).write_text(str(os.getpid()))",
+                "time.sleep(30)",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    worker_command = [python, str(worker_script)]
+    coordinator_script.write_text(
+        "\n".join(
+            [
+                "import pathlib",
+                "import sys",
+                "import time",
+                f"sys.path.insert(0, {str(repo_root)!r})",
+                (
+                    "from core.runtime.detached_subprocess_broker "
+                    "import DetachedBrokerError, run_brokered_process"
+                ),
+                f"worker_marker = pathlib.Path({str(worker_pid_path)!r})",
+                f"outcome = pathlib.Path({str(coordinator_outcome)!r})",
+                f"command = {worker_command!r}",
+                "if not worker_marker.exists():",
+                "    while True:",
+                "        try:",
+                (
+                    "            run_brokered_process("
+                    f"command, cwd=pathlib.Path({str(workspace)!r}), "
+                    f"stdout_path=pathlib.Path({str(worker_log)!r}), "
+                    "timeout_s=20.0)"
+                ),
+                "        except DetachedBrokerError as exc:",
+                (
+                    "            if 'external authorization required at ' "
+                    "not in str(exc):"
+                ),
+                "                raise",
+                (
+                    f"            pathlib.Path({str(authorization_wait)!r})"
+                    ".write_text(str(exc), encoding='utf-8')"
+                ),
+                "            time.sleep(0.05)",
+                "            continue",
+                "        break",
+                "outcome.write_text('resumed', encoding='utf-8')",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    subprocess.run(
+        ["git", "add", "worker.py", "coordinator.py"],
+        cwd=workspace,
+        check=True,
+    )
+
+    trust_policy_path, trust_root_path, trust_policy, runner_key = (
+        _worker_origin_trust_fixture(tmp_path / "trust")
+    )
+    origin_dir = tmp_path / "origins"
+    run_dir = tmp_path / "run"
+    broker_policy = _worker_origin_policy(
+        command=worker_command,
+        cwd=workspace,
+        stdout_path=worker_log,
+        trust_policy_path=trust_policy_path,
+        trust_root_path=trust_root_path,
+        artifact_dir=origin_dir,
+        timeout_s=20.0,
+    )
+
+    monkeypatch.setenv(
+        "AURA_DETACHED_TEST_CRASH_POINT",
+        "after_broker_release",
+    )
+    first = _launch(
+        run_dir,
+        [python, str(coordinator_script)],
+        timeout_s=60.0,
+        resume_contract="target_checkpoint",
+        broker_policy=broker_policy,
+        cwd=workspace,
+    )
+    request_path = _wait_for_glob(origin_dir, "*.request.json", timeout_s=15.0)
+    _wait_for_glob(tmp_path, authorization_wait.name, timeout_s=5.0)
+    request = json.loads(request_path.read_text(encoding="utf-8"))
+    signature = runner_key.sign(
+        base64.b64decode(request["signed_payload_b64"], validate=True)
+    )
+    attestation = assemble_role_attestation(
+        trust_policy,
+        request,
+        signature_b64=base64.b64encode(signature).decode("ascii"),
+        role=CAMPAIGN_RUNNER,
+    )
+    detached._atomic_write(
+        request_path.with_name(
+            request_path.name.replace(".request.json", ".attestation.json")
+        ),
+        attestation,
+        replace=False,
+    )
+
+    _wait_for_glob(tmp_path, worker_pid_path.name, timeout_s=10.0)
+    deadline = time.time() + 8.0
+    while time.time() < deadline and detached._pid_matches(
+        first["supervisor_pid"],
+        first["supervisor_start_token"],
+    ):
+        time.sleep(0.05)
+    stale_worker_pid = int(worker_pid_path.read_text(encoding="utf-8"))
+    assert detached._inspect_process(stale_worker_pid).state == "alive"
+
+    monkeypatch.setenv(
+        "AURA_DETACHED_TEST_CRASH_POINT",
+        "after_worker_origin_quarantine",
+    )
+    with pytest.raises(subprocess.CalledProcessError):
+        _launch(
+            run_dir,
+            [python, str(coordinator_script)],
+            timeout_s=60.0,
+            resume=True,
+            resume_contract="target_checkpoint",
+            broker_policy=broker_policy,
+            cwd=workspace,
+        )
+    assert detached._inspect_process(stale_worker_pid).state == "dead"
+    crash_boundary_events = detached._read_attempts(run_dir)
+    assert sum(
+        event["event"] == "BROKER_ORIGIN_QUARANTINED"
+        for event in crash_boundary_events
+    ) == 1
+    assert not any(
+        event["event"] == "LAUNCHED" and event["attempt"] == 2
+        for event in crash_boundary_events
+    )
+
+    monkeypatch.delenv("AURA_DETACHED_TEST_CRASH_POINT")
+    _launch(
+        run_dir,
+        [python, str(coordinator_script)],
+        timeout_s=60.0,
+        resume=True,
+        resume_contract="target_checkpoint",
+        broker_policy=broker_policy,
+        cwd=workspace,
+    )
+    receipt = _wait_for(run_dir / detached.RECEIPT_FILE, timeout_s=20.0)
+    assert receipt["status"] == "passed"
+    assert coordinator_outcome.read_text(encoding="utf-8") == "resumed"
+    assert detached._inspect_process(stale_worker_pid).state == "dead"
+
+    events = detached._read_attempts(run_dir)
+    quarantines = [
+        event
+        for event in events
+        if event["event"] == "BROKER_ORIGIN_QUARANTINED"
+    ]
+    assert len(quarantines) == 1
+    quarantine = quarantines[0]
+    quarantine_receipt = quarantine["quarantine_receipt"]
+    assert quarantine["attempt"] == 1
+    assert quarantine_receipt["claim_eligible"] is False
+    assert quarantine_receipt["lifecycle_recoverable"] is False
+    assert quarantine_receipt["authority_key_recoverable"] is False
+    assert quarantine_receipt["worker_identity_observed"] == "dead"
+    assert quarantine_receipt["worker_process_group_empty"] is True
+    assert quarantine_receipt["prior_journal_head_sha256"] == (
+        quarantine["previous_event_sha256"]
+    )
+    assert not any(
+        event["event"] == "BROKER_TERMINAL" and event["attempt"] == 1
+        for event in events
+    )
+    assert any(
+        event["event"] == "LAUNCHED" and event["attempt"] == 2
+        for event in events
+    )
+    plan, _events, _status, _receipt = detached._verify_run_locked(run_dir)
+
+    policy = plan["broker_policy"][0]
+    contract = policy["worker_origin"]
+    broker_start = next(
+        event
+        for event in events
+        if event["event"] == "BROKER_STARTED" and event["attempt"] == 1
+    )
+    paths = detached._worker_origin_artifact_paths(
+        contract,
+        supervisor_attempt=1,
+        broker_policy_sha256=policy["policy_sha256"],
+    )
+    authorization = json.loads(paths["payload"].read_text(encoding="utf-8"))
+    forged_quarantine = json.loads(json.dumps(quarantine))
+    forged_receipt = forged_quarantine["quarantine_receipt"]
+    forged_receipt["claim_eligible"] = True
+    forged_body = {
+        key: value
+        for key, value in forged_receipt.items()
+        if key != "receipt_sha256"
+    }
+    forged_receipt["receipt_sha256"] = detached._sha256(forged_body)
+    with pytest.raises(
+        detached.DetachedStepError,
+        match="quarantine receipt binding is invalid",
+    ):
+        detached._verify_persisted_worker_origin_quarantine(
+            plan=plan,
+            policy=policy,
+            contract=contract,
+            attempt=1,
+            broker_start=broker_start,
+            quarantine_event=forged_quarantine,
+            authorization=authorization,
+            paths=paths,
+            lifecycle_artifact_sha256=None,
+        )
 
 
 def test_broker_worker_origin_is_externally_authorized_and_supervisor_signed(
