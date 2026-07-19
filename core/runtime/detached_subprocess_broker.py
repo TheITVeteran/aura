@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import math
 import os
 import secrets
 import socket
@@ -31,10 +32,20 @@ class DetachedBrokerError(RuntimeError):
 class BrokeredProcessResult:
     returncode: int
     request_id: str
+    policy_sha256: str
     worker_pid: int
+    worker_process_group_id: int
     worker_start_token: str
+    started_at: float
+    finished_at: float
+    duration_s: float
     timed_out: bool
+    containment_verified: bool
+    status: str
+    error: str | None
+    worker_origin_lifecycle: dict[str, Any] | None
     receipt_sha256: str
+    response_hmac_sha256: str
 
 
 def _canonical_bytes(value: Any) -> bytes:
@@ -153,20 +164,61 @@ def run_brokered_process(
         raise DetachedBrokerError(str(response.get("error") or "broker request rejected"))
     if (
         not common_binding_valid
+        or not isinstance(response.get("policy_sha256"), str)
+        or len(response["policy_sha256"]) != 64
         or not isinstance(response.get("returncode"), int)
         or isinstance(response.get("returncode"), bool)
         or not isinstance(response.get("worker_pid"), int)
         or int(response["worker_pid"]) <= 0
+        or not isinstance(response.get("worker_process_group_id"), int)
+        or isinstance(response.get("worker_process_group_id"), bool)
+        or int(response["worker_process_group_id"]) <= 1
         or not isinstance(response.get("worker_start_token"), str)
         or not response["worker_start_token"]
+        or not isinstance(response.get("started_at"), (int, float))
+        or isinstance(response.get("started_at"), bool)
+        or not math.isfinite(float(response["started_at"]))
+        or not isinstance(response.get("finished_at"), (int, float))
+        or isinstance(response.get("finished_at"), bool)
+        or not math.isfinite(float(response["finished_at"]))
+        or float(response["finished_at"]) < float(response["started_at"])
+        or not isinstance(response.get("duration_s"), (int, float))
+        or isinstance(response.get("duration_s"), bool)
+        or not math.isfinite(float(response["duration_s"]))
+        or float(response["duration_s"]) < 0.0
         or not isinstance(response.get("timed_out"), bool)
+        or not isinstance(response.get("containment_verified"), bool)
+        or response.get("status")
+        not in {"passed", "failed", "timed_out", "containment_failed"}
+        or (
+            response.get("error") is not None
+            and not isinstance(response.get("error"), str)
+        )
+        or (
+            response.get("worker_origin_lifecycle") is not None
+            and not isinstance(response.get("worker_origin_lifecycle"), dict)
+        )
     ):
         raise DetachedBrokerError("detached subprocess broker response binding is invalid")
     return BrokeredProcessResult(
         returncode=int(response["returncode"]),
         request_id=request_id,
+        policy_sha256=str(response["policy_sha256"]),
         worker_pid=int(response["worker_pid"]),
+        worker_process_group_id=int(response["worker_process_group_id"]),
         worker_start_token=str(response["worker_start_token"]),
+        started_at=float(response["started_at"]),
+        finished_at=float(response["finished_at"]),
+        duration_s=float(response["duration_s"]),
         timed_out=bool(response["timed_out"]),
+        containment_verified=bool(response["containment_verified"]),
+        status=str(response["status"]),
+        error=response.get("error"),
+        worker_origin_lifecycle=(
+            dict(response["worker_origin_lifecycle"])
+            if isinstance(response.get("worker_origin_lifecycle"), dict)
+            else None
+        ),
         receipt_sha256=receipt_sha,
+        response_hmac_sha256=response_hmac,
     )

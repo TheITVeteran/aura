@@ -171,6 +171,110 @@ def test_fsync_sealed_result_can_be_verified_after_worker_exit(tmp_path: Path) -
 
 @pytest.mark.parametrize(
     "boundary",
+    (None, STARTED, ARM_RESULT, VERIFIED, COMMITTED),
+)
+def test_preverified_cell_import_resumes_exactly_at_every_write_boundary(
+    tmp_path: Path,
+    boundary: str | None,
+) -> None:
+    plan = _plan(1)
+    cell_id = plan.cell_ids[0]
+    result = {"signed_stage_result": "exact"}
+    verification = {
+        "schema": "aura.latent_cortex.stage_import_verification.v1",
+        "stage_sha256": "b" * 64,
+    }
+    commit = {
+        "schema": "aura.latent_cortex.stage_import_commit.v1",
+        "transaction_sha256": "c" * 64,
+    }
+    stage_path = tmp_path / "stage.jsonl"
+    with CampaignJournal(stage_path, plan) as stage:
+        expected_attempt_id = stage.start_cell(cell_id)
+        stage.record_arm_result(cell_id, expected_attempt_id, result)
+        stage.record_verified(cell_id, expected_attempt_id, verification)
+        stage.commit_cell(cell_id, expected_attempt_id, commit)
+
+    canonical_path = tmp_path / f"canonical-{boundary or 'empty'}.jsonl"
+    if boundary is not None:
+        with CampaignJournal(canonical_path, plan) as interrupted:
+            attempt_id = interrupted.start_cell(cell_id)
+            assert attempt_id == expected_attempt_id
+            if boundary in {ARM_RESULT, VERIFIED, COMMITTED}:
+                interrupted.record_arm_result(cell_id, attempt_id, result)
+            if boundary in {VERIFIED, COMMITTED}:
+                interrupted.record_verified(cell_id, attempt_id, verification)
+            if boundary == COMMITTED:
+                interrupted.commit_cell(cell_id, attempt_id, commit)
+
+    with CampaignJournal(canonical_path, plan) as resumed:
+        receipt = resumed.import_committed_cell(
+            cell_id,
+            expected_attempt_id=expected_attempt_id,
+            result=result,
+            verification=verification,
+            commit=commit,
+        )
+        assert receipt["attempt_id"] == expected_attempt_id
+        assert receipt["resumed_from_state"] == (boundary or STARTED)
+        assert receipt["already_committed"] is (boundary == COMMITTED)
+        assert resumed.resume().committed_cell_ids == (cell_id,)
+        assert resumed.committed_records()[0]["result"] == result
+
+        replay = resumed.import_committed_cell(
+            cell_id,
+            expected_attempt_id=expected_attempt_id,
+            result=result,
+            verification=verification,
+            commit=commit,
+        )
+        assert replay["already_committed"] is True
+        assert replay["commit_event_sha256"] == receipt["commit_event_sha256"]
+
+
+def test_preverified_cell_import_rejects_conflicts_without_overwriting(
+    tmp_path: Path,
+) -> None:
+    plan = _plan(1)
+    cell_id = plan.cell_ids[0]
+    path = tmp_path / "conflict.jsonl"
+    with CampaignJournal(path, plan) as interrupted:
+        attempt_id = interrupted.start_cell(cell_id)
+        interrupted.record_arm_result(cell_id, attempt_id, {"value": "other"})
+
+    with CampaignJournal(path, plan) as resumed:
+        _assert_code(
+            "import_arm_result_conflict",
+            lambda: resumed.import_committed_cell(
+                cell_id,
+                expected_attempt_id=attempt_id,
+                result={"value": "expected"},
+                verification={"accepted": True},
+                commit={"stage_sha256": "d" * 64},
+            ),
+        )
+        assert resumed.result_records()[0]["result"] == {"value": "other"}
+        assert resumed.resume().committed_cell_ids == ()
+
+    empty_path = tmp_path / "attempt-mismatch.jsonl"
+    with CampaignJournal(empty_path, plan) as empty:
+        head_before = empty.resume().journal_head_sha256
+        _assert_code(
+            "import_attempt_id_conflict",
+            lambda: empty.import_committed_cell(
+                cell_id,
+                expected_attempt_id="not-the-derived-attempt",
+                result={"value": "expected"},
+                verification={"accepted": True},
+                commit={"stage_sha256": "d" * 64},
+            ),
+        )
+        assert empty.resume().journal_head_sha256 == head_before
+        assert empty.resume().incomplete_cell_ids == ()
+
+
+@pytest.mark.parametrize(
+    "boundary",
     [None, STARTED, ARM_RESULT, VERIFIED, FAILED, COMMITTED],
 )
 def test_interruption_at_every_state_boundary_is_deterministically_resumable(
