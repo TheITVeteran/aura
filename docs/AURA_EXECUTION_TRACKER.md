@@ -20488,3 +20488,55 @@ Evidence-weighted completion remains 27%; this is checkpoint 164 of the faithful
 292-399 forecast, leaving approximately 128-235 checkpoints. No reasoning-gain,
 frontier, external-custody campaign, live-app, release, or soak credit is
 awarded. Final soaks remain deferred.
+
+## Checkpoint 2026-07-19-165: Terminal Worker-Stage Import Protocol
+
+CP165 completes the production-quality verification layer between a detached
+supervisor-owned worker origin and the canonical paired-campaign journal.
+
+- One worker attempt must now produce the complete ordered cell set for exactly
+  one frozen arm in an isolated private journal. Partial, incomplete, failed,
+  timed-out, uncontained, abandoned, or lifecycle-less attempts are
+  unconditionally ineligible for canonical import.
+- The verifier reconstructs the exact allowed-cell digest from the campaign
+  plan; binds campaign, protocol, detached plan, broker policy, arm, attempt
+  slot, model, adapter, and detached-supervisor key custody; rebuilds the
+  external runner-signature request; and verifies every typed result signature,
+  sequence number, prior-origin link, attempt identity, and terminal lifecycle.
+- Broker-authenticated process and containment evidence is checked against the
+  exact lifecycle artifact path/hash, terminal event hash, result count, and
+  worker session. A substituted lifecycle summary, forged result, wrong policy,
+  or nonterminal broker verdict fails closed before the canonical journal is
+  opened for import.
+- Stage, lifecycle, intent, and receipt artifacts require owned, single-link,
+  private, regular, canonical files with bounded size and stable identity. The
+  stage is reread after journal replay to detect replacement or mutation across
+  verification.
+- Import writes a durable intent anchored to the prior canonical head, resumes
+  exact staged evidence through every journal boundary, publishes an immutable
+  receipt bound to the final canonical head, and is byte-stable on replay.
+  Conflicting intent, result, verification, commit, or attempt identities are
+  never replaced by a convenient retry.
+
+Validation is green: all 55 focused worker-stage, campaign-journal,
+detached-origin, and broker-client tests pass in 24.30 seconds. Eight new
+end-to-end tests cover full import and replay, partial-stage rejection, failed
+and uncontained workers, forged result origin, broker-lifecycle substitution,
+private/canonical storage enforcement, and intent conflict. Focused Ruff,
+bytecode compilation, and diff checks pass. The detached resident-32B trainer
+remained healthy and reached finite checkpoint 460/576 during validation.
+
+This checkpoint proves the complete staging/import protocol, not its use by the
+production campaign. CP166+ must migrate the paired runner to one isolated arm
+stage per supervisor attempt, perform bounded external-signature admission,
+bind the outer detached journal and quarantine history, remove every producer
+private-key argument and legacy signing path, and update the production and
+independent final-envelope verifiers together. Separately administered
+credentials, independent security review, complete compute reconstruction and
+ablations, accepted resident-32B pilot/powered/frontier evidence, installed-app
+proof, release gates, and final soaks remain open.
+
+Evidence-weighted completion remains 27%; this is checkpoint 165 of the faithful
+292-399 forecast, leaving approximately 127-234 checkpoints. No reasoning-gain,
+frontier, external-custody campaign, live-app, release, or soak credit is
+awarded. Final soaks remain deferred.
