@@ -19448,3 +19448,50 @@ the supervisor reaps it; the old order consulted libproc before authoritative
   exact resident resume launches. Evidence-weighted completion remains 27%;
   this is checkpoint 141 of the faithful 292-399 forecast, leaving
   approximately 151-258 checkpoints. Final soaks remain deferred.
+
+## Checkpoint 2026-07-18-142: Independent Trust Legs + Deliberative Unification
+
+CP142 lands the two independent-verification prerequisites the confirmatory
+campaign declares as required controls, plus the runtime-unification organs
+from the finish-line pass. No model was loaded; the training lane stayed with
+the CP139-141 detached run.
+
+- Signed contamination audit: `tools/produce_contamination_audit.py`
+  (keygen/produce/verify) sweeps every frozen campaign prompt against the
+  exact training-corpus bytes under exact/normalized/token-fivegram methods
+  (importing the campaign's own normalization), signs the canonical audit
+  body with Ed25519, refuses external-independence claims for in-repo keys,
+  and reports overlap honestly as failed_overlap. The REAL campaign consumer
+  (`_contamination_audit`) accepting clean audits and rejecting tampered or
+  forged ones is under test. An external keypair now exists at
+  `~/.aura/trust/contamination_audit_ed25519_{private,public}.pem`
+  (key_id 4035ecbe…).
+- Independent evidence verification:
+  `tools/verify_paired_campaign_evidence.py` regenerates the task battery
+  from the plan's DECLARED generation parameters — a self-consistent plan
+  that lies about its seeds is caught before grading — replays the
+  hash-chained journal read-only, re-grades committed raw outputs with
+  independently regenerated blinded answers, and must agree with the
+  published grade including its content hash. Corrupt evidence fails closed
+  with a verdict. 14/14 focused tests.
+- Deliberative unification (landed earlier this pass, recorded here):
+  bidirectional GWT↔RLC coupling (coalitions seed ablatable thought slots;
+  conclusions COMPETE for broadcast, priced by verification; lab episodes
+  stay decoupled), verifier arbitration over episode fast weights (a decoded
+  probe under active ΔW must not regress the verified score, else ΔW is
+  erased), organ ingress as vectors (body pressure decomposition naming
+  strained channels + anticipatory weighting — also fixing a silent
+  always-absent body-signal defect; VAD affect with distress raising stakes;
+  canonical-self embedding similarity), and the held-out facet grading loop
+  (episode facet judgments become gradeable Foundry verdicts via
+  `tools/grade_latent_facets.py`; ten human grades activate Wilson-bounded
+  reliability weights that mute hollow cue detectors end to end through the
+  wire). 187/187 focused latent-cortex tests green after rebase onto the
+  parallel session's CP138-141 line.
+- These are engineering and trust-infrastructure gains only: no reasoning,
+  resident-32B, frontier, or installed-app capability credit. The intelligence
+  dividend still rides on the CP139 recurrence-native training run and its
+  preregistered pilot/confirmatory campaigns.
+- Evidence-weighted completion remains 27%. This is checkpoint 142 of the
+  faithful 292-399 forecast, leaving approximately 150-257 checkpoints.
+  Final soaks remain deferred.
