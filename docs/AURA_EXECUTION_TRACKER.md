@@ -20940,3 +20940,50 @@ Evidence-weighted completion remains 27%; this is checkpoint 173 of the faithful
 292-399 forecast, leaving approximately 119-226 checkpoints. No reasoning-gain,
 frontier, external-custody campaign, live-app, release, or soak credit is
 awarded. Final soaks remain deferred.
+
+## Checkpoint 2026-07-19-174: Preterminal 32B Training Acceptance Contract
+
+CP174 fixes the exact internal-mechanics acceptance target for the active
+resident-32B recurrence run before terminal completion. Promotion can no longer
+derive "complete" from whatever workload a detached command declares after the
+fact.
+
+- The self-hashed v1 contract binds the immutable CP147 detached plan,
+  command, launcher, execution environment, tracked source-tree manifest,
+  no-restart/no-resume/no-broker policies, timeout, and resource envelope.
+- It fixes the 12-family by three-depth by 16-example factorial corpus, 576
+  examples and 576 optimizer steps, seed, recurrence ladder, slots, branches,
+  exchange, LoRA topology, optimizer, five-step logging/checkpoint cadence,
+  and exact streamed-gradient execution mode.
+- It binds the 32B base checkpoint fingerprint, model behavior bundle,
+  training runtime, all eight archived producer source hashes plus the resource
+  wrapper, and exact preterminal config, dataset, execution-spec, and resource
+  artifact bytes.
+- Claim scope is explicitly `internal_mechanics_acceptance_only`. The contract
+  records that training began before this commit, the original detached
+  terminal does not bind an output root, no external attestation is present,
+  and reasoning/frontier gain remains unmeasured. Those limitations cannot be
+  erased by a successful internal promotion.
+- Required successors are encoded in the contract: terminal artifact
+  generation validation, immutable freeze, frozen 32B mechanics smoke, fresh
+  hidden-task pilot, and powered externally administered frontier campaign.
+
+Validation is green: three strict duplicate-key/non-finite-safe contract tests
+verify its self-hash, scope, factorial workload, and identity coverage. A live
+preterminal comparison passes against the active plan and all four bound
+artifacts. At publication the trainer is healthy at checkpoint 550/576, so the
+contract precedes terminal adapter and benchmark evidence. Focused Ruff,
+bytecode, formatting, and diff checks pass.
+
+This is a version-controlled internal acceptance contract, not an independent
+signature or proof that the original supervisor causally captured the output
+generation. CP175+ must enforce it in promotion, replay exact model
+tokenization and loss cadence, establish the strongest honest terminal
+generation evidence available for this run, and add public freeze/promotion
+composition tests. A later externally claim-eligible reproduction must use an
+output-binding supervisor from launch.
+
+Evidence-weighted completion remains 27%; this is checkpoint 174 of the faithful
+292-399 forecast, leaving approximately 118-225 checkpoints. No reasoning-gain,
+frontier, external-custody campaign, live-app, release, or soak credit is
+awarded. Final soaks remain deferred.
