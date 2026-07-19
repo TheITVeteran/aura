@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "corpora": {
+    "anima-rationis": {
+      "snapshot": "config/requirement_sources/ANIMA_RATIONIS.txt",
+      "original_path": "/Users/bryan/Downloads/Anima Rationis.txt",
+      "original_sha256": "683fda592b223dbe9deaa98588d32efc54f0ba56ef1c81b49b4f0a92c3fcef6d",
+      "description": "Recursive Latent Cortex theory/requirements document (2026-07-15): latent workspace, controlled recurrence, schedule search, virtual width, fast weights, consolidation, and the falsifiable frontier-evidence ladder. Obligations map to the RLC-* tracker family and FRONTIER-COGNITION-001."
+    },
+    "capabilities-pdf": {
+      "snapshot": "config/requirement_sources/AURA_CAPABILITIES_PDF.txt",
+      "original_path": "/Users/bryan/Desktop/aura capabilities.pdf",
+      "original_sha256": "853eae8a849a7883564c1f8b56e43b5d3911f15ea4ea6d10271dbe83c1b25ebf",
+      "description": "Verbatim text extraction (single page, extracted 2026-07-16 during SCOPE-001 baseline; original_sha256 pins the source PDF) of the 2026-07-12 capability corpus. Obligations map to the OMEGA capability rows and the CTX3-* units under ADDENDUM-33."
+    },
+    "context-prompt": {
+      "snapshot": "config/requirement_sources/CONTEXT_TO_THINK_ABOUT_AS_YOU_WORK.txt",
+      "original_path": "/Users/bryan/Downloads/CONTEXT TO THINK ABOUT AS YOU WORK (1).txt",
+      "original_sha256": "998bc0f48161c1145adbab552b2e073916a774962b3defb76cf65710bbcf2115",
+      "description": "The primary improvement-pass prompt corpus: mandatory goals (immediate/high-end/sub-goals), engineering standards, boring-reliability bars, proof purification, runtime unification, and the assessment question battery."
+    },
+    "second-criticism": {
+      "snapshot": "config/requirement_sources/SECOND_CRITICISM_CORPUS.txt",
+      "original_path": "/Users/bryan/.codex/attachments/f895c26f-56d2-4c6a-80d7-ee488603715a/pasted-text.txt",
+      "original_sha256": "027b88359b729cc8ed78b72f5ca9f0873399c1dfd4201d25843706dd7f3fa3ab",
+      "description": "The second (canonical-mind) criticism corpus: ontological duplication, canonical causal graph, incomplete pieces, sentience/personhood/AGI evidence bars. Generated the ADDENDUM-19..33 items and CTX2-* units."
+    }
+  }
+}

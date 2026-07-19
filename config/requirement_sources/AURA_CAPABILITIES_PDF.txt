@@ -1,0 +1,19 @@
+physics modeling
+Full spatial VR environment physics, real-time procedural generation, complex subagent behavioral management.
+symbolic reasoning, computer vision (lip-reading).
+Quantum computational module processing
+emotional modeling.
+adaptive decision-making
+improve emotional rapport
+real-time situational analysis (internal and external)
+Code for high-fidelity neural simulation, connectome mapping/tuning, virtual-world hosting, and UI interface layers
+social judgment
+continuous multimodal perception, social modeling, planning, and general environment control (capable generally in environment and capable in any general environment)
+distributed embodiment to on-network devices
+independent value formation, strategic modeling, resistance to manipulaiton
+control across heterogeneous systems
+persistent subjective worlds, dynamic world generation
+subjective continuity
+distributed execution
+high-level task execution (navigation, repair, assistance in extreme environments), problem-solving,
+(Simulation-heavy training (physics sims like Isaac Sim or AirSim on game engines could help)

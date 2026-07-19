@@ -1,4 +1,4 @@
-.PHONY: update update-live rollback release-status lint test live-test typecheck compile quality smoke setup setup-dev setup-prod run demo demo-full demo-autonomy demo-learning triage contract-doc fmea-doc report bench courtroom baselines longevity longevity-24h longevity-4h chaos governance-lint cognitive-gate-audit skill-catalog-audit model-load-audit resource-observation-audit security enterprise-gate enterprise-collect enterprise-strict production-gate frontend-contract architecture-map provenance decisive proof-bundle behavioral-proof activation-audit source-hygiene clean-bench aletheia-validate final-proof person-box-proof sovereignty-proof doctor diagnostic-bundle backup restore restore-test memory-export memory-purge data-export data-purge log-purge closeout-audit closeout-semantic-status closeout-rubric identity-reset certify aletheia-live-proof aura-certify-boot
+.PHONY: update update-live rollback release-status lint test live-test typecheck compile quality smoke setup setup-dev setup-prod run demo demo-full demo-autonomy demo-learning triage contract-doc fmea-doc report bench courtroom baselines longevity longevity-24h longevity-4h chaos governance-lint reqproof-gate reqproof-release cognitive-gate-audit skill-catalog-audit model-load-audit resource-observation-audit security enterprise-gate enterprise-collect enterprise-strict production-gate frontend-contract architecture-map provenance decisive proof-bundle behavioral-proof activation-audit source-hygiene clean-bench aletheia-validate final-proof person-box-proof sovereignty-proof doctor diagnostic-bundle backup restore restore-test memory-export memory-purge data-export data-purge log-purge closeout-audit closeout-semantic-status closeout-rubric identity-reset certify aletheia-live-proof aura-certify-boot
 
 
 PYTHON ?= python
@@ -114,6 +114,14 @@ source-hygiene:
 governance-lint:
 	@echo "🛡  Running governance lint..."
 	@$(PYTHON) tools/lint_governance.py
+
+reqproof-gate:
+	@echo "📋 Requirement-to-proof structural gate (SCOPE-001)..."
+	@$(PYTHON) tools/reqproof/gate.py --mode structural
+
+reqproof-release:
+	@echo "📋 Requirement-to-proof RELEASE gate (blocks until zero open mandatory scope)..."
+	@$(PYTHON) tools/reqproof/gate.py --mode release
 
 cognitive-gate-audit:
 	@echo "🧠 Auditing cognitive candidate-gate coverage..."

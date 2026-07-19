@@ -43,6 +43,10 @@ class TestChecklistPin:
             "enterprise_gate",
             "production_gate",
             "fresh_hard_deaths",
+            # CP-scope control plane (SCOPE-001): registry/tracker coherence,
+            # zero-unmapped source coverage, and the defect-fingerprint
+            # ratchet are release-checklist items from 2026-07-18 onward.
+            "reqproof_structural",
         ]
 
     def test_deferred_gates_are_named_with_reasons(self):

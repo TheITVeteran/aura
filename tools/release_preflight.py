@@ -113,6 +113,14 @@ def default_checks() -> tuple[PreflightCheck, ...]:
                 "--out", "artifacts/reliability/preflight_triage.json",
             ),
         ),
+        PreflightCheck(
+            name="reqproof_structural",
+            purpose=(
+                "requirement registry matches the tracker, closure graph sound, "
+                "corpus coverage zero-unmapped, defect ratchet holds"
+            ),
+            command=(py, "tools/reqproof/gate.py", "--mode", "structural"),
+        ),
     )
 
 

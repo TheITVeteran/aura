@@ -1,0 +1,1504 @@
+{
+  "entries": [
+    {
+      "class": "rationale",
+      "corpus": "context-prompt",
+      "lines": "1-1",
+      "reason": "Conversational preamble challenging premature completion; the obligation it restates is the mandate below.",
+      "requirements": [],
+      "sha256": "8d7b1f1c1d7faa50a11f78fd6be7442a0261af1229cd9aba9bcef6875e7e0365"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "2-2",
+      "requirements": [
+        "FOUNDATION-100-001",
+        "FND-02-HYGIENE",
+        "FND-08-DEPTH",
+        "AUDIT-001"
+      ],
+      "sha256": "3b0c1571413857d95d1256ba1dccb4ab7a192e495cad8a2b4189ee6c136b716a"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "3-3",
+      "requirements": [
+        "FOUNDATION-100-001",
+        "SCOPE-001",
+        "FND-07-UNITY"
+      ],
+      "sha256": "0d3e92763c2e745b49a5459cd7ba75ab9b6bd70af2f131e39c11b17a85abd9d7"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "4-4",
+      "requirements": [
+        "SCOPE-001",
+        "PROGRESS-CONTROL-001",
+        "CHECKPOINT-001"
+      ],
+      "sha256": "e6f65e136b791e2669a6d1d0faa0c08a6eac71b3f4ec2d11bf936ebc7da071d1"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "5-5",
+      "requirements": [
+        "FRONTIER-001",
+        "CLAIMS-001",
+        "INTELLIGENCE-001",
+        "LONGHORIZON-001",
+        "CONVERSATION-001",
+        "DESKTOP-001",
+        "RUNTIME-001",
+        "FRONTIER-COGNITION-001",
+        "AUDIT-001",
+        "IIT-SYSTEM-001"
+      ],
+      "sha256": "f8e7070f24b49043641ccab56bb09bf8795a8e11c455c48221198174ebd4f5f2"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "6-6",
+      "requirements": [
+        "CLAIMS-001",
+        "INTELLIGENCE-001",
+        "IIT-SYSTEM-001",
+        "CONCEPTUAL-LEAP-001"
+      ],
+      "sha256": "f92f83b352ff8fbb7ec5dd2371567bd7469f2e3fa8f6cc1dfa4085b67d27e56b"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "7-7",
+      "requirements": [
+        "RUNTIME-001",
+        "UI-001",
+        "CONVERSATION-001",
+        "CHAT-DELIVERY-001",
+        "TOOLS-001",
+        "ADAPT-001",
+        "CODING-001",
+        "DESKTOP-001",
+        "MIND-001",
+        "SUBSTRATE-001",
+        "OPERATIONS-001",
+        "PORTABILITY-001",
+        "FAULT-001",
+        "ARCH-001",
+        "AGENCY-001",
+        "AUTONOMY-AUTHORITY-001",
+        "CLAIMS-001",
+        "COLLEAGUE-001"
+      ],
+      "sha256": "015787d7842a35cb481f1bf75260bbf9995e0d5bc6eeb8132b3958eec599bfef"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "8-8",
+      "requirements": [
+        "CLAIMS-001"
+      ],
+      "sha256": "2c6ce465d304906718ba5b7d0213cbec1660be961986fe13f67e1a33f1762eb1"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "9-9",
+      "requirements": [
+        "SOAK-001",
+        "OPERATIONS-001"
+      ],
+      "sha256": "f43a6cb0335f9463092df671490022086d53f43ab47ec1533885451dafbfb168"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "10-10",
+      "requirements": [
+        "SUBSTRATE-001",
+        "MIND-001",
+        "CLAIMS-001"
+      ],
+      "sha256": "0ea6a5e288fc7d495182c1ab5b7fc736e00ac026523796cf3bc23443525b77a5"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "11-11",
+      "requirements": [
+        "REPLICATION-001",
+        "INTELLIGENCE-001",
+        "REPO-001",
+        "ARCH-001"
+      ],
+      "sha256": "75f28f724d763752ecd497a1725572ea6e8a2592aa0a21d26cbf67b30e8a8416"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "12-12",
+      "requirements": [
+        "ARCH-001"
+      ],
+      "sha256": "1b4d59c4edcdf2b43a7ae3962bd45e82e13580cfbbf4eb06404617a68e93dc50"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "13-13",
+      "requirements": [
+        "FAULT-001"
+      ],
+      "sha256": "06607759990f80b0e7e35daf319b49f42b1b5edac09c6c96a12e7a2ecfaa45d4"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "14-14",
+      "requirements": [
+        "REPO-001"
+      ],
+      "sha256": "744470b6403463bfd78f32bca86d64f81120b057c9ad1d0196a228689c4c6478"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "15-15",
+      "requirements": [
+        "BOOT-HEALTH-001",
+        "RUNTIME-001",
+        "HEALTH-SURFACE-001"
+      ],
+      "sha256": "e8863369b666271101692b11b478067e95109428a14319890bda649478176c4e"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "16-16",
+      "requirements": [
+        "ARCH-001",
+        "ARCH-BASELINE-001"
+      ],
+      "sha256": "8b8bda5d245cd66ff4c3c0a30c795b76cf2899d96642c4daa871758ae59456a7"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "17-17",
+      "requirements": [
+        "FAULT-001"
+      ],
+      "sha256": "d445e90365b876e913f0c34ce88f8c265628c2cedc3948b525e1b76cf2876722"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "18-18",
+      "requirements": [
+        "PERF-001",
+        "UI-001",
+        "FOREGROUND-LATENCY-001"
+      ],
+      "sha256": "52714962655baa3f23e6cf58b2b0fcd1b5883a2d7874881da167fc9970cd85d4"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "19-19",
+      "requirements": [
+        "UI-001"
+      ],
+      "sha256": "5e0bf8c18daa5b75b2289fe1f9e225ca75fa57bcda93ad832e600ec39a3559b6"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "20-20",
+      "requirements": [
+        "VALIDATE-001",
+        "RUNTIME-001"
+      ],
+      "sha256": "5f424ee830f8051436ca7a5891a303e26aeb1e016da39cf7670957908dc139a9"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "21-21",
+      "requirements": [
+        "TOOLS-001",
+        "EXPECT-001",
+        "EFFECT-001"
+      ],
+      "sha256": "2575611dba58a3d6e6f62a3a80f05e0b41bfad026dc365b297eb65e89eda3cca"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "22-22",
+      "requirements": [
+        "UI-001",
+        "SUPPORTABILITY-001"
+      ],
+      "sha256": "fac3ef021e9ad614839c775b15e57beec41bd9217eb393998b49d04c23729d36"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "23-23",
+      "requirements": [
+        "MIND-001",
+        "FAULT-001",
+        "CHAT-DELIVERY-001",
+        "TOPOLOGY-CONSISTENCY-001"
+      ],
+      "sha256": "9786d868f9b8f244bc0235636e8df9a18ccb983e8e7f8b4cab69884ac5b78377"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "24-24",
+      "requirements": [
+        "UI-001"
+      ],
+      "sha256": "b4fcf28b06c399bb31d14d9fb9d98d700f46ada3530cc3af249814eec92cab9c"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "25-25",
+      "requirements": [
+        "OPERATIONS-001",
+        "PORTABILITY-001",
+        "TEST-DEPTH-001",
+        "REPLICATION-001",
+        "SOAK-001",
+        "SUPPORTABILITY-001",
+        "AUDIT-001"
+      ],
+      "sha256": "36bbe2d971f616befdaed390aeac981a28413a6f217fa74dd82c106749aa6abb"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "26-26",
+      "requirements": [
+        "PROOF-001",
+        "ARCH-001",
+        "MIND-001"
+      ],
+      "sha256": "f0326d6ab71e53f9864d265f275288fc06e30e57474a3348334f7de3c036219b"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "27-27",
+      "requirements": [
+        "CLAIMS-001",
+        "FRONTIER-001",
+        "REPO-001"
+      ],
+      "sha256": "9724ce068b7e36d5beea424ecce1feedd8e371a6ea17a49b9daa54021d6ff9c3"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "28-28",
+      "requirements": [
+        "FND-02-HYGIENE",
+        "FND-03-CONTRACTS",
+        "TEST-DEPTH-001"
+      ],
+      "sha256": "2fbd50339d347573b923f68feb9770cfcfa23346b92e79a0851df15d64fc4d8c"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "29-29",
+      "requirements": [
+        "MIND-001",
+        "PERF-001",
+        "FAULT-001",
+        "SOAK-001",
+        "FND-07-UNITY"
+      ],
+      "sha256": "50c18c8c261fa1ba0ad75769cc8e4fff6232a326e1707c2eb74e6a4db0eb0e30"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "30-30",
+      "requirements": [
+        "VALIDATE-001",
+        "RESOURCE-001",
+        "FAULT-001",
+        "FND-01-INVENTORY"
+      ],
+      "sha256": "fcf1ac3f504340b2a323a28445f6b14a1833800103e8f74aaafef680439fd234"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "31-31",
+      "requirements": [
+        "SCOPE-001",
+        "AUDIT-001",
+        "CLAIMS-001"
+      ],
+      "sha256": "d2f09420f67555b2453509ea3456d43e5ef6c12ad288eb2a1da6ec141680d9e4"
+    },
+    {
+      "class": "duplicate",
+      "corpus": "context-prompt",
+      "lines": "36-36",
+      "reason": "Restates the every-line closeout mandate from L2/L5; tracked by AUDIT-001, FND-01-INVENTORY.",
+      "requirements": [],
+      "sha256": "ad2ca90b3009e5dcc13b296a863e9c2ccf958ccdc735dace76845a0a31ee0b9b"
+    },
+    {
+      "class": "duplicate",
+      "corpus": "context-prompt",
+      "lines": "39-46",
+      "reason": "Structured restatement of the high-end goals from L6.",
+      "requirements": [
+        "CLAIMS-001",
+        "INTELLIGENCE-001",
+        "IIT-SYSTEM-001",
+        "CONCEPTUAL-LEAP-001"
+      ],
+      "sha256": "8ca086d1da2000266bbaccc97e12c80eb9607ffe3f70fba68644c60e958c4415"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "49-53",
+      "requirements": [
+        "RUNTIME-001",
+        "INTELLIGENCE-001",
+        "UI-001",
+        "FAULT-001"
+      ],
+      "sha256": "a32bc93962513c6119adad92d7de850dcc3bd7b580d895c0434656b10c97ecba"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "54-57",
+      "requirements": [
+        "AGENCY-001",
+        "AUTONOMY-AUTHORITY-001",
+        "RUNTIME-001"
+      ],
+      "sha256": "e084c0d481e05465e677a8919a810e5cb35f938c75481a9c69ca584768ca09c3"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "58-63",
+      "requirements": [
+        "CLAIMS-001",
+        "MIND-001",
+        "COLLEAGUE-001",
+        "ARCH-001"
+      ],
+      "sha256": "7fa9333a707081b1f91bd7a7fd8b255f407af1885601a34be261108116b399f9"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "64-66",
+      "requirements": [
+        "DESKTOP-001",
+        "CODING-001",
+        "ADAPT-001",
+        "IMMUNE-CODING-001"
+      ],
+      "sha256": "daa0d70718ae95e01c35dea3454fe28b13e7429b6a2803c62069bc404bdbc44e"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "67-67",
+      "requirements": [
+        "CONVERSATION-001",
+        "CHAT-DELIVERY-001",
+        "INFERENCE-RELIABILITY-001"
+      ],
+      "sha256": "e66df29c59b2ccbf0b4d47e83a59858336b479184b56ae24260d4b0f44c81ff4"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "68-70",
+      "requirements": [
+        "TOOLS-001",
+        "SUBSTRATE-001",
+        "EFFECT-001"
+      ],
+      "sha256": "7a82bae0670d498bffc8a34d30f39f64f7efccc13aeec23c64ecdc1fec24b427"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "71-76",
+      "requirements": [
+        "OPERATIONS-001",
+        "PORTABILITY-001",
+        "SUPPORTABILITY-001",
+        "OBSERVE-001",
+        "REPO-001"
+      ],
+      "sha256": "50d390937ee9406786c55a8baed48a31d8b08c4cfc007d1d08a178d152adb858"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "79-82",
+      "requirements": [
+        "FAULT-001",
+        "TEST-DEPTH-001",
+        "OPERATIONS-001",
+        "SECURITY-001",
+        "DATA-LIFECYCLE-001",
+        "COMPATIBILITY-001"
+      ],
+      "sha256": "2d278734c448c2b571cfc71a53f05d3fa5a3ece6a2311455be15c209db25d38a"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "83-84",
+      "requirements": [
+        "CLAIMS-001",
+        "SOAK-001"
+      ],
+      "sha256": "a8f3fad7fcf3310172a892b1cac8658270d35f2bb815ee5b546b06e36e38015f"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "85-85",
+      "requirements": [
+        "SUBSTRATE-001",
+        "MIND-001"
+      ],
+      "sha256": "0ea6a5e288fc7d495182c1ab5b7fc736e00ac026523796cf3bc23443525b77a5"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "86-86",
+      "requirements": [
+        "REPLICATION-001",
+        "INTELLIGENCE-001",
+        "REPO-001"
+      ],
+      "sha256": "75f28f724d763752ecd497a1725572ea6e8a2592aa0a21d26cbf67b30e8a8416"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "87-88",
+      "requirements": [
+        "ARCH-001",
+        "FAULT-001"
+      ],
+      "sha256": "a5b9f885c068fea5d0dc8e20d55216f176e4c2355adade4217722afa1e0f8dae"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "89-89",
+      "requirements": [
+        "REPO-001"
+      ],
+      "sha256": "744470b6403463bfd78f32bca86d64f81120b057c9ad1d0196a228689c4c6478"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "90-90",
+      "requirements": [
+        "BOOT-HEALTH-001",
+        "HEALTH-SURFACE-001"
+      ],
+      "sha256": "e8863369b666271101692b11b478067e95109428a14319890bda649478176c4e"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "91-91",
+      "requirements": [
+        "ARCH-001",
+        "ARCH-BASELINE-001"
+      ],
+      "sha256": "8b8bda5d245cd66ff4c3c0a30c795b76cf2899d96642c4daa871758ae59456a7"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "92-92",
+      "requirements": [
+        "FAULT-001"
+      ],
+      "sha256": "d445e90365b876e913f0c34ce88f8c265628c2cedc3948b525e1b76cf2876722"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "93-93",
+      "requirements": [
+        "PERF-001",
+        "UI-001"
+      ],
+      "sha256": "52714962655baa3f23e6cf58b2b0fcd1b5883a2d7874881da167fc9970cd85d4"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "94-94",
+      "requirements": [
+        "UI-001"
+      ],
+      "sha256": "5e0bf8c18daa5b75b2289fe1f9e225ca75fa57bcda93ad832e600ec39a3559b6"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "95-95",
+      "requirements": [
+        "VALIDATE-001"
+      ],
+      "sha256": "5f424ee830f8051436ca7a5891a303e26aeb1e016da39cf7670957908dc139a9"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "96-96",
+      "requirements": [
+        "TOOLS-001",
+        "EXPECT-001",
+        "EFFECT-001"
+      ],
+      "sha256": "2575611dba58a3d6e6f62a3a80f05e0b41bfad026dc365b297eb65e89eda3cca"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "97-97",
+      "requirements": [
+        "UI-001",
+        "SUPPORTABILITY-001"
+      ],
+      "sha256": "fac3ef021e9ad614839c775b15e57beec41bd9217eb393998b49d04c23729d36"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "98-98",
+      "requirements": [
+        "MIND-001",
+        "FAULT-001",
+        "CHAT-DELIVERY-001"
+      ],
+      "sha256": "8a306ad5802cd93a682fd68cd4f776a8a63b1b9674532ca947d0856356bb5231"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "99-99",
+      "requirements": [
+        "UI-001"
+      ],
+      "sha256": "b4fcf28b06c399bb31d14d9fb9d98d700f46ada3530cc3af249814eec92cab9c"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "100-109",
+      "requirements": [
+        "OPERATIONS-001",
+        "PORTABILITY-001",
+        "TEST-DEPTH-001",
+        "REPLICATION-001",
+        "SOAK-001",
+        "AUDIT-001"
+      ],
+      "sha256": "58f8d58d29ff61d705dc1b79ff49038feb72e5b22da4d2d4d5f407ab9313ce13"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "110-113",
+      "requirements": [
+        "PROOF-001",
+        "ARCH-001",
+        "MIND-001"
+      ],
+      "sha256": "be0a19f249ede9786a0a7471e3cb4d79bcb5ce5aafbbd3e60368ebac817ab838"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "116-121",
+      "requirements": [
+        "CLAIMS-001",
+        "FRONTIER-001",
+        "REPO-001",
+        "ARCH-001"
+      ],
+      "sha256": "ccb38c1cc05875c941aba82310fdcf821c45aeea6a07e2be3c4f6abf42319e0c"
+    },
+    {
+      "class": "duplicate",
+      "corpus": "context-prompt",
+      "lines": "124-124",
+      "reason": "Restates L28 (no scaffolding, production closed-loop).",
+      "requirements": [
+        "FND-02-HYGIENE",
+        "FND-03-CONTRACTS",
+        "TEST-DEPTH-001"
+      ],
+      "sha256": "2fbd50339d347573b923f68feb9770cfcfa23346b92e79a0851df15d64fc4d8c"
+    },
+    {
+      "class": "duplicate",
+      "corpus": "context-prompt",
+      "lines": "127-127",
+      "reason": "Restates L29 (unified entity, longevity).",
+      "requirements": [
+        "MIND-001",
+        "PERF-001",
+        "FAULT-001",
+        "SOAK-001"
+      ],
+      "sha256": "50c18c8c261fa1ba0ad75769cc8e4fff6232a326e1707c2eb74e6a4db0eb0e30"
+    },
+    {
+      "class": "duplicate",
+      "corpus": "context-prompt",
+      "lines": "130-130",
+      "reason": "Restates L30 (live runtime is the main test; RAM care; root fixes).",
+      "requirements": [
+        "VALIDATE-001",
+        "RESOURCE-001",
+        "FAULT-001"
+      ],
+      "sha256": "fcf1ac3f504340b2a323a28445f6b14a1833800103e8f74aaafef680439fd234"
+    },
+    {
+      "class": "duplicate",
+      "corpus": "context-prompt",
+      "lines": "133-133",
+      "reason": "Restates L31 (all goals mandatory).",
+      "requirements": [
+        "SCOPE-001"
+      ],
+      "sha256": "dcad761f2c7f19acbbe6d67a11072811e6b2d10f25e9a59c7128040cf4137b0e"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "142-142",
+      "requirements": [
+        "AUDIT-001",
+        "CLAIMS-001"
+      ],
+      "sha256": "8609bb3dda793b6056a8d3c28305dcc1c03537c8b4dcea949936078a4b5d701e"
+    },
+    {
+      "class": "normative",
+      "corpus": "context-prompt",
+      "lines": "149-149",
+      "requirements": [
+        "AUDIT-001",
+        "CLAIMS-001"
+      ],
+      "sha256": "e77e6f40c88b3d927898d8302211dfea0be7fa1854fa517af53134639cf754cf"
+    },
+    {
+      "class": "normative",
+      "corpus": "second-criticism",
+      "lines": "4-6",
+      "requirements": [
+        "ADDENDUM-19",
+        "CTX2-MIND-001",
+        "MIND-001"
+      ],
+      "sha256": "f22bc0c39d312bfc09c88621e1c0af2ab43841bddd167615b1c65aa8c2952b3f"
+    },
+    {
+      "class": "normative",
+      "corpus": "second-criticism",
+      "lines": "8-10",
+      "requirements": [
+        "ADDENDUM-21",
+        "CTX2-LANE-001",
+        "CTX2-LANE-002"
+      ],
+      "sha256": "723ab7483a5bc1501a00af78f6cd5db31b2de25bd75c9a2e5b1c3e500b59c9e8"
+    },
+    {
+      "class": "normative",
+      "corpus": "second-criticism",
+      "lines": "11-11",
+      "requirements": [
+        "CTX2-LANE-003"
+      ],
+      "sha256": "2545f021724825fd6ba7d8fe0e5d1d53686a49580a8ee58320f6a6aebdb25944"
+    },
+    {
+      "class": "normative",
+      "corpus": "second-criticism",
+      "lines": "12-12",
+      "requirements": [
+        "ADDENDUM-22",
+        "CTX2-TEST-001",
+        "CTX2-TEST-002"
+      ],
+      "sha256": "0f2424e1353f69940b8c3005e0090700fce437688f595679e28b90a32616091a"
+    },
+    {
+      "class": "normative",
+      "corpus": "second-criticism",
+      "lines": "13-13",
+      "requirements": [
+        "ADDENDUM-23",
+        "CTX2-GATE-001",
+        "CTX2-GATE-002"
+      ],
+      "sha256": "46cf7c4f639b4b8276545ba8f3eaa29421e3454f4b219a97f11d2f3d81499681"
+    },
+    {
+      "class": "normative",
+      "corpus": "second-criticism",
+      "lines": "14-14",
+      "requirements": [
+        "CTX2-SKILL-001",
+        "CTX2-SKILL-002"
+      ],
+      "sha256": "9ea9cfb5718d658122d1eab8c0eb6578e19b0833cb6b99eab01448422d306a25"
+    },
+    {
+      "class": "normative",
+      "corpus": "second-criticism",
+      "lines": "15-15",
+      "requirements": [
+        "ADDENDUM-24",
+        "CTX2-AMP-001"
+      ],
+      "sha256": "de60a3ca7dc9df029d5edafb2cc6d057fe26d0022a182a17d83bb47cdb3b32dc"
+    },
+    {
+      "class": "normative",
+      "corpus": "second-criticism",
+      "lines": "16-16",
+      "requirements": [
+        "ADDENDUM-25",
+        "CTX2-ONESHOT-001",
+        "CTX2-ONESHOT-003"
+      ],
+      "sha256": "73c92c3ec9cd1e5322f0e34da70063766bc4821e0b5f09045eab487e223e9054"
+    },
+    {
+      "class": "normative",
+      "corpus": "second-criticism",
+      "lines": "18-28",
+      "requirements": [
+        "ADDENDUM-19",
+        "CTX2-MIND-001",
+        "CTX2-MIND-003",
+        "MIND-001"
+      ],
+      "sha256": "4bd08b9c2a660f5d5d4ce02af2edddd5ecd74cf3fee8c382b433e44386ea452e"
+    },
+    {
+      "class": "normative",
+      "corpus": "second-criticism",
+      "lines": "32-36",
+      "requirements": [
+        "ADDENDUM-30",
+        "COLLEAGUE-001"
+      ],
+      "sha256": "b272024270dfb2fa5fd45a54e46a74abbea86c9363732c1962f441e5a4c02df3"
+    },
+    {
+      "class": "normative",
+      "corpus": "second-criticism",
+      "lines": "40-53",
+      "requirements": [
+        "ADDENDUM-19",
+        "ADDENDUM-20",
+        "ARCH-001",
+        "MIND-001",
+        "CTX2-GRAPH-003"
+      ],
+      "sha256": "5825ef44b05dc6a843d8ffd49360e79dbfba4d85ebc85979a9e273203ae75a2d"
+    },
+    {
+      "class": "normative",
+      "corpus": "second-criticism",
+      "lines": "57-66",
+      "requirements": [
+        "ADDENDUM-20",
+        "CTX2-GRAPH-001",
+        "CTX2-GRAPH-002",
+        "CTX2-GRAPH-004",
+        "STATE-001"
+      ],
+      "sha256": "b2bc487dae8acd6e03d8bd08b6b22501b221e496f91e3402600b8af9d5814529"
+    },
+    {
+      "class": "normative",
+      "corpus": "second-criticism",
+      "lines": "69-81",
+      "requirements": [
+        "ADDENDUM-27",
+        "CTX2-PERSON-001",
+        "CTX2-PERSON-002",
+        "CLAIMS-001"
+      ],
+      "sha256": "2469011c48bb4b08b8d249cb6b6f042cb7a0d0fec0d27e8af4f89285c67679a2"
+    },
+    {
+      "class": "normative",
+      "corpus": "second-criticism",
+      "lines": "83-96",
+      "requirements": [
+        "ADDENDUM-19",
+        "CTX2-MIND-002",
+        "CTX2-GATE-001",
+        "ADDENDUM-21",
+        "CTX2-SKILL-002",
+        "CTX2-MEM-001",
+        "CTX2-MEM-002",
+        "CTX2-ONESHOT-004",
+        "CTX2-AMP-003",
+        "CTX2-ROLLBACK-001",
+        "ADDENDUM-28",
+        "CTX2-REPL-001"
+      ],
+      "sha256": "141d7c756c3c0ec9434908cae714b02562c3dcbc659db2a2bb98c6fe69568350"
+    },
+    {
+      "class": "normative",
+      "corpus": "second-criticism",
+      "lines": "99-111",
+      "requirements": [
+        "ADDENDUM-29",
+        "CTX2-WELFARE-001",
+        "CTX2-WELFARE-002",
+        "CTX2-WELFARE-003",
+        "WELFARE-001"
+      ],
+      "sha256": "780348511a6050e7c98a84694532e9c886993ceb954c464fa4411cf7afd57920"
+    },
+    {
+      "class": "normative",
+      "corpus": "second-criticism",
+      "lines": "114-129",
+      "requirements": [
+        "ADDENDUM-27",
+        "CTX2-PERSON-001",
+        "CTX2-PERSON-003",
+        "CLAIMS-001"
+      ],
+      "sha256": "4fe0696094f1a276f73d30d2593723c780b67755bac99ff5be3a718ef431627a"
+    },
+    {
+      "class": "normative",
+      "corpus": "second-criticism",
+      "lines": "132-147",
+      "requirements": [
+        "ADDENDUM-30",
+        "CTX2-COLLEAGUE-001",
+        "CTX2-COLLEAGUE-002",
+        "CTX2-COLLEAGUE-003",
+        "COLLEAGUE-001"
+      ],
+      "sha256": "0715df2faf9151f469f61cefc36e563b53bd1cbef5ca21d7caf4b4839448e98e"
+    },
+    {
+      "class": "normative",
+      "corpus": "second-criticism",
+      "lines": "151-167",
+      "requirements": [
+        "ADDENDUM-31",
+        "CTX2-AGI-001",
+        "INTELLIGENCE-001",
+        "LONGHORIZON-001"
+      ],
+      "sha256": "f429c29d3b6c8fe4c727241a275ba1bd79d5f526fe4e9e3d83e834c1e1979a01"
+    },
+    {
+      "class": "normative",
+      "corpus": "second-criticism",
+      "lines": "171-178",
+      "requirements": [
+        "ADDENDUM-31",
+        "CTX2-AGI-002",
+        "CLAIMS-001"
+      ],
+      "sha256": "37bf4ab7b7b0cb290c5e24f1926ef277595b41b7026f379cc6e014cd38be2960"
+    },
+    {
+      "class": "normative",
+      "corpus": "second-criticism",
+      "lines": "181-188",
+      "requirements": [
+        "ADDENDUM-28",
+        "CTX2-ID-001",
+        "IDENTITY-001"
+      ],
+      "sha256": "9d8e93ae233a81f44d0706504e0bc22f421d2c1486072e587407841e74f9501c"
+    },
+    {
+      "class": "normative",
+      "corpus": "second-criticism",
+      "lines": "195-203",
+      "requirements": [
+        "ADDENDUM-28",
+        "CTX2-ID-002",
+        "CTX2-ID-003",
+        "CTX2-MEM-002",
+        "IDENTITY-001",
+        "MEMORY-001"
+      ],
+      "sha256": "68c53c3fbc1fa83e32897c869551361d7a8263e10ae5f421663fb5830d2f6a8b"
+    },
+    {
+      "class": "normative",
+      "corpus": "capabilities-pdf",
+      "lines": "1-1",
+      "requirements": [
+        "CTX3-PHYS-001",
+        "SIMWORLD-001"
+      ],
+      "sha256": "e220272b9fd6183b215aa307c91cda88186b6023b34aafb0c41307eedc950023"
+    },
+    {
+      "class": "normative",
+      "corpus": "capabilities-pdf",
+      "lines": "2-2",
+      "requirements": [
+        "CTX3-PHYS-002",
+        "CTX3-SUBAGENT-001",
+        "SIMWORLD-001"
+      ],
+      "sha256": "44101e87ad739de35ade15b1b63b0f99767f90452a5b1212363b750ddf283398"
+    },
+    {
+      "class": "normative",
+      "corpus": "capabilities-pdf",
+      "lines": "3-3",
+      "requirements": [
+        "CTX3-REASON-001",
+        "CTX3-PERCEPT-001",
+        "MULTIMODAL-001"
+      ],
+      "sha256": "e1fd0c5adb6fca6c57ab9c0a7ea0d21db3cc83d30a1c4de0f2af09f7d290bee4"
+    },
+    {
+      "class": "normative",
+      "corpus": "capabilities-pdf",
+      "lines": "4-4",
+      "requirements": [
+        "CTX3-QUANTUM-001",
+        "CTX3-QUANTUM-002",
+        "QUANTUM-001"
+      ],
+      "sha256": "df857f0be43f5baae765b817d51a6666d89c9c3d38329930c83545e65f20d741"
+    },
+    {
+      "class": "normative",
+      "corpus": "capabilities-pdf",
+      "lines": "5-7",
+      "requirements": [
+        "CTX3-SOCIAL-001",
+        "CTX3-SOCIAL-002",
+        "CTX3-DECIDE-001",
+        "SOCIAL-001"
+      ],
+      "sha256": "d963cdade04fdfedfda3e6908c985706e13a2badf0a3bc7c314ea723ea34e5a7"
+    },
+    {
+      "class": "normative",
+      "corpus": "capabilities-pdf",
+      "lines": "8-8",
+      "requirements": [
+        "CTX3-SITUATION-001",
+        "OBSERVE-001"
+      ],
+      "sha256": "3ef2db94dc14e6be3bc8314b77dc55f723f7744fc99a176552d6d1a818c022c8"
+    },
+    {
+      "class": "normative",
+      "corpus": "capabilities-pdf",
+      "lines": "9-9",
+      "requirements": [
+        "CTX3-NEURO-001",
+        "CTX3-NEURO-002",
+        "CTX3-WORLD-002",
+        "NEUROSIM-001",
+        "UI-001"
+      ],
+      "sha256": "041643429c91a28b6dd2b23f99d3d9aee1bc893ff97d0b38cc179e473cacd7ce"
+    },
+    {
+      "class": "normative",
+      "corpus": "capabilities-pdf",
+      "lines": "10-10",
+      "requirements": [
+        "CTX3-SOCIAL-001",
+        "CTX3-DECIDE-001",
+        "SOCIAL-001"
+      ],
+      "sha256": "87d09e2b7acbffa33a4c5225bf7eaac2a07a37b55ad7cd8c49f5dfbb65fd3c3f"
+    },
+    {
+      "class": "normative",
+      "corpus": "capabilities-pdf",
+      "lines": "11-11",
+      "requirements": [
+        "CTX3-PERCEPT-001",
+        "CTX3-PERCEPT-002",
+        "MULTIMODAL-001",
+        "DESKTOP-001"
+      ],
+      "sha256": "c8c878c523d88dbf303e86e559b321393351e48266b76c4c121a9967c2721e53"
+    },
+    {
+      "class": "normative",
+      "corpus": "capabilities-pdf",
+      "lines": "12-12",
+      "requirements": [
+        "CTX3-DIST-001",
+        "DISTRIBUTED-001"
+      ],
+      "sha256": "7cd8bc4e8cb74c6ba5195bae1c0877e94fa234abc3777dd04dcd2efa3a00b7c0"
+    },
+    {
+      "class": "normative",
+      "corpus": "capabilities-pdf",
+      "lines": "13-13",
+      "requirements": [
+        "CTX3-VALUE-001",
+        "CTX3-VALUE-002",
+        "VALUES-001"
+      ],
+      "sha256": "cc6eaf81b6621a23d70e2ecdb38cc3ef18b828c493067c1e7aec1e860ab1025a"
+    },
+    {
+      "class": "normative",
+      "corpus": "capabilities-pdf",
+      "lines": "14-14",
+      "requirements": [
+        "CTX3-DIST-002",
+        "DISTRIBUTED-001"
+      ],
+      "sha256": "eb19b3cc2eda1334987ad4e8b6bd85f01ad835b919b59a64a62dd1d720f1b7f0"
+    },
+    {
+      "class": "normative",
+      "corpus": "capabilities-pdf",
+      "lines": "15-15",
+      "requirements": [
+        "CTX3-WORLD-001",
+        "CTX3-WORLD-002",
+        "SIMWORLD-001"
+      ],
+      "sha256": "bacfa5fb08edb8bb0e81f9c8c927fdb78b2a5a2fef819446083d5e4570be5470"
+    },
+    {
+      "class": "normative",
+      "corpus": "capabilities-pdf",
+      "lines": "16-16",
+      "requirements": [
+        "CTX3-CONTINUITY-001",
+        "IDENTITY-001"
+      ],
+      "sha256": "fada98baaeba26117ba83adce58580e9c0f732962ded372a518778cfb1da46e8"
+    },
+    {
+      "class": "normative",
+      "corpus": "capabilities-pdf",
+      "lines": "17-17",
+      "requirements": [
+        "CTX3-DIST-002",
+        "DISTRIBUTED-001"
+      ],
+      "sha256": "0a8f7a74ddd0712bf6c0f0217d41aa88f743d8afd80d5496fd377d044a4f852b"
+    },
+    {
+      "class": "normative",
+      "corpus": "capabilities-pdf",
+      "lines": "18-18",
+      "requirements": [
+        "CTX3-EXTREME-001",
+        "EXTREME-001"
+      ],
+      "sha256": "dfb7d18cb8b8b732b43684f9ac0a3b6a0ca3a7ca4d13201682f0caeda96a0a39"
+    },
+    {
+      "class": "normative",
+      "corpus": "capabilities-pdf",
+      "lines": "19-19",
+      "requirements": [
+        "CTX3-SIMTRAIN-001",
+        "SIMWORLD-001"
+      ],
+      "sha256": "160faff6d20af422c781b1787367003153ffca0feb20945cf9d56df08a75381e"
+    },
+    {
+      "class": "rationale",
+      "corpus": "anima-rationis",
+      "lines": "1-48",
+      "reason": "Theoretical correction establishing that fixed weights do not imply fixed computation; the buildable obligations begin at the architecture section (L49).",
+      "requirements": [],
+      "sha256": "77fbfdcee6e4f773e5a67880acc296779477f1fa13017bbca5a5af3b7f85cf25"
+    },
+    {
+      "class": "normative",
+      "corpus": "anima-rationis",
+      "lines": "49-52",
+      "requirements": [
+        "RLC-SCOPE-001",
+        "RLC-MECHANICS-001",
+        "FRONTIER-COGNITION-001"
+      ],
+      "sha256": "d481ed9434675d790497db3b7ebe7e4907987177f4d5863c71a5bae6d588ad90"
+    },
+    {
+      "class": "normative",
+      "corpus": "anima-rationis",
+      "lines": "53-71",
+      "requirements": [
+        "RLC-WORKSPACE-001"
+      ],
+      "sha256": "b87d6f022b1d6f39bfe68a1270b250c4f7666581201bd18d18a1641b8000de82"
+    },
+    {
+      "class": "normative",
+      "corpus": "anima-rationis",
+      "lines": "72-102",
+      "requirements": [
+        "RLC-RECURRENCE-001",
+        "RLC-COMPUTE-001"
+      ],
+      "sha256": "927d855018efe3b95af5f9d8ad82da6014587e114b012ccabf89a84484eb57a0"
+    },
+    {
+      "class": "normative",
+      "corpus": "anima-rationis",
+      "lines": "103-138",
+      "requirements": [
+        "RLC-SCHEDULE-001"
+      ],
+      "sha256": "499927331a5de446b332b81a48e05e75c01bb7097ffd3958dad4d32f9099d477"
+    },
+    {
+      "class": "normative",
+      "corpus": "anima-rationis",
+      "lines": "139-172",
+      "requirements": [
+        "RLC-BRANCHES-001"
+      ],
+      "sha256": "f7b1f997e6d523060ab697841590d807356e0af20f026eaf80454ae51c64b42f"
+    },
+    {
+      "class": "normative",
+      "corpus": "anima-rationis",
+      "lines": "173-222",
+      "requirements": [
+        "RLC-LATENT-OPT-001"
+      ],
+      "sha256": "a45cedae543665ade8f09ea301849135bc36d11c88ae74f07f1b24525649c63a"
+    },
+    {
+      "class": "normative",
+      "corpus": "anima-rationis",
+      "lines": "223-265",
+      "requirements": [
+        "RLC-FAST-WEIGHTS-001"
+      ],
+      "sha256": "7ec62d8d051c2eaec8626fdae91f04c918aef36be1cde090af4e8fe58bc6cb05"
+    },
+    {
+      "class": "normative",
+      "corpus": "anima-rationis",
+      "lines": "266-290",
+      "requirements": [
+        "RLC-SCHEDULE-001",
+        "RLC-SCOPE-001"
+      ],
+      "sha256": "cfcecc6cf23d53e7167deabc72294ec0889d9df2bdcb010ffc660f70c561e5b6"
+    },
+    {
+      "class": "normative",
+      "corpus": "anima-rationis",
+      "lines": "291-312",
+      "requirements": [
+        "RLC-RUNTIME-001",
+        "RLC-MECHANICS-001",
+        "RLC-LIFECYCLE-001"
+      ],
+      "sha256": "c261c7a1e5b29d67130149acb8b35277558331679d4fd224733daed9ff5e10cc"
+    },
+    {
+      "class": "normative",
+      "corpus": "anima-rationis",
+      "lines": "313-389",
+      "requirements": [
+        "RLC-MECHANICS-001",
+        "RLC-COMPUTE-001",
+        "RLC-EXPERIMENTS-001",
+        "RLC-CLAIMS-001"
+      ],
+      "sha256": "3d93369b329fd4b7fb68930b25e6559b1dc6ff25f8c2f0795c0112dc8e16ccc0"
+    },
+    {
+      "class": "normative",
+      "corpus": "anima-rationis",
+      "lines": "390-445",
+      "requirements": [
+        "RLC-EXPERIMENTS-001",
+        "RLC-SCALING-001",
+        "RLC-FRESH-TASKS-001"
+      ],
+      "sha256": "31aa123b8bcf25426ce8d73b0525e379efafefce95970b8a96b308ae30705876"
+    },
+    {
+      "class": "normative",
+      "corpus": "anima-rationis",
+      "lines": "446-469",
+      "requirements": [
+        "RLC-BASELINES-001",
+        "RLC-EXPERIMENTS-001"
+      ],
+      "sha256": "d30512202567abca235cd5d5b6d97c881f52a324b6b6c7509927e4b239c918fb"
+    },
+    {
+      "class": "normative",
+      "corpus": "anima-rationis",
+      "lines": "470-489",
+      "requirements": [
+        "RLC-SCOPE-001",
+        "RLC-CLAIMS-001"
+      ],
+      "sha256": "515991919d9977a197383fbb38061cb9d52355c4d8b4c73d60485e89fe45e60a"
+    },
+    {
+      "class": "rationale",
+      "corpus": "anima-rationis",
+      "lines": "490-514",
+      "reason": "Reframing plus published s1/QwQ evidence that the checkpoint leaves reasoning capability unrealized; motivates but does not add obligations beyond RLC-FRONTIER-001.",
+      "requirements": [],
+      "sha256": "f41797f1f023af8464a0af778c9104e83a6753967a659406028ac4f49e5e19ce"
+    },
+    {
+      "class": "normative",
+      "corpus": "anima-rationis",
+      "lines": "515-544",
+      "requirements": [
+        "RLC-CONSOLIDATION-001",
+        "ADAPT-001"
+      ],
+      "sha256": "899f660e3c02065c1640f604eb5d1f45d20f46b70975775c61c9b9c710f9d9a5"
+    },
+    {
+      "class": "normative",
+      "corpus": "anima-rationis",
+      "lines": "545-577",
+      "requirements": [
+        "RLC-RECURRENCE-001",
+        "RLC-SCHEDULE-001"
+      ],
+      "sha256": "3ca47acfe1d239a9ec853929c7087a92eff69c04cf5aeb24268e2458bad52961"
+    },
+    {
+      "class": "normative",
+      "corpus": "anima-rationis",
+      "lines": "578-612",
+      "requirements": [
+        "RLC-FAST-WEIGHTS-001",
+        "RLC-CONSOLIDATION-001",
+        "RLC-ANTI-INTERFERENCE-001"
+      ],
+      "sha256": "3b313a618a45241f7739056b59af9d9f1d6fe4a804fc9a24fec5351f39cc769c"
+    },
+    {
+      "class": "rationale",
+      "corpus": "anima-rationis",
+      "lines": "613-655",
+      "reason": "Expected-gain estimates and benchmark history contextualizing the program; the enforceable success bars are L656-680 and L1085-1094.",
+      "requirements": [],
+      "sha256": "2ebb92e46ffdfe9417fe5186c63d0cc99b0443f1476194d67ff124164fc9ae1f"
+    },
+    {
+      "class": "normative",
+      "corpus": "anima-rationis",
+      "lines": "656-680",
+      "requirements": [
+        "RLC-FRONTIER-001",
+        "RLC-SCALING-001",
+        "RLC-CLAIMS-001"
+      ],
+      "sha256": "69e9b13553efbf5de4b38e633e7bf30b38c59b7fb41fb3eb2403ec782b395a0c"
+    },
+    {
+      "class": "normative",
+      "corpus": "anima-rationis",
+      "lines": "681-708",
+      "requirements": [
+        "RLC-SCOPE-001",
+        "FRONTIER-COGNITION-001"
+      ],
+      "sha256": "bc0f109311f360dbca340e19e9b396e138554fb8363ec58e4e07b0dc4417e3ba"
+    },
+    {
+      "class": "normative",
+      "corpus": "anima-rationis",
+      "lines": "709-742",
+      "requirements": [
+        "RLC-SCOPE-001",
+        "ADAPT-001"
+      ],
+      "sha256": "bd010de0a23d678c8802c5d1f245bdf5fe1666711097b3beab30c1e89cfc33f9"
+    },
+    {
+      "class": "normative",
+      "corpus": "anima-rationis",
+      "lines": "743-772",
+      "requirements": [
+        "RLC-RECURRENCE-001",
+        "RLC-COMPUTE-001",
+        "RLC-SCALING-001"
+      ],
+      "sha256": "787d25a1c4586196b8f2506e05f067a46bc7ebc55c0da89fcc67143680e32c30"
+    },
+    {
+      "class": "normative",
+      "corpus": "anima-rationis",
+      "lines": "773-796",
+      "requirements": [
+        "RLC-WORKSPACE-001"
+      ],
+      "sha256": "0e6ecc4a8059353981c25e1a5442f85fddeae466a3995d83f9fe558cae46040f"
+    },
+    {
+      "class": "normative",
+      "corpus": "anima-rationis",
+      "lines": "797-817",
+      "requirements": [
+        "RLC-FAST-WEIGHTS-001",
+        "RLC-CONSOLIDATION-001",
+        "RLC-ANTI-INTERFERENCE-001"
+      ],
+      "sha256": "04ead970b5156f433e93f6f3bdd63b223d2f5f6b738827fc63405afd4505ef68"
+    },
+    {
+      "class": "normative",
+      "corpus": "anima-rationis",
+      "lines": "818-837",
+      "requirements": [
+        "MULTIMODAL-001",
+        "RLC-SCOPE-001"
+      ],
+      "sha256": "e80f8226705b776b00832fb3e9fc926713e9cf943101804590218d9371fdd64e"
+    },
+    {
+      "class": "normative",
+      "corpus": "anima-rationis",
+      "lines": "838-863",
+      "requirements": [
+        "RLC-FAST-WEIGHTS-001",
+        "ADAPT-001"
+      ],
+      "sha256": "20b8c8014ef94bb33f1963fe014f7171a27b7a19bdaf2a224044601aea94ef8d"
+    },
+    {
+      "class": "normative",
+      "corpus": "anima-rationis",
+      "lines": "864-924",
+      "requirements": [
+        "RLC-CONSOLIDATION-001",
+        "ADAPT-001",
+        "RLC-FRESH-TASKS-001"
+      ],
+      "sha256": "85d8fcbb66c5149ec50c193e6f51d5668ef8ea0c7177168f8a9c6bc6d3fa6a37"
+    },
+    {
+      "class": "normative",
+      "corpus": "anima-rationis",
+      "lines": "925-1006",
+      "requirements": [
+        "RLC-ANTI-INTERFERENCE-001",
+        "RLC-BASELINES-001",
+        "RLC-FRESH-TASKS-001"
+      ],
+      "sha256": "8c4b4386c51f7d45148866f723e99aaa15d77cc77ce77ba0ce3d417ca67227f7"
+    },
+    {
+      "class": "rationale",
+      "corpus": "anima-rationis",
+      "lines": "1007-1024",
+      "reason": "Compression-vs-procedures insight motivating the cognitive-kernel target already mapped at L681-742.",
+      "requirements": [],
+      "sha256": "949add6a47bf71c290641e8516a32f3419a932dfefbcd8c268d1656146a02969"
+    },
+    {
+      "class": "normative",
+      "corpus": "anima-rationis",
+      "lines": "1025-1051",
+      "requirements": [
+        "RLC-FRONTIER-001",
+        "RLC-CLAIMS-001",
+        "FRONTIER-COGNITION-001"
+      ],
+      "sha256": "9d6166e7c429e2dfdbed20ff04abbd0d43f5a160aa50e5efe3d4e9b3c673fd0c"
+    },
+    {
+      "class": "normative",
+      "corpus": "anima-rationis",
+      "lines": "1052-1069",
+      "requirements": [
+        "RLC-EXPERIMENTS-001",
+        "RLC-LIVE32B-001",
+        "RLC-FRESH-TASKS-001",
+        "RLC-BASELINES-001",
+        "RLC-ANTI-INTERFERENCE-001",
+        "RLC-INDEPENDENT-001"
+      ],
+      "sha256": "83250442bcef7fd7f056b2b4272f50c9a7cb1cd4734333efcd312c09d677ead2"
+    },
+    {
+      "class": "rationale",
+      "corpus": "anima-rationis",
+      "lines": "1070-1084",
+      "reason": "Concluding restatement of the wholesale recipe; each component is mapped at its defining section above.",
+      "requirements": [],
+      "sha256": "3d21c6b11e8acd95289ad6d8d4406d5a1319025ed6e2289722aa751f990eeae8"
+    },
+    {
+      "class": "normative",
+      "corpus": "anima-rationis",
+      "lines": "1085-1094",
+      "requirements": [
+        "RLC-FRONTIER-001",
+        "RLC-SCALING-001",
+        "RLC-EXPERIMENTS-001",
+        "RLC-ANTI-INTERFERENCE-001",
+        "RLC-CONSOLIDATION-001",
+        "RLC-CLAIMS-001"
+      ],
+      "sha256": "a002b72ce00c7969fa44578d0fcef000d934df163ebaefc0cf6239dbbd4a418c"
+    }
+  ],
+  "schema_version": 1
+}

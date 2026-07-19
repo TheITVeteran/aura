@@ -1,0 +1,11 @@
+{
+  "ACTION-CLAIM-MISMATCH": "Grounding-fault class name used by the action/claim comparator, not a requirement ID.",
+  "FM-ACTION-001": "FMEA failure-mode registry entry (docs/FMEA.md), tracked by the FMEA loop rather than the requirement registry.",
+  "FM-LOOP-004": "FMEA failure-mode registry entry (docs/FMEA.md), tracked by the FMEA loop rather than the requirement registry.",
+  "PASSF-ACTION-SHALLOW-SUCCESS": "Named failure-mode seed key from the Pass F FMEA item, not a requirement ID.",
+  "PASSF-FALSE-HEALTH": "Named failure-mode seed key from the Pass F FMEA item, not a requirement ID.",
+  "PASSF-NEURAL-STREAM-FLOOD": "Named failure-mode seed key from the Pass F FMEA item, not a requirement ID.",
+  "PASSF-RESOURCE-SPAWN-LOOP": "Named failure-mode seed key from the Pass F FMEA item, not a requirement ID.",
+  "PASSF-SEMANTIC-REVIEW-GAP": "Named failure-mode seed key from the Pass F FMEA item, not a requirement ID.",
+  "PASSF-STALE-OBLIGATION": "Named failure-mode seed key from the Pass F FMEA item, not a requirement ID."
+}
