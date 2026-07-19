@@ -19365,3 +19365,48 @@ resident-32B, frontier, installed-app, release, or soak credit.
   build the signed contamination-corpus producer and independent raw-output/
   compute verifier without loading another model. Final long soaks remain
   deferred.
+
+## Checkpoint 2026-07-18-139: Resident V2 Prospective Protocol Freeze
+
+CP139 freezes the resident recurrence-native training and decision protocol
+before the resident model is loaded or any pilot result exists. It awards no
+training, gain, frontier, installed-app, release, or soak credit.
+
+- The protocol binds clean published `main` at CP138
+  `f13692afb22e7e0d074c2967025c2bd161a65545`, active fused resident manifest
+  `05b4a40e...6b83f`, and expected full weight identity `8eae71e7...0fad`.
+  Runtime admission must independently recompute the full model, behavior,
+  Python/dependency, trainer, objective, execution, and curriculum identities.
+- Training is frozen at 576 unique examples: all twelve families, depths
+  2/4/8, 16 cells each, one exact epoch, recurrent curriculum 1/2/4, 16 slots,
+  constructive and counterexample branches, rank-8 scoped LoRA over o_proj and
+  v_proj, AdamW at 1e-4, and 25-step immutable checkpoints. The first detached
+  invocation has a 0.001-minute training window and must publish exactly one
+  step with return code 75; a separately supervised invocation must then resume
+  the exact optimizer/cursor/order state through step 576. Resumed training has
+  a 720-minute hard budget and the supervisor a 13-hour outer deadline.
+- The first post-training result is a two-seed, seven-domain, four-arm
+  directional falsification pilot under task registry `2026.07.18.2`. It may
+  advance only if adapter RLC beats both adapter vanilla and base RLC, ordinary
+  adapter behavior does not materially regress, isolation stays exact, and all
+  source/model/adapter/reset/scorer receipts validate. A negative or
+  inconclusive pilot requires diagnosis and a newly preregistered training
+  revision; it cannot be promoted by adding favorable tasks post hoc.
+- The six-arm confirmatory campaign remains conditional. Before its tasks are
+  issued, a prospective power simulation must choose the larger of its sample
+  requirement and the registry floor of 20 trials per domain. It additionally
+  requires externally held task/provider trust roots, signed zero-overlap
+  contamination evidence against the exact training corpus, independent raw
+  rescoring and compute replay, counterbalanced order, state/reset receipts,
+  domain and production non-inferiority, repeated replication, and the installed
+  desktop producer. The interaction claim remains
+  `(adapter_rlc-adapter_vanilla) > (base_rlc-base_vanilla)`.
+- Exact protocol:
+  `artifacts/closeout/latent_cortex/resident_32b_v2_cp139/protocol.json`.
+  Evidence-weighted completion remains 27%. This is checkpoint 139 of the
+  faithful 292-399 forecast, leaving approximately 153-260 checkpoints.
+- Next: publish CP139, launch the forced partial under the one-shot detached
+  supervisor, validate its one-step checkpoint and resident identity, then
+  launch exact detached resume. Continue lightweight verifier and contamination
+  infrastructure while the model lane is occupied. Final long soaks remain
+  deferred.
