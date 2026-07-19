@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "workstream": "SCOPE-001 / PROGRESS-CONTROL-001 — Requirement-to-Proof Control Plane",
+  "operator_contract": [
+    "Work directly on main; no branches/worktrees.",
+    "Never touch core/brain/llm/latent_cortex/**, its tests, RLC-owned files, or Zencoder's in-flight dirty files.",
+    "Reconcile git status + origin/main before editing and before every checkpoint; commit with explicit paths only.",
+    "Bounded runs only; no multi-hour soaks; push at every meaningful checkpoint."
+  ],
+  "session_1": {
+    "status": "complete",
+    "completed_at_commit": "b67ba49f",
+    "delivered": [
+      "tools/reqproof/{schema,tracker_parse,migrate,validate,coverage,gate,author_coverage_map}.py",
+      "config/requirement_registry.json — 301 requirements, deterministic, tamper-evident",
+      "config/requirement_sources/ + MANIFEST.json — 4 corpora snapshotted and provenance-hashed",
+      "config/requirement_coverage_map.json — 137 entries, zero-unmapped across all corpora",
+      "config/reqproof_defect_baseline.json — 58 pinned pre-existing defects (shrink-only)",
+      "config/reqproof_prose_token_allowlist.json — 9 reviewed non-requirement tokens",
+      "97 tests incl. anti-gaming battery (tests/test_reqproof_*.py, tests/reqproof_testkit.py)",
+      "release_preflight gate 'reqproof_structural' + Makefile targets reqproof-gate / reqproof-release",
+      "tracker SCOPE-001 row moved to IN PROGRESS with machine-backed status"
+    ],
+    "verification": {
+      "structural_gate": "pass (zero blocking defects, zero unmapped, ratchet holds)",
+      "release_gate": "fail by design: 281 mandatory not closed, 58 pinned defects",
+      "repo_gates": "compile, lint, smoke(104+), governance-lint, security, enterprise-gate all green at b67ba49f"
+    }
+  },
+  "session_2": {
+    "objective": "Evidence ledger + progress engine: make every percentage and remaining-checkpoint number reproducible from exact registry and evidence state.",
+    "ordered_tasks": [
+      {
+        "id": "S2-1",
+        "task": "Evidence recording CLI (tools/reqproof/evidence.py): attach EvidenceRef entries (class, ref, sha256, commit, date) to requirements via a registry overlay or regeneration-safe ledger file — never hand-edits of requirement_registry.json. Drain the 19 unproven-closure defects by either recording real verifiable evidence for the migrated COMPLETE rows or demoting them to in_progress in the tracker (each demotion is a truth correction, not scope loss)."
+      },
+      {
+        "id": "S2-2",
+        "task": "Checkpoint accounting: ingest pushed checkpoint history (CP1..current from tracker narrative + git) into a machine checkpoint ledger keyed to requirement IDs; supersede tools/closeout/remaining_checkpoint_contract.py by importing its remaining obligations as registry acceptance references."
+      },
+      {
+        "id": "S2-3",
+        "task": "Progress engine (tools/reqproof/progress.py): evidence-weighted burn-up + total-checkpoint forecast computed ONLY from registry+evidence+checkpoint ledger. Publish per-workstream open acceptance units, newly discovered scope, reopened regressions, and a confidence interval; wire the number into the tracker's Current Estimate section as a generated block (manual estimate deleted)."
+      },
+      {
+        "id": "S2-4",
+        "task": "Weight assignment pass: replace weight_provenance=default with reviewed risk/proof weights for the ~30 highest-risk parents; record provenance=assigned."
+      },
+      {
+        "id": "S2-5",
+        "task": "Drain ratchet debt: adjudicate 23 dependency cycles (real dependency vs mutual reference), define real rows for the 11 prose-minted requirements in the tracker, resolve 3 contradictory statuses and 2 false closures; shrink the baseline with each fix."
+      }
+    ],
+    "regeneration_rule": "Any tracker normative edit requires migrate.py --write in the same commit (TestRealRepositoryGate enforces at HEAD).",
+    "known_sharp_edges": [
+      "Zencoder edits the tracker frequently; run migrate --check before assuming staleness is yours.",
+      "gate.py --refresh-baseline refuses growth; initial seeding only when the baseline file is absent.",
+      "Enterprise gate flags the words stub/mock/placeholder and raw subprocess: use core/runtime/subprocess_gateway and neutral naming in any new reqproof code.",
+      "MIGRATION_RULES_VERSION must bump whenever migration rule text/derivations change (it is part of generated_from)."
+    ]
+  },
+  "session_3": {
+    "objective": "Release contract integration + tracker convergence: RELEASE-CONTRACT-001 manifest keyed to registry IDs; release train consumes reqproof-release; tracker master tables become a generated view of the registry (single source of truth inverts); full-suite chunk run + closeout audit of the control plane itself.",
+    "depends_on": ["S2-1", "S2-2", "S2-3"]
+  },
+  "resume_command": "python tools/reqproof/gate.py --mode structural && python tools/reqproof/migrate.py --check"
+}
