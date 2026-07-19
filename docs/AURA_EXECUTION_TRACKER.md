@@ -16,15 +16,16 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **Checkpoint 147 is the current
-  reviewed source candidate in the `main` worktree; checkpoints through CP146
-  are pushed. The corrected resident-32B path completed clean one- and five-step
-  calibrations with finite durable checkpoints, exact source identity, and no
-  memory ratchet. The measured warm rate is 74.90 seconds per step, projecting
-  about 12 hours for 576 steps. The sampled 61-GiB peak is still too close to
-  the 64-GiB host limit, so CP147 adds an explicit 48-GiB MLX wired-residency
-  control before the full launch. No reasoning-gain or frontier claim exists
-  yet. A wired resident gate, completed training, authenticated role roots, the
+- Current bounded implementation milestone: **Checkpoint 148 is the current
+  reviewed source candidate in the `main` worktree; checkpoints through CP147
+  are pushed. The corrected resident-32B path completed clean one-, two-, and
+  five-step calibrations with finite durable checkpoints, exact source identity,
+  no memory ratchet, and a 48-GiB MLX wired-residency limit. The full detached
+  576-step run is active from exact pushed CP147 source and has crossed its first
+  durable five-step checkpoint. The calibrated operating ETA is 10-16 hours,
+  with a 24-hour training deadline and a 26-hour containment timeout. No
+  reasoning-gain or frontier claim exists yet. Completed training,
+  authenticated role roots, the
   paired pilot, external-frontier comparison, and exact rebuilt-app proof remain
   open**. Checkpoint 80
   made cached
@@ -19671,3 +19672,37 @@ faithful 292-399 forecast, leaving approximately 145-252 checkpoints. Next:
 publish CP147, run a bounded resident gate under the 48-GiB wired limit from an
 exact isolated commit, and launch the 24-hour-capped detached full run only if
 the physical profile and receipts pass. Final soaks remain deferred.
+
+## Checkpoint 2026-07-18-148: Wired Gate and Full Resident Launch
+
+The real two-step resident gate ran from isolated pushed commit `35d22706` with
+the 40-GiB active, 2-GiB cache, and 48-GiB wired MLX envelope introduced by
+CP147. It completed cleanly in 121.02 seconds, reproduced the first two streamed
+calibration losses exactly (`5.078771`, `1.933315`), emitted two finite durable
+checkpoints, and proved descendant containment at exit. Seven physical-footprint
+samples ranged from 22-54 GiB and fell after peaks instead of ratcheting.
+
+The passed gate admitted the full 576-step resident run from the same immutable
+worktree and commit. The detached supervisor is PID `82371`, its trainer is PID
+`82384`, and the source-bound plan and command digests are
+`47572325947fe3781e332b384d90f6e1c04e6835681489652641eaaa3056c116` and
+`8e56f7298b7ec1d19f0f7eee913b494ff5ee67b0f637cceca50adb4f7ddea082`.
+The run is a deterministic step-zero launch, checkpoints every five steps, has
+a 24-hour training deadline inside a 26-hour detached containment timeout, and
+survives the initiating Codex session. It crossed its first immutable checkpoint
+at step five with finite mean loss `3.268469` after 244.21 training seconds.
+
+`launch_cp148.json` binds the stable calibration receipts, resource envelope,
+immutable first checkpoint, exact launch plan, source commit, process identities,
+and open completion state. The growing training directory and footprint stream
+remain intentionally unsealed until process termination. This checkpoint proves
+only launch admission, resource behavior, source identity, containment, and
+durable progress; it awards no training-completion, reasoning-gain, or frontier
+capability credit.
+
+Evidence-weighted completion remains 27%; this is checkpoint 148 of the faithful
+292-399 forecast, leaving approximately 144-251 checkpoints. Next: keep the full
+run monitored without competing model workloads, implement authenticated
+pre-pinned role-separated trust roots, validate the final step-576 bundle, freeze
+fresh pilot seeds, and run the preregistered paired pilot. Final soaks remain
+deferred.

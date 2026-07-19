@@ -1,0 +1,74 @@
+{
+  "calibration_gate": {
+    "adapter_sha256": "9a8ea0d64fdb715c96a7b13923e69fc61370863e45342de901117cf2870a9fcd",
+    "complete": true,
+    "config_sha256": "51ddac5ae133aba83125d3b1508cd6a28f5caf07598682422d3183c21a400b15",
+    "contained": true,
+    "detached_duration_s": 121.021899,
+    "detached_file_sha256": "c5d8e3060122757d2eb9aae0dfbce4e46abb45ca98e6f7873d6aa997f47f7952",
+    "detached_receipt_sha256": "07fb54179b233dd3278414f17ecfaccd784c8fc1fd128b6c9f92bfbd1ff3e3dc",
+    "execution_spec_sha256": "ac08659fc9487098f876d660db4b02259f19b3471227b35e4edbabf4d4e76987",
+    "losses": [
+      5.078771,
+      1.933315
+    ],
+    "memory_sampler": {
+      "max_physical_footprint_gb": 54,
+      "min_physical_footprint_gb": 22,
+      "sample_count": 7,
+      "sample_interval_s": 15,
+      "sha256": "e5fe3f741ed94deb8cfecc1aebc19361dbf6d03dbd3e5de7d96a5b5043ae339a"
+    },
+    "resource_envelope_file_sha256": "f8945710d6fa607373e32a4876ea2593cbbe5180d6ae20d38ae32e7274628e16",
+    "steps": 2,
+    "trainer_file_sha256": "018ee610bec02e238a144c7c775ec3dd9a306407dff73208eac254f963263174",
+    "trainer_receipt_sha256": "018ee610bec02e238a144c7c775ec3dd9a306407dff73208eac254f963263174",
+    "training_elapsed_s": 106.580302
+  },
+  "capability_credit_eligible": false,
+  "frozen_at": "2026-07-19T06:46:04Z",
+  "full_run": {
+    "adapter_id": "resident-32b-recurrence-v2-cp147-full",
+    "checkpoint_every": 5,
+    "child_pid_at_launch": 82384,
+    "command_sha256": "8e56f7298b7ec1d19f0f7eee913b494ff5ee67b0f637cceca50adb4f7ddea082",
+    "first_checkpoint": {
+      "adapter_sha256": "67564ea45dc0b9fd5f2d9f964c4be5e378c5344b0e77abe06c57e23348640436",
+      "complete_sha256": "710629ec647a1279c78e0e5f62c55abe0a8fc19b9e38f9d116767d3d7be1b3be",
+      "elapsed_training_s": 244.212062,
+      "id": "step-00000005-285d79e4ec6c449798a17360ab8a51ef",
+      "mean_loss": 3.268469,
+      "step": 5
+    },
+    "launch_plan_file_sha256": "37de8bd00b081dd709c322900a68bec59087b9d960ff2a01aa7e05281e96f8d7",
+    "max_steps": 576,
+    "plan_sha256": "47572325947fe3781e332b384d90f6e1c04e6835681489652641eaaa3056c116",
+    "resume_contract": "none",
+    "source_commit": "35d22706e61b7eff0a636956f53737a3d2cef6db",
+    "source_worktree": "/Users/bryan/.aura/rlc-training-cp147",
+    "started_at_unix": 1784443215.9773922,
+    "state_at_freeze": "running",
+    "supervisor_pid_at_launch": 82371,
+    "timeout_s": 93600,
+    "training_deadline_s": 86400
+  },
+  "parent_calibration": {
+    "path": "artifacts/closeout/latent_cortex/resident_32b_v2_cp139/calibration_cp147.json",
+    "sha256": "eab4fe1d0f75fe543bf115cb1cb98574f16baf18816471b44d369063959b782b"
+  },
+  "resource_envelope": {
+    "active_memory_gib": 40,
+    "cache_gib": 2,
+    "device_memory_bytes": 68719476736,
+    "device_recommended_working_set_bytes": 55662788608,
+    "mlx_version": "0.31.2",
+    "wired_memory_gib": 48
+  },
+  "result": {
+    "full_run_admitted": true,
+    "full_run_complete": false,
+    "reason": "the real resident two-step wired gate passed with exact loss reproduction, finite checkpoints, detached containment, and a non-ratcheting sampled footprint; the full run has crossed its first durable checkpoint",
+    "training_or_capability_claim": false
+  },
+  "schema": "aura.recurrence_native_resident_launch.v1"
+}
