@@ -89,7 +89,7 @@ WORKER_ORIGIN_DIR = "worker_origins"
 VERDICT_SCHEMA = "aura.latent_cortex.independent_evidence_verdict.v1"
 TASK_ISSUER_PAYLOAD_SCHEMA = "aura.latent_cortex.task_issuer_prelaunch.v1"
 CAMPAIGN_RUNNER_PAYLOAD_SCHEMA = "aura.latent_cortex.runner_prelaunch.v1"
-FINAL_VERIFIER_PAYLOAD_SCHEMA = "aura.latent_cortex.final_verifier_payload.v2"
+FINAL_VERIFIER_PAYLOAD_SCHEMA = "aura.latent_cortex.final_verifier_payload.v3"
 SEALED_OUTPUT_MANIFEST_SCHEMA = "aura.latent_cortex.sealed_output_manifest.v3"
 ANSWER_REVEAL_PAYLOAD_SCHEMA = "aura.latent_cortex.answer_reveal_payload.v1"
 FINAL_RUN_PAYLOAD_SCHEMA = "aura.latent_cortex.final_run_payload.v3"
@@ -103,6 +103,52 @@ WORKER_LIFECYCLE_MANIFEST_SCHEMA = (
 
 def _sha256_bytes(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
+
+
+def _first_semantic_difference(
+    production: Any,
+    independent: Any,
+    *,
+    path: str = "$",
+) -> str | None:
+    if type(production) is not type(independent):
+        return (
+            f"{path}: type {type(production).__name__} != "
+            f"{type(independent).__name__}"
+        )
+    if isinstance(production, dict):
+        production_keys = set(production)
+        independent_keys = set(independent)
+        if production_keys != independent_keys:
+            missing = sorted(production_keys - independent_keys)
+            extra = sorted(independent_keys - production_keys)
+            return f"{path}: missing={missing!r} extra={extra!r}"
+        for key in sorted(production):
+            difference = _first_semantic_difference(
+                production[key],
+                independent[key],
+                path=f"{path}.{key}",
+            )
+            if difference is not None:
+                return difference
+        return None
+    if isinstance(production, list):
+        if len(production) != len(independent):
+            return f"{path}: length {len(production)} != {len(independent)}"
+        for index, (left, right) in enumerate(
+            zip(production, independent, strict=True)
+        ):
+            difference = _first_semantic_difference(
+                left,
+                right,
+                path=f"{path}[{index}]",
+            )
+            if difference is not None:
+                return difference
+        return None
+    if production != independent:
+        return f"{path}: {production!r} != {independent!r}"
+    return None
 
 
 @contextmanager
@@ -423,8 +469,24 @@ def _verify_prelaunch_trust(
 
 def _canonical_artifact(path: Path, *, role: str) -> dict[str, Any]:
     raw = read_stable_bytes(path, max_bytes=64 * 1024 * 1024)
+
+    def object_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"{role} contains duplicate JSON key {key!r}")
+            result[key] = value
+        return result
+
+    def reject_constant(value: str) -> None:
+        raise ValueError(f"{role} contains non-finite number {value}")
+
     try:
-        document = json.loads(raw)
+        document = json.loads(
+            raw,
+            object_pairs_hook=object_pairs,
+            parse_constant=reject_constant,
+        )
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError(f"{role} is not valid JSON") from exc
     if not isinstance(document, dict) or raw != canonical_json_bytes(document) + b"\n":
@@ -1408,8 +1470,14 @@ def verify_campaign_evidence(
     failures: list[str] = []
     detail: dict[str, Any] = {}
 
-    plan_payload = (campaign_dir / PLAN_FILE).read_bytes()
-    plan = CampaignPlan.from_dict(json.loads(plan_payload))
+    plan_path = campaign_dir / PLAN_FILE
+    plan_payload = read_stable_bytes(
+        plan_path,
+        max_bytes=64 * 1024 * 1024,
+    )
+    plan = CampaignPlan.from_dict(
+        _canonical_artifact(plan_path, role="campaign plan")
+    )
     detail["plan_sha256"] = _sha256_bytes(plan_payload)
     trusted_policy, trust_failures, trust_detail = _verify_prelaunch_trust(
         plan,
@@ -1506,70 +1574,99 @@ def verify_campaign_evidence(
             trusted_policy.policy_sha256 if trusted_policy is not None else None
         ),
     )
-    independent_grade = independent_grade_campaign(
+    independent_result = independent_grade_campaign(
         records,
         plan=plan,
         issuer_tasks=tasks,
+        trusted_contamination_root_sha256=trusted_root,
+        trusted_campaign_policy_sha256=(
+            trusted_policy.policy_sha256 if trusted_policy is not None else None
+        ),
     )
-    detail["recomputed_verdict"] = grade.get("verdict")
-    detail["recomputed_claim_tier"] = grade.get("claim_tier")
-    detail["independent_verdict"] = independent_grade.get("verdict")
-    detail["independent_claim_tier"] = independent_grade.get("claim_tier")
-    detail["independent_implementation_sha256"] = independent_grade.get(
+    if (
+        not isinstance(independent_result, dict)
+        or set(independent_result)
+        != {
+            "semantic_grade",
+            "semantic_grade_canonical_sha256",
+            "implementation_sha256",
+        }
+    ):
+        failures.append("independent kernel returned an invalid result envelope")
+        independent_result = {}
+    independent_grade = independent_result.get("semantic_grade")
+    independent_grade_sha256 = independent_result.get(
+        "semantic_grade_canonical_sha256"
+    )
+    independent_implementation_sha256 = independent_result.get(
         "implementation_sha256"
     )
-    for key in (
-        "verdict",
-        "claim_tier",
-        "observed_task_count",
-        "observed_cell_count",
-        "domain_counts",
+    if (
+        not isinstance(independent_implementation_sha256, str)
+        or len(independent_implementation_sha256) != 64
+        or any(
+            character not in "0123456789abcdef"
+            for character in independent_implementation_sha256
+        )
     ):
-        if grade.get(key) != independent_grade.get(key):
-            failures.append(
-                f"production grade {key}={grade.get(key)!r} disagrees with "
-                f"independent kernel {independent_grade.get(key)!r}"
-            )
-    production_comparisons = grade.get("comparisons")
-    independent_comparisons = independent_grade.get("comparisons")
-    if isinstance(production_comparisons, dict) and isinstance(
-        independent_comparisons, dict
-    ):
-        if set(production_comparisons) != set(independent_comparisons):
-            failures.append("production and independent comparison sets disagree")
-        else:
-            for name in sorted(production_comparisons):
-                production_claim = production_comparisons[name]
-                independent_claim = independent_comparisons[name]
-                production_tier = (
-                    production_claim.get("tier")
-                    if isinstance(production_claim, dict)
-                    else None
-                )
-                independent_tier = (
-                    independent_claim.get("tier")
-                    if isinstance(independent_claim, dict)
-                    else None
-                )
-                if production_tier != independent_tier:
-                    failures.append(
-                        f"comparison {name} tier disagrees: production "
-                        f"{production_tier!r}, independent {independent_tier!r}"
-                    )
+        failures.append("independent kernel implementation identity is invalid")
+    production_grade_bytes = canonical_json_bytes(grade)
+    production_semantic_grade_sha256 = _sha256_bytes(production_grade_bytes)
+    detail["recomputed_verdict"] = grade.get("verdict")
+    detail["recomputed_claim_tier"] = grade.get("claim_tier")
+    detail["production_semantic_grade_sha256"] = (
+        production_semantic_grade_sha256
+    )
+    detail["independent_semantic_grade_sha256"] = independent_grade_sha256
+    detail["independent_implementation_sha256"] = (
+        independent_implementation_sha256
+    )
+    detail["independent_verdict"] = (
+        independent_grade.get("verdict")
+        if isinstance(independent_grade, dict)
+        else None
+    )
+    detail["independent_claim_tier"] = (
+        independent_grade.get("claim_tier")
+        if isinstance(independent_grade, dict)
+        else None
+    )
+    if not isinstance(independent_grade, dict):
+        failures.append("independent kernel returned no semantic grade tree")
     else:
-        failures.append("production or independent comparisons are invalid")
+        independent_grade_bytes = canonical_json_bytes(independent_grade)
+        actual_independent_sha256 = _sha256_bytes(independent_grade_bytes)
+        if independent_grade_sha256 != actual_independent_sha256:
+            failures.append(
+                "independent semantic grade hash does not match its complete tree"
+            )
+        if (
+            production_grade_bytes != independent_grade_bytes
+            or production_semantic_grade_sha256 != actual_independent_sha256
+        ):
+            difference = _first_semantic_difference(grade, independent_grade)
+            failures.append(
+                "production and independent semantic grade trees differ"
+                + (f": {difference}" if difference is not None else "")
+            )
 
     # 4. Agreement with the published grade, if one exists.
     grade_path = campaign_dir / GRADE_FILE
     published_grade_sha256: str | None = None
     campaign_manifest_sha256: str | None = None
     if grade_path.exists():
-        published = json.loads(grade_path.read_bytes())
+        published = _canonical_artifact(
+            grade_path,
+            role="published grade",
+        )
         published_grade_sha256 = published.get("grade_sha256")
         detail["published_verdict"] = published.get("verdict")
         manifest_path = campaign_dir / MANIFEST_FILE
         if manifest_path.exists():
-            manifest = json.loads(manifest_path.read_bytes())
+            manifest = _canonical_artifact(
+                manifest_path,
+                role="campaign manifest",
+            )
             campaign_manifest_sha256 = manifest.get("manifest_sha256")
             if published.get("campaign_manifest_sha256") != manifest.get(
                 "manifest_sha256"
@@ -1652,6 +1749,10 @@ def verify_campaign_evidence(
             failures.append(
                 "final verifier attestation requires sealed manifest and published grade"
             )
+        elif failures:
+            detail["verifier_attestation_request_blocked_by_failures"] = list(
+                failures
+            )
         else:
             implementation_map = metadata["execution_config"].get(
                 "implementation_sha256"
@@ -1666,15 +1767,40 @@ def verify_campaign_evidence(
             independent_scoring_sha256 = detail.get(
                 "independent_implementation_sha256"
             )
+            exact_grade_sha256 = (
+                implementation_map.get(
+                    "core/brain/llm/latent_cortex/exact_paired_grade.py"
+                )
+                if isinstance(implementation_map, dict)
+                else None
+            )
+            exact_statistics_sha256 = (
+                implementation_map.get(
+                    "core/brain/llm/latent_cortex/exact_paired_statistics.py"
+                )
+                if isinstance(implementation_map, dict)
+                else None
+            )
+            production_semantic_grade_sha256 = detail.get(
+                "production_semantic_grade_sha256"
+            )
+            independent_semantic_grade_sha256 = detail.get(
+                "independent_semantic_grade_sha256"
+            )
             if not all(
                 isinstance(value, str) and len(value) == 64
                 for value in (
                     production_grade_sha256,
+                    exact_grade_sha256,
+                    exact_statistics_sha256,
                     independent_scoring_sha256,
+                    production_semantic_grade_sha256,
+                    independent_semantic_grade_sha256,
                 )
             ):
                 failures.append(
-                    "final verifier payload lacks pinned production or independent kernel identity"
+                    "final verifier payload lacks pinned semantic or "
+                    "implementation identity"
                 )
                 return {
                     "schema": VERDICT_SCHEMA,
@@ -1706,7 +1832,17 @@ def verify_campaign_evidence(
                     "key_erasure_manifest_sha256"
                 ),
                 "production_protocol_sha256": _campaign_protocol_sha256(),
+                "production_semantic_grade_sha256": (
+                    production_semantic_grade_sha256
+                ),
+                "independent_semantic_grade_sha256": (
+                    independent_semantic_grade_sha256
+                ),
                 "production_grade_implementation_sha256": production_grade_sha256,
+                "exact_grade_implementation_sha256": exact_grade_sha256,
+                "exact_statistics_implementation_sha256": (
+                    exact_statistics_sha256
+                ),
                 "independent_scoring_implementation_sha256": (
                     independent_scoring_sha256
                 ),

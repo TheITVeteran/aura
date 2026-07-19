@@ -9,6 +9,9 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from core.brain.llm.latent_cortex.campaign_journal import canonical_json_bytes
+from core.brain.llm.latent_cortex.exact_paired_grade import (
+    exact_campaign_power_plan,
+)
 from core.brain.llm.latent_cortex.frontier_tasks import (
     FRONTIER_DOMAINS,
     build_task_manifest,
@@ -94,7 +97,7 @@ def _plan():
     return tasks, build_campaign_plan("paired-test", tasks, **kwargs)
 
 
-def _grade_plan(*, claim_eligible: bool = True):
+def _grade_plan(*, claim_eligible: bool = False):
     tasks = generate_task_battery(
         range(20),
         domains=FRONTIER_DOMAINS,
@@ -140,8 +143,21 @@ def _grade_plan(*, claim_eligible: bool = True):
         },
         contamination_audit=contamination_audit,
         campaign_trust=_campaign_trust() if claim_eligible else None,
-        claim_eligible=claim_eligible,
+        claim_eligible=False,
     )
+    if claim_eligible:
+        document = plan.to_dict()
+        metadata = document["metadata"]
+        metadata["claim_eligible"] = True
+        metadata["claim_scope"] = "resident same-checkpoint causal attribution"
+        plan = type(plan).build(
+            document["campaign_name"],
+            [
+                plan.cell_definition(cell_id)
+                for cell_id in plan.cell_ids
+            ],
+            metadata=metadata,
+        )
     return plan, tasks
 
 
@@ -257,7 +273,7 @@ def test_plan_freezes_every_task_arm_and_is_deterministic():
         assert ordinals == list(range(len(tasks)))
 
 
-def test_complete_strong_2x2_gain_stays_preverified_until_external_signature():
+def test_strong_2x2_gain_without_powered_noninferiority_stays_inconclusive():
     plan, tasks = _grade_plan()
     grade = grade_campaign(
         _records(plan, tasks, gain=True),
@@ -267,13 +283,21 @@ def test_complete_strong_2x2_gain_stays_preverified_until_external_signature():
         trusted_campaign_policy_sha256=TEST_POLICY_SHA256,
     )
 
-    assert grade["verdict"] == "gain_preverified"
+    assert grade["verdict"] == "inconclusive"
     assert grade["claim_tier"] == "CONJECTURE"
-    assert grade["reasons"] == ["independent_final_verifier_required"]
-    assert grade["interaction"]["interval_95"][0] > 0
+    assert grade["reasons"] == ["gain_not_proven"]
+    assert grade["interaction"]["lower"]["numerator"] > 0
     assert grade["frontier_claim_eligible"] is False
-    assert grade["same_checkpoint_gain_claim_eligible"] is True
-    assert grade["interaction"]["one_sided_permutation_p"] > 0.0
+    assert grade["same_checkpoint_gain_claim_eligible"] is False
+    assert (
+        grade["interaction"]["one_sided_exact_sign_flip_p"]["numerator"] > 0
+    )
+    assert (
+        grade["comparisons"]["adapter_effect_under_vanilla"]["evidence"][
+            "all_families_noninferior"
+        ]
+        is False
+    )
 
 
 def test_regressing_adapter_is_refuted():
@@ -288,7 +312,7 @@ def test_regressing_adapter_is_refuted():
 
     assert grade["verdict"] == "gain_refuted"
     assert grade["claim_tier"] == "REFUTED"
-    assert grade["interaction"]["interval_95"][1] <= 0
+    assert grade["interaction"]["upper"]["numerator"] <= 0
 
 
 def test_missing_cell_stays_incomplete():
@@ -306,7 +330,7 @@ def test_missing_cell_stays_incomplete():
     assert grade["reasons"] == ["campaign_incomplete"]
 
 
-def test_positive_preflight_cannot_emit_proven_verdict():
+def test_positive_preflight_without_noninferiority_cannot_emit_gain_verdict():
     plan, tasks = _grade_plan(claim_eligible=False)
     grade = grade_campaign(
         _records(plan, tasks, gain=True),
@@ -314,14 +338,14 @@ def test_positive_preflight_cannot_emit_proven_verdict():
         issuer_tasks=tasks,
     )
 
-    assert grade["verdict"] == "gain_observed_preflight"
+    assert grade["verdict"] == "inconclusive"
     assert grade["claim_tier"] == "CONJECTURE"
-    assert grade["reasons"] == ["campaign_not_claim_eligible"]
+    assert grade["reasons"] == ["gain_not_proven"]
 
 
 @pytest.mark.parametrize("trusted_root", [None, "0" * 64])
 def test_claim_grade_requires_out_of_band_pinned_contamination_root(trusted_root):
-    plan, tasks = _grade_plan()
+    plan, tasks = _grade_plan(claim_eligible=True)
 
     with pytest.raises(
         PairedCampaignError,
@@ -380,6 +404,38 @@ def test_grader_rejects_unbound_or_mutated_evidence(mutation, reason):
             trusted_contamination_root_sha256=TEST_TRUST_ROOT_SHA256,
             trusted_campaign_policy_sha256=TEST_POLICY_SHA256,
         )
+
+
+def test_grader_rejects_bool_aliases_in_canonical_evidence():
+    plan, tasks = _grade_plan()
+    rows = _records(plan, tasks)
+    ordinal_row = next(
+        row
+        for row in rows
+        if row["definition"]["execution_ordinal_within_arm"] == 1
+    )
+    ordinal_row["definition"]["execution_ordinal_within_arm"] = True
+    with pytest.raises(
+        PairedCampaignError,
+        match="campaign_record_definition_mismatch",
+    ):
+        grade_campaign(rows, plan=plan, issuer_tasks=tasks)
+
+    rows = _records(plan, tasks)
+    base_row = next(
+        row
+        for row in rows
+        if row["definition"]["arm"] == BASE_VANILLA
+    )
+    base_row["result"]["adapter_wrapped_projections"] = False
+    base_row["commit"]["result_sha256"] = hashlib.sha256(
+        canonical_json_bytes(base_row["result"])
+    ).hexdigest()
+    with pytest.raises(
+        PairedCampaignError,
+        match="campaign_base_arm_adapter_contaminated",
+    ):
+        grade_campaign(rows, plan=plan, issuer_tasks=tasks)
 
 
 def test_grader_rejects_malformed_plan_coverage():
@@ -528,8 +584,52 @@ def test_claim_eligible_plan_rejects_worker_visible_generation_seeds():
         )
 
 
+def test_claim_eligible_plan_rejects_exact_but_underpowered_receipt():
+    tasks = generate_task_battery(
+        range(20),
+        domains=FRONTIER_DOMAINS,
+        difficulty=2,
+    )
+    manifest = build_task_manifest(tasks)
+    audit = _signed_contamination_audit(manifest.manifest_sha256)
+    power = exact_campaign_power_plan(
+        domain_count=len(FRONTIER_DOMAINS),
+        comparison_count=6,
+        arm_count=len(FULL_ARMS),
+        planned_observations_per_domain=20,
+    )
+    execution_config = {
+        "worker_task_material": "public_manifest_only",
+        "answer_reveal_protocol": "sealed_outputs_then_issuer_reveal_v1",
+        "worker_origin_protocol": "preauthorized_ephemeral_chain_v2",
+        "worker_origin_attempt_slots": 3,
+        "generation_seed_count": 20,
+        "generation_seed_min_entropy_bits": 60,
+        "generation_seed_policy": "external_issuer_uniform_63bit",
+        "generation_seed_disclosure": "post_seal_answer_reveal",
+        "domains": list(FRONTIER_DOMAINS),
+        "exact_statistical_power": power,
+    }
+
+    assert power["powered_for_zero_loss_noninferiority"] is False
+    with pytest.raises(
+        PairedCampaignError,
+        match="campaign_exact_power_required",
+    ):
+        build_campaign_plan(
+            "underpowered-claim",
+            tasks,
+            model_identity={"checkpoint_fingerprint": "a" * 64},
+            adapter_identity={"composite_identity_sha256": "b" * 64},
+            execution_config=execution_config,
+            contamination_audit=audit,
+            campaign_trust=_campaign_trust(),
+            claim_eligible=True,
+        )
+
+
 def test_claim_grade_requires_out_of_band_campaign_policy_pin():
-    plan, tasks = _grade_plan()
+    plan, tasks = _grade_plan(claim_eligible=True)
 
     with pytest.raises(
         PairedCampaignError, match="campaign_prelaunch_trust_required"
@@ -539,6 +639,22 @@ def test_claim_grade_requires_out_of_band_campaign_policy_pin():
             plan=plan,
             issuer_tasks=tasks,
             trusted_contamination_root_sha256=TEST_TRUST_ROOT_SHA256,
+        )
+
+
+def test_grader_rejects_forged_underpowered_claim_plan():
+    plan, tasks = _grade_plan(claim_eligible=True)
+
+    with pytest.raises(
+        PairedCampaignError,
+        match="campaign_exact_power_required",
+    ):
+        grade_campaign(
+            [],
+            plan=plan,
+            issuer_tasks=tasks,
+            trusted_contamination_root_sha256=TEST_TRUST_ROOT_SHA256,
+            trusted_campaign_policy_sha256=TEST_POLICY_SHA256,
         )
 
 

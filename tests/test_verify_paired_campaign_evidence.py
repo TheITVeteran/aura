@@ -10,9 +10,12 @@ forged grades.
 from __future__ import annotations
 
 import ast
+import copy
 import hashlib
 import json
 from pathlib import Path
+
+import pytest
 
 from core.brain.llm.latent_cortex.campaign_journal import (
     CampaignJournal,
@@ -437,8 +440,92 @@ def test_production_grader_divergence_is_caught_by_independent_kernel(
 
     assert not verdict["passed"]
     assert any(
-        "independent kernel" in failure for failure in verdict["failures"]
+        "semantic grade trees differ" in failure
+        for failure in verdict["failures"]
     )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda grade: grade["statistical_policy"].__setitem__(
+            "minimum_domain_observations",
+            21,
+        ),
+        lambda grade: grade["comparisons"]["adapter_rlc_gain"]["evidence"][
+            "pooled"
+        ].__setitem__("treatment_wins", 999),
+        lambda grade: grade["interaction"]["sign_flip"].__setitem__(
+            "threshold",
+            999,
+        ),
+        lambda grade: grade["reasons"].append("forged_deep_reason"),
+    ],
+)
+def test_any_deep_production_grade_divergence_fails_full_tree_parity(
+    tmp_path: Path,
+    monkeypatch,
+    mutation,
+):
+    campaign_dir, plan, tasks, records, manifest = _build_campaign_dir(tmp_path)
+    _publish_grade(campaign_dir, plan, tasks, records, manifest)
+    broken = copy.deepcopy(
+        grade_campaign(records, plan=plan, issuer_tasks=tasks)
+    )
+    mutation(broken)
+    monkeypatch.setattr(
+        verifier_module,
+        "grade_campaign",
+        lambda *args, **kwargs: broken,
+    )
+
+    verdict = verify_campaign_evidence(campaign_dir)
+
+    assert verdict["passed"] is False
+    parity_failures = [
+        failure
+        for failure in verdict["failures"]
+        if "semantic grade trees differ" in failure
+    ]
+    assert len(parity_failures) == 1
+    assert "$." in parity_failures[0]
+
+
+def test_independent_semantic_tree_hash_mismatch_fails_closed(
+    tmp_path: Path,
+    monkeypatch,
+):
+    campaign_dir, *_rest = _build_campaign_dir(tmp_path)
+    real_kernel = verifier_module.independent_grade_campaign
+
+    def mismatched_hash(*args, **kwargs):
+        result = real_kernel(*args, **kwargs)
+        return {
+            **result,
+            "semantic_grade_canonical_sha256": "0" * 64,
+        }
+
+    monkeypatch.setattr(
+        verifier_module,
+        "independent_grade_campaign",
+        mismatched_hash,
+    )
+
+    verdict = verify_campaign_evidence(campaign_dir)
+
+    assert verdict["passed"] is False
+    assert any(
+        "semantic grade hash does not match" in failure
+        for failure in verdict["failures"]
+    )
+
+
+def test_canonical_artifact_rejects_duplicate_json_keys(tmp_path: Path):
+    artifact = tmp_path / "duplicate.json"
+    artifact.write_bytes(b'{"schema":"first","schema":"second"}\n')
+
+    with pytest.raises(ValueError, match="duplicate JSON key"):
+        verifier_module._canonical_artifact(artifact, role="test artifact")
 
 
 def test_independent_kernel_has_no_production_grading_imports():

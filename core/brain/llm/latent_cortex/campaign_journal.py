@@ -15,6 +15,7 @@ import os
 import stat
 import tempfile
 import threading
+from bisect import bisect_left
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -164,6 +165,10 @@ class CampaignPlan:
     plan_sha256: str
     cell_ids: tuple[str, ...]
     _document_bytes: bytes = field(repr=False)
+    _cell_definition_bytes: tuple[tuple[str, bytes], ...] = field(
+        repr=False,
+        compare=False,
+    )
 
     @classmethod
     def build(
@@ -223,6 +228,15 @@ class CampaignPlan:
             plan_sha256=plan_sha256,
             cell_ids=tuple(cell["cell_id"] for cell in normalized_cells),
             _document_bytes=canonical_json_bytes(document),
+            _cell_definition_bytes=tuple(
+                sorted(
+                    (
+                        cell["cell_id"],
+                        canonical_json_bytes(cell["definition"]),
+                    )
+                    for cell in normalized_cells
+                )
+            ),
         )
 
     @classmethod
@@ -270,11 +284,22 @@ class CampaignPlan:
         return cast(dict[str, Any], _strict_json_loads(self._document_bytes, role="plan"))
 
     def cell_definition(self, cell_id: str) -> dict[str, Any]:
-        document = self.to_dict()
-        for cell in document["cells"]:
-            if cell["cell_id"] == cell_id:
-                return cast(dict[str, Any], cell["definition"])
-        _fail("unknown_cell")
+        if not isinstance(cell_id, str):
+            _fail("unknown_cell")
+        position = bisect_left(
+            self._cell_definition_bytes,
+            (cell_id, b""),
+        )
+        if (
+            position >= len(self._cell_definition_bytes)
+            or self._cell_definition_bytes[position][0] != cell_id
+        ):
+            _fail("unknown_cell")
+        definition = self._cell_definition_bytes[position][1]
+        return cast(
+            dict[str, Any],
+            _strict_json_loads(definition, role="cell_definition"),
+        )
 
 
 @dataclass(frozen=True, slots=True)

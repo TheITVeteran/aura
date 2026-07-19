@@ -50,6 +50,9 @@ from core.brain.llm.latent_cortex.campaign_trust import (  # noqa: E402
     validate_campaign_trust_policy,
     verify_role_attestation,
 )
+from core.brain.llm.latent_cortex.exact_paired_grade import (  # noqa: E402
+    exact_campaign_power_plan,
+)
 from core.brain.llm.latent_cortex.frontier_tasks import (  # noqa: E402
     CURRENT_REGISTRY_VERSION,
     FRONTIER_DOMAINS,
@@ -62,6 +65,7 @@ from core.brain.llm.latent_cortex.frontier_tasks import (  # noqa: E402
     parse_final_answer,
 )
 from core.brain.llm.latent_cortex.paired_campaign import (  # noqa: E402
+    ADAPTER_EQUAL_COMPUTE,
     ADAPTER_RLC,
     BASE_EQUAL_COMPUTE,
     BASE_RLC,
@@ -1432,8 +1436,27 @@ def _execution_config(
         "worker_origin_protocol": "preauthorized_ephemeral_chain_v2",
         "worker_origin_attempt_slots": args.max_infra_attempts,
         "vanilla_fallback_allowed": False,
+        "exact_statistical_power": _statistical_power_plan(args),
         "implementation_sha256": _implementation_sha256(),
     }
+
+
+def _statistical_power_plan(args: argparse.Namespace) -> dict[str, Any]:
+    arms = _arms(args)
+    comparison_count = 4
+    if BASE_EQUAL_COMPUTE in arms:
+        comparison_count += 1
+    if ADAPTER_EQUAL_COMPUTE in arms:
+        comparison_count += 1
+    planned = int(
+        getattr(args, "seed_count", 0) or len(args.seed_values)
+    )
+    return exact_campaign_power_plan(
+        domain_count=len(args.domain_values),
+        comparison_count=comparison_count,
+        arm_count=len(arms),
+        planned_observations_per_domain=planned,
+    )
 
 
 def _expected_plan(
@@ -1544,6 +1567,7 @@ def _claim_eligible(
     campaign_trust: Mapping[str, Any] | None,
 ) -> bool:
     per_domain = int(getattr(args, "seed_count", 0) or len(args.seed_values))
+    power = _statistical_power_plan(args)
     seed_entropy_bits = int(
         getattr(args, "seed_entropy_bits", 0)
         or min(value.bit_length() for value in args.seed_values)
@@ -1551,7 +1575,8 @@ def _claim_eligible(
     runtime_bundle = model_identity.get("runtime_bundle")
     return bool(
         args.confirmatory
-        and per_domain >= 20
+        and per_domain >= power["minimum_observations"]
+        and power["powered_for_zero_loss_noninferiority"] is True
         and seed_entropy_bits >= 60
         and args.profile == "full"
         and set(args.domain_values) == set(FRONTIER_DOMAINS)
@@ -1578,8 +1603,12 @@ def _persist_plan(campaign_dir: Path, plan: CampaignPlan) -> None:
 
 
 def _load_persisted_plan(campaign_dir: Path) -> CampaignPlan:
-    payload = json.loads((campaign_dir / PLAN_FILE).read_text(encoding="utf-8"))
-    return CampaignPlan.from_dict(payload)
+    return CampaignPlan.from_dict(
+        _read_canonical_json_artifact(
+            campaign_dir / PLAN_FILE,
+            role="campaign plan",
+        )
+    )
 
 
 def _resolve_projection(model: Any, projection: str) -> tuple[Any, str, Any]:
@@ -3149,7 +3178,7 @@ def _load_or_prepare_role_request(
 
 
 def _read_canonical_json_artifact(path: Path, *, role: str) -> dict[str, Any]:
-    payload = _read_stable_bytes(path, max_bytes=16 * 1024 * 1024)
+    payload = _read_stable_bytes(path, max_bytes=64 * 1024 * 1024)
     try:
         document = json.loads(payload)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:

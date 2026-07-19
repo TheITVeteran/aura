@@ -16,12 +16,12 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **Checkpoint 158 is the current
-  reviewed source candidate in the `main` worktree; checkpoints through CP157
+- Current bounded implementation milestone: **Checkpoint 159 is the current
+  reviewed source candidate in the `main` worktree; checkpoints through CP158
   are pushed. The corrected resident-32B path completed clean one-, two-, and
   five-step calibrations with finite durable checkpoints, exact source identity,
   no memory ratchet, and a 48-GiB MLX wired-residency limit. The full detached
-  576-step run is active from exact pushed CP147 source at step 265/576 with
+  576-step run is active from exact pushed CP147 source at step 305/576 with
   finite losses and durable five-step checkpoints; it remains governed by the
   24-hour training deadline and 26-hour containment timeout. No
   reasoning-gain or frontier claim exists yet. Completed training,
@@ -368,7 +368,7 @@ Status rules:
 | `RLC-FRONTIER-001` | `IN PROGRESS (VERIFIER/RAW PACKAGE SOURCE GREEN; CURRENT GAIN HYPOTHESIS NOT SUPPORTED) 2026-07-17` | Prove statistically significant, practically meaningful, compute-matched gains of the full integrated resident 32B over vanilla/equal-compute controls, then run contemporaneous external-frontier comparisons under equal information/tools and separately reported compute and latency budgets. CP95-96 provide the fail-closed evidence package and verifier boundaries, but the available data do not prove a dividend: the 32B template sweep is statistical parity with vanilla ahead on point estimate, and the preregistered 1.5B factorial campaign has vanilla beating every latent arm. Treat this as a redesign/training result. Require recurrence-native trained checkpoints, broad replicated gains, no material domain regression, exact build identity, recomputed operation-level compute, scorer replay, factorial ablations, externally held trust roots, contemporaneous providers, and a machine-accepted release certificate. | `RLC-BASELINES-001`, `RLC-FRESH-TASKS-001`, `RLC-LIVE32B-001`; CP95-120 |
 | `RLC-LIVE32B-001` | `IN PROGRESS (AUTHENTIC CP106 ANSWER + CP118 MECHANICS + FIRST CONSOLIDATION TRANSACTION; COMPLETE PRODUCT/GAIN CERT OPEN) 2026-07-17` | Rebuild and launch the installed Aura.app from the exact pushed commit, prove the resident checkpoint is the intended 32B artifact, run every mechanism and full composition through worker/service/CognitiveEngine paths, verify visible answer causality and latency/resource SLOs, inspect Neural and terminal streams, survive cancellation/restart/pressure, and publish immutable live receipts. CP106 earns bounded authentic-answer credit. CP118 earns mechanism-only credit after independent invalidation of its malformed public reply. CP119's exact-app compound turn is retained as a 79.15-second FAIL with FAST/compact misrouting, stale-context contamination, duplicate generation ownership, and an incomplete malformed answer. The first fused-32B consolidation transaction proves distill/activate/rollback machinery but no retained gain. CP120 exact-app reproof, broad same-checkpoint controls, recurrence-native training, fault campaigns, latency/resource envelopes, repeated runs, and independent acceptance remain mandatory. Smaller-model evidence never substitutes for this claim. | `RLC-RUNTIME-001`, `GUI-001`, `VALIDATE-001`; CP97-120 |
 | `RLC-SCALING-001` | `OPEN 2026-07-15` | Run frozen 1.5B/7B/32B scaling curves to distinguish architecture mechanics from capability effects, establish recurrence/slot/branch/optimizer scaling laws and resource envelopes, and detect gains that disappear or reverse at resident scale. Never substitute smaller-model success for the 32B release claim. | `RLC-EXPERIMENTS-001`, `RLC-LIVE32B-001` |
-| `RLC-INDEPENDENT-001` | `IN PROGRESS (DETACHED TRUST + TWO-PHASE ANSWER ISOLATION + SIGNED FINAL RUN + SOFTWARE RESULT/LIFECYCLE CHAINS INTEGRATED; SUPERVISOR-OWNED AUTHORITY AND EXACT-STATISTICS FOUNDATIONS BUILT; EXECUTION ORIGIN AND COMPLETE INDEPENDENT SEMANTIC PARITY FAIL CLOSED/OPEN) 2026-07-19` | Produce a standalone verifier implementation and reproducible evidence bundle; have an independent process/reviewer recompute hashes, task lineage, compute matching, statistics, ablations, and claim tier from raw outputs. CP95 rejects missing trust roots, wrong keys, signature tampering, producer/verifier or issuer/producer role collision, unbound producer identity, stale chronology, and divergent signed evidence. CP96 adds a model-free CLI, strict duplicate-key/non-finite JSON decoding, externally supplied role/key pins, a separately pinned local verification-kernel digest, six bounded canonical JSONL stores, exact raw-byte and structured-receipt rebinding, no-follow stable reads, complete raw-directory membership, deterministic certificates, and an unsigned-bundle preverification request for an externally held Ed25519 key. CP145 adds a separate terminal parser, type-strict task scorer, comparison statistics, and exact sign-flip interaction implementation, but adversarial review reopened its acceptance boundary: production-to-independent comparison is still partial and must become complete semantic/estimand parity before certification. CP149-150 add an externally rooted, revisioned, time-bounded four-role policy; distinct identity/key/organization and custody declarations; pre-inference issuer/runner attestations; policy-pinned contamination auditing over the adapter's exact dataset manifest; source-bound role implementations; independent plan reconstruction; and a required post-evidence verifier signature. CP151 adds canonical detached-signature request/assembly. CP152 removes answers and generation seeds from worker-visible plans/argv and requires a post-seal issuer reveal. CP153 requires a distinct post-grade runner signature. CP154 defines strict pre-authorized ephemeral result-chain primitives. CP155 integrates those chains and single-use attempts but proves only record integrity: the producer creates and can read each exportable worker key, so a no-worker forgery is intentionally rejected by the independent claim gate. CP156 adds a canonical all-slot lifecycle manifest transitively bound through the output seal, grade, runner signature, and final verifier payload; post-final launch/exit rewrites now fail. Key erasure is a write-ahead state machine that recovers deterministically after interruption between intent, unlink, receipt, and aggregate publication. CP157 adds the private-key-free v4 protocol and a supervisor-owned in-memory authority with an exact externally authorized execution contract, typed ordered results, signed terminal/abandoned receipts, strict state transitions, bounded inputs, and independent lifecycle-attestation verification. CP158 adds dependency-free exact rational effects, paired-binomial tails, deterministic Holm correction, integer compute-tolerance decisions, exact dynamic-programming sign-flip interaction tails, and conservative simultaneous Clopper-Pearson effect bounds with proof witnesses and declared resource limits. The current campaign intentionally remains on a named legacy integrity-only module and bootstrap-based grade schema until detached-supervisor integration and complete exact semantic-tree migration land. Closure still requires those integrations, an independently implemented raw-artifact replica, exact broker/OS executable/environment/sandbox/process binding, real separately administered credentials, operation-level compute reconstruction, complete ablations, and accepted live resident-32B evidence. | `RLC-FRONTIER-001`, `RELEASE-CONTRACT-001`; CP95-96, CP145, CP149-158 |
+| `RLC-INDEPENDENT-001` | `IN PROGRESS (EXACT COMPLETE SEMANTIC-TREE PARITY SOURCE GREEN; DETACHED EXECUTION ORIGIN/EXTERNAL CUSTODY/LIVE EVIDENCE OPEN) 2026-07-19` | Produce a standalone verifier implementation and reproducible evidence bundle; have an independent process/reviewer recompute hashes, task lineage, compute matching, statistics, ablations, and claim tier from raw outputs. CP95 rejects missing trust roots, wrong keys, signature tampering, producer/verifier or issuer/producer role collision, unbound producer identity, stale chronology, and divergent signed evidence. CP96 adds a model-free CLI, strict duplicate-key/non-finite JSON decoding, externally supplied role/key pins, a separately pinned local verification-kernel digest, six bounded canonical JSONL stores, exact raw-byte and structured-receipt rebinding, no-follow stable reads, complete raw-directory membership, deterministic certificates, and an unsigned-bundle preverification request for an externally held Ed25519 key. CP145 adds a separate terminal parser, type-strict task scorer, comparison statistics, and exact sign-flip interaction implementation. CP149-150 add an externally rooted, revisioned, time-bounded four-role policy; distinct identity/key/organization and custody declarations; pre-inference issuer/runner attestations; policy-pinned contamination auditing over the adapter's exact dataset manifest; source-bound role implementations; independent plan reconstruction; and a required post-evidence verifier signature. CP151 adds canonical detached-signature request/assembly. CP152 removes answers and generation seeds from worker-visible plans/argv and requires a post-seal issuer reveal. CP153 requires a distinct post-grade runner signature. CP154 defines strict pre-authorized ephemeral result-chain primitives. CP155 integrates those chains and single-use attempts but proves only record integrity: the producer creates and can read each exportable worker key, so a no-worker forgery is intentionally rejected by the independent claim gate. CP156 adds a canonical all-slot lifecycle manifest transitively bound through the output seal, grade, runner signature, and final verifier payload; post-final launch/exit rewrites now fail. Key erasure is a write-ahead state machine that recovers deterministically after interruption between intent, unlink, receipt, and aggregate publication. CP157 adds the private-key-free v4 protocol and a supervisor-owned in-memory authority with an exact externally authorized execution contract, typed ordered results, signed terminal/abandoned receipts, strict state transitions, bounded inputs, and independent lifecycle-attestation verification. CP158 adds dependency-free exact rational effects, paired-binomial tails, deterministic Holm correction, integer compute-tolerance decisions, exact dynamic-programming sign-flip interaction tails, and conservative simultaneous Clopper-Pearson effect bounds with proof witnesses and declared resource limits. CP159 migrates production to exact grade schema v2, independently reimplements the entire parser/scorer/trust/statistics/power tree with standard-library arithmetic, requires byte-identical complete semantic trees, and binds both tree hashes plus production, exact-grade, exact-statistics, independent-kernel, and verifier identities into final verifier payload v3. Claim plans must carry a rederived exact power receipt; the current seven-domain/six-arm design needs 411 observations per domain, 2,877 tasks, and 17,262 arm cells even under the all-tie/no-loss non-inferiority case. Closure still requires detached-supervisor integration, exact broker/OS executable/environment/sandbox/process binding, real separately administered credentials, independent security review, operation-level compute reconstruction, complete ablations, and accepted live resident-32B evidence. | `RLC-FRONTIER-001`, `RELEASE-CONTRACT-001`; CP95-96, CP145, CP149-159 |
 | `RLC-CLAIMS-001` | `OPEN 2026-07-15` | Publish exact conclusions for mechanics, trained-checkpoint dynamics, resident-32B capability, broad/frontier gains, limitations, nulls, and non-claims. Documentation, UI, health, Foundry, and release manifests must derive from accepted artifacts and automatically demote stale, mismatched, or superseded evidence. | `RLC-INDEPENDENT-001`, `CLAIMS-001`, `RELEASE-CONTRACT-001` |
 | `RELEASE-CONTRACT-001` | `OPEN 2026-07-13` | Define the Aura 1.0 product contract as a versioned machine-readable manifest: every supported capability, platform/hardware/account/permission mode, SLO, data guarantee, security/privacy boundary, operator control, degradation behavior, claim limit, and explicit non-goal must have an owner and acceptance evidence. Release tooling must reject an undocumented feature, unsupported claim, open severity-1/2 defect, waived mandatory gate, or proof artifact from a different commit/build. | `SCOPE-001`, `CAPABILITY-CERT-001`, `VALIDATE-001`, `OPERATIONS-001`; Aura 1.0 closure question 2026-07-13 |
 | `EXPECT-001` | `IN PROGRESS (NON-EXECUTION AMPLIFICATION SOURCE GREEN; LIVE OPEN) 2026-07-13` | Complete Fable's Aura Expectation Engine so natural-language intent becomes causal acceptance criteria, observed-effect verdicts, repair, persistence, and follow-through across every action path. Checkpoint 71 adds one structured result-disposition boundary: deferral, denial, admission failure, scheduler busy, refusal, cancellation, timeout, and explicit failed execution cannot trigger surprise, LLM belief extraction, rethink, or recursive redispatch. Deterministic observed facts remain eligible, while successful unknown results use a bounded direct generation lane with tools disabled instead of becoming an executable cognitive objective. General acceptance-criteria compilation, effect verification, repair convergence, and exact-main live proof remain open. | Pass F 1 and 14; Matrix 9; `ACTION-SPINE-001`, `FOREGROUND-LATENCY-001`; Checkpoint 71 |
@@ -20188,5 +20188,71 @@ attestations, and reject any semantic difference.
 
 Evidence-weighted completion remains 27%; this is checkpoint 158 of the faithful
 292-399 forecast, leaving approximately 134-241 checkpoints. No reasoning-gain,
+frontier, external-custody, execution-origin, live-app, release, or soak credit
+is awarded. Final soaks remain deferred.
+
+## Checkpoint 2026-07-19-159: Exact Grade and Complete Independent Parity
+
+CP159 closes the statistical-schema and partial-verifier defects identified at
+CP145 and carried explicitly through CP158.
+
+- Production grade schema v2 contains only deterministic exact rational
+  paired-binomial, Holm, simultaneous Clopper-Pearson, integer compute-control,
+  and exact sign-flip interaction evidence. Bootstrap resampling, floating
+  verdict fields, NumPy, and seeded pseudo-random intervals are absent.
+- The non-inferiority gate is strict: observing no adapter regression is not
+  evidence of non-inferiority. Every domain's simultaneous lower bound must be
+  greater than `-1/50`, required gain comparisons must be proven, the paired
+  interaction lower bound must exceed `1/50`, and its exact one-sided sign-flip
+  tail must be below `1/20`. Certified refutation is evaluated before unrelated
+  underpower so negative evidence cannot be hidden by another weak family.
+- Claim eligibility now requires an exact statistical-power receipt that is
+  rederived from the signed plan's actual domains, arms, task counts, and seed
+  count by the producer, production grader, and independent kernel. For the
+  seven-domain, six-comparison, six-arm campaign, the exact all-tie/no-loss
+  non-inferiority boundary is 411 observations per domain: 410 fails, while 411
+  passes. A definitive full campaign therefore plans 2,877 tasks and 17,262 arm
+  cells. Missing, underpowered, or field-drifted receipts fail closed.
+- `independent_paired_campaign_scoring.py` is a separate standard-library-only
+  implementation of strict terminal parsing, type-exact answer scoring,
+  Ed25519 contamination-root verification, plan and runtime identity replay,
+  paired tails, Holm adjustment, dyadic bound witnesses, power derivation,
+  compute matching, sign-flip interaction, and final verdict construction. It
+  imports none of the production parser, scorer, experiment, or statistics
+  implementations.
+- The standalone verifier compares the complete production and independent
+  semantic trees by canonical bytes and SHA-256, reports the first recursive
+  difference only as diagnostics, and rejects any changed policy, comparison,
+  bound witness, interaction, reason, or leaf even when headline verdicts and
+  tiers agree. The final verifier payload v3 binds both complete tree hashes and
+  the production grader, exact grader, exact statistics, independent kernel,
+  protocol, and verifier implementation identities. It will not emit a signable
+  final-attestation request while any earlier trust, lifecycle, reveal, parity,
+  publication, or final-run failure exists.
+- Campaign plans cache immutable canonical cell-definition bytes and use binary
+  search for defensive fresh lookups. A 240-task grade fixture fell from about
+  21 seconds to about 2.2 seconds without changing serialized plan bytes.
+  Canonical plan, grade, and manifest readers reject duplicate keys and
+  noncanonical bytes.
+
+Validation is green across 187 exact-statistics, exact-grade, campaign-plan,
+journal, external-trust, worker-origin, runner, independent-kernel, and final
+verifier tests in 91.42 seconds. Adversarial coverage includes 410/411 power
+boundary parity, forged and drifted power receipts, deep semantic mutations,
+independent-tree hash substitution, incomplete evidence parity, bool/integer
+confusion, duplicate JSON keys, trust-root substitution, and worker lifecycle
+tampering. Focused Ruff, bytecode compilation, and diff checks pass. The
+detached resident trainer remained healthy and reached finite checkpoint
+305/576.
+
+This checkpoint proves exact same-checkpoint campaign semantics and complete
+two-implementation agreement infrastructure, not a reasoning gain. The current
+runtime still uses the named legacy integrity-only worker path; external
+execution origin, independently administered custody, completed 32B training,
+the pilot, the powered campaign, external-frontier comparison, live desktop
+proof, release gates, and final soaks remain open.
+
+Evidence-weighted completion remains 27%; this is checkpoint 159 of the faithful
+292-399 forecast, leaving approximately 133-240 checkpoints. No reasoning-gain,
 frontier, external-custody, execution-origin, live-app, release, or soak credit
 is awarded. Final soaks remain deferred.

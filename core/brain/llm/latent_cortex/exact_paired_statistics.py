@@ -20,20 +20,21 @@ import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from fractions import Fraction
+from functools import lru_cache
 from typing import Final, Literal, final
 
-MAX_RATIONAL_BITS: Final = 65_536
+MAX_RATIONAL_BITS: Final = 262_144
 MAX_PAIRED_OBSERVATIONS: Final = 1_000_000
 MAX_EXACT_BINOMIAL_TRIALS: Final = 4_096
-MAX_CERTIFIED_BOUND_TRIALS: Final = 512
+MAX_CERTIFIED_BOUND_TRIALS: Final = 4_096
 MAX_HOLM_HYPOTHESES: Final = 1_024
 MAX_HYPOTHESIS_NAME_LENGTH: Final = 256
 MAX_COMPUTE_UNITS: Final = (1 << 63) - 1
-MAX_SIGN_FLIP_OBSERVATIONS: Final = 64
+MAX_SIGN_FLIP_OBSERVATIONS: Final = 4_096
 MAX_SIGN_FLIP_ABSOLUTE_VALUE: Final = 100_000
 MAX_SIGN_FLIP_TOTAL_MAGNITUDE: Final = 100_000
 MAX_SIGN_FLIP_STATES: Final = 200_001
-MAX_SIGN_FLIP_TRANSITIONS: Final = 5_000_000
+MAX_SIGN_FLIP_TRANSITIONS: Final = 100_000_000
 MIN_BOUND_PRECISION_BITS: Final = 4
 MAX_BOUND_PRECISION_BITS: Final = 64
 
@@ -212,6 +213,7 @@ class ExactPairedBinomialTail:
     discordant: int
 
 
+@lru_cache(maxsize=8_192, typed=True)
 def exact_paired_binomial_tail(wins: int, losses: int) -> ExactPairedBinomialTail:
     """Return the exact one-sided paired binomial tail for treatment superiority."""
 
@@ -562,17 +564,43 @@ def _binomial_probability_counts(
     numerator_p = probability.numerator
     denominator_p = probability.denominator
     numerator_q = denominator_p - numerator_p
-    if tail_kind == "upper":
-        first, last = successes, trials
-    else:
-        first, last = 0, successes
-    numerator = sum(
-        math.comb(trials, count)
-        * pow(numerator_p, count)
-        * pow(numerator_q, trials - count)
-        for count in range(first, last + 1)
-    )
-    return numerator, pow(denominator_p, trials)
+    denominator = pow(denominator_p, trials)
+    if numerator_p == 0:
+        mass_at_zero = denominator
+        if tail_kind == "upper":
+            return (mass_at_zero if successes == 0 else 0), denominator
+        return mass_at_zero, denominator
+    if numerator_q == 0:
+        mass_at_trials = denominator
+        if tail_kind == "upper":
+            return mass_at_trials, denominator
+        return (
+            mass_at_trials if successes == trials else 0
+        ), denominator
+
+    first = successes if tail_kind == "upper" else 0
+    last = trials if tail_kind == "upper" else successes
+    term = pow(numerator_q, trials)
+    numerator = 0
+    for count in range(trials + 1):
+        if first <= count <= last:
+            numerator += term
+        if count == trials:
+            break
+        recurrence_numerator = (
+            term * (trials - count) * numerator_p
+        )
+        recurrence_denominator = (count + 1) * numerator_q
+        quotient, remainder = divmod(
+            recurrence_numerator,
+            recurrence_denominator,
+        )
+        if remainder:
+            raise CertificationError(
+                "binomial adjacent-term recurrence is not integral"
+            )
+        term = quotient
+    return numerator, denominator
 
 
 def _counts_leq_rational(
@@ -583,6 +611,7 @@ def _counts_leq_rational(
     return numerator * threshold.denominator <= threshold.numerator * denominator
 
 
+@lru_cache(maxsize=16_384, typed=True)
 def _certified_proportion_bound(
     *,
     component: Literal["win_lower", "win_upper", "loss_lower", "loss_upper"],
@@ -723,6 +752,7 @@ def _certified_proportion_bound(
     )
 
 
+@lru_cache(maxsize=4_096, typed=True)
 def certified_rational_effect_bounds(
     wins: int,
     losses: int,

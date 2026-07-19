@@ -14,7 +14,10 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from core.brain.llm.latent_cortex.campaign_journal import canonical_json_bytes
+from core.brain.llm.latent_cortex.campaign_journal import (
+    CampaignPlan,
+    canonical_json_bytes,
+)
 from core.brain.llm.latent_cortex.campaign_trust import (
     CAMPAIGN_RUNNER,
     CAMPAIGN_TRUST_POLICY_SCHEMA,
@@ -28,6 +31,28 @@ from core.brain.llm.latent_cortex.frontier_tasks import generate_task_battery
 from core.brain.llm.latent_cortex.paired_campaign import build_campaign_plan
 from tools import run_latent_cortex_paired_campaign as runner
 from tools import verify_paired_campaign_evidence as evidence_verifier
+
+
+def _synthetic_claim_plan_for_nonstatistical_contract(
+    unsigned: CampaignPlan,
+    *,
+    campaign_trust: dict,
+) -> CampaignPlan:
+    """Elevate a small fixture only for worker/trust state-machine tests."""
+
+    document = unsigned.to_dict()
+    metadata = document["metadata"]
+    metadata["claim_eligible"] = True
+    metadata["claim_scope"] = "resident same-checkpoint causal attribution"
+    metadata["campaign_trust"] = campaign_trust
+    return CampaignPlan.build(
+        document["campaign_name"],
+        [
+            unsigned.cell_definition(cell_id)
+            for cell_id in unsigned.cell_ids
+        ],
+        metadata=metadata,
+    )
 
 
 def _external_policy_fixture(campaign_name: str, now: int):
@@ -297,15 +322,9 @@ def test_claim_reveal_pauses_for_exact_external_issuer_signature(
         "policy_sha256": policy.policy_sha256,
         "unsigned_plan_sha256": unsigned.plan_sha256,
     }
-    plan = build_campaign_plan(
-        campaign_name,
-        tasks,
-        model_identity=model_identity,
-        adapter_identity=adapter_identity,
-        execution_config=execution_config,
-        contamination_audit=audit,
+    plan = _synthetic_claim_plan_for_nonstatistical_contract(
+        unsigned,
         campaign_trust=trust,
-        claim_eligible=True,
     )
     campaign_dir = tmp_path / "campaign"
     campaign_dir.mkdir()
@@ -675,21 +694,14 @@ def _worker_origin_claim_fixture(tmp_path: Path):
         claim_eligible=False,
         arms=runner.PRIMARY_ARMS,
     )
-    plan = build_campaign_plan(
-        campaign_name,
-        tasks,
-        model_identity={"model": "sealed"},
-        adapter_identity={"adapter": "sealed"},
-        execution_config=execution_config,
-        contamination_audit=audit,
+    plan = _synthetic_claim_plan_for_nonstatistical_contract(
+        unsigned,
         campaign_trust={
             "prelaunch_verified": True,
             "externally_custodied": True,
             "policy_sha256": policy.policy_sha256,
             "unsigned_plan_sha256": unsigned.plan_sha256,
         },
-        claim_eligible=True,
-        arms=runner.PRIMARY_ARMS,
     )
     campaign_dir = tmp_path / "campaign"
     campaign_dir.mkdir()
@@ -1110,6 +1122,13 @@ def test_claim_eligibility_requires_full_powered_seven_domain_protocol():
         profile="full",
         domain_values=runner.FRONTIER_DOMAINS,
     )
+    minimum_observations = runner._statistical_power_plan(args)[
+        "minimum_observations"
+    ]
+    assert minimum_observations == 411
+    args.seed_values = tuple(
+        (1 << 60) + value for value in range(minimum_observations)
+    )
     model_identity = {
         "runtime_bundle": {
             "model_type": "qwen2",
@@ -1137,14 +1156,18 @@ def test_claim_eligibility_requires_full_powered_seven_domain_protocol():
         is False
     )
     args.domain_values = runner.FRONTIER_DOMAINS
-    args.seed_values = tuple((1 << 60) + value for value in range(19))
+    args.seed_values = tuple(
+        (1 << 60) + value for value in range(minimum_observations - 1)
+    )
     assert (
         runner._claim_eligible(
             args, model_identity, adapter_identity, audit, trust
         )
         is False
     )
-    args.seed_values = tuple((1 << 60) + value for value in range(20))
+    args.seed_values = tuple(
+        (1 << 60) + value for value in range(minimum_observations)
+    )
     assert (
         runner._claim_eligible(
             args, model_identity, adapter_identity, {}, trust
@@ -1157,7 +1180,7 @@ def test_claim_eligibility_requires_full_powered_seven_domain_protocol():
         )
         is False
     )
-    args.seed_values = tuple(range(20))
+    args.seed_values = tuple(range(minimum_observations))
     assert (
         runner._claim_eligible(
             args, model_identity, adapter_identity, audit, trust

@@ -18,12 +18,24 @@ from core.brain.llm.latent_cortex.campaign_journal import (
     CampaignPlan,
     canonical_json_bytes,
 )
+from core.brain.llm.latent_cortex.exact_paired_grade import (
+    ALPHA,
+    BOUND_PRECISION_BITS,
+    MINIMUM_EFFECT,
+    ExactPairedGradeError,
+    ExactPairedObservation,
+    campaign_global_bound_family_count,
+    exact_campaign_power_plan,
+    exact_interaction_proven,
+    exact_interaction_refuted,
+    grade_exact_interaction,
+    grade_exact_paired_comparison,
+)
+from core.brain.llm.latent_cortex.exact_paired_statistics import Rational
 from core.brain.llm.latent_cortex.experiments import (
     CONJECTURE,
     PROVEN,
     REFUTED,
-    PairedObservation,
-    grade_paired_treatment_vs_control,
 )
 from core.brain.llm.latent_cortex.frontier_tasks import (
     FRONTIER_DOMAINS,
@@ -35,7 +47,7 @@ from core.brain.llm.latent_cortex.frontier_tasks import (
 )
 
 CAMPAIGN_SCHEMA = "aura.latent_cortex.resident_paired_campaign.v1"
-GRADE_SCHEMA = "aura.latent_cortex.resident_paired_grade.v1"
+GRADE_SCHEMA = "aura.latent_cortex.resident_paired_grade.v2"
 CONTAMINATION_AUDIT_SCHEMA = "aura.latent_cortex.contamination_audit.v2"
 
 BASE_VANILLA = "base_vanilla"
@@ -49,7 +61,6 @@ PRIMARY_ARMS = (BASE_VANILLA, BASE_RLC, ADAPTER_VANILLA, ADAPTER_RLC)
 FULL_ARMS = (*PRIMARY_ARMS, BASE_EQUAL_COMPUTE, ADAPTER_EQUAL_COMPUTE)
 
 _MIN_DOMAIN_TRIALS = 20
-_BOOTSTRAP_RESAMPLES = 20_000
 
 
 class PairedCampaignError(ValueError):
@@ -67,6 +78,68 @@ def _fail(code: str) -> Never:
 
 def _sha256(value: Any) -> str:
     return hashlib.sha256(canonical_json_bytes(value)).hexdigest()
+
+
+def _strict_json_equal(left: Any, right: Any) -> bool:
+    try:
+        return canonical_json_bytes(left) == canonical_json_bytes(right)
+    except (TypeError, ValueError):
+        return False
+
+
+def _comparison_count(arms: Sequence[str]) -> int:
+    count = 4
+    if BASE_EQUAL_COMPUTE in arms:
+        count += 1
+    if ADAPTER_EQUAL_COMPUTE in arms:
+        count += 1
+    return count
+
+
+def _validate_claim_exact_power(
+    execution_config: Mapping[str, Any],
+    *,
+    task_domains: Iterable[str],
+    arms: Sequence[str],
+) -> None:
+    domains = execution_config.get("domains")
+    generation_seed_count = execution_config.get("generation_seed_count")
+    observed_receipt = execution_config.get("exact_statistical_power")
+    domain_counts: dict[str, int] = defaultdict(int)
+    for domain in task_domains:
+        if not isinstance(domain, str) or not domain:
+            _fail("campaign_exact_power_required")
+        domain_counts[domain] += 1
+    if (
+        not isinstance(domains, list)
+        or not domains
+        or any(not isinstance(domain, str) or not domain for domain in domains)
+        or len(set(domains)) != len(domains)
+        or set(domains) != set(domain_counts)
+        or type(generation_seed_count) is not int
+        or generation_seed_count <= 0
+        or any(
+            count != generation_seed_count
+            for count in domain_counts.values()
+        )
+        or not isinstance(observed_receipt, Mapping)
+    ):
+        _fail("campaign_exact_power_required")
+    try:
+        expected_receipt = exact_campaign_power_plan(
+            domain_count=len(domain_counts),
+            comparison_count=_comparison_count(arms),
+            arm_count=len(arms),
+            planned_observations_per_domain=generation_seed_count,
+        )
+    except ExactPairedGradeError as exc:
+        raise PairedCampaignError("campaign_exact_power_required") from exc
+    if (
+        canonical_json_bytes(dict(observed_receipt))
+        != canonical_json_bytes(expected_receipt)
+        or expected_receipt["powered_for_zero_loss_noninferiority"] is not True
+    ):
+        _fail("campaign_exact_power_required")
 
 
 def _is_sha256(value: Any) -> bool:
@@ -279,6 +352,12 @@ def build_campaign_plan(
         or execution_config.get("generation_seed_min_entropy_bits", 0) < 60
     ):
         _fail("campaign_answer_blinding_required")
+    if claim_eligible:
+        _validate_claim_exact_power(
+            execution_config,
+            task_domains=(task.domain for task in public_tasks),
+            arms=normalized_arms,
+        )
     task_by_id = {task.task_id: task for task in public_tasks}
     ordered_tasks = [task_by_id[record.task_id] for record in manifest.tasks]
     execution_order = _arm_execution_order(campaign_name, normalized_arms)
@@ -370,7 +449,7 @@ def _strict_result_row(
     verification = cast(Mapping[str, Any], verification)
     commit = cast(Mapping[str, Any], commit)
     expected_definition = plan.cell_definition(cell_id)
-    if dict(definition) != expected_definition:
+    if not _strict_json_equal(dict(definition), expected_definition):
         _fail("campaign_record_definition_mismatch")
     task_id = expected_definition["task_id"]
     domain = expected_definition["domain"]
@@ -401,16 +480,20 @@ def _strict_result_row(
         or not isinstance(runtime_bundle, Mapping)
         or not isinstance(implementation_sha256, Mapping)
         or runtime_identity.get("worker_model_path") != model_identity.get("model_path")
-        or runtime_identity.get("worker_model_parameter_count")
-        != runtime_bundle.get("logical_parameter_count")
+        or not _strict_json_equal(
+            runtime_identity.get("worker_model_parameter_count"),
+            runtime_bundle.get("logical_parameter_count"),
+        )
         or runtime_identity.get("worker_model_parameter_count_basis")
         != runtime_bundle.get("logical_parameter_count_basis")
         or runtime_identity.get("worker_weight_fingerprint")
         != model_identity.get("fingerprint")
         or runtime_identity.get("worker_weight_fingerprint_method")
         != model_identity.get("method")
-        or runtime_identity.get("worker_weight_file_count")
-        != model_identity.get("files")
+        or not _strict_json_equal(
+            runtime_identity.get("worker_weight_file_count"),
+            model_identity.get("files"),
+        )
         or runtime_identity.get("worker_runtime_bundle_sha256")
         != runtime_bundle.get("bundle_sha256")
         or runtime_identity.get("worker_load_boundary_verified") is not True
@@ -435,15 +518,20 @@ def _strict_result_row(
         if (
             result.get("adapter_identity_sha256")
             != adapter_receipt.get("composite_identity_sha256")
-            or result.get("adapter_wrapped_projections")
-            != adapter_receipt.get("wrapped_projection_count")
+            or not _strict_json_equal(
+                result.get("adapter_wrapped_projections"),
+                adapter_receipt.get("wrapped_projection_count"),
+            )
             or not isinstance(result.get("runtime_adapter_identity"), Mapping)
-            or dict(cast(Mapping[str, Any], result["runtime_adapter_identity"]))
-            != dict(adapter_receipt)
+            or not _strict_json_equal(
+                dict(cast(Mapping[str, Any], result["runtime_adapter_identity"])),
+                dict(adapter_receipt),
+            )
         ):
             _fail("campaign_adapter_activation_mismatch")
     elif (
         result.get("adapter_identity_sha256") is not None
+        or type(result.get("adapter_wrapped_projections")) is not int
         or result.get("adapter_wrapped_projections") != 0
         or result.get("runtime_adapter_identity") is not None
     ):
@@ -459,7 +547,7 @@ def _strict_result_row(
         _fail("campaign_score_binding_invalid")
     independent_score = issuer_task.score(text).to_dict()
     if (
-        dict(score) != independent_score
+        not _strict_json_equal(dict(score), independent_score)
         or independent_score.get("correct") is not correct
         or verification.get("answer_commitment_sha256")
         != task.get("answer_commitment_sha256")
@@ -484,9 +572,10 @@ def _paired_claim(
     treatment: str,
     control: str,
     require_compute: bool,
-    compute_tolerance: float,
+    compute_tolerance: Rational,
+    global_bound_family_count: int,
 ) -> dict[str, Any]:
-    by_domain: dict[str, list[PairedObservation]] = defaultdict(list)
+    by_domain: dict[str, list[ExactPairedObservation]] = defaultdict(list)
     for task_id in sorted(rows):
         arms = rows[task_id]
         if treatment not in arms or control not in arms:
@@ -496,55 +585,25 @@ def _paired_claim(
         if treatment_domain != control_domain:
             _fail("campaign_task_domain_drift")
         by_domain[treatment_domain].append(
-            PairedObservation(
+            ExactPairedObservation(
                 task_id=task_id,
                 family=treatment_domain,
                 treatment_success=treatment_success,
                 control_success=control_success,
-                treatment_layer_apps=treatment_cost,
-                control_layer_apps=control_cost,
+                treatment_compute=treatment_cost,
+                control_compute=control_cost,
             )
         )
-    claim = grade_paired_treatment_vs_control(
-        f"{treatment}_vs_{control}",
-        f"{treatment} improves over {control}",
-        dict(by_domain),
-        alpha=0.05,
-        minimum_effect=0.02,
+    return grade_exact_paired_comparison(
+        experiment=f"{treatment}_vs_{control}",
+        statement=f"{treatment} improves over {control}",
+        treatment=treatment,
+        control=control,
+        observations_by_family=dict(by_domain),
         compute_tolerance=compute_tolerance,
         require_compute=require_compute,
-    ).to_dict()
-    claim.pop("graded_at", None)
-    return cast(dict[str, Any], claim)
-
-
-def _interaction_interval(values: list[int]) -> tuple[float, float, float]:
-    """Deterministic percentile interval for the 2x2 interaction effect."""
-
-    if not values:
-        return 0.0, 0.0, 1.0
-    mean = sum(values) / len(values)
-    if len(set(values)) == 1:
-        pvalue = 2.0 ** (-len(values)) if values[0] > 0 else 1.0
-        return float(values[0]), float(values[0]), pvalue
-    import numpy as np
-
-    data = np.asarray(values, dtype=np.float64)
-    rng = np.random.default_rng(20260718)
-    samples: Any = np.empty((_BOOTSTRAP_RESAMPLES,), dtype=np.float64)
-    for start in range(0, _BOOTSTRAP_RESAMPLES, 500):
-        count = min(500, _BOOTSTRAP_RESAMPLES - start)
-        indices = rng.integers(0, len(data), size=(count, len(data)))
-        samples[start : start + count] = data[indices].mean(axis=1)
-    low, high = np.quantile(samples, [0.025, 0.975])
-    # One-sided random-sign permutation over task-level interaction values.
-    permuted: Any = np.empty((_BOOTSTRAP_RESAMPLES,), dtype=np.float64)
-    for start in range(0, _BOOTSTRAP_RESAMPLES, 500):
-        count = min(500, _BOOTSTRAP_RESAMPLES - start)
-        signs = rng.choice((-1.0, 1.0), size=(count, len(data)))
-        permuted[start : start + count] = (signs * data).mean(axis=1)
-    pvalue = (1.0 + float((permuted >= mean).sum())) / (len(permuted) + 1.0)
-    return float(low), float(high), pvalue
+        global_bound_family_count=global_bound_family_count,
+    )
 
 
 def grade_campaign(
@@ -595,7 +654,10 @@ def grade_campaign(
         _fail("campaign_issuer_tasks_invalid")
     issuer_tasks_by_id = {task.task_id: task for task in issuer_tasks}
     if set(issuer_tasks_by_id) != set(tasks_by_id) or any(
-        task.public.to_dict() != dict(tasks_by_id[task_id])
+        not _strict_json_equal(
+            task.public.to_dict(),
+            dict(tasks_by_id[task_id]),
+        )
         for task_id, task in issuer_tasks_by_id.items()
     ):
         _fail("campaign_issuer_tasks_mismatch")
@@ -695,6 +757,14 @@ def grade_campaign(
         or planned_domains != set(FRONTIER_DOMAINS)
     ):
         _fail("campaign_claim_eligibility_invalid")
+    if claim_eligible:
+        _validate_claim_exact_power(
+            cast(Mapping[str, Any], execution_config),
+            task_domains=(
+                cast(str, task["domain"]) for task in tasks_by_id.values()
+            ),
+            arms=arms,
+        )
     rows: dict[str, dict[str, tuple[str, bool, int]]] = defaultdict(dict)
     observed_cell_ids: set[str] = set()
     for record in records:
@@ -739,34 +809,47 @@ def grade_campaign(
         }
         return {**body, "grade_sha256": _sha256(body)}
 
+    domain_counts: dict[str, int] = defaultdict(int)
+    for task_arms in rows.values():
+        domain_counts[task_arms[BASE_VANILLA][0]] += 1
+    comparison_count = _comparison_count(arms)
+    global_bound_family_count = campaign_global_bound_family_count(
+        domain_count=len(domain_counts),
+        comparison_count=comparison_count,
+    )
+
     comparisons = {
         "base_rlc_gain": _paired_claim(
             rows,
             treatment=BASE_RLC,
             control=BASE_VANILLA,
             require_compute=False,
-            compute_tolerance=1.0,
+            compute_tolerance=Rational(1, 1),
+            global_bound_family_count=global_bound_family_count,
         ),
         "adapter_rlc_gain": _paired_claim(
             rows,
             treatment=ADAPTER_RLC,
             control=ADAPTER_VANILLA,
             require_compute=False,
-            compute_tolerance=1.0,
+            compute_tolerance=Rational(1, 1),
+            global_bound_family_count=global_bound_family_count,
         ),
         "adapter_effect_under_rlc": _paired_claim(
             rows,
             treatment=ADAPTER_RLC,
             control=BASE_RLC,
             require_compute=False,
-            compute_tolerance=1.0,
+            compute_tolerance=Rational(1, 1),
+            global_bound_family_count=global_bound_family_count,
         ),
         "adapter_effect_under_vanilla": _paired_claim(
             rows,
             treatment=ADAPTER_VANILLA,
             control=BASE_VANILLA,
             require_compute=False,
-            compute_tolerance=1.0,
+            compute_tolerance=Rational(1, 1),
+            global_bound_family_count=global_bound_family_count,
         ),
     }
     if BASE_EQUAL_COMPUTE in arms:
@@ -775,7 +858,8 @@ def grade_campaign(
             treatment=BASE_RLC,
             control=BASE_EQUAL_COMPUTE,
             require_compute=True,
-            compute_tolerance=0.20,
+            compute_tolerance=Rational(1, 5),
+            global_bound_family_count=global_bound_family_count,
         )
     if ADAPTER_EQUAL_COMPUTE in arms:
         comparisons["adapter_equal_compute"] = _paired_claim(
@@ -783,20 +867,26 @@ def grade_campaign(
             treatment=ADAPTER_RLC,
             control=ADAPTER_EQUAL_COMPUTE,
             require_compute=True,
-            compute_tolerance=0.20,
+            compute_tolerance=Rational(1, 5),
+            global_bound_family_count=global_bound_family_count,
         )
 
-    interactions: list[int] = []
-    domain_counts: dict[str, int] = defaultdict(int)
+    adapter_differences: list[int] = []
+    base_differences: list[int] = []
     for task_arms in rows.values():
-        domain = task_arms[BASE_VANILLA][0]
-        domain_counts[domain] += 1
-        interactions.append(
-            (int(task_arms[ADAPTER_RLC][1]) - int(task_arms[ADAPTER_VANILLA][1]))
-            - (int(task_arms[BASE_RLC][1]) - int(task_arms[BASE_VANILLA][1]))
+        adapter_differences.append(
+            int(task_arms[ADAPTER_RLC][1])
+            - int(task_arms[ADAPTER_VANILLA][1])
         )
-    interaction_mean = sum(interactions) / len(interactions)
-    interaction_low, interaction_high, interaction_p = _interaction_interval(interactions)
+        base_differences.append(
+            int(task_arms[BASE_RLC][1])
+            - int(task_arms[BASE_VANILLA][1])
+        )
+    interaction = grade_exact_interaction(
+        adapter_differences=adapter_differences,
+        base_differences=base_differences,
+        global_bound_family_count=global_bound_family_count,
+    )
     underpowered = sorted(
         domain for domain, count in domain_counts.items() if count < _MIN_DOMAIN_TRIALS
     )
@@ -806,11 +896,15 @@ def grade_campaign(
     statistically_proven = (
         not underpowered
         and all(comparisons[name]["tier"] == PROVEN for name in required_claims)
-        and interaction_low > 0.02
-        and interaction_p < 0.05
-        and not comparisons["adapter_effect_under_vanilla"]["evidence"].get("regressed_families")
+        and exact_interaction_proven(interaction)
+        and comparisons["adapter_effect_under_vanilla"]["evidence"].get(
+            "all_families_noninferior"
+        )
     )
-    refuted = comparisons["adapter_rlc_gain"]["tier"] == REFUTED or interaction_high <= 0.0
+    refuted = (
+        comparisons["adapter_rlc_gain"]["tier"] == REFUTED
+        or exact_interaction_refuted(interaction)
+    )
     if statistically_proven and claim_eligible:
         verdict, tier, reasons = (
             "gain_preverified",
@@ -823,14 +917,14 @@ def grade_campaign(
             CONJECTURE,
             ["campaign_not_claim_eligible"],
         )
+    elif refuted:
+        verdict, tier, reasons = "gain_refuted", REFUTED, ["gain_gate_failed"]
     elif underpowered:
         verdict, tier, reasons = (
             "incomplete_underpowered",
             CONJECTURE,
             [f"underpowered_domain:{domain}" for domain in underpowered],
         )
-    elif refuted:
-        verdict, tier, reasons = "gain_refuted", REFUTED, ["gain_gate_failed"]
     else:
         verdict, tier, reasons = "inconclusive", CONJECTURE, ["gain_not_proven"]
     body = {
@@ -843,14 +937,22 @@ def grade_campaign(
         "observed_cell_count": observed_cells,
         "plan_sha256": plan.plan_sha256,
         "domain_counts": dict(sorted(domain_counts.items())),
-        "comparisons": comparisons,
-        "interaction": {
-            "method": "task-paired 2x2 difference-in-differences bootstrap and sign permutation",
-            "mean": round(interaction_mean, 6),
-            "interval_95": [round(interaction_low, 6), round(interaction_high, 6)],
-            "one_sided_permutation_p": interaction_p,
-            "resamples": _BOOTSTRAP_RESAMPLES,
+        "statistical_policy": {
+            "alpha": {
+                "numerator": ALPHA.numerator,
+                "denominator": ALPHA.denominator,
+            },
+            "minimum_effect": {
+                "numerator": MINIMUM_EFFECT.numerator,
+                "denominator": MINIMUM_EFFECT.denominator,
+            },
+            "minimum_domain_observations": _MIN_DOMAIN_TRIALS,
+            "minimum_domain_count": 2,
+            "global_bound_family_count": global_bound_family_count,
+            "bound_precision_bits": BOUND_PRECISION_BITS,
         },
+        "comparisons": comparisons,
+        "interaction": interaction,
         "frontier_claim_eligible": False,
         "same_checkpoint_gain_claim_eligible": claim_eligible,
         "reasons": reasons,

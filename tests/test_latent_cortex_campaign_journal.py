@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import os
 import subprocess
@@ -91,10 +92,14 @@ def test_plan_and_cell_ids_are_deterministic_and_immutable() -> None:
     cells[0]["task"] = "mutated"
     metadata["nested"]["issuer"] = "mutated"
     assert first.cell_definition(first.cell_ids[0]) == {"seed": 1, "task": "alpha"}
+    returned_definition = first.cell_definition(first.cell_ids[0])
+    returned_definition["task"] = "mutated-return"
+    assert first.cell_definition(first.cell_ids[0]) == {"seed": 1, "task": "alpha"}
     assert first.to_dict()["metadata"] == {"nested": {"issuer": "independent"}}
 
     rebuilt = CampaignPlan.from_dict(first.to_dict())
     assert rebuilt == first
+    assert copy.deepcopy(first) == first
 
 
 def test_journal_replay_returns_only_committed_cells(tmp_path: Path) -> None:
