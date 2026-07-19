@@ -5,6 +5,8 @@ import hmac
 import json
 import os
 import socket
+import stat
+import sys
 import threading
 import uuid
 from pathlib import Path
@@ -16,6 +18,40 @@ from core.runtime import detached_subprocess_broker as broker
 
 def _canonical_bytes(value: object) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def test_command_normalization_matches_frozen_policy_launcher_semantics(
+    tmp_path: Path,
+) -> None:
+    real_parent = tmp_path / "versions/current/bin"
+    real_parent.mkdir(parents=True)
+    executable = real_parent / "python-test"
+    executable.write_text("#!/bin/sh\nexit 0\n", encoding="ascii")
+    executable.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
+    alias_parent = tmp_path / "active"
+    alias_parent.symlink_to(real_parent.parent)
+    launcher = alias_parent / "bin/python-test"
+
+    assert broker._normalized_command([str(launcher), "worker.py"], tmp_path) == [
+        str(real_parent / "python-test"),
+        "worker.py",
+    ]
+
+
+def test_command_normalization_preserves_final_virtualenv_launcher(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "python-real"
+    target.write_text("#!/bin/sh\nexit 0\n", encoding="ascii")
+    target.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
+    launcher = tmp_path / ".venv/bin/python"
+    launcher.parent.mkdir(parents=True)
+    launcher.symlink_to(target)
+
+    assert broker._normalized_command([str(launcher), "worker.py"], tmp_path) == [
+        str(launcher),
+        "worker.py",
+    ]
 
 
 def test_client_rejects_forged_unkeyed_broker_response(
@@ -59,7 +95,7 @@ def test_client_rejects_forged_unkeyed_broker_response(
     try:
         with pytest.raises(broker.DetachedBrokerError, match="response binding"):
             broker.run_brokered_process(
-                [str(Path(os.__file__).resolve()), "unused"],
+                [sys.executable, "unused"],
                 cwd=tmp_path,
                 stdout_path=tmp_path / "worker.log",
                 timeout_s=2.0,
@@ -131,7 +167,7 @@ def test_client_preserves_authenticated_supervisor_lifecycle_receipt(
     thread.start()
     try:
         result = broker.run_brokered_process(
-            [str(Path(os.__file__).resolve()), "unused"],
+            [sys.executable, "unused"],
             cwd=tmp_path,
             stdout_path=tmp_path / "worker.log",
             timeout_s=2.0,

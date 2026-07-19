@@ -8,6 +8,7 @@ import json
 import math
 import os
 import secrets
+import shutil
 import socket
 import stat
 from dataclasses import dataclass
@@ -62,6 +63,33 @@ def _command_sha256(command: list[str]) -> str:
     return hashlib.sha256(_canonical_bytes(command)).hexdigest()
 
 
+def _normalized_command(command: list[str], cwd: Path) -> list[str]:
+    executable = command[0]
+    try:
+        if "/" in executable:
+            candidate = Path(executable).expanduser()
+            if not candidate.is_absolute():
+                candidate = cwd / candidate
+        else:
+            located = shutil.which(executable, path=os.environ.get("PATH"))
+            if located is None:
+                raise DetachedBrokerError(
+                    f"broker command executable is unavailable: {executable}"
+                )
+            candidate = Path(located)
+        launcher = candidate.parent.resolve(strict=True) / candidate.name
+        resolved_target = launcher.resolve(strict=True)
+    except OSError as exc:
+        raise DetachedBrokerError(
+            f"broker command executable is unavailable: {executable}"
+        ) from exc
+    if not resolved_target.is_file() or not os.access(launcher, os.X_OK):
+        raise DetachedBrokerError(
+            f"broker command executable is not executable: {launcher}"
+        )
+    return [str(launcher), *command[1:]]
+
+
 def broker_available() -> bool:
     return bool(os.environ.get(BROKER_SOCKET_ENV) and os.environ.get(BROKER_TOKEN_ENV))
 
@@ -89,6 +117,8 @@ def run_brokered_process(
     if not stat.S_ISSOCK(broker_stat.st_mode) or broker_stat.st_uid != os.geteuid():
         raise DetachedBrokerError("detached subprocess broker socket identity is invalid")
 
+    resolved_cwd = cwd.expanduser().resolve(strict=True)
+    normalized_command = _normalized_command(command, resolved_cwd)
     request_id = secrets.token_hex(16)
     reply_name = f"aura-broker-reply-{os.geteuid()}-{os.getpid()}-{request_id}.sock"
     reply_path = Path("/tmp") / reply_name
@@ -99,9 +129,9 @@ def run_brokered_process(
         "action": "run",
         "broker_token": broker_token,
         "request_id": request_id,
-        "command": command,
-        "command_sha256": _command_sha256(command),
-        "cwd": str(cwd.expanduser().resolve(strict=True)),
+        "command": normalized_command,
+        "command_sha256": _command_sha256(normalized_command),
+        "cwd": str(resolved_cwd),
         "stdout_path": str(stdout_path.expanduser().resolve(strict=False)),
         "timeout_s": float(timeout_s),
         "reply_path": str(reply_path),

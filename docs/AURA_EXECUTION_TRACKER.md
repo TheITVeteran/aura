@@ -20857,3 +20857,48 @@ Evidence-weighted completion remains 27%; this is checkpoint 171 of the faithful
 292-399 forecast, leaving approximately 121-228 checkpoints. No reasoning-gain,
 frontier, external-custody campaign, live-app, release, or soak credit is
 awarded. Final soaks remain deferred.
+
+## Checkpoint 2026-07-19-172: Canonical Detached Broker Commands
+
+CP172 closes an exact-command identity defect found while validating terminal
+training promotion. The detached plan canonicalized aliases in a brokered
+launcher's parent directory, while the live broker client submitted the
+original alias. A Homebrew `opt` launcher could therefore be authorized in the
+frozen policy yet rejected at runtime as an unknown command.
+
+- The broker client now applies the same deterministic launcher normalization
+  as detached plan construction before hashing or transmitting a request. It
+  resolves aliases in the parent path, preserves the final launcher component
+  needed for virtual-environment discovery, validates that the resolved target
+  is an executable regular file, and leaves every argument unchanged.
+- The normalized command and its digest remain covered by the authenticated
+  request/response exchange and exact frozen-policy comparison. This does not
+  broaden the allowlist or accept target-byte equivalence as authority.
+- Unit coverage proves parent-alias normalization and final virtualenv-launcher
+  preservation. Existing mock clients now use a real executable rather than a
+  non-executable Python source file, so they continue to exercise response HMAC
+  and lifecycle verification through the production request path.
+- The externally authorized worker-origin supervisor test now reaches its
+  signature request and completes successfully under the same command form
+  that previously failed before authorization.
+
+Validation is green: 14 focused broker-client and detached-supervisor cases
+pass in 49.77 seconds, including exact allowlisting, forged-response rejection,
+single-use bounds, containment, and external worker-origin authorization.
+Focused Ruff, bytecode compilation, formatting, and diff checks pass. A broader
+99-case prerequisite run first exposed the alias defect; after repair its
+previously failing case passes both alone and in the focused broker set. One
+unrelated five-second detached smoke timed out once under concurrent resident
+32B training and passed immediately in isolation; no timeout was widened and no
+failure was silenced.
+
+This checkpoint repairs detached broker execution identity only. CP173+ must
+finish the terminal-training promotion contract, including the real producer
+schema, preregistered workload, terminal output-root binding, exact tokenizer
+replay, and public freeze/promotion composition tests. The resident-32B trainer
+remains active and its artifacts remain outside this commit.
+
+Evidence-weighted completion remains 27%; this is checkpoint 172 of the faithful
+292-399 forecast, leaving approximately 120-227 checkpoints. No reasoning-gain,
+frontier, external-custody campaign, live-app, release, or soak credit is
+awarded. Final soaks remain deferred.
