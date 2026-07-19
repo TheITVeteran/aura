@@ -652,7 +652,7 @@ def _attach_http_chat_delivery_receipt(
     request: Request | None,
     body: Any,
     payload: dict[str, Any],
-    record: DeliveryRecord,
+    record: DeliveryRecord | None = None,
 ) -> None:
     response_text = str(payload.get("response") or "").strip()
     principal = _authenticated_chat_principal(request)
@@ -661,6 +661,16 @@ def _attach_http_chat_delivery_receipt(
     session_key = _chat_turn_session_key(request, body)
     status = str(payload.get("status") or "")
     existing_background = response.background
+    # The delivery record enriches the receipt when the paired-boundary
+    # produced one; a transport receipt without it is still honest (fresh
+    # terminal time, no turn binding) — the social/feedback path exercises
+    # this standalone.
+    turn_id = str(getattr(record, "turn_id", "") or "")
+    terminal_at = float(
+        getattr(record, "terminal_at", 0.0)
+        or getattr(record, "updated_at", 0.0)
+        or time.time()
+    )
 
     async def _after_send() -> None:
         try:
@@ -673,8 +683,8 @@ def _attach_http_chat_delivery_receipt(
                 session_key=session_key,
                 status_code=response.status_code,
                 status=status,
-                turn_id=record.turn_id,
-                terminal_at=float(record.terminal_at or record.updated_at),
+                turn_id=turn_id,
+                terminal_at=terminal_at,
             )
 
     response.background = BackgroundTask(_after_send)
@@ -11800,9 +11810,14 @@ def _build_self_diagnostic_reply(user_message: str) -> str:
                 edge_count = int(counts.get("hyphae", 0))
             else:
                 topology_reader = getattr(mycelium, "get_network_topology", None)
-                topology = topology_reader() if callable(topology_reader) else {}
-                node_count = int(topology.get("pathway_count", 0) or 0)
-                edge_count = len(topology.get("hyphae") or {})
+                if callable(topology_reader):
+                    topology = topology_reader() or {}
+                    node_count = int(topology.get("pathway_count", 0) or 0)
+                    edge_count = len(topology.get("hyphae") or {})
+                else:
+                    # Bare network objects expose the structures directly.
+                    node_count = len(getattr(mycelium, "pathways", {}) or {})
+                    edge_count = len(getattr(mycelium, "hyphae", []) or [])
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation('chat', exc)
         logger.debug("Self-diagnostic mycelial read failed: %s", exc)

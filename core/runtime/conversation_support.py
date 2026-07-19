@@ -851,6 +851,37 @@ async def record_conversation_experience(
                 action="skipped relationship graph update for this exchange",
             )
             logger.debug("Relationship graph update skipped: %s", exc)
+    elif exact_agent_id is None and user_id not in (
+        "local_user",
+        "unattributed_session",
+    ):
+        # No exact THIRD-PARTY partner, but the turn has a resolved owner
+        # (Bryan). The aura↔owner edge is the owner's own relationship with
+        # their AI — they are its data controller, so it needs no third-party
+        # relational-memory grant (that gate protects other people's data).
+        # A consent-DENIED exact partner never reaches here: exact_agent_id
+        # is non-None in that case, so this branch is skipped.
+        try:
+            from core.social.relationship_graph import RelationshipConsentRequiredError
+
+            entity_graph = service_access.optional_service(
+                "entity_graph", "relationship_graph", default=None
+            )
+            if entity_graph and hasattr(entity_graph, "register_interaction"):
+                await entity_graph.register_interaction(
+                    "aura_self", user_id, "conversation", "self", "person"
+                )
+        except RelationshipConsentRequiredError:
+            logger.debug(
+                "Owner relationship edge abstained after consent changed for %s.",
+                user_id,
+            )
+        except (ImportError, RuntimeError, AttributeError, TypeError) as exc:
+            _record_conversation_degradation(
+                exc,
+                action="skipped owner relationship edge for this exchange",
+            )
+            logger.debug("Owner relationship edge skipped: %s", exc)
     else:
         logger.debug(
             "Relationship topology update abstained: exact-agent recall/prompt consent absent."

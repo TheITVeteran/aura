@@ -299,7 +299,11 @@ def _required_revision(payload: Any) -> int:
 async def get_all(_: None = Depends(_require_internal)) -> JSONResponse:
     store = get_settings()
     state = await asyncio.to_thread(store.describe)
-    return JSONResponse(
+    payload: dict[str, Any] = {**state}
+    # Route-owned keys win over any same-named keys inside describe() —
+    # spreading state LAST once silently replaced the `schema` alias (the
+    # controls-panel schema list) with the store's own schema string.
+    payload.update(
         {
             "control_plane": {
                 "schema": SETTINGS_SCHEMA_NAME,
@@ -311,9 +315,9 @@ async def get_all(_: None = Depends(_require_internal)) -> JSONResponse:
             "settings_schema": _schema_payload(),
             # `schema` remains as a compatibility alias for older internal clients.
             "schema": _schema_payload(),
-            **state,
         }
     )
+    return JSONResponse(payload)
 
 
 @router.patch("")

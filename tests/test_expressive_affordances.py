@@ -174,7 +174,10 @@ def test_menu_enabled_by_default_and_realize_wired():
     from interface.routes import chat as chat_routes
 
     src = inspect.getsource(chat_routes)
-    assert '"AURA_EXPRESSIVE_AFFORDANCES", "0"' in src  # off by default (0 zero-shot emission; needs training first)
+    # Off by default (zero-shot emission needs training first) — pinned at
+    # the typed-flag layer, the canonical form since the C1 migration.
+    assert '"AURA_EXPRESSIVE_AFFORDANCES"' in src
+    assert chat_routes._EXPRESSIVE_AFFORDANCES_FLAG.spec.default is False
     assert "_pending_affordance_intents" in src          # stashed before gate
     assert "_affordance_registry.realize(" in src        # realized after assembly
     assert 'setdefault("data", {})["affordances"]' in src  # surfaced on the wire

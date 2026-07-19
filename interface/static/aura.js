@@ -3743,9 +3743,12 @@ async function readChatDeliveryResponse(response) {
 
 async function postChatDelivery(item, message) {
     const controller = new AbortController();
+    // Lane-aware budget: a real 32B turn can take up to the ready/recovering
+    // ceiling; the old flat 90s frontend timeout aborted legitimate turns.
+    const requestTimeoutMs = conversationLaneRequestTimeoutMs(state.conversationLane);
     const timeoutId = window.setTimeout(
         () => controller.abort(),
-        conversationLaneRequestTimeoutMs(state.conversationLane)
+        requestTimeoutMs
     );
     const headers = {
         ...auraDesktopHeaders({ 'Content-Type': 'application/json' }),

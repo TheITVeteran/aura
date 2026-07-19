@@ -1,6 +1,7 @@
 """Tests for CRSM capture ingestion into the LoRA training corpus."""
 from __future__ import annotations
 
+import hashlib
 import json
 
 from training.build_dataset_v3 import build_crsm_experience_examples, parse_crsm_capture_text
@@ -60,11 +61,17 @@ def test_train_and_fuse_marks_crsm_consumed_only_from_current_manifest(tmp_path,
 
     dataset = tmp_path / "lora_dataset.jsonl"
     dataset.write_text("{}\n{}\n{}\n", encoding="utf-8")
+    dataset_bytes = dataset.read_bytes()
     manifest = tmp_path / "crsm_integration_manifest.json"
+    # The gate verifies manifest CURRENCY cryptographically: sha256 + size +
+    # line count must match the live dataset, not merely its mtime — a stale
+    # manifest must never mark fresh captures consumed.
     manifest.write_text(
         json.dumps(
             {
                 "source_lines": 3,
+                "source_size": len(dataset_bytes),
+                "source_sha256": hashlib.sha256(dataset_bytes).hexdigest(),
                 "source_mtime": dataset.stat().st_mtime,
                 "accepted": 2,
             }
