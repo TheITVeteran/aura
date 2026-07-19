@@ -25,6 +25,7 @@ def register_derived_engines(orchestrator: Any = None) -> dict[str, Any]:
     from core.affect.affective_resonance import register_affective_resonance
     from core.brain.deep_deliberation import register_deep_deliberation
     from core.brain.latent_cortex_service import register_latent_cortex
+    from core.knowledge.compiled_understanding import register_compiled_understanding
     from core.ethics.adversarial_conscience import register_adversarial_conscience
     from core.evals.adaptive_test_chamber import register_test_chamber
     from core.goals.directive_conflict_sentinel import register_directive_sentinel
@@ -47,6 +48,9 @@ def register_derived_engines(orchestrator: Any = None) -> dict[str, Any]:
         # path: the Recursive Latent Cortex facade (worker episodes are only
         # ever started by explicit calls, never by registration).
         "latent_cortex": register_latent_cortex,
+        # Compiled Understanding Layer: digest-first conceptual context +
+        # idle bridge indexing (pure registration; no background task).
+        "compiled_understanding": register_compiled_understanding,
         "brainiac": register_knowledge_bottling,
         "tron": register_user_advocate,
         "caine": register_scenario_forge,

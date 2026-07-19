@@ -3465,12 +3465,44 @@
       "scope": "<module>.AuraKernel._record_dream_fragment"
     },
     {
+      "callee": "<file_write_gateway>.ensure_directory",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/knowledge/compiled_understanding.py",
+      "scope": "<module>.CompiledUnderstandingService.export_reuse_evidence"
+    },
+    {
+      "callee": "<file_write_gateway>.write_text",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/knowledge/compiled_understanding.py",
+      "scope": "<module>.CompiledUnderstandingService.export_reuse_evidence"
+    },
+    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().append_text",
       "canonical_owner": false,
       "category": "file_write_gateway",
       "count": 1,
       "path": "core/learning/autonomous_rsi.py",
       "scope": "<module>.ExternalLedgerMirror.append"
+    },
+    {
+      "callee": "<file_write_gateway>.ensure_directory",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/learning/cortex_generation_upgrade.py",
+      "scope": "<module>._governed_write"
+    },
+    {
+      "callee": "<file_write_gateway>.write_bytes",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/learning/cortex_generation_upgrade.py",
+      "scope": "<module>._governed_write"
     },
     {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
@@ -8471,6 +8503,14 @@
       "count": 1,
       "path": "core/kernel/upgrades_10x.py",
       "scope": "<module>.EternalMemoryPhase.__init__"
+    },
+    {
+      "callee": "self.db_path.parent.mkdir",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/knowledge/compiled_understanding.py",
+      "scope": "<module>.DigestLibrary._connect"
     },
     {
       "callee": "self.db_path.parent.mkdir",
@@ -13994,6 +14034,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "01a9ba06604ef958143580b8b2ce32399bf95540fe8f244ea16aec9040cb6e10",
+  "inventory_sha256": "2dec4bc698ed31b53b20ef57543ec4a08f7d28dec6d33a19e3a4fd78ace23a5f",
   "schema_version": 1
 }

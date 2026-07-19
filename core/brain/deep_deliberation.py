@@ -120,9 +120,50 @@ class DeepDeliberationEngine:
                 try:
                     from core.brain.latent_cortex_service import get_latent_cortex_service
 
+                    # Compiled understanding: digest-first conceptual context
+                    # for the episode — dense, provenance-carrying concept
+                    # digests instead of raw retrieval, sized for the
+                    # episode's bounded compaction budget. Absent or failed
+                    # ⇒ the episode proceeds on the question alone.
+                    episode_messages = None
+                    try:
+                        from core.knowledge.compiled_understanding import (
+                            get_compiled_understanding,
+                        )
+
+                        understanding = await asyncio.wait_for(
+                            get_compiled_understanding().understand(refined),
+                            timeout=min(20.0, timeout_s),
+                        )
+                        compiled_context = str(
+                            understanding.get("context") or ""
+                        ).strip()
+                        if compiled_context:
+                            episode_messages = [
+                                {
+                                    "role": "system",
+                                    "content": (
+                                        "Compiled understanding (provenance-"
+                                        "tracked concept digests):\n"
+                                        + compiled_context
+                                    ),
+                                },
+                                {"role": "user", "content": refined},
+                            ]
+                    except (ImportError, AttributeError, RuntimeError,
+                            TypeError, ValueError, TimeoutError) as cu_exc:
+                        _degrade(
+                            cu_exc,
+                            action=(
+                                "ran latent episode without compiled "
+                                "understanding context"
+                            ),
+                        )
+
                     latent = await asyncio.wait_for(
                         get_latent_cortex_service(self.orchestrator).deep_reason(
-                            refined,
+                            None if episode_messages else refined,
+                            messages=episode_messages,
                             stakes=0.6,
                             uncertainty=0.7,
                             domain="deliberation",
