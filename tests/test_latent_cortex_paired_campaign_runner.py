@@ -1091,6 +1091,23 @@ def test_worker_execution_manifest_binds_imports_exclusions_and_detached_snapsho
         terminal_summaries=tuple(terminals),
         quarantine_summaries=(),
     )
+    detached_run_dir = tmp_path / "detached-run"
+    detached_run_dir.mkdir(mode=0o700)
+    detached_plan_path = detached_run_dir / "detached_plan.json"
+    detached_attempts_path = detached_run_dir / "detached_attempts.jsonl"
+    detached_plan_path.write_bytes(canonical_json_bytes(evidence.plan) + b"\n")
+    detached_attempts_path.write_text("{}\n", encoding="ascii")
+    monkeypatch.setattr(
+        runner,
+        "_detached_evidence_environment",
+        lambda: (
+            detached_run_dir,
+            detached_plan_path,
+            detached_attempts_path,
+            detached_plan_sha256,
+            1,
+        ),
+    )
     monkeypatch.setattr(
         runner,
         "_verify_detached_worker_broker_result",
@@ -1115,6 +1132,12 @@ def test_worker_execution_manifest_binds_imports_exclusions_and_detached_snapsho
     assert manifest["import_count"] == len(runner.PRIMARY_ARMS)
     assert manifest["excluded_count"] == 1
     assert manifest["detached_plan_sha256"] == detached_plan_sha256
+    assert manifest["detached_run_dir"] == str(detached_run_dir)
+    assert manifest["detached_plan_path"] == str(detached_plan_path)
+    assert manifest["detached_attempts_path"] == str(detached_attempts_path)
+    assert manifest["detached_plan_artifact_sha256"] == hashlib.sha256(
+        detached_plan_path.read_bytes()
+    ).hexdigest()
     assert manifest["detached_classification_head_sha256"] == "c" * 64
     assert manifest["detached_classifications"]["terminal_count"] == len(results)
     assert (

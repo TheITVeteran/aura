@@ -56,10 +56,15 @@ from core.brain.llm.latent_cortex.frontier_tasks import (  # noqa: E402
     build_task_manifest,
     generate_task_battery,
 )
+from core.brain.llm.latent_cortex.independent_worker_campaign_evidence import (  # noqa: E402
+    IndependentWorkerCampaignEvidenceError,
+    verify_worker_campaign_evidence,
+)
 from core.brain.llm.latent_cortex.paired_campaign import (  # noqa: E402
     grade_campaign,
 )
 from core.brain.llm.latent_cortex.worker_origin import (  # noqa: E402
+    WORKER_KEY_CUSTODY_DETACHED_SUPERVISOR,
     WORKER_KEY_CUSTODY_PRODUCER_SOFTWARE,
     ZERO_SHA256,
 )
@@ -86,13 +91,13 @@ WORKER_AUTHORIZATION_MANIFEST_FILE = "worker_authorization_manifest.json"
 WORKER_LIFECYCLE_MANIFEST_FILE = "worker_lifecycle_manifest.json"
 WORKER_KEY_ERASURE_MANIFEST_FILE = "worker_key_erasure_manifest.json"
 WORKER_ORIGIN_DIR = "worker_origins"
-VERDICT_SCHEMA = "aura.latent_cortex.independent_evidence_verdict.v1"
+VERDICT_SCHEMA = "aura.latent_cortex.independent_evidence_verdict.v2"
 TASK_ISSUER_PAYLOAD_SCHEMA = "aura.latent_cortex.task_issuer_prelaunch.v1"
 CAMPAIGN_RUNNER_PAYLOAD_SCHEMA = "aura.latent_cortex.runner_prelaunch.v1"
-FINAL_VERIFIER_PAYLOAD_SCHEMA = "aura.latent_cortex.final_verifier_payload.v3"
-SEALED_OUTPUT_MANIFEST_SCHEMA = "aura.latent_cortex.sealed_output_manifest.v3"
+FINAL_VERIFIER_PAYLOAD_SCHEMA = "aura.latent_cortex.final_verifier_payload.v4"
+SEALED_OUTPUT_MANIFEST_SCHEMA = "aura.latent_cortex.sealed_output_manifest.v4"
 ANSWER_REVEAL_PAYLOAD_SCHEMA = "aura.latent_cortex.answer_reveal_payload.v1"
-FINAL_RUN_PAYLOAD_SCHEMA = "aura.latent_cortex.final_run_payload.v3"
+FINAL_RUN_PAYLOAD_SCHEMA = "aura.latent_cortex.final_run_payload.v4"
 WORKER_AUTHORIZATION_MANIFEST_SCHEMA = (
     "aura.latent_cortex.worker_authorization_manifest.v1"
 )
@@ -288,7 +293,13 @@ def _verifier_implementation_sha256() -> str:
         REPO_ROOT / "core/brain/llm/latent_cortex/campaign_trust.py",
         REPO_ROOT / "core/brain/llm/latent_cortex/experiments.py",
         REPO_ROOT / "core/brain/llm/latent_cortex/frontier_tasks.py",
+        REPO_ROOT
+        / "core/brain/llm/latent_cortex/independent_worker_campaign_evidence.py",
         REPO_ROOT / "core/brain/llm/latent_cortex/paired_campaign.py",
+        REPO_ROOT / "core/brain/llm/latent_cortex/detached_campaign_evidence.py",
+        REPO_ROOT / "core/brain/llm/latent_cortex/worker_attempt_import.py",
+        REPO_ROOT / "core/brain/llm/latent_cortex/worker_origin.py",
+        REPO_ROOT / "core/runtime/detached_subprocess_broker.py",
         REPO_ROOT / "core/runtime/file_read_gateway.py",
     )
     identity = [
@@ -1018,7 +1029,7 @@ def _verify_worker_key_erasure(
     return aggregate
 
 
-def _verify_worker_origin_evidence(
+def _verify_legacy_worker_origin_evidence(
     campaign_dir: Path,
     *,
     plan: CampaignPlan,
@@ -1170,6 +1181,66 @@ def _verify_worker_origin_evidence(
     }
 
 
+def _verify_worker_origin_evidence(
+    campaign_dir: Path,
+    *,
+    plan: CampaignPlan,
+    result_records: tuple[dict[str, Any], ...],
+    trusted_policy: Any | None,
+) -> tuple[list[str], dict[str, Any]]:
+    del result_records
+    if plan.to_dict()["metadata"].get("claim_eligible") is not True:
+        return [], {"required": False, "verified": False}
+    if trusted_policy is None:
+        return ["worker origins have no independently trusted policy"], {
+            "required": True,
+            "verified": False,
+        }
+    try:
+        verified = verify_worker_campaign_evidence(
+            campaign_dir=campaign_dir,
+            plan=plan,
+            policy=trusted_policy,
+            expected_protocol_sha256=_campaign_protocol_sha256(),
+        )
+    except (OSError, TypeError, ValueError, KeyError) as exc:
+        code = (
+            exc.code
+            if isinstance(exc, IndependentWorkerCampaignEvidenceError)
+            else f"{type(exc).__name__}:{exc}"
+        )
+        return [f"detached worker evidence validation failed: {code}"], {
+            "required": True,
+            "verified": False,
+            "failure_code": code,
+        }
+    return [], {
+        "required": True,
+        "verified": True,
+        "cryptographic_chain_verified": True,
+        "worker_execution_origin_proven": True,
+        "worker_key_custody": WORKER_KEY_CUSTODY_DETACHED_SUPERVISOR,
+        "worker_execution_manifest_sha256": verified.manifest_sha256,
+        "detached_plan_sha256": verified.detached_plan_sha256,
+        "detached_plan_artifact_sha256": verified.detached_plan_artifact_sha256,
+        "detached_journal_head_sha256": verified.detached_journal_head_sha256,
+        "detached_attempts_artifact_sha256": (
+            verified.detached_attempts_artifact_sha256
+        ),
+        "detached_classification_head_sha256": (
+            verified.detached_classification_head_sha256
+        ),
+        "detached_classifications_sha256": (
+            verified.detached_classifications_sha256
+        ),
+        "imports_sha256": verified.imports_sha256,
+        "excluded_attempts_sha256": verified.excluded_attempts_sha256,
+        "imported_attempt_count": verified.imported_attempt_count,
+        "excluded_attempt_count": verified.excluded_attempt_count,
+        "private_key_copy_exclusion_proven": True,
+    }
+
+
 def _verify_sealed_output_reveal(
     campaign_dir: Path,
     *,
@@ -1177,6 +1248,7 @@ def _verify_sealed_output_reveal(
     tasks: tuple[Any, ...],
     result_records: tuple[dict[str, Any], ...],
     trusted_policy: Any | None,
+    worker_evidence: Mapping[str, Any],
 ) -> tuple[list[str], dict[str, Any]]:
     execution = plan.to_dict()["metadata"].get("execution_config")
     if not isinstance(execution, dict) or execution.get(
@@ -1198,6 +1270,29 @@ def _verify_sealed_output_reveal(
         or not isinstance(sealed.get("cells"), list)
     ):
         failures.append("sealed output manifest is invalid")
+    claim_eligible = plan.to_dict()["metadata"].get("claim_eligible") is True
+    if claim_eligible:
+        expected_worker_binding = {
+            "worker_execution_manifest_sha256": worker_evidence.get(
+                "worker_execution_manifest_sha256"
+            ),
+            "detached_plan_sha256": worker_evidence.get("detached_plan_sha256"),
+            "detached_classification_head_sha256": worker_evidence.get(
+                "detached_classification_head_sha256"
+            ),
+            "detached_classifications_sha256": worker_evidence.get(
+                "detached_classifications_sha256"
+            ),
+            "worker_imports_sha256": worker_evidence.get("imports_sha256"),
+            "worker_excluded_attempts_sha256": worker_evidence.get(
+                "excluded_attempts_sha256"
+            ),
+        }
+        if worker_evidence.get("verified") is not True or any(
+            sealed.get(key) != value
+            for key, value in expected_worker_binding.items()
+        ):
+            failures.append("sealed output detached-worker binding differs")
     result_by_cell = {record["cell_id"]: record for record in result_records}
     sealed_cells = sealed.get("cells") if isinstance(sealed.get("cells"), list) else []
     if len(sealed_cells) != len(plan.cell_ids):
@@ -1281,7 +1376,6 @@ def _verify_sealed_output_reveal(
         if payload["answers"] != expected_answers:
             failures.append("answer reveal differs from independent task regeneration")
 
-    claim_eligible = plan.to_dict()["metadata"].get("claim_eligible") is True
     if claim_eligible:
         if trusted_policy is None:
             failures.append("answer reveal has no independently trusted issuer")
@@ -1333,7 +1427,7 @@ def _verify_sealed_output_reveal(
     }
 
 
-def _verify_final_run_envelope(
+def _verify_legacy_final_run_envelope(
     campaign_dir: Path,
     *,
     plan: CampaignPlan,
@@ -1459,6 +1553,142 @@ def _verify_final_run_envelope(
     }
 
 
+def _verify_final_run_envelope(
+    campaign_dir: Path,
+    *,
+    plan: CampaignPlan,
+    trusted_policy: Any | None,
+    worker_evidence: Mapping[str, Any],
+) -> tuple[list[str], dict[str, Any]]:
+    if plan.to_dict()["metadata"].get("claim_eligible") is not True:
+        return [], {"required": False, "verified": False}
+    if trusted_policy is None:
+        return ["final run has no independently trusted runner"], {
+            "required": True,
+            "verified": False,
+        }
+    if worker_evidence.get("verified") is not True:
+        return ["final run has no verified detached-worker evidence"], {
+            "required": True,
+            "verified": False,
+        }
+    envelope = _canonical_artifact(
+        campaign_dir / FINAL_RUN_ENVELOPE_FILE,
+        role="final run envelope",
+    )
+    if set(envelope) != {
+        "schema",
+        "payload",
+        "request_sha256",
+        "campaign_runner_attestation",
+        "envelope_sha256",
+    } or envelope.get("schema") != "aura.latent_cortex.final_run_envelope.v4":
+        return ["final run envelope schema is invalid"], {
+            "required": True,
+            "verified": False,
+        }
+    material = {
+        key: envelope[key]
+        for key in ("payload", "request_sha256", "campaign_runner_attestation")
+    }
+    failures: list[str] = []
+    if envelope.get("envelope_sha256") != _sha256_bytes(
+        canonical_json_bytes(material)
+    ):
+        failures.append("final run envelope digest is invalid")
+    sealed = _canonical_artifact(
+        campaign_dir / SEALED_OUTPUT_MANIFEST_FILE,
+        role="sealed output manifest",
+    )
+    reveal = _canonical_artifact(campaign_dir / ANSWER_REVEAL_FILE, role="answer reveal")
+    manifest = _canonical_artifact(
+        campaign_dir / MANIFEST_FILE,
+        role="campaign manifest",
+    )
+    grade = _canonical_artifact(campaign_dir / GRADE_FILE, role="published grade")
+    worker_manifest = _canonical_artifact(
+        campaign_dir / "worker_execution_manifest.json",
+        role="worker execution manifest",
+    )
+    expected_payload = {
+        "schema": FINAL_RUN_PAYLOAD_SCHEMA,
+        "campaign_name": plan.campaign_name,
+        "policy_sha256": trusted_policy.policy_sha256,
+        "protocol_sha256": _campaign_protocol_sha256(),
+        "plan_sha256": plan.plan_sha256,
+        "sealed_output_manifest_sha256": sealed["manifest_sha256"],
+        "answer_reveal_sha256": reveal["reveal_sha256"],
+        "campaign_manifest_sha256": manifest["manifest_sha256"],
+        "journal_head_sha256": manifest["journal_head_sha256"],
+        "published_grade_sha256": grade["grade_sha256"],
+        "worker_execution_manifest_sha256": worker_evidence[
+            "worker_execution_manifest_sha256"
+        ],
+        "detached_plan_sha256": worker_evidence["detached_plan_sha256"],
+        "detached_classification_head_sha256": worker_evidence[
+            "detached_classification_head_sha256"
+        ],
+        "detached_classifications_sha256": worker_evidence[
+            "detached_classifications_sha256"
+        ],
+        "worker_imports_sha256": worker_evidence["imports_sha256"],
+        "worker_excluded_attempts_sha256": worker_evidence[
+            "excluded_attempts_sha256"
+        ],
+    }
+    if worker_manifest.get("manifest_sha256") != worker_evidence.get(
+        "worker_execution_manifest_sha256"
+    ):
+        failures.append("final run worker manifest differs from independent replay")
+    if envelope.get("payload") != expected_payload:
+        failures.append("final run payload differs from independent reconstruction")
+    request = _canonical_artifact(
+        campaign_dir / FINAL_RUN_REQUEST_FILE,
+        role="final run request",
+    )
+    signed_payload = request.get("signed_payload")
+    signed_at = (
+        signed_payload.get("signed_at_unix")
+        if isinstance(signed_payload, dict)
+        else None
+    )
+    if type(signed_at) is not int:
+        failures.append("final run request timestamp is invalid")
+    else:
+        expected_request = prepare_role_signature_request(
+            trusted_policy,
+            role=CAMPAIGN_RUNNER,
+            payload=expected_payload,
+            signed_at_unix=signed_at,
+        )
+        if request != expected_request:
+            failures.append("final run request is not canonical")
+        if envelope.get("request_sha256") != request.get("request_sha256"):
+            failures.append("final run request digest is not bound")
+        try:
+            verified = verify_role_attestation(
+                trusted_policy,
+                envelope.get("campaign_runner_attestation"),
+                role=CAMPAIGN_RUNNER,
+                expected_payload=expected_payload,
+                not_before_unix=signed_at,
+            )
+        except ValueError:
+            failures.append("final run attestation is invalid")
+        else:
+            if verified != request.get("signed_payload"):
+                failures.append("final run attestation differs from request")
+    return failures, {
+        "required": True,
+        "verified": not failures,
+        "envelope_sha256": envelope.get("envelope_sha256"),
+        "request_sha256": envelope.get("request_sha256"),
+        "worker_execution_manifest_sha256": worker_evidence.get(
+            "worker_execution_manifest_sha256"
+        ),
+    }
+
+
 def verify_campaign_evidence(
     campaign_dir: Path,
     *,
@@ -1550,6 +1780,7 @@ def verify_campaign_evidence(
             tasks=tasks,
             result_records=result_records,
             trusted_policy=trusted_policy,
+            worker_evidence=worker_origin_detail,
         )
     except (OSError, TypeError, ValueError, KeyError) as exc:
         reveal_failures = [f"sealed output or answer reveal validation failed: {exc}"]
@@ -1685,16 +1916,25 @@ def verify_campaign_evidence(
                     "answer_reveal_sha256"
                 )
             if worker_origin_detail.get("required") is True:
-                expected_material["worker_authorization_manifest_sha256"] = (
-                    worker_origin_detail.get("authorization_manifest_sha256")
+                expected_material["worker_execution_manifest_sha256"] = (
+                    worker_origin_detail.get("worker_execution_manifest_sha256")
                 )
-                expected_material["worker_lifecycle_manifest_sha256"] = (
+                expected_material["detached_plan_sha256"] = (
+                    worker_origin_detail.get("detached_plan_sha256")
+                )
+                expected_material["detached_classification_head_sha256"] = (
                     worker_origin_detail.get(
-                        "worker_lifecycle_manifest_sha256"
+                        "detached_classification_head_sha256"
                     )
                 )
-                expected_material["worker_key_erasure_manifest_sha256"] = (
-                    worker_origin_detail.get("key_erasure_manifest_sha256")
+                expected_material["detached_classifications_sha256"] = (
+                    worker_origin_detail.get("detached_classifications_sha256")
+                )
+                expected_material["worker_imports_sha256"] = (
+                    worker_origin_detail.get("imports_sha256")
+                )
+                expected_material["worker_excluded_attempts_sha256"] = (
+                    worker_origin_detail.get("excluded_attempts_sha256")
                 )
             expected_grade = {
                 **expected_material,
@@ -1724,6 +1964,7 @@ def verify_campaign_evidence(
             campaign_dir,
             plan=plan,
             trusted_policy=trusted_policy,
+            worker_evidence=worker_origin_detail,
         )
     except (OSError, TypeError, ValueError, KeyError) as exc:
         final_run_failures = [f"final run envelope validation failed: {exc}"]
@@ -1819,17 +2060,32 @@ def verify_campaign_evidence(
                 "final_run_envelope_sha256": final_run_detail.get(
                     "envelope_sha256"
                 ),
-                "worker_authorization_manifest_sha256": worker_origin_detail.get(
-                    "authorization_manifest_sha256"
+                "worker_execution_manifest_sha256": worker_origin_detail.get(
+                    "worker_execution_manifest_sha256"
                 ),
-                "worker_origin_chains_sha256": worker_origin_detail.get(
-                    "origin_chains_sha256"
+                "detached_plan_sha256": worker_origin_detail.get(
+                    "detached_plan_sha256"
                 ),
-                "worker_lifecycle_manifest_sha256": worker_origin_detail.get(
-                    "worker_lifecycle_manifest_sha256"
+                "detached_plan_artifact_sha256": worker_origin_detail.get(
+                    "detached_plan_artifact_sha256"
                 ),
-                "worker_key_erasure_manifest_sha256": worker_origin_detail.get(
-                    "key_erasure_manifest_sha256"
+                "detached_journal_head_sha256": worker_origin_detail.get(
+                    "detached_journal_head_sha256"
+                ),
+                "detached_attempts_artifact_sha256": worker_origin_detail.get(
+                    "detached_attempts_artifact_sha256"
+                ),
+                "detached_classification_head_sha256": worker_origin_detail.get(
+                    "detached_classification_head_sha256"
+                ),
+                "detached_classifications_sha256": worker_origin_detail.get(
+                    "detached_classifications_sha256"
+                ),
+                "worker_imports_sha256": worker_origin_detail.get(
+                    "imports_sha256"
+                ),
+                "worker_excluded_attempts_sha256": worker_origin_detail.get(
+                    "excluded_attempts_sha256"
                 ),
                 "production_protocol_sha256": _campaign_protocol_sha256(),
                 "production_semantic_grade_sha256": (

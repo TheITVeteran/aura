@@ -2687,6 +2687,30 @@ def _verify_detached_worker_broker_result(
     *,
     require_claim_eligible: bool,
 ) -> VerifiedDetachedBrokerEvidence:
+    run_dir, plan_path, attempts_path, plan_sha256, supervisor_attempt = (
+        _detached_evidence_environment()
+    )
+    try:
+        verified = verify_detached_broker_evidence(
+            run_dir=run_dir,
+            broker_result=result,
+            require_claim_eligible=require_claim_eligible,
+        )
+    except DetachedCampaignEvidenceError as exc:
+        raise CampaignProducerError(
+            f"detached supervisor evidence rejected: {exc.code}"
+        ) from exc
+    if (
+        plan_path != run_dir / "detached_plan.json"
+        or attempts_path != run_dir / "detached_attempts.jsonl"
+        or verified.plan.get("plan_sha256") != plan_sha256
+        or verified.attempt != supervisor_attempt
+    ):
+        raise CampaignProducerError("detached supervisor evidence identity differs")
+    return verified
+
+
+def _detached_evidence_environment() -> tuple[Path, Path, Path, str, int]:
     run_value = str(os.environ.get(DETACHED_RUN_DIR_ENV, "") or "")
     plan_value = str(os.environ.get(DETACHED_PLAN_PATH_ENV, "") or "")
     attempts_value = str(os.environ.get(DETACHED_ATTEMPTS_PATH_ENV, "") or "")
@@ -2713,22 +2737,7 @@ def _verify_detached_worker_broker_result(
         raise CampaignProducerError(
             "detached supervisor evidence environment is inconsistent"
         )
-    try:
-        verified = verify_detached_broker_evidence(
-            run_dir=run_dir,
-            broker_result=result,
-            require_claim_eligible=require_claim_eligible,
-        )
-    except DetachedCampaignEvidenceError as exc:
-        raise CampaignProducerError(
-            f"detached supervisor evidence rejected: {exc.code}"
-        ) from exc
-    if (
-        verified.plan.get("plan_sha256") != plan_sha256
-        or verified.attempt != supervisor_attempt
-    ):
-        raise CampaignProducerError("detached supervisor evidence identity differs")
-    return verified
+    return run_dir, plan_path, attempts_path, plan_sha256, supervisor_attempt
 
 
 def _import_brokered_worker_attempt(
@@ -2816,6 +2825,17 @@ def _build_worker_execution_manifest(
     policy = _load_campaign_trust_policy(args, require_current=True)
     if policy is None:
         raise CampaignProducerError("worker execution has no trusted policy")
+    (
+        detached_run_dir,
+        detached_plan_path,
+        detached_attempts_path,
+        environment_plan_sha256,
+        _supervisor_attempt,
+    ) = _detached_evidence_environment()
+    detached_plan_artifact = _read_stable_bytes(
+        detached_plan_path,
+        max_bytes=64 * 1024 * 1024,
+    )
     imports: list[dict[str, Any]] = []
     excluded: list[dict[str, Any]] = []
     successful_arms: set[str] = set()
@@ -2981,6 +3001,15 @@ def _build_worker_execution_manifest(
         or detached_quarantines is None
     ):
         raise CampaignProducerError("worker execution arm coverage is incomplete")
+    if detached_plan_sha256 != environment_plan_sha256:
+        raise CampaignProducerError("worker execution detached plan differs from env")
+    if (
+        _read_stable_bytes(detached_plan_path, max_bytes=64 * 1024 * 1024)
+        != detached_plan_artifact
+    ):
+        raise CampaignProducerError(
+            "detached plan changed while worker evidence was assembled"
+        )
     with CampaignJournal(campaign_dir / JOURNAL_FILE, plan) as journal:
         canonical_records = journal.result_records()
     canonical_origins = {
@@ -3010,6 +3039,12 @@ def _build_worker_execution_manifest(
         "policy_sha256": policy.policy_sha256,
         "protocol_sha256": _campaign_protocol_sha256(),
         "plan_sha256": plan.plan_sha256,
+        "detached_run_dir": str(detached_run_dir),
+        "detached_plan_path": str(detached_plan_path),
+        "detached_attempts_path": str(detached_attempts_path),
+        "detached_plan_artifact_sha256": _sha256_bytes(
+            detached_plan_artifact
+        ),
         "detached_plan_sha256": detached_plan_sha256,
         "detached_classification_head_sha256": (
             detached_classification_head_sha256

@@ -16,12 +16,12 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **Checkpoint 168 is the current
-  reviewed source candidate in the `main` worktree; checkpoints through CP167
+- Current bounded implementation milestone: **Checkpoint 169 is the current
+  reviewed source candidate in the `main` worktree; checkpoints through CP168
   are pushed. The corrected resident-32B path completed clean one-, two-, and
   five-step calibrations with finite durable checkpoints, exact source identity,
   no memory ratchet, and a 48-GiB MLX wired-residency limit. The full detached
-  576-step run is active from exact pushed CP147 source at step 485/576 with
+  576-step run is active from exact pushed CP147 source at step 500/576 with
   finite losses and durable five-step checkpoints; it remains governed by the
   24-hour training deadline and 26-hour containment timeout. No
   reasoning-gain or frontier claim exists yet. Completed training,
@@ -20676,5 +20676,66 @@ release gates, and final soaks remain open.
 
 Evidence-weighted completion remains 27%; this is checkpoint 168 of the faithful
 292-399 forecast, leaving approximately 124-231 checkpoints. No reasoning-gain,
+frontier, external-custody campaign, live-app, release, or soak credit is
+awarded. Final soaks remain deferred.
+
+## Checkpoint 2026-07-19-169: Independent Detached Campaign Certification
+
+CP169 migrates the independent campaign verifier from the historical
+producer-held-key protocol to raw detached-worker evidence and closes the
+missing post-process replay boundary discovered during CP168.
+
+- The production worker-execution manifest now binds the exact canonical
+  detached run, plan, and attempt-journal locations plus the immutable detached
+  plan artifact hash. Plan bytes are checked before and after aggregation so a
+  concurrent replacement cannot be certified under another snapshot.
+- A new read-only verifier reconstructs every broker result from its canonical
+  artifact, independently replays the final detached plan/journal and response
+  HMAC, verifies each successful signed stage and lifecycle, and derives each
+  transactional import intent, receipt, and contiguous canonical
+  `STARTED`/`ARM_RESULT` boundary from the journal itself. It does not trust the
+  producer's aggregate manifest fields.
+- Every terminal must map exactly once to an imported or excluded attempt;
+  every arm must have exactly one imported terminal; all starts must already be
+  terminally classified or quarantined by the detached replay; and canonical
+  worker origins must equal imported origins while remaining disjoint from
+  excluded and quarantined sessions.
+- Evidence paths must be absolute, canonical, owned, single-link, and
+  non-writable by group or world. Unrecognized arm names, duplicate arms,
+  excessive attempt bounds, symlinked manifests, unplanned attempt artifacts,
+  duplicate JSON keys, non-finite numbers, path substitution, and artifact
+  changes during replay fail closed.
+- Sealed-output v4, the published grade, final-run payload/envelope v4, verdict
+  v2, and final-verifier payload v4 all bind the independently reconstructed
+  worker manifest, detached plan and classification snapshot, imports, and
+  exclusions. The final verifier attestation additionally binds the final
+  detached journal head and exact detached-attempt artifact hash observed after
+  the campaign process exits.
+- Historical producer-key parsing remains isolated for forensic readability,
+  but the current claim path requires
+  `detached_supervisor_staged_arm_import_v3`; legacy evidence cannot become a
+  current claim.
+
+Validation is green: the focused campaign/detached trust stack passes 68/68;
+the expanded campaign journal, exact grading, independent scoring, campaign
+trust, detached authority, worker-origin, stage-import, runner, and verifier
+set passes 201/201 in 71.51 seconds. Ruff, bytecode compilation, repository
+lint, governance ownership, formatting, and diff checks pass. The positive
+model-free fixture uses a real external runner signature, supervisor-owned
+ephemeral worker authority, signed result chain, broker HMAC journal,
+transactional import, independent replay, and v4 final-run signature; rehashed
+receipt forgery, symlink substitution, unplanned artifacts, and arm-path
+traversal are rejected.
+
+This closes the independent verifier implementation, not the scientific
+result. A real powered claim still requires the completed resident-32B adapter,
+separately administered production trust roots, preregistered hidden seeds,
+all six arms across the seven-domain exact-power battery, accepted external
+verifier attestation, compute/ablation review, frontier comparison, rebuilt-app
+proof, release gates, and final soaks. The synthetic trust fixture deliberately
+does not impersonate that powered result.
+
+Evidence-weighted completion remains 27%; this is checkpoint 169 of the faithful
+292-399 forecast, leaving approximately 123-230 checkpoints. No reasoning-gain,
 frontier, external-custody campaign, live-app, release, or soak credit is
 awarded. Final soaks remain deferred.
