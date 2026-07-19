@@ -1,0 +1,64 @@
+{
+  "schema": "aura.recurrence_native_resident_resource_amendment.v1",
+  "parent_protocol_path": "artifacts/closeout/latent_cortex/resident_32b_v2_cp139/protocol.json",
+  "parent_protocol_sha256": "2f5df8c9c215d20dc98a6b48b29b4207bdb527af477293b1b5904338bcef34f4",
+  "reason": "Two post-checkpoint cold reloads were killed by macOS Jetsam before training. The first Jetsam report records the 32B Python process at 5676548 16KiB resident pages, approximately 86.6GiB, on a 64GiB host with only 1.2GiB swap free.",
+  "timing_policy": "Resource amendment frozen after mechanics-only step 1 and before any pilot, confirmatory task, or capability outcome.",
+  "observed_resource_failures": [
+    {
+      "child_pid": 93301,
+      "returncode": -9,
+      "duration_seconds": 99.926557,
+      "detached_receipt_sha256": "21c6f8d88a0fba0c29ae4c0496680e3f244bf05d4b1784deed40f55c3bd5f032"
+    },
+    {
+      "child_pid": 1443,
+      "returncode": -9,
+      "duration_seconds": 101.72601,
+      "detached_receipt_sha256": "92d8c093d41c23e590fb12ce267a80f920ea2ead356d40f284be2562f51e53d5"
+    }
+  ],
+  "jetsam_evidence": {
+    "path": "/Library/Logs/DiagnosticReports/JetsamEvent-2026-07-18-222947.ips",
+    "sha256": "99798891ada5982f8f3a81e437291004b2fd03be027cc4d69017f6709274fb9a",
+    "page_size_bytes": 16384,
+    "resident_pages": 5676548,
+    "largest_process": "Python"
+  },
+  "resume_checkpoint": {
+    "source_directory": "artifacts/closeout/latent_cortex/resident_32b_v2_cp139/adapter-attempt3-bounded-grace",
+    "steps": 1,
+    "invocation_count": 1,
+    "halt_reason": "wall_clock",
+    "complete": false,
+    "config_sha256": "651f1caf591b5b8ee8cfc8b6a820afb258b854e253823f4feb11b878551c7980",
+    "dataset_sha256": "035cdf45cb43cdbb2fb3f0eaa2e426d6d156163e3eec4fd716d579ddf965d146",
+    "execution_spec_sha256": "ac08659fc9487098f876d660db4b02259f19b3471227b35e4edbabf4d4e76987",
+    "adapter_sha256": "3c3a3a549fb23f830769910e2ebf2a0d8c9f4de9325efd9388898c795ea3c6bd",
+    "trainer_receipt_sha256": "e515ff209e30dceee43874e1d6a09753ec3936d1a267f8adb98e58dbea213a11",
+    "latest_pointer_sha256": "616b696a2238d9c5de253f9673f7b6ced9145a515c60b5817c357c362541c8e0",
+    "detached_receipt_sha256": "b1c86b30b57a98456f523b0850c87abcd533986d9ce3f396622d86d1063c9a9e",
+    "detached_containment_verified": true,
+    "detached_lineage_empty": true,
+    "detached_process_group_empty": true,
+    "detached_supervisor_result_excluded": "The old two-second identity grace produced supervisor code 70 after the durable trainer checkpoint. CP143 repairs that supervisor defect; only the trainer checkpoint is resumed."
+  },
+  "mlx_envelope": {
+    "wrapper": "tools/run_recurrence_training_envelope.py",
+    "wrapper_sha256": "66e3cf8cc59d0508efc5c131e0925ceecae61c17b0cccc396313ec08e2d62d1d",
+    "active_memory_limit_gib": 40,
+    "cache_limit_gib": 2,
+    "clear_cache_before_model_load": true,
+    "envelope_artifact": "artifacts/closeout/latent_cortex/resident_32b_v2_cp139/adapter/launch_resource_envelope.json"
+  },
+  "unchanged_scientific_contract": [
+    "resident model identity",
+    "training dataset and deterministic order",
+    "optimizer and exact step-1 state",
+    "RLC execution spec",
+    "maximum step 576",
+    "pilot and confirmatory decision rules",
+    "forbidden capability claims before evaluation"
+  ],
+  "claim_credit": "none_resource_admission_only"
+}

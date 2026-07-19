@@ -19527,3 +19527,31 @@ The three failed resident supervisor receipts remain retained diagnostic
 evidence and award no training credit. Evidence-weighted completion remains
 27%; this is checkpoint 143 of the faithful 292-399 forecast, leaving
 approximately 149-256 checkpoints. Final soaks remain deferred.
+
+## Checkpoint 2026-07-18-144: Resident Training Memory Envelope
+
+Two fresh resident cold reloads were terminated by macOS Jetsam before a
+gradient step. The system report records the 32B Python process at 5,676,548
+16-KiB resident pages, approximately 86.6 GiB, on the 64-GiB host while only
+1.2 GiB swap remained free. Repeating the unbounded loader is therefore
+prohibited.
+
+- `tools/run_recurrence_training_envelope.py` sets MLX active memory to 40 GiB,
+  cache memory to 2 GiB, clears cache before model load, and writes an
+  idempotent envelope artifact binding device, MLX, wrapper, and trainer
+  identities before executing the unchanged v2 trainer in-process.
+- The exact step-one adapter from the third attempt is retained as the resume
+  source. Its trainer receipt, config, dataset, execution spec, adapter bytes,
+  latest pointer, and containment evidence are hash-bound in
+  `resource_amendment_cp144.json`. The obsolete supervisor verdict is excluded;
+  it awards no mechanics credit.
+- The amendment changes no model, data, sample order, optimizer state,
+  execution shape, step budget, or evaluation decision rule. It was frozen
+  before any capability task or result. Three envelope tests, Ruff, Python
+  compilation, and diff integrity pass.
+
+Evidence-weighted completion remains 27%; this is checkpoint 144 of the
+faithful 292-399 forecast, leaving approximately 148-255 checkpoints. Next:
+publish CP144, restore the bound step-one checkpoint to the operative adapter
+path, and launch the 575-step detached resume under the 40/2-GiB envelope.
+Final soaks remain deferred.
