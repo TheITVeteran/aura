@@ -85,10 +85,12 @@ from core.brain.llm.latent_cortex.runtime_identity import (  # noqa: E402
 from core.brain.llm.latent_cortex.worker_origin import (  # noqa: E402
     WORKER_KEY_CUSTODY_PRODUCER_SOFTWARE,
     ZERO_SHA256,
-    build_worker_authorization_payload,
-    build_worker_result_origin,
-    verify_worker_authorization,
-    verify_worker_result_origin,
+)
+from core.brain.llm.latent_cortex.worker_origin_legacy import (  # noqa: E402
+    build_legacy_worker_authorization_payload,
+    build_legacy_worker_result_origin,
+    verify_legacy_worker_authorization,
+    verify_legacy_worker_result_origin,
 )
 from core.runtime.detached_subprocess_broker import (  # noqa: E402
     broker_available,
@@ -428,7 +430,7 @@ def _worker_authorization_payload(
         worker_attempt_slot=attempt_slot,
         worker_boot_id=worker_boot_id,
     )
-    return build_worker_authorization_payload(
+    return build_legacy_worker_authorization_payload(
         campaign_name=plan.campaign_name,
         policy_sha256=policy.policy_sha256,
         protocol_sha256=_campaign_protocol_sha256(),
@@ -1888,7 +1890,7 @@ def _worker_origin_context(
     request = _read_canonical_json_artifact(
         paths["request"], role="worker authorization request"
     )
-    signed = verify_worker_authorization(
+    signed = verify_legacy_worker_authorization(
         policy,
         attestation,
         expected_payload=payload,
@@ -2007,7 +2009,7 @@ def _verify_existing_arm_origin_chain(
             paths["attestation"], role="prior worker authorization"
         )
         sequence += 1
-        verify_worker_result_origin(
+        verify_legacy_worker_result_origin(
             policy,
             authorization_attestation=attestation,
             expected_authorization_payload=authorization,
@@ -2294,7 +2296,7 @@ def _execute_worker(
                     }
                     if origin_context is not None:
                         origin_sequence += 1
-                        result["worker_origin"] = build_worker_result_origin(
+                        result["worker_origin"] = build_legacy_worker_result_origin(
                             authorization_attestation=origin_context["attestation"],
                             authorization_payload=origin_context["payload"],
                             private_key=origin_context["private_key"],
@@ -3256,7 +3258,7 @@ def _validate_worker_authorization_manifest(
             paths["attestation"], role="worker authorization attestation"
         )
         try:
-            signed = verify_worker_authorization(
+            signed = verify_legacy_worker_authorization(
                 policy,
                 attestation,
                 expected_payload=expected_payload,
@@ -3345,7 +3347,7 @@ def _admit_worker_authorizations(
                 role=f"{arm} attempt {attempt_slot} worker authorization",
             )
             try:
-                signed = verify_worker_authorization(
+                signed = verify_legacy_worker_authorization(
                     policy,
                     attestation,
                     expected_payload=payload,

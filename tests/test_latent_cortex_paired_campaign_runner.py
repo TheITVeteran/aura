@@ -807,15 +807,17 @@ def test_claim_worker_origin_lifecycle_is_signed_chained_and_erased(
                     "worker_boot_id": entry["worker_boot_id"]
                 },
             }
-            result["worker_origin"] = runner.build_worker_result_origin(
-                authorization_attestation=attestation,
-                authorization_payload=entry["authorization_payload"],
-                private_key=private_key,
-                result_body=result,
-                cell_id=cell_id,
-                attempt_id=attempt_id,
-                worker_boot_id=entry["worker_boot_id"],
-                sequence=1,
+            result["worker_origin"] = (
+                runner.build_legacy_worker_result_origin(
+                    authorization_attestation=attestation,
+                    authorization_payload=entry["authorization_payload"],
+                    private_key=private_key,
+                    result_body=result,
+                    cell_id=cell_id,
+                    attempt_id=attempt_id,
+                    worker_boot_id=entry["worker_boot_id"],
+                    sequence=1,
+                )
             )
             journal.record_arm_result(cell_id, attempt_id, result)
 

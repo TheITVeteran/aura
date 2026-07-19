@@ -62,9 +62,11 @@ from core.brain.llm.latent_cortex.paired_campaign import (  # noqa: E402
 from core.brain.llm.latent_cortex.worker_origin import (  # noqa: E402
     WORKER_KEY_CUSTODY_PRODUCER_SOFTWARE,
     ZERO_SHA256,
-    build_worker_authorization_payload,
-    verify_worker_authorization,
-    verify_worker_result_origin,
+)
+from core.brain.llm.latent_cortex.worker_origin_legacy import (  # noqa: E402
+    build_legacy_worker_authorization_payload,
+    verify_legacy_worker_authorization,
+    verify_legacy_worker_result_origin,
 )
 from core.runtime.file_read_gateway import read_stable_bytes  # noqa: E402
 from tools.independent_paired_campaign_scoring import (  # noqa: E402
@@ -610,7 +612,7 @@ def _verify_worker_authorization_manifest(
             )
         except (TypeError, ValueError) as exc:
             raise ValueError("worker authorization key is invalid") from exc
-        expected_payload = build_worker_authorization_payload(
+        expected_payload = build_legacy_worker_authorization_payload(
             campaign_name=plan.campaign_name,
             policy_sha256=trusted_policy.policy_sha256,
             protocol_sha256=_campaign_protocol_sha256(),
@@ -664,7 +666,7 @@ def _verify_worker_authorization_manifest(
         attestation = _canonical_artifact(
             paths["attestation"], role="worker authorization attestation"
         )
-        signed = verify_worker_authorization(
+        signed = verify_legacy_worker_authorization(
             trusted_policy,
             attestation,
             expected_payload=expected_payload,
@@ -1019,7 +1021,7 @@ def _verify_worker_origin_evidence(
                     raise ValueError("worker result attempt-slot order differs")
                 authorization = authorization_by_position[(arm, attempt_slot)]
                 sequence += 1
-                verify_worker_result_origin(
+                verify_legacy_worker_result_origin(
                     trusted_policy,
                     authorization_attestation=authorization["attestation"],
                     expected_authorization_payload=authorization["payload"],
