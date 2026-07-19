@@ -67,6 +67,14 @@ def _sha256(value: Any) -> str:
     return hashlib.sha256(canonical_json_bytes(value)).hexdigest()
 
 
+def _is_sha256(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
 def _contamination_audit_valid(
     audit: Any,
     *,
@@ -203,6 +211,7 @@ def build_campaign_plan(
     adapter_identity: Mapping[str, Any],
     execution_config: Mapping[str, Any],
     contamination_audit: Mapping[str, Any] | None = None,
+    campaign_trust: Mapping[str, Any] | None = None,
     arms: Sequence[str] = FULL_ARMS,
     claim_eligible: bool = False,
 ) -> CampaignPlan:
@@ -230,6 +239,17 @@ def build_campaign_plan(
     )
     if claim_eligible and not audit_valid:
         _fail("campaign_contamination_audit_required")
+    normalized_campaign_trust = (
+        None if campaign_trust is None else dict(campaign_trust)
+    )
+    if claim_eligible and (
+        not isinstance(normalized_campaign_trust, dict)
+        or normalized_campaign_trust.get("prelaunch_verified") is not True
+        or normalized_campaign_trust.get("externally_custodied") is not True
+        or not _is_sha256(normalized_campaign_trust.get("policy_sha256"))
+        or not _is_sha256(normalized_campaign_trust.get("unsigned_plan_sha256"))
+    ):
+        _fail("campaign_prelaunch_trust_required")
     task_by_id = {task.task_id: task for task in tasks}
     ordered_tasks = [task_by_id[record.task_id] for record in manifest.tasks]
     execution_order = _arm_execution_order(campaign_name, normalized_arms)
@@ -284,6 +304,8 @@ def build_campaign_plan(
             audit["signature"]["trust_root_sha256"] if audit_valid else None
         ),
     }
+    if normalized_campaign_trust is not None:
+        metadata["campaign_trust"] = normalized_campaign_trust
     return CampaignPlan.build(campaign_name, cells, metadata=metadata)
 
 
@@ -502,6 +524,7 @@ def grade_campaign(
     plan: CampaignPlan,
     issuer_tasks: Sequence[FrontierTask],
     trusted_contamination_root_sha256: str | None = None,
+    trusted_campaign_policy_sha256: str | None = None,
 ) -> dict[str, Any]:
     """Grade a complete replayed campaign; never infer absent cells."""
 
@@ -554,6 +577,16 @@ def grade_campaign(
     claim_eligible = metadata.get("claim_eligible")
     if type(claim_eligible) is not bool:
         _fail("campaign_claim_eligibility_invalid")
+    campaign_trust = metadata.get("campaign_trust")
+    if claim_eligible and (
+        not isinstance(campaign_trust, Mapping)
+        or campaign_trust.get("prelaunch_verified") is not True
+        or campaign_trust.get("externally_custodied") is not True
+        or not _is_sha256(campaign_trust.get("policy_sha256"))
+        or campaign_trust.get("policy_sha256")
+        != trusted_campaign_policy_sha256
+    ):
+        _fail("campaign_prelaunch_trust_required")
     contamination_audit = metadata.get("contamination_audit")
     planned_contamination_root = metadata.get(
         "contamination_trust_root_sha256"
@@ -743,7 +776,11 @@ def grade_campaign(
     )
     refuted = comparisons["adapter_rlc_gain"]["tier"] == REFUTED or interaction_high <= 0.0
     if statistically_proven and claim_eligible:
-        verdict, tier, reasons = "gain_proven", PROVEN, []
+        verdict, tier, reasons = (
+            "gain_preverified",
+            CONJECTURE,
+            ["independent_final_verifier_required"],
+        )
     elif statistically_proven:
         verdict, tier, reasons = (
             "gain_observed_preflight",

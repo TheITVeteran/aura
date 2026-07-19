@@ -18,7 +18,7 @@ from typing import Any, Never
 
 from core.brain.llm.latent_cortex.campaign_journal import canonical_json_bytes
 
-CAMPAIGN_TRUST_POLICY_SCHEMA = "aura.latent_cortex.campaign_trust_policy.v1"
+CAMPAIGN_TRUST_POLICY_SCHEMA = "aura.latent_cortex.campaign_trust_policy.v2"
 CAMPAIGN_ROLE_ATTESTATION_SCHEMA = (
     "aura.latent_cortex.campaign_role_attestation.v1"
 )
@@ -38,7 +38,11 @@ CAMPAIGN_TRUST_ROLES = (
 _POLICY_KEYS = {
     "schema",
     "policy_id",
+    "policy_revision",
     "campaign_name",
+    "protocol_sha256",
+    "previous_policy_sha256",
+    "revoked_key_ids",
     "issued_at_unix",
     "not_before_unix",
     "expires_at_unix",
@@ -52,6 +56,8 @@ _ROLE_PIN_KEYS = {
     "key_id",
     "implementation_sha256",
     "release_sha256",
+    "custody_class",
+    "custody_evidence_sha256",
 }
 _ROOT_SIGNATURE_KEYS = {
     "algorithm",
@@ -73,6 +79,13 @@ _SIGNED_PAYLOAD_KEYS = {
     "signed_at_unix",
     "payload",
 }
+_CUSTODY_CLASSES = {
+    "test_fixture",
+    "local_software",
+    "external_service",
+    "remote_hsm",
+}
+_EXTERNAL_CUSTODY_CLASSES = {"external_service", "remote_hsm"}
 
 
 class CampaignTrustError(ValueError):
@@ -174,7 +187,11 @@ def policy_signed_payload(policy_document: Mapping[str, Any]) -> dict[str, Any]:
         for key in (
             "schema",
             "policy_id",
+            "policy_revision",
             "campaign_name",
+            "protocol_sha256",
+            "previous_policy_sha256",
+            "revoked_key_ids",
             "issued_at_unix",
             "not_before_unix",
             "expires_at_unix",
@@ -189,6 +206,9 @@ def validate_campaign_trust_policy(
     *,
     trusted_root_public_key_pem: bytes,
     expected_campaign_name: str | None = None,
+    expected_policy_sha256: str | None = None,
+    expected_protocol_sha256: str | None = None,
+    minimum_policy_revision: int | None = None,
     now_unix: int | None = None,
 ) -> VerifiedCampaignTrustPolicy:
     """Authenticate one strict policy against a separately supplied root key."""
@@ -199,11 +219,44 @@ def validate_campaign_trust_policy(
     if not isinstance(document, dict) or document.get("schema") != CAMPAIGN_TRUST_POLICY_SCHEMA:
         _fail("campaign_trust_policy_schema_invalid")
     _identifier(document.get("policy_id"), role="campaign_trust_policy_id")
+    revision = document.get("policy_revision")
+    if isinstance(revision, bool) or not isinstance(revision, int) or revision <= 0:
+        _fail("campaign_trust_policy_revision_invalid")
+    if minimum_policy_revision is not None:
+        minimum_revision = minimum_policy_revision
+        if (
+            isinstance(minimum_revision, bool)
+            or not isinstance(minimum_revision, int)
+            or minimum_revision <= 0
+        ):
+            _fail("campaign_trust_minimum_revision_invalid")
+        if revision < minimum_revision:
+            _fail("campaign_trust_policy_rollback")
     campaign_name = _identifier(
         document.get("campaign_name"), role="campaign_trust_campaign_name"
     )
     if expected_campaign_name is not None and campaign_name != expected_campaign_name:
         _fail("campaign_trust_campaign_name_mismatch")
+    protocol_sha256 = document.get("protocol_sha256")
+    if not _is_sha256(protocol_sha256):
+        _fail("campaign_trust_protocol_invalid")
+    if (
+        expected_protocol_sha256 is not None
+        and protocol_sha256 != expected_protocol_sha256
+    ):
+        _fail("campaign_trust_protocol_mismatch")
+    previous_policy_sha256 = document.get("previous_policy_sha256")
+    if previous_policy_sha256 is not None and not _is_sha256(
+        previous_policy_sha256
+    ):
+        _fail("campaign_trust_previous_policy_invalid")
+    revoked_key_ids = document.get("revoked_key_ids")
+    if (
+        not isinstance(revoked_key_ids, list)
+        or len(set(revoked_key_ids)) != len(revoked_key_ids)
+        or any(not _is_sha256(key_id) for key_id in revoked_key_ids)
+    ):
+        _fail("campaign_trust_revocation_set_invalid")
 
     issued_at = _unix_time(
         document.get("issued_at_unix"), role="campaign_trust_issued_at"
@@ -244,6 +297,12 @@ def validate_campaign_trust_policy(
             _fail(f"campaign_trust_{role}_implementation_invalid")
         if not _is_sha256(pin.get("release_sha256")):
             _fail(f"campaign_trust_{role}_release_invalid")
+        if pin.get("custody_class") not in _CUSTODY_CLASSES:
+            _fail(f"campaign_trust_{role}_custody_invalid")
+        if not _is_sha256(pin.get("custody_evidence_sha256")):
+            _fail(f"campaign_trust_{role}_custody_evidence_invalid")
+        if key_id in revoked_key_ids:
+            _fail("campaign_trust_revoked_role_key")
         if signer_id in signer_ids:
             _fail("campaign_trust_signer_identity_reused")
         if organization_id in organization_ids:
@@ -268,6 +327,8 @@ def validate_campaign_trust_policy(
     )
     if root_raw in role_keys:
         _fail("campaign_trust_root_role_key_reused")
+    if root_key_id in revoked_key_ids:
+        _fail("campaign_trust_revoked_root_key")
     if root_signature.get("key_id") != root_key_id:
         _fail("campaign_trust_root_key_mismatch")
     signed_payload = canonical_json_bytes(policy_signed_payload(document))
@@ -287,10 +348,25 @@ def validate_campaign_trust_policy(
     except InvalidSignature:
         _fail("campaign_trust_root_signature_invalid")
 
-    return VerifiedCampaignTrustPolicy(
+    verified = VerifiedCampaignTrustPolicy(
         document=document,
         policy_sha256=hashlib.sha256(canonical_json_bytes(document)).hexdigest(),
         root_key_id=root_key_id,
+    )
+    if expected_policy_sha256 is not None:
+        if not _is_sha256(expected_policy_sha256):
+            _fail("campaign_trust_expected_policy_invalid")
+        if verified.policy_sha256 != expected_policy_sha256:
+            _fail("campaign_trust_policy_pin_mismatch")
+    return verified
+
+
+def externally_custodied_roles(policy: VerifiedCampaignTrustPolicy) -> bool:
+    """Return true only when every role declares externally evidenced custody."""
+
+    return all(
+        policy.role_pin(role)["custody_class"] in _EXTERNAL_CUSTODY_CLASSES
+        for role in CAMPAIGN_TRUST_ROLES
     )
 
 
@@ -420,6 +496,7 @@ __all__ = [
     "TASK_ISSUER",
     "VerifiedCampaignTrustPolicy",
     "build_role_attestation",
+    "externally_custodied_roles",
     "load_ed25519_public_key",
     "policy_signed_payload",
     "validate_campaign_trust_policy",

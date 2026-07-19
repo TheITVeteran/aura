@@ -13,8 +13,17 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from core.brain.llm.latent_cortex.campaign_journal import canonical_json_bytes
+from core.brain.llm.latent_cortex.campaign_trust import (
+    CAMPAIGN_RUNNER,
+    CAMPAIGN_TRUST_POLICY_SCHEMA,
+    CAMPAIGN_TRUST_ROLES,
+    TASK_ISSUER,
+    build_role_attestation,
+    validate_campaign_trust_policy,
+)
 from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec
 from core.brain.llm.latent_cortex.frontier_tasks import generate_task_battery
+from core.brain.llm.latent_cortex.paired_campaign import build_campaign_plan
 from tools import run_latent_cortex_paired_campaign as runner
 
 
@@ -174,16 +183,46 @@ def test_claim_eligibility_requires_full_powered_seven_domain_protocol():
             "logical_parameter_count_basis": "architecture_config_logical",
         }
     }
+    adapter_identity = {
+        "manifest": {"dataset_manifest": {"sha256": "d" * 64}}
+    }
     audit = {"status": "passed_zero_overlap", "signature": {"verified": True}}
-    assert runner._claim_eligible(args, model_identity, audit) is True
+    trust = {"prelaunch_verified": True, "externally_custodied": True}
+    assert (
+        runner._claim_eligible(
+            args, model_identity, adapter_identity, audit, trust
+        )
+        is True
+    )
 
     args.domain_values = ("mathematics", "coding")
-    assert runner._claim_eligible(args, model_identity, audit) is False
+    assert (
+        runner._claim_eligible(
+            args, model_identity, adapter_identity, audit, trust
+        )
+        is False
+    )
     args.domain_values = runner.FRONTIER_DOMAINS
     args.seed_values = tuple(range(19))
-    assert runner._claim_eligible(args, model_identity, audit) is False
+    assert (
+        runner._claim_eligible(
+            args, model_identity, adapter_identity, audit, trust
+        )
+        is False
+    )
     args.seed_values = tuple(range(20))
-    assert runner._claim_eligible(args, model_identity, {}) is False
+    assert (
+        runner._claim_eligible(
+            args, model_identity, adapter_identity, {}, trust
+        )
+        is False
+    )
+    assert (
+        runner._claim_eligible(
+            args, model_identity, adapter_identity, audit, None
+        )
+        is False
+    )
 
 
 def test_contamination_audit_verifies_ed25519_external_trust_root(tmp_path: Path):
@@ -241,6 +280,226 @@ def test_contamination_audit_verifies_ed25519_external_trust_root(tmp_path: Path
     audit_path.write_text(json.dumps(audit))
     with pytest.raises(runner.CampaignProducerError):
         runner._contamination_audit(args, tasks)
+
+
+def test_contamination_audit_must_cover_bound_adapter_training_corpus(
+    tmp_path: Path,
+):
+    tasks = generate_task_battery([7], domains=("mathematics",), difficulty=2)
+    manifest = runner.build_task_manifest(tasks)
+    private_key = Ed25519PrivateKey.from_private_bytes(bytes(range(32)))
+    public_key = private_key.public_key()
+    public_der = public_key.public_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    body = {
+        "schema": runner.CONTAMINATION_AUDIT_SCHEMA,
+        "task_manifest_sha256": manifest.manifest_sha256,
+        "status": "passed_zero_overlap",
+        "overlap_count": 0,
+        "auditor_independence": "external",
+        "corpora": [{"name": "wrong-corpus", "snapshot_sha256": "f" * 64}],
+        "methods": ["exact_prompt", "normalized_prompt", "token_fivegram"],
+    }
+    audit = {
+        **body,
+        "signature": {
+            "algorithm": "ed25519",
+            "key_id": hashlib.sha256(public_der).hexdigest(),
+            "signature_b64": base64.b64encode(
+                private_key.sign(canonical_json_bytes(body))
+            ).decode("ascii"),
+        },
+    }
+    audit_path = tmp_path / "audit.json"
+    trust_path = tmp_path / "auditor.pem"
+    audit_path.write_text(json.dumps(audit))
+    trust_path.write_bytes(
+        public_key.public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+    )
+    args = SimpleNamespace(
+        contamination_audit=str(audit_path),
+        contamination_trust_root=str(trust_path),
+    )
+
+    with pytest.raises(
+        runner.CampaignProducerError,
+        match="does not cover the adapter training corpus",
+    ):
+        runner._contamination_audit(
+            args,
+            tasks,
+            expected_training_corpus_sha256="e" * 64,
+        )
+
+
+def test_prelaunch_trust_verifies_all_pinned_roles_before_inference(
+    tmp_path: Path,
+):
+    now = int(time.time())
+    root_key = Ed25519PrivateKey.generate()
+    role_keys = {
+        role: Ed25519PrivateKey.generate() for role in CAMPAIGN_TRUST_ROLES
+    }
+
+    def role_pin(role: str) -> dict[str, str]:
+        raw = role_keys[role].public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
+        implementation_sha256 = (
+            runner._prelaunch_role_implementation_sha256(role)
+            if role in {TASK_ISSUER, CAMPAIGN_RUNNER, "contamination_auditor"}
+            else hashlib.sha256(f"{role}:implementation".encode()).hexdigest()
+        )
+        return {
+            "signer_id": f"{role}-signer",
+            "organization_id": f"{role}-organization",
+            "public_key_b64": base64.b64encode(raw).decode("ascii"),
+            "key_id": hashlib.sha256(raw).hexdigest(),
+            "implementation_sha256": implementation_sha256,
+            "release_sha256": hashlib.sha256(f"{role}:release".encode()).hexdigest(),
+            "custody_class": "remote_hsm",
+            "custody_evidence_sha256": hashlib.sha256(
+                f"{role}:custody".encode()
+            ).hexdigest(),
+        }
+
+    policy_body = {
+        "schema": CAMPAIGN_TRUST_POLICY_SCHEMA,
+        "policy_id": "resident-prelaunch-test",
+        "policy_revision": 1,
+        "campaign_name": "resident-prelaunch-test",
+        "protocol_sha256": runner._campaign_protocol_sha256(),
+        "previous_policy_sha256": None,
+        "revoked_key_ids": [],
+        "issued_at_unix": now - 10,
+        "not_before_unix": now - 5,
+        "expires_at_unix": now + 3600,
+        "roles": {role: role_pin(role) for role in CAMPAIGN_TRUST_ROLES},
+    }
+    root_payload = canonical_json_bytes(policy_body)
+    root_raw = root_key.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    policy_document = {
+        **policy_body,
+        "root_signature": {
+            "algorithm": "Ed25519",
+            "key_id": hashlib.sha256(root_raw).hexdigest(),
+            "signature_b64": base64.b64encode(
+                root_key.sign(root_payload)
+            ).decode("ascii"),
+            "signed_payload_sha256": hashlib.sha256(root_payload).hexdigest(),
+        },
+    }
+    root_pem = root_key.public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    verified_policy = validate_campaign_trust_policy(
+        policy_document,
+        trusted_root_public_key_pem=root_pem,
+        expected_campaign_name="resident-prelaunch-test",
+        expected_protocol_sha256=runner._campaign_protocol_sha256(),
+        now_unix=now,
+    )
+
+    tasks = generate_task_battery([7], domains=("mathematics",), difficulty=1)
+    task_manifest = runner.build_task_manifest(tasks)
+    auditor_key = role_keys["contamination_auditor"]
+    auditor_der = auditor_key.public_key().public_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    audit_body = {
+        "schema": runner.CONTAMINATION_AUDIT_SCHEMA,
+        "task_manifest_sha256": task_manifest.manifest_sha256,
+        "status": "passed_zero_overlap",
+        "overlap_count": 0,
+        "auditor_independence": "external",
+        "corpora": [{"name": "training-corpus", "snapshot_sha256": "d" * 64}],
+        "methods": ["exact_prompt", "normalized_prompt", "token_fivegram"],
+    }
+    audit_payload = canonical_json_bytes(audit_body)
+    audit = {
+        **audit_body,
+        "signature": {
+            "algorithm": "ed25519",
+            "key_id": hashlib.sha256(auditor_der).hexdigest(),
+            "signature_b64": base64.b64encode(
+                auditor_key.sign(audit_payload)
+            ).decode("ascii"),
+            "signed_payload_sha256": hashlib.sha256(audit_payload).hexdigest(),
+            "public_key_der_b64": base64.b64encode(auditor_der).decode("ascii"),
+            "trust_root_sha256": hashlib.sha256(auditor_der).hexdigest(),
+            "verified": True,
+        },
+    }
+    execution_config = {
+        "difficulty": 1,
+        "task_registry_version": runner.REGISTRY_VERSION,
+        "generation_seeds": [7],
+        "domains": ["mathematics"],
+    }
+    unsigned_plan = build_campaign_plan(
+        "resident-prelaunch-test",
+        tasks,
+        model_identity={"model": "sealed"},
+        adapter_identity={"adapter": "sealed"},
+        execution_config=execution_config,
+        contamination_audit=audit,
+        claim_eligible=False,
+    )
+    args = SimpleNamespace(campaign_name="resident-prelaunch-test")
+    payloads = runner._prelaunch_payloads(
+        args,
+        unsigned_plan=unsigned_plan,
+        policy=verified_policy,
+    )
+    issuer_attestation = build_role_attestation(
+        verified_policy,
+        role=TASK_ISSUER,
+        payload=payloads[TASK_ISSUER],
+        signed_at_unix=now,
+        private_key=role_keys[TASK_ISSUER],
+    )
+    runner_attestation = build_role_attestation(
+        verified_policy,
+        role=CAMPAIGN_RUNNER,
+        payload=payloads[CAMPAIGN_RUNNER],
+        signed_at_unix=now,
+        private_key=role_keys[CAMPAIGN_RUNNER],
+    )
+    policy_path = tmp_path / "policy.json"
+    root_path = tmp_path / "root.pem"
+    issuer_path = tmp_path / "issuer.json"
+    runner_path = tmp_path / "runner.json"
+    policy_path.write_text(json.dumps(policy_document))
+    root_path.write_bytes(root_pem)
+    issuer_path.write_text(json.dumps(issuer_attestation))
+    runner_path.write_text(json.dumps(runner_attestation))
+    args.campaign_trust_policy = str(policy_path)
+    args.campaign_trust_root = str(root_path)
+    args.task_issuer_attestation = str(issuer_path)
+    args.runner_attestation = str(runner_path)
+
+    trust = runner._verified_campaign_trust(
+        args,
+        unsigned_plan=unsigned_plan,
+        contamination_audit=audit,
+    )
+
+    assert trust is not None
+    assert trust["prelaunch_verified"] is True
+    assert trust["externally_custodied"] is True
+    assert trust["policy_sha256"] == verified_policy.policy_sha256
+    assert trust["unsigned_plan_sha256"] == unsigned_plan.plan_sha256
 
 
 def test_effective_full_stack_shape_is_frozen_not_cli_placeholder():

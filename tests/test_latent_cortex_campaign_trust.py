@@ -13,9 +13,11 @@ from core.brain.llm.latent_cortex.campaign_trust import (
     CAMPAIGN_RUNNER,
     CAMPAIGN_TRUST_POLICY_SCHEMA,
     CAMPAIGN_TRUST_ROLES,
+    EVIDENCE_VERIFIER,
     TASK_ISSUER,
     CampaignTrustError,
     build_role_attestation,
+    externally_custodied_roles,
     policy_signed_payload,
     validate_campaign_trust_policy,
     verify_role_attestation,
@@ -50,6 +52,10 @@ def _pin(
         "key_id": hashlib.sha256(raw).hexdigest(),
         "implementation_sha256": hashlib.sha256(f"{role}:impl".encode()).hexdigest(),
         "release_sha256": hashlib.sha256(f"{role}:release".encode()).hexdigest(),
+        "custody_class": "test_fixture",
+        "custody_evidence_sha256": hashlib.sha256(
+            f"{role}:custody".encode()
+        ).hexdigest(),
     }
 
 
@@ -61,7 +67,11 @@ def _policy_fixture():
     body = {
         "schema": CAMPAIGN_TRUST_POLICY_SCHEMA,
         "policy_id": "resident-32b-confirmatory-2026-07",
+        "policy_revision": 1,
         "campaign_name": "resident-32b-confirmatory",
+        "protocol_sha256": "9" * 64,
+        "previous_policy_sha256": None,
+        "revoked_key_ids": [],
         "issued_at_unix": 1_800_000_000,
         "not_before_unix": 1_800_000_100,
         "expires_at_unix": 1_800_086_400,
@@ -107,6 +117,7 @@ def test_policy_requires_external_root_and_four_independent_roles():
     ).hexdigest()
     assert verified.root_key_id == hashlib.sha256(_public_raw(root)).hexdigest()
     assert set(verified.document["roles"]) == set(CAMPAIGN_TRUST_ROLES)
+    assert externally_custodied_roles(verified) is False
 
 
 def test_policy_rejects_bundle_selected_or_tampered_root():
@@ -180,6 +191,46 @@ def test_policy_enforces_time_window(now_unix: int, error: str):
             trusted_root_public_key_pem=_public_pem(root),
             now_unix=now_unix,
         )
+
+
+def test_policy_enforces_protocol_revision_pin_and_revocations():
+    policy, root, _role_keys = _policy_fixture()
+    with pytest.raises(CampaignTrustError, match="campaign_trust_protocol_mismatch"):
+        validate_campaign_trust_policy(
+            policy,
+            trusted_root_public_key_pem=_public_pem(root),
+            expected_protocol_sha256="8" * 64,
+            now_unix=1_800_000_200,
+        )
+    with pytest.raises(CampaignTrustError, match="campaign_trust_policy_rollback"):
+        validate_campaign_trust_policy(
+            policy,
+            trusted_root_public_key_pem=_public_pem(root),
+            minimum_policy_revision=2,
+            now_unix=1_800_000_200,
+        )
+
+    policy["revoked_key_ids"] = [policy["roles"][TASK_ISSUER]["key_id"]]
+    _resign(policy, root)
+    with pytest.raises(CampaignTrustError, match="campaign_trust_revoked_role_key"):
+        validate_campaign_trust_policy(
+            policy,
+            trusted_root_public_key_pem=_public_pem(root),
+            now_unix=1_800_000_200,
+        )
+
+
+def test_external_custody_requires_every_role_to_have_external_evidence():
+    policy, root, _role_keys = _policy_fixture()
+    for pin in policy["roles"].values():
+        pin["custody_class"] = "remote_hsm"
+    _resign(policy, root)
+    verified = validate_campaign_trust_policy(
+        policy,
+        trusted_root_public_key_pem=_public_pem(root),
+        now_unix=1_800_000_200,
+    )
+    assert externally_custodied_roles(verified) is True
 
 
 def test_role_attestation_is_policy_bound_and_payload_exact():
@@ -283,3 +334,36 @@ def test_attestation_rejects_wrong_private_key_and_stage_time():
             expected_payload={"task": "x"},
             not_after_unix=1_800_000_149,
         )
+
+
+def test_final_verifier_attestation_binds_sealed_evidence_after_prelaunch():
+    policy, root, role_keys = _policy_fixture()
+    verified = validate_campaign_trust_policy(
+        policy,
+        trusted_root_public_key_pem=_public_pem(root),
+        now_unix=1_800_000_200,
+    )
+    payload = {
+        "schema": "aura.latent_cortex.final_verifier_payload.v1",
+        "campaign_manifest_sha256": "a" * 64,
+        "published_grade_sha256": "b" * 64,
+        "production_grade_implementation_sha256": "c" * 64,
+        "independent_scoring_implementation_sha256": "d" * 64,
+    }
+    attestation = build_role_attestation(
+        verified,
+        role=EVIDENCE_VERIFIER,
+        payload=payload,
+        signed_at_unix=1_800_000_300,
+        private_key=role_keys[EVIDENCE_VERIFIER],
+    )
+
+    signed = verify_role_attestation(
+        verified,
+        attestation,
+        role=EVIDENCE_VERIFIER,
+        expected_payload=payload,
+        not_before_unix=1_800_000_250,
+    )
+
+    assert signed["payload"] == payload

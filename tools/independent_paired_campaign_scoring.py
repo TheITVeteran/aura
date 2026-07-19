@@ -572,7 +572,7 @@ def independent_grade_campaign(
     )
     claim_eligible = plan.to_dict().get("metadata", {}).get("claim_eligible") is True
     if statistically_proven and claim_eligible:
-        verdict, tier = "gain_proven", PROVEN
+        verdict, tier = "gain_preverified", CONJECTURE
     elif statistically_proven:
         verdict, tier = "gain_observed_preflight", CONJECTURE
     elif underpowered:

@@ -32,6 +32,7 @@ from core.brain.llm.latent_cortex.paired_campaign import (
     build_campaign_plan,
     grade_campaign,
 )
+from tools import run_latent_cortex_paired_campaign as campaign_runner_module
 from tools import verify_paired_campaign_evidence as verifier_module
 from tools.independent_paired_campaign_scoring import (
     independent_grade_campaign,
@@ -214,6 +215,13 @@ def test_honest_campaign_passes_independent_verification(tmp_path: Path):
     assert verdict["recomputed_verdict"] == published["verdict"]
     assert verdict["committed_records"] == len(plan.cell_ids)
     assert verdict["task_count"] == len(tasks)
+
+
+def test_independent_verifier_reconstructs_runner_protocol_identity():
+    assert (
+        verifier_module._campaign_protocol_sha256()
+        == campaign_runner_module._campaign_protocol_sha256()
+    )
 
 
 def test_unpublished_grade_still_recomputes_verdict(tmp_path: Path):

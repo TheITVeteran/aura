@@ -39,6 +39,16 @@ TEST_PUBLIC_DER = Ed25519PrivateKey.from_private_bytes(
     format=serialization.PublicFormat.SubjectPublicKeyInfo,
 )
 TEST_TRUST_ROOT_SHA256 = hashlib.sha256(TEST_PUBLIC_DER).hexdigest()
+TEST_POLICY_SHA256 = "f" * 64
+
+
+def _campaign_trust():
+    return {
+        "prelaunch_verified": True,
+        "externally_custodied": True,
+        "policy_sha256": TEST_POLICY_SHA256,
+        "unsigned_plan_sha256": "1" * 64,
+    }
 
 
 def _signed_contamination_audit(task_manifest_sha256: str):
@@ -121,6 +131,7 @@ def _grade_plan(*, claim_eligible: bool = True):
             },
         },
         contamination_audit=contamination_audit,
+        campaign_trust=_campaign_trust() if claim_eligible else None,
         claim_eligible=claim_eligible,
     )
     return plan, tasks
@@ -238,17 +249,19 @@ def test_plan_freezes_every_task_arm_and_is_deterministic():
         assert ordinals == list(range(len(tasks)))
 
 
-def test_complete_strong_2x2_gain_grades_proven_but_not_frontier():
+def test_complete_strong_2x2_gain_stays_preverified_until_external_signature():
     plan, tasks = _grade_plan()
     grade = grade_campaign(
         _records(plan, tasks, gain=True),
         plan=plan,
         issuer_tasks=tasks,
         trusted_contamination_root_sha256=TEST_TRUST_ROOT_SHA256,
+        trusted_campaign_policy_sha256=TEST_POLICY_SHA256,
     )
 
-    assert grade["verdict"] == "gain_proven"
-    assert grade["claim_tier"] == "PROVEN"
+    assert grade["verdict"] == "gain_preverified"
+    assert grade["claim_tier"] == "CONJECTURE"
+    assert grade["reasons"] == ["independent_final_verifier_required"]
     assert grade["interaction"]["interval_95"][0] > 0
     assert grade["frontier_claim_eligible"] is False
     assert grade["same_checkpoint_gain_claim_eligible"] is True
@@ -262,6 +275,7 @@ def test_regressing_adapter_is_refuted():
         plan=plan,
         issuer_tasks=tasks,
         trusted_contamination_root_sha256=TEST_TRUST_ROOT_SHA256,
+        trusted_campaign_policy_sha256=TEST_POLICY_SHA256,
     )
 
     assert grade["verdict"] == "gain_refuted"
@@ -277,6 +291,7 @@ def test_missing_cell_stays_incomplete():
         plan=plan,
         issuer_tasks=tasks,
         trusted_contamination_root_sha256=TEST_TRUST_ROOT_SHA256,
+        trusted_campaign_policy_sha256=TEST_POLICY_SHA256,
     )
 
     assert grade["verdict"] == "incomplete"
@@ -309,6 +324,7 @@ def test_claim_grade_requires_out_of_band_pinned_contamination_root(trusted_root
             plan=plan,
             issuer_tasks=tasks,
             trusted_contamination_root_sha256=trusted_root,
+            trusted_campaign_policy_sha256=TEST_POLICY_SHA256,
         )
 
 
@@ -354,6 +370,7 @@ def test_grader_rejects_unbound_or_mutated_evidence(mutation, reason):
             plan=plan,
             issuer_tasks=tasks,
             trusted_contamination_root_sha256=TEST_TRUST_ROOT_SHA256,
+            trusted_campaign_policy_sha256=TEST_POLICY_SHA256,
         )
 
 
@@ -375,6 +392,7 @@ def test_grader_rejects_malformed_plan_coverage():
             plan=malformed,
             issuer_tasks=tasks,
             trusted_contamination_root_sha256=TEST_TRUST_ROOT_SHA256,
+            trusted_campaign_policy_sha256=TEST_POLICY_SHA256,
         )
 
 
@@ -396,6 +414,7 @@ def test_independent_scorer_rejects_self_consistent_forged_correctness():
             plan=plan,
             issuer_tasks=tasks,
             trusted_contamination_root_sha256=TEST_TRUST_ROOT_SHA256,
+            trusted_campaign_policy_sha256=TEST_POLICY_SHA256,
         )
 
 
@@ -438,6 +457,39 @@ def test_claim_eligible_plan_rejects_tampered_audit_signature():
         )
 
 
+def test_claim_eligible_plan_requires_prelaunch_role_trust():
+    tasks = generate_task_battery([7], domains=("mathematics",), difficulty=1)
+    manifest = build_task_manifest(tasks)
+    audit = _signed_contamination_audit(manifest.manifest_sha256)
+
+    with pytest.raises(
+        PairedCampaignError, match="campaign_prelaunch_trust_required"
+    ):
+        build_campaign_plan(
+            "missing-role-trust",
+            tasks,
+            model_identity={"checkpoint_fingerprint": "a" * 64},
+            adapter_identity={"composite_identity_sha256": "b" * 64},
+            execution_config={"max_steps": 8},
+            contamination_audit=audit,
+            claim_eligible=True,
+        )
+
+
+def test_claim_grade_requires_out_of_band_campaign_policy_pin():
+    plan, tasks = _grade_plan()
+
+    with pytest.raises(
+        PairedCampaignError, match="campaign_prelaunch_trust_required"
+    ):
+        grade_campaign(
+            [],
+            plan=plan,
+            issuer_tasks=tasks,
+            trusted_contamination_root_sha256=TEST_TRUST_ROOT_SHA256,
+        )
+
+
 def test_grader_rejects_planned_adapter_identity_reported_without_loaded_receipt():
     plan, tasks = _grade_plan()
     rows = _records(plan, tasks)
@@ -458,4 +510,5 @@ def test_grader_rejects_planned_adapter_identity_reported_without_loaded_receipt
             plan=plan,
             issuer_tasks=tasks,
             trusted_contamination_root_sha256=TEST_TRUST_ROOT_SHA256,
+            trusted_campaign_policy_sha256=TEST_POLICY_SHA256,
         )

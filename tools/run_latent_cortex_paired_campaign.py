@@ -23,9 +23,10 @@ import sys
 import time
 import uuid
 from collections import Counter
+from collections.abc import Mapping
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
@@ -39,6 +40,13 @@ from core.brain.llm.latent_cortex.campaign_journal import (  # noqa: E402
     CampaignJournal,
     CampaignPlan,
     canonical_json_bytes,
+)
+from core.brain.llm.latent_cortex.campaign_trust import (  # noqa: E402
+    CAMPAIGN_RUNNER,
+    TASK_ISSUER,
+    externally_custodied_roles,
+    validate_campaign_trust_policy,
+    verify_role_attestation,
 )
 from core.brain.llm.latent_cortex.frontier_tasks import (  # noqa: E402
     CURRENT_REGISTRY_VERSION,
@@ -83,6 +91,8 @@ LOG_FILE = "runner.log"
 OBJECTIVE_SOURCE = REPO_ROOT / "core/learning/recurrence_native_objective.py"
 V2_MANIFEST_FILE = "recurrence_adapter_manifest.json"
 CONTAMINATION_AUDIT_SCHEMA = "aura.latent_cortex.contamination_audit.v2"
+TASK_ISSUER_PAYLOAD_SCHEMA = "aura.latent_cortex.task_issuer_prelaunch.v1"
+CAMPAIGN_RUNNER_PAYLOAD_SCHEMA = "aura.latent_cortex.runner_prelaunch.v1"
 
 
 class CampaignProducerError(RuntimeError):
@@ -690,9 +700,30 @@ def _load_contamination_trust_root(path_value: str) -> tuple[Any, bytes, str]:
     return public_key, public_der, _sha256_bytes(public_der)
 
 
+def _adapter_dataset_manifest_sha256(
+    adapter_identity: Mapping[str, Any],
+) -> str | None:
+    manifest = adapter_identity.get("manifest")
+    if not isinstance(manifest, Mapping):
+        return None
+    binding = manifest.get("dataset_manifest")
+    if not isinstance(binding, Mapping):
+        return None
+    digest = binding.get("sha256")
+    if (
+        not isinstance(digest, str)
+        or len(digest) != 64
+        or any(character not in "0123456789abcdef" for character in digest)
+    ):
+        return None
+    return digest
+
+
 def _contamination_audit(
     args: argparse.Namespace,
     tasks: tuple[FrontierTask, ...],
+    *,
+    expected_training_corpus_sha256: str | None = None,
 ) -> dict[str, Any]:
     raw_path = str(getattr(args, "contamination_audit", "") or "").strip()
     if not raw_path:
@@ -744,6 +775,18 @@ def _contamination_audit(
         )
     ):
         raise CampaignProducerError("contamination audit verification failed")
+    corpus_hashes = {
+        record["snapshot_sha256"]
+        for record in corpora
+        if isinstance(record, dict)
+    }
+    if (
+        expected_training_corpus_sha256 is not None
+        and expected_training_corpus_sha256 not in corpus_hashes
+    ):
+        raise CampaignProducerError(
+            "contamination audit does not cover the adapter training corpus"
+        )
     if (
         not isinstance(signature, dict)
         or set(signature) != {"algorithm", "key_id", "signature_b64"}
@@ -799,6 +842,218 @@ def _implementation_sha256() -> dict[str, str]:
     return {
         str(path.relative_to(REPO_ROOT)): _sha256_bytes(path.read_bytes())
         for path in implementation_paths
+    }
+
+
+def _campaign_protocol_sha256() -> str:
+    return _sha256_bytes(canonical_json_bytes(_implementation_sha256()))
+
+
+def _prelaunch_role_implementation_sha256(role: str) -> str:
+    paths = {
+        TASK_ISSUER: REPO_ROOT
+        / "core/brain/llm/latent_cortex/frontier_tasks.py",
+        CAMPAIGN_RUNNER: Path(__file__).resolve(),
+        "contamination_auditor": REPO_ROOT / "tools/produce_contamination_audit.py",
+    }
+    path = paths.get(role)
+    if path is None:
+        raise CampaignProducerError("unsupported prelaunch trust role")
+    return _sha256_bytes(_read_stable_bytes(path, max_bytes=16 * 1024 * 1024))
+
+
+def _read_json_artifact(path_value: str, *, role: str) -> dict[str, Any]:
+    path = Path(path_value).expanduser().resolve(strict=True)
+    payload = _read_stable_bytes(path, max_bytes=16 * 1024 * 1024)
+    try:
+        document = json.loads(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise CampaignProducerError(f"{role} is not valid JSON") from exc
+    if not isinstance(document, dict):
+        raise CampaignProducerError(f"{role} must be a JSON object")
+    return document
+
+
+def _load_campaign_trust_policy(
+    args: argparse.Namespace,
+    *,
+    require_current: bool,
+) -> Any | None:
+    policy_path = str(getattr(args, "campaign_trust_policy", "") or "").strip()
+    root_path = str(getattr(args, "campaign_trust_root", "") or "").strip()
+    if not policy_path and not root_path:
+        return None
+    if not policy_path or not root_path:
+        raise CampaignProducerError(
+            "campaign trust policy and independent root are both required"
+        )
+    policy = _read_json_artifact(policy_path, role="campaign trust policy")
+    root_bytes = _read_stable_bytes(
+        Path(root_path).expanduser().resolve(strict=True),
+        max_bytes=64 * 1024,
+    )
+    return validate_campaign_trust_policy(
+        policy,
+        trusted_root_public_key_pem=root_bytes,
+        expected_campaign_name=args.campaign_name,
+        expected_protocol_sha256=_campaign_protocol_sha256(),
+        now_unix=int(time.time()) if require_current else None,
+    )
+
+
+def _prelaunch_payloads(
+    args: argparse.Namespace,
+    *,
+    unsigned_plan: CampaignPlan,
+    policy: Any,
+) -> dict[str, dict[str, Any]]:
+    metadata = unsigned_plan.to_dict()["metadata"]
+    task_manifest = metadata["task_manifest"]
+    task_commitment = metadata["task_commitment"]
+    execution_config = metadata["execution_config"]
+    return {
+        TASK_ISSUER: {
+            "schema": TASK_ISSUER_PAYLOAD_SCHEMA,
+            "campaign_name": args.campaign_name,
+            "policy_sha256": policy.policy_sha256,
+            "unsigned_plan_sha256": unsigned_plan.plan_sha256,
+            "task_manifest_sha256": task_manifest["manifest_sha256"],
+            "task_commitment_sha256": task_commitment["commitment_sha256"],
+            "generation_config_sha256": _sha256_bytes(
+                canonical_json_bytes(
+                    {
+                        "difficulty": execution_config["difficulty"],
+                        "domains": execution_config["domains"],
+                        "generation_seeds": execution_config["generation_seeds"],
+                        "task_registry_version": execution_config[
+                            "task_registry_version"
+                        ],
+                    }
+                )
+            ),
+        },
+        CAMPAIGN_RUNNER: {
+            "schema": CAMPAIGN_RUNNER_PAYLOAD_SCHEMA,
+            "campaign_name": args.campaign_name,
+            "policy_sha256": policy.policy_sha256,
+            "protocol_sha256": _campaign_protocol_sha256(),
+            "unsigned_plan_sha256": unsigned_plan.plan_sha256,
+            "model_identity_sha256": _sha256_bytes(
+                canonical_json_bytes(metadata["model_identity"])
+            ),
+            "adapter_identity_sha256": _sha256_bytes(
+                canonical_json_bytes(metadata["adapter_identity"])
+            ),
+            "execution_config_sha256": _sha256_bytes(
+                canonical_json_bytes(execution_config)
+            ),
+            "contamination_audit_sha256": _sha256_bytes(
+                canonical_json_bytes(metadata["contamination_audit"])
+            ),
+            "arms": metadata["arms"],
+            "cell_count": len(unsigned_plan.cell_ids),
+        },
+    }
+
+
+def _policy_auditor_matches(
+    policy: Any,
+    contamination_audit: Mapping[str, Any],
+) -> bool:
+    signature = contamination_audit.get("signature")
+    if not isinstance(signature, Mapping):
+        return False
+    public_der_b64 = signature.get("public_key_der_b64")
+    if not isinstance(public_der_b64, str):
+        return False
+    try:
+        public_der = base64.b64decode(public_der_b64, validate=True)
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+        public_key = serialization.load_der_public_key(public_der)
+        if not isinstance(public_key, Ed25519PublicKey):
+            return False
+        public_raw = public_key.public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
+    except (TypeError, ValueError):
+        return False
+    return (
+        base64.b64encode(public_raw).decode("ascii")
+        == policy.role_pin("contamination_auditor")["public_key_b64"]
+    )
+
+
+def _verified_campaign_trust(
+    args: argparse.Namespace,
+    *,
+    unsigned_plan: CampaignPlan,
+    contamination_audit: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    policy = _load_campaign_trust_policy(args, require_current=True)
+    if policy is None:
+        return None
+    if not _policy_auditor_matches(policy, contamination_audit):
+        raise CampaignProducerError(
+            "contamination auditor does not match the pre-pinned campaign role"
+        )
+    for role in (TASK_ISSUER, CAMPAIGN_RUNNER, "contamination_auditor"):
+        if (
+            policy.role_pin(role)["implementation_sha256"]
+            != _prelaunch_role_implementation_sha256(role)
+        ):
+            raise CampaignProducerError(
+                f"{role} implementation does not match the pre-pinned source"
+            )
+    payloads = _prelaunch_payloads(args, unsigned_plan=unsigned_plan, policy=policy)
+    issuer_path = str(
+        getattr(args, "task_issuer_attestation", "") or ""
+    ).strip()
+    runner_path = str(getattr(args, "runner_attestation", "") or "").strip()
+    if not issuer_path or not runner_path:
+        raise CampaignProducerError(
+            "task issuer and campaign runner prelaunch attestations are required"
+        )
+    admitted_at = int(time.time())
+    issuer_attestation = _read_json_artifact(
+        issuer_path, role="task issuer attestation"
+    )
+    runner_attestation = _read_json_artifact(
+        runner_path, role="campaign runner attestation"
+    )
+    verify_role_attestation(
+        policy,
+        issuer_attestation,
+        role=TASK_ISSUER,
+        expected_payload=payloads[TASK_ISSUER],
+        not_after_unix=admitted_at,
+    )
+    verify_role_attestation(
+        policy,
+        runner_attestation,
+        role=CAMPAIGN_RUNNER,
+        expected_payload=payloads[CAMPAIGN_RUNNER],
+        not_after_unix=admitted_at,
+    )
+    return {
+        "schema": "aura.latent_cortex.campaign_prelaunch_trust.v1",
+        "policy": policy.document,
+        "policy_sha256": policy.policy_sha256,
+        "root_key_id": policy.root_key_id,
+        "protocol_sha256": _campaign_protocol_sha256(),
+        "unsigned_plan_sha256": unsigned_plan.plan_sha256,
+        "task_issuer_attestation": issuer_attestation,
+        "task_issuer_payload_sha256": _sha256_bytes(
+            canonical_json_bytes(payloads[TASK_ISSUER])
+        ),
+        "runner_attestation": runner_attestation,
+        "runner_payload_sha256": _sha256_bytes(
+            canonical_json_bytes(payloads[CAMPAIGN_RUNNER])
+        ),
+        "prelaunch_verified": True,
+        "externally_custodied": externally_custodied_roles(policy),
     }
 
 
@@ -939,15 +1194,43 @@ def _expected_plan(
 ) -> tuple[CampaignPlan, tuple[FrontierTask, ...]]:
     tasks = _tasks(args)
     model_identity, adapter_identity = _identity_material(args)
-    contamination_audit = _contamination_audit(args, tasks)
-    claim_eligible = _claim_eligible(args, model_identity, contamination_audit)
+    training_corpus_sha256 = _adapter_dataset_manifest_sha256(adapter_identity)
+    contamination_audit = _contamination_audit(
+        args,
+        tasks,
+        expected_training_corpus_sha256=training_corpus_sha256,
+    )
+    execution_config = _execution_config(args, adapter_identity)
+    unsigned_plan = build_campaign_plan(
+        args.campaign_name,
+        tasks,
+        model_identity=model_identity,
+        adapter_identity=adapter_identity,
+        execution_config=execution_config,
+        contamination_audit=contamination_audit,
+        arms=_arms(args),
+        claim_eligible=False,
+    )
+    campaign_trust = _verified_campaign_trust(
+        args,
+        unsigned_plan=unsigned_plan,
+        contamination_audit=contamination_audit,
+    )
+    claim_eligible = _claim_eligible(
+        args,
+        model_identity,
+        adapter_identity,
+        contamination_audit,
+        campaign_trust,
+    )
     plan = build_campaign_plan(
         args.campaign_name,
         tasks,
         model_identity=model_identity,
         adapter_identity=adapter_identity,
-        execution_config=_execution_config(args, adapter_identity),
+        execution_config=execution_config,
         contamination_audit=contamination_audit,
+        campaign_trust=campaign_trust,
         arms=_arms(args),
         claim_eligible=claim_eligible,
     )
@@ -957,7 +1240,9 @@ def _expected_plan(
 def _claim_eligible(
     args: argparse.Namespace,
     model_identity: dict[str, Any],
+    adapter_identity: Mapping[str, Any],
     contamination_audit: dict[str, Any],
+    campaign_trust: Mapping[str, Any] | None,
 ) -> bool:
     per_domain = len(args.seed_values)
     runtime_bundle = model_identity.get("runtime_bundle")
@@ -971,9 +1256,13 @@ def _claim_eligible(
         and runtime_bundle.get("logical_parameter_count_basis")
         == "architecture_config_logical"
         and int(runtime_bundle.get("logical_parameter_count") or 0) >= 30_000_000_000
+        and _adapter_dataset_manifest_sha256(adapter_identity) is not None
         and contamination_audit.get("status") == "passed_zero_overlap"
         and isinstance(contamination_audit.get("signature"), dict)
         and contamination_audit["signature"].get("verified") is True
+        and isinstance(campaign_trust, Mapping)
+        and campaign_trust.get("prelaunch_verified") is True
+        and campaign_trust.get("externally_custodied") is True
     )
 
 
@@ -1589,6 +1878,15 @@ def _worker_args(args: argparse.Namespace, arm: str) -> list[str]:
     if args.contamination_audit:
         command.extend(["--contamination-audit", args.contamination_audit])
         command.extend(["--contamination-trust-root", args.contamination_trust_root])
+    for option, attribute in (
+        ("--campaign-trust-policy", "campaign_trust_policy"),
+        ("--campaign-trust-root", "campaign_trust_root"),
+        ("--task-issuer-attestation", "task_issuer_attestation"),
+        ("--runner-attestation", "runner_attestation"),
+    ):
+        value = str(getattr(args, attribute, "") or "").strip()
+        if value:
+            command.extend([option, value])
     return command
 
 
@@ -1692,6 +1990,11 @@ def _orchestrate(
             if args.contamination_audit
             else None
         ),
+        trusted_campaign_policy_sha256=(
+            metadata["campaign_trust"]["policy_sha256"]
+            if isinstance(metadata.get("campaign_trust"), dict)
+            else None
+        ),
     )
     final_material = dict(grade)
     final_material.pop("grade_sha256", None)
@@ -1721,7 +2024,51 @@ def _orchestrate(
         ),
         flush=True,
     )
-    return 0 if final["verdict"] == "gain_proven" else 2
+    return 0 if final["verdict"] in {"gain_preverified", "gain_proven"} else 2
+
+
+def _prepare_trust_requests(args: argparse.Namespace) -> dict[str, Any]:
+    tasks = _tasks(args)
+    model_identity, adapter_identity = _identity_material(args)
+    contamination_audit = _contamination_audit(
+        args,
+        tasks,
+        expected_training_corpus_sha256=_adapter_dataset_manifest_sha256(
+            adapter_identity
+        ),
+    )
+    execution_config = _execution_config(args, adapter_identity)
+    unsigned_plan = build_campaign_plan(
+        args.campaign_name,
+        tasks,
+        model_identity=model_identity,
+        adapter_identity=adapter_identity,
+        execution_config=execution_config,
+        contamination_audit=contamination_audit,
+        arms=_arms(args),
+        claim_eligible=False,
+    )
+    policy = _load_campaign_trust_policy(args, require_current=True)
+    if policy is None:
+        raise CampaignProducerError("campaign trust policy is required")
+    if not _policy_auditor_matches(policy, contamination_audit):
+        raise CampaignProducerError(
+            "contamination auditor does not match the pre-pinned campaign role"
+        )
+    payloads = _prelaunch_payloads(
+        args,
+        unsigned_plan=unsigned_plan,
+        policy=policy,
+    )
+    return {
+        "schema": "aura.latent_cortex.campaign_trust_requests.v1",
+        "campaign_name": args.campaign_name,
+        "policy_sha256": policy.policy_sha256,
+        "protocol_sha256": _campaign_protocol_sha256(),
+        "unsigned_plan_sha256": unsigned_plan.plan_sha256,
+        "externally_custodied": externally_custodied_roles(policy),
+        "requests": payloads,
+    }
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -1749,6 +2096,15 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--confirmatory", action="store_true")
     parser.add_argument("--contamination-audit", default="")
     parser.add_argument("--contamination-trust-root", default="")
+    parser.add_argument("--campaign-trust-policy", default="")
+    parser.add_argument("--campaign-trust-root", default="")
+    parser.add_argument("--task-issuer-attestation", default="")
+    parser.add_argument("--runner-attestation", default="")
+    parser.add_argument(
+        "--prepare-trust",
+        action="store_true",
+        help="emit exact prelaunch role payloads without persisting or running a plan",
+    )
     parser.add_argument("--n-slots", type=_positive_int, default=16)
     parser.add_argument("--branches", type=_positive_int, default=2)
     parser.add_argument("--rlc-steps", type=_positive_int, default=8)
@@ -1792,6 +2148,46 @@ def main() -> int:
         )
     elif args.contamination_trust_root:
         parser.error("--contamination-trust-root requires --contamination-audit")
+    trust_paths = (
+        args.campaign_trust_policy,
+        args.campaign_trust_root,
+        args.task_issuer_attestation,
+        args.runner_attestation,
+    )
+    if any(trust_paths) and not (
+        args.campaign_trust_policy and args.campaign_trust_root
+    ):
+        parser.error(
+            "--campaign-trust-policy and --campaign-trust-root are required together"
+        )
+    if args.confirmatory and not args.prepare_trust:
+        if not args.contamination_audit:
+            parser.error("--confirmatory requires --contamination-audit")
+        if not all(trust_paths):
+            parser.error(
+                "--confirmatory requires the campaign trust policy, independent "
+                "root, task issuer attestation, and runner attestation"
+            )
+    for attribute in (
+        "campaign_trust_policy",
+        "campaign_trust_root",
+        "task_issuer_attestation",
+        "runner_attestation",
+    ):
+        value = str(getattr(args, attribute, "") or "").strip()
+        if value:
+            setattr(args, attribute, str(Path(value).expanduser().resolve(strict=True)))
+    if args.prepare_trust:
+        if not args.contamination_audit:
+            parser.error("--prepare-trust requires --contamination-audit")
+        if not args.campaign_trust_policy or not args.campaign_trust_root:
+            parser.error(
+                "--prepare-trust requires campaign trust policy and independent root"
+            )
+        if args.worker_arm:
+            parser.error("--prepare-trust cannot be combined with --worker-arm")
+        print(json.dumps(_prepare_trust_requests(args), indent=2, sort_keys=True))
+        return 0
     campaign_dir.mkdir(parents=True, exist_ok=True)
     expected, tasks = _expected_plan(args)
     _persist_plan(campaign_dir, expected)
