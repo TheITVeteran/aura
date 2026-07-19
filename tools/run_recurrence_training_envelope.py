@@ -35,17 +35,28 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _configure_mlx(mx: Any, *, memory_gb: float, cache_gb: float) -> dict[str, Any]:
+def _configure_mlx(
+    mx: Any,
+    *,
+    memory_gb: float,
+    cache_gb: float,
+    wired_gb: float,
+) -> dict[str, Any]:
     memory_bytes = int(memory_gb * GIB)
     cache_bytes = int(cache_gb * GIB)
+    wired_bytes = int(wired_gb * GIB)
     if cache_bytes >= memory_bytes:
         raise ValueError("MLX cache limit must be below the active memory limit")
+    if wired_bytes <= memory_bytes:
+        raise ValueError("MLX wired limit must exceed the active memory limit")
+    mx.set_wired_limit(wired_bytes)
     mx.set_memory_limit(memory_bytes)
     mx.set_cache_limit(cache_bytes)
     mx.clear_cache()
     return {
         "memory_limit_bytes": memory_bytes,
         "cache_limit_bytes": cache_bytes,
+        "wired_limit_bytes": wired_bytes,
         "cache_cleared_before_model_load": True,
     }
 
@@ -69,6 +80,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--memory-limit-gb", type=_positive_gib, required=True)
     parser.add_argument("--cache-limit-gb", type=_positive_gib, required=True)
+    parser.add_argument("--wired-limit-gb", type=_positive_gib, required=True)
     parser.add_argument("--envelope-out", required=True)
     parser.add_argument("--trainer", required=True)
     parser.add_argument("trainer_args", nargs=argparse.REMAINDER)
@@ -86,12 +98,25 @@ def main() -> int:
 
     import mlx.core as mx
 
+    device_info = dict(mx.device_info())
+    wired_bytes = int(args.wired_limit_gb * GIB)
+    device_memory = device_info.get("memory_size")
+    recommended = device_info.get("max_recommended_working_set_size")
+    if (
+        not isinstance(device_memory, int)
+        or wired_bytes >= device_memory
+        or not isinstance(recommended, int)
+        or wired_bytes > recommended
+    ):
+        raise RuntimeError(
+            "MLX wired limit must not exceed the device recommended working set"
+        )
     limits = _configure_mlx(
         mx,
         memory_gb=args.memory_limit_gb,
         cache_gb=args.cache_limit_gb,
+        wired_gb=args.wired_limit_gb,
     )
-    device_info = dict(mx.device_info())
     envelope = {
         "schema": SCHEMA,
         **limits,
@@ -110,7 +135,8 @@ def main() -> int:
     print(
         "MLX recurrence envelope: "
         f"active={limits['memory_limit_bytes'] // GIB}GiB "
-        f"cache={limits['cache_limit_bytes'] // GIB}GiB",
+        f"cache={limits['cache_limit_bytes'] // GIB}GiB "
+        f"wired={limits['wired_limit_bytes'] // GIB}GiB",
         flush=True,
     )
     sys.argv = [str(trainer), *trainer_args]

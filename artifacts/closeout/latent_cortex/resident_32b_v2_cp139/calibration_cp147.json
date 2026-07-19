@@ -1,0 +1,80 @@
+{
+  "calibration_id": "resident-32b-v2-cp147-streamed-five-step",
+  "capability_credit_eligible": false,
+  "dataset_sha256": "035cdf45cb43cdbb2fb3f0eaa2e426d6d156163e3eec4fd716d579ddf965d146",
+  "execution_spec_sha256": "ac08659fc9487098f876d660db4b02259f19b3471227b35e4edbabf4d4e76987",
+  "frozen_at": "2026-07-19T06:34:15Z",
+  "five_step": {
+    "adapter_sha256": "67564ea45dc0b9fd5f2d9f964c4be5e378c5344b0e77abe06c57e23348640436",
+    "complete": true,
+    "config_sha256": "ac2c5b4b9d002666b1fc3a173392f9556a29cea73bf4f4f81bf6eed28a6875fd",
+    "contained": true,
+    "detached_duration_s": 425.464254,
+    "detached_receipt_sha256": "96e7b03d3c85b4a51d85ac81bee1405278237996f9677f9db8be7369cc7791df",
+    "losses": [
+      5.078771,
+      1.933315,
+      3.360502,
+      1.975004,
+      3.994754
+    ],
+    "memory_sampler": {
+      "max_physical_footprint_gb": 61,
+      "min_physical_footprint_gb": 18,
+      "sample_count": 27,
+      "sample_interval_s": 15,
+      "sha256": "7d3ad9d19bbe8e825dfd50e84c4347b5ae5b5969af109662ccd4db9330e1b765"
+    },
+    "plan_sha256": "d0880dcddfeab2823389cd8c47e4186724983da008865fa177af8df3b0f8629f",
+    "steps": 5,
+    "trainer_receipt_sha256": "81f5d380c722536dd26c3c231119fedb1dbf885862151d68ce11b9c25da557b7",
+    "training_elapsed_s": 411.11894
+  },
+  "gradient_execution": {
+    "concurrent_depth_graphs": 1,
+    "finite_loss_and_gradient_required_before_update": true,
+    "mode": "depth_serial_exact_sum",
+    "optimizer_updates_per_sample": 1,
+    "schema": "aura.recurrence_streamed_depth_gradient.v1"
+  },
+  "one_step": {
+    "complete": true,
+    "contained": true,
+    "detached_duration_s": 125.707789,
+    "detached_receipt_sha256": "7284fcb360a87c367d145e30e8394f2ed3cb70150c6c81d98c72e50140f7ac83",
+    "loss": 5.078771,
+    "steps": 1,
+    "trainer_receipt_sha256": "f27a172087ff5b680514a9035218c5ec8df9a121991a3018bf6fadd18cc8394c",
+    "training_elapsed_s": 111.502908
+  },
+  "parent_resource_amendment": {
+    "path": "artifacts/closeout/latent_cortex/resident_32b_v2_cp139/resource_amendment_cp146.json",
+    "sha256": "e2aa17c8c952860eae320699ff0c1387b635ecdda3bfd1c08983c5dc0c451abd"
+  },
+  "projection": {
+    "checkpoint_interval_for_projection": 5,
+    "eta_range_h": [
+      10.0,
+      16.0
+    ],
+    "first_step_training_s": 111.502908,
+    "projected_576_step_training_h": 11.994808,
+    "projected_576_step_training_s": 43181.308,
+    "warm_step_training_s": 74.904008
+  },
+  "result": {
+    "memory_non_ratcheting": true,
+    "passed": true,
+    "resident_full_run_admitted": false,
+    "reason": "streamed gradients are viable, but the 61-GiB sampled peak requires a wired-residency gate before the full run"
+  },
+  "schema": "aura.recurrence_native_resident_calibration.v1",
+  "trainer_source_sha256": "35814802ba2054bd55c7a71029751b7d4e7d2c02d4db7baca90771e0e08e80c3",
+  "wired_envelope_candidate": {
+    "active_memory_gib": 40,
+    "cache_gib": 2,
+    "test_sha256": "5747cc7d494880aefddc8cae74113752bc065d872380495db226735f36825e1f",
+    "wired_memory_gib": 48,
+    "wrapper_sha256": "53d22ae64012823313bdf81a21eccada52f6289eccf4ffb85c1b6051a2d7996a"
+  }
+}

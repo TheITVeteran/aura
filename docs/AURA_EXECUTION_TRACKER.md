@@ -16,16 +16,17 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **Checkpoint 146 is the current
-  reviewed source candidate in the `main` worktree; checkpoints through CP145
-  are pushed. The resident-32B resume reached step 5 but was then killed by
-  macOS at 93.8 GiB resident memory, proving the prior MLX allocator envelope
-  did not bound retained activation graphs. CP146 serializes the mathematically
-  separable depth gradients, keeps one optimizer update per sample, and proves
-  value/gradient equivalence on real tiny-Qwen weights. No reasoning-gain or
-  frontier claim exists yet. A clean resident calibration, completed training,
-  authenticated role roots, the paired pilot, external-frontier comparison,
-  and exact rebuilt-app proof remain open**. Checkpoint 80
+- Current bounded implementation milestone: **Checkpoint 147 is the current
+  reviewed source candidate in the `main` worktree; checkpoints through CP146
+  are pushed. The corrected resident-32B path completed clean one- and five-step
+  calibrations with finite durable checkpoints, exact source identity, and no
+  memory ratchet. The measured warm rate is 74.90 seconds per step, projecting
+  about 12 hours for 576 steps. The sampled 61-GiB peak is still too close to
+  the 64-GiB host limit, so CP147 adds an explicit 48-GiB MLX wired-residency
+  control before the full launch. No reasoning-gain or frontier claim exists
+  yet. A wired resident gate, completed training, authenticated role roots, the
+  paired pilot, external-frontier comparison, and exact rebuilt-app proof remain
+  open**. Checkpoint 80
   made cached
   readiness truthful and fast,
   removed synchronous Phi/Eternal maintenance from the foreground cycle, and
@@ -19636,3 +19637,37 @@ faithful 292-399 forecast, leaving approximately 146-253 checkpoints. Next:
 publish CP146, create an isolated worktree at that exact commit, run a one-step
 resident calibration with memory evidence, then launch the full detached run
 only if that bounded gate passes. Final soaks remain deferred.
+
+## Checkpoint 2026-07-18-147: Resident Calibration and Wired Margin
+
+The streamed-gradient implementation was executed from an isolated worktree at
+exact pushed commit `1e3f6907`. Both bounded resident runs completed under the
+real fused 32B checkpoint with source-bound receipts and detached containment.
+
+- The one-step gate completed in 125.71 seconds with 111.50 seconds inside the
+  training loop, finite loss 5.078771, one durable optimizer checkpoint, and a
+  clean `max_steps` receipt.
+- The five-step gate completed in 425.46 seconds with 411.12 training seconds,
+  five finite losses and five durable checkpoints. Subtracting the compiled
+  first step yields a measured warm rate of 74.904 seconds per step. The
+  straight 576-step projection is 43,181 seconds, 11.995 hours; the operational
+  ETA remains 10-16 hours for task-length variance and full-run checkpointing.
+- Fifteen-second physical-footprint sampling recorded 27 observations. Memory
+  repeatedly rose and fell instead of ratcheting, but the observed range was
+  18-61 GiB. A 61-GiB peak on a 64-GiB host is not enough failure margin for a
+  long unattended run even though five steps survived.
+- `tools/run_recurrence_training_envelope.py` now requires and receipts an MLX
+  wired-memory limit in addition to active and cache limits. The candidate
+  40-GiB active, 2-GiB cache, 48-GiB wired envelope is below the device's
+  51.83-GiB recommended working set and 64-GiB physical memory. Four focused
+  envelope tests, Ruff, and compilation pass.
+- `calibration_cp147.json` binds both detached and trainer receipts, the memory
+  samples, source/config/data/execution identities, measured timing, projection,
+  and the still-fail-closed full-run admission decision. Calibration is
+  mechanics/performance evidence only; it grants no capability credit.
+
+Evidence-weighted completion remains 27%; this is checkpoint 147 of the
+faithful 292-399 forecast, leaving approximately 145-252 checkpoints. Next:
+publish CP147, run a bounded resident gate under the 48-GiB wired limit from an
+exact isolated commit, and launch the 24-hour-capped detached full run only if
+the physical profile and receipts pass. Final soaks remain deferred.
