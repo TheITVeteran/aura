@@ -41,3 +41,16 @@ api_key = "your_api_key_goes_here"
 '''
 
     assert _scan_python_ast(source, "sample.py") == []
+
+
+def test_security_scan_allows_env_var_name_constants():
+    """An env-var NAME constant says where a secret lives; it is not the
+    secret. The value must be a SCREAMING_SNAKE identifier to qualify."""
+    source = 'BROKER_TOKEN_ENV = "AURA_DETACHED_BROKER_TOKEN"\n'
+    assert _scan_python_ast(source, "core/runtime/broker.py") == []
+
+
+def test_security_scan_still_flags_secrets_in_env_named_variables():
+    source = 'BROKER_TOKEN_ENV = "sk-9fQz2LmXv7Rb4TpW8dYc1KhN"\n'
+    findings = _scan_python_ast(source, "core/runtime/broker.py")
+    assert findings and findings[0]["kind"] == "secret_like_literal"

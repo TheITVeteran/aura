@@ -135,6 +135,8 @@ def _scan_assignment(node: ast.Assign | ast.AnnAssign, rel: str) -> list[dict]:
         return []
     if _is_enum_symbol_literal(names, literal):
         return []
+    if _is_env_var_name_literal(names, literal):
+        return []
     if _is_placeholder_literal(literal):
         return []
     if len(literal) < 20 or literal.startswith("$") or literal.startswith("<"):
@@ -182,6 +184,19 @@ def _is_parser_regex_constant(names: list[str], literal: str) -> bool:
 def _is_placeholder_literal(literal: str) -> bool:
     lowered = literal.lower()
     return any(marker in lowered for marker in PLACEHOLDER_MARKERS)
+
+
+def _is_env_var_name_literal(names: list[str], literal: str) -> bool:
+    """`FOO_TOKEN_ENV = "AURA_FOO_TOKEN"` names WHERE a secret lives, not the
+    secret itself: the variable must say it holds an env-var name and the
+    literal must be a SCREAMING_SNAKE identifier, not credential material."""
+    if not re.fullmatch(r"[A-Z][A-Z0-9_]{2,}", literal):
+        return False
+    for name in names:
+        words = {part for part in re.split(r"[^a-z0-9]+|_", name.lower()) if part}
+        if "env" in words or "envvar" in words:
+            return True
+    return False
 
 
 def _is_enum_symbol_literal(names: list[str], literal: str) -> bool:
