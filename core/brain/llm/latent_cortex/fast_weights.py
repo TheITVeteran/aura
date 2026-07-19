@@ -222,6 +222,19 @@ class EpisodicFastWeights:
         self.handles: list[FastWeightHandle] = []
         self.lifecycle = FastWeightsLifecycle()
         self.last_export_receipt: dict[str, Any] | None = None
+        # Anything caching model OUTPUTS (probe memoization) registers here:
+        # attach/rescale/detach change the model function, so every such
+        # transition must flush downstream caches or they become lies.
+        self.on_function_change: Callable[[str], None] | None = None
+
+    def _notify_function_change(self, reason: str) -> None:
+        callback = self.on_function_change
+        if callback is None:
+            return
+        try:
+            callback(reason)
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            logger.warning("Fast-weight function-change listener failed (%s)", reason)
 
     # ── Attach / detach ─────────────────────────────────────────────────
     def attach(
@@ -278,6 +291,9 @@ class EpisodicFastWeights:
             (h.wrapper.retrieval_seeded_columns for h in self.handles),
             default=0,
         )
+        # V=0 makes attach bit-identical, but retrieval-seeded columns can
+        # start non-zero — notify conservatively either way.
+        self._notify_function_change("fast_weights_attached")
         return len(self.handles)
 
     def detach(self) -> int:
@@ -301,6 +317,8 @@ class EpisodicFastWeights:
         self.handles = list(reversed(remaining))
         self.lifecycle.detach_conflicts += conflicts
         self.lifecycle.erased = not self.handles
+        if restored:
+            self._notify_function_change("fast_weights_detached")
         return restored
 
     def rescale(self, factor: float) -> float:
@@ -322,6 +340,7 @@ class EpisodicFastWeights:
         for handle in self.handles:
             handle.wrapper.scale *= float(factor)
         self.lifecycle.canary_rescales += 1
+        self._notify_function_change("fast_weights_rescaled")
         return float(self.handles[0].wrapper.scale)
 
     def effective_delta_metrics(self) -> dict[str, Any]:
@@ -538,6 +557,8 @@ class EpisodicFastWeights:
                 bind_params(params)
                 break
         bind_params(params)  # leave the best params installed without another forward pass
+        if self.lifecycle.optimized_steps:
+            self._notify_function_change("fast_weights_optimized")
 
     # ── Consolidation handoff ───────────────────────────────────────────
     def export_candidate(

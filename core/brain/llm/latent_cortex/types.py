@@ -284,6 +284,9 @@ class CortexConfig:
     escape: dict[str, Any] | None = None
     # Per-episode latent interpretability/safety telemetry in the receipt.
     telemetry_enabled: bool = True
+    # Per-episode decode-probe memoization: identical latent states decode
+    # once; the cache flushes on every fast-weight function change.
+    probe_cache_enabled: bool = True
 
     def validate(self) -> list[str]:
         """Return a list of human-readable violations (empty ⇒ valid)."""
@@ -481,6 +484,8 @@ class CortexConfig:
             problems.append("fast_weights.canary_max_tokens outside [4, 128]")
         if type(self.telemetry_enabled) is not bool:
             problems.append("telemetry_enabled must be boolean")
+        if type(self.probe_cache_enabled) is not bool:
+            problems.append("probe_cache_enabled must be boolean")
         if self.escape is not None:
             if not isinstance(self.escape, dict):
                 problems.append("escape must be a mapping or null")
@@ -624,6 +629,8 @@ class EpisodeReceipt:
     bytecode_events: list[dict[str, Any]] = field(default_factory=list)
     # Latent interpretability/safety telemetry (telemetry.LatentTelemetry).
     latent_telemetry: dict[str, Any] = field(default_factory=dict)
+    # Decode-probe memoization evidence (probe_cache.DecodeProbeCache).
+    probe_cache: dict[str, Any] = field(default_factory=dict)
     decode_temperature: float = 0.0
     decode_top_p: float = 1.0
     decode_bridge_applied: bool = False
@@ -732,6 +739,7 @@ class EpisodeReceipt:
             "escape": dict(self.escape),
             "bytecode_events": [dict(row) for row in self.bytecode_events],
             "latent_telemetry": dict(self.latent_telemetry),
+            "probe_cache": dict(self.probe_cache),
             "decode_temperature": self.decode_temperature,
             "decode_top_p": self.decode_top_p,
             "decode_bridge_applied": self.decode_bridge_applied,

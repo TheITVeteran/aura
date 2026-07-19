@@ -31,6 +31,7 @@ from core.brain.llm.latent_cortex.capability_canaries import (
 )
 from core.brain.llm.latent_cortex.escape import EscapeConfig
 from core.brain.llm.latent_cortex.fast_weights import EpisodicFastWeights
+from core.brain.llm.latent_cortex.probe_cache import DecodeProbeCache
 from core.brain.llm.latent_cortex.governance import CheckpointInvariant
 from core.brain.llm.latent_cortex.latent_opt import LatentOptimizer, build_proxy_loss
 from core.brain.llm.latent_cortex.recurrence import WindowRunner
@@ -600,13 +601,33 @@ class LatentCortexEngine:
 
         Full-cache snapshot → persist this branch's slots → decode → restore.
         This is what lets a verifier score every branch before exactly one
-        winner's state is committed.
+        winner's state is committed. Probes are memoized per episode on the
+        exact latent state: an unchanged (seed, z, bridge) triple under an
+        unchanged model function decodes once and costs nothing after that.
         """
         from core.brain.llm.recurrent_depth import (
             _restore_recurrent_caches,
             _snapshot_recurrent_caches,
         )
 
+        probe_tokens = (
+            self.config.verifier_probe_max_tokens
+            if max_tokens is None
+            else max_tokens
+        )
+        probe_cache = getattr(self, "_episode_probe_cache", None)
+        cache_key = None
+        if probe_cache is not None:
+            cache_key = probe_cache.key(
+                branch.workspace.seed_z,
+                branch.z,
+                list(bridge_tokens or []),
+                probe_tokens,
+            )
+            memoized = probe_cache.get(cache_key)
+            if memoized is not None:
+                return memoized
+        spent_before = budget.spent_layer_apps
         snaps = _snapshot_recurrent_caches(cache, 0, self.n_layers)
         try:
             slot_logits = self._persist_branch(branch, cache, runner)
@@ -616,12 +637,7 @@ class LatentCortexEngine:
                     budget,
                     bridge_tokens,
                 )
-            probe_tokens = (
-                self.config.verifier_probe_max_tokens
-                if max_tokens is None
-                else max_tokens
-            )
-            return self._decode(
+            decoded = self._decode(
                 cache,
                 budget,
                 slot_logits,
@@ -631,6 +647,13 @@ class LatentCortexEngine:
             )[0]
         finally:
             _restore_recurrent_caches(cache, 0, self.n_layers, snaps)
+        if probe_cache is not None and cache_key is not None:
+            probe_cache.put(
+                cache_key,
+                decoded,
+                budget.spent_layer_apps - spent_before,
+            )
+        return decoded
 
     def _verifier_probe_layer_apps(
         self,
@@ -990,6 +1013,12 @@ class LatentCortexEngine:
             list(cognitive_context_items or [])
         )
         telemetry = LatentTelemetry(enabled=bool(self.config.telemetry_enabled))
+        # Probe memoization lives exactly one episode: identical latent
+        # states decode once; the cache empties the moment ΔW changes the
+        # model function.
+        self._episode_probe_cache = (
+            DecodeProbeCache() if self.config.probe_cache_enabled else None
+        )
         escape_cfg = EscapeConfig(**dict(self.config.escape or {}))
         ensemble = BranchEnsemble.seed(
             embeddings,
@@ -1311,6 +1340,10 @@ class LatentCortexEngine:
         canary_baseline: dict[str, float] | None = None
         if self.config.fast_weights.enabled:
             fast_weights = EpisodicFastWeights(self.config.fast_weights)
+            if self._episode_probe_cache is not None:
+                # Every ΔW lifecycle transition changes the model function;
+                # memoized probes must die at each boundary.
+                fast_weights.on_function_change = self._episode_probe_cache.invalidate
             if fast_weight_baseline_cost + safety_reserve > budget.remaining_layer_apps:
                 raise RuntimeError("compute budget cannot admit fast-weight baseline probe")
             fw_baseline = self._fw_probe(budget)
@@ -1554,6 +1587,8 @@ class LatentCortexEngine:
 
         receipt.recurrence_adapter = runner.adapter_receipt()
         receipt.latent_telemetry = telemetry.to_receipt()
+        if self._episode_probe_cache is not None:
+            receipt.probe_cache = self._episode_probe_cache.to_receipt()
         return out_tokens, receipt
 
     def _finalize_fast_weights(
