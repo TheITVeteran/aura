@@ -17,12 +17,13 @@ from core.brain.llm.latent_cortex.campaign_trust import (
 )
 
 WORKER_AUTHORIZATION_PAYLOAD_SCHEMA = (
-    "aura.latent_cortex.worker_authorization_payload.v1"
+    "aura.latent_cortex.worker_authorization_payload.v3"
 )
 WORKER_RESULT_ORIGIN_SCHEMA = "aura.latent_cortex.worker_result_origin.v1"
 WORKER_RESULT_SIGNED_PAYLOAD_SCHEMA = (
-    "aura.latent_cortex.worker_result_signed_payload.v1"
+    "aura.latent_cortex.worker_result_signed_payload.v2"
 )
+WORKER_KEY_CUSTODY_PRODUCER_SOFTWARE = "producer_process_exportable"
 ZERO_SHA256 = "0" * 64
 
 _AUTHORIZATION_KEYS = {
@@ -32,7 +33,11 @@ _AUTHORIZATION_KEYS = {
     "protocol_sha256",
     "plan_sha256",
     "arm",
+    "worker_attempt_slot",
+    "worker_boot_id",
+    "worker_key_custody",
     "worker_source_sha256",
+    "worker_command",
     "worker_command_sha256",
     "model_identity_sha256",
     "adapter_identity_sha256",
@@ -54,6 +59,7 @@ _RESULT_PAYLOAD_KEYS = {
     "cell_id",
     "attempt_id",
     "worker_boot_id",
+    "worker_attempt_slot",
     "worker_key_id",
     "sequence",
     "previous_origin_sha256",
@@ -141,6 +147,15 @@ def _validated_authorization_payload(value: Any) -> dict[str, Any]:
         _fail("worker_authorization_payload_invalid")
     for role in ("campaign_name", "arm"):
         _identifier(authorization.get(role), role=role)
+    _sequence(
+        authorization.get("worker_attempt_slot"), role="worker_attempt_slot"
+    )
+    _worker_boot_id(authorization.get("worker_boot_id"))
+    if (
+        authorization.get("worker_key_custody")
+        != WORKER_KEY_CUSTODY_PRODUCER_SOFTWARE
+    ):
+        _fail("worker_key_custody_invalid")
     for role in (
         "policy_sha256",
         "protocol_sha256",
@@ -155,6 +170,20 @@ def _validated_authorization_payload(value: Any) -> dict[str, Any]:
     _public_raw, key_id = _decode_public_key(
         authorization.get("worker_public_key_b64")
     )
+    command = authorization.get("worker_command")
+    if (
+        not isinstance(command, list)
+        or not command
+        or any(
+            not isinstance(argument, str)
+            or not argument
+            or len(argument) > 16_384
+            for argument in command
+        )
+        or _sha256_bytes(canonical_json_bytes(command))
+        != authorization.get("worker_command_sha256")
+    ):
+        _fail("worker_command_invalid")
     if authorization.get("worker_key_id") != key_id:
         _fail("worker_authorization_key_mismatch")
     return authorization
@@ -167,8 +196,11 @@ def build_worker_authorization_payload(
     protocol_sha256: str,
     plan_sha256: str,
     arm: str,
+    worker_attempt_slot: int,
+    worker_boot_id: str,
+    worker_key_custody: str,
     worker_source_sha256: str,
-    worker_command_sha256: str,
+    worker_command: list[str],
     model_identity_sha256: str,
     adapter_identity_sha256: str,
     worker_public_key_raw: bytes,
@@ -182,17 +214,32 @@ def build_worker_authorization_payload(
         ("arm", arm),
     ):
         _identifier(value, role=role)
+    _sequence(worker_attempt_slot, role="worker_attempt_slot")
+    _worker_boot_id(worker_boot_id)
+    if worker_key_custody != WORKER_KEY_CUSTODY_PRODUCER_SOFTWARE:
+        _fail("worker_key_custody_invalid")
     for role, value in (
         ("policy_sha256", policy_sha256),
         ("protocol_sha256", protocol_sha256),
         ("plan_sha256", plan_sha256),
         ("worker_source_sha256", worker_source_sha256),
-        ("worker_command_sha256", worker_command_sha256),
         ("model_identity_sha256", model_identity_sha256),
         ("adapter_identity_sha256", adapter_identity_sha256),
     ):
         if not _is_sha256(value):
             _fail(f"{role}_invalid")
+    command = _normalize(worker_command, role="worker_command")
+    if (
+        not isinstance(command, list)
+        or not command
+        or any(
+            not isinstance(argument, str)
+            or not argument
+            or len(argument) > 16_384
+            for argument in command
+        )
+    ):
+        _fail("worker_command_invalid")
     return {
         "schema": WORKER_AUTHORIZATION_PAYLOAD_SCHEMA,
         "campaign_name": campaign_name,
@@ -200,8 +247,12 @@ def build_worker_authorization_payload(
         "protocol_sha256": protocol_sha256,
         "plan_sha256": plan_sha256,
         "arm": arm,
+        "worker_attempt_slot": worker_attempt_slot,
+        "worker_boot_id": worker_boot_id,
+        "worker_key_custody": worker_key_custody,
         "worker_source_sha256": worker_source_sha256,
-        "worker_command_sha256": worker_command_sha256,
+        "worker_command": command,
+        "worker_command_sha256": _sha256_bytes(canonical_json_bytes(command)),
         "model_identity_sha256": model_identity_sha256,
         "adapter_identity_sha256": adapter_identity_sha256,
         "worker_public_key_b64": base64.b64encode(worker_public_key_raw).decode(
@@ -254,6 +305,8 @@ def build_worker_result_origin(
     for role, value in (("cell_id", cell_id), ("attempt_id", attempt_id)):
         _identifier(value, role=role)
     _worker_boot_id(worker_boot_id)
+    if worker_boot_id != authorization["worker_boot_id"]:
+        _fail("worker_boot_id_authorization_mismatch")
     result = _normalize(result_body, role="worker_result_body")
     if not isinstance(result, dict) or "worker_origin" in result:
         _fail("worker_result_body_invalid")
@@ -275,6 +328,7 @@ def build_worker_result_origin(
         "cell_id": cell_id,
         "attempt_id": attempt_id,
         "worker_boot_id": worker_boot_id,
+        "worker_attempt_slot": authorization["worker_attempt_slot"],
         "worker_key_id": authorization["worker_key_id"],
         "sequence": sequence,
         "previous_origin_sha256": previous_origin_sha256,
@@ -350,6 +404,7 @@ def verify_worker_result_origin(
         "cell_id": expected_cell_id,
         "attempt_id": expected_attempt_id,
         "worker_boot_id": signed_payload.get("worker_boot_id"),
+        "worker_attempt_slot": authorization["worker_attempt_slot"],
         "worker_key_id": authorization["worker_key_id"],
         "sequence": expected_sequence,
         "previous_origin_sha256": expected_previous_origin_sha256,
@@ -360,6 +415,11 @@ def verify_worker_result_origin(
     _identifier(signed_payload.get("cell_id"), role="cell_id")
     _identifier(signed_payload.get("attempt_id"), role="attempt_id")
     _worker_boot_id(signed_payload.get("worker_boot_id"))
+    if signed_payload.get("worker_boot_id") != authorization["worker_boot_id"]:
+        _fail("worker_boot_id_authorization_mismatch")
+    _sequence(
+        signed_payload.get("worker_attempt_slot"), role="worker_attempt_slot"
+    )
     _sequence(signed_payload.get("sequence"), role="worker_result_sequence")
     for role in (
         "authorization_attestation_sha256",
@@ -407,6 +467,7 @@ __all__ = [
     "WORKER_AUTHORIZATION_PAYLOAD_SCHEMA",
     "WORKER_RESULT_ORIGIN_SCHEMA",
     "WORKER_RESULT_SIGNED_PAYLOAD_SCHEMA",
+    "WORKER_KEY_CUSTODY_PRODUCER_SOFTWARE",
     "ZERO_SHA256",
     "WorkerOriginError",
     "build_worker_authorization_payload",

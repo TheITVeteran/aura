@@ -126,6 +126,14 @@ def _grade_plan(*, claim_eligible: bool = True):
         execution_config={
             "max_steps": 8,
             "decode_max_tokens": 256,
+            "worker_task_material": "public_manifest_only",
+            "answer_reveal_protocol": "sealed_outputs_then_issuer_reveal_v1",
+            "worker_origin_protocol": "preauthorized_ephemeral_chain_v2",
+            "worker_origin_attempt_slots": 3,
+            "generation_seed_count": 20,
+            "generation_seed_min_entropy_bits": 60,
+            "generation_seed_policy": "external_issuer_uniform_63bit",
+            "generation_seed_disclosure": "post_seal_answer_reveal",
             "implementation_sha256": {
                 "tools/run_latent_cortex_paired_campaign.py": RUNNER_SHA256,
             },

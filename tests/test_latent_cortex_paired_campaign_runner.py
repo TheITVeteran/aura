@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import hashlib
 import json
 import os
@@ -274,6 +275,8 @@ def test_claim_reveal_pauses_for_exact_external_issuer_signature(
         "difficulty": 1,
         "worker_task_material": "public_manifest_only",
         "answer_reveal_protocol": "sealed_outputs_then_issuer_reveal_v1",
+        "worker_origin_protocol": "preauthorized_ephemeral_chain_v2",
+        "worker_origin_attempt_slots": 3,
         "generation_seed_count": 1,
         "generation_seed_min_entropy_bits": 60,
         "generation_seed_policy": "external_issuer_uniform_63bit",
@@ -350,6 +353,14 @@ def test_claim_reveal_pauses_for_exact_external_issuer_signature(
         campaign_manifest = journal.finalize(campaign_dir / runner.MANIFEST_FILE)
     args.final_run_attestation = ""
     grade = {"grade_sha256": "e" * 64}
+    worker_authorizations = {"manifest_sha256": "a" * 64}
+    worker_key_erasure = {"manifest_sha256": "b" * 64}
+    (campaign_dir / runner.WORKER_AUTHORIZATION_MANIFEST_FILE).write_bytes(
+        canonical_json_bytes(worker_authorizations) + b"\n"
+    )
+    (campaign_dir / runner.WORKER_KEY_ERASURE_MANIFEST_FILE).write_bytes(
+        canonical_json_bytes(worker_key_erasure) + b"\n"
+    )
     assert (
         runner._admit_final_run_envelope(
             args,
@@ -358,6 +369,8 @@ def test_claim_reveal_pauses_for_exact_external_issuer_signature(
             answer_reveal=reveal,
             campaign_manifest=campaign_manifest,
             grade=grade,
+            worker_authorizations=worker_authorizations,
+            worker_key_erasure=worker_key_erasure,
         )
         is None
     )
@@ -384,6 +397,8 @@ def test_claim_reveal_pauses_for_exact_external_issuer_signature(
         answer_reveal=reveal,
         campaign_manifest=campaign_manifest,
         grade=grade,
+        worker_authorizations=worker_authorizations,
+        worker_key_erasure=worker_key_erasure,
     )
     assert final_envelope is not None
     assert final_envelope["request_sha256"] == final_request["request_sha256"]
@@ -521,6 +536,23 @@ def test_worker_command_resolves_relative_campaign_directory(
     assert all(entry["max_invocations"] == 1 for entry in policy)
 
 
+def test_claim_broker_policy_covers_every_exact_worker_attempt_command(
+    tmp_path: Path,
+):
+    args, _plan, _policy, _role_keys = _worker_origin_claim_fixture(tmp_path)
+    policy = runner._detached_broker_policy(args)
+
+    expected = {
+        tuple(runner._worker_args(args, arm, worker_attempt_slot=attempt_slot))
+        for arm in runner.PRIMARY_ARMS
+        for attempt_slot in range(1, args.max_infra_attempts + 1)
+    }
+    observed = {tuple(entry["command"]) for entry in policy}
+    assert observed == expected
+    assert len(policy) == len(expected)
+    assert all(entry["max_invocations"] == 1 for entry in policy)
+
+
 def test_run_child_uses_detached_broker_when_available(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -570,6 +602,428 @@ def test_run_child_uses_detached_broker_when_available(
     assert observed["cwd"] == runner.REPO_ROOT
     assert observed["stdout_path"] == tmp_path / runner.LOG_FILE
     assert observed["timeout_s"] == 12.5
+
+
+def _worker_origin_claim_fixture(tmp_path: Path):
+    now = int(time.time())
+    campaign_name = "worker-origin-claim-test"
+    policy, role_keys = _external_policy_fixture(campaign_name, now)
+    tasks = generate_task_battery([7], domains=("mathematics",), difficulty=1)
+    task_manifest = runner.build_task_manifest(tasks)
+    auditor = Ed25519PrivateKey.generate()
+    auditor_der = auditor.public_key().public_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    audit_body = {
+        "schema": runner.CONTAMINATION_AUDIT_SCHEMA,
+        "task_manifest_sha256": task_manifest.manifest_sha256,
+        "status": "passed_zero_overlap",
+        "overlap_count": 0,
+        "auditor_independence": "external",
+        "corpora": [{"name": "training", "snapshot_sha256": "d" * 64}],
+        "methods": ["exact_prompt", "normalized_prompt", "token_fivegram"],
+    }
+    audit_bytes = canonical_json_bytes(audit_body)
+    audit = {
+        **audit_body,
+        "signature": {
+            "algorithm": "ed25519",
+            "key_id": hashlib.sha256(auditor_der).hexdigest(),
+            "signature_b64": base64.b64encode(auditor.sign(audit_bytes)).decode(
+                "ascii"
+            ),
+            "signed_payload_sha256": hashlib.sha256(audit_bytes).hexdigest(),
+            "public_key_der_b64": base64.b64encode(auditor_der).decode("ascii"),
+            "trust_root_sha256": hashlib.sha256(auditor_der).hexdigest(),
+            "verified": True,
+        },
+    }
+    execution_config = {
+        "difficulty": 1,
+        "task_registry_version": runner.REGISTRY_VERSION,
+        "generation_seed_count": 1,
+        "generation_seed_min_entropy_bits": 61,
+        "generation_seed_policy": "external_issuer_uniform_63bit",
+        "generation_seed_disclosure": "post_seal_answer_reveal",
+        "domains": ["mathematics"],
+        "worker_task_material": "public_manifest_only",
+        "answer_reveal_protocol": "sealed_outputs_then_issuer_reveal_v1",
+        "worker_origin_protocol": "preauthorized_ephemeral_chain_v2",
+        "worker_origin_attempt_slots": 2,
+        "implementation_sha256": runner._implementation_sha256(),
+    }
+    unsigned = build_campaign_plan(
+        campaign_name,
+        tasks,
+        model_identity={"model": "sealed"},
+        adapter_identity={"adapter": "sealed"},
+        execution_config=execution_config,
+        contamination_audit=audit,
+        claim_eligible=False,
+        arms=runner.PRIMARY_ARMS,
+    )
+    plan = build_campaign_plan(
+        campaign_name,
+        tasks,
+        model_identity={"model": "sealed"},
+        adapter_identity={"adapter": "sealed"},
+        execution_config=execution_config,
+        contamination_audit=audit,
+        campaign_trust={
+            "prelaunch_verified": True,
+            "externally_custodied": True,
+            "policy_sha256": policy.policy_sha256,
+            "unsigned_plan_sha256": unsigned.plan_sha256,
+        },
+        claim_eligible=True,
+        arms=runner.PRIMARY_ARMS,
+    )
+    campaign_dir = tmp_path / "campaign"
+    campaign_dir.mkdir()
+    runner._persist_plan(campaign_dir, plan)
+    args = SimpleNamespace(
+        campaign_dir=str(campaign_dir),
+        campaign_name=campaign_name,
+        model="/sealed/model",
+        adapter="/sealed/adapter",
+        adapter_id="adapter-id",
+        personality_adapter="none",
+        seeds=str(1 << 60),
+        seed_values=(1 << 60,),
+        seed_count=0,
+        seed_entropy_bits=0,
+        domains="mathematics",
+        domain_values=("mathematics",),
+        difficulty=1,
+        task_registry_version=runner.REGISTRY_VERSION,
+        profile="primary",
+        n_slots=4,
+        branches=2,
+        rlc_steps=2,
+        rlc_profile="resident_full_stack",
+        decode_max_tokens=64,
+        episode_timeout=10.0,
+        load_timeout=10.0,
+        warmup_timeout=10.0,
+        arm_timeout=20.0,
+        campaign_timeout=30.0,
+        equal_compute_max_samples=2,
+        max_infra_attempts=2,
+        confirmatory=True,
+        contamination_audit="",
+        contamination_trust_root="",
+        campaign_trust_policy="/external/policy.json",
+        campaign_trust_root="/external/root.pem",
+        task_issuer_attestation="/external/issuer.json",
+        runner_attestation="/external/runner.json",
+        worker_arm="",
+    )
+    return args, plan, policy, role_keys
+
+
+def _sign_worker_authorization_requests(
+    args: SimpleNamespace,
+    policy,
+    runner_key: Ed25519PrivateKey,
+) -> None:
+    campaign_dir = Path(args.campaign_dir)
+    for arm in runner.PRIMARY_ARMS:
+        for attempt_slot in range(1, args.max_infra_attempts + 1):
+            paths = runner._worker_origin_paths(campaign_dir, arm, attempt_slot)
+            request = json.loads(paths["request"].read_bytes())
+            attestation = build_role_attestation(
+                policy,
+                role=CAMPAIGN_RUNNER,
+                payload=request["signed_payload"]["payload"],
+                signed_at_unix=request["signed_payload"]["signed_at_unix"],
+                private_key=runner_key,
+            )
+            paths["attestation"].write_bytes(
+                canonical_json_bytes(attestation) + b"\n"
+            )
+
+
+def test_claim_worker_origin_lifecycle_is_signed_chained_and_erased(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    args, plan, policy, role_keys = _worker_origin_claim_fixture(tmp_path)
+    monkeypatch.setattr(
+        runner, "_load_campaign_trust_policy", lambda *_args, **_kwargs: policy
+    )
+
+    assert runner._admit_worker_authorizations(args, plan) is None
+    _sign_worker_authorization_requests(
+        args,
+        policy,
+        role_keys[CAMPAIGN_RUNNER],
+    )
+    authorization_manifest = runner._admit_worker_authorizations(args, plan)
+    assert authorization_manifest is not None
+    assert authorization_manifest["claim_required"] is True
+    assert len(authorization_manifest["entries"]) == (
+        len(runner.PRIMARY_ARMS) * args.max_infra_attempts
+    )
+
+    entries = {
+        (entry["arm"], entry["attempt_slot"]): entry
+        for entry in authorization_manifest["entries"]
+    }
+    for arm in runner.PRIMARY_ARMS:
+        command = runner._worker_args(args, arm, worker_attempt_slot=1)
+        launch, launch_paths = runner._record_worker_launch(
+            args, arm, 1, command
+        )
+        runner._record_worker_exit(launch_paths, launch, returncode=0)
+    with runner.CampaignJournal(
+        Path(args.campaign_dir) / runner.JOURNAL_FILE, plan
+    ) as journal:
+        for cell_id in plan.cell_ids:
+            definition = plan.cell_definition(cell_id)
+            arm = definition["arm"]
+            entry = entries[(arm, 1)]
+            paths = runner._worker_origin_paths(Path(args.campaign_dir), arm, 1)
+            private_key = runner._load_worker_private_key(paths["private_key"])
+            attestation = json.loads(paths["attestation"].read_bytes())
+            attempt_id = journal.start_cell(cell_id)
+            result = {
+                "arm": arm,
+                "text": "candidate",
+                "layer_apps": 1,
+                "runtime_model_identity": {
+                    "worker_boot_id": entry["worker_boot_id"]
+                },
+            }
+            result["worker_origin"] = runner.build_worker_result_origin(
+                authorization_attestation=attestation,
+                authorization_payload=entry["authorization_payload"],
+                private_key=private_key,
+                result_body=result,
+                cell_id=cell_id,
+                attempt_id=attempt_id,
+                worker_boot_id=entry["worker_boot_id"],
+                sequence=1,
+            )
+            journal.record_arm_result(cell_id, attempt_id, result)
+
+    chains = runner._verify_worker_origin_chains(args, plan)
+    assert chains is not None
+    assert len(chains["chains"]) == len(runner.PRIMARY_ARMS)
+    assert all(chain["result_count"] == 1 for chain in chains["chains"])
+    sealed = runner._seal_output_manifest(
+        Path(args.campaign_dir),
+        plan,
+        worker_origin_chains=chains,
+    )
+    erasure = runner._erase_worker_private_keys(
+        args,
+        plan,
+        authorization_manifest=authorization_manifest,
+        sealed_outputs=sealed,
+    )
+    assert erasure is not None
+    assert erasure["all_private_paths_absent"] is True
+    assert erasure["copy_exclusion_claimed"] is False
+    for entry in authorization_manifest["entries"]:
+        paths = runner._worker_origin_paths(
+            Path(args.campaign_dir), entry["arm"], entry["attempt_slot"]
+        )
+        assert not paths["private_key"].exists()
+        assert paths["erasure"].exists()
+
+    assert runner._admit_worker_authorizations(args, plan) == authorization_manifest
+    with runner.CampaignJournal(
+        Path(args.campaign_dir) / runner.JOURNAL_FILE, plan
+    ) as journal:
+        result_records = journal.result_records()
+    failures, detail = evidence_verifier._verify_worker_origin_evidence(
+        Path(args.campaign_dir),
+        plan=plan,
+        result_records=result_records,
+        trusted_policy=policy,
+    )
+    assert failures == [
+        "worker execution origin is unproven: producer process held exportable "
+        "worker signing keys"
+    ]
+    assert detail["verified"] is False
+    assert detail["cryptographic_chain_verified"] is True
+    assert detail["worker_execution_origin_proven"] is False
+    assert detail["consumed_worker_attempts"] == len(runner.PRIMARY_ARMS)
+    assert detail["private_key_copy_exclusion_proven"] is False
+
+    erasure_manifest_path = (
+        Path(args.campaign_dir) / runner.WORKER_KEY_ERASURE_MANIFEST_FILE
+    )
+    original_erasure_manifest = erasure_manifest_path.read_bytes()
+    attacked_erasure_manifest = copy.deepcopy(erasure)
+    attacked_erasure_manifest["copy_exclusion_claimed"] = True
+    attacked_erasure_material = dict(attacked_erasure_manifest)
+    attacked_erasure_material.pop("manifest_sha256")
+    attacked_erasure_manifest["manifest_sha256"] = hashlib.sha256(
+        canonical_json_bytes(attacked_erasure_material)
+    ).hexdigest()
+    erasure_manifest_path.write_bytes(
+        canonical_json_bytes(attacked_erasure_manifest) + b"\n"
+    )
+    with pytest.raises(
+        runner.CampaignProducerError,
+        match="worker key erasure manifest is invalid",
+    ):
+        runner._erase_worker_private_keys(
+            args,
+            plan,
+            authorization_manifest=authorization_manifest,
+            sealed_outputs=sealed,
+        )
+    erasure_manifest_path.write_bytes(original_erasure_manifest)
+
+    first = authorization_manifest["entries"][0]
+    first_paths = runner._worker_origin_paths(
+        Path(args.campaign_dir), first["arm"], first["attempt_slot"]
+    )
+    original_erasure_receipt = first_paths["erasure"].read_bytes()
+    attacked_erasure_receipt = copy.deepcopy(erasure["receipts"][0])
+    attacked_erasure_receipt["absence_verified"] = False
+    attacked_receipt_material = dict(attacked_erasure_receipt)
+    attacked_receipt_material.pop("receipt_sha256")
+    attacked_erasure_receipt["receipt_sha256"] = hashlib.sha256(
+        canonical_json_bytes(attacked_receipt_material)
+    ).hexdigest()
+    attacked_erasure_manifest = copy.deepcopy(erasure)
+    attacked_erasure_manifest["receipts"][0] = attacked_erasure_receipt
+    attacked_erasure_material = dict(attacked_erasure_manifest)
+    attacked_erasure_material.pop("manifest_sha256")
+    attacked_erasure_manifest["manifest_sha256"] = hashlib.sha256(
+        canonical_json_bytes(attacked_erasure_material)
+    ).hexdigest()
+    first_paths["erasure"].write_bytes(
+        canonical_json_bytes(attacked_erasure_receipt) + b"\n"
+    )
+    erasure_manifest_path.write_bytes(
+        canonical_json_bytes(attacked_erasure_manifest) + b"\n"
+    )
+    with pytest.raises(
+        runner.CampaignProducerError,
+        match="worker key erasure receipt differs",
+    ):
+        runner._erase_worker_private_keys(
+            args,
+            plan,
+            authorization_manifest=authorization_manifest,
+            sealed_outputs=sealed,
+        )
+    first_paths["erasure"].write_bytes(original_erasure_receipt)
+    erasure_manifest_path.write_bytes(original_erasure_manifest)
+
+    attacked_records = copy.deepcopy(result_records)
+    attacked_records[0]["result"]["text"] = "tampered after signing"
+    failures, detail = evidence_verifier._verify_worker_origin_evidence(
+        Path(args.campaign_dir),
+        plan=plan,
+        result_records=tuple(attacked_records),
+        trusted_policy=policy,
+    )
+    assert failures
+    assert detail["verified"] is False
+
+    first_paths["private_key"].write_bytes(b"x" * 32)
+    failures, detail = evidence_verifier._verify_worker_origin_evidence(
+        Path(args.campaign_dir),
+        plan=plan,
+        result_records=result_records,
+        trusted_policy=policy,
+    )
+    assert any("private key remains" in failure for failure in failures)
+    assert detail["verified"] is False
+
+
+def test_worker_attempt_slot_is_single_use_across_parent_restart(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    args, plan, policy, role_keys = _worker_origin_claim_fixture(tmp_path)
+    monkeypatch.setattr(
+        runner, "_load_campaign_trust_policy", lambda *_args, **_kwargs: policy
+    )
+    assert runner._admit_worker_authorizations(args, plan) is None
+    _sign_worker_authorization_requests(
+        args,
+        policy,
+        role_keys[CAMPAIGN_RUNNER],
+    )
+    assert runner._admit_worker_authorizations(args, plan) is not None
+    arm = runner.PRIMARY_ARMS[0]
+    command = runner._worker_args(args, arm, worker_attempt_slot=1)
+    runner._record_worker_launch(args, arm, 1, command)
+
+    assert (
+        runner._next_worker_attempt_slot(
+            Path(args.campaign_dir), arm, maximum=args.max_infra_attempts
+        )
+        == 2
+    )
+    with pytest.raises(
+        runner.CampaignProducerError, match="already consumed"
+    ):
+        runner._record_worker_launch(args, arm, 1, command)
+
+
+def test_worker_launcher_failure_consumes_slot_with_explicit_exit_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    args, plan, policy, role_keys = _worker_origin_claim_fixture(tmp_path)
+    monkeypatch.setattr(
+        runner, "_load_campaign_trust_policy", lambda *_args, **_kwargs: policy
+    )
+    assert runner._admit_worker_authorizations(args, plan) is None
+    _sign_worker_authorization_requests(
+        args,
+        policy,
+        role_keys[CAMPAIGN_RUNNER],
+    )
+    assert runner._admit_worker_authorizations(args, plan) is not None
+    monkeypatch.setattr(runner, "broker_available", lambda: True)
+
+    def fail_launcher(*_args, **_kwargs):
+        raise RuntimeError("broker unavailable")
+
+    monkeypatch.setattr(runner, "run_brokered_process", fail_launcher)
+    arm = runner.PRIMARY_ARMS[0]
+    with pytest.raises(RuntimeError, match="broker unavailable"):
+        runner._run_child(
+            args,
+            arm,
+            timeout_s=1.0,
+            worker_attempt_slot=1,
+        )
+
+    paths = runner._worker_origin_paths(Path(args.campaign_dir), arm, 1)
+    exit_receipt = json.loads(paths["exit"].read_bytes())
+    assert exit_receipt["schema"] == "aura.latent_cortex.worker_exit.v2"
+    assert exit_receipt["outcome"] == "launcher_failure"
+    assert exit_receipt["returncode"] is None
+    assert exit_receipt["error_type"] == "RuntimeError"
+    _manifest, by_position = (
+        evidence_verifier._verify_worker_authorization_manifest(
+            Path(args.campaign_dir),
+            plan=plan,
+            trusted_policy=policy,
+        )
+    )
+    assert evidence_verifier._verify_worker_launch_receipts(
+        Path(args.campaign_dir),
+        used_positions=set(),
+        authorization_by_position=by_position,
+    ) == {(arm, 1)}
+    assert (
+        runner._next_worker_attempt_slot(
+            Path(args.campaign_dir), arm, maximum=args.max_infra_attempts
+        )
+        == 2
+    )
 
 
 def test_claim_eligibility_requires_full_powered_seven_domain_protocol():

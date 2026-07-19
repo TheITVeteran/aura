@@ -265,6 +265,10 @@ def build_campaign_plan(
         != "public_manifest_only"
         or execution_config.get("answer_reveal_protocol")
         != "sealed_outputs_then_issuer_reveal_v1"
+        or execution_config.get("worker_origin_protocol")
+        != "preauthorized_ephemeral_chain_v2"
+        or type(execution_config.get("worker_origin_attempt_slots")) is not int
+        or execution_config.get("worker_origin_attempt_slots", 0) <= 0
         or execution_config.get("generation_seed_disclosure")
         != "post_seal_answer_reveal"
         or execution_config.get("generation_seed_policy")
@@ -602,6 +606,13 @@ def grade_campaign(
     claim_eligible = metadata.get("claim_eligible")
     if type(claim_eligible) is not bool:
         _fail("campaign_claim_eligibility_invalid")
+    if claim_eligible and (
+        execution_config.get("worker_origin_protocol")
+        != "preauthorized_ephemeral_chain_v2"
+        or type(execution_config.get("worker_origin_attempt_slots")) is not int
+        or execution_config.get("worker_origin_attempt_slots", 0) <= 0
+    ):
+        _fail("campaign_worker_origin_required")
     campaign_trust = metadata.get("campaign_trust")
     if claim_eligible and (
         not isinstance(campaign_trust, Mapping)

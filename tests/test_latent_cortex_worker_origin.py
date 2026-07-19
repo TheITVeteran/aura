@@ -18,6 +18,7 @@ from core.brain.llm.latent_cortex.campaign_trust import (
     validate_campaign_trust_policy,
 )
 from core.brain.llm.latent_cortex.worker_origin import (
+    WORKER_KEY_CUSTODY_PRODUCER_SOFTWARE,
     ZERO_SHA256,
     WorkerOriginError,
     build_worker_authorization_payload,
@@ -105,8 +106,11 @@ def _fixture():
         protocol_sha256="1" * 64,
         plan_sha256="2" * 64,
         arm="adapter_rlc",
+        worker_attempt_slot=1,
+        worker_boot_id=BOOT_ID,
+        worker_key_custody=WORKER_KEY_CUSTODY_PRODUCER_SOFTWARE,
         worker_source_sha256="3" * 64,
-        worker_command_sha256="4" * 64,
+        worker_command=["python", "worker.py", "--worker-arm", "adapter_rlc"],
         model_identity_sha256="5" * 64,
         adapter_identity_sha256="6" * 64,
         worker_public_key_raw=_public_raw(worker_key),
@@ -213,6 +217,8 @@ def test_authorized_worker_result_chain_round_trip():
     first_payload = _verify(policy, authorization, attestation, first)
     assert first_payload["sequence"] == 1
     assert first_payload["previous_origin_sha256"] == ZERO_SHA256
+    assert first_payload["worker_attempt_slot"] == 1
+    assert first_payload["worker_boot_id"] == BOOT_ID
 
     previous = first["worker_origin"]["origin_sha256"]
     second = _signed_result(
@@ -289,6 +295,7 @@ def test_result_rejects_body_and_boot_identity_tampering():
     ("field", "value", "error"),
     [
         ("worker_boot_id", "not-a-128-bit-id", "worker_boot_id_invalid"),
+        ("worker_attempt_slot", True, "worker_attempt_slot_invalid"),
         ("sequence", True, "worker_result_sequence_invalid"),
     ],
 )
@@ -316,6 +323,17 @@ def test_result_builder_rejects_noncanonical_boot_id():
             authorization,
             attestation,
             boot_id="NOT-CANONICAL",
+        )
+
+    with pytest.raises(
+        WorkerOriginError, match="worker_boot_id_authorization_mismatch"
+    ):
+        _signed_result(
+            worker_key,
+            authorization,
+            attestation,
+            body=_result_body(boot_id="b" * 32),
+            boot_id="b" * 32,
         )
 
 
@@ -405,6 +423,9 @@ def test_worker_authorization_rejects_role_substitution_and_late_signature():
         lambda payload: payload.__setitem__("schema", "wrong"),
         lambda payload: payload.__setitem__("plan_sha256", "short"),
         lambda payload: payload.__setitem__("arm", " adapter_rlc"),
+        lambda payload: payload.__setitem__(
+            "worker_key_custody", "worker_process_memory_nonexported"
+        ),
         lambda payload: payload.__setitem__("worker_public_key_b64", "not-base64"),
         lambda payload: payload.__setitem__("unexpected", True),
     ],
