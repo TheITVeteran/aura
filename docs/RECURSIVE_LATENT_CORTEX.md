@@ -220,10 +220,46 @@ GWT↔RLC bidirectional coupling, continuous pre-action cortex loop,
 retrieval→ΔW compilation; plus fast-weight capability canaries, latent
 safety telemetry, attractor escape ladder, vector organ ingress,
 held-out facet grading, verifier arbitration over ΔW, and durable
-adapter distillation with the anti-interference battery. Items 8–15 of
-the list are training programs (data + operator-launched runs), not
-runtime organs; the objective and curriculum losses are their entry
-point.
+adapter distillation with the anti-interference battery.
+
+**Training programs (items 10–16) — machinery landed 2026-07-18:** the six
+programs now exist as real modules in `core/learning/` alongside the
+already-landed recurrence-native objective and depth curriculum:
+`transition_grading` (every consequential step scored on named dimensions;
+reliability compounds multiplicatively; verified failures never train
+positive), `on_policy_repair` (earliest CAUSAL error by replay bisect from
+the agent's own trajectory; corrections from the exact reached state;
+retained only on rerun success + transfer majority; emits the
+(state, operations, best operation, verified outcome) unit),
+`teacher_federation` (verifier has the last word, Wilson-bounded
+reliability ledgers break ties — never prestige; unverifiable agreement is
+tiered consensus_unverified; verified failures kept as negatives),
+`minimax_curriculum` (P(d) ∝ (1−S_d/S_ref)^γ toward the weakest measured
+domain, replay floor, explicit exploration share for unmeasurable domains),
+`social_outcome_learning` (delayed relational outcomes price the reward;
+the manipulation guard zeroes dishonestly-won gains; untracked
+theory-of-mind caps credit), `robustness_families` (structured slots +
+alternative templates generate paraphrase/reorder/rename/value-change/
+distractor/mislead/missing/contradiction variants with truthfully
+recomputed answers; grading rewards invariance AND correct movement).
+These are program machinery with contract tests; no training run under
+them has produced capability evidence yet — runs remain operator-launched
+under the single-owner resident protocol.
+
+**Probe memoization (item 20):** decode probes are memoized per episode on
+the exact latent state (`probe_cache.py`); a hit costs the budget nothing,
+savings are receipted, and every fast-weight lifecycle transition flushes
+the cache via the `on_function_change` hook — a probe memoized under a
+different model function is a lie, and the invalidation trail proves the
+boundary held. Prompt-KV sharing across branches and O(1) reference
+snapshots were already in place.
+
+With these, all 22 items of the RSL addendum are implemented: runtime
+organs live in `core/brain/llm/latent_cortex/`, ingress/coupling seams in
+`core/brain/`, training programs in `core/learning/`. Implementation is
+not capability: the preregistered campaigns above still hold the honest
+capability verdicts, and the recurrence-native resident training (CP139+)
+is the arm expected to move them.
 
 The in-episode fast-weight boundary now has two independent guards. The
 behavioral battery measures protected continuations, while an exact structural

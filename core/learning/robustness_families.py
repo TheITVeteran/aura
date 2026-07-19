@@ -177,10 +177,13 @@ def generate_family(spec: RobustTaskSpec, *, seed: int) -> list[TaskVariant]:
     if len(validated.premise_keys) >= 2:
         rng = _rng(validated, "premise_reorder", seed)
         order = list(validated.premise_keys)
-        while True:
+        for _attempt in range(8):
             rng.shuffle(order)
             if tuple(order) != validated.premise_keys:
                 break
+        else:
+            # Bounded fallback: rotation always differs for >= 2 keys.
+            order = order[1:] + order[:1]
         reordered = dict(base_slots)
         for target_key, source_key in zip(validated.premise_keys, order, strict=True):
             reordered[target_key] = base_slots[source_key]

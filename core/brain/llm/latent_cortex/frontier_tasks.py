@@ -95,7 +95,8 @@ class FrontierTaskError(ValueError):
 
 
 def _fail(code: str) -> NoReturn:
-    raise FrontierTaskError(code)
+    error = FrontierTaskError(code)
+    raise error
 
 
 def _sha256_bytes(payload: bytes) -> str:

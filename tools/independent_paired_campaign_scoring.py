@@ -49,7 +49,8 @@ class IndependentScoringError(ValueError):
 
 
 def _fail(code: str) -> Never:
-    raise IndependentScoringError(code)
+    error = IndependentScoringError(code)
+    raise error
 
 
 def _canonical_bytes(value: Any) -> bytes:

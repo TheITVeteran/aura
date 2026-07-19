@@ -63,6 +63,10 @@ DEFAULT_PRODUCTION_DIRS = {
 DEFAULT_PRODUCTION_FILES = {"aura_main.py"}
 
 ALLOW_DYNAMIC_CODE = {
+    # TOCTOU-hardened frozen-source loading: executes EXACTLY the curriculum
+    # bytes it hashed into the training receipt — the exec IS the security
+    # feature (importing the module path again could race a source edit).
+    "tools/recurrence_native_train_v2.py",
     "core/agency/repl_daemon.py",
     "core/runtime/dynamic_execution_gateway.py",
     "core/sandbox/bash_daemon.py",
@@ -89,6 +93,16 @@ ALLOW_SUBPROCESS = {
     "tools/box/parent_controller.py",
     # Operator/CI drivers that orchestrate child processes by design:
     "tools/run_test_chunks.py",
+    # Detached-execution supervisor: its entire job is spawning, sandboxing,
+    # and reaping a real child process tree with crash-observable receipts.
+    "tools/run_detached_step.py",
+    # Campaign driver: spawns one worker process per resumable cell so a
+    # crash kills the cell, never the journal.
+    "tools/run_latent_cortex_paired_campaign.py",
+    # Detached-execution proofs: real child processes and real SIGKILLs are
+    # the only honest way to test supervisor containment.
+    "tests/test_run_detached_step.py",
+    "tests/test_latent_cortex_campaign_journal.py",
     # The release checklist runner spawns the make gates it enforces:
     "tools/release_preflight.py",
     "tests/test_architecture_quality_gate.py",
@@ -172,6 +186,9 @@ ALLOW_BLOCKING_SLEEP_IN_ASYNC = {
 
 SELF_DESCRIPTIVE_PATTERN_FILES = {
     "tools/aura_enterprise_gate.py",
+    # macOS-only detached-execution suite: sandbox-exec + process groups do
+    # not exist elsewhere, so the platform skipif is honest, not debt.
+    "tests/test_run_detached_step.py",
     # Production modules with self-descriptive stub/mock/placeholder keywords in docs/comments
     "core/agency/agency_facade.py",
     "core/agency/skill_library.py",

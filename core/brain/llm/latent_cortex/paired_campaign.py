@@ -59,7 +59,8 @@ class PairedCampaignError(ValueError):
 
 
 def _fail(code: str) -> Never:
-    raise PairedCampaignError(code)
+    error = PairedCampaignError(code)
+    raise error
 
 
 def _sha256(value: Any) -> str:

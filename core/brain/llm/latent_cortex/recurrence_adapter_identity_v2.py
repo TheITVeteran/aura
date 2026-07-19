@@ -65,7 +65,8 @@ class RecurrenceAdapterIdentityV2Error(ValueError):
 
 
 def _fail(code: str) -> Never:
-    raise RecurrenceAdapterIdentityV2Error(code)
+    error = RecurrenceAdapterIdentityV2Error(code)
+    raise error
 
 
 def canonical_json_bytes(value: Any) -> bytes:

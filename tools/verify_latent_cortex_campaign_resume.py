@@ -283,7 +283,7 @@ def main() -> int:
     args = parser.parse_args()
     try:
         verdict = verify_campaign(Path(args.campaign_dir))
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - CLI boundary: every failure becomes exit code + stderr
         print(f"verify_latent_cortex_campaign_resume: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 2
     print(json.dumps(verdict, sort_keys=True, separators=(",", ":")))

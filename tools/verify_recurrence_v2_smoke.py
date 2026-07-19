@@ -44,7 +44,8 @@ class SmokeVerificationError(RuntimeError):
 
 
 def _fail(reason: str) -> Never:
-    raise SmokeVerificationError(reason)
+    error = SmokeVerificationError(reason)
+    raise error
 
 
 def _strict_json(path: Path, *, max_bytes: int = 64 * 1024 * 1024) -> dict[str, Any]:
@@ -364,7 +365,7 @@ def main() -> int:
         payload = canonical_json_bytes(verdict) + b"\n"
         output = Path(args.output).expanduser().resolve(strict=False)
         _atomic_create_or_verify(output, payload)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - CLI boundary: every failure becomes exit code + stderr
         print(
             f"verify_recurrence_v2_smoke: {type(exc).__name__}: {exc}",
             file=sys.stderr,

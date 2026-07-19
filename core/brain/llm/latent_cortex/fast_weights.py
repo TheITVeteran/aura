@@ -57,7 +57,9 @@ def _linear_dimension_source(module):
     """
     current = module
     seen: set[int] = set()
-    while True:
+    # Wrapper chains are shallow (LoRA-over-quantized is depth 2); 32 is a
+    # hard bound against pathological nesting, backed by cycle detection.
+    for _depth in range(32):
         identity = id(current)
         if identity in seen:
             raise TypeError("linear wrapper cycle while resolving dimensions")
@@ -70,6 +72,7 @@ def _linear_dimension_source(module):
                 f"{type(module).__name__} has no weight-bearing linear projection"
             )
         current = nested
+    raise TypeError("linear wrapper nesting exceeds supported depth")
 
 
 def _linear_dims(module) -> tuple[int, int]:

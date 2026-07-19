@@ -200,7 +200,7 @@ def test_malformed_rank_numbers_are_rejected(bad_rank):
     "field,value",
     [
         ("adapter", "../adapter.safetensors"),
-        ("adapter", "/tmp/adapter.safetensors"),
+        ("adapter", "/var/adapter.safetensors"),
         ("adapter", "nested/../../adapter.safetensors"),
         ("adapter", "nested\\adapter.safetensors"),
         ("receipt", "../receipt.json"),

@@ -75,7 +75,7 @@ def test_broker_availability_requires_both_socket_and_token(
     monkeypatch.delenv(broker.BROKER_SOCKET_ENV, raising=False)
     monkeypatch.delenv(broker.BROKER_TOKEN_ENV, raising=False)
     assert broker.broker_available() is False
-    monkeypatch.setenv(broker.BROKER_SOCKET_ENV, "/tmp/not-enough.sock")
+    monkeypatch.setenv(broker.BROKER_SOCKET_ENV, "/var/empty/not-enough.sock")
     assert broker.broker_available() is False
     monkeypatch.setenv(broker.BROKER_TOKEN_ENV, "a" * 64)
     assert broker.broker_available() is True

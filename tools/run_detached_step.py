@@ -961,7 +961,11 @@ def _observe_direct_child(
 ) -> tuple[ProcessObservation, int | None]:
     """Reconcile waitpid and libproc across transient Darwin exit states."""
     deadline = time.monotonic() + timeout_s
-    while True:
+    observation = ProcessObservation("unknown")
+    # Each non-terminal round sleeps 10ms, so the round bound can only trip
+    # after the wall-clock deadline check inside the body has returned; it
+    # exists as the hard guarantee that this loop is finite.
+    for _round in range(max(1, int(timeout_s * 100) + 2)):
         returncode = child.poll()
         if returncode is not None:
             return ProcessObservation("dead"), returncode
@@ -981,6 +985,7 @@ def _observe_direct_child(
         if time.monotonic() >= deadline:
             return observation, None
         time.sleep(0.01)
+    return observation, None
 
 
 def _process_group_exists(process_group_id: int) -> bool:
@@ -1263,7 +1268,7 @@ def _open_secure_log(path: Path) -> Any:
         ):
             raise DetachedStepError(f"log file ownership or type is unsafe: {path}")
         return os.fdopen(descriptor, "ab", buffering=0, closefd=True)
-    except BaseException:
+    except BaseException:  # noqa: BLE001 - fd cleanup on any exit; original re-raised
         os.close(descriptor)
         raise
 
@@ -1300,7 +1305,7 @@ def _spawn_gated_target(
             pass_fds=(gate_read_fd,),
             env=environment,
         )
-    except BaseException:
+    except BaseException:  # noqa: BLE001 - fd cleanup on any exit; original re-raised
         os.close(gate_read_fd)
         os.close(gate_write_fd)
         raise
@@ -1353,7 +1358,7 @@ def _create_control_socket(
             },
         )
         return control_socket, socket_path, control_token, broker_token
-    except BaseException:
+    except BaseException:  # noqa: BLE001 - socket cleanup on any exit; original re-raised
         control_socket.close()
         socket_path.unlink(missing_ok=True)
         raise
@@ -1566,7 +1571,7 @@ def _start_broker_worker(
             deadline_ns=started_monotonic_ns + int(float(request["timeout_s"]) * 1_000_000_000),
             log=log,
         )
-    except BaseException as start_exc:
+    except BaseException as start_exc:  # noqa: BLE001 - start-failure cleanup; strongest error re-raised
         if gate_write_fd is not None:
             os.close(gate_write_fd)
         cleanup_exc: BaseException | None = None
@@ -1584,7 +1589,7 @@ def _start_broker_worker(
                     worker.wait(timeout=_TERM_GRACE_S)
                     if _process_group_exists(worker.pid):
                         raise DetachedStepError("unidentified broker worker group survived cleanup")
-            except BaseException as exc:
+            except BaseException as exc:  # noqa: BLE001 - cleanup error captured for the receipt, never masked
                 cleanup_exc = exc
         log.close()
         if cleanup_exc is not None:
@@ -1659,7 +1664,7 @@ def _finish_broker_worker(
             worker.containment_token,
         )
         containment_verified = True
-    except BaseException as exc:
+    except BaseException as exc:  # noqa: BLE001 - crash-observability: every failure becomes a receipt
         returncode = 70
         cleanup_error = f"{type(exc).__name__}: {exc}"[:1000]
     finally:
@@ -2107,7 +2112,7 @@ def _supervise(run_dir: Path, plan: dict[str, Any], attempt: int) -> None:
                     os._exit(91)
             except subprocess.TimeoutExpired:
                 continue
-    except BaseException as exc:
+    except BaseException as exc:  # noqa: BLE001 - supervisor crash-observability: failure becomes receipt
         supervisor_error = exc
         if returncode is None:
             returncode = 70
@@ -2130,7 +2135,7 @@ def _supervise(run_dir: Path, plan: dict[str, Any], attempt: int) -> None:
                     broker_containment_verified = bool(
                         broker_response["containment_verified"]
                     ) and broker_containment_verified
-                except BaseException as broker_cleanup_exc:
+                except BaseException as broker_cleanup_exc:  # noqa: BLE001 - broker cleanup error captured for the receipt
                     if supervisor_error is None:
                         supervisor_error = broker_cleanup_exc
                     returncode = 70
@@ -2146,7 +2151,7 @@ def _supervise(run_dir: Path, plan: dict[str, Any], attempt: int) -> None:
                     plan.get("fork_policy") == "kernel_denied"
                     and broker_containment_verified
                 )
-            except BaseException as cleanup_exc:
+            except BaseException as cleanup_exc:  # noqa: BLE001 - cleanup error captured for the receipt
                 if supervisor_error is None:
                     supervisor_error = cleanup_exc
                 else:
@@ -2161,7 +2166,7 @@ def _supervise(run_dir: Path, plan: dict[str, Any], attempt: int) -> None:
             )
         try:
             _stop_power_assertion(power_assertion)
-        except BaseException as assertion_cleanup_exc:
+        except BaseException as assertion_cleanup_exc:  # noqa: BLE001 - power-assertion cleanup error captured for the receipt
             containment_verified = False
             if supervisor_error is None:
                 supervisor_error = assertion_cleanup_exc
@@ -2267,7 +2272,7 @@ def _daemonize(run_dir: Path, plan: dict[str, Any], attempt: int) -> tuple[int, 
         max_fd = 65_536 if soft_limit == resource.RLIM_INFINITY else min(int(soft_limit), 65_536)
         os.closerange(3, max_fd)
         _supervise(run_dir, plan, attempt)
-    except BaseException as exc:
+    except BaseException as exc:  # noqa: BLE001 - supervisor last-resort: failure becomes status file
         supervisor_pid = os.getpid()
         supervisor_observation = _inspect_process(supervisor_pid)
         supervisor_start_token = supervisor_observation.token

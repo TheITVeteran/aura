@@ -66,7 +66,8 @@ class CampaignJournalError(ValueError):
 
 
 def _fail(code: str) -> Never:
-    raise CampaignJournalError(code)
+    error = CampaignJournalError(code)
+    raise error
 
 
 def _is_sha256(value: Any) -> bool:
@@ -336,7 +337,7 @@ class CampaignJournal:
                 self._write_genesis()
             self._state = self._replay()
             self._recovered_attempts = set(self._state.active_by_cell.values())
-        except BaseException:
+        except BaseException:  # noqa: BLE001 - resource cleanup on any exit; original re-raised
             self.close()
             raise
 
@@ -376,7 +377,7 @@ class CampaignJournal:
                 fcntl.flock(self._lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 _fail("journal_writer_locked")
-        except BaseException:
+        except BaseException:  # noqa: BLE001 - resource cleanup on any exit; original re-raised
             if self._lock_fd is not None:
                 os.close(self._lock_fd)
                 self._lock_fd = None
@@ -947,7 +948,9 @@ class CampaignJournal:
     def __del__(self) -> None:
         try:
             self.close()
-        except Exception:
+        except (OSError, RuntimeError, ValueError):
+            # Finalizers must never raise; the explicit close/context-manager
+            # paths are where real close errors surface.
             pass
 
 

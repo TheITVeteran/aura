@@ -54,7 +54,7 @@ def _execute_frozen_curriculum(
     sys.modules[module_name] = module
     try:
         exec(compile(source_bytes, str(origin), "exec"), module.__dict__)
-    except BaseException:
+    except BaseException:  # noqa: BLE001 - module-registry cleanup on any exit; original re-raised
         sys.modules.pop(module_name, None)
         raise
     families = getattr(module, "RECURRENCE_TRAINING_FAMILIES", None)

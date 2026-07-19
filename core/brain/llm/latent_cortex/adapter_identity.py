@@ -53,7 +53,8 @@ class AdapterIdentityError(ValueError):
 
 
 def _fail(code: str) -> Never:
-    raise AdapterIdentityError(code)
+    error = AdapterIdentityError(code)
+    raise error
 
 
 def _canonical_json_bytes(value: Any) -> bytes:
@@ -821,7 +822,7 @@ def inspect_mlx_tensor_metadata(adapter_path: str | Path) -> tuple[TensorIdentit
         _fail("mlx_unavailable")
     try:
         loaded = mx.load(str(path))
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - typed wrap; original exception chained
         raise AdapterIdentityError("adapter_tensor_inspection_failed") from exc
     if not isinstance(loaded, Mapping):
         _fail("adapter_tensor_container_invalid")

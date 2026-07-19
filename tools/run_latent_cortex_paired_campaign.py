@@ -94,7 +94,8 @@ def _deadline_alarm(seconds: float, stage: str):
     """Hard wall deadline for one worker stage on POSIX main threads."""
 
     def expired(_signum: int, _frame: Any) -> None:
-        raise TimeoutError(f"{stage} exceeded {seconds:.3f}s hard deadline")
+        error = TimeoutError(f"{stage} exceeded {seconds:.3f}s hard deadline")
+        raise error
 
     previous_handler = signal.getsignal(signal.SIGALRM)
     previous_timer = signal.getitimer(signal.ITIMER_REAL)
@@ -1106,7 +1107,7 @@ def _load_adapter(model: Any, adapter_dir: Path, manifest: dict[str, Any]) -> in
         )
         if after_load != before_load:
             raise CampaignProducerError("adapter bytes changed across load boundary")
-    except BaseException:
+    except BaseException:  # noqa: BLE001 - adapter rollback on any exit; original re-raised
         for parent, leaf, original in reversed(originals):
             setattr(parent, leaf, original)
         raise
@@ -1512,7 +1513,7 @@ def _execute_worker(
                         f"latency={elapsed:.2f}s layer_apps={layer_apps}",
                         flush=True,
                     )
-                except BaseException as exc:
+                except BaseException as exc:  # noqa: BLE001 - infrastructure failure becomes a journaled cell failure, then re-raises
                     try:
                         journal.fail_cell(
                             cell_id,
@@ -1520,8 +1521,12 @@ def _execute_worker(
                             reason=f"infrastructure_failure:{type(exc).__name__}",
                             details={"message": str(exc)[:2000]},
                         )
-                    except BaseException:
-                        pass
+                    except BaseException as journal_exc:  # noqa: BLE001 - crash path: the ORIGINAL infrastructure error must win
+                        print(
+                            "journal fail_cell during crash handling failed: "
+                            f"{type(journal_exc).__name__}",
+                            file=sys.stderr,
+                        )
                     raise
     return 0
 
