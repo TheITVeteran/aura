@@ -19,16 +19,17 @@ import stat
 import sys
 import time
 import types
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 TRAIN_SCHEMA_V2 = "aura.recurrence_native_train.v2"
 ADAPTER_MANIFEST_SCHEMA_V2 = "aura.recurrence_adapter_manifest.v2"
+GRADIENT_EXECUTION_SCHEMA = "aura.recurrence_streamed_depth_gradient.v1"
 TASK_GENERATOR_SOURCE = REPO_ROOT / "core/learning/recurrence_curriculum.py"
 MAX_CURRICULUM_SOURCE_BYTES = 1_000_000
 
@@ -206,6 +207,110 @@ def _wrap_window_layers(
     return wrapped
 
 
+def _streamed_depth_value_and_grad(
+    model: Any,
+    prompt_tokens: Sequence[int],
+    answer_tokens: Sequence[int],
+    *,
+    spec: Any,
+    depths: tuple[int, ...],
+    monotonicity_weight: float,
+) -> tuple[float, Any]:
+    """Evaluate one depth graph at a time while preserving the v2 gradient.
+
+    The monotonic hinge is ``relu(deep - stop_gradient(shallow))``. Its
+    derivative therefore changes only the coefficient of the deeper loss; no
+    cross-depth activation graph is required. Materializing each depth's LoRA
+    gradient before advancing bounds peak memory without changing the single
+    optimizer update or the mathematical objective.
+    """
+
+    if (
+        len(depths) < 2
+        or tuple(sorted(set(depths))) != depths
+        or any(type(depth) is not int or depth < 1 for depth in depths)
+    ):
+        raise ValueError("depths must be a strictly increasing tuple")
+    if (
+        isinstance(monotonicity_weight, bool)
+        or not isinstance(monotonicity_weight, (int, float))
+        or not math.isfinite(float(monotonicity_weight))
+        or not 0.0 <= float(monotonicity_weight) <= 10.0
+    ):
+        raise ValueError("monotonicity_weight must be inside [0, 10]")
+
+    import mlx.core as mx
+    import mlx.nn as nn
+    from mlx.utils import tree_flatten, tree_map
+
+    from core.learning.recurrence_native_objective_v2 import live_path_loss
+
+    accumulated: Any | None = None
+    loss_values: list[float] = []
+    base_coefficient = 1.0 / len(depths)
+    for depth in depths:
+        depth_spec = spec.with_depth(depth)
+
+        def depth_loss(
+            mdl: Any,
+            prompt: Sequence[int],
+            answer: Sequence[int],
+            _depth_spec: Any = depth_spec,
+        ) -> Any:
+            return live_path_loss(
+                mdl,
+                prompt,
+                answer,
+                spec=_depth_spec,
+            )
+
+        value, gradients = nn.value_and_grad(model, depth_loss)(
+            model,
+            prompt_tokens,
+            answer_tokens,
+        )
+        finite_flags = [
+            mx.all(mx.isfinite(gradient))
+            for _path, gradient in tree_flatten(gradients)
+        ]
+        mx.eval(value, gradients, finite_flags)
+        loss_value = float(value)
+        if not math.isfinite(loss_value) or not all(
+            bool(flag) for flag in finite_flags
+        ):
+            raise FloatingPointError("non_finite_streamed_depth_gradient")
+        coefficient = base_coefficient
+        if loss_values and loss_value > loss_values[-1]:
+            coefficient += float(monotonicity_weight)
+        scaled = tree_map(
+            lambda gradient, factor=coefficient: factor * gradient,
+            gradients,
+        )
+        accumulated = (
+            scaled
+            if accumulated is None
+            else tree_map(
+                lambda previous, current: previous + current,
+                accumulated,
+                scaled,
+            )
+        )
+        mx.eval(accumulated)
+        loss_values.append(loss_value)
+        del gradients, scaled, finite_flags
+        mx.clear_cache()
+
+    if accumulated is None:
+        raise RuntimeError("streamed gradient accumulator is empty")
+    objective_value = sum(loss_values) / len(loss_values) + float(
+        monotonicity_weight
+    ) * sum(
+        max(deep - shallow, 0.0)
+        for shallow, deep in zip(loss_values, loss_values[1:], strict=False)
+    )
+    return objective_value, accumulated
+
+
 def _render_example(tokenizer: Any, task: Any) -> dict[str, Any]:
     prompt_tokens = list(
         tokenizer.apply_chat_template(
@@ -354,7 +459,6 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
     curriculum = _capture_frozen_curriculum()
 
     import mlx.core as mx
-    import mlx.nn as nn
     import mlx.optimizers as optim
     from mlx.utils import tree_flatten
     from mlx_lm import load
@@ -369,7 +473,6 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
     )
     from core.learning.recurrence_native_objective_v2 import (
         RECURRENCE_NATIVE_SCHEMA_V2,
-        depth_curriculum_loss_v2,
     )
     from core.learning.recurrence_training_state import (
         canonical_json_bytes,
@@ -519,6 +622,13 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
             "learning_rate": args.learning_rate,
             "weight_decay": 0.01,
         },
+        "gradient_execution": {
+            "schema": GRADIENT_EXECUTION_SCHEMA,
+            "mode": "depth_serial_exact_sum",
+            "concurrent_depth_graphs": 1,
+            "optimizer_updates_per_sample": 1,
+            "finite_loss_and_gradient_required_before_update": True,
+        },
         "train_seed": args.train_seed,
         "max_steps": args.max_steps,
         "sources": sources,
@@ -572,21 +682,6 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
             flush=True,
         )
 
-    def loss_fn(
-        mdl: Any,
-        prompt_tokens: Sequence[int],
-        answer_tokens: Sequence[int],
-    ) -> Any:
-        return depth_curriculum_loss_v2(
-            mdl,
-            prompt_tokens,
-            answer_tokens,
-            spec=spec,
-            depths=ladder,
-            monotonicity_weight=args.monotonicity_weight,
-        )
-
-    value_and_grad = nn.value_and_grad(model, loss_fn)
     started_monotonic = time.monotonic()
     deadline = started_monotonic + args.max_minutes * 60.0
     window_losses: list[float] = []
@@ -633,17 +728,20 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
                 cursor = 0
                 order = _deterministic_order(len(examples), args.train_seed, epoch)
             example = examples[order[cursor]]
-            loss, gradients = value_and_grad(
-                model,
-                example["prompt_tokens"],
-                example["answer_tokens"],
-            )
-            optimizer.update(model, gradients)
-            mx.eval(model.trainable_parameters(), optimizer.state)
-            loss_value = float(loss)
-            if not math.isfinite(loss_value):
+            try:
+                loss_value, gradients = _streamed_depth_value_and_grad(
+                    model,
+                    example["prompt_tokens"],
+                    example["answer_tokens"],
+                    spec=spec,
+                    depths=ladder,
+                    monotonicity_weight=args.monotonicity_weight,
+                )
+            except FloatingPointError:
                 halt_reason = "non_finite_loss"
                 break
+            optimizer.update(model, gradients)
+            mx.eval(model.trainable_parameters(), optimizer.state)
             step += 1
             cursor += 1
             window_losses.append(loss_value)
@@ -718,6 +816,7 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
             "trainable_params": int(sum(value.size for value in trainable.values())),
         },
         "optimizer": config_payload["optimizer"],
+        "gradient_execution": config_payload["gradient_execution"],
         "steps": step,
         "epoch": epoch,
         "cursor": cursor,
@@ -801,6 +900,7 @@ if __name__ == "__main__":
 __all__ = [
     "ADAPTER_MANIFEST_SCHEMA_V2",
     "FrozenCurriculum",
+    "GRADIENT_EXECUTION_SCHEMA",
     "MAX_CURRICULUM_SOURCE_BYTES",
     "TASK_GENERATOR_SOURCE",
     "TRAIN_SCHEMA_V2",
@@ -808,4 +908,5 @@ __all__ = [
     "_capture_frozen_curriculum",
     "_execute_frozen_curriculum",
     "_run",
+    "_streamed_depth_value_and_grad",
 ]

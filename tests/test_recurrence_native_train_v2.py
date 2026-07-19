@@ -15,9 +15,15 @@ from mlx.utils import tree_flatten  # noqa: E402
 from mlx_lm.models.qwen2 import Model, ModelArgs  # noqa: E402
 from mlx_lm.tuner.lora import LoRALinear  # noqa: E402
 
+from core.brain.llm.latent_cortex.execution_spec import (  # noqa: E402
+    RLCExecutionSpec,
+)
 from core.brain.llm.latent_cortex.recurrence_adapter import (  # noqa: E402
     ScopedLoRALinear,
     recurrence_adapter_scope,
+)
+from core.learning.recurrence_native_objective_v2 import (  # noqa: E402
+    depth_curriculum_loss_v2,
 )
 from core.learning.recurrence_training_state import (  # noqa: E402
     load_recurrence_checkpoint,
@@ -26,6 +32,7 @@ from core.learning.recurrence_training_state import (  # noqa: E402
 from tools.recurrence_native_train_v2 import (  # noqa: E402
     _deterministic_order,
     _run,
+    _streamed_depth_value_and_grad,
     _wrap_window_layers,
 )
 
@@ -193,6 +200,52 @@ def test_resume_matches_uninterrupted_adapter_and_optimizer_state(tmp_path):
         bool(mx.array_equal(continuous_state[key], resumed_state[key]))
         for key in continuous_state
     )
+
+
+def test_streamed_depth_gradient_matches_monolithic_objective():
+    monolithic, _monolithic_optimizer, _ = _prepared(seed=811)
+    streamed, _streamed_optimizer, _ = _prepared(seed=811)
+    prompt = [5, 9, 17]
+    answer = [7, 11]
+    spec = RLCExecutionSpec(
+        n_slots=2,
+        branch_roles=("constructive_solution",),
+        recurrent_steps=2,
+        exchange_interval=1,
+    )
+    depths = (1, 2)
+    weight = 0.5
+
+    def loss_fn(model):
+        return depth_curriculum_loss_v2(
+            model,
+            prompt,
+            answer,
+            spec=spec,
+            depths=depths,
+            monotonicity_weight=weight,
+        )
+
+    expected_value, expected_gradients = nn.value_and_grad(
+        monolithic, loss_fn
+    )(monolithic)
+    actual_value, actual_gradients = _streamed_depth_value_and_grad(
+        streamed,
+        prompt,
+        answer,
+        spec=spec,
+        depths=depths,
+        monotonicity_weight=weight,
+    )
+    mx.eval(expected_value, expected_gradients, actual_gradients)
+    assert actual_value == pytest.approx(float(expected_value), rel=1e-5, abs=1e-5)
+    expected = dict(tree_flatten(expected_gradients))
+    actual = dict(tree_flatten(actual_gradients))
+    assert set(actual) == set(expected)
+    for key in expected:
+        assert bool(
+            mx.allclose(actual[key], expected[key], rtol=1e-4, atol=1e-5)
+        ), key
 
 
 def test_run_requires_model_lane_before_any_load():

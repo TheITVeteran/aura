@@ -1,0 +1,87 @@
+{
+  "amendment_id": "resident-32b-v2-cp146-streamed-gradient",
+  "capability_credit_eligible": false,
+  "change": {
+    "checkpoint_every_steps": 5,
+    "gradient_execution": {
+      "concurrent_depth_graphs": 1,
+      "finite_loss_and_gradient_required_before_update": true,
+      "mode": "depth_serial_exact_sum",
+      "optimizer_updates_per_sample": 1,
+      "schema": "aura.recurrence_streamed_depth_gradient.v1"
+    },
+    "restart_policy": "restart_from_deterministic_step_zero",
+    "trainer_sha256_after": "35814802ba2054bd55c7a71029751b7d4e7d2c02d4db7baca90771e0e08e80c3",
+    "trainer_sha256_before": "f401202296422a32934e71bf26e5e8d8fe3441e4a88b133bf834b3c9313f5f41"
+  },
+  "failure_evidence": {
+    "detached_receipt": {
+      "duration_s": 1294.672386,
+      "path": "artifacts/closeout/latent_cortex/resident_32b_v2_cp139/detached-resume/detached_receipt.json",
+      "returncode": -9,
+      "sha256": "83004f8533d35248170d35b715fd49734dd519f84bffed711c05aabb4bf1a86a"
+    },
+    "jetsam": {
+      "largest_process": "Python",
+      "page_size_bytes": 16384,
+      "path": "/Library/Logs/DiagnosticReports/JetsamEvent-2026-07-18-230106.ips",
+      "resident_bytes": 100710875136,
+      "resident_gib": 93.794312,
+      "resident_pages": 6146904,
+      "sha256": "80fcded2abdf705ced81ebab0670fb0f2760ef3f45954f56a8950e231ed4ccaa",
+      "system_reason": "vm-compressor-space-shortage"
+    },
+    "last_logged_progress": {
+      "mean_loss": 3.15588,
+      "step": 5
+    },
+    "last_published_checkpoint": {
+      "config_sha256": "651f1caf591b5b8ee8cfc8b6a820afb258b854e253823f4feb11b878551c7980",
+      "dataset_sha256": "035cdf45cb43cdbb2fb3f0eaa2e426d6d156163e3eec4fd716d579ddf965d146",
+      "execution_spec_sha256": "ac08659fc9487098f876d660db4b02259f19b3471227b35e4edbabf4d4e76987",
+      "step": 1,
+      "training_credit_retained": false
+    }
+  },
+  "frozen_at": "2026-07-19T06:15:12Z",
+  "parent_protocol": {
+    "path": "artifacts/closeout/latent_cortex/resident_32b_v2_cp139/protocol.json",
+    "sha256": "2f5df8c9c215d20dc98a6b48b29b4207bdb527af477293b1b5904338bcef34f4"
+  },
+  "parent_resource_amendment": {
+    "path": "artifacts/closeout/latent_cortex/resident_32b_v2_cp139/resource_amendment_cp144.json",
+    "sha256": "1cf6b6fe4f6dd7ce6f0359b1084e59c5144d27e6aaaf838c8f618e98c4741689"
+  },
+  "proof_obligations": {
+    "completed": [
+      "streamed and monolithic objective values agree on a real tiny Qwen2 checkpoint",
+      "every streamed LoRA gradient tensor agrees with the monolithic gradient within rtol=1e-4 and atol=1e-5",
+      "one optimizer update remains the atomic update for one curriculum sample",
+      "all depth losses and gradients must be finite before optimizer mutation",
+      "27 focused trainer, objective, curriculum-binding, smoke, and adapter-identity tests pass",
+      "focused Ruff and Python compilation pass"
+    ],
+    "open": [
+      "one resident-32B streamed step must complete below the prior Jetsam envelope",
+      "the resident step must publish a finite durable checkpoint and measured peak-memory receipt",
+      "the full 576-step run must complete from deterministic step zero",
+      "paired pilot and confirmatory campaigns must establish any reasoning gain"
+    ]
+  },
+  "scientific_contract": {
+    "adapter_topology_unchanged": true,
+    "curriculum_bytes_unchanged": true,
+    "dataset_order_unchanged": true,
+    "depth_objective_unchanged": true,
+    "execution_spec_unchanged": true,
+    "model_checkpoint_unchanged": true,
+    "monotonicity_hinge_unchanged": true,
+    "optimizer_hyperparameters_unchanged": true,
+    "sample_count_unchanged": true
+  },
+  "schema": "aura.recurrence_training_resource_amendment.v2",
+  "test_source": {
+    "path": "tests/test_recurrence_native_train_v2.py",
+    "sha256": "6ef5b5ed65f264ebec3d1827d215a89d962e5e65a7c1ac214178eb21e2f13922"
+  }
+}

@@ -16,14 +16,15 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **Checkpoint 145 is the current
-  reviewed source candidate in the `main` worktree; checkpoints through CP144
-  are pushed. The exact resident-32B recurrence-native resume is detached and
-  has advanced from its bound step-one checkpoint through the first logged
-  step-five window under the 40/2-GiB MLX envelope. No reasoning-gain or
-  frontier claim exists yet. CP145 adds a separately implemented campaign
-  scorer/statistics kernel and complete-grade comparison; authenticated role
-  roots, completed training, the paired pilot, external-frontier comparison,
+- Current bounded implementation milestone: **Checkpoint 146 is the current
+  reviewed source candidate in the `main` worktree; checkpoints through CP145
+  are pushed. The resident-32B resume reached step 5 but was then killed by
+  macOS at 93.8 GiB resident memory, proving the prior MLX allocator envelope
+  did not bound retained activation graphs. CP146 serializes the mathematically
+  separable depth gradients, keeps one optimizer update per sample, and proves
+  value/gradient equivalence on real tiny-Qwen weights. No reasoning-gain or
+  frontier claim exists yet. A clean resident calibration, completed training,
+  authenticated role roots, the paired pilot, external-frontier comparison,
   and exact rebuilt-app proof remain open**. Checkpoint 80
   made cached
   readiness truthful and fast,
@@ -19598,3 +19599,40 @@ faithful 292-399 forecast, leaving approximately 147-254 checkpoints. The next
 RLC gates are continued exact training, authenticated trust roles, frozen fresh
 pilot seeds, the four-arm directional pilot, and only then any eligible
 confirmatory or external-frontier campaign. Final soaks remain deferred.
+
+## Checkpoint 2026-07-18-146: Streamed Resident Gradient Execution
+
+The CP144 allocator envelope did not fix the resident training peak. The exact
+detached resume advanced through logged step 5, then macOS killed PID 61831
+after 1,294.67 seconds. The new Jetsam report records 6,146,904 resident
+16-KiB pages, 93.794 GiB, and `vm-compressor-space-shortage`. The detached
+receipt reports return code `-9`, no timeout, and proven empty containment.
+
+- The root cause is the monolithic depth curriculum: depth 1, 2, and 4 each
+  built a complete two-branch 32B activation graph before their scalar losses
+  were combined. The MLX 40-GiB setting limits allocator policy, not total
+  retained process memory, so it could not make this graph fit a 64-GiB host.
+- The monotonic term is `relu(deep - stop_gradient(shallow))`; its gradient
+  only changes the coefficient of the deeper loss. The trainer now evaluates
+  each depth independently, materializes and finite-checks the LoRA gradient,
+  adds the exact coefficient into a small gradient accumulator, clears the
+  activation cache, and performs one unchanged AdamW update after every depth.
+  This preserves the objective and update boundary while reducing concurrent
+  depth graphs from three to one.
+- A real tiny-Qwen2 differential test compares the new streamed path with the
+  original monolithic objective. Objective values agree within `1e-5`; every
+  trainable gradient tensor agrees within `rtol=1e-4, atol=1e-5`. The complete
+  adjacent trainer/objective/curriculum/smoke/identity surface passes `27/27`;
+  focused Ruff and Python compilation pass.
+- `resource_amendment_cp146.json` binds the parent protocol, CP144 amendment,
+  failed detached receipt, Jetsam report, old/new trainer identities, test
+  identity, unchanged model/data/order/optimizer/topology contract, and open
+  resident obligations. The obsolete step-one checkpoint receives no training
+  credit; the corrected run restarts deterministically from step zero. Durable
+  checkpoints move to every five steps without changing optimization.
+
+Evidence-weighted completion remains 27%; this is checkpoint 146 of the
+faithful 292-399 forecast, leaving approximately 146-253 checkpoints. Next:
+publish CP146, create an isolated worktree at that exact commit, run a one-step
+resident calibration with memory evidence, then launch the full detached run
+only if that bounded gate passes. Final soaks remain deferred.
