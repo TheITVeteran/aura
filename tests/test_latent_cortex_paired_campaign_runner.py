@@ -354,12 +354,16 @@ def test_claim_reveal_pauses_for_exact_external_issuer_signature(
     args.final_run_attestation = ""
     grade = {"grade_sha256": "e" * 64}
     worker_authorizations = {"manifest_sha256": "a" * 64}
+    worker_lifecycle = {"manifest_sha256": "c" * 64}
     worker_key_erasure = {"manifest_sha256": "b" * 64}
     (campaign_dir / runner.WORKER_AUTHORIZATION_MANIFEST_FILE).write_bytes(
         canonical_json_bytes(worker_authorizations) + b"\n"
     )
     (campaign_dir / runner.WORKER_KEY_ERASURE_MANIFEST_FILE).write_bytes(
         canonical_json_bytes(worker_key_erasure) + b"\n"
+    )
+    (campaign_dir / runner.WORKER_LIFECYCLE_MANIFEST_FILE).write_bytes(
+        canonical_json_bytes(worker_lifecycle) + b"\n"
     )
     assert (
         runner._admit_final_run_envelope(
@@ -370,12 +374,19 @@ def test_claim_reveal_pauses_for_exact_external_issuer_signature(
             campaign_manifest=campaign_manifest,
             grade=grade,
             worker_authorizations=worker_authorizations,
+            worker_lifecycle=worker_lifecycle,
             worker_key_erasure=worker_key_erasure,
         )
         is None
     )
     final_request = json.loads(
         (campaign_dir / runner.FINAL_RUN_REQUEST_FILE).read_bytes()
+    )
+    assert (
+        final_request["signed_payload"]["payload"][
+            "worker_lifecycle_manifest_sha256"
+        ]
+        == worker_lifecycle["manifest_sha256"]
     )
     final_attestation = build_role_attestation(
         policy,
@@ -398,6 +409,7 @@ def test_claim_reveal_pauses_for_exact_external_issuer_signature(
         campaign_manifest=campaign_manifest,
         grade=grade,
         worker_authorizations=worker_authorizations,
+        worker_lifecycle=worker_lifecycle,
         worker_key_erasure=worker_key_erasure,
     )
     assert final_envelope is not None
@@ -811,10 +823,21 @@ def test_claim_worker_origin_lifecycle_is_signed_chained_and_erased(
     assert chains is not None
     assert len(chains["chains"]) == len(runner.PRIMARY_ARMS)
     assert all(chain["result_count"] == 1 for chain in chains["chains"])
+    lifecycle = runner._build_worker_lifecycle_manifest(
+        args,
+        plan,
+        authorization_manifest=authorization_manifest,
+    )
+    assert lifecycle is not None
     sealed = runner._seal_output_manifest(
         Path(args.campaign_dir),
         plan,
         worker_origin_chains=chains,
+        worker_lifecycle=lifecycle,
+    )
+    assert (
+        sealed["worker_lifecycle_manifest_sha256"]
+        == lifecycle["manifest_sha256"]
     )
     erasure = runner._erase_worker_private_keys(
         args,
@@ -830,7 +853,27 @@ def test_claim_worker_origin_lifecycle_is_signed_chained_and_erased(
             Path(args.campaign_dir), entry["arm"], entry["attempt_slot"]
         )
         assert not paths["private_key"].exists()
+        assert paths["erasure_intent"].exists()
         assert paths["erasure"].exists()
+
+    first = authorization_manifest["entries"][0]
+    first_paths = runner._worker_origin_paths(
+        Path(args.campaign_dir), first["arm"], first["attempt_slot"]
+    )
+    erasure_manifest_path = (
+        Path(args.campaign_dir) / runner.WORKER_KEY_ERASURE_MANIFEST_FILE
+    )
+    erasure_manifest_path.unlink()
+    first_paths["erasure"].unlink()
+    erasure = runner._erase_worker_private_keys(
+        args,
+        plan,
+        authorization_manifest=authorization_manifest,
+        sealed_outputs=sealed,
+    )
+    assert erasure is not None
+    assert first_paths["erasure"].exists()
+    assert not first_paths["private_key"].exists()
 
     assert runner._admit_worker_authorizations(args, plan) == authorization_manifest
     with runner.CampaignJournal(
@@ -853,10 +896,58 @@ def test_claim_worker_origin_lifecycle_is_signed_chained_and_erased(
     assert detail["consumed_worker_attempts"] == len(runner.PRIMARY_ARMS)
     assert detail["private_key_copy_exclusion_proven"] is False
 
-    erasure_manifest_path = (
-        Path(args.campaign_dir) / runner.WORKER_KEY_ERASURE_MANIFEST_FILE
+    original_launch = first_paths["launch"].read_bytes()
+    original_exit = first_paths["exit"].read_bytes()
+    attacked_launch = json.loads(original_launch)
+    attacked_launch["launched_at_unix_ns"] += 1
+    attacked_exit = json.loads(original_exit)
+    attacked_exit["launch_sha256"] = hashlib.sha256(
+        canonical_json_bytes(attacked_launch)
+    ).hexdigest()
+    attacked_exit_material = dict(attacked_exit)
+    attacked_exit_material.pop("receipt_sha256")
+    attacked_exit["receipt_sha256"] = hashlib.sha256(
+        canonical_json_bytes(attacked_exit_material)
+    ).hexdigest()
+    first_paths["launch"].write_bytes(
+        canonical_json_bytes(attacked_launch) + b"\n"
     )
+    first_paths["exit"].write_bytes(canonical_json_bytes(attacked_exit) + b"\n")
+    failures, detail = evidence_verifier._verify_worker_origin_evidence(
+        Path(args.campaign_dir),
+        plan=plan,
+        result_records=result_records,
+        trusted_policy=policy,
+    )
+    assert any("worker lifecycle manifest differs" in failure for failure in failures)
+    assert detail["verified"] is False
+    first_paths["launch"].write_bytes(original_launch)
+    first_paths["exit"].write_bytes(original_exit)
+
     original_erasure_manifest = erasure_manifest_path.read_bytes()
+    original_erasure_intent = first_paths["erasure_intent"].read_bytes()
+    attacked_erasure_intent = json.loads(original_erasure_intent)
+    attacked_erasure_intent["method"] = "unlink_without_write_ahead_intent"
+    attacked_intent_material = dict(attacked_erasure_intent)
+    attacked_intent_material.pop("intent_sha256")
+    attacked_erasure_intent["intent_sha256"] = hashlib.sha256(
+        canonical_json_bytes(attacked_intent_material)
+    ).hexdigest()
+    first_paths["erasure_intent"].write_bytes(
+        canonical_json_bytes(attacked_erasure_intent) + b"\n"
+    )
+    with pytest.raises(
+        runner.CampaignProducerError,
+        match="worker key erasure intent differs",
+    ):
+        runner._erase_worker_private_keys(
+            args,
+            plan,
+            authorization_manifest=authorization_manifest,
+            sealed_outputs=sealed,
+        )
+    first_paths["erasure_intent"].write_bytes(original_erasure_intent)
+
     attacked_erasure_manifest = copy.deepcopy(erasure)
     attacked_erasure_manifest["copy_exclusion_claimed"] = True
     attacked_erasure_material = dict(attacked_erasure_manifest)
@@ -879,10 +970,6 @@ def test_claim_worker_origin_lifecycle_is_signed_chained_and_erased(
         )
     erasure_manifest_path.write_bytes(original_erasure_manifest)
 
-    first = authorization_manifest["entries"][0]
-    first_paths = runner._worker_origin_paths(
-        Path(args.campaign_dir), first["arm"], first["attempt_slot"]
-    )
     original_erasure_receipt = first_paths["erasure"].read_bytes()
     attacked_erasure_receipt = copy.deepcopy(erasure["receipts"][0])
     attacked_erasure_receipt["absence_verified"] = False
@@ -1006,18 +1093,6 @@ def test_worker_launcher_failure_consumes_slot_with_explicit_exit_receipt(
     assert exit_receipt["outcome"] == "launcher_failure"
     assert exit_receipt["returncode"] is None
     assert exit_receipt["error_type"] == "RuntimeError"
-    _manifest, by_position = (
-        evidence_verifier._verify_worker_authorization_manifest(
-            Path(args.campaign_dir),
-            plan=plan,
-            trusted_policy=policy,
-        )
-    )
-    assert evidence_verifier._verify_worker_launch_receipts(
-        Path(args.campaign_dir),
-        used_positions=set(),
-        authorization_by_position=by_position,
-    ) == {(arm, 1)}
     assert (
         runner._next_worker_attempt_slot(
             Path(args.campaign_dir), arm, maximum=args.max_infra_attempts

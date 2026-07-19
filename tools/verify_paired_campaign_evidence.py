@@ -81,17 +81,21 @@ ANSWER_REVEAL_FILE = "answer_reveal.json"
 FINAL_RUN_REQUEST_FILE = "final_run_request.json"
 FINAL_RUN_ENVELOPE_FILE = "final_run_envelope.json"
 WORKER_AUTHORIZATION_MANIFEST_FILE = "worker_authorization_manifest.json"
+WORKER_LIFECYCLE_MANIFEST_FILE = "worker_lifecycle_manifest.json"
 WORKER_KEY_ERASURE_MANIFEST_FILE = "worker_key_erasure_manifest.json"
 WORKER_ORIGIN_DIR = "worker_origins"
 VERDICT_SCHEMA = "aura.latent_cortex.independent_evidence_verdict.v1"
 TASK_ISSUER_PAYLOAD_SCHEMA = "aura.latent_cortex.task_issuer_prelaunch.v1"
 CAMPAIGN_RUNNER_PAYLOAD_SCHEMA = "aura.latent_cortex.runner_prelaunch.v1"
-FINAL_VERIFIER_PAYLOAD_SCHEMA = "aura.latent_cortex.final_verifier_payload.v1"
-SEALED_OUTPUT_MANIFEST_SCHEMA = "aura.latent_cortex.sealed_output_manifest.v2"
+FINAL_VERIFIER_PAYLOAD_SCHEMA = "aura.latent_cortex.final_verifier_payload.v2"
+SEALED_OUTPUT_MANIFEST_SCHEMA = "aura.latent_cortex.sealed_output_manifest.v3"
 ANSWER_REVEAL_PAYLOAD_SCHEMA = "aura.latent_cortex.answer_reveal_payload.v1"
-FINAL_RUN_PAYLOAD_SCHEMA = "aura.latent_cortex.final_run_payload.v2"
+FINAL_RUN_PAYLOAD_SCHEMA = "aura.latent_cortex.final_run_payload.v3"
 WORKER_AUTHORIZATION_MANIFEST_SCHEMA = (
     "aura.latent_cortex.worker_authorization_manifest.v1"
+)
+WORKER_LIFECYCLE_MANIFEST_SCHEMA = (
+    "aura.latent_cortex.worker_lifecycle_manifest.v1"
 )
 
 
@@ -439,6 +443,7 @@ def _worker_origin_paths(
         "attestation": root / f"{stem}.attestation.json",
         "launch": root / f"{stem}.launch.json",
         "exit": root / f"{stem}.exit.json",
+        "erasure_intent": root / f"{stem}.erasure-intent.json",
         "erasure": root / f"{stem}.erasure.json",
     }
 
@@ -684,10 +689,13 @@ def _verify_worker_authorization_manifest(
 def _verify_worker_launch_receipts(
     campaign_dir: Path,
     *,
+    plan: CampaignPlan,
+    authorization_manifest: Mapping[str, Any],
     used_positions: set[tuple[str, int]],
     authorization_by_position: dict[tuple[str, int], dict[str, Any]],
-) -> set[tuple[str, int]]:
+) -> tuple[set[tuple[str, int]], dict[str, Any]]:
     consumed_positions: set[tuple[str, int]] = set()
+    lifecycle_entries: list[dict[str, Any]] = []
     for position, authorization in authorization_by_position.items():
         arm, attempt_slot = position
         payload = authorization["payload"]
@@ -721,6 +729,7 @@ def _verify_worker_launch_receipts(
             or launch.get("authorization_attestation_sha256")
             != _sha256_bytes(canonical_json_bytes(authorization["attestation"]))
             or type(launch.get("launched_at_unix_ns")) is not int
+            or launch["launched_at_unix_ns"] <= 0
         ):
             raise ValueError("worker launch receipt differs")
         exit_receipt = _canonical_artifact(paths["exit"], role="worker exit receipt")
@@ -741,6 +750,8 @@ def _verify_worker_launch_receipts(
             or exit_receipt.get("launch_sha256")
             != _sha256_bytes(canonical_json_bytes(launch))
             or type(exit_receipt.get("exited_at_unix_ns")) is not int
+            or exit_receipt["exited_at_unix_ns"]
+            < launch["launched_at_unix_ns"]
             or receipt_sha256 != _sha256_bytes(canonical_json_bytes(exit_material))
         ):
             raise ValueError("worker exit receipt differs")
@@ -760,9 +771,43 @@ def _verify_worker_launch_receipts(
                 raise ValueError("worker launcher failure receipt differs")
         else:
             raise ValueError("worker exit outcome differs")
+        lifecycle_material = {
+            "arm": arm,
+            "attempt_slot": attempt_slot,
+            "launch": launch,
+            "exit": exit_receipt,
+        }
+        lifecycle_entries.append(
+            {
+                **lifecycle_material,
+                "entry_sha256": _sha256_bytes(
+                    canonical_json_bytes(lifecycle_material)
+                ),
+            }
+        )
     if not used_positions.issubset(consumed_positions):
         raise ValueError("worker result has no consumed launch slot")
-    return consumed_positions
+    material = {
+        "schema": WORKER_LIFECYCLE_MANIFEST_SCHEMA,
+        "policy_sha256": authorization_manifest["policy_sha256"],
+        "plan_sha256": plan.plan_sha256,
+        "worker_authorization_manifest_sha256": authorization_manifest[
+            "manifest_sha256"
+        ],
+        "entry_count": len(lifecycle_entries),
+        "entries": lifecycle_entries,
+    }
+    expected_manifest = {
+        **material,
+        "manifest_sha256": _sha256_bytes(canonical_json_bytes(material)),
+    }
+    observed_manifest = _canonical_artifact(
+        campaign_dir / WORKER_LIFECYCLE_MANIFEST_FILE,
+        role="worker lifecycle manifest",
+    )
+    if observed_manifest != expected_manifest:
+        raise ValueError("worker lifecycle manifest differs")
+    return consumed_positions, expected_manifest
 
 
 def _verify_worker_key_erasure(
@@ -794,7 +839,7 @@ def _verify_worker_key_erasure(
             "manifest_sha256",
         }
         or aggregate.get("schema")
-        != "aura.latent_cortex.worker_key_erasure_manifest.v1"
+        != "aura.latent_cortex.worker_key_erasure_manifest.v2"
         or aggregate.get("policy_sha256")
         != authorization_manifest["policy_sha256"]
         or aggregate.get("plan_sha256") != plan.plan_sha256
@@ -816,6 +861,48 @@ def _verify_worker_key_erasure(
         paths = _worker_origin_paths(campaign_dir, arm, attempt_slot)
         if paths["private_key"].exists() or paths["private_key"].is_symlink():
             raise ValueError("worker private key remains after erasure")
+        intent = _canonical_artifact(
+            paths["erasure_intent"], role="worker key erasure intent"
+        )
+        intent_material = dict(intent)
+        intent_sha256 = intent_material.pop("intent_sha256", None)
+        if (
+            set(intent)
+            != {
+                "schema",
+                "policy_sha256",
+                "plan_sha256",
+                "worker_authorization_manifest_sha256",
+                "sealed_output_manifest_sha256",
+                "arm",
+                "attempt_slot",
+                "worker_boot_id",
+                "worker_key_id",
+                "method",
+                "intent_at_unix_ns",
+                "intent_sha256",
+            }
+            or intent.get("schema")
+            != "aura.latent_cortex.worker_key_erasure_intent.v1"
+            or intent.get("policy_sha256")
+            != authorization_manifest["policy_sha256"]
+            or intent.get("plan_sha256") != plan.plan_sha256
+            or intent.get("worker_authorization_manifest_sha256")
+            != authorization_manifest["manifest_sha256"]
+            or intent.get("sealed_output_manifest_sha256")
+            != sealed_outputs["manifest_sha256"]
+            or intent.get("arm") != arm
+            or intent.get("attempt_slot") != attempt_slot
+            or intent.get("worker_boot_id") != entry["worker_boot_id"]
+            or intent.get("worker_key_id") != entry["worker_key_id"]
+            or intent.get("method")
+            != "write_ahead_intent_then_unlink_and_parent_directory_fsync"
+            or type(intent.get("intent_at_unix_ns")) is not int
+            or intent["intent_at_unix_ns"] <= 0
+            or intent_sha256
+            != _sha256_bytes(canonical_json_bytes(intent_material))
+        ):
+            raise ValueError("worker key erasure intent differs")
         disk_receipt = _canonical_artifact(
             paths["erasure"], role="worker key erasure receipt"
         )
@@ -823,8 +910,26 @@ def _verify_worker_key_erasure(
         receipt_sha256 = receipt_material.pop("receipt_sha256", None)
         if (
             receipt != disk_receipt
+            or set(disk_receipt)
+            != {
+                "schema",
+                "intent_sha256",
+                "policy_sha256",
+                "plan_sha256",
+                "sealed_output_manifest_sha256",
+                "arm",
+                "attempt_slot",
+                "worker_boot_id",
+                "worker_key_id",
+                "absence_observed_at_unix_ns",
+                "method",
+                "absence_verified",
+                "copy_exclusion_claimed",
+                "receipt_sha256",
+            }
             or disk_receipt.get("schema")
-            != "aura.latent_cortex.worker_key_erasure.v1"
+            != "aura.latent_cortex.worker_key_erasure.v2"
+            or disk_receipt.get("intent_sha256") != intent["intent_sha256"]
             or disk_receipt.get("policy_sha256")
             != authorization_manifest["policy_sha256"]
             or disk_receipt.get("plan_sha256") != plan.plan_sha256
@@ -835,10 +940,13 @@ def _verify_worker_key_erasure(
             or disk_receipt.get("worker_boot_id") != entry["worker_boot_id"]
             or disk_receipt.get("worker_key_id") != entry["worker_key_id"]
             or disk_receipt.get("method")
-            != "unlink_and_parent_directory_fsync"
+            != "write_ahead_intent_then_unlink_and_parent_directory_fsync"
             or disk_receipt.get("absence_verified") is not True
             or disk_receipt.get("copy_exclusion_claimed") is not False
-            or type(disk_receipt.get("erased_at_unix_ns")) is not int
+            or type(disk_receipt.get("absence_observed_at_unix_ns"))
+            is not int
+            or disk_receipt["absence_observed_at_unix_ns"]
+            < intent["intent_at_unix_ns"]
             or receipt_sha256
             != _sha256_bytes(canonical_json_bytes(receipt_material))
         ):
@@ -938,8 +1046,10 @@ def _verify_worker_origin_evidence(
                     "chain_head_sha256": previous,
                 }
             )
-        consumed_positions = _verify_worker_launch_receipts(
+        consumed_positions, lifecycle_manifest = _verify_worker_launch_receipts(
             campaign_dir,
+            plan=plan,
+            authorization_manifest=authorization_manifest,
             used_positions=used_positions,
             authorization_by_position=authorization_by_position,
         )
@@ -957,8 +1067,12 @@ def _verify_worker_origin_evidence(
             campaign_dir / SEALED_OUTPUT_MANIFEST_FILE,
             role="sealed output manifest",
         )
-        if sealed_outputs.get("worker_origin_chains") != chain_evidence:
-            raise ValueError("sealed worker result chains differ")
+        if (
+            sealed_outputs.get("worker_origin_chains") != chain_evidence
+            or sealed_outputs.get("worker_lifecycle_manifest_sha256")
+            != lifecycle_manifest["manifest_sha256"]
+        ):
+            raise ValueError("sealed worker evidence differs")
         erasure = _verify_worker_key_erasure(
             campaign_dir,
             plan=plan,
@@ -982,6 +1096,9 @@ def _verify_worker_origin_evidence(
             "manifest_sha256"
         ],
         "origin_chains_sha256": chain_evidence["chains_sha256"],
+        "worker_lifecycle_manifest_sha256": lifecycle_manifest[
+            "manifest_sha256"
+        ],
         "key_erasure_manifest_sha256": erasure["manifest_sha256"],
         "used_worker_attempts": len(used_positions),
         "consumed_worker_attempts": len(consumed_positions),
@@ -1175,7 +1292,7 @@ def _verify_final_run_envelope(
         "request_sha256",
         "campaign_runner_attestation",
         "envelope_sha256",
-    } or envelope.get("schema") != "aura.latent_cortex.final_run_envelope.v2":
+    } or envelope.get("schema") != "aura.latent_cortex.final_run_envelope.v3":
         return ["final run envelope schema is invalid"], {
             "required": True,
             "verified": False,
@@ -1203,6 +1320,10 @@ def _verify_final_run_envelope(
         campaign_dir / WORKER_AUTHORIZATION_MANIFEST_FILE,
         role="worker authorization manifest",
     )
+    worker_lifecycle = _canonical_artifact(
+        campaign_dir / WORKER_LIFECYCLE_MANIFEST_FILE,
+        role="worker lifecycle manifest",
+    )
     worker_key_erasure = _canonical_artifact(
         campaign_dir / WORKER_KEY_ERASURE_MANIFEST_FILE,
         role="worker key erasure manifest",
@@ -1219,6 +1340,9 @@ def _verify_final_run_envelope(
         "journal_head_sha256": manifest["journal_head_sha256"],
         "published_grade_sha256": grade["grade_sha256"],
         "worker_authorization_manifest_sha256": worker_authorizations[
+            "manifest_sha256"
+        ],
+        "worker_lifecycle_manifest_sha256": worker_lifecycle[
             "manifest_sha256"
         ],
         "worker_key_erasure_manifest_sha256": worker_key_erasure[
@@ -1465,6 +1589,11 @@ def verify_campaign_evidence(
                 expected_material["worker_authorization_manifest_sha256"] = (
                     worker_origin_detail.get("authorization_manifest_sha256")
                 )
+                expected_material["worker_lifecycle_manifest_sha256"] = (
+                    worker_origin_detail.get(
+                        "worker_lifecycle_manifest_sha256"
+                    )
+                )
                 expected_material["worker_key_erasure_manifest_sha256"] = (
                     worker_origin_detail.get("key_erasure_manifest_sha256")
                 )
@@ -1567,6 +1696,9 @@ def verify_campaign_evidence(
                 ),
                 "worker_origin_chains_sha256": worker_origin_detail.get(
                     "origin_chains_sha256"
+                ),
+                "worker_lifecycle_manifest_sha256": worker_origin_detail.get(
+                    "worker_lifecycle_manifest_sha256"
                 ),
                 "worker_key_erasure_manifest_sha256": worker_origin_detail.get(
                     "key_erasure_manifest_sha256"
