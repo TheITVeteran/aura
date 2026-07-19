@@ -23,6 +23,12 @@ CAMPAIGN_ROLE_ATTESTATION_SCHEMA = (
     "aura.latent_cortex.campaign_role_attestation.v1"
 )
 CAMPAIGN_ROLE_PAYLOAD_SCHEMA = "aura.latent_cortex.campaign_role_payload.v1"
+CAMPAIGN_POLICY_SIGNATURE_REQUEST_SCHEMA = (
+    "aura.latent_cortex.campaign_policy_signature_request.v1"
+)
+CAMPAIGN_ROLE_SIGNATURE_REQUEST_SCHEMA = (
+    "aura.latent_cortex.campaign_role_signature_request.v1"
+)
 
 TASK_ISSUER = "task_issuer"
 CAMPAIGN_RUNNER = "campaign_runner"
@@ -49,6 +55,7 @@ _POLICY_KEYS = {
     "roles",
     "root_signature",
 }
+_POLICY_BODY_KEYS = _POLICY_KEYS - {"root_signature"}
 _ROLE_PIN_KEYS = {
     "signer_id",
     "organization_id",
@@ -78,6 +85,16 @@ _SIGNED_PAYLOAD_KEYS = {
     "signer_id",
     "signed_at_unix",
     "payload",
+}
+_SIGNATURE_REQUEST_KEYS = {
+    "schema",
+    "algorithm",
+    "key_id",
+    "public_key_b64",
+    "signed_payload",
+    "signed_payload_sha256",
+    "signed_payload_b64",
+    "request_sha256",
 }
 _CUSTODY_CLASSES = {
     "test_fixture",
@@ -201,7 +218,7 @@ def policy_signed_payload(policy_document: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def validate_campaign_trust_policy(
+def _validate_campaign_trust_policy_document(
     raw: Any,
     *,
     trusted_root_public_key_pem: bytes,
@@ -210,9 +227,8 @@ def validate_campaign_trust_policy(
     expected_protocol_sha256: str | None = None,
     minimum_policy_revision: int | None = None,
     now_unix: int | None = None,
+    verify_root_signature: bool,
 ) -> VerifiedCampaignTrustPolicy:
-    """Authenticate one strict policy against a separately supplied root key."""
-
     if not isinstance(raw, Mapping) or set(raw) != _POLICY_KEYS:
         _fail("campaign_trust_policy_schema_invalid")
     document = _normalized_json(raw, role="campaign_trust_policy")
@@ -335,18 +351,19 @@ def validate_campaign_trust_policy(
     signed_payload_sha256 = hashlib.sha256(signed_payload).hexdigest()
     if root_signature.get("signed_payload_sha256") != signed_payload_sha256:
         _fail("campaign_trust_root_payload_mismatch")
-    try:
-        signature = base64.b64decode(
-            root_signature["signature_b64"], validate=True
-        )
-    except (TypeError, ValueError, binascii.Error):
-        _fail("campaign_trust_root_signature_invalid")
-    from cryptography.exceptions import InvalidSignature
+    if verify_root_signature:
+        try:
+            signature = base64.b64decode(
+                root_signature["signature_b64"], validate=True
+            )
+        except (TypeError, ValueError, binascii.Error):
+            _fail("campaign_trust_root_signature_invalid")
+        from cryptography.exceptions import InvalidSignature
 
-    try:
-        root_key.verify(signature, signed_payload)
-    except InvalidSignature:
-        _fail("campaign_trust_root_signature_invalid")
+        try:
+            root_key.verify(signature, signed_payload)
+        except InvalidSignature:
+            _fail("campaign_trust_root_signature_invalid")
 
     verified = VerifiedCampaignTrustPolicy(
         document=document,
@@ -361,6 +378,179 @@ def validate_campaign_trust_policy(
     return verified
 
 
+def validate_campaign_trust_policy(
+    raw: Any,
+    *,
+    trusted_root_public_key_pem: bytes,
+    expected_campaign_name: str | None = None,
+    expected_policy_sha256: str | None = None,
+    expected_protocol_sha256: str | None = None,
+    minimum_policy_revision: int | None = None,
+    now_unix: int | None = None,
+) -> VerifiedCampaignTrustPolicy:
+    """Authenticate one strict policy against a separately supplied root key."""
+
+    return _validate_campaign_trust_policy_document(
+        raw,
+        trusted_root_public_key_pem=trusted_root_public_key_pem,
+        expected_campaign_name=expected_campaign_name,
+        expected_policy_sha256=expected_policy_sha256,
+        expected_protocol_sha256=expected_protocol_sha256,
+        minimum_policy_revision=minimum_policy_revision,
+        now_unix=now_unix,
+        verify_root_signature=True,
+    )
+
+
+def _signature_request(
+    *,
+    schema: str,
+    key_id: str,
+    public_key_raw: bytes,
+    signed_payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    normalized_payload = _normalized_json(
+        signed_payload, role="campaign_signature_request_payload"
+    )
+    if not isinstance(normalized_payload, dict):
+        _fail("campaign_signature_request_payload_invalid")
+    signed_bytes = canonical_json_bytes(normalized_payload)
+    request = {
+        "schema": schema,
+        "algorithm": "Ed25519",
+        "key_id": key_id,
+        "public_key_b64": base64.b64encode(public_key_raw).decode("ascii"),
+        "signed_payload": normalized_payload,
+        "signed_payload_sha256": hashlib.sha256(signed_bytes).hexdigest(),
+        "signed_payload_b64": base64.b64encode(signed_bytes).decode("ascii"),
+    }
+    return {
+        **request,
+        "request_sha256": hashlib.sha256(canonical_json_bytes(request)).hexdigest(),
+    }
+
+
+def _validate_signature_request(raw: Any, *, schema: str) -> dict[str, Any]:
+    if not isinstance(raw, Mapping) or set(raw) != _SIGNATURE_REQUEST_KEYS:
+        _fail("campaign_signature_request_schema_invalid")
+    request = _normalized_json(raw, role="campaign_signature_request")
+    if not isinstance(request, dict) or request.get("schema") != schema:
+        _fail("campaign_signature_request_schema_invalid")
+    if request.get("algorithm") != "Ed25519":
+        _fail("campaign_signature_request_algorithm_invalid")
+    public_raw, key_id = _decode_public_key(
+        request.get("public_key_b64"), role="campaign_signature_request"
+    )
+    if request.get("key_id") != key_id:
+        _fail("campaign_signature_request_key_mismatch")
+    signed_payload = request.get("signed_payload")
+    if not isinstance(signed_payload, dict):
+        _fail("campaign_signature_request_payload_invalid")
+    signed_bytes = canonical_json_bytes(signed_payload)
+    if request.get("signed_payload_sha256") != hashlib.sha256(
+        signed_bytes
+    ).hexdigest():
+        _fail("campaign_signature_request_payload_mismatch")
+    if request.get("signed_payload_b64") != base64.b64encode(signed_bytes).decode(
+        "ascii"
+    ):
+        _fail("campaign_signature_request_bytes_mismatch")
+    request_body = dict(request)
+    request_sha256 = request_body.pop("request_sha256", None)
+    if request_sha256 != hashlib.sha256(
+        canonical_json_bytes(request_body)
+    ).hexdigest():
+        _fail("campaign_signature_request_digest_mismatch")
+    return {**request, "_public_key_raw": public_raw}
+
+
+def prepare_policy_signature_request(
+    unsigned_policy: Mapping[str, Any],
+    *,
+    trusted_root_public_key_pem: bytes,
+    expected_campaign_name: str | None = None,
+    expected_protocol_sha256: str | None = None,
+    minimum_policy_revision: int | None = None,
+    now_unix: int | None = None,
+) -> dict[str, Any]:
+    """Prepare exact policy bytes for a detached external-root signature."""
+
+    if not isinstance(unsigned_policy, Mapping) or set(unsigned_policy) != _POLICY_BODY_KEYS:
+        _fail("campaign_trust_unsigned_policy_schema_invalid")
+    body = _normalized_json(unsigned_policy, role="campaign_trust_unsigned_policy")
+    if not isinstance(body, dict):
+        _fail("campaign_trust_unsigned_policy_schema_invalid")
+    _root_key, root_raw, root_key_id = load_ed25519_public_key(
+        trusted_root_public_key_pem,
+        role="campaign",
+    )
+    signed_payload_sha256 = hashlib.sha256(canonical_json_bytes(body)).hexdigest()
+    candidate = {
+        **body,
+        "root_signature": {
+            "algorithm": "Ed25519",
+            "key_id": root_key_id,
+            "signature_b64": "",
+            "signed_payload_sha256": signed_payload_sha256,
+        },
+    }
+    _validate_campaign_trust_policy_document(
+        candidate,
+        trusted_root_public_key_pem=trusted_root_public_key_pem,
+        expected_campaign_name=expected_campaign_name,
+        expected_protocol_sha256=expected_protocol_sha256,
+        minimum_policy_revision=minimum_policy_revision,
+        now_unix=now_unix,
+        verify_root_signature=False,
+    )
+    return _signature_request(
+        schema=CAMPAIGN_POLICY_SIGNATURE_REQUEST_SCHEMA,
+        key_id=root_key_id,
+        public_key_raw=root_raw,
+        signed_payload=body,
+    )
+
+
+def assemble_signed_campaign_policy(
+    request: Mapping[str, Any],
+    *,
+    signature_b64: str,
+    trusted_root_public_key_pem: bytes,
+    expected_campaign_name: str | None = None,
+    expected_protocol_sha256: str | None = None,
+    minimum_policy_revision: int | None = None,
+    now_unix: int | None = None,
+) -> VerifiedCampaignTrustPolicy:
+    """Verify a detached root signature and assemble a complete policy."""
+
+    parsed = _validate_signature_request(
+        request, schema=CAMPAIGN_POLICY_SIGNATURE_REQUEST_SCHEMA
+    )
+    _root_key, root_raw, root_key_id = load_ed25519_public_key(
+        trusted_root_public_key_pem,
+        role="campaign",
+    )
+    if parsed["key_id"] != root_key_id or parsed["_public_key_raw"] != root_raw:
+        _fail("campaign_signature_request_key_mismatch")
+    document = {
+        **parsed["signed_payload"],
+        "root_signature": {
+            "algorithm": "Ed25519",
+            "key_id": root_key_id,
+            "signature_b64": signature_b64,
+            "signed_payload_sha256": parsed["signed_payload_sha256"],
+        },
+    }
+    return validate_campaign_trust_policy(
+        document,
+        trusted_root_public_key_pem=trusted_root_public_key_pem,
+        expected_campaign_name=expected_campaign_name,
+        expected_protocol_sha256=expected_protocol_sha256,
+        minimum_policy_revision=minimum_policy_revision,
+        now_unix=now_unix,
+    )
+
+
 def externally_custodied_roles(policy: VerifiedCampaignTrustPolicy) -> bool:
     """Return true only when every role declares externally evidenced custody."""
 
@@ -368,6 +558,81 @@ def externally_custodied_roles(policy: VerifiedCampaignTrustPolicy) -> bool:
         policy.role_pin(role)["custody_class"] in _EXTERNAL_CUSTODY_CLASSES
         for role in CAMPAIGN_TRUST_ROLES
     )
+
+
+def prepare_role_signature_request(
+    policy: VerifiedCampaignTrustPolicy,
+    *,
+    role: str,
+    payload: Mapping[str, Any],
+    signed_at_unix: int,
+) -> dict[str, Any]:
+    """Prepare exact role-attestation bytes for a detached signature."""
+
+    pin = policy.role_pin(role)
+    signed_at = _unix_time(signed_at_unix, role="campaign_attestation_signed_at")
+    if not policy.document["not_before_unix"] <= signed_at < policy.document[
+        "expires_at_unix"
+    ]:
+        _fail("campaign_attestation_outside_policy_window")
+    normalized_payload = _normalized_json(payload, role="campaign_attestation_payload")
+    if not isinstance(normalized_payload, dict):
+        _fail("campaign_attestation_payload_invalid")
+    signed_payload = {
+        "schema": CAMPAIGN_ROLE_PAYLOAD_SCHEMA,
+        "policy_sha256": policy.policy_sha256,
+        "role": role,
+        "signer_id": pin["signer_id"],
+        "signed_at_unix": signed_at,
+        "payload": normalized_payload,
+    }
+    public_raw, key_id = _decode_public_key(pin["public_key_b64"], role=role)
+    return _signature_request(
+        schema=CAMPAIGN_ROLE_SIGNATURE_REQUEST_SCHEMA,
+        key_id=key_id,
+        public_key_raw=public_raw,
+        signed_payload=signed_payload,
+    )
+
+
+def assemble_role_attestation(
+    policy: VerifiedCampaignTrustPolicy,
+    request: Mapping[str, Any],
+    *,
+    signature_b64: str,
+    role: str,
+) -> dict[str, Any]:
+    """Verify and assemble one detached role-attestation signature."""
+
+    parsed = _validate_signature_request(
+        request, schema=CAMPAIGN_ROLE_SIGNATURE_REQUEST_SCHEMA
+    )
+    pin = policy.role_pin(role)
+    public_raw, key_id = _decode_public_key(pin["public_key_b64"], role=role)
+    if parsed["key_id"] != key_id or parsed["_public_key_raw"] != public_raw:
+        _fail("campaign_signature_request_key_mismatch")
+    signed_payload = parsed["signed_payload"]
+    if (
+        signed_payload.get("schema") != CAMPAIGN_ROLE_PAYLOAD_SCHEMA
+        or signed_payload.get("policy_sha256") != policy.policy_sha256
+        or signed_payload.get("role") != role
+        or signed_payload.get("signer_id") != pin["signer_id"]
+        or not isinstance(signed_payload.get("payload"), dict)
+    ):
+        _fail("campaign_attestation_identity_mismatch")
+    attestation = {
+        "schema": CAMPAIGN_ROLE_ATTESTATION_SCHEMA,
+        "signed_payload": signed_payload,
+        "signed_payload_sha256": parsed["signed_payload_sha256"],
+        "signature_b64": signature_b64,
+    }
+    verify_role_attestation(
+        policy,
+        attestation,
+        role=role,
+        expected_payload=signed_payload["payload"],
+    )
+    return attestation
 
 
 def build_role_attestation(
@@ -380,11 +645,13 @@ def build_role_attestation(
 ) -> dict[str, Any]:
     """Sign one canonical role payload with the policy-pinned private key."""
 
+    request = prepare_role_signature_request(
+        policy,
+        role=role,
+        payload=payload,
+        signed_at_unix=signed_at_unix,
+    )
     pin = policy.role_pin(role)
-    signed_at = _unix_time(signed_at_unix, role="campaign_attestation_signed_at")
-    normalized_payload = _normalized_json(payload, role="campaign_attestation_payload")
-    if not isinstance(normalized_payload, dict):
-        _fail("campaign_attestation_payload_invalid")
     public_key = private_key.public_key()
     from cryptography.hazmat.primitives import serialization
 
@@ -394,23 +661,15 @@ def build_role_attestation(
     )
     if hashlib.sha256(public_raw).hexdigest() != pin["key_id"]:
         _fail("campaign_attestation_private_key_mismatch")
-    signed_payload = {
-        "schema": CAMPAIGN_ROLE_PAYLOAD_SCHEMA,
-        "policy_sha256": policy.policy_sha256,
-        "role": role,
-        "signer_id": pin["signer_id"],
-        "signed_at_unix": signed_at,
-        "payload": normalized_payload,
-    }
-    signed_bytes = canonical_json_bytes(signed_payload)
-    return {
-        "schema": CAMPAIGN_ROLE_ATTESTATION_SCHEMA,
-        "signed_payload": signed_payload,
-        "signed_payload_sha256": hashlib.sha256(signed_bytes).hexdigest(),
-        "signature_b64": base64.b64encode(private_key.sign(signed_bytes)).decode(
+    signed_bytes = base64.b64decode(request["signed_payload_b64"], validate=True)
+    return assemble_role_attestation(
+        policy,
+        request,
+        signature_b64=base64.b64encode(private_key.sign(signed_bytes)).decode(
             "ascii"
         ),
-    }
+        role=role,
+    )
 
 
 def verify_role_attestation(
@@ -485,8 +744,10 @@ def verify_role_attestation(
 
 
 __all__ = [
+    "CAMPAIGN_POLICY_SIGNATURE_REQUEST_SCHEMA",
     "CAMPAIGN_ROLE_ATTESTATION_SCHEMA",
     "CAMPAIGN_ROLE_PAYLOAD_SCHEMA",
+    "CAMPAIGN_ROLE_SIGNATURE_REQUEST_SCHEMA",
     "CAMPAIGN_RUNNER",
     "CAMPAIGN_TRUST_POLICY_SCHEMA",
     "CAMPAIGN_TRUST_ROLES",
@@ -495,10 +756,14 @@ __all__ = [
     "EVIDENCE_VERIFIER",
     "TASK_ISSUER",
     "VerifiedCampaignTrustPolicy",
+    "assemble_role_attestation",
+    "assemble_signed_campaign_policy",
     "build_role_attestation",
     "externally_custodied_roles",
     "load_ed25519_public_key",
     "policy_signed_payload",
+    "prepare_policy_signature_request",
+    "prepare_role_signature_request",
     "validate_campaign_trust_policy",
     "verify_role_attestation",
 ]

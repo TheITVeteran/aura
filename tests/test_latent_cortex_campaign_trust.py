@@ -16,9 +16,13 @@ from core.brain.llm.latent_cortex.campaign_trust import (
     EVIDENCE_VERIFIER,
     TASK_ISSUER,
     CampaignTrustError,
+    assemble_role_attestation,
+    assemble_signed_campaign_policy,
     build_role_attestation,
     externally_custodied_roles,
     policy_signed_payload,
+    prepare_policy_signature_request,
+    prepare_role_signature_request,
     validate_campaign_trust_policy,
     verify_role_attestation,
 )
@@ -118,6 +122,64 @@ def test_policy_requires_external_root_and_four_independent_roles():
     assert verified.root_key_id == hashlib.sha256(_public_raw(root)).hexdigest()
     assert set(verified.document["roles"]) == set(CAMPAIGN_TRUST_ROLES)
     assert externally_custodied_roles(verified) is False
+
+
+def test_policy_detached_signature_request_round_trip():
+    policy, root, _role_keys = _policy_fixture()
+    unsigned = policy_signed_payload(policy)
+    request = prepare_policy_signature_request(
+        unsigned,
+        trusted_root_public_key_pem=_public_pem(root),
+        expected_campaign_name="resident-32b-confirmatory",
+        expected_protocol_sha256="9" * 64,
+        now_unix=1_800_000_200,
+    )
+    signature = root.sign(base64.b64decode(request["signed_payload_b64"]))
+
+    verified = assemble_signed_campaign_policy(
+        request,
+        signature_b64=base64.b64encode(signature).decode("ascii"),
+        trusted_root_public_key_pem=_public_pem(root),
+        expected_campaign_name="resident-32b-confirmatory",
+        expected_protocol_sha256="9" * 64,
+        now_unix=1_800_000_200,
+    )
+
+    assert verified.document == policy
+    assert request["signed_payload"] == unsigned
+    assert request["signed_payload_sha256"] == hashlib.sha256(
+        canonical_json_bytes(unsigned)
+    ).hexdigest()
+
+
+def test_policy_detached_request_rejects_tampering_and_wrong_signature():
+    policy, root, _role_keys = _policy_fixture()
+    request = prepare_policy_signature_request(
+        policy_signed_payload(policy),
+        trusted_root_public_key_pem=_public_pem(root),
+        now_unix=1_800_000_200,
+    )
+    attacked = copy.deepcopy(request)
+    attacked["signed_payload"]["campaign_name"] = "attacked"
+    with pytest.raises(
+        CampaignTrustError, match="campaign_signature_request_payload_mismatch"
+    ):
+        assemble_signed_campaign_policy(
+            attacked,
+            signature_b64=base64.b64encode(b"x" * 64).decode("ascii"),
+            trusted_root_public_key_pem=_public_pem(root),
+            now_unix=1_800_000_200,
+        )
+
+    with pytest.raises(
+        CampaignTrustError, match="campaign_trust_root_signature_invalid"
+    ):
+        assemble_signed_campaign_policy(
+            request,
+            signature_b64=base64.b64encode(b"x" * 64).decode("ascii"),
+            trusted_root_public_key_pem=_public_pem(root),
+            now_unix=1_800_000_200,
+        )
 
 
 def test_policy_rejects_bundle_selected_or_tampered_root():
@@ -264,6 +326,64 @@ def test_role_attestation_is_policy_bound_and_payload_exact():
     assert signed_payload["payload"] == payload
     assert signed_payload["policy_sha256"] == verified.policy_sha256
     assert signed_payload["signer_id"] == "task_issuer-signer"
+
+
+def test_role_detached_signature_request_round_trip():
+    policy, root, role_keys = _policy_fixture()
+    verified = validate_campaign_trust_policy(
+        policy,
+        trusted_root_public_key_pem=_public_pem(root),
+        now_unix=1_800_000_200,
+    )
+    payload = {"task_manifest_sha256": "a" * 64}
+    request = prepare_role_signature_request(
+        verified,
+        role=TASK_ISSUER,
+        payload=payload,
+        signed_at_unix=1_800_000_150,
+    )
+    signature = role_keys[TASK_ISSUER].sign(
+        base64.b64decode(request["signed_payload_b64"])
+    )
+
+    attestation = assemble_role_attestation(
+        verified,
+        request,
+        signature_b64=base64.b64encode(signature).decode("ascii"),
+        role=TASK_ISSUER,
+    )
+
+    assert verify_role_attestation(
+        verified,
+        attestation,
+        role=TASK_ISSUER,
+        expected_payload=payload,
+    )["payload"] == payload
+
+
+def test_role_detached_request_rejects_policy_key_or_role_substitution():
+    policy, root, role_keys = _policy_fixture()
+    verified = validate_campaign_trust_policy(
+        policy,
+        trusted_root_public_key_pem=_public_pem(root),
+        now_unix=1_800_000_200,
+    )
+    request = prepare_role_signature_request(
+        verified,
+        role=TASK_ISSUER,
+        payload={"task": "x"},
+        signed_at_unix=1_800_000_150,
+    )
+    signature = role_keys[TASK_ISSUER].sign(
+        base64.b64decode(request["signed_payload_b64"])
+    )
+    with pytest.raises(CampaignTrustError, match="campaign_signature_request_key_mismatch"):
+        assemble_role_attestation(
+            verified,
+            request,
+            signature_b64=base64.b64encode(signature).decode("ascii"),
+            role=CAMPAIGN_RUNNER,
+        )
 
 
 @pytest.mark.parametrize("mutation", ["payload", "role", "signature", "policy"])
