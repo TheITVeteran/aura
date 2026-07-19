@@ -1,0 +1,17 @@
+arm base_rlc process exit=0 attempt=1
+arm adapter_rlc process exit=0 attempt=1
+arm base_vanilla process exit=0 attempt=1
+arm adapter_vanilla process exit=0 attempt=1
+{
+  "campaign_manifest_sha256": "0fbb7c8e4a5a26cf263f0649cd943601ebc7da09ea956a5c0bdc1e6e6253fd89",
+  "claim_tier": "CONJECTURE",
+  "frontier_claim_eligible": false,
+  "grade_path": "/Users/bryan/.aura/live-source/artifacts/closeout/latent_cortex/cp137_v2_1p5b_smoke/paired_campaign/grade.json",
+  "grade_sha256": "000c909cc76485395db8ce26dae3ea10bac43dc0ed847524b8c618b0ea5ead2d",
+  "observed_cell_count": 4,
+  "observed_task_count": 1,
+  "reasons": [
+    "underpowered_domain:mathematics"
+  ],
+  "verdict": "incomplete_underpowered"
+}

@@ -19233,3 +19233,66 @@ gain, frontier, live-product, release, or soak credit.
   completion, strict bundle validation, then four-arm paired inference with
   ordinary-generation isolation and scoped-activation receipts. Final long
   soaks remain deferred.
+
+## Checkpoint 2026-07-18-137: Detached V2 Mechanics Certificate
+
+CP137 executes the bounded current-main recurrence-native v2 protocol on the
+real Qwen2.5-1.5B checkpoint and repairs two detached-execution defects exposed
+by that evidence run. It proves training/runtime mechanics only. It does not
+award reasoning-gain, frontier, resident-32B, installed-app, release, or soak
+credit.
+
+- The protected pre-CP133 endurance driver was allowed to reach its own
+  180-minute deadline before cleanup. It published `FAIL`: `65/200` turns,
+  math accuracy `0/7`, an active critical incident, one reply repeated 32
+  times, and at least ten sampled turns over 180 seconds. The process did not
+  die, but behavioral service was unusable. This remains negative historical
+  evidence against the old worktree, not current-main soak evidence.
+- The first CP137 detached launch found that the supervisor's source manifest
+  enumerated untracked JSON and then invalidated itself by creating
+  `detached_plan.json` under the repository. Each run directory is now an
+  explicit, hash-bound mutable evidence root excluded from source
+  re-enumeration. An exclusion containing the target script, an entire source
+  root, or any Git-tracked file fails closed; new source outside the bound run
+  directory still invalidates execution.
+- The second launch found that command normalization resolved
+  `.venv/bin/python` to its Homebrew target and thereby removed virtualenv
+  package discovery. Detached commands now preserve the final launcher path
+  while binding its resolved executable bytes, symlink target and mode, and
+  `pyvenv.cfg`. Target, resume-verifier, and broker launchers are all checked
+  through the same contract before execution.
+- The repaired detached partial run performed one real gradient step and
+  intentionally returned `75` at the wall-clock boundary. The separate resume
+  invocation loaded step 1 at exact epoch/cursor/order/optimizer state,
+  completed step 2, and returned `0`. Loss moved from `4.370473` to `2.370586`;
+  the final receipt records two invocations, `max_steps`, and exactly two
+  immutable checkpoint generations with no duplicate terminal generation.
+- Strict v2 validation accepts adapter identity
+  `4ab2b647873aba43c2f144de02177a73415169b53870f588f9044622deb8dd72`
+  over base checkpoint
+  `d6e4ecf7593b78cb88ded2f4e98dd26b16802b38d2421b2af805eaea2f24f37d`.
+  The four-arm one-task mechanics campaign committed and replayed all cells.
+  Base and adapter vanilla output are byte-identical; base RLC reports zero
+  recurrence-adapter calls; adapter RLC reports 56 calls over 112 adapted slot
+  positions; and its first-logit digest differs from base RLC. This proves
+  scoped causal execution while preserving ordinary-generation isolation.
+- `tools/verify_recurrence_v2_smoke.py` now independently reopens the strict
+  adapter boundary, detached receipts, checkpoint chain, campaign journal,
+  manifest, grade, arm matrix, ordinary-output hashes, and activation receipts
+  and emits create-once
+  `artifacts/closeout/latent_cortex/cp137_v2_1p5b_smoke/mechanics_verdict.json`.
+  Its verdict is `passed=true`, explicitly
+  `frontier_or_reasoning_gain_proven=false`, because one task is underpowered
+  and every arm answered it incorrectly.
+- The detached supervisor plus mechanics-verifier matrix passes `42/42`.
+  Strict mypy, Python compilation, and Ruff `F/E9/I` pass for the changed
+  tools. Evidence-weighted completion remains 27%. This is checkpoint 137 of
+  the faithful 292-399 forecast, leaving approximately 155-262 checkpoints.
+- Next: freeze the resident-32B v2 training configuration and prospective
+  power plan, launch training detached with durable partial/resume evidence,
+  then execute powered same-checkpoint base-vanilla/base-RLC/adapter-vanilla/
+  adapter-RLC and equal-compute campaigns. No intelligence or frontier claim
+  is available until fresh held-out results establish the interaction,
+  independent raw-output rescoring and external trust roots accept it, broad
+  domains show no regression, and the installed desktop producer reproduces
+  the effect. Final long soaks remain deferred.

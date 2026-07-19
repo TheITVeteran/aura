@@ -28,7 +28,7 @@ import stat
 import subprocess
 import sys
 import time
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -198,7 +198,25 @@ def _git_root(cwd: Path) -> Path | None:
     return candidate if candidate.is_dir() else None
 
 
-def _git_tracked_paths(root: Path) -> list[Path]:
+def _normalized_excluded_roots(paths: Iterable[Path]) -> tuple[Path, ...]:
+    roots: set[Path] = set()
+    for path in paths:
+        resolved = path.expanduser().resolve(strict=False)
+        if not resolved.is_absolute() or resolved == resolved.parent:
+            raise DetachedStepError("execution exclusion root is invalid")
+        roots.add(resolved)
+    return tuple(sorted(roots, key=lambda value: os.fsencode(value)))
+
+
+def _is_excluded(path: Path, excluded_roots: tuple[Path, ...]) -> bool:
+    return any(path == root or path.is_relative_to(root) for root in excluded_roots)
+
+
+def _git_tracked_paths(
+    root: Path,
+    *,
+    excluded_roots: tuple[Path, ...] = (),
+) -> list[Path]:
     try:
         tracked_result = subprocess.run(
             ["/usr/bin/git", "-C", str(root), "ls-files", "-z", "--cached"],
@@ -234,6 +252,13 @@ def _git_tracked_paths(root: Path) -> list[Path]:
             raise DetachedStepError("Git-tracked execution path is not decodable") from exc
         if relative.is_absolute() or ".." in relative.parts:
             raise DetachedStepError(f"unsafe Git-tracked execution path: {relative}")
+        absolute = root / relative
+        if _is_excluded(absolute, excluded_roots):
+            if tracked:
+                raise DetachedStepError(
+                    "execution exclusion contains Git-tracked source"
+                )
+            continue
         if tracked or relative.suffix.lower() in _SOURCE_SUFFIXES:
             paths.add(relative)
     return sorted(paths, key=lambda value: os.fsencode(value))
@@ -293,11 +318,17 @@ def _fingerprint_file(path: Path) -> dict[str, Any]:
     }
 
 
-def _source_tree_paths(root: Path) -> list[Path]:
+def _source_tree_paths(
+    root: Path,
+    *,
+    excluded_roots: tuple[Path, ...] = (),
+) -> list[Path]:
     paths: list[Path] = []
     for path in root.rglob("*"):
         relative = path.relative_to(root)
         if any(part in {".git", ".mypy_cache", ".pytest_cache", "__pycache__"} for part in relative.parts):
+            continue
+        if _is_excluded(path, excluded_roots):
             continue
         if path.is_file() and path.suffix.lower() in _EXECUTABLE_SOURCE_SUFFIXES:
             paths.append(relative)
@@ -322,9 +353,17 @@ def _source_file_arguments(command: list[str], cwd: Path) -> list[Path]:
     return sorted(paths, key=lambda value: os.fsencode(value))
 
 
-def _build_execution_manifest(command: list[str], cwd: Path) -> dict[str, Any]:
+def _build_execution_manifest(
+    command: list[str],
+    cwd: Path,
+    *,
+    excluded_roots: Iterable[Path] = (),
+) -> dict[str, Any]:
+    exclusions = _normalized_excluded_roots(excluded_roots)
     roots: list[dict[str, Any]] = [_fingerprint_file(Path(command[0]))]
     source_paths = _source_file_arguments(command, cwd)
+    if any(_is_excluded(path, exclusions) for path in source_paths):
+        raise DetachedStepError("execution exclusion contains target source")
     git_roots: set[Path] = set()
     for candidate in [cwd, *(path.parent for path in source_paths)]:
         if (root := _git_root(candidate)) is not None:
@@ -344,7 +383,9 @@ def _build_execution_manifest(command: list[str], cwd: Path) -> dict[str, Any]:
             "Python -m execution requires a Git-tracked working or PYTHONPATH source root"
         )
     for git_root in sorted(git_roots, key=lambda value: os.fsencode(value)):
-        tracked = _git_tracked_paths(git_root)
+        if _is_excluded(git_root, exclusions):
+            raise DetachedStepError("execution exclusion contains a source root")
+        tracked = _git_tracked_paths(git_root, excluded_roots=exclusions)
         roots.append(
             {
                 "path": str(git_root),
@@ -365,11 +406,15 @@ def _build_execution_manifest(command: list[str], cwd: Path) -> dict[str, Any]:
             {
                 "path": str(source_root),
                 "kind": "source_tree",
-                **_fingerprint_paths(source_root, _source_tree_paths(source_root)),
+                **_fingerprint_paths(
+                    source_root,
+                    _source_tree_paths(source_root, excluded_roots=exclusions),
+                ),
             }
         )
     body = {
         "schema": f"{SCHEMA_PREFIX}.execution_manifest.v1",
+        "excluded_roots": [str(path) for path in exclusions],
         "roots": roots,
     }
     return {**body, "manifest_sha256": _sha256(body)}
@@ -382,14 +427,24 @@ def _verify_execution_manifest_structure(manifest: Any) -> dict[str, Any]:
     if (
         manifest.get("schema") != f"{SCHEMA_PREFIX}.execution_manifest.v1"
         or manifest.get("manifest_sha256") != _sha256(body)
+        or not isinstance(manifest.get("excluded_roots"), list)
         or not isinstance(manifest.get("roots"), list)
         or not manifest["roots"]
     ):
         raise DetachedStepError("execution manifest binding is invalid")
+    raw_exclusions = manifest["excluded_roots"]
+    if any(not isinstance(value, str) or not value for value in raw_exclusions):
+        raise DetachedStepError("execution manifest exclusion is invalid")
+    exclusions = _normalized_excluded_roots(Path(value) for value in raw_exclusions)
+    if [str(path) for path in exclusions] != raw_exclusions:
+        raise DetachedStepError("execution manifest exclusion is not canonical")
     return manifest
 
 
 def _refresh_execution_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
+    exclusions = _normalized_excluded_roots(
+        Path(value) for value in manifest.get("excluded_roots", [])
+    )
     roots: list[dict[str, Any]] = []
     for root in manifest["roots"]:
         if not isinstance(root, dict):
@@ -401,7 +456,7 @@ def _refresh_execution_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
         if kind == "file":
             roots.append(_fingerprint_file(path))
         elif kind == "git_tracked_tree":
-            tracked = _git_tracked_paths(path)
+            tracked = _git_tracked_paths(path, excluded_roots=exclusions)
             roots.append(
                 {
                     "path": str(path),
@@ -414,12 +469,19 @@ def _refresh_execution_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
                 {
                     "path": str(path),
                     "kind": kind,
-                    **_fingerprint_paths(path, _source_tree_paths(path)),
+                    **_fingerprint_paths(
+                        path,
+                        _source_tree_paths(path, excluded_roots=exclusions),
+                    ),
                 }
             )
         else:
             raise DetachedStepError(f"unsupported execution manifest root kind: {kind}")
-    body = {"schema": f"{SCHEMA_PREFIX}.execution_manifest.v1", "roots": roots}
+    body = {
+        "schema": f"{SCHEMA_PREFIX}.execution_manifest.v1",
+        "excluded_roots": [str(path) for path in exclusions],
+        "roots": roots,
+    }
     return {**body, "manifest_sha256": _sha256(body)}
 
 
@@ -447,15 +509,64 @@ def _resolve_command(command: list[str], cwd: Path, environment: dict[str, str])
         candidate = Path(executable).expanduser()
         if not candidate.is_absolute():
             candidate = cwd / candidate
-        resolved = candidate.resolve(strict=True)
     else:
         located = shutil.which(executable, path=environment["PATH"])
         if located is None:
             raise DetachedStepError(f"command executable is unavailable: {executable}")
-        resolved = Path(located).resolve(strict=True)
-    if not resolved.is_file() or not os.access(resolved, os.X_OK):
-        raise DetachedStepError(f"command executable is not an executable file: {resolved}")
-    return [str(resolved), *command[1:]]
+        candidate = Path(located)
+    # Preserve the final launcher component. Python uses a virtualenv
+    # launcher's location to discover pyvenv.cfg; resolving that symlink here
+    # silently changes the interpreter environment even when the binary bytes
+    # are identical. The binding below still freezes the resolved target.
+    launcher = candidate.parent.resolve(strict=True) / candidate.name
+    resolved_target = launcher.resolve(strict=True)
+    if not resolved_target.is_file() or not os.access(launcher, os.X_OK):
+        raise DetachedStepError(f"command executable is not an executable file: {launcher}")
+    return [str(launcher), *command[1:]]
+
+
+def _launcher_binding(path: Path) -> dict[str, Any]:
+    if not path.is_absolute():
+        raise DetachedStepError("command launcher path must be absolute")
+    try:
+        launcher_stat = path.lstat()
+        resolved = path.resolve(strict=True)
+    except OSError as exc:
+        raise DetachedStepError(f"command launcher is unavailable: {path}") from exc
+    if not (stat.S_ISREG(launcher_stat.st_mode) or stat.S_ISLNK(launcher_stat.st_mode)):
+        raise DetachedStepError(f"command launcher type is invalid: {path}")
+    if not resolved.is_file() or not os.access(path, os.X_OK):
+        raise DetachedStepError(f"command launcher is not executable: {path}")
+    pyvenv_path = path.parent.parent / "pyvenv.cfg"
+    pyvenv: dict[str, Any] | None = None
+    if pyvenv_path.exists() or pyvenv_path.is_symlink():
+        if pyvenv_path.is_symlink() or not pyvenv_path.is_file():
+            raise DetachedStepError("command launcher pyvenv.cfg is unsafe")
+        pyvenv = {
+            "path": str(pyvenv_path),
+            "sha256": _sha256_file(pyvenv_path),
+            "size": pyvenv_path.stat().st_size,
+        }
+    body = {
+        "schema": f"{SCHEMA_PREFIX}.launcher_binding.v1",
+        "invocation_path": str(path),
+        "invocation_kind": "symlink" if stat.S_ISLNK(launcher_stat.st_mode) else "file",
+        "invocation_mode": stat.S_IMODE(launcher_stat.st_mode),
+        "symlink_target": os.readlink(path) if stat.S_ISLNK(launcher_stat.st_mode) else None,
+        "resolved_path": str(resolved),
+        "resolved_sha256": _sha256_file(resolved),
+        "pyvenv": pyvenv,
+    }
+    return {**body, "binding_sha256": _sha256(body)}
+
+
+def _verify_launcher_binding(binding: Any, path: Path) -> dict[str, Any]:
+    if not isinstance(binding, dict):
+        raise DetachedStepError("command launcher binding is missing")
+    current = _launcher_binding(path)
+    if binding != current:
+        raise DetachedStepError("command launcher binding changed")
+    return current
 
 
 def _fsync_directory(path: Path) -> None:
@@ -2202,6 +2313,8 @@ def _parse_broker_policy_json(
 def _build_broker_policy(
     specifications: list[dict[str, Any]],
     environment: dict[str, str],
+    *,
+    execution_exclusion_roots: Iterable[Path] = (),
 ) -> list[dict[str, Any]]:
     policies: list[dict[str, Any]] = []
     seen_commands: set[str] = set()
@@ -2243,11 +2356,16 @@ def _build_broker_policy(
         body = {
             "command": resolved_command,
             "command_sha256": command_sha,
+            "executable_binding": _launcher_binding(Path(resolved_command[0])),
             "cwd": str(cwd),
             "stdout_path": str(stdout_path),
             "timeout_s_max": float(timeout_s_max),
             "max_invocations": max_invocations,
-            "execution_manifest": _build_execution_manifest(resolved_command, cwd),
+            "execution_manifest": _build_execution_manifest(
+                resolved_command,
+                cwd,
+                excluded_roots=execution_exclusion_roots,
+            ),
         }
         policies.append({**body, "policy_sha256": _sha256(body)})
     return policies
@@ -2261,10 +2379,13 @@ def _build_plan(
     resume_contract: str,
     resume_verifier: list[str] | None = None,
     broker_policy_specs: list[dict[str, Any]] | None = None,
+    execution_exclusion_roots: Iterable[Path] = (),
 ) -> dict[str, Any]:
+    exclusions = _normalized_excluded_roots(execution_exclusion_roots)
     environment = _frozen_environment()
     resolved_command = _resolve_command(command, cwd, environment)
     executable_path = Path(resolved_command[0])
+    executable_binding = _launcher_binding(executable_path)
     if sys.platform != "darwin" or not _DARWIN_SANDBOX.is_file():
         raise DetachedStepError(
             "strong detached containment requires the macOS sandbox-exec process-fork boundary"
@@ -2290,17 +2411,32 @@ def _build_plan(
         else None
     )
     command_sha256 = _sha256(resolved_command)
-    target_execution_manifest = _build_execution_manifest(resolved_command, cwd)
-    verifier_execution_manifest = (
-        _build_execution_manifest(resolved_verifier, cwd) if resolved_verifier else None
+    target_execution_manifest = _build_execution_manifest(
+        resolved_command,
+        cwd,
+        excluded_roots=exclusions,
     )
-    broker_policy = _build_broker_policy(broker_policy_specs or [], environment)
+    verifier_execution_manifest = (
+        _build_execution_manifest(
+            resolved_verifier,
+            cwd,
+            excluded_roots=exclusions,
+        )
+        if resolved_verifier
+        else None
+    )
+    broker_policy = _build_broker_policy(
+        broker_policy_specs or [],
+        environment,
+        execution_exclusion_roots=exclusions,
+    )
     body = {
         "schema": f"{SCHEMA_PREFIX}.plan.v2",
         "name": name,
         "command": resolved_command,
         "command_sha256": command_sha256,
-        "executable_sha256": _sha256_file(executable_path),
+        "executable_sha256": executable_binding["resolved_sha256"],
+        "executable_binding": executable_binding,
         "execution_sandbox": sandbox,
         "power_assertion": power_assertion,
         "target_execution_manifest": target_execution_manifest,
@@ -2309,7 +2445,12 @@ def _build_plan(
         "resume_verifier_command": resolved_verifier,
         "resume_verifier_command_sha256": _sha256(resolved_verifier) if resolved_verifier else None,
         "resume_verifier_executable_sha256": (
-            _sha256_file(Path(resolved_verifier[0])) if resolved_verifier else None
+            _launcher_binding(Path(resolved_verifier[0]))["resolved_sha256"]
+            if resolved_verifier
+            else None
+        ),
+        "resume_verifier_executable_binding": (
+            _launcher_binding(Path(resolved_verifier[0])) if resolved_verifier else None
         ),
         "resume_verifier_execution_manifest": verifier_execution_manifest,
         "broker_policy": broker_policy,
@@ -2344,6 +2485,7 @@ def _comparable_plan(plan: dict[str, Any]) -> dict[str, Any]:
             "command",
             "command_sha256",
             "executable_sha256",
+            "executable_binding",
             "execution_sandbox",
             "power_assertion",
             "target_execution_manifest",
@@ -2352,6 +2494,7 @@ def _comparable_plan(plan: dict[str, Any]) -> dict[str, Any]:
             "resume_verifier_command",
             "resume_verifier_command_sha256",
             "resume_verifier_executable_sha256",
+            "resume_verifier_executable_binding",
             "resume_verifier_execution_manifest",
             "broker_policy",
             "broker_policy_sha256",
@@ -2388,7 +2531,10 @@ def _verify_plan(plan: dict[str, Any], path: Path) -> None:
     executable = Path(command[0])
     if not executable.is_absolute() or not executable.is_file():
         raise DetachedStepError(f"detached plan executable is unavailable: {path}")
-    if plan.get("executable_sha256") != _sha256_file(executable):
+    executable_binding = _verify_launcher_binding(
+        plan.get("executable_binding"), executable
+    )
+    if plan.get("executable_sha256") != executable_binding["resolved_sha256"]:
         raise DetachedStepError(f"detached plan executable hash mismatch: {path}")
     sandbox = plan.get("execution_sandbox")
     if not isinstance(sandbox, dict):
@@ -2424,7 +2570,11 @@ def _verify_plan(plan: dict[str, Any], path: Path) -> None:
         if (
             plan.get("resume_verifier_command_sha256") != _sha256(verifier)
             or not Path(verifier[0]).is_absolute()
-            or plan.get("resume_verifier_executable_sha256") != _sha256_file(Path(verifier[0]))
+            or plan.get("resume_verifier_executable_sha256")
+            != _verify_launcher_binding(
+                plan.get("resume_verifier_executable_binding"),
+                Path(verifier[0]),
+            )["resolved_sha256"]
         ):
             raise DetachedStepError(f"detached plan resume verifier binding is invalid: {path}")
         _verify_execution_manifest_structure(plan.get("resume_verifier_execution_manifest"))
@@ -2434,6 +2584,7 @@ def _verify_plan(plan: dict[str, Any], path: Path) -> None:
             "resume_verifier_command",
             "resume_verifier_command_sha256",
             "resume_verifier_executable_sha256",
+            "resume_verifier_executable_binding",
             "resume_verifier_execution_manifest",
         )
     ):
@@ -2473,6 +2624,9 @@ def _verify_plan(plan: dict[str, Any], path: Path) -> None:
             or max_invocations <= 0
         ):
             raise DetachedStepError(f"detached plan broker policy entry binding is invalid: {path}")
+        _verify_launcher_binding(
+            policy.get("executable_binding"), Path(command[0])
+        )
         _verify_execution_manifest_structure(policy.get("execution_manifest"))
         seen_broker_commands.add(command_sha)
     if plan.get("session_escape_policy") != "prohibited":
@@ -2890,6 +3044,7 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict[s
         args.resume_contract,
         resume_verifier,
         broker_policy_specs,
+        (run_dir,),
     )
     recovered_stale_child = False
     prior_completion_indeterminate = False

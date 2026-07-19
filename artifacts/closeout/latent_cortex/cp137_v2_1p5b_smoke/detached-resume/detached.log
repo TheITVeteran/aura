@@ -1,0 +1,5 @@
+loading /Users/bryan/.aura/live-source/models/Qwen2.5-1.5B-Instruct-4bit personality=none
+resumed exact checkpoint at step=1 epoch=0 cursor=1
+step=2 epoch=1 cursor=1/1 mean_loss=2.37059
+checkpoint=step-00000002-2c67cf42259d4d67a46551d2a9e5d4fe
+halt=max_steps step=2 adapter=73f48dbde2385c9b555aef2bc901be394e64d7f2a84c4ff554ebbb6857d8c872

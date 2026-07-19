@@ -752,8 +752,31 @@ def test_plan_freezes_absolute_executable_and_secret_free_environment(
     )
     assert Path(plan["command"][0]).is_absolute()
     assert plan["executable_sha256"] == detached._sha256_file(Path(plan["command"][0]))
+    assert plan["executable_binding"]["resolved_sha256"] == plan["executable_sha256"]
     assert "ANTHROPIC_API_KEY" not in plan["execution_environment"]
     assert "must-not-cross-boundary" not in json.dumps(plan)
+
+
+def test_command_resolution_preserves_virtualenv_launcher(tmp_path: Path) -> None:
+    environment = detached._frozen_environment()
+    environment["PATH"] = str(tmp_path / "venv" / "bin")
+    bin_dir = tmp_path / "venv" / "bin"
+    bin_dir.mkdir(parents=True)
+    launcher = bin_dir / "python"
+    launcher.symlink_to(Path(sys.executable))
+    pyvenv = tmp_path / "venv" / "pyvenv.cfg"
+    pyvenv.write_text("home = /frozen/interpreter\n", encoding="utf-8")
+
+    resolved = detached._resolve_command([str(launcher), "-c", "pass"], tmp_path, environment)
+    assert resolved[0] == str(launcher)
+    binding = detached._launcher_binding(Path(resolved[0]))
+    assert binding["invocation_kind"] == "symlink"
+    assert binding["resolved_path"] == str(Path(sys.executable).resolve())
+    assert binding["pyvenv"]["sha256"] == detached._sha256_file(pyvenv)
+
+    pyvenv.write_text("home = /mutated/interpreter\n", encoding="utf-8")
+    with pytest.raises(detached.DetachedStepError, match="launcher binding changed"):
+        detached._verify_launcher_binding(binding, launcher)
 
 
 def test_execution_manifest_detects_interpreted_script_mutation(tmp_path: Path) -> None:
@@ -771,6 +794,54 @@ def test_execution_manifest_detects_interpreted_script_mutation(tmp_path: Path) 
     script.write_text("print('mutated')\n", encoding="utf-8")
     with pytest.raises(detached.DetachedStepError, match="execution source changed"):
         detached._verify_execution_manifest_current(plan["target_execution_manifest"])
+
+
+def test_execution_manifest_allows_bound_run_artifacts_but_not_other_source(
+    tmp_path: Path,
+) -> None:
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
+    script = repository / "target.py"
+    script.write_text("print('stable')\n", encoding="utf-8")
+    subprocess.run(["git", "add", "target.py"], cwd=repository, check=True)
+    run_dir = repository / "artifacts" / "run"
+    plan = detached._build_plan(
+        "run-artifact-freeze",
+        [sys.executable, str(script)],
+        repository,
+        5.0,
+        "none",
+        execution_exclusion_roots=(run_dir,),
+    )
+
+    run_dir.mkdir(parents=True)
+    (run_dir / "detached_plan.json").write_text("{}\n", encoding="utf-8")
+    detached._verify_execution_manifest_current(plan["target_execution_manifest"])
+
+    (repository / "late_source.py").write_text("raise SystemExit(1)\n", encoding="utf-8")
+    with pytest.raises(detached.DetachedStepError, match="execution source changed"):
+        detached._verify_execution_manifest_current(plan["target_execution_manifest"])
+
+
+def test_execution_manifest_rejects_excluding_tracked_source(tmp_path: Path) -> None:
+    repository = tmp_path / "repository"
+    source_dir = repository / "tools"
+    source_dir.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
+    script = source_dir / "target.py"
+    script.write_text("print('stable')\n", encoding="utf-8")
+    subprocess.run(["git", "add", "tools/target.py"], cwd=repository, check=True)
+
+    with pytest.raises(detached.DetachedStepError, match="target source"):
+        detached._build_plan(
+            "unsafe-run-exclusion",
+            [sys.executable, str(script)],
+            repository,
+            5.0,
+            "none",
+            execution_exclusion_roots=(source_dir,),
+        )
 
 
 def test_mutated_resume_verifier_is_rejected_before_replay(

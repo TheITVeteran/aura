@@ -1,0 +1,13 @@
+Traceback (most recent call last):
+  File "/Users/bryan/.aura/live-source/tools/recurrence_native_train_v2.py", line 690, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "/Users/bryan/.aura/live-source/tools/recurrence_native_train_v2.py", line 187, in main
+    from core.runtime.model_lane_control import standalone_model_lane
+  File "/Users/bryan/.aura/live-source/core/runtime/model_lane_control.py", line 30, in <module>
+    from core.brain.lane_admission import (
+  File "/Users/bryan/.aura/live-source/core/brain/lane_admission.py", line 51, in <module>
+    from core.runtime.resource_observation import ResourceObserver, get_resource_observer
+  File "/Users/bryan/.aura/live-source/core/runtime/resource_observation.py", line 31, in <module>
+    import psutil
+ModuleNotFoundError: No module named 'psutil'

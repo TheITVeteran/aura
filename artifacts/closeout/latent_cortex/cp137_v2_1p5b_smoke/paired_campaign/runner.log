@@ -1,0 +1,4 @@
+[base_rlc] committed rlc_frontier:mathematics:8456d728b12562b5296c577d332cdcdfb9d1f13babf00db91a8b425c714498fc correct=False latency=2.88s layer_apps=8694
+[adapter_rlc] committed rlc_frontier:mathematics:8456d728b12562b5296c577d332cdcdfb9d1f13babf00db91a8b425c714498fc correct=False latency=3.06s layer_apps=8694
+[base_vanilla] committed rlc_frontier:mathematics:8456d728b12562b5296c577d332cdcdfb9d1f13babf00db91a8b425c714498fc correct=False latency=0.64s layer_apps=5320
+[adapter_vanilla] committed rlc_frontier:mathematics:8456d728b12562b5296c577d332cdcdfb9d1f13babf00db91a8b425c714498fc correct=False latency=0.47s layer_apps=5320
