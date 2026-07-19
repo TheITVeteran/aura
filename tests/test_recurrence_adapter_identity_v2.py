@@ -95,6 +95,13 @@ def _bundle():
         "targets": ["o_proj"],
         "wrapped_projections": ["model.layers.1.self_attn.o_proj"],
     }
+    gradient_execution = {
+        "schema": "aura.recurrence_streamed_depth_gradient.v1",
+        "mode": "depth_serial_exact_sum",
+        "concurrent_depth_graphs": 1,
+        "optimizer_updates_per_sample": 1,
+        "finite_loss_and_gradient_required_before_update": True,
+    }
     config = {
         "schema": "aura.recurrence_native_training_config.v2",
         "model_path": "/models/frozen",
@@ -111,6 +118,7 @@ def _bundle():
         "monotonicity_weight": 0.5,
         "lora": lora_config,
         "optimizer": {"name": "AdamW", "learning_rate": 0.0001, "weight_decay": 0.01},
+        "gradient_execution": gradient_execution,
         "train_seed": 1777,
         "max_steps": 8,
         "sources": config_sources,
@@ -138,6 +146,7 @@ def _bundle():
         "training_runtime": training_runtime,
         "lora": lora,
         "optimizer": config["optimizer"],
+        "gradient_execution": gradient_execution,
         "steps": 8,
         "epoch": 1,
         "cursor": 2,
@@ -262,6 +271,35 @@ def test_complete_training_bundle_validates_with_training_time_provenance():
     assert receipt["objective_name"] == "aura.recurrence_native_objective.v2"
     assert receipt["objective_source_provenance"] == "training_time_archived_source"
     assert receipt["wrapped_projection_count"] == 1
+    assert receipt["gradient_execution"]["mode"] == "depth_serial_exact_sum"
+
+
+def test_gradient_execution_must_match_exact_trainer_contract():
+    manifest_bytes, artifacts, tensors, base, model_behavior, personality, training_runtime = _bundle()
+    receipt = __import__("json").loads(artifacts["receipt.json"])
+    receipt["gradient_execution"]["concurrent_depth_graphs"] = 2
+    artifacts["receipt.json"] = _encoded(receipt)
+    manifest = __import__("json").loads(manifest_bytes)
+    manifest["training_receipt"] = _binding(
+        "receipt.json", artifacts["receipt.json"]
+    )
+    manifest_bytes = _encoded(manifest)
+
+    with pytest.raises(
+        RecurrenceAdapterIdentityV2Error,
+        match="gradient_execution_cross_binding_mismatch",
+    ):
+        _validate(
+            (
+                manifest_bytes,
+                artifacts,
+                tensors,
+                base,
+                model_behavior,
+                personality,
+                training_runtime,
+            )
+        )
 
 
 def test_partial_training_bundle_is_never_load_eligible():

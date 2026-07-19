@@ -670,6 +670,7 @@ def validate_v2_adapter_identity(
             "training_runtime",
             "lora",
             "optimizer",
+            "gradient_execution",
             "steps",
             "epoch",
             "cursor",
@@ -700,6 +701,7 @@ def validate_v2_adapter_identity(
             "monotonicity_weight",
             "lora",
             "optimizer",
+            "gradient_execution",
             "train_seed",
             "max_steps",
             "sources",
@@ -799,6 +801,31 @@ def validate_v2_adapter_identity(
     )
     if receipt.get("optimizer") != optimizer or optimizer.get("name") != "AdamW":
         _fail("optimizer_cross_binding_mismatch")
+    gradient_execution = dict(
+        _exact(
+            config.get("gradient_execution"),
+            {
+                "schema",
+                "mode",
+                "concurrent_depth_graphs",
+                "optimizer_updates_per_sample",
+                "finite_loss_and_gradient_required_before_update",
+            },
+            role="gradient_execution",
+        )
+    )
+    if (
+        gradient_execution
+        != {
+            "schema": "aura.recurrence_streamed_depth_gradient.v1",
+            "mode": "depth_serial_exact_sum",
+            "concurrent_depth_graphs": 1,
+            "optimizer_updates_per_sample": 1,
+            "finite_loss_and_gradient_required_before_update": True,
+        }
+        or receipt.get("gradient_execution") != gradient_execution
+    ):
+        _fail("gradient_execution_cross_binding_mismatch")
     if (
         dataset.get("train_seed") != config.get("train_seed")
         or not isinstance(dataset.get("examples"), list)
@@ -930,6 +957,7 @@ def validate_v2_adapter_identity(
         "training_completion_sha256": sha256_bytes(completion_raw),
         "sources": normalized_sources,
         "lora": lora,
+        "gradient_execution": gradient_execution,
         "tensors": tensors,
     }
     return {
@@ -952,6 +980,7 @@ def validate_v2_adapter_identity(
         "objective_source_provenance": "training_time_archived_source",
         "rank": lora["rank"],
         "targets": lora["targets"],
+        "gradient_execution": gradient_execution,
         "wrapped_projection_count": lora["wrapped_projections"],
         "tensor_count": len(tensors),
         "tensor_metadata_sha256": sha256_bytes(canonical_json_bytes(tensors)),

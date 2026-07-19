@@ -20902,3 +20902,41 @@ Evidence-weighted completion remains 27%; this is checkpoint 172 of the faithful
 292-399 forecast, leaving approximately 120-227 checkpoints. No reasoning-gain,
 frontier, external-custody campaign, live-app, release, or soak credit is
 awarded. Final soaks remain deferred.
+
+## Checkpoint 2026-07-19-173: Streamed Gradient Identity Contract
+
+CP173 closes a real producer/consumer schema mismatch found by adversarial
+review of terminal-training promotion. The resident trainer records its exact
+depth-serial gradient execution mode in both training configuration and final
+receipt, but the recurrence-v2 identity validator previously rejected those
+fields as unexpected. A completed real adapter therefore could not pass the
+CP170 freeze path even though synthetic fixtures did.
+
+- The recurrence-v2 identity contract now requires `gradient_execution` in
+  both producer documents and validates the complete field set: schema,
+  depth-serial exact-sum mode, one concurrent depth graph, one optimizer update
+  per sample, and finite loss/gradient admission before every update.
+- Configuration and receipt must carry byte-equivalent execution contracts;
+  an altered concurrency count or mode fails semantically after artifact
+  bindings are rehashed, rather than only failing as incidental byte tamper.
+- The normalized gradient contract is now part of composite adapter identity
+  and the returned identity receipt, so freeze, launch, and runtime identity
+  all retain the execution method that produced the weights.
+- The production-shaped identity fixture now matches the real trainer output
+  instead of omitting the field that exposed the incompatibility.
+
+Validation is green: 16 recurrence trainer, curriculum-binding, and v2 identity
+tests pass in 9.85 seconds; 11 adapter freeze, v2 smoke, and paired-runner
+integration cases pass in 5.10 seconds. Focused Ruff, bytecode, formatting, and
+diff checks pass.
+
+This checkpoint makes the real producer output admissible to strict identity
+validation; it does not promote or freeze the active adapter. CP174+ must still
+bind an independently fixed 576-step workload, exact model tokenization, the
+terminal output generation, public freeze/promotion composition, and complete
+loss/runtime evidence before the real adapter can enter a mechanics smoke.
+
+Evidence-weighted completion remains 27%; this is checkpoint 173 of the faithful
+292-399 forecast, leaving approximately 119-226 checkpoints. No reasoning-gain,
+frontier, external-custody campaign, live-app, release, or soak credit is
+awarded. Final soaks remain deferred.
