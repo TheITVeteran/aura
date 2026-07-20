@@ -1,0 +1,87 @@
+{
+  "schema": "aura.latent_cortex.resident_pilot_contract.v1",
+  "contract_id": "resident-32b-recurrence-v2-cp179-directional-pilot",
+  "created_at": "2026-07-20T02:13:49Z",
+  "source_commit": "7f12e537af53dc99cb3a375e7a514adad4e4428b",
+  "claim_scope": "internal_directional_falsification_only",
+  "preregistered_before_model_output": true,
+  "mechanics_gate": {
+    "verdict_sha256": "353b70585c1a4ed28b8f4bb137c7291d785bb9aab76bdd409b93d48f130e3b8b",
+    "file_sha256": "378365592614d6f4176d55558630bda76d054ac20eacdf00c24d1f02a8249482",
+    "ready_for_fresh_hidden_task_pilot": true
+  },
+  "model": {
+    "path": "/Users/bryan/.aura/live-source/training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118",
+    "base_checkpoint_sha256": "8eae71e73a14d1228a942d4faf84690d70b62148f25b0f924435535f7c550fad",
+    "model_behavior_bundle_sha256": "7eb54f8b670bba6e5b37ae5f9c6d016e9628034951b3ee702ca0096123c5e674",
+    "logical_parameter_count": 32763876352,
+    "personality_adapter": "trained"
+  },
+  "adapter": {
+    "path": "/Users/bryan/.aura/live-source/artifacts/closeout/latent_cortex/resident_32b_v2_cp139/frozen-adapter-streamed-full-cp176",
+    "adapter_id": "resident-32b-recurrence-v2-cp147-full",
+    "adapter_sha256": "4bbd88d77a262cf4ef9c23b7c9c88044d0073832084988089a43813cd232ade0",
+    "identity_sha256": "b48e4211df99a1fe68b529d1da8e81a14451b9ca06f7fc3131b828bf9a94493c",
+    "freeze_certificate_sha256": "c9a1f288f72aa931a8b31b76099817d2bbe745c95d3676d644ca6b4af4162e80",
+    "content_root_sha256": "d26c241817f04441baf8a3a7fd1e2e9f1096c73eb0f9e929247c0b1cb0e49f17"
+  },
+  "campaign": {
+    "name": "cp179-resident-32b-directional-pilot",
+    "directory": "/Users/bryan/.aura/live-source/artifacts/closeout/latent_cortex/resident_32b_v2_cp139/cp179-directional-pilot",
+    "task_registry_version": "2026.07.18.2",
+    "seeds": [6667973568684396963, 8018464717327901555],
+    "seed_entropy_bits": 63,
+    "domains": [
+      "novel_algorithms",
+      "mathematics",
+      "coding",
+      "scientific_inference",
+      "long_horizon_planning",
+      "calibration",
+      "misleading_premise"
+    ],
+    "arms": ["base_vanilla", "base_rlc", "adapter_vanilla", "adapter_rlc"],
+    "profile": "primary",
+    "difficulty": 2,
+    "n_slots": 16,
+    "branches": 2,
+    "rlc_steps": 4,
+    "rlc_profile": "recurrence_attribution",
+    "decode_max_tokens": 256,
+    "episode_timeout_s": 1200.0,
+    "load_timeout_s": 1200.0,
+    "warmup_timeout_s": 600.0,
+    "arm_timeout_s": 10800.0,
+    "campaign_timeout_s": 43200.0,
+    "equal_compute_max_samples": 8,
+    "max_infra_attempts": 2,
+    "task_count": 14,
+    "cell_count": 56,
+    "plan_sha256": "ff3c0e880df240a47fe6ff6cb7a3acc99b761b6e804cef8a749b424ef81bec7d",
+    "plan_file_sha256": "06bd5868c7f5fa0bb56a115ec53417bea95e946f8ad34365c99cf1fa7fcafbcb",
+    "task_manifest_sha256": "8e7a23ca3005965eafa775a3a20aca1e63bcd2f0495f70e1716a17320aa0d6e0",
+    "claim_eligible": false,
+    "vanilla_fallback_allowed": false
+  },
+  "decision": {
+    "advance_only_if": [
+      "all_56_cells_commit_and_replay",
+      "adapter_rlc_total_correct_strictly_exceeds_adapter_vanilla",
+      "adapter_rlc_total_correct_strictly_exceeds_base_rlc",
+      "adapter_vanilla_output_is_byte_identical_to_base_vanilla_per_task",
+      "adapter_vanilla_total_correct_is_not_below_base_vanilla",
+      "base_rlc_has_zero_recurrence_adapter_activity",
+      "adapter_rlc_has_positive_scoped_recurrence_adapter_activity",
+      "adapter_rlc_changes_at_least_one_first_logit_digest",
+      "all_model_adapter_source_reset_scorer_and_detached_receipts_validate"
+    ],
+    "advance_target": "powered_external_frontier_campaign",
+    "nonadvance_action": "diagnose_and_preregister_new_training_or_pilot_revision",
+    "post_hoc_task_selection_allowed": false,
+    "pilot_can_prove_frontier_gain": false
+  },
+  "external_attestation_present": false,
+  "reasoning_gain_proven_before_run": false,
+  "frontier_gain_proven_before_run": false,
+  "contract_sha256": "e4bb2c6939967067b2caee719a86deafae87584410b9f4c48e15ec79ae0ee7e7"
+}

@@ -21180,3 +21180,52 @@ run the resident four-arm pilot under detached containment, independently
 rescore it, and either promote the adapter to a powered campaign or diagnose a
 negative result without post-hoc task selection. Final long soaks remain
 deferred.
+
+## Checkpoint 2026-07-19-178: Preregistered Resident Directional Pilot
+
+CP178 freezes the exact first capability test before any pilot model worker is
+started. It closes the under-specified-seed and post-hoc-decision gaps in the
+broader CP139 protocol; it does not provide a pilot result or award reasoning,
+frontier, external-attestation, live-product, release, or soak credit.
+
+- Two fresh unique 63-bit seeds, `6667973568684396963` and
+  `8018464717327901555`, deterministically issue 14 answer-committed tasks over
+  all seven required domains under registry `2026.07.18.2`. The resulting
+  four-arm matrix contains 56 cells at task-manifest root
+  `8e7a23ca3005965eafa775a3a20aca1e63bcd2f0495f70e1716a17320aa0d6e0`.
+- The frozen plan is
+  `ff3c0e880df240a47fe6ff6cb7a3acc99b761b6e804cef8a749b424ef81bec7d`
+  with exact file SHA-256
+  `06bd5868c7f5fa0bb56a115ec53417bea95e946f8ad34365c99cf1fa7fcafbcb`.
+  It binds the resident model/frozen adapter, primary four-arm profile,
+  difficulty 2, 16 slots, two branches, four recurrent steps, deterministic
+  256-token decode, no vanilla fallback, timeouts, retry ceiling, implementation
+  identities, task prompts, and blinded answer commitments.
+- The self-hashed contract at
+  `config/latent_cortex/resident_32b_pilot_contract.json` fixes the advance rule:
+  all cells and receipts must replay; adapter RLC must strictly exceed both
+  adapter vanilla and base RLC in total correct; ordinary output must remain
+  byte-identical; adapter vanilla must not regress; base RLC must show zero
+  adapter activity; trained RLC must show positive scoped activity and at least
+  one causal first-logit change. Failure or inconclusion requires diagnosis and
+  a newly preregistered revision, never favorable post-hoc task selection.
+- `tools/verify_resident_pilot_preflight.py` independently checks contract self-
+  hash, exact seeds/domains/arms/budgets, resident and adapter identities,
+  CP177 mechanics receipt and file roots, plan and task-manifest roots, all 56
+  cells, fallback prohibition, and absence of campaign output. Rehashed attempts
+  to weaken seed entropy, eligibility, fallback, post-hoc selection, or claim
+  scope fail closed.
+- The live preflight passed with `model_output_observed=false` at receipt root
+  `c78984f45b194f3df0330772504d8e170fbd20007e9c2d04ee75c6f0d848ab57`.
+  The contract explicitly states that this directional pilot cannot by itself
+  prove frontier gain; a positive result only admits the independently rooted,
+  powered six-arm campaign.
+
+Validation is green: 16/16 pilot-contract and resident-mechanics tests pass;
+focused Ruff, bytecode compilation, JSON parsing, and diff integrity pass.
+
+Evidence-weighted completion remains 27%. This is checkpoint 178 of the
+faithful 292-399 forecast, leaving approximately 114-221 checkpoints. Next:
+publish this preregistration, execute the exact 56-cell pilot under detached
+containment, independently replay and score every raw output, and apply the
+fixed advance-or-diagnose rule. Final long soaks remain deferred.
