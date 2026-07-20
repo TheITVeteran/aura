@@ -1,8 +1,31 @@
-# RLC wiring handoff (CP234)
+# RLC wiring handoff (CP234) — seams closed CP236–238
 
-State as of Jul 20 2026. All seven Anima Rationis components exist with
-tests. **None except the halting bridge have a seam into the live engine.**
-This document is the map for finishing that.
+State as of Jul 20 2026 (evening). All seven Anima Rationis components
+exist with tests, and the seams this document mapped are now closed:
+
+* **CP236**: learned halting is ATTACHABLE — `CortexConfig.halting`
+  loads a trained `HaltingHead` from disk (save/load added), attaches it
+  to every branch, and the episode receipt carries `head_was_causal` with
+  a `learned_halting_not_causal` flag when the head never fired. A
+  requested head that cannot load refuses the episode. Plus the two
+  dynamics gaps the evidence demanded: `rotation_pressure` (direct
+  training pressure on cos(pass1,pass2)=0.9994; cos² over consecutive
+  window-pass increments punishes idempotence AND the period-2 cycle)
+  and `trajectory_shaped_rewards` + `latent_step_answer_ce`
+  (RLTT-style latent-trajectory credit for GRPO; verifier stays the
+  last word, reordering is confessed).
+* **CP237**: `record_paired_outcome` has a real caller —
+  `tools/schedule_search_campaign.py` runs search → paired holdout
+  trials → per-task-committed outcomes → the LIVE library, persisted.
+* **CP238**: the integrated evaluation exists —
+  `core/learning/integrated_eval_tasks.py` (retrieval-DEPENDENT tasks
+  whose answers exist only in organ context) +
+  `tools/integrated_rlc_eval.py` (paired context-on/context-off arms,
+  distractors in both, ingress-fired receipts, leakage self-check).
+
+Remaining architecture decision (unchanged): whether the live engine
+adopts intrinsic recurrence, slot recurrence, or both — CP227's training
+result decides it. Original map below for the record.
 
 ## What is done
 
