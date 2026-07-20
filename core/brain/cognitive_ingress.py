@@ -443,6 +443,82 @@ def _signal_memory(objective: str) -> IngressSignal:
     return IngressSignal(source="memory", present=False)
 
 
+def _signal_reference(objective: str) -> IngressSignal:
+    """Offline reference corpus: 6.6M-article Wikipedia behind FTS5.
+
+    The knowledge organ the integration bet names first — frontier breadth
+    through retrieval rather than parameters. Hits are CLAIMS (an
+    encyclopedia is testimony, not observation), so they pass the epistemic
+    firewall like memory recall: duplicates collapse to independent
+    sources, conflicts refuse each other, and an unresolved conflict seeds
+    the caution instead of a lucky winner. A grounded hit lowers
+    uncertainty slightly; a blank corpus on an arbitrary objective is
+    normal conversation, never a penalty.
+    """
+    from core.brain.epistemic_firewall import EpistemicFirewall, EvidenceItem
+
+    try:
+        from core.knowledge.local_corpus import get_local_corpus_store
+
+        store = get_local_corpus_store()
+    except (ImportError, AttributeError, OSError, RuntimeError, ValueError):
+        return IngressSignal(source="reference", present=False)
+    if store is None:
+        return IngressSignal(source="reference", present=False)
+    try:
+        hits = store.search(str(objective or "")[:300], limit=4)
+    except Exception:  # noqa: BLE001 - organ contract unknown; absent
+        return IngressSignal(source="reference", present=False)
+    if not hits:
+        return IngressSignal(
+            source="reference",
+            present=True,
+            value=0.0,
+            detail="local_corpus: 0 hits",
+        )
+    evidence = [
+        EvidenceItem(
+            text=f"{hit.title}: {hit.snippet}".strip(),
+            origin=f"local_corpus:{str(hit.title)[:80]}",
+            channel="local_corpus",
+            kind="claim",
+        )
+        for hit in hits
+        if str(hit.snippet or "").strip()
+    ]
+    grounding = min(1.0, len(hits) / 4.0)
+    recalled = ""
+    caution = ""
+    firewall_receipt: dict[str, Any] = {}
+    conflict_uncertainty = 0.0
+    try:
+        verdict = EpistemicFirewall(max_admitted=2).review(objective, evidence)
+        firewall_receipt = verdict.to_receipt()
+        admitted = " ".join(verdict.admitted_texts())[:400]
+        if admitted:
+            recalled = ("Reference (offline encyclopedia): " + admitted)[:400]
+        caution = verdict.caution_text()
+        if verdict.abstain:
+            conflict_uncertainty = 0.08
+            grounding = min(grounding, 0.25)
+    except (TypeError, ValueError):
+        recalled = ""
+        caution = "Evidence check: reference admission failed; nothing seeded"
+    return IngressSignal(
+        source="reference",
+        present=True,
+        value=grounding,
+        uncertainty_delta=-0.05 * grounding + conflict_uncertainty,
+        detail=(
+            f"local_corpus: {len(hits)} hits, "
+            f"{len(firewall_receipt.get('admitted', []))} admitted"
+        ),
+        context_text=recalled,
+        firewall=firewall_receipt,
+        caution_text=caution,
+    )
+
+
 def _signal_body(orchestrator: Any) -> IngressSignal:
     """The whole pressure VECTOR, not one scalar.
 
@@ -820,6 +896,7 @@ def assemble_cognitive_ingress(
     """Typed allocation inputs for one latent episode, with receipts."""
     signals = [
         _signal_memory(objective),
+        _signal_reference(objective),
         _signal_body(orchestrator),
         _signal_goals(objective),
         _signal_will(orchestrator),
@@ -861,7 +938,7 @@ def cognitive_context_items(ingress: CognitiveIngress) -> list[dict[str, str]]:
     """
     items: list[dict[str, str]] = []
     by_source = {signal.source: signal for signal in ingress.signals}
-    for source in ("memory", "goals", "world_model", "self_model"):
+    for source in ("memory", "reference", "goals", "world_model", "self_model"):
         signal = by_source.get(source)
         if signal is None or not signal.present:
             continue
