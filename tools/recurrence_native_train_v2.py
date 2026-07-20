@@ -603,7 +603,11 @@ def _build_parser() -> argparse.ArgumentParser:
     # CP181 v3 objective surface. Defaults keep v2 behavior bit-for-bit;
     # --objective v3 engages the margin hinge, branch-diversity pressure,
     # live-bridge parity, and held-out validation.
-    parser.add_argument("--objective", choices=("v2", "v3"), default="v2")
+    parser.add_argument(
+        "--objective", choices=("v2", "v3", "v4"), default="v2"
+    )
+    parser.add_argument("--compute-price", type=float, default=0.01)
+    parser.add_argument("--depth-temperature", type=float, default=0.15)
     parser.add_argument("--depth-margin", type=float, default=0.05)
     parser.add_argument("--diversity-weight", type=float, default=0.25)
     parser.add_argument("--diversity-target-cos", type=float, default=0.98)
@@ -758,7 +762,7 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
         raise ValueError("resource guard ceilings are invalid")
     if not math.isfinite(args.monotonicity_weight) or not 0.0 <= args.monotonicity_weight <= 10.0:
         raise ValueError("monotonicity-weight must be inside [0, 10]")
-    objective_is_v3 = args.objective == "v3"
+    objective_is_v3 = args.objective in ("v3", "v4")
     resume_migration_path = getattr(args, "resume_migration_evidence", None)
     if resume_migration_path is not None and (
         not args.resume or not args.activation_checkpointing or not objective_is_v3
@@ -798,6 +802,9 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
     )
     from core.learning.recurrence_native_objective_v3 import (
         RECURRENCE_NATIVE_SCHEMA_V3,
+    )
+    from core.learning.recurrence_native_objective_v4 import (
+        RECURRENCE_NATIVE_SCHEMA_V4,
     )
 
     objective_schema = (
@@ -938,11 +945,11 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
         # bound through the detached supervisor's git-tree execution manifest.
         "objective": _source_binding(
             REPO_ROOT
-            / (
-                "core/learning/recurrence_native_objective_v3.py"
-                if objective_is_v3
-                else "core/learning/recurrence_native_objective_v2.py"
-            )
+            / {
+                "v4": "core/learning/recurrence_native_objective_v4.py",
+                "v3": "core/learning/recurrence_native_objective_v3.py",
+                "v2": "core/learning/recurrence_native_objective_v2.py",
+            }[args.objective]
         ),
         "execution_spec": _source_binding(
             REPO_ROOT / "core/brain/llm/latent_cortex/execution_spec.py"

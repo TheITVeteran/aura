@@ -464,3 +464,42 @@ def test_probe_steps_subset_bounds_cost_on_large_models():
         trajectory_loss_v4(
             model, PROMPT, ANSWER, spec=spec, depth=4, probe_steps=(1, 9)
         )
+
+
+# ── CP211: the composite must actually USE compute-priced selection ─────
+
+
+def test_composite_routes_through_adaptive_selection_not_a_hinge():
+    """Regression for a real shipped defect: depth_curriculum_loss_v4
+    documented compute-priced selection while still running the old
+    unconditional monotonic hinge and never calling adaptive_depth_loss."""
+    import inspect
+
+    from core.learning import recurrence_native_objective_v4 as module
+
+    source = inspect.getsource(module.depth_curriculum_loss_v4)
+    assert "adaptive_depth_loss(" in source, "composite must use selection"
+    assert "monotonicity_weight" not in source, "unconditional hinge removed"
+
+
+def test_modular_shaped_sample_selects_shallow_without_penalty():
+    """The family that recurrence HURTS (+15.1% measured) must be able to
+    stay shallow and pay nothing — under the old hinge this cell was
+    permanently in violation, which is what neutralized recurrence."""
+    anti_monotone = [mx.array(v) for v in (2.702, 2.88, 2.95, 3.110)]
+    loss, priced, selected = adaptive_depth_loss(
+        anti_monotone, (1, 2, 4, 8), compute_price=0.01, temperature=0.15
+    )
+    assert selected == 1
+    # The winning (shallow) cost is the smallest priced cost: no hinge debt.
+    assert float(loss) < min(priced) + 0.15
+    assert min(priced) == pytest.approx(priced[0], abs=1e-6)
+
+
+def test_default_depth_ladder_includes_the_measured_optimum():
+    import inspect
+
+    from core.learning import recurrence_native_objective_v4 as module
+
+    signature = inspect.signature(module.depth_curriculum_loss_v4)
+    assert 8 in signature.parameters["depths"].default, "measured optimum is 8"

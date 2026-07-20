@@ -395,9 +395,9 @@ def depth_curriculum_loss_v4(
     answer_tokens: Sequence[int],
     *,
     spec: RLCExecutionSpec,
-    depths: tuple[int, ...] = (1, 2, 4),
-    monotonicity_weight: float = 0.5,
-    depth_margin: float = 0.05,
+    depths: tuple[int, ...] = (1, 2, 4, 8),
+    compute_price: float = 0.01,
+    depth_temperature: float = 0.15,
     diversity_weight: float = 1.0,
     target_separation: float = DEFAULT_TARGET_SEPARATION,
     softmin_temperature: float = 0.5,
@@ -420,10 +420,6 @@ def depth_curriculum_loss_v4(
         or tuple(sorted(set(depths))) != depths
     ):
         raise ValueError("depths must be a strictly increasing tuple")
-    hinge_weight = _validate_scalar(
-        "monotonicity_weight", monotonicity_weight, low=0.0, high=10.0
-    )
-    margin = _validate_scalar("depth_margin", depth_margin, low=0.0, high=2.0)
     diversity_scale = _validate_scalar(
         "diversity_weight", diversity_weight, low=0.0, high=10.0
     )
@@ -463,23 +459,30 @@ def depth_curriculum_loss_v4(
         telemetry_branch_losses[key] = [round(v, 6) for v in branch_losses]
         telemetry_weights[key] = [round(v, 6) for v in weights]
 
-    margin_penalty = mx.zeros(())
-    for shallow, deep in zip(answer_losses, answer_losses[1:]):
-        margin_penalty = margin_penalty + mx.maximum(
-            deep - mx.stop_gradient(shallow) + margin, 0.0
-        )
+    # Compute-priced depth SELECTION, not a uniform improvement mandate.
+    # The measured family split (khop -33.1% monotone, modular +15.1%
+    # anti-monotone) makes a global hinge unwinnable on modular cells, and
+    # the cheapest escape is to neutralize recurrence everywhere. Selection
+    # lets each sample pick the depth that actually pays.
+    depth_selected_loss, priced, selected_depth = adaptive_depth_loss(
+        answer_losses,
+        depths,
+        compute_price=compute_price,
+        temperature=depth_temperature,
+    )
     diversity_penalty = sum(diversity_penalties) / len(diversity_penalties)
     balance_penalty = sum(balance_penalties) / len(balance_penalties)
     loss = (
-        sum(answer_losses) / len(answer_losses)
-        + hinge_weight * margin_penalty
+        depth_selected_loss
         + diversity_scale * diversity_penalty
         + balance_scale * balance_penalty
     )
     telemetry = {
         "schema": RECURRENCE_NATIVE_SCHEMA_V4,
         "depth_losses": [round(float(v), 6) for v in answer_losses],
-        "margin_penalty": round(float(margin_penalty), 6),
+        "selected_depth": selected_depth,
+        "priced_depth_costs": [round(value, 6) for value in priced],
+        "compute_price": float(compute_price),
         "diversity_penalty": round(float(diversity_penalty), 6),
         "diversity_weight": diversity_scale,
         "target_separation": float(target_separation),

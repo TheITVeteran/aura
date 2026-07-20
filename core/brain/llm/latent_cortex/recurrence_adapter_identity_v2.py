@@ -37,7 +37,12 @@ OBJECTIVE_SCHEMA_V2 = "aura.recurrence_native_objective.v2"
 # exactly the additional v3 evidence keys — nothing optional, nothing
 # extra. v2 bundles validate byte-for-byte as before.
 OBJECTIVE_SCHEMA_V3 = "aura.recurrence_native_objective.v3"
-ACCEPTED_OBJECTIVE_SCHEMAS = frozenset({OBJECTIVE_SCHEMA_V2, OBJECTIVE_SCHEMA_V3})
+# CP211: v4 (compute-priced depth selection + separation-based width +
+# trajectory per-step improvement) ships in the same bundle format.
+OBJECTIVE_SCHEMA_V4 = "aura.recurrence_native_objective.v4"
+ACCEPTED_OBJECTIVE_SCHEMAS = frozenset(
+    {OBJECTIVE_SCHEMA_V2, OBJECTIVE_SCHEMA_V3, OBJECTIVE_SCHEMA_V4}
+)
 RECEIPT_V3_EXTRA_KEYS = frozenset({"objective_options", "holdout_trail"})
 CONFIG_V3_EXTRA_KEYS = frozenset({"objective_options", "bridge", "holdout"})
 DATASET_V3_EXTRA_KEYS = frozenset({"holdout_per_cell", "holdout_indices"})
@@ -807,7 +812,10 @@ def validate_v2_adapter_identity(
     spec_payload = strict_json_loads(payloads["execution_spec"], role="execution_spec")
     loader_config = strict_json_loads(payloads["loader_config"], role="loader_config")
     declared_objective = receipt.get("objective_schema") if isinstance(receipt, Mapping) else None
-    objective_is_v3 = declared_objective == OBJECTIVE_SCHEMA_V3
+    objective_is_v3 = declared_objective in (
+        OBJECTIVE_SCHEMA_V3,
+        OBJECTIVE_SCHEMA_V4,
+    )
     migration_receipt_present = "resume_migration" in receipt
     migration_config_present = "resume_migration" in config
     if not (
@@ -1256,6 +1264,7 @@ __all__ = [
     "ACCEPTED_OBJECTIVE_SCHEMAS",
     "OBJECTIVE_SCHEMA_V2",
     "OBJECTIVE_SCHEMA_V3",
+    "OBJECTIVE_SCHEMA_V4",
     "SOURCE_ROLES",
     "TRAINING_CONFIG_SCHEMA_V2",
     "TRAINING_SCHEMA_V2",
