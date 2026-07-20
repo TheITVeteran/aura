@@ -100,3 +100,36 @@ def test_receipt_is_complete_enough_to_audit_a_run():
     }
     assert receipt["memory_limit_gb"] == pytest.approx(4.0, rel=1e-6)
     assert receipt["cache_limit_gb"] == pytest.approx(1.0, rel=1e-6)
+
+
+# ── Reading pressure correctly, not alarmingly ──────────────────────────
+
+
+def test_host_pressure_reports_reclaimable_not_just_free():
+    """'Pages free' excludes inactive/purgeable memory the kernel reclaims
+    on demand, so a healthy host can read ~1GB free while 65% of RAM is
+    actually available. Aborting a good run on that number is a false
+    alarm; the signals that preceded this host's jetsam kill were SWAP and
+    COMPRESSOR growth."""
+    from core.runtime.mlx_memory_guard import host_pressure
+
+    report = host_pressure()
+    if not report.get("available"):
+        pytest.skip("vm_stat unavailable on this platform")
+    assert report["reclaimable_gb"] >= report["free_gb"]
+    assert 0.0 <= report["available_fraction"] <= 1.0
+    assert report["host_gb"] > 0
+    assert isinstance(report["under_pressure"], bool)
+
+
+def test_pressure_verdict_keys_on_swap_and_compression():
+    """The verdict must not fire merely because free memory looks small."""
+    from core.runtime.mlx_memory_guard import host_pressure
+
+    report = host_pressure()
+    if not report.get("available"):
+        pytest.skip("vm_stat unavailable on this platform")
+    if report["swap_used_gb"] < 2.0 and report["compressed_gb"] < 0.25 * report[
+        "host_gb"
+    ] and report["reclaimable_gb"] >= 0.08 * report["host_gb"]:
+        assert report["under_pressure"] is False

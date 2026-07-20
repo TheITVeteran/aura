@@ -53,6 +53,76 @@ def host_memory_bytes() -> int:
     return 8 * 1024**3
 
 
+def host_pressure() -> dict[str, Any]:
+    """Real memory pressure, not the misleading 'Pages free' number.
+
+    On macOS, ``Pages free`` excludes inactive/purgeable pages that the
+    kernel will reclaim on demand, so a healthy host can report ~1 GB free
+    while 65% of RAM is actually available. Deciding to abort a run on that
+    number is a false alarm; the signals that actually preceded this host's
+    jetsam kill were SWAP and COMPRESSOR growth.
+    """
+    import subprocess
+
+    stats: dict[str, int] = {}
+    try:
+        output = subprocess.run(
+            ["vm_stat"], capture_output=True, text=True, timeout=5, check=True
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return {"available": False}
+    page_size = 16384
+    for line in output.splitlines():
+        if "page size of" in line:
+            for token in line.split():
+                if token.isdigit():
+                    page_size = int(token)
+                    break
+            continue
+        if ":" not in line:
+            continue
+        key, _, value = line.partition(":")
+        digits = value.strip().rstrip(".")
+        if digits.isdigit():
+            stats[key.strip()] = int(digits)
+
+    def gb(name: str) -> float:
+        return stats.get(name, 0) * page_size / 1024**3
+
+    free = gb("Pages free")
+    inactive = gb("Pages inactive")
+    speculative = gb("Pages speculative")
+    purgeable = gb("Pages purgeable")
+    compressed = gb("Pages occupied by compressor")
+    host = host_memory_bytes() / 1024**3
+    reclaimable = free + inactive + speculative + purgeable
+    swap_used = 0.0
+    try:
+        swap = subprocess.run(
+            ["sysctl", "-n", "vm.swapusage"],
+            capture_output=True, text=True, timeout=5, check=True,
+        ).stdout
+        for token in swap.replace("=", " ").split():
+            if token.endswith("M") and token[:-1].replace(".", "").isdigit():
+                swap_used = float(token[:-1]) / 1024.0
+                break
+    except (OSError, subprocess.SubprocessError, ValueError):
+        pass
+    return {
+        "available": True,
+        "host_gb": round(host, 2),
+        "free_gb": round(free, 2),
+        "reclaimable_gb": round(reclaimable, 2),
+        "available_fraction": round(reclaimable / max(host, 1e-9), 3),
+        "compressed_gb": round(compressed, 2),
+        "swap_used_gb": round(swap_used, 2),
+        # The signals that actually preceded the jetsam kill.
+        "under_pressure": bool(
+            compressed > 0.25 * host or swap_used > 2.0 or reclaimable < 0.08 * host
+        ),
+    }
+
+
 @dataclass
 class MemoryEnvelope:
     """Applied limits plus the reclaim hook for long loops."""
@@ -180,5 +250,6 @@ __all__ = [
     "MLX_MEMORY_GUARD_SCHEMA",
     "MemoryEnvelope",
     "host_memory_bytes",
+    "host_pressure",
     "mlx_memory_envelope",
 ]
