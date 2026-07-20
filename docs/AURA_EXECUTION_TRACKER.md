@@ -21841,3 +21841,53 @@ is awarded. Next: publish CP192, create the fresh step-10 migration with CP189
 and CP191 failure lineage, execute the detached one-step resident calibration,
 and launch exact training only if independently measured footprint remains
 below every certified ceiling. Final long soaks remain deferred.
+
+## Checkpoint 2026-07-20-193: Grouped Rematerialization Recovery Boundary
+
+CP192's real schema-v2 migration bound CP189's original failure and CP191's
+ordered recovery failure, then copied and verified the exact step-10 state. Its
+resident calibration loaded cleanly with no competing model workload. Per-
+layer rematerialization reduced early compute footprint substantially and
+reached a low-water sample near 22.2 GB, but the same graph later climbed to
+74,049.9 MB against the immutable 73,728-MB ceiling. The sentinel killed the
+process tree. Trainer return code -9, sentinel return code 0, restart count
+zero, verified containment, and empty process group and lineage establish a
+second clean recovery failure. The peak improved by 1,142.1 MB relative to
+CP191 but still exceeded the boundary by 321.9 MB. Exact step 10 remains intact;
+no long training launched and no training or capability credit is awarded.
+
+Semantic analysis rejected naive branchwise gradient splitting: recurrent
+branches exchange differentiable consensus state, and the diversity objective
+depends jointly on both final states. Holding either branch constant would
+silently change the claimed objective. CP193 instead preserves the entire
+coupled graph while checkpointing contiguous four-layer transformer groups.
+
+- Prelude, recurrent window, and coda ranges execute in their original order.
+  Concatenate/split view operations inside the recurrent window are collapsed
+  around each unchanged layer sequence, avoiding redundant checkpoint
+  boundaries without changing arithmetic or scoped-adapter positions.
+- Each checkpoint receives the complete trainable parameter tree, updates the
+  resident model inside recomputation, and reopens the exact captured adapter
+  span. Group wrappers are keyed by ordered layer identity and scope, preventing
+  incompatible prelude/window/coda reuse.
+- Gradient execution advances to v4 and cryptographically identifies
+  `transformer_layer_group_checkpoint` with group size four across training
+  config, receipt, migration summary, manifest, and adapter identity. The next
+  migration will bind both CP191 and CP192 recovery failures in chronological
+  order before copying the unchanged step-10 adapter and optimizer.
+
+Validation is green: 85/85 broad focused recurrence, migration, identity,
+launcher, mechanics, pilot, and post-training tests pass. The tests include
+exact ordinary-versus-grouped objective values, identical nonzero gradient
+keys, per-tensor gradient equality, and equal objective telemetry. Focused
+Ruff, bytecode compilation, and diff-integrity checks pass. No resident CP193
+calibration has launched at this source checkpoint.
+
+Evidence-weighted completion remains 27%. This is checkpoint 193 of the
+faithful 292-399 total-checkpoint forecast, leaving approximately 99-206
+checkpoints. No training-completion, mechanics, reasoning-gain, same-checkpoint
+interaction, frontier, external-custody, installed-app, release, or soak credit
+is awarded. Next: publish CP193, create the fresh step-10 migration with both
+failed recovery generations, execute the detached one-step calibration, and
+launch exact training only after a tombstone-free checkpoint/rearm verdict.
+Final long soaks remain deferred.

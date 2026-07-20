@@ -58,6 +58,7 @@ RESUME_MIGRATION_KEYS = frozenset(
         "recovery_attempt_count",
         "recovery_attempts_sha256",
         "activation_rematerialization",
+        "layer_group_size",
         "new_trainer_sha256",
     }
 )
@@ -247,9 +248,15 @@ def _resume_migration_identity(value: Any) -> dict[str, Any]:
         minimum=0,
         maximum=100_000,
     )
-    if value.get("activation_rematerialization") != "per_transformer_layer_checkpoint":
+    if value.get("activation_rematerialization") != "transformer_layer_group_checkpoint":
         _fail("resume_migration_rematerialization_invalid")
-    normalized["activation_rematerialization"] = "per_transformer_layer_checkpoint"
+    normalized["activation_rematerialization"] = "transformer_layer_group_checkpoint"
+    normalized["layer_group_size"] = _integer(
+        value.get("layer_group_size"),
+        role="resume_migration_layer_group_size",
+        minimum=4,
+        maximum=4,
+    )
     return normalized
 
 
@@ -301,6 +308,7 @@ def _migration_certificate_summary(value: Any) -> dict[str, Any]:
                 canonical_json_bytes(recovery_attempts)
             ),
             "activation_rematerialization": change.get("activation_rematerialization"),
+            "layer_group_size": change.get("layer_group_size"),
             "new_trainer_sha256": trainer.get("sha256"),
         }
     )
@@ -973,7 +981,14 @@ def validate_v2_adapter_identity(
         "optimizer_updates_per_sample": 1,
         "finite_loss_and_gradient_required_before_update": True,
     }
-    if schema == "aura.recurrence_streamed_depth_gradient.v3":
+    if schema == "aura.recurrence_streamed_depth_gradient.v4":
+        expected_gradient_execution.update(
+            {
+                "activation_rematerialization": "transformer_layer_group_checkpoint",
+                "layer_group_size": 4,
+            }
+        )
+    elif schema == "aura.recurrence_streamed_depth_gradient.v3":
         expected_gradient_execution["activation_rematerialization"] = (
             "per_transformer_layer_checkpoint"
         )
@@ -997,7 +1012,7 @@ def validate_v2_adapter_identity(
         _fail("gradient_execution_cross_binding_mismatch")
     resume_migration: dict[str, Any] | None = None
     if migration_manifest_present:
-        if schema != "aura.recurrence_streamed_depth_gradient.v3":
+        if schema != "aura.recurrence_streamed_depth_gradient.v4":
             _fail("resume_migration_rematerialization_invalid")
         resume_migration = _resume_migration_identity(config.get("resume_migration"))
         if receipt.get("resume_migration") != resume_migration:

@@ -407,7 +407,8 @@ def verify_calibration(migration_path: Path) -> dict[str, Any]:
         or training_receipt.get("halt_reason") != "wall_clock"
         or training_receipt.get("steps") != expected_step
         or training_receipt.get("gradient_execution", {}).get("activation_rematerialization")
-        != "per_transformer_layer_checkpoint"
+        != "transformer_layer_group_checkpoint"
+        or training_receipt.get("gradient_execution", {}).get("layer_group_size") != 4
         or training_receipt.get("resume_migration") != summary
     ):
         failure_points.append("calibration_training_receipt_invalid")

@@ -261,6 +261,7 @@ def migration_identity_summary(document: Mapping[str, Any]) -> dict[str, Any]:
         "recovery_attempt_count": len(recovery_attempts),
         "recovery_attempts_sha256": _sha(_canonical(recovery_attempts)),
         "activation_rematerialization": change.get("activation_rematerialization"),
+        "layer_group_size": change.get("layer_group_size"),
         "new_trainer_sha256": trainer.get("sha256"),
     }
 
@@ -423,8 +424,9 @@ def prepare_migration(
         "amendment": _binding(amendment),
         "new_trainer": _binding(new_trainer),
         "required_execution_change": {
-            "gradient_schema": "aura.recurrence_streamed_depth_gradient.v3",
-            "activation_rematerialization": "per_transformer_layer_checkpoint",
+            "gradient_schema": "aura.recurrence_streamed_depth_gradient.v4",
+            "activation_rematerialization": "transformer_layer_group_checkpoint",
+            "layer_group_size": 4,
             "optimizer_state_reset": False,
             "adapter_state_reset": False,
             "sample_cursor_reset": False,
@@ -469,8 +471,9 @@ def verify_migration(
         or trainer.get("sha256") != expected_trainer_sha256
         or change
         != {
-            "gradient_schema": "aura.recurrence_streamed_depth_gradient.v3",
-            "activation_rematerialization": "per_transformer_layer_checkpoint",
+            "gradient_schema": "aura.recurrence_streamed_depth_gradient.v4",
+            "activation_rematerialization": "transformer_layer_group_checkpoint",
+            "layer_group_size": 4,
             "optimizer_state_reset": False,
             "adapter_state_reset": False,
             "sample_cursor_reset": False,

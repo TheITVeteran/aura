@@ -639,12 +639,13 @@ def _upgrade_bundle_to_migrated_v3():
     config = json.loads(artifacts["training_config.json"])
     receipt = json.loads(artifacts["receipt.json"])
     gradient = {
-        "schema": "aura.recurrence_streamed_depth_gradient.v3",
+        "schema": "aura.recurrence_streamed_depth_gradient.v4",
         "mode": "depth_serial_exact_sum",
         "concurrent_depth_graphs": 1,
         "optimizer_updates_per_sample": 1,
         "finite_loss_and_gradient_required_before_update": True,
-        "activation_rematerialization": "per_transformer_layer_checkpoint",
+        "activation_rematerialization": "transformer_layer_group_checkpoint",
+        "layer_group_size": 4,
     }
     config["gradient_execution"] = gradient
     receipt["gradient_execution"] = gradient
@@ -665,7 +666,8 @@ def _upgrade_bundle_to_migrated_v3():
         "failure": {"tombstone": {"sha256": "5" * 64}},
         "recovery_attempts": [],
         "required_execution_change": {
-            "activation_rematerialization": "per_transformer_layer_checkpoint"
+            "activation_rematerialization": "transformer_layer_group_checkpoint",
+            "layer_group_size": 4,
         },
         "new_trainer": {"sha256": receipt["trainer_source_sha256"]},
     }
@@ -691,7 +693,8 @@ def _upgrade_bundle_to_migrated_v3():
         "recovery_attempts_sha256": hashlib.sha256(
             canonical_json_bytes(migration["recovery_attempts"])
         ).hexdigest(),
-        "activation_rematerialization": "per_transformer_layer_checkpoint",
+        "activation_rematerialization": "transformer_layer_group_checkpoint",
+        "layer_group_size": 4,
         "new_trainer_sha256": migration["new_trainer"]["sha256"],
     }
     config["resume_migration"] = resume_migration
@@ -732,8 +735,9 @@ def test_migrated_v3_bundle_binds_checkpoint_provenance():
     assert receipt["complete"] is True
     assert receipt["resume_migration"]["source_step"] == 7
     assert receipt["resume_migration"]["activation_rematerialization"] == (
-        "per_transformer_layer_checkpoint"
+        "transformer_layer_group_checkpoint"
     )
+    assert receipt["resume_migration"]["layer_group_size"] == 4
     assert receipt["checkpoint_migration_sha256"]
 
 

@@ -38,7 +38,11 @@ RECURRENCE_NATIVE_SCHEMA_V2 = "aura.recurrence_native_objective.v2"
 class _LayerCheckpointState:
     model: Any
     parameters: Any
-    wrappers: dict[tuple[int, int | None, int | None], Callable[..., Any]]
+    group_size: int
+    wrappers: dict[
+        tuple[tuple[int, ...], int | None, int | None],
+        Callable[..., Any],
+    ]
 
 
 _LAYER_CHECKPOINTS: ContextVar[_LayerCheckpointState | None] = ContextVar(
@@ -78,14 +82,26 @@ def _logits(model: Any, hidden: Any) -> Any:
 
 
 @contextmanager
-def transformer_layer_checkpointing(model: Any, parameters: Any) -> Iterator[None]:
-    """Rematerialize each transformer layer while preserving graph semantics."""
+def transformer_layer_group_checkpointing(
+    model: Any,
+    parameters: Any,
+    *,
+    group_size: int = 4,
+) -> Iterator[None]:
+    """Rematerialize bounded layer groups while preserving graph semantics."""
 
     layers = tuple(model.model.layers)
     if not layers:
         raise ValueError("model has no transformer layers")
+    if type(group_size) is not int or not 1 <= group_size <= len(layers):
+        raise ValueError("group_size must be inside [1, model layer count]")
     token = _LAYER_CHECKPOINTS.set(
-        _LayerCheckpointState(model=model, parameters=parameters, wrappers={})
+        _LayerCheckpointState(
+            model=model,
+            parameters=parameters,
+            group_size=group_size,
+            wrappers={},
+        )
     )
     try:
         yield
@@ -93,31 +109,55 @@ def transformer_layer_checkpointing(model: Any, parameters: Any) -> Iterator[Non
         _LAYER_CHECKPOINTS.reset(token)
 
 
-def _causal_layer(layer: Any, hidden: Any) -> Any:
+def _causal_layers(layers: Sequence[Any], hidden: Any) -> Any:
     from mlx_lm.models.base import create_attention_mask
 
+    layer_sequence = tuple(layers)
+    if not layer_sequence:
+        return hidden
     checkpointed = _LAYER_CHECKPOINTS.get()
-    mask = create_attention_mask(hidden, None)
     if checkpointed is None:
-        return layer(hidden, mask, None)
+        for layer in layer_sequence:
+            hidden = layer(hidden, create_attention_mask(hidden, None), None)
+        return hidden
     activation = current_recurrence_adapter_scope()
     start = activation.start if activation is not None else None
     stop = activation.stop if activation is not None else None
-    key = (id(layer), start, stop)
-    call = checkpointed.wrappers.get(key)
-    if call is None:
-        import mlx.core as mx
+    import mlx.core as mx
 
-        def layer_call(all_parameters: Any, value: Any, attention_mask: Any) -> Any:
-            checkpointed.model.update(all_parameters)
-            if start is None or stop is None:
-                return layer(value, attention_mask, None)
-            with recurrence_adapter_scope(start=start, stop=stop):
-                return layer(value, attention_mask, None)
+    for offset in range(0, len(layer_sequence), checkpointed.group_size):
+        group = layer_sequence[offset : offset + checkpointed.group_size]
+        key = (tuple(id(layer) for layer in group), start, stop)
+        call = checkpointed.wrappers.get(key)
+        if call is None:
 
-        call = mx.checkpoint(layer_call)
-        checkpointed.wrappers[key] = call
-    return call(checkpointed.parameters, hidden, mask)
+            def layer_group_call(
+                all_parameters: Any,
+                value: Any,
+                _group: tuple[Any, ...] = group,
+                _start: int | None = start,
+                _stop: int | None = stop,
+            ) -> Any:
+                checkpointed.model.update(all_parameters)
+
+                def run(current: Any) -> Any:
+                    for member in _group:
+                        current = member(
+                            current,
+                            create_attention_mask(current, None),
+                            None,
+                        )
+                    return current
+
+                if _start is None or _stop is None:
+                    return run(value)
+                with recurrence_adapter_scope(start=_start, stop=_stop):
+                    return run(value)
+
+            call = mx.checkpoint(layer_group_call)
+            checkpointed.wrappers[key] = call
+        hidden = call(checkpointed.parameters, hidden)
+    return hidden
 
 
 def _seed_branch(
@@ -148,8 +188,7 @@ def _prelude_prompt_and_slots(
 
     prompt_length = int(prompt_embeddings.shape[1])
     hidden = mx.concatenate([prompt_embeddings, slot_seed], axis=1)
-    for layer in model.model.layers[:prelude_end]:
-        hidden = _causal_layer(layer, hidden)
+    hidden = _causal_layers(model.model.layers[:prelude_end], hidden)
     return hidden[:, :prompt_length, :], hidden[:, prompt_length:, :]
 
 
@@ -170,11 +209,10 @@ def _window_pass(
         start=prompt_length,
         stop=prompt_length + slot_count,
     ):
-        for layer in model.model.layers[prelude_end:coda_start]:
-            joined = mx.concatenate([prompt_hidden, slot_hidden], axis=1)
-            joined = _causal_layer(layer, joined)
-            prompt_hidden = joined[:, :prompt_length, :]
-            slot_hidden = joined[:, prompt_length:, :]
+        joined = mx.concatenate([prompt_hidden, slot_hidden], axis=1)
+        joined = _causal_layers(model.model.layers[prelude_end:coda_start], joined)
+        prompt_hidden = joined[:, :prompt_length, :]
+        slot_hidden = joined[:, prompt_length:, :]
     return slot_hidden
 
 
@@ -268,8 +306,7 @@ def _persist_and_score(
     prompt_length = int(prompt_embeddings.shape[1])
     slot_count = int(slot_seed.shape[1])
     hidden = mx.concatenate([prompt_embeddings, slot_seed, tail_embeddings], axis=1)
-    for layer in model.model.layers[:prelude_end]:
-        hidden = _causal_layer(layer, hidden)
+    hidden = _causal_layers(model.model.layers[:prelude_end], hidden)
     slot_start = prompt_length
     slot_stop = prompt_length + slot_count
     hidden = mx.concatenate(
@@ -277,10 +314,8 @@ def _persist_and_score(
         axis=1,
     )
     with recurrence_adapter_scope(start=slot_start, stop=slot_stop):
-        for layer in model.model.layers[prelude_end:coda_start]:
-            hidden = _causal_layer(layer, hidden)
-    for layer in model.model.layers[coda_start:]:
-        hidden = _causal_layer(layer, hidden)
+        hidden = _causal_layers(model.model.layers[prelude_end:coda_start], hidden)
+    hidden = _causal_layers(model.model.layers[coda_start:], hidden)
     all_logits = _logits(model, hidden)
     answer_start = prompt_length + slot_count + bridge_count
     prediction_start = answer_start - 1

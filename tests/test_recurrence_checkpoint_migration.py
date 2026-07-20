@@ -251,7 +251,8 @@ def test_migration_copies_exact_state_and_verifies_identity(tmp_path: Path):
 
     assert result["source_step"] == 10
     assert result["source_checkpoint"].startswith("checkpoints/step-00000010-")
-    assert result["activation_rematerialization"] == "per_transformer_layer_checkpoint"
+    assert result["activation_rematerialization"] == "transformer_layer_group_checkpoint"
+    assert result["layer_group_size"] == 4
     assert result["new_trainer_sha256"] == paths["trainer_sha256"]
     document = json.loads(migration.read_text(encoding="ascii"))
     for role in ("complete", "adapter", "optimizer"):

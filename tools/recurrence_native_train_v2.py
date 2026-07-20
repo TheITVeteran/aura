@@ -466,12 +466,16 @@ def _streamed_depth_value_and_grad(
 
         if activation_checkpointing:
             from core.learning.recurrence_native_objective_v2 import (
-                transformer_layer_checkpointing,
+                transformer_layer_group_checkpointing,
             )
 
             def checkpointed_depth_loss(parameters: Any) -> Any:
                 model.update(parameters)
-                with transformer_layer_checkpointing(model, parameters):
+                with transformer_layer_group_checkpointing(
+                    model,
+                    parameters,
+                    group_size=4,
+                ):
                     return depth_loss(model, prompt_tokens, answer_tokens)
 
             value, gradients = mx.value_and_grad(checkpointed_depth_loss)(
@@ -997,7 +1001,7 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
         },
         "gradient_execution": {
             "schema": (
-                "aura.recurrence_streamed_depth_gradient.v3"
+                "aura.recurrence_streamed_depth_gradient.v4"
                 if args.activation_checkpointing
                 else GRADIENT_EXECUTION_SCHEMA
             ),
@@ -1006,7 +1010,10 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
             "optimizer_updates_per_sample": 1,
             "finite_loss_and_gradient_required_before_update": True,
             **(
-                {"activation_rematerialization": "per_transformer_layer_checkpoint"}
+                {
+                    "activation_rematerialization": "transformer_layer_group_checkpoint",
+                    "layer_group_size": 4,
+                }
                 if args.activation_checkpointing
                 else {}
             ),
