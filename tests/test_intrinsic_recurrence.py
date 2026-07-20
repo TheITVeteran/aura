@@ -276,3 +276,39 @@ def test_mismatched_caches_are_refused():
         recurrent_hidden_states(model, TOKENS, plan, caches=wrong)
     with pytest.raises(ValueError, match="make_recurrent_caches"):
         recurrent_hidden_states(model, TOKENS, plan, caches={"prelude": []})
+
+
+# ── One clock: the depth bank must see the intrinsic iteration ──────────
+
+
+def test_depth_conditioned_weights_track_the_intrinsic_iteration():
+    """Two ContextVars for the same concept means the depth bank reports 0
+    for every pass -- a mechanism present in name only."""
+    from core.learning.depth_conditioned_lora import current_depth_index
+
+    assert current_depth_index() == 0
+    with recurrent_iteration(2):
+        assert current_iteration() == 2
+        assert current_depth_index() == 2, (
+            "depth-conditioned LoRA would apply pass-0 weights on pass 2"
+        )
+    assert current_depth_index() == 0, "must restore"
+
+
+def test_the_window_sees_a_consistent_depth_index_per_pass():
+    from core.learning.depth_conditioned_lora import current_depth_index
+
+    model = _model()
+    seen: list[tuple[int, int]] = []
+    original = model.model.layers[3]
+
+    class Spy:
+        def __call__(self, *args, **kwargs):
+            seen.append((current_iteration(), current_depth_index()))
+            return original(*args, **kwargs)
+
+    model.model.layers[3] = Spy()
+    recurrent_hidden_states(
+        model, TOKENS, RecurrentDepthPlan(prelude_end=2, coda_start=6, iterations=4)
+    )
+    assert seen == [(0, 0), (1, 1), (2, 2), (3, 3)]

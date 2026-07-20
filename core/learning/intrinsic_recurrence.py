@@ -271,11 +271,29 @@ def current_iteration() -> int:
 
 @contextmanager
 def recurrent_iteration(index: int):
+    """Publish the iteration index on BOTH recurrence clocks.
+
+    ``depth_conditioned_lora`` keys its per-depth weight deltas off its own
+    ContextVar, which until now was set only by the slot-recurrence loop.
+    Leaving the two clocks separate would mean the depth bank silently
+    reports depth 0 for every pass here -- a mechanism present in name
+    only, which is the same defect CP211 had to repair in v4. So this sets
+    both, and a test pins that the bank sees the intrinsic index.
+
+    This matters specifically because of what the 1.5B sweep measured:
+    cos(pass 1, pass 2) = 0.9994. Applying the SAME map repeatedly barely
+    rotates the state, so depth buys little. Per-iteration weight deltas
+    make each pass a different function, which is what turns repetition
+    into deepening.
+    """
     if type(index) is not int or index < 0:
         raise ValueError("iteration index must be a non-negative integer")
+    from core.learning.depth_conditioned_lora import recurrent_depth_index
+
     token = _ITERATION.set(index)
     try:
-        yield index
+        with recurrent_depth_index(index):
+            yield index
     finally:
         _ITERATION.reset(token)
 
