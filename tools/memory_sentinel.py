@@ -70,6 +70,7 @@ RING_MAX_LINES = 600  # ~20 minutes at 2s
 RING_WINDOW_S = 20 * 60
 RING_MAX_LINES_LIMIT = 100_000
 IMMEDIATE_KILL_OVERSHOOT = 1.15
+TARGET_OBSERVATION_GRACE_S = 10.0
 _RING_LINE_COUNTS: dict[Path, int] = {}
 
 
@@ -242,6 +243,24 @@ def target_process_is_current(
     )
 
 
+def target_identity_state(pid: int, started_at: float) -> str:
+    """Classify target identity without depending on memory telemetry."""
+
+    try:
+        process = psutil.Process(int(pid))
+        observed_started_at = float(process.create_time())
+        status = str(process.status()).lower()
+    except psutil.NoSuchProcess:
+        return "gone"
+    except (psutil.Error, OSError, RuntimeError, SystemError, TypeError, ValueError):
+        return "unobservable"
+    if abs(observed_started_at - float(started_at)) > 0.5:
+        return "reused"
+    if status in {"dead", "zombie"}:
+        return "gone"
+    return "current"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pid", type=int, required=True)
@@ -349,8 +368,10 @@ def main(argv: list[str] | None = None) -> int:
             int(args.ring_window_seconds / max(0.5, float(args.interval))) + 1,
         ),
     )
+    observation_gap_started_at: float | None = None
     # Bounded by the target's own lifetime: the sentinel exists exactly
-    # as long as the process it guards.
+    # as long as the process it guards. Process identity is checked separately
+    # from RSS so one failed metric read cannot impersonate process death.
     while target_process_is_current(target, target_started_at):
         core_mb, child_mb, proc_count, footprint_mb = tree_rss_mb(
             args.pid,
@@ -568,8 +589,45 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         time.sleep(max(0.5, args.interval))
-        tree = _OBSERVER.process_tree(args.pid, recursive=True)
-        target = _root_process(tree, args.pid)
+        while True:
+            tree = _OBSERVER.process_tree(args.pid, recursive=True)
+            target = _root_process(tree, args.pid)
+            if target_process_is_current(target, target_started_at):
+                if observation_gap_started_at is not None:
+                    _evidence("resource observation recovered for guarded target")
+                    observation_gap_started_at = None
+                break
+            identity_state = target_identity_state(args.pid, target_started_at)
+            if identity_state in {"gone", "reused"}:
+                break
+            now = time.monotonic()
+            if observation_gap_started_at is None:
+                observation_gap_started_at = now
+                _evidence(
+                    "resource observation unavailable while target identity is not "
+                    "confirmed gone; retrying"
+                )
+            if now - observation_gap_started_at >= TARGET_OBSERVATION_GRACE_S:
+                killed = kill_tree(args.pid)
+                _write_tombstone(
+                    args.tombstone_dir,
+                    {
+                        "schema": "aura.memory_sentinel.tombstone.v1",
+                        "reason": "resource observation unavailable beyond bounded grace",
+                        "guard_stage": guard_stage,
+                        "startup_lethal_mb": args.startup_lethal_mb,
+                        "steady_lethal_mb": args.lethal_mb,
+                        "identity_state": identity_state,
+                        "killed_pids": killed,
+                        "written_at": time.time(),
+                    },
+                )
+                _evidence(
+                    "exiting: resource observation unavailable beyond bounded grace; "
+                    f"target tree killed={killed}"
+                )
+                return 2
+            time.sleep(max(0.5, args.interval))
 
     # Target vanished without OUR kill: capture the unified log around
     # the death immediately — silent SIGKILLs leave their only evidence

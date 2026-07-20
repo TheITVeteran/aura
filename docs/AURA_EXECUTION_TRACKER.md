@@ -21998,3 +21998,41 @@ is awarded. Next: publish CP195, bind all four failed recoveries into a fresh
 step-10 migration, execute the detached one-step calibration, and launch exact
 training only after a tombstone-free checkpoint/rearm verdict. Final long soaks
 remain deferred.
+
+## Checkpoint 2026-07-20-196: Sentinel Observation-Lifetime Repair
+
+CP195's exact discrete-adjoint calibration changed the empirical memory result
+decisively. The first resident step completed its bounded graph work in about
+281 seconds while the external sentinel observed a 29,358.3-MB compute peak,
+44,369.7 MB below the immutable 73,728-MB compute ceiling. The prior four
+checkpoint-placement attempts converged near 74 GB; the discrete adjoint did
+not. However, this run is not admitted as a successful calibration. One
+transient root-process observation failure made the sentinel report the trainer
+as vanished and exit at 04:24:03. The still-live trainer published its signed
+compute-release request six seconds later and then failed closed after the
+120-second acknowledgement deadline. Trainer return code 1 and the missing
+release acknowledgement prohibit both a calibration verdict and long launch.
+The exact step-10 checkpoint remains unchanged.
+
+The repair separates process identity from optional RSS telemetry in the
+canonical host observer. A failed memory-info call now retains PID, parent,
+creation time, and status with an explicitly unavailable zero RSS metric rather
+than deleting the process observation. The external sentinel independently
+confirms PID identity after any missing tree sample and retries within a bounded
+10-second observation window. A recovered sample resumes the same guard state;
+a sustained blind interval remains fail-closed, writes a tombstone, and kills
+the guarded tree. It cannot silently disable memory enforcement or acknowledge
+a lease from unobserved telemetry.
+
+Validation is green: 48/48 sentinel, resource-observer hermeticity and
+ownership, and resource-stage handshake tests pass. Focused Ruff and bytecode
+compilation pass. No long training has launched at this checkpoint.
+
+Evidence-weighted completion remains 27%. This is checkpoint 196 of the
+faithful 292-399 total-checkpoint forecast, leaving approximately 96-203
+checkpoints. No training-completion, mechanics, reasoning-gain, same-checkpoint
+interaction, frontier, external-custody, installed-app, release, or soak credit
+is awarded. Next: publish CP196, preserve the failed control-plane attempt,
+rerun the exact one-step calibration with the repaired sentinel, verify the
+complete acquire/release/rearm chain, and launch detached training immediately
+only after that immutable verdict passes. Final long soaks remain deferred.

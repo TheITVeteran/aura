@@ -144,6 +144,54 @@ def test_memory_sentinel_rejects_reused_target_pid():
     assert memory_sentinel.target_process_is_current(target, 100.0) is False
 
 
+def test_memory_sentinel_identity_survives_transient_rss_failure(monkeypatch):
+    class Process:
+        pid = 11
+
+        def oneshot(self):
+            class Context:
+                def __enter__(self):
+                    return None
+
+                def __exit__(self, *_args):
+                    return False
+
+            return Context()
+
+        def ppid(self):
+            return 1
+
+        def create_time(self):
+            return 100.0
+
+        def status(self):
+            return "running"
+
+        def memory_info(self):
+            raise OSError("transient rss failure")
+
+    observed = memory_sentinel._OBSERVER._lightweight_process_from_handle(Process())
+
+    assert observed is not None
+    assert observed.pid == 11
+    assert observed.create_time == 100.0
+    assert observed.rss_bytes == 0
+
+
+def test_memory_sentinel_confirms_identity_after_missing_tree_sample(monkeypatch):
+    process = type(
+        "Process",
+        (),
+        {
+            "create_time": lambda self: 100.0,
+            "status": lambda self: "running",
+        },
+    )()
+    monkeypatch.setattr(memory_sentinel.psutil, "Process", lambda _pid: process)
+
+    assert memory_sentinel.target_identity_state(11, 100.0) == "current"
+
+
 def test_memory_sentinel_transitions_from_startup_to_steady_guard(
     tmp_path,
     monkeypatch,

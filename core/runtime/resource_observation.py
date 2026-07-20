@@ -553,18 +553,29 @@ class HostResourceObserver:
 
         try:
             with process.oneshot():
-                return ProcessObservation(
-                    provenance=self.provenance,
-                    pid=int(process.pid),
-                    ppid=int(process.ppid()),
-                    create_time=float(process.create_time()),
-                    status=str(process.status()),
-                    name="",
-                    cmdline=(),
-                    rss_bytes=int(getattr(process.memory_info(), "rss", 0) or 0),
-                )
+                pid = int(process.pid)
+                ppid = int(process.ppid())
+                create_time = float(process.create_time())
+                status = str(process.status())
         except (psutil.Error, OSError, RuntimeError, SystemError, TypeError, ValueError):
             return None
+        try:
+            rss_bytes = int(getattr(process.memory_info(), "rss", 0) or 0)
+        except (psutil.Error, OSError, RuntimeError, SystemError, TypeError, ValueError):
+            # Identity is authoritative for process-lifetime decisions. A
+            # transient RSS read failure must degrade one metric, not make a
+            # live guarded process appear to have exited.
+            rss_bytes = 0
+        return ProcessObservation(
+            provenance=self.provenance,
+            pid=pid,
+            ppid=ppid,
+            create_time=create_time,
+            status=status,
+            name="",
+            cmdline=(),
+            rss_bytes=rss_bytes,
+        )
 
     def process_tree(
         self,
