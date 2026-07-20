@@ -333,3 +333,12 @@ def test_training_loop_releases_step_graph_before_holdout_or_next_rhs():
 
     assert release < cache_barrier < checkpoint_branch
     assert "del value\n            mx.clear_cache()" in source
+
+
+def test_resource_guard_ack_precedes_training_clock_and_first_graph():
+    source = inspect.getsource(_run)
+    handshake = source.index("_await_resource_guard(")
+    training_clock = source.index("started_monotonic = time.monotonic()")
+    training_loop = source.index("while step < args.max_steps")
+
+    assert handshake < training_clock < training_loop

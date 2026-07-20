@@ -1,0 +1,19 @@
+{
+  "schema": "aura.memory_sentinel.tombstone.v1",
+  "reason": "external sentinel killed process tree at lethal ceiling",
+  "lethal_mb": 59392.0,
+  "final_sample": {
+    "at": 1784530761.518194,
+    "core_mb": 17587.6,
+    "child_mb": 0.0,
+    "footprint_mb": 63302.6,
+    "managed_mb": 63302.6,
+    "procs": 1,
+    "observation_source": "host",
+    "observation_scenario_id": "external-memory-sentinel"
+  },
+  "killed_pids": [
+    71259
+  ],
+  "written_at": 1784530761.548376
+}

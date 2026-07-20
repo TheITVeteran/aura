@@ -5,6 +5,10 @@ from pathlib import Path
 
 import pytest
 
+from core.runtime.resource_stage_guard import (
+    publish_armed_ack,
+    publish_ready_marker,
+)
 from tools import verify_resident_v3_training_admission as admission
 
 
@@ -109,6 +113,10 @@ def _resume_contract(tmp_path: Path):
         },
         "partial": {"checkpoint_every_steps": 5},
         "resume": {"checkpoint_every_steps": 5},
+        "sentinel": {
+            "partial_stage_path": str(tmp_path / "adapter/partial-stage.json"),
+            "resume_stage_path": str(tmp_path / "adapter/resume-stage.json"),
+        },
     }
     command = [
         str(tmp_path / ".venv/bin/python"),
@@ -134,6 +142,12 @@ def _resume_contract(tmp_path: Path):
         "540",
         "--checkpoint-every",
         "5",
+        "--resource-stage-path",
+        amendment["sentinel"]["resume_stage_path"],
+        "--resource-startup-lethal-mb",
+        "73728",
+        "--resource-steady-lethal-mb",
+        "59392",
         "--resume",
     ]
     return protocol, amendment, {"command": command, "plan_sha256": "a" * 64, "command_sha256": "b" * 64}
@@ -158,6 +172,8 @@ def test_partial_command_forbids_resume_flag(tmp_path, monkeypatch):
     monkeypatch.setattr(admission, "REPO_ROOT", tmp_path)
     protocol, amendment, plan = _resume_contract(tmp_path)
     plan["command"].remove("--resume")
+    stage_index = plan["command"].index("--resource-stage-path") + 1
+    plan["command"][stage_index] = amendment["sentinel"]["partial_stage_path"]
 
     evidence = admission._verify_resume_command(
         plan,
@@ -202,10 +218,39 @@ def test_footprint_requires_clean_sentinel_and_stays_below_lethal(tmp_path, monk
     ring = tmp_path / "ring.jsonl"
     ring.write_text(
         "\n".join(
-            json.dumps({"at": index, "managed_mb": managed})
-            for index, managed in enumerate((22000.0, 41000.0, 57000.0), start=1)
+            json.dumps(
+                {
+                    "at": index,
+                    "managed_mb": managed,
+                    "guard_stage": stage,
+                    "active_lethal_mb": lethal,
+                    "marker_observed": observed,
+                }
+            )
+            for index, (managed, stage, lethal, observed) in enumerate(
+                (
+                    (22000.0, "startup", 73728.0, False),
+                    (57000.0, "steady", 59392.0, True),
+                    (41000.0, "steady", 59392.0, True),
+                ),
+                start=1,
+            )
         )
         + "\n"
+    )
+    stage_path = tmp_path / "stage.json"
+    _marker, marker_raw = publish_ready_marker(
+        stage_path,
+        target_pid=123,
+        trainer_sha256="c" * 64,
+    )
+    publish_armed_ack(
+        stage_path,
+        marker_raw=marker_raw,
+        target_pid=123,
+        sentinel_pid=456,
+        startup_lethal_mb=73728.0,
+        steady_lethal_mb=59392.0,
     )
     plan = {
         "command": [
@@ -215,6 +260,10 @@ def test_footprint_requires_clean_sentinel_and_stays_below_lethal(tmp_path, monk
             "123",
             "--lethal-mb",
             "59392",
+            "--startup-lethal-mb",
+            "73728",
+            "--steady-marker",
+            str(stage_path),
             "--interval",
             "2.0",
             "--ring",
@@ -224,20 +273,38 @@ def test_footprint_requires_clean_sentinel_and_stays_below_lethal(tmp_path, monk
         ],
         "plan_sha256": "a" * 64,
     }
-    receipt = {"returncode": 0, "status": "passed", "receipt_sha256": "b" * 64}
+    receipt = {
+        "returncode": 0,
+        "status": "passed",
+        "receipt_sha256": "b" * 64,
+        "child_pid": 456,
+    }
     monkeypatch.setattr(admission, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(admission, "_detached_terminal", lambda *_args, **_kwargs: (plan, receipt))
 
-    evidence = admission._verify_footprint(ring, sentinel_dir, trainer_pid=123)
+    evidence = admission._verify_footprint(
+        ring,
+        sentinel_dir,
+        trainer_pid=123,
+        stage_path=stage_path,
+        expected_trainer_sha256="c" * 64,
+    )
     assert evidence["sample_count"] == 3
-    assert evidence["peak_managed_mb"] == 57000.0
+    assert evidence["startup_peak_managed_mb"] == 22000.0
+    assert evidence["steady_peak_managed_mb"] == 57000.0
 
     (sentinel_dir / "sentinel_tombstone_1.json").write_text("{}")
     with pytest.raises(
         admission.ResidentV3TrainingAdmissionError,
         match="memory_sentinel_lethal_abort",
     ):
-        admission._verify_footprint(ring, sentinel_dir, trainer_pid=123)
+        admission._verify_footprint(
+            ring,
+            sentinel_dir,
+            trainer_pid=123,
+            stage_path=stage_path,
+            expected_trainer_sha256="c" * 64,
+        )
 
 
 def test_admission_output_is_create_once(tmp_path):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import resource
 
@@ -12,6 +13,11 @@ from core.runtime.resource_observation import (
     ObservationSource,
     ProcessObservation,
     ProcessTableObservation,
+)
+from core.runtime.resource_stage_guard import (
+    ack_path,
+    publish_ready_marker,
+    read_armed_ack,
 )
 from tools import memory_sentinel
 from tools.memory_sentinel import should_kill_for_memory
@@ -132,6 +138,144 @@ def test_memory_sentinel_rejects_reused_target_pid():
     )
 
     assert memory_sentinel.target_process_is_current(target, 100.0) is False
+
+
+def test_memory_sentinel_transitions_from_startup_to_steady_guard(
+    tmp_path,
+    monkeypatch,
+):
+    provenance = ObservationProvenance(
+        source=ObservationSource.HOST,
+        scenario_id="sentinel-stage-test",
+    )
+    target = ProcessObservation(
+        provenance=provenance,
+        pid=123,
+        ppid=1,
+        create_time=100.0,
+        status="running",
+        name="trainer",
+        cmdline=("python", "trainer.py"),
+        rss_bytes=100 * 1024 * 1024,
+    )
+    live = ProcessTableObservation(provenance=provenance, processes=(target,))
+    dead = ProcessTableObservation(provenance=provenance, processes=())
+
+    class Observer:
+        def __init__(self):
+            self.calls = 0
+
+        def process_tree(self, _pid, *, recursive):
+            assert recursive is True
+            self.calls += 1
+            return live if self.calls == 1 else dead
+
+    marker_path = tmp_path / "ready.json"
+    _marker, marker_raw = publish_ready_marker(
+        marker_path,
+        target_pid=123,
+        trainer_sha256="d" * 64,
+    )
+    ring = tmp_path / "ring.jsonl"
+    monkeypatch.setattr(memory_sentinel, "_OBSERVER", Observer())
+    monkeypatch.setattr(
+        memory_sentinel,
+        "tree_rss_mb",
+        lambda *_args, **_kwargs: (56000.0, 0.0, 1, 56000.0),
+    )
+    monkeypatch.setattr(memory_sentinel.time, "sleep", lambda _seconds: None)
+
+    assert memory_sentinel.main(
+        [
+            "--pid",
+            "123",
+            "--lethal-mb",
+            "59392",
+            "--startup-lethal-mb",
+            "73728",
+            "--steady-marker",
+            str(marker_path),
+            "--ring",
+            str(ring),
+            "--tombstone-dir",
+            str(tmp_path),
+        ]
+    ) == 0
+
+    acknowledgement, _raw = read_armed_ack(
+        marker_path,
+        marker_raw=marker_raw,
+        expected_target_pid=123,
+        startup_lethal_mb=73728.0,
+        steady_lethal_mb=59392.0,
+    )
+    assert acknowledgement["stage"] == "steady_memory_guard_armed"
+    assert ack_path(marker_path).is_file()
+    sample = json.loads(ring.read_text().splitlines()[0])
+    assert sample["guard_stage"] == "steady"
+    assert sample["active_lethal_mb"] == 59392.0
+    assert sample["marker_observed"] is True
+
+
+def test_memory_sentinel_kills_target_on_invalid_stage_handshake(
+    tmp_path,
+    monkeypatch,
+):
+    provenance = ObservationProvenance(
+        source=ObservationSource.HOST,
+        scenario_id="sentinel-invalid-stage-test",
+    )
+    target = ProcessObservation(
+        provenance=provenance,
+        pid=123,
+        ppid=1,
+        create_time=100.0,
+        status="running",
+        name="trainer",
+        cmdline=("python", "trainer.py"),
+        rss_bytes=100 * 1024 * 1024,
+    )
+    table = ProcessTableObservation(provenance=provenance, processes=(target,))
+
+    class Observer:
+        def process_tree(self, _pid, *, recursive):
+            assert recursive is True
+            return table
+
+    marker_path = tmp_path / "ready.json"
+    marker_path.write_text("{}\n", encoding="utf-8")
+    killed: list[int] = []
+    monkeypatch.setattr(memory_sentinel, "_OBSERVER", Observer())
+    monkeypatch.setattr(
+        memory_sentinel,
+        "tree_rss_mb",
+        lambda *_args, **_kwargs: (56000.0, 0.0, 1, 56000.0),
+    )
+    monkeypatch.setattr(
+        memory_sentinel,
+        "kill_tree",
+        lambda pid: killed.append(pid) or [pid],
+    )
+
+    assert memory_sentinel.main(
+        [
+            "--pid",
+            "123",
+            "--lethal-mb",
+            "59392",
+            "--startup-lethal-mb",
+            "73728",
+            "--steady-marker",
+            str(marker_path),
+            "--ring",
+            str(tmp_path / "ring.jsonl"),
+            "--tombstone-dir",
+            str(tmp_path),
+        ]
+    ) == 2
+    assert killed == [123]
+    tombstone = next(tmp_path.glob("sentinel_tombstone_*.json"))
+    assert "invalid steady-stage" in tombstone.read_text(encoding="utf-8")
 
 
 def test_memory_sentinel_default_ceiling_is_host_safe_on_64gb_node(monkeypatch):

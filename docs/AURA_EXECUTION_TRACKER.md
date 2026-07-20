@@ -21494,3 +21494,58 @@ frontier, external-custody, installed-app, release, or soak credit is awarded.
 Next: publish CP185, execute the resource-guarded forced partial, require a
 tombstone-free memory profile, then launch the exact resume and continue the
 model-free admission/freeze preparation. Final long soaks remain deferred.
+
+## Checkpoint 2026-07-20-186: Staged Resident Memory Guard
+
+The CP185 forced-partial is a failed startup run, not training evidence. Its
+external sentinel killed PID 71259 at 63,302.6 MB during resident checkpoint
+loading, before any optimizer step. The static 59,392-MB ceiling conflated a
+bounded model-load transient with the lower steady-state ceiling needed to
+catch recurrence graph growth. The trainer receipt records return code `-9`,
+no timeout or restart, verified containment, and empty process group and
+lineage. `resource_failure_cp186.json` binds that receipt, sentinel receipt,
+tombstone, footprint ring, diagnosis, and zero-credit disposition.
+
+- `core/runtime/resource_stage_guard.py` defines one strict create-once
+  handshake shared by trainer, sentinel, and admission verifier. Canonical JSON,
+  duplicate-key rejection, no-follow/create-exclusive file operations, exact
+  schemas, trainer and sentinel PIDs, trainer source hash, random nonce, marker
+  hash, ceilings, and timestamps are validated on both sides.
+- `tools/memory_sentinel.py` can now guard two irreversible stages. Startup is
+  capped at 73,728 MB. After model load and exact-resume setup, the trainer
+  publishes its ready marker; only when observed footprint is at or below
+  59,392 MB may the sentinel publish the bound acknowledgement and arm the
+  steady ceiling. Every sample receipts stage, active ceiling, and marker
+  observation. A malformed handshake kills the target tree and writes a
+  distinct tombstone rather than leaving a loaded trainer unguarded.
+- `tools/recurrence_native_train_v2.py` waits for that acknowledgement before
+  starting its training clock or constructing the first gradient graph. A
+  missing acknowledgement fails on a bounded timeout. Resource-stage paths and
+  ceilings remain detached execution evidence rather than semantic training
+  configuration, so partial and exact-resume phases can use separate create-
+  once markers without changing the adapter's deterministic config identity.
+- The launcher automatically starts a phase-bound sentinel after the detached
+  trainer, stops a target that could not be guarded, and rejects changed source
+  hashes, stale marker/ack/ring/run paths, wrong ceilings, or a mismatched
+  partial checkpoint. The independent admission verifier now requires startup
+  and steady samples for both phases, no sample at or above its active ceiling,
+  an irreversible stage transition, no tombstone, and exact trainer-hash,
+  trainer-PID, sentinel-PID, marker-hash, and limit bindings.
+- `resident_32b_v3_cp186/protocol.json` freezes a fresh adapter and optimizer
+  identity. It changes only resource staging: model, corpus, deterministic
+  order, v3 objective, bridge, recurrence topology, optimizer, holdout guard,
+  directional pilot, and confirmatory decision rules remain unchanged.
+
+Validation is green: 56/56 focused resource-stage, sentinel, launcher,
+admission, exact-resume, streamed-gradient, and graph-lifetime tests pass;
+focused Ruff and bytecode compilation pass; the actual resident-32B partial
+dry-run preflight passes against the frozen source hashes. The forced partial
+and resume have not launched at this checkpoint.
+
+Evidence-weighted completion remains 27%. This is checkpoint 186 of the faithful
+292-399 total-checkpoint forecast, leaving approximately 106-213 checkpoints.
+No training, mechanics, reasoning-gain, frontier, external-custody,
+installed-app, release, or soak credit is awarded. Next: publish CP186, run the
+staged forced partial, verify a tombstone-free startup-to-steady transition,
+then run exact resume and issue the independent admission certificate. Final
+long soaks remain deferred.

@@ -1,0 +1,14 @@
+{"at":1784530735.2704809,"core_mb":17810.9,"child_mb":0.0,"footprint_mb":42647.7,"managed_mb":42647.7,"procs":1,"observation_source":"host","observation_scenario_id":"external-memory-sentinel"}
+{"at":1784530737.279572,"core_mb":17824.7,"child_mb":0.0,"footprint_mb":45961.0,"managed_mb":45961.0,"procs":1,"observation_source":"host","observation_scenario_id":"external-memory-sentinel"}
+{"at":1784530739.2919931,"core_mb":17825.9,"child_mb":0.0,"footprint_mb":41006.5,"managed_mb":41006.5,"procs":1,"observation_source":"host","observation_scenario_id":"external-memory-sentinel"}
+{"at":1784530741.3120818,"core_mb":17826.2,"child_mb":0.0,"footprint_mb":35267.0,"managed_mb":35267.0,"procs":1,"observation_source":"host","observation_scenario_id":"external-memory-sentinel"}
+{"at":1784530743.327341,"core_mb":17826.4,"child_mb":0.0,"footprint_mb":32281.3,"managed_mb":32281.3,"procs":1,"observation_source":"host","observation_scenario_id":"external-memory-sentinel"}
+{"at":1784530745.349487,"core_mb":17827.0,"child_mb":0.0,"footprint_mb":29313.6,"managed_mb":29313.6,"procs":1,"observation_source":"host","observation_scenario_id":"external-memory-sentinel"}
+{"at":1784530747.370178,"core_mb":17827.1,"child_mb":0.0,"footprint_mb":25740.2,"managed_mb":25740.2,"procs":1,"observation_source":"host","observation_scenario_id":"external-memory-sentinel"}
+{"at":1784530749.384923,"core_mb":17827.2,"child_mb":0.0,"footprint_mb":21935.7,"managed_mb":21935.7,"procs":1,"observation_source":"host","observation_scenario_id":"external-memory-sentinel"}
+{"at":1784530751.397116,"core_mb":17826.2,"child_mb":0.0,"footprint_mb":28483.7,"managed_mb":28483.7,"procs":1,"observation_source":"host","observation_scenario_id":"external-memory-sentinel"}
+{"at":1784530753.410953,"core_mb":17826.8,"child_mb":0.0,"footprint_mb":42111.5,"managed_mb":42111.5,"procs":1,"observation_source":"host","observation_scenario_id":"external-memory-sentinel"}
+{"at":1784530755.420599,"core_mb":17823.9,"child_mb":0.0,"footprint_mb":51246.2,"managed_mb":51246.2,"procs":1,"observation_source":"host","observation_scenario_id":"external-memory-sentinel"}
+{"at":1784530757.443889,"core_mb":17617.6,"child_mb":0.0,"footprint_mb":56515.0,"managed_mb":56515.0,"procs":1,"observation_source":"host","observation_scenario_id":"external-memory-sentinel"}
+{"at":1784530759.489449,"core_mb":17595.9,"child_mb":0.0,"footprint_mb":60494.0,"managed_mb":60494.0,"procs":1,"observation_source":"host","observation_scenario_id":"external-memory-sentinel"}
+{"at":1784530761.518194,"core_mb":17587.6,"child_mb":0.0,"footprint_mb":63302.6,"managed_mb":63302.6,"procs":1,"observation_source":"host","observation_scenario_id":"external-memory-sentinel"}

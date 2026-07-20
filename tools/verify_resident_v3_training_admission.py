@@ -29,6 +29,12 @@ from core.brain.llm.latent_cortex.recurrence_adapter_identity_v2 import (  # noq
 )
 from core.runtime.atomic_writer import atomic_write_bytes  # noqa: E402
 from core.runtime.file_read_gateway import read_stable_bytes  # noqa: E402
+from core.runtime.resource_stage_guard import (  # noqa: E402
+    ResourceStageGuardError,
+    ack_path,
+    read_armed_ack,
+    read_ready_marker,
+)
 from tools import run_detached_step as detached  # noqa: E402
 from tools.run_latent_cortex_paired_campaign import (  # noqa: E402
     model_behavior_bundle_identity,
@@ -283,10 +289,12 @@ def _verify_resume_command(
     envelope = amendment.get("resource_envelope")
     training = protocol.get("training")
     phase_contract = amendment.get(phase)
+    sentinel = amendment.get("sentinel")
     if (
         not isinstance(envelope, Mapping)
         or not isinstance(training, Mapping)
         or not isinstance(phase_contract, Mapping)
+        or not isinstance(sentinel, Mapping)
     ):
         _fail("resume_contract_invalid")
     try:
@@ -299,6 +307,12 @@ def _verify_resume_command(
         memory_limit = float(wrapper_options.get("--memory-limit-gb", "nan"))
         cache_limit = float(wrapper_options.get("--cache-limit-gb", "nan"))
         wired_limit = float(wrapper_options.get("--wired-limit-gb", "nan"))
+        startup_lethal_mb = float(
+            trainer_options.get("--resource-startup-lethal-mb", "nan")
+        )
+        steady_lethal_mb = float(
+            trainer_options.get("--resource-steady-lethal-mb", "nan")
+        )
         max_steps = int(trainer_options.get("--max-steps", "-1"))
         checkpoint_every = int(trainer_options.get("--checkpoint-every", "-1"))
     except (TypeError, ValueError, OverflowError) as exc:
@@ -315,6 +329,10 @@ def _verify_resume_command(
         or trainer_options.get("--out-dir") != training.get("output_dir")
         or trainer_options.get("--adapter-id") != training.get("adapter_id")
         or trainer_options.get("--objective") != "v3"
+        or trainer_options.get("--resource-stage-path")
+        != sentinel.get(f"{phase}_stage_path")
+        or startup_lethal_mb != 73728.0
+        or steady_lethal_mb != 59392.0
         or max_steps != training.get("max_steps")
         or checkpoint_every != phase_contract.get("checkpoint_every_steps")
     ):
@@ -427,6 +445,8 @@ def _verify_footprint(
     sentinel_dir: Path,
     *,
     trainer_pid: int,
+    stage_path: Path,
+    expected_trainer_sha256: str,
 ) -> dict[str, Any]:
     plan, receipt = _detached_terminal(sentinel_dir, role="memory_sentinel")
     if receipt.get("returncode") != 0 or receipt.get("status") != "passed":
@@ -435,11 +455,19 @@ def _verify_footprint(
     if not isinstance(command, list):
         _fail("memory_sentinel_command_invalid")
     options = _option_map(command[2:], role="memory_sentinel")
-    lethal_mb = float(options.get("--lethal-mb", "nan"))
+    try:
+        lethal_mb = float(options.get("--lethal-mb", "nan"))
+        startup_lethal_mb = float(options.get("--startup-lethal-mb", "nan"))
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ResidentV3TrainingAdmissionError(
+            "memory_sentinel_command_mismatch"
+        ) from exc
     if (
         command[1] != str(REPO_ROOT / "tools/memory_sentinel.py")
         or int(options.get("--pid", "-1")) != trainer_pid
         or lethal_mb != 59392.0
+        or startup_lethal_mb != 73728.0
+        or Path(options.get("--steady-marker", "")) != stage_path
         or Path(options.get("--ring", "")) != ring_path
     ):
         _fail("memory_sentinel_command_mismatch")
@@ -461,25 +489,72 @@ def _verify_footprint(
         raise ResidentV3TrainingAdmissionError("memory_sample_invalid") from exc
     if not samples:
         _fail("memory_samples_missing")
-    managed = [sample.get("managed_mb") for sample in samples]
-    if any(
-        isinstance(value, bool)
-        or not isinstance(value, (int, float))
-        or not math.isfinite(float(value))
-        or float(value) < 0.0
-        for value in managed
+    stages: list[str] = []
+    startup_values: list[float] = []
+    steady_values: list[float] = []
+    for sample in samples:
+        managed = sample.get("managed_mb")
+        stage = sample.get("guard_stage")
+        active_lethal = sample.get("active_lethal_mb")
+        marker_observed = sample.get("marker_observed")
+        expected_lethal = startup_lethal_mb if stage == "startup" else lethal_mb
+        if (
+            isinstance(managed, bool)
+            or not isinstance(managed, (int, float))
+            or not math.isfinite(float(managed))
+            or float(managed) < 0.0
+            or stage not in {"startup", "steady"}
+            or active_lethal != expected_lethal
+            or type(marker_observed) is not bool
+            or (stage == "steady" and marker_observed is not True)
+        ):
+            _fail("memory_sample_invalid")
+        if float(managed) >= expected_lethal:
+            _fail("memory_envelope_exceeded")
+        stages.append(stage)
+        (startup_values if stage == "startup" else steady_values).append(
+            float(managed)
+        )
+    if not startup_values or not steady_values:
+        _fail("memory_guard_stage_evidence_missing")
+    first_steady = stages.index("steady")
+    if "startup" in stages[first_steady:]:
+        _fail("memory_guard_stage_regressed")
+    try:
+        marker, marker_raw = read_ready_marker(
+            stage_path,
+            expected_target_pid=trainer_pid,
+        )
+        acknowledgement, acknowledgement_raw = read_armed_ack(
+            stage_path,
+            marker_raw=marker_raw,
+            expected_target_pid=trainer_pid,
+            startup_lethal_mb=startup_lethal_mb,
+            steady_lethal_mb=lethal_mb,
+        )
+    except ResourceStageGuardError as exc:
+        raise ResidentV3TrainingAdmissionError(
+            "memory_guard_handshake_invalid"
+        ) from exc
+    if (
+        marker.get("trainer_sha256") != expected_trainer_sha256
+        or acknowledgement.get("sentinel_pid") != receipt.get("child_pid")
     ):
-        _fail("memory_sample_invalid")
-    peak = max(float(value) for value in managed)
-    if peak >= lethal_mb:
-        _fail("memory_envelope_exceeded")
+        _fail("memory_guard_handshake_binding_mismatch")
     return {
         "sample_count": len(samples),
-        "peak_managed_mb": peak,
-        "lethal_mb": lethal_mb,
+        "startup_sample_count": len(startup_values),
+        "steady_sample_count": len(steady_values),
+        "startup_peak_managed_mb": max(startup_values),
+        "steady_peak_managed_mb": max(steady_values),
+        "startup_lethal_mb": startup_lethal_mb,
+        "steady_lethal_mb": lethal_mb,
         "head_at": samples[0].get("at"),
         "tail_at": samples[-1].get("at"),
         "ring_sha256": _sha256(raw),
+        "marker_sha256": _sha256(marker_raw),
+        "ack_sha256": _sha256(acknowledgement_raw),
+        "ack_path": str(ack_path(stage_path)),
         "sentinel_plan_sha256": plan.get("plan_sha256"),
         "sentinel_receipt_sha256": receipt.get("receipt_sha256"),
     }
@@ -652,11 +727,19 @@ def verify(args: argparse.Namespace) -> dict[str, Any]:
         args.partial_footprint_ring,
         args.partial_sentinel_run_dir,
         trainer_pid=int(partial_receipt["child_pid"]),
+        stage_path=Path(amendment["sentinel"]["partial_stage_path"]),
+        expected_trainer_sha256=str(
+            amendment["resource_envelope"]["trainer_sha256"]
+        ),
     )
     resume_footprint = _verify_footprint(
         args.resume_footprint_ring,
         args.resume_sentinel_run_dir,
         trainer_pid=int(resume_receipt["child_pid"]),
+        stage_path=Path(amendment["sentinel"]["resume_stage_path"]),
+        expected_trainer_sha256=str(
+            amendment["resource_envelope"]["trainer_sha256"]
+        ),
     )
     payload = {
         "schema": SCHEMA,

@@ -18,6 +18,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from core.runtime.file_read_gateway import read_stable_bytes  # noqa: E402
+from core.runtime.resource_stage_guard import ack_path  # noqa: E402
 
 PROTOCOL_SCHEMA = "aura.recurrence_native_resident_protocol.v2"
 AMENDMENT_SCHEMA = "aura.recurrence_native_resident_protocol_amendment.v1"
@@ -277,6 +278,35 @@ def _validate_contract(
         or envelope.get("trainer_sha256") != _sha256_file(trainer)
     ):
         _fail("resource_envelope_source_mismatch")
+    sentinel = amendment.get("sentinel")
+    sentinel_program = _source_path(
+        sentinel.get("program") if isinstance(sentinel, Mapping) else None,
+        role="sentinel_program",
+    )
+    stage_guard_source = _source_path(
+        sentinel.get("stage_guard_source") if isinstance(sentinel, Mapping) else None,
+        role="stage_guard_source",
+    )
+    if (
+        not isinstance(sentinel, Mapping)
+        or sentinel_program != REPO_ROOT / "tools/memory_sentinel.py"
+        or stage_guard_source != REPO_ROOT / "core/runtime/resource_stage_guard.py"
+        or sentinel.get("program_sha256") != _sha256_file(sentinel_program)
+        or sentinel.get("stage_guard_source_sha256")
+        != _sha256_file(stage_guard_source)
+        or _finite_number(sentinel.get("lethal_mb"), role="sentinel_lethal_mb")
+        != 59392.0
+        or _finite_number(
+            sentinel.get("startup_lethal_mb"),
+            role="sentinel_startup_lethal_mb",
+        )
+        != 73728.0
+        or _finite_number(sentinel.get("interval_seconds"), role="sentinel_interval")
+        != 2.0
+        or sentinel.get("required_for_each_phase") is not True
+        or sentinel.get("tombstone_means_phase_failure") is not True
+    ):
+        _fail("sentinel_contract_invalid")
 
     training = protocol.get("training")
     phase_contract = amendment.get(phase)
@@ -307,6 +337,9 @@ def _validate_contract(
         _fail("run_dir_outside_protocol_root")
     if run_dir.exists():
         _fail("run_dir_already_exists")
+    sentinel_run_dir = run_dir.with_name(f"sentinel-{phase}")
+    if sentinel_run_dir.exists():
+        _fail("sentinel_run_dir_already_exists")
     envelope_out = _absolute_path(envelope.get("envelope_out"), role="envelope_out")
     try:
         envelope_out.relative_to(adapter)
@@ -314,6 +347,23 @@ def _validate_contract(
         _fail("envelope_out_outside_adapter")
     if phase == "partial" and envelope_out.exists():
         _fail("envelope_out_already_exists")
+    ring = _absolute_path(sentinel.get(f"{phase}_ring"), role="sentinel_ring")
+    try:
+        ring.relative_to(adapter)
+    except ValueError:
+        _fail("sentinel_ring_outside_adapter")
+    if ring.exists():
+        _fail("sentinel_ring_already_exists")
+    stage_path = _absolute_path(
+        sentinel.get(f"{phase}_stage_path"),
+        role="resource_stage",
+    )
+    try:
+        stage_path.relative_to(adapter)
+    except ValueError:
+        _fail("resource_stage_path_outside_adapter")
+    if stage_path.exists() or ack_path(stage_path).exists():
+        _fail("resource_stage_artifact_already_exists")
     return protocol, amendment, {"wrapper": wrapper, "trainer": trainer}
 
 
@@ -326,6 +376,7 @@ def _target_command(
 ) -> list[str]:
     training = protocol["training"]
     envelope = amendment["resource_envelope"]
+    sentinel = amendment["sentinel"]
     phase_contract = amendment[phase]
     max_minutes = phase_contract.get("max_minutes")
     if max_minutes is None:
@@ -415,6 +466,17 @@ def _target_command(
         str(_positive_int(phase_contract["checkpoint_every_steps"], role="checkpoint_every")),
         "--log-every",
         str(_positive_int(phase_contract["log_every_steps"], role="log_every")),
+        "--resource-stage-path",
+        str(sentinel[f"{phase}_stage_path"]),
+        "--resource-startup-lethal-mb",
+        str(
+            _finite_number(
+                sentinel["startup_lethal_mb"],
+                role="sentinel_startup_lethal_mb",
+            )
+        ),
+        "--resource-steady-lethal-mb",
+        str(_finite_number(sentinel["lethal_mb"], role="sentinel_lethal_mb")),
     ]
     if phase == "resume":
         command.append("--resume")
@@ -454,6 +516,72 @@ def build_launch_command(
     return launcher, target
 
 
+def _sentinel_launch_command(
+    amendment: Mapping[str, Any],
+    *,
+    phase: str,
+    trainer_pid: int,
+) -> list[str]:
+    if phase not in {"partial", "resume"} or type(trainer_pid) is not int or trainer_pid < 1:
+        _fail("sentinel_launch_state_invalid")
+    phase_contract = amendment.get(phase)
+    sentinel = amendment.get("sentinel")
+    if not isinstance(phase_contract, Mapping) or not isinstance(sentinel, Mapping):
+        _fail("sentinel_contract_invalid")
+    run_dir = Path(str(phase_contract["run_dir"]))
+    sentinel_dir = run_dir.with_name(f"sentinel-{phase}")
+    python = REPO_ROOT / ".venv/bin/python"
+    return [
+        str(python),
+        str(REPO_ROOT / "tools/run_detached_step.py"),
+        "launch",
+        "--run-dir",
+        str(sentinel_dir),
+        "--name",
+        f"{phase_contract['name']}-memory-sentinel",
+        "--cwd",
+        str(REPO_ROOT),
+        "--timeout",
+        str(_positive_int(phase_contract["timeout_seconds"], role="sentinel_timeout")),
+        "--",
+        str(python),
+        str(REPO_ROOT / str(sentinel["program"])),
+        "--pid",
+        str(trainer_pid),
+        "--lethal-mb",
+        str(_finite_number(sentinel["lethal_mb"], role="sentinel_lethal_mb")),
+        "--startup-lethal-mb",
+        str(
+            _finite_number(
+                sentinel["startup_lethal_mb"],
+                role="sentinel_startup_lethal_mb",
+            )
+        ),
+        "--steady-marker",
+        str(sentinel[f"{phase}_stage_path"]),
+        "--interval",
+        str(_finite_number(sentinel["interval_seconds"], role="sentinel_interval")),
+        "--ring",
+        str(sentinel[f"{phase}_ring"]),
+        "--tombstone-dir",
+        str(sentinel_dir),
+    ]
+
+
+def _stop_unguarded_target(run_dir: Path) -> None:
+    subprocess.run(
+        [
+            str(REPO_ROOT / ".venv/bin/python"),
+            str(REPO_ROOT / "tools/run_detached_step.py"),
+            "stop",
+            "--run-dir",
+            str(run_dir),
+        ],
+        cwd=REPO_ROOT,
+        check=False,
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--protocol", type=Path, required=True)
@@ -478,6 +606,37 @@ def main(argv: Sequence[str] | None = None) -> int:
     completed = subprocess.run(launcher, cwd=REPO_ROOT, check=False)
     if completed.returncode != 0:
         _fail("detached_launcher_failed")
+    _amendment_raw, amendment = _read_json(args.amendment, role="amendment")
+    run_dir = Path(str(amendment[args.phase]["run_dir"]))
+    try:
+        _status_raw, status = _read_json(
+            run_dir / "detached_status.json",
+            role="target_status",
+        )
+    except ResidentRecurrenceLaunchError:
+        _stop_unguarded_target(run_dir)
+        raise
+    trainer_pid = status.get("child_pid")
+    if (
+        type(trainer_pid) is not int
+        or trainer_pid < 1
+        or status.get("state") != "running"
+    ):
+        _stop_unguarded_target(run_dir)
+        _fail("target_not_running_before_sentinel")
+    sentinel_launcher = _sentinel_launch_command(
+        amendment,
+        phase=args.phase,
+        trainer_pid=trainer_pid,
+    )
+    sentinel_completed = subprocess.run(
+        sentinel_launcher,
+        cwd=REPO_ROOT,
+        check=False,
+    )
+    if sentinel_completed.returncode != 0:
+        _stop_unguarded_target(run_dir)
+        _fail("sentinel_launcher_failed_target_stopped")
     return 0
 
 

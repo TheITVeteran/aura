@@ -148,60 +148,6 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _await_resource_guard(
-    marker_path: Path,
-    *,
-    trainer_sha256: str,
-    startup_lethal_mb: float,
-    steady_lethal_mb: float,
-    timeout_s: float = 120.0,
-) -> dict[str, Any]:
-    """Block the first training graph until the external guard is steady."""
-
-    from core.runtime.resource_stage_guard import (
-        ResourceStageGuardError,
-        ack_path,
-        publish_ready_marker,
-        read_armed_ack,
-        sha256_bytes,
-    )
-
-    acknowledgement = ack_path(marker_path)
-    if acknowledgement.exists():
-        raise ResourceStageGuardError(
-            "resource guard acknowledgement exists before trainer marker"
-        )
-    _marker, marker_raw = publish_ready_marker(
-        marker_path,
-        target_pid=os.getpid(),
-        trainer_sha256=trainer_sha256,
-    )
-    print(f"resource guard marker published: {marker_path}", flush=True)
-    deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
-        if acknowledgement.exists():
-            _ack, ack_raw = read_armed_ack(
-                marker_path,
-                marker_raw=marker_raw,
-                expected_target_pid=os.getpid(),
-                startup_lethal_mb=startup_lethal_mb,
-                steady_lethal_mb=steady_lethal_mb,
-            )
-            print(
-                "resource guard steady-stage acknowledgement accepted: "
-                f"{acknowledgement}",
-                flush=True,
-            )
-            return {
-                "marker_sha256": sha256_bytes(marker_raw),
-                "ack_sha256": sha256_bytes(ack_raw),
-            }
-        time.sleep(0.25)
-    raise ResourceStageGuardError(
-        "external sentinel did not acknowledge the steady memory guard in time"
-    )
-
-
 def _source_binding(path: Path) -> dict[str, Any]:
     resolved = path.resolve(strict=True)
     return {
@@ -521,9 +467,6 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-steps", type=_positive_int, default=100_000)
     parser.add_argument("--checkpoint-every", type=_positive_int, default=25)
     parser.add_argument("--log-every", type=_positive_int, default=5)
-    parser.add_argument("--resource-stage-path", type=Path)
-    parser.add_argument("--resource-startup-lethal-mb", type=float)
-    parser.add_argument("--resource-steady-lethal-mb", type=float)
     parser.add_argument("--resume", action="store_true")
     return parser
 
@@ -593,20 +536,6 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
         raise ValueError("max-minutes must be finite and positive")
     if not math.isfinite(args.learning_rate) or args.learning_rate <= 0:
         raise ValueError("learning-rate must be finite and positive")
-    resource_guard_values = (
-        args.resource_stage_path,
-        args.resource_startup_lethal_mb,
-        args.resource_steady_lethal_mb,
-    )
-    resource_guard_enabled = all(value is not None for value in resource_guard_values)
-    if any(value is not None for value in resource_guard_values) != resource_guard_enabled:
-        raise ValueError("resource guard arguments must be supplied together")
-    if resource_guard_enabled and not (
-        math.isfinite(args.resource_startup_lethal_mb)
-        and math.isfinite(args.resource_steady_lethal_mb)
-        and args.resource_startup_lethal_mb > args.resource_steady_lethal_mb > 0.0
-    ):
-        raise ValueError("resource guard ceilings are invalid")
     if (
         not math.isfinite(args.monotonicity_weight)
         or not 0.0 <= args.monotonicity_weight <= 10.0
@@ -933,14 +862,6 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
         print(
             f"resumed exact checkpoint at step={step} epoch={epoch} cursor={cursor}",
             flush=True,
-        )
-
-    if resource_guard_enabled:
-        _await_resource_guard(
-            args.resource_stage_path.expanduser(),
-            trainer_sha256=sources["trainer"]["sha256"],
-            startup_lethal_mb=float(args.resource_startup_lethal_mb),
-            steady_lethal_mb=float(args.resource_steady_lethal_mb),
         )
 
     started_monotonic = time.monotonic()

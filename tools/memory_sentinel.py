@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import signal
 import subprocess
@@ -48,6 +49,11 @@ from core.runtime.resource_observation import (  # noqa: E402
     ObservationSource,
     ProcessObservation,
     ProcessTableObservation,
+)
+from core.runtime.resource_stage_guard import (  # noqa: E402
+    ResourceStageGuardError,
+    publish_armed_ack,
+    read_ready_marker,
 )
 
 _RUsageV4 = DarwinRUsageInfoV4
@@ -199,6 +205,16 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pid", type=int, required=True)
     parser.add_argument("--lethal-mb", type=float, default=46080.0)
+    parser.add_argument(
+        "--startup-lethal-mb",
+        type=float,
+        help="Temporary model-load ceiling used until --steady-marker is acknowledged.",
+    )
+    parser.add_argument(
+        "--steady-marker",
+        type=Path,
+        help="Create-once trainer marker that requests transition to --lethal-mb.",
+    )
     parser.add_argument("--interval", type=float, default=1.0)
     parser.add_argument(
         "--ring",
@@ -211,6 +227,18 @@ def main(argv: list[str] | None = None) -> int:
         default=Path("data/error_logs/memory"),
     )
     args = parser.parse_args(argv)
+    staged = args.startup_lethal_mb is not None or args.steady_marker is not None
+    if staged and (
+        args.startup_lethal_mb is None
+        or args.steady_marker is None
+        or not math.isfinite(args.startup_lethal_mb)
+        or not math.isfinite(args.lethal_mb)
+        or not args.startup_lethal_mb > args.lethal_mb > 0.0
+    ):
+        parser.error(
+            "--startup-lethal-mb and --steady-marker must be supplied together, "
+            "with startup ceiling greater than a positive steady ceiling"
+        )
 
     tree = _OBSERVER.process_tree(args.pid, recursive=True)
     target = _root_process(tree, args.pid)
@@ -238,10 +266,15 @@ def main(argv: list[str] | None = None) -> int:
     signal.signal(signal.SIGTERM, _on_sigterm)
     _evidence(
         f"armed: target pid={args.pid} lethal_mb={args.lethal_mb:.0f} "
+        f"startup_lethal_mb={args.startup_lethal_mb or args.lethal_mb:.0f} "
+        f"staged={staged} "
         f"interval_s={args.interval:.1f} ring={args.ring}"
     )
 
     consecutive_over = 0
+    guard_stage = "startup" if staged else "steady"
+    marker_observed = False
+    active_lethal_mb = float(args.startup_lethal_mb or args.lethal_mb)
     ring_max_lines = max(
         RING_MAX_LINES,
         min(
@@ -259,6 +292,54 @@ def main(argv: list[str] | None = None) -> int:
         # memorystatus kills on footprint (RSS + compressed); guard on
         # whichever view is larger so compression cannot hide a runaway.
         managed = max(core_mb + child_mb, footprint_mb)
+        if guard_stage == "startup" and args.steady_marker.exists():
+            marker_observed = True
+            try:
+                _marker, marker_raw = read_ready_marker(
+                    args.steady_marker,
+                    expected_target_pid=args.pid,
+                )
+                if managed <= args.lethal_mb:
+                    publish_armed_ack(
+                        args.steady_marker,
+                        marker_raw=marker_raw,
+                        target_pid=args.pid,
+                        sentinel_pid=os.getpid(),
+                        startup_lethal_mb=float(args.startup_lethal_mb),
+                        steady_lethal_mb=float(args.lethal_mb),
+                    )
+                    guard_stage = "steady"
+                    active_lethal_mb = float(args.lethal_mb)
+                    consecutive_over = 0
+                    _evidence(
+                        "transitioned: trainer marker acknowledged; "
+                        f"steady lethal_mb={active_lethal_mb:.0f}"
+                    )
+            except ResourceStageGuardError as exc:
+                killed = kill_tree(args.pid)
+                tombstone = {
+                    "schema": "aura.memory_sentinel.tombstone.v1",
+                    "reason": "invalid steady-stage resource-guard handshake",
+                    "guard_stage": guard_stage,
+                    "startup_lethal_mb": args.startup_lethal_mb,
+                    "steady_lethal_mb": args.lethal_mb,
+                    "error": str(exc),
+                    "killed_pids": killed,
+                    "written_at": time.time(),
+                }
+                try:
+                    args.tombstone_dir.mkdir(parents=True, exist_ok=True)
+                    (
+                        args.tombstone_dir
+                        / f"sentinel_tombstone_{int(time.time())}.json"
+                    ).write_text(json.dumps(tombstone, indent=2))
+                except OSError:
+                    pass
+                _evidence(
+                    "exiting: invalid steady-stage handshake; "
+                    f"target tree killed: {exc} killed={killed}"
+                )
+                return 2
         entry = {
             "at": time.time(),
             "core_mb": round(core_mb, 1),
@@ -268,10 +349,13 @@ def main(argv: list[str] | None = None) -> int:
             "procs": proc_count,
             "observation_source": tree.provenance.source.value,
             "observation_scenario_id": tree.provenance.scenario_id,
+            "guard_stage": guard_stage,
+            "active_lethal_mb": active_lethal_mb,
+            "marker_observed": marker_observed,
         }
         write_ring(args.ring, entry, max_lines=ring_max_lines)
 
-        if managed >= args.lethal_mb:
+        if managed >= active_lethal_mb:
             consecutive_over += 1
         else:
             consecutive_over = 0
@@ -283,14 +367,15 @@ def main(argv: list[str] | None = None) -> int:
         # reclaim at lower ceilings.
         if should_kill_for_memory(
             managed_mb=managed,
-            lethal_mb=args.lethal_mb,
+            lethal_mb=active_lethal_mb,
             consecutive_over=consecutive_over,
         ):
             killed = kill_tree(args.pid)
             tombstone = {
                 "schema": "aura.memory_sentinel.tombstone.v1",
                 "reason": "external sentinel killed process tree at lethal ceiling",
-                "lethal_mb": args.lethal_mb,
+                "lethal_mb": active_lethal_mb,
+                "guard_stage": guard_stage,
                 "final_sample": entry,
                 "killed_pids": killed,
                 "written_at": time.time(),
@@ -304,7 +389,7 @@ def main(argv: list[str] | None = None) -> int:
                 pass
             _evidence(
                 f"exiting: killed target tree at lethal ceiling "
-                f"(managed_mb={managed:.0f} >= lethal_mb={args.lethal_mb:.0f}, killed={killed})"
+                f"(managed_mb={managed:.0f} >= lethal_mb={active_lethal_mb:.0f}, killed={killed})"
             )
             return 0
 
