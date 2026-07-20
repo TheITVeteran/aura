@@ -1,0 +1,25 @@
+{
+  "final_sample": {
+    "active_lethal_mb": 73728.0,
+    "at": 1784544134.422174,
+    "child_mb": 0.0,
+    "core_mb": 17622.5,
+    "footprint_mb": 74049.9,
+    "guard_stage": "compute",
+    "lease_sequence": 1,
+    "lease_workload": "training_step",
+    "managed_mb": 74049.9,
+    "marker_observed": true,
+    "observation_scenario_id": "external-memory-sentinel",
+    "observation_source": "host",
+    "procs": 1
+  },
+  "guard_stage": "compute",
+  "killed_pids": [
+    27619
+  ],
+  "lethal_mb": 73728.0,
+  "reason": "external sentinel killed process tree at lethal ceiling",
+  "schema": "aura.memory_sentinel.tombstone.v1",
+  "written_at": 1784544134.490962
+}

@@ -20,6 +20,7 @@ from tools.reqproof.evidence import (
 )
 from tools.reqproof.gate import run_gate
 from tools.reqproof.migrate import migrate
+from tools.reqproof.progress import ScopeBaseline, write_scope_baseline_atomic
 from tools.reqproof.schema import load_registry
 
 MINI_CORPUS = """Build alpha end to end.
@@ -34,6 +35,7 @@ def build_mini_repo(root: Path, **tracker_kwargs) -> dict[str, Path]:
         "registry": root / "config" / "requirement_registry.json",
         "allowlist": root / "config" / "reqproof_prose_token_allowlist.json",
         "evidence_ledger": root / "config" / "requirement_evidence_ledger.json",
+        "scope_baseline": root / "config" / "reqproof_scope_baseline.json",
         "baseline": root / "config" / "reqproof_defect_baseline.json",
         "report": root / "artifacts" / "reqproof" / "GATE_REPORT.json",
         "corpus": root / "config" / "requirement_sources" / "MINI.txt",
@@ -95,6 +97,10 @@ def build_mini_repo(root: Path, **tracker_kwargs) -> dict[str, Path]:
         EvidenceLedger.empty_for(load_registry(paths["registry"])),
         paths["evidence_ledger"],
     )
+    write_scope_baseline_atomic(
+        ScopeBaseline.from_registry(load_registry(paths["registry"])),
+        paths["scope_baseline"],
+    )
     return paths
 
 
@@ -106,6 +112,7 @@ def gate(root: Path, paths: dict[str, Path], **kwargs):
         tracker_path=paths["tracker"],
         allowlist_path=paths["allowlist"],
         evidence_ledger_path=paths["evidence_ledger"],
+        scope_baseline_path=paths["scope_baseline"],
         baseline_path=paths["baseline"],
         report_path=paths["report"],
         **kwargs,
@@ -122,6 +129,9 @@ def rebind_ledger(paths: dict[str, Path]) -> None:
             entries=current.entries,
         ),
         paths["evidence_ledger"],
+    )
+    write_scope_baseline_atomic(
+        ScopeBaseline.from_registry(registry), paths["scope_baseline"]
     )
 
 
@@ -157,6 +167,27 @@ class TestBaselinePass:
         code, report = gate(tmp_path, paths)
         assert code == 1
         assert any("different registry" in failure for failure in report["failures"])
+
+    def test_scope_denominator_growth_or_shrink_fails_structurally(self, tmp_path):
+        paths = build_mini_repo(tmp_path)
+        current = ScopeBaseline.from_registry(load_registry(paths["registry"]))
+        write_scope_baseline_atomic(
+            ScopeBaseline(fingerprints=current.fingerprints[:-1]),
+            paths["scope_baseline"],
+        )
+        code, report = gate(tmp_path, paths)
+        assert code == 1
+        assert any("baseline is stale" in failure for failure in report["failures"])
+
+        write_scope_baseline_atomic(
+            ScopeBaseline(
+                fingerprints=tuple(sorted((*current.fingerprints, "ZZZ-999::A1::test")))
+            ),
+            paths["scope_baseline"],
+        )
+        code, report = gate(tmp_path, paths)
+        assert code == 1
+        assert any("denominator shrank" in failure for failure in report["failures"])
 
 
 class TestGamingAttempts:
@@ -441,6 +472,9 @@ class TestRealRepositoryGate:
             evidence_ledger_path=self.ROOT
             / "config"
             / "requirement_evidence_ledger.json",
+            scope_baseline_path=self.ROOT
+            / "config"
+            / "reqproof_scope_baseline.json",
             baseline_path=self.ROOT / "config" / "reqproof_defect_baseline.json",
             report_path=tmp_path / "GATE_REPORT.json",
         )

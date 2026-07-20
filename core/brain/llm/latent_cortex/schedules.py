@@ -854,6 +854,23 @@ class SearchResult:
     best_score: float
     evaluated: int
     history: list[dict[str, Any]] = field(default_factory=list)
+    # Held-out score of the winner, when a separate evaluator was supplied.
+    holdout_score: float | None = None
+
+    def generalization_gap(self) -> float | None:
+        """Search score minus held-out score.
+
+        A large gap means the search found the search set, not a better
+        program -- and in the final number that looks identical to a
+        discovery unless it is reported.
+        """
+        if self.holdout_score is None:
+            return None
+        return self.best_score - self.holdout_score
+
+    def overfit_warning(self, *, tolerance: float = 0.1) -> bool:
+        gap = self.generalization_gap()
+        return gap is not None and gap > tolerance
 
 
 class ScheduleSearch:
@@ -922,11 +939,30 @@ class ScheduleSearch:
         population: int = 6,
         generations: int = 4,
         seed_schedule: LayerSchedule | None = None,
+        holdout_evaluator: Callable[[LayerSchedule], float] | None = None,
+        max_layer_apps: int | None = None,
     ) -> SearchResult:
+        """Evolve schedules; optionally verify the winner on held-out tasks.
+
+        ``holdout_evaluator`` scores the finalists ONCE, after the search is
+        finished. Anima Rationis line 138 requires schedules be searched
+        against held-out verified tasks: a schedule selected on the tasks it
+        is scored on is a memorized answer key, and in the final number that
+        is indistinguishable from a discovery. Passing the SAME callable for
+        both is refused rather than silently permitted.
+
+        ``max_layer_apps`` caps compute so a "better" schedule cannot win by
+        simply running more layer applications than the baseline.
+        """
         if population < 2 or population > 128:
             raise ValueError("population outside [2, 128]")
         if generations < 1 or generations > 256:
             raise ValueError("generations outside [1, 256]")
+        if holdout_evaluator is not None and holdout_evaluator is evaluator:
+            raise ValueError(
+                "search and held-out evaluators must be different task sets: "
+                "selecting on the tasks being scored produces an answer key"
+            )
         base = seed_schedule or LayerSchedule.single_window(self._p, self._c, 4)
         violations = base.validate(prelude_end=self._p, coda_start=self._c)
         if violations:
@@ -943,7 +979,29 @@ class ScheduleSearch:
                 scored[key] = (s, value)
             return scored[key][1]
 
-        pool = [base] + [self._mutate(base) for _ in range(population - 1)]
+        def admissible(candidate: LayerSchedule) -> bool:
+            if max_layer_apps is None:
+                return True
+            return candidate.total_layer_repeats <= max_layer_apps
+
+        if max_layer_apps is not None and not admissible(base):
+            # The seed enters the pool unconditionally, so a budget below it
+            # would silently cap nothing while appearing to bound compute.
+            raise ValueError(
+                f"max_layer_apps={max_layer_apps} is below the seed "
+                f"schedule's own {base.total_layer_repeats} layer repeats; "
+                "the budget would bound nothing"
+            )
+
+        pool = [base]
+        guard = 0
+        while len(pool) < population and guard < population * 50:
+            guard += 1
+            child = self._mutate(base)
+            if admissible(child):
+                pool.append(child)
+        while len(pool) < population:
+            pool.append(base)
         history: list[dict[str, Any]] = []
         for gen in range(generations):
             ranked = sorted(pool, key=score, reverse=True)
@@ -956,12 +1014,32 @@ class ScheduleSearch:
                     "pool": [s.schedule_hash for s in ranked],
                 }
             )
-            children = [self._mutate(self._rng.choice(survivors)) for _ in range(population - len(survivors))]
+            children: list[LayerSchedule] = []
+            guard = 0
+            need = population - len(survivors)
+            while len(children) < need and guard < need * 50:
+                guard += 1
+                child = self._mutate(self._rng.choice(survivors))
+                if admissible(child):
+                    children.append(child)
             pool = survivors + children
 
         best_hash = max(scored, key=lambda k: scored[k][1])
         best, best_score = scored[best_hash]
-        return SearchResult(best=best, best_score=best_score, evaluated=len(scored), history=history)
+        holdout = None
+        if holdout_evaluator is not None:
+            # Scored ONCE, after the search finished. Scoring it during
+            # selection would make the held-out set part of the search set.
+            holdout = float(holdout_evaluator(best))
+            if not math.isfinite(holdout):
+                raise ValueError("held-out evaluator returned a non-finite score")
+        return SearchResult(
+            best=best,
+            best_score=best_score,
+            evaluated=len(scored),
+            history=history,
+            holdout_score=holdout,
+        )
 
 
 __all__ = [

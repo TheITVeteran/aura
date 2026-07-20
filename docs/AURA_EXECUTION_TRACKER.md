@@ -353,8 +353,8 @@ Status rules:
 
 | Master ID | Status | Mandatory workstream and closure burden | Detailed scope |
 |---|---|---|---|
-| `SCOPE-001` | `IN PROGRESS (MACHINE REGISTRY + ZERO-UNMAPPED COVERAGE + STRUCTURAL GATE + HASHED EVIDENCE LEDGER LANDED; EVIDENCE POPULATION, PROGRESS ENGINE, TRACKER-VIEW CONVERGENCE OPEN) 2026-07-20` | Build the machine-readable requirement-to-proof control plane, assign every prompt/context obligation a stable ID, enforce evidence-backed transitions, and generate zero-unmapped coverage. The registry (`config/requirement_registry.json`, 301 requirements) is generated deterministically from this tracker's normative extraction by `tools/reqproof/migrate.py`. The separate `config/requirement_evidence_ledger.json` is canonically hashed and bound to the exact registry; its writer computes artifact hashes and the structural gate rejects tampering, registry drift, unknown requirement/class references, unsafe or symlinked paths, missing/mutated files, unknown commits, duplicates, and incomplete evidence-class closure. `tools/reqproof/gate.py --mode structural` also enforces registry/tracker coherence, a sound closure DAG, zero-unmapped coverage of all four source corpora, and a shrink-only defect-fingerprint ratchet (58 pinned pre-existing defects: 23 dependency cycles, 19 unproven closures, 11 prose-minted requirements, 3 contradictory statuses, 2 false closures). Wired into `release_preflight` as `reqproof_structural`; `--mode release` blocks while any mandatory requirement or defect remains. Prose edits, shallow tests, stale artifacts, and omitted children cannot close a requirement. Still open: per-requirement evidence population and source-change freshness policy, the evidence-weighted progress/forecast engine (`PROGRESS-CONTROL-001`), and converging this tracker into a generated view of the registry. | Matrix 1; Pass F 12-13; checkpoint hygiene |
-| `PROGRESS-CONTROL-001` | `IN PROGRESS 2026-07-13` | Generate an evidence-weighted Aura 1.0 burn-up and total-checkpoint forecast from the requirement-to-proof graph. Track per-workstream acceptance units, dependencies, risk/proof weights, source/test/live/release state, every completed pushed checkpoint, estimate range, newly discovered scope, reopened regressions, and confidence. Count implementation, cleanup, repair, integration, verification, live, portability, release, and soak checkpoints rather than only headline milestones. Never award progress for prose, code presence, mocked-only evidence, an unpushed commit, or a source-green live obligation; release blocks unless the denominator is complete and zero mandatory units remain. | `SCOPE-001`, `RELEASE-CONTRACT-001`, `CHECKPOINT-001`, `VALIDATE-001`; running progress request 2026-07-13 |
+| `SCOPE-001` | `IN PROGRESS (MACHINE REGISTRY + ZERO-UNMAPPED COVERAGE + STRUCTURAL GATE + HASHED ACCEPTANCE LEDGER + PROGRESS ENGINE LANDED; EVIDENCE POPULATION, WEIGHT CALIBRATION, TRACKER-VIEW CONVERGENCE OPEN) 2026-07-20` | Build the machine-readable requirement-to-proof control plane, assign every prompt/context obligation a stable ID, enforce evidence-backed transitions, and generate zero-unmapped coverage. The registry (`config/requirement_registry.json`, 301 requirements) is generated deterministically from this tracker's normative extraction by `tools/reqproof/migrate.py`. The separate `config/requirement_evidence_ledger.json` is canonically hashed and bound to the exact registry; schema v2 requires every artifact to name explicit acceptance units as well as a required evidence class. Its writer computes artifact hashes and the structural gate rejects tampering, registry drift, unknown requirement/class/acceptance references, unsafe or symlinked paths, missing/mutated files, commits not reachable from both `HEAD` and pushed `origin/main`, duplicates, and incomplete acceptance-by-class closure. `tools/reqproof/gate.py --mode structural` also enforces registry/tracker coherence, a sound closure DAG, zero-unmapped coverage of all four source corpora, and a shrink-only defect-fingerprint ratchet (58 pinned pre-existing defects: 23 dependency cycles, 19 unproven closures, 11 prose-minted requirements, 3 contradictory statuses, 2 false closures). Release preflight runs both the structural gate and the progress engine; `--mode release` blocks while any mandatory requirement or defect remains. Still open: reviewed historical evidence population, source-change freshness beyond pushed ancestry, non-default risk/proof weights, and converging this tracker into a generated registry view. | Matrix 1; Pass F 12-13; checkpoint hygiene |
+| `PROGRESS-CONTROL-001` | `IN PROGRESS (ACCEPTANCE-GRANULAR BURN-UP + TOTAL CHECKPOINT INVENTORY SOURCE GREEN; HISTORICAL EVIDENCE, WEIGHTS, CALIBRATION, GENERATED-VIEW RECENCY OPEN) 2026-07-20` | `tools/reqproof/progress.py` deterministically computes machine-certified completion from verified acceptance/evidence cells only, publishes the legacy 27% separately as uncertified engineering judgment, inventories every full dated checkpoint record through Git blame, distinguishes records from commits, rejects unpushed records from completed count, and estimates remaining/total records from a hashed evidence-class/throughput policy with explicit confidence. Required closure evidence remains implementation, test, live, portability, release, and soak evidence; tracker rewording may not shrink that matrix. The first baseline finds 301 requirements, 300 mandatory, 1,581 acceptance/evidence cells, 4,007 weighted points, 259 pushed checkpoint records on 248 commits, 21 records sharing commits, 0 verified cells, and therefore 0.00% machine-certified completion; its provisional low-confidence policy-prior forecast is 393-660 total records before this checkpoint is added. Never award progress for prose, code presence, mocked-only evidence, an unpushed commit, or a source-green live obligation. Still open: backfill reviewed immutable evidence, assign non-default risk/proof weights, calibrate throughput from verified deltas, model reopened/regressed evidence explicitly, and generate the canonical tracker view without a commit-self-reference cycle. | `SCOPE-001`, `RELEASE-CONTRACT-001`, `CHECKPOINT-001`, `VALIDATE-001`; running progress request 2026-07-13; CP208 |
 | `FOUNDATION-100-001` | `OPEN 2026-07-13` | Close the complete Aura implementation foundation from smallest source detail through largest capability expansion using the ten-layer foundation ladder below. Inventory every executable and persistent surface, eliminate hygiene/debt and placeholder behavior, impose typed/effect/lifecycle/data contracts, unify ownership and integration, deepen/generalize every capability, then certify resilience, performance, security, live behavior, and expansion with a machine-counted zero-open report. | `REPO-001`, `ARCH-001`, `CAPABILITY-CERT-001`, `SCOPE-001`; foundation-to-100% request 2026-07-13 |
 | `RLC-SCOPE-001` | `IN PROGRESS 2026-07-15` | Map every requirement, caveat, mechanism, failure mode, experiment, expansion, and learning claim in `Anima Rationis.txt` to executable owners, dependencies, tests, live artifacts, independent verdicts, and explicit non-claims. Zero unmapped statements and zero closure from prose/code presence are mandatory. | Recursive Latent Cortex request; `SCOPE-001`, `PROGRESS-CONTROL-001`; CP95 |
 | `RLC-MECHANICS-001` | `IN PROGRESS (FOUNDATION + CP95 HARDENING; FULL AUDIT OPEN) 2026-07-15` | Production-harden all seven mechanisms together: writable latent workspace, controlled recurrence, programmable layer schedules, tied-weight virtual width and exchange, gradient optimization over thoughts, episode-scoped generated fast weights, and adaptive halt/revert. Prove finite dynamics, exact topology/cache behavior, deterministic controls, bounded resources, cancellation, fault cleanup, causal answer influence, and cross-mechanism composition on supported architectures. | `RLC-SCOPE-001`, `RLC-LIFECYCLE-001`, `RLC-COMPUTE-001`; CP95 |
@@ -22421,3 +22421,46 @@ checkpoints. No requirement receives completion credit from the empty ledger.
 Next: build the deterministic burn-up/forecast engine, then populate evidence
 from reviewed immutable artifacts under an explicit source-change freshness
 policy. Final long soaks remain deferred.
+
+## Checkpoint 2026-07-20-208: Evidence-Weighted Progress Control
+
+The evidence ledger is upgraded to schema v2. Every new proof entry must bind
+one or more canonical acceptance IDs (`A1`, `A2`, ...) within one requirement;
+the complete acceptance-by-required-class matrix must verify before closure.
+Unknown, missing, duplicated, unsorted, or out-of-range acceptance IDs fail.
+Evidence commits must be ancestors of both current `HEAD` and pushed
+`origin/main`, preventing an unpushed side-branch artifact from earning credit.
+
+`tools/reqproof/progress.py` and its hashed policy now compute a deterministic
+burn-up from those verified cells. The report keeps machine-certified progress
+separate from the legacy engineering estimate; inventories all dated checkpoint
+records through Git blame; distinguishes records, pushed records, distinct
+commits, shared-commit records, and unpushed records; and produces an explicit
+low/high total-record forecast from weighted remaining burden. The report and
+generated `docs/AURA_PROGRESS.md` are self-hashed and carry their calibration,
+confidence, assumptions, and non-claims. Release preflight recomputes the
+progress report independently, and `make reqproof-progress` publishes it.
+
+The first real run finds 301 requirements, 300 mandatory requirements, 1,581
+acceptance/evidence cells, and 4,007 weighted points. It reconstructs 259 pushed
+checkpoint records on 248 commits, including 21 records on shared commits and
+zero unpushed records. With zero historical entries intentionally promoted into
+the new ledger, machine-certified completion is 0.00%; this means evidence
+backfill is incomplete, not that no engineering exists. The 27% estimate is now
+explicitly `legacy_uncertified_not_used_for_release`. The initial policy-prior
+forecast is 134-401 remaining records and 393-660 total before this checkpoint;
+after CP208 is pushed the total-record range becomes 394-661. Confidence remains
+low until reviewed evidence and assigned weights replace default assumptions.
+
+Validation is green: 65 progress, evidence-ledger, validator, gate, and release
+preflight tests pass; focused Ruff and bytecode compilation pass; the real
+progress engine completes against `origin/main`; and acceptance matrix,
+artifact mutation, policy tampering, duplicate checkpoint, shared-commit, and
+unpushed-record controls all behave as specified.
+
+This is total checkpoint record 260 in the full tracker, not merely number 208
+in the latest numbering series. No completion credit is awarded for building
+the measurement system itself. Next: publish CP208, regenerate the canonical
+progress view from pushed `main`, and start reviewed evidence/weight backfill so
+the certified percentage and forecast can converge from observed facts. Final
+long soaks remain deferred.

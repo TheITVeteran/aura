@@ -121,6 +121,19 @@ def default_checks() -> tuple[PreflightCheck, ...]:
             ),
             command=(py, "tools/reqproof/gate.py", "--mode", "structural"),
         ),
+        PreflightCheck(
+            name="reqproof_progress",
+            purpose=(
+                "recompute acceptance-granular certified completion and the "
+                "total pushed-checkpoint forecast without tracker-prose credit"
+            ),
+            command=(
+                py,
+                "tools/reqproof/progress.py",
+                "--markdown",
+                "artifacts/reqproof/PROGRESS_REPORT.md",
+            ),
+        ),
     )
 
 

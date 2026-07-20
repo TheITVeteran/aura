@@ -55,6 +55,12 @@ from tools.reqproof.migrate import (  # noqa: E402
     DEFAULT_REGISTRY_PATH,
     load_prose_allowlist,
 )
+from tools.reqproof.progress import (  # noqa: E402
+    DEFAULT_SCOPE_BASELINE_PATH,
+    ProgressError,
+    load_scope_baseline,
+    verify_scope_baseline,
+)
 from tools.reqproof.schema import (  # noqa: E402
     CLOSED_STATES,
     RegistrySchemaError,
@@ -115,6 +121,7 @@ def run_gate(
     tracker_path: Path,
     allowlist_path: Path,
     evidence_ledger_path: Path,
+    scope_baseline_path: Path,
     baseline_path: Path,
     report_path: Path,
     refresh_baseline: bool = False,
@@ -125,6 +132,7 @@ def run_gate(
     coverage_report: dict = {}
     registry = None
     evidence_ledger = None
+    scope_baseline = None
 
     try:
         registry = load_registry(registry_path)
@@ -134,6 +142,10 @@ def run_gate(
         evidence_ledger = load_evidence_ledger(evidence_ledger_path)
     except EvidenceLedgerError as exc:
         failures.append(f"evidence ledger: {exc}")
+    try:
+        scope_baseline = load_scope_baseline(scope_baseline_path)
+    except ProgressError as exc:
+        failures.append(f"scope baseline: {exc}")
     try:
         extraction = parse_tracker(tracker_path)
     except TrackerParseError as exc:
@@ -146,6 +158,12 @@ def run_gate(
         except EvidenceLedgerError as exc:
             failures.append(f"evidence ledger: {exc}")
             evidence_ledger = None
+    if registry is not None and scope_baseline is not None:
+        try:
+            verify_scope_baseline(scope_baseline, registry)
+        except ProgressError as exc:
+            failures.append(f"scope baseline: {exc}")
+            scope_baseline = None
 
     if registry is not None and extraction is not None:
         allowlist = load_prose_allowlist(allowlist_path)
@@ -155,8 +173,8 @@ def run_gate(
                 root=root,
                 extraction=extraction,
                 prose_allowlist=allowlist,
-                evidence_by_requirement=(
-                    evidence_ledger.by_requirement()
+                evidence_entries_by_requirement=(
+                    evidence_ledger.entries_by_requirement()
                     if evidence_ledger is not None
                     else {}
                 ),
@@ -246,6 +264,14 @@ def run_gate(
                 if evidence_ledger is not None
                 else ""
             ),
+            "scope_baseline_cells": (
+                len(scope_baseline.fingerprints) if scope_baseline is not None else 0
+            ),
+            "scope_baseline_sha256": (
+                scope_baseline.compute_content_sha256()
+                if scope_baseline is not None
+                else ""
+            ),
         }
         if mode == "release":
             if mandatory_open:
@@ -293,6 +319,7 @@ def main() -> int:
     parser.add_argument("--tracker", default=str(ROOT / TRACKER_RELPATH))
     parser.add_argument("--allowlist", default=str(DEFAULT_ALLOWLIST_PATH))
     parser.add_argument("--evidence-ledger", default=str(DEFAULT_EVIDENCE_LEDGER_PATH))
+    parser.add_argument("--scope-baseline", default=str(DEFAULT_SCOPE_BASELINE_PATH))
     parser.add_argument("--baseline", default=str(DEFAULT_BASELINE_PATH))
     parser.add_argument("--report", default=str(DEFAULT_REPORT_PATH))
     parser.add_argument(
@@ -308,6 +335,7 @@ def main() -> int:
         tracker_path=Path(args.tracker),
         allowlist_path=Path(args.allowlist),
         evidence_ledger_path=Path(args.evidence_ledger),
+        scope_baseline_path=Path(args.scope_baseline),
         baseline_path=Path(args.baseline),
         report_path=Path(args.report),
         refresh_baseline=bool(args.refresh_baseline),

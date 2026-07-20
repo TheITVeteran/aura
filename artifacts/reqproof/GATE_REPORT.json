@@ -1,0 +1,372 @@
+{
+  "coverage": {
+    "corpora": {
+      "anima-rationis": {
+        "nonblank_lines": 1074,
+        "original_sha256": "683fda592b223dbe9deaa98588d32efc54f0ba56ef1c81b49b4f0a92c3fcef6d",
+        "snapshot": "config/requirement_sources/ANIMA_RATIONIS.txt",
+        "total_lines": 1094,
+        "unmapped_spans": []
+      },
+      "capabilities-pdf": {
+        "nonblank_lines": 19,
+        "original_sha256": "853eae8a849a7883564c1f8b56e43b5d3911f15ea4ea6d10271dbe83c1b25ebf",
+        "snapshot": "config/requirement_sources/AURA_CAPABILITIES_PDF.txt",
+        "total_lines": 19,
+        "unmapped_spans": []
+      },
+      "context-prompt": {
+        "nonblank_lines": 115,
+        "original_sha256": "998bc0f48161c1145adbab552b2e073916a774962b3defb76cf65710bbcf2115",
+        "snapshot": "config/requirement_sources/CONTEXT_TO_THINK_ABOUT_AS_YOU_WORK.txt",
+        "total_lines": 149,
+        "unmapped_spans": []
+      },
+      "second-criticism": {
+        "nonblank_lines": 141,
+        "original_sha256": "027b88359b729cc8ed78b72f5ca9f0873399c1dfd4201d25843706dd7f3fa3ab",
+        "snapshot": "config/requirement_sources/SECOND_CRITICISM_CORPUS.txt",
+        "total_lines": 203,
+        "unmapped_spans": []
+      }
+    },
+    "entries": 137,
+    "entries_by_class": {
+      "duplicate": 6,
+      "normative": 125,
+      "rationale": 6
+    },
+    "unmapped_lines": 0
+  },
+  "defect_counts": {
+    "contradictory-status": 3,
+    "dependency-cycle": 23,
+    "false-closure": 2,
+    "prose-minted": 11,
+    "unproven-closure": 19
+  },
+  "defects": [
+    {
+      "defect_class": "contradictory-status",
+      "detail": "complete requirement depends on REPO-001 which is still open",
+      "subject": "LIFECYCLE-001::REPO-001"
+    },
+    {
+      "defect_class": "contradictory-status",
+      "detail": "complete requirement depends on VALIDATE-001 which is still open",
+      "subject": "LIFECYCLE-001::VALIDATE-001"
+    },
+    {
+      "defect_class": "contradictory-status",
+      "detail": "complete requirement depends on REPO-001 which is still open",
+      "subject": "STORAGE-GATEWAY-001::REPO-001"
+    },
+    {
+      "defect_class": "dependency-cycle",
+      "detail": "cycle: ACTION-SPINE-001 -> AUTONOMY-AUTHORITY-001 -> AGENCY-001 -> ACTION-SPINE-001",
+      "subject": "ACTION-SPINE-001+AGENCY-001+AUTONOMY-AUTHORITY-001"
+    },
+    {
+      "defect_class": "dependency-cycle",
+      "detail": "cycle: EXPECT-001 -> ACTION-SPINE-001 -> EXPECT-001",
+      "subject": "ACTION-SPINE-001+EXPECT-001"
+    },
+    {
+      "defect_class": "dependency-cycle",
+      "detail": "cycle: CAPABILITY-CERT-001 -> RELEASE-CONTRACT-001 -> CAPABILITY-CERT-001",
+      "subject": "CAPABILITY-CERT-001+RELEASE-CONTRACT-001"
+    },
+    {
+      "defect_class": "dependency-cycle",
+      "detail": "cycle: OPERATIONS-001 -> COMPATIBILITY-001 -> OPERATIONS-001",
+      "subject": "COMPATIBILITY-001+OPERATIONS-001"
+    },
+    {
+      "defect_class": "dependency-cycle",
+      "detail": "cycle: CONVERSATION-001 -> INFERENCE-RELIABILITY-001 -> CONVERSATION-001",
+      "subject": "CONVERSATION-001+INFERENCE-RELIABILITY-001"
+    },
+    {
+      "defect_class": "dependency-cycle",
+      "detail": "cycle: OPERATIONS-001 -> DATA-LIFECYCLE-001 -> OPERATIONS-001",
+      "subject": "DATA-LIFECYCLE-001+OPERATIONS-001"
+    },
+    {
+      "defect_class": "dependency-cycle",
+      "detail": "cycle: FOREGROUND-LATENCY-001 -> PERF-001 -> HEALTH-SURFACE-001 -> FOREGROUND-LATENCY-001",
+      "subject": "FOREGROUND-LATENCY-001+HEALTH-SURFACE-001+PERF-001"
+    },
+    {
+      "defect_class": "dependency-cycle",
+      "detail": "cycle: FOREGROUND-LATENCY-001 -> IIT-SYSTEM-001 -> FOREGROUND-LATENCY-001",
+      "subject": "FOREGROUND-LATENCY-001+IIT-SYSTEM-001"
+    },
+    {
+      "defect_class": "dependency-cycle",
+      "detail": "cycle: SUBSTRATE-001 -> FOREGROUND-LATENCY-001 -> IIT-SYSTEM-001 -> SUBSTRATE-001",
+      "subject": "FOREGROUND-LATENCY-001+IIT-SYSTEM-001+SUBSTRATE-001"
+    },
+    {
+      "defect_class": "dependency-cycle",
+      "detail": "cycle: FOREGROUND-LATENCY-001 -> PERF-001 -> FOREGROUND-LATENCY-001",
+      "subject": "FOREGROUND-LATENCY-001+PERF-001"
+    },
+    {
+      "defect_class": "dependency-cycle",
+      "detail": "cycle: SUBSTRATE-001 -> FOREGROUND-LATENCY-001 -> SUBSTRATE-001",
+      "subject": "FOREGROUND-LATENCY-001+SUBSTRATE-001"
+    },
+    {
+      "defect_class": "dependency-cycle",
+      "detail": "cycle: PERF-001 -> HEALTH-SURFACE-001 -> PERF-001",
+      "subject": "HEALTH-SURFACE-001+PERF-001"
+    },
+    {
+      "defect_class": "dependency-cycle",
+      "detail": "cycle: IIT-BASELINE-INTEGRITY-001 -> IIT-LIVE-001 -> IIT-BASELINE-INTEGRITY-001",
+      "subject": "IIT-BASELINE-INTEGRITY-001+IIT-LIVE-001"
+    },
+    {
+      "defect_class": "dependency-cycle",
+      "detail": "cycle: IIT-LIVE-001 -> IIT-STATISTICS-001 -> IIT-LIVE-001",
+      "subject": "IIT-LIVE-001+IIT-STATISTICS-001"
+    },
+    {
+      "defect_class": "dependency-cycle",
+      "detail": "cycle: UI-001 -> LAUNCH-PROVENANCE-001 -> UI-001",
+      "subject": "LAUNCH-PROVENANCE-001+UI-001"
+    },
+    {
+      "defect_class": "dependency-cycle",
+      "detail": "cycle: REPLICATION-001 -> PORTABILITY-001 -> REPLICATION-001",
+      "subject": "PORTABILITY-001+REPLICATION-001"
+    },
+    {
+      "defect_class": "dependency-cycle",
+      "detail": "cycle: RLC-COMPUTE-001 -> RLC-FRONTIER-001 -> RLC-BASELINES-001 -> RLC-COMPUTE-001",
+      "subject": "RLC-BASELINES-001+RLC-COMPUTE-001+RLC-FRONTIER-001"
+    },
+    {
+      "defect_class": "dependency-cycle",
+      "detail": "cycle: RLC-FRONTIER-001 -> RLC-BASELINES-001 -> RLC-EXPERIMENTS-001 -> RLC-FRONTIER-001",
+      "subject": "RLC-BASELINES-001+RLC-EXPERIMENTS-001+RLC-FRONTIER-001"
+    },
+    {
+      "defect_class": "dependency-cycle",
+      "detail": "cycle: RLC-CAUSAL-INGRESS-001 -> RLC-WORKSPACE-001 -> RLC-CAUSAL-INGRESS-001",
+      "subject": "RLC-CAUSAL-INGRESS-001+RLC-WORKSPACE-001"
+    },
+    {
+      "defect_class": "dependency-cycle",
+      "detail": "cycle: RLC-LIFECYCLE-001 -> RLC-MECHANICS-001 -> RLC-COMPUTE-001 -> RLC-FRONTIER-001 -> RLC-LIVE32B-001 -> RLC-RUNTIME-001 -> RLC-LIFECYCLE-001",
+      "subject": "RLC-COMPUTE-001+RLC-FRONTIER-001+RLC-LIFECYCLE-001+RLC-LIVE32B-001+RLC-MECHANICS-001+RLC-RUNTIME-001"
+    },
+    {
+      "defect_class": "dependency-cycle",
+      "detail": "cycle: RLC-LIFECYCLE-001 -> RLC-MECHANICS-001 -> RLC-COMPUTE-001 -> RLC-LIFECYCLE-001",
+      "subject": "RLC-COMPUTE-001+RLC-LIFECYCLE-001+RLC-MECHANICS-001"
+    },
+    {
+      "defect_class": "dependency-cycle",
+      "detail": "cycle: RLC-CONSOLIDATION-001 -> RLC-FAST-WEIGHTS-001 -> RLC-CONSOLIDATION-001",
+      "subject": "RLC-CONSOLIDATION-001+RLC-FAST-WEIGHTS-001"
+    },
+    {
+      "defect_class": "dependency-cycle",
+      "detail": "cycle: RLC-LIFECYCLE-001 -> RLC-MECHANICS-001 -> RLC-LIFECYCLE-001",
+      "subject": "RLC-LIFECYCLE-001+RLC-MECHANICS-001"
+    },
+    {
+      "defect_class": "false-closure",
+      "detail": "complete requirement requires ADDENDUM-21 which is open",
+      "subject": "LANE-001::ADDENDUM-21"
+    },
+    {
+      "defect_class": "false-closure",
+      "detail": "complete requirement requires PASSF-03 which is open",
+      "subject": "RESOURCE-001::PASSF-03"
+    },
+    {
+      "defect_class": "prose-minted",
+      "detail": "obligation exists only as a prose reference",
+      "subject": "AUTONOMY-001"
+    },
+    {
+      "defect_class": "prose-minted",
+      "detail": "obligation exists only as a prose reference",
+      "subject": "CHAT-001"
+    },
+    {
+      "defect_class": "prose-minted",
+      "detail": "obligation exists only as a prose reference",
+      "subject": "CLOSEOUT-001"
+    },
+    {
+      "defect_class": "prose-minted",
+      "detail": "obligation exists only as a prose reference",
+      "subject": "GUI-001"
+    },
+    {
+      "defect_class": "prose-minted",
+      "detail": "obligation exists only as a prose reference",
+      "subject": "OBSERVABILITY-001"
+    },
+    {
+      "defect_class": "prose-minted",
+      "detail": "obligation exists only as a prose reference",
+      "subject": "PRIVACY-001"
+    },
+    {
+      "defect_class": "prose-minted",
+      "detail": "obligation exists only as a prose reference",
+      "subject": "RELEASE-001"
+    },
+    {
+      "defect_class": "prose-minted",
+      "detail": "obligation exists only as a prose reference",
+      "subject": "RESOURCE-OWNERSHIP-001"
+    },
+    {
+      "defect_class": "prose-minted",
+      "detail": "obligation exists only as a prose reference",
+      "subject": "RLC-MECH-006"
+    },
+    {
+      "defect_class": "prose-minted",
+      "detail": "obligation exists only as a prose reference",
+      "subject": "SEMANTIC-REVIEW-001"
+    },
+    {
+      "defect_class": "prose-minted",
+      "detail": "obligation exists only as a prose reference",
+      "subject": "VOICE-001"
+    },
+    {
+      "defect_class": "unproven-closure",
+      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], implementation[A2], implementation[A3], implementation[A4], implementation[A5], implementation[A6], implementation[A7], implementation[A8], implementation[A9], test[A1], test[A2], test[A3], test[A4], test[A5], test[A6], test[A7], test[A8], test[A9], live[A1], live[A2], live[A3], live[A4], live[A5], live[A6], live[A7], live[A8], live[A9], release[A1], release[A2], release[A3], release[A4], release[A5], release[A6], release[A7], release[A8], release[A9], soak[A1], soak[A2], soak[A3], soak[A4], soak[A5], soak[A6], soak[A7], soak[A8], soak[A9]",
+      "subject": "ADDENDUM-22"
+    },
+    {
+      "defect_class": "unproven-closure",
+      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], implementation[A2], implementation[A3], implementation[A4], implementation[A5], test[A1], test[A2], test[A3], test[A4], test[A5], live[A1], live[A2], live[A3], live[A4], live[A5], gui[A1], gui[A2], gui[A3], gui[A4], gui[A5], portability[A1], portability[A2], portability[A3], portability[A4], portability[A5]",
+      "subject": "ADDENDUM-23"
+    },
+    {
+      "defect_class": "unproven-closure",
+      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], implementation[A2], implementation[A3], implementation[A4], test[A1], test[A2], test[A3], test[A4]",
+      "subject": "ADDENDUM-32"
+    },
+    {
+      "defect_class": "unproven-closure",
+      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], test[A1]",
+      "subject": "CTX2-GATE-001"
+    },
+    {
+      "defect_class": "unproven-closure",
+      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], test[A1]",
+      "subject": "CTX2-GATE-002"
+    },
+    {
+      "defect_class": "unproven-closure",
+      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], test[A1]",
+      "subject": "CTX2-SHUTDOWN-001"
+    },
+    {
+      "defect_class": "unproven-closure",
+      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], test[A1]",
+      "subject": "CTX2-SHUTDOWN-002"
+    },
+    {
+      "defect_class": "unproven-closure",
+      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], test[A1]",
+      "subject": "CTX2-SHUTDOWN-003"
+    },
+    {
+      "defect_class": "unproven-closure",
+      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], test[A1]",
+      "subject": "CTX2-SKILL-001"
+    },
+    {
+      "defect_class": "unproven-closure",
+      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], test[A1], portability[A1]",
+      "subject": "CTX2-SKILL-002"
+    },
+    {
+      "defect_class": "unproven-closure",
+      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], test[A1]",
+      "subject": "CTX2-TEST-001"
+    },
+    {
+      "defect_class": "unproven-closure",
+      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], test[A1]",
+      "subject": "CTX2-TEST-002"
+    },
+    {
+      "defect_class": "unproven-closure",
+      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], test[A1]",
+      "subject": "CTX2-TEST-003"
+    },
+    {
+      "defect_class": "unproven-closure",
+      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], test[A1], live[A1], release[A1]",
+      "subject": "LANE-001"
+    },
+    {
+      "defect_class": "unproven-closure",
+      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], test[A1]",
+      "subject": "LIFECYCLE-001"
+    },
+    {
+      "defect_class": "unproven-closure",
+      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], test[A1], live[A1]",
+      "subject": "RESOURCE-001"
+    },
+    {
+      "defect_class": "unproven-closure",
+      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], test[A1]",
+      "subject": "SHUTDOWN-001"
+    },
+    {
+      "defect_class": "unproven-closure",
+      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], test[A1]",
+      "subject": "SKILLS-001"
+    },
+    {
+      "defect_class": "unproven-closure",
+      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], test[A1]",
+      "subject": "STORAGE-GATEWAY-001"
+    }
+  ],
+  "failures": [],
+  "mode": "structural",
+  "non_claims": [
+    "No completion percentage or checkpoint forecast is published by this gate yet; only raw counts are honest at this stage.",
+    "A structural pass asserts registry/coverage integrity only \u2014 it is not evidence that any requirement's engineering work is done."
+  ],
+  "ratchet": {
+    "baseline_fingerprints": 58,
+    "current_fingerprints": 58,
+    "fixed_pending_refresh": [],
+    "new": []
+  },
+  "schema_version": 1,
+  "summary": {
+    "evidence_ledger_entries": 0,
+    "evidence_ledger_sha256": "1577dbedd38fcb0e871bc813a8f64d726974305c9e6a1f850061a5460c3d1cff",
+    "mandatory_not_closed": 281,
+    "registry_content_sha256": "9c7db19c7c1200b3ccb6bed439337baa77424b7bcdc71bfb42ac37fb6b6160a3",
+    "registry_revision": 25,
+    "requirements": 301,
+    "scope_baseline_cells": 1581,
+    "scope_baseline_sha256": "2c4460973629919fe21a49798b77a07db6491ce20aac5d28804638c7121a22d4",
+    "states": {
+      "complete": 19,
+      "deferred": 1,
+      "in_progress": 78,
+      "open": 202,
+      "withdrawn": 1
+    },
+    "tracker_extraction_sha256": "33a1dffe0d5addb2c0d26548ee08e1b47b03fa2634375ff044f171a71b393b1e"
+  },
+  "verdict": "pass"
+}

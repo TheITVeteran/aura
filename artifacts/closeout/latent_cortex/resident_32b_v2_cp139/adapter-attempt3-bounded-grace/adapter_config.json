@@ -1,0 +1,18 @@
+{
+  "execution_spec_sha256": "ac08659fc9487098f876d660db4b02259f19b3471227b35e4edbabf4d4e76987",
+  "fine_tune_type": "recurrence_scoped_lora",
+  "loader": "aura_custom_loader_required",
+  "lora_parameters": {
+    "dropout": 0.0,
+    "keys": [
+      "o_proj",
+      "v_proj"
+    ],
+    "rank": 8,
+    "scale": 20.0
+  },
+  "model": "/Users/bryan/.aura/live-source/training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118",
+  "num_layers": 32,
+  "schema": "aura.recurrence_scoped_lora_config.v1",
+  "wrapped_projection_count": 64
+}

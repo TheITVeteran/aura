@@ -42,6 +42,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from tools.reqproof.evidence import (
+    EvidenceLedgerEntry,
     EvidenceLedgerError,
     resolve_evidence_target,
     sha256_file,
@@ -113,8 +114,11 @@ def default_commit_exists(root: Path) -> Callable[[str], bool]:
     from core.runtime.subprocess_gateway import get_subprocess_gateway
 
     gateway = get_subprocess_gateway()
+    cache: dict[str, bool] = {}
 
     def check(commit: str) -> bool:
+        if commit in cache:
+            return cache[commit]
         result = gateway.run(
             ["git", "cat-file", "-e", f"{commit}^{{commit}}"],
             cwd=root,
@@ -122,7 +126,25 @@ def default_commit_exists(root: Path) -> Callable[[str], bool]:
             read_only=True,
             source="reqproof_evidence_commit_probe",
         )
-        return result.returncode == 0
+        if result.returncode != 0:
+            cache[commit] = False
+            return False
+        for ref, source in (
+            ("HEAD", "reqproof_evidence_head_ancestry"),
+            ("origin/main", "reqproof_evidence_main_ancestry"),
+        ):
+            ancestry = gateway.run(
+                ["git", "merge-base", "--is-ancestor", commit, ref],
+                cwd=root,
+                timeout=30,
+                read_only=True,
+                source=source,
+            )
+            if ancestry.returncode != 0:
+                cache[commit] = False
+                return False
+        cache[commit] = True
+        return True
 
     return check
 
@@ -217,24 +239,41 @@ def _verify_evidence(
     return defects
 
 
-def _verified_evidence_classes(
-    requirement: Requirement,
-    evidence_refs: tuple[EvidenceRef, ...],
+def evidence_ref_is_verified(
+    evidence: EvidenceRef,
     root: Path,
     commit_exists: Callable[[str], bool],
-) -> set[str]:
-    verified: set[str] = set()
-    for evidence in evidence_refs:
-        try:
-            target = resolve_evidence_target(root, evidence.ref)
-        except EvidenceLedgerError:
-            continue
-        if _sha256_file(target) != evidence.sha256:
-            continue
-        if not commit_exists(evidence.commit):
-            continue
-        verified.add(evidence.evidence_class)
-    return verified
+) -> bool:
+    try:
+        target = resolve_evidence_target(root, evidence.ref)
+    except EvidenceLedgerError:
+        return False
+    return _sha256_file(target) == evidence.sha256 and commit_exists(evidence.commit)
+
+
+def _verified_acceptance_coverage(
+    requirement: Requirement,
+    legacy_refs: tuple[EvidenceRef, ...],
+    ledger_entries: tuple[EvidenceLedgerEntry, ...],
+    root: Path,
+    commit_exists: Callable[[str], bool],
+) -> dict[str, set[str]]:
+    coverage: dict[str, set[str]] = {}
+    all_acceptance = {
+        f"A{index}" for index in range(1, len(requirement.acceptance) + 1)
+    }
+    # Inline registry evidence is retained only as a compatibility path. The
+    # generated production registry is always empty; all new evidence uses the
+    # acceptance-granular external ledger.
+    for evidence in legacy_refs:
+        if evidence_ref_is_verified(evidence, root, commit_exists):
+            coverage.setdefault(evidence.evidence_class, set()).update(all_acceptance)
+    for entry in ledger_entries:
+        if evidence_ref_is_verified(entry.evidence, root, commit_exists):
+            coverage.setdefault(entry.evidence.evidence_class, set()).update(
+                entry.acceptance_ids
+            )
+    return coverage
 
 
 def validate_registry(
@@ -245,12 +284,17 @@ def validate_registry(
     prose_allowlist: dict[str, str] | None = None,
     commit_exists: Callable[[str], bool] | None = None,
     evidence_by_requirement: Mapping[str, tuple[EvidenceRef, ...]] | None = None,
+    evidence_entries_by_requirement: Mapping[
+        str, tuple[EvidenceLedgerEntry, ...]
+    ]
+    | None = None,
 ) -> list[Defect]:
     """Run every detector; returns defects sorted by fingerprint."""
     if commit_exists is None:
         commit_exists = default_commit_exists(root)
     prose_allowlist = prose_allowlist or {}
     evidence_by_requirement = evidence_by_requirement or {}
+    evidence_entries_by_requirement = evidence_entries_by_requirement or {}
     by_id = registry.by_id()
     defects: list[Defect] = []
 
@@ -314,8 +358,14 @@ def validate_registry(
     )
 
     for requirement in registry.requirements:
-        evidence_refs = tuple(requirement.evidence) + tuple(
+        legacy_refs = tuple(requirement.evidence) + tuple(
             evidence_by_requirement.get(requirement.id, ())
+        )
+        ledger_entries = tuple(
+            evidence_entries_by_requirement.get(requirement.id, ())
+        )
+        evidence_refs = legacy_refs + tuple(
+            entry.evidence for entry in ledger_entries
         )
         defects.extend(
             _verify_evidence(requirement, evidence_refs, root, commit_exists)
@@ -335,19 +385,27 @@ def validate_registry(
                             ),
                         )
                     )
-            verified = _verified_evidence_classes(
-                requirement, evidence_refs, root, commit_exists
+            verified = _verified_acceptance_coverage(
+                requirement,
+                legacy_refs,
+                ledger_entries,
+                root,
+                commit_exists,
             )
-            missing = [
-                cls for cls in requirement.evidence_required if cls not in verified
-            ]
+            missing = []
+            for class_name in requirement.evidence_required:
+                covered = verified.get(class_name, set())
+                for index in range(1, len(requirement.acceptance) + 1):
+                    acceptance_id = f"A{index}"
+                    if acceptance_id not in covered:
+                        missing.append(f"{class_name}[{acceptance_id}]")
             if missing:
                 defects.append(
                     Defect(
                         defect_class="unproven-closure",
                         subject=requirement.id,
                         detail=(
-                            "complete without verifiable evidence for: "
+                            "complete without acceptance-granular verifiable evidence for: "
                             + ", ".join(missing)
                         ),
                     )

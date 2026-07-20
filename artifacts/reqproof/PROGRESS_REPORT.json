@@ -1,0 +1,4816 @@
+{
+  "checkpoint_inventory": {
+    "distinct_pushed_commits": 248,
+    "pushed_checkpoint_records": 259,
+    "records_in_tracker": 259,
+    "records_on_shared_commits": 21,
+    "unpushed_checkpoint_records": 0,
+    "unpushed_record_ids": []
+  },
+  "completion": {
+    "engineering_estimate_percent": "27.00",
+    "engineering_estimate_status": "legacy_uncertified_not_used_for_release",
+    "machine_certified_percent": "0.00",
+    "status": "provisional_evidence_backfill_incomplete",
+    "verified_basis_points": 0
+  },
+  "evidence_classes": [
+    {
+      "cells_total": 504,
+      "cells_verified": 0,
+      "evidence_class": "implementation",
+      "weight": 2
+    },
+    {
+      "cells_total": 504,
+      "cells_verified": 0,
+      "evidence_class": "test",
+      "weight": 2
+    },
+    {
+      "cells_total": 221,
+      "cells_verified": 0,
+      "evidence_class": "live",
+      "weight": 3
+    },
+    {
+      "cells_total": 80,
+      "cells_verified": 0,
+      "evidence_class": "gui",
+      "weight": 3
+    },
+    {
+      "cells_total": 102,
+      "cells_verified": 0,
+      "evidence_class": "security",
+      "weight": 4
+    },
+    {
+      "cells_total": 61,
+      "cells_verified": 0,
+      "evidence_class": "portability",
+      "weight": 4
+    },
+    {
+      "cells_total": 43,
+      "cells_verified": 0,
+      "evidence_class": "release",
+      "weight": 4
+    },
+    {
+      "cells_total": 66,
+      "cells_verified": 0,
+      "evidence_class": "soak",
+      "weight": 4
+    }
+  ],
+  "forecast": {
+    "calibration": "policy_prior_only",
+    "confidence": "low",
+    "conservative_weighted_points_per_checkpoint": 10,
+    "optimistic_weighted_points_per_checkpoint": 30,
+    "remaining_checkpoint_records_high": 401,
+    "remaining_checkpoint_records_low": 134,
+    "total_checkpoint_records_high": 660,
+    "total_checkpoint_records_low": 393
+  },
+  "inputs": {
+    "evidence_ledger_sha256": "1577dbedd38fcb0e871bc813a8f64d726974305c9e6a1f850061a5460c3d1cff",
+    "progress_policy_sha256": "51b725d4ff7c375ae98cece8d7d6d4351739689b500450b67b836e7e37006a47",
+    "registry_sha256": "9c7db19c7c1200b3ccb6bed439337baa77424b7bcdc71bfb42ac37fb6b6160a3",
+    "scope_baseline_sha256": "2c4460973629919fe21a49798b77a07db6491ce20aac5d28804638c7121a22d4"
+  },
+  "non_claims": [
+    "The 27 percent engineering estimate is not machine-certified and cannot release Aura.",
+    "A forecast is an explicit throughput estimate, not evidence that any remaining work is complete.",
+    "Checkpoint records sharing one commit are counted as records and exposed separately from distinct commits.",
+    "Parent and child requirements are both counted when each declares its own integration or proof burden."
+  ],
+  "report_sha256": "b2bf785ed7e819e96c57af0a0d2b02719b6d0f2a546cb63db3f55c94d5abc906",
+  "requirements": [
+    {
+      "acceptance_units": 1,
+      "cells_total": 5,
+      "cells_verified": 0,
+      "id": "ACCESSIBILITY-I18N-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "gui",
+        "portability",
+        "release"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "15.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 4,
+      "cells_verified": 0,
+      "id": "ACCOUNT-AUTHORITY-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live",
+        "security"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "11.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "ACTION-SPINE-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "7.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "ADAPT-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "release"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "8.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "ADAPTATION-STATE-AUTHORITY-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "7.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 5,
+      "cells_total": 20,
+      "cells_verified": 0,
+      "id": "ADDENDUM-19",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live",
+        "gui"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "50.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 5,
+      "cells_total": 20,
+      "cells_verified": 0,
+      "id": "ADDENDUM-20",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live",
+        "security"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "55.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 9,
+      "cells_total": 36,
+      "cells_verified": 0,
+      "id": "ADDENDUM-21",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live",
+        "soak"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "99.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 9,
+      "cells_total": 45,
+      "cells_verified": 0,
+      "id": "ADDENDUM-22",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live",
+        "release",
+        "soak"
+      ],
+      "state_claim": "complete",
+      "weight_provenance": "default",
+      "weighted_points_total": "135.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 5,
+      "cells_total": 25,
+      "cells_verified": 0,
+      "id": "ADDENDUM-23",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live",
+        "gui",
+        "portability"
+      ],
+      "state_claim": "complete",
+      "weight_provenance": "default",
+      "weighted_points_total": "70.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 4,
+      "cells_total": 16,
+      "cells_verified": 0,
+      "id": "ADDENDUM-24",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live",
+        "security"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "44.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 4,
+      "cells_total": 8,
+      "cells_verified": 0,
+      "id": "ADDENDUM-25",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "16.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 4,
+      "cells_total": 12,
+      "cells_verified": 0,
+      "id": "ADDENDUM-26",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "28.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 4,
+      "cells_total": 16,
+      "cells_verified": 0,
+      "id": "ADDENDUM-27",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live",
+        "security"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "44.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 4,
+      "cells_total": 12,
+      "cells_verified": 0,
+      "id": "ADDENDUM-28",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "security"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "32.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 4,
+      "cells_total": 8,
+      "cells_verified": 0,
+      "id": "ADDENDUM-29",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "16.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 4,
+      "cells_total": 20,
+      "cells_verified": 0,
+      "id": "ADDENDUM-30",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live",
+        "security",
+        "soak"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "60.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 4,
+      "cells_total": 12,
+      "cells_verified": 0,
+      "id": "ADDENDUM-31",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "portability"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "32.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 4,
+      "cells_total": 8,
+      "cells_verified": 0,
+      "id": "ADDENDUM-32",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "complete",
+      "weight_provenance": "default",
+      "weighted_points_total": "16.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 29,
+      "cells_total": 203,
+      "cells_verified": 0,
+      "id": "ADDENDUM-33",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live",
+        "gui",
+        "security",
+        "portability",
+        "soak"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "638.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 4,
+      "cells_verified": 0,
+      "id": "AGENCY-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live",
+        "security"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "11.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "AMPLIFY-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "ARCH-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "ARCH-BASELINE-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "ASYNC-TASK-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "7.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "AUDIT-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "AUTONOMY-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "AUTONOMY-AUTHORITY-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "7.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "BOOT-HEALTH-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "7.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 5,
+      "cells_verified": 0,
+      "id": "CAPABILITY-CERT-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "gui",
+        "security",
+        "release"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "15.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 14,
+      "cells_total": 42,
+      "cells_verified": 0,
+      "id": "CARRYOVER-01",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "98.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 2,
+      "cells_total": 6,
+      "cells_verified": 0,
+      "id": "CARRYOVER-02",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "security"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "16.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 2,
+      "cells_total": 8,
+      "cells_verified": 0,
+      "id": "CARRYOVER-03",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live",
+        "gui"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "20.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 2,
+      "cells_total": 4,
+      "cells_verified": 0,
+      "id": "CARRYOVER-04",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "8.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 3,
+      "cells_total": 9,
+      "cells_verified": 0,
+      "id": "CARRYOVER-05",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "21.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 2,
+      "cells_total": 4,
+      "cells_verified": 0,
+      "id": "CARRYOVER-06",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "8.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CARRYOVER-07",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 4,
+      "cells_verified": 0,
+      "id": "CARRYOVER-08",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live",
+        "soak"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "11.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 2,
+      "cells_total": 6,
+      "cells_verified": 0,
+      "id": "CARRYOVER-09",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "14.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CHAT-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 4,
+      "cells_verified": 0,
+      "id": "CHAT-DELIVERY-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live",
+        "gui"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "10.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CHECKPOINT-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CLAIMS-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CLOSEOUT-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CODING-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "COLLEAGUE-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "security"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "8.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "COMPATIBILITY-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "release"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "8.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 4,
+      "cells_verified": 0,
+      "id": "CONCEPTUAL-LEAP-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live",
+        "security"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "11.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "CONVERSATION-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "7.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX2-AGI-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX2-AGI-002",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX2-AMP-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX2-AMP-002",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX2-AMP-003",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "CTX2-COLLEAGUE-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "7.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX2-COLLEAGUE-002",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX2-COLLEAGUE-003",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX2-GATE-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "complete",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX2-GATE-002",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "complete",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX2-GRAPH-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX2-GRAPH-002",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX2-GRAPH-003",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX2-GRAPH-004",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX2-ID-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX2-ID-002",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX2-ID-003",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX2-LANE-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX2-LANE-002",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX2-LANE-003",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX2-LANE-004",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX2-MEM-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX2-MEM-002",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX2-MIND-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX2-MIND-002",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX2-MIND-003",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX2-MIND-004",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX2-ONESHOT-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX2-ONESHOT-002",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX2-ONESHOT-003",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX2-ONESHOT-004",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX2-PERSON-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX2-PERSON-002",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX2-PERSON-003",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX2-REPL-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX2-ROLLBACK-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX2-SHUTDOWN-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "complete",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX2-SHUTDOWN-002",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "complete",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX2-SHUTDOWN-003",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "complete",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX2-SKILL-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "complete",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "CTX2-SKILL-002",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "portability"
+      ],
+      "state_claim": "complete",
+      "weight_provenance": "default",
+      "weighted_points_total": "8.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX2-TEST-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "complete",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX2-TEST-002",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "complete",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX2-TEST-003",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "complete",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX2-WELFARE-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX2-WELFARE-002",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX2-WELFARE-003",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX3-CONTINUITY-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX3-DECIDE-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX3-DIST-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX3-DIST-002",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX3-EXTREME-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX3-NEURO-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX3-NEURO-002",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX3-PERCEPT-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX3-PERCEPT-002",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX3-PHYS-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX3-PHYS-002",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX3-QUANTUM-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX3-QUANTUM-002",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX3-REASON-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX3-SIMTRAIN-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX3-SITUATION-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX3-SOCIAL-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX3-SOCIAL-002",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX3-SUBAGENT-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX3-VALUE-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX3-VALUE-002",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX3-WORLD-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "CTX3-WORLD-002",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 4,
+      "cells_verified": 0,
+      "id": "DATA-LIFECYCLE-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "security",
+        "release"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "12.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "DESKTOP-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "DESKTOP-ACCESS-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "7.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "DISTRIBUTED-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "EFFECT-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "ENTERPRISE-CONTROL-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "security"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "8.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "EXPECT-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "7.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "EXTREME-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "FAULT-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "FND-01-INVENTORY",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "gui"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "7.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "FND-02-HYGIENE",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "FND-03-CONTRACTS",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "FND-04-EFFECTS",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "gui"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "7.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "FND-05-OWNERSHIP",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "FND-06-DATA",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "FND-07-UNITY",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "7.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "FND-08-DEPTH",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "gui"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "7.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 4,
+      "cells_verified": 0,
+      "id": "FND-09-HARDENING",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "security",
+        "portability"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "12.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "FND-10-EXPANSION",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "soak"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "8.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 4,
+      "cells_verified": 0,
+      "id": "FOREGROUND-LATENCY-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live",
+        "gui"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "10.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 4,
+      "cells_verified": 0,
+      "id": "FOUNDATION-100-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live",
+        "security"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "11.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "FRONTIER-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 4,
+      "cells_verified": 0,
+      "id": "FRONTIER-COGNITION-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live",
+        "security"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "11.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "GUI-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 4,
+      "cells_verified": 0,
+      "id": "HEALTH-SURFACE-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live",
+        "gui"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "10.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "IDENTITY-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "IIT-ABSTRACTION-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "IIT-BASELINE-INTEGRITY-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "7.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "IIT-CERT-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "IIT-COMPLEX-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "IIT-CONCLUSION-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "7.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "IIT-GRAPH-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "IIT-LIVE-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "7.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "IIT-SOLVER-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "IIT-STATISTICS-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "7.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "IIT-SYSTEM-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "7.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 5,
+      "cells_verified": 0,
+      "id": "IMMUNE-CODING-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live",
+        "gui",
+        "security"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "14.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "INFERENCE-RELIABILITY-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "7.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "INTELLIGENCE-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 4,
+      "cells_verified": 0,
+      "id": "LANE-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live",
+        "release"
+      ],
+      "state_claim": "complete",
+      "weight_provenance": "default",
+      "weighted_points_total": "11.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 4,
+      "cells_verified": 0,
+      "id": "LAUNCH-PROVENANCE-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live",
+        "gui"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "10.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "LIFECYCLE-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "complete",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "LONGHORIZON-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "security"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "8.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 4,
+      "cells_total": 12,
+      "cells_verified": 0,
+      "id": "MATRIX-01",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "28.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 4,
+      "cells_total": 20,
+      "cells_verified": 0,
+      "id": "MATRIX-02",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live",
+        "gui",
+        "release"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "56.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 4,
+      "cells_total": 12,
+      "cells_verified": 0,
+      "id": "MATRIX-03",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "28.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 4,
+      "cells_total": 8,
+      "cells_verified": 0,
+      "id": "MATRIX-04",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "16.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 4,
+      "cells_total": 12,
+      "cells_verified": 0,
+      "id": "MATRIX-05",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "security"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "32.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 4,
+      "cells_total": 12,
+      "cells_verified": 0,
+      "id": "MATRIX-06",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "28.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 4,
+      "cells_total": 12,
+      "cells_verified": 0,
+      "id": "MATRIX-07",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "gui"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "28.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 4,
+      "cells_total": 16,
+      "cells_verified": 0,
+      "id": "MATRIX-08",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "security",
+        "release"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "48.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 4,
+      "cells_total": 12,
+      "cells_verified": 0,
+      "id": "MATRIX-09",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "28.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 4,
+      "cells_total": 8,
+      "cells_verified": 0,
+      "id": "MATRIX-10",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "16.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 4,
+      "cells_total": 12,
+      "cells_verified": 0,
+      "id": "MATRIX-11",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "gui"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "28.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 4,
+      "cells_total": 8,
+      "cells_verified": 0,
+      "id": "MATRIX-12",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "16.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 4,
+      "cells_total": 16,
+      "cells_verified": 0,
+      "id": "MATRIX-13",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live",
+        "soak"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "44.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 4,
+      "cells_total": 16,
+      "cells_verified": 0,
+      "id": "MATRIX-14",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live",
+        "gui"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "40.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 4,
+      "cells_total": 20,
+      "cells_verified": 0,
+      "id": "MATRIX-15",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "security",
+        "portability",
+        "release"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "64.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 4,
+      "cells_total": 12,
+      "cells_verified": 0,
+      "id": "MATRIX-16",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "security"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "32.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 4,
+      "cells_total": 12,
+      "cells_verified": 0,
+      "id": "MATRIX-17",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "security"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "32.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 4,
+      "cells_total": 20,
+      "cells_verified": 0,
+      "id": "MATRIX-18",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live",
+        "portability",
+        "soak"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "60.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "MEMORY-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "7.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "MEMORY-LEAK-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "7.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "MIND-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "7.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 4,
+      "cells_verified": 0,
+      "id": "MORPHOGENETIC-ENGINEERING-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live",
+        "security"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "11.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 2,
+      "cells_total": 4,
+      "cells_verified": 0,
+      "id": "MQ-01",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "8.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 2,
+      "cells_total": 4,
+      "cells_verified": 0,
+      "id": "MQ-02",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "8.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 2,
+      "cells_total": 4,
+      "cells_verified": 0,
+      "id": "MQ-03",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "8.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 2,
+      "cells_total": 4,
+      "cells_verified": 0,
+      "id": "MQ-04",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "8.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 2,
+      "cells_total": 4,
+      "cells_verified": 0,
+      "id": "MQ-05",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "8.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 2,
+      "cells_total": 4,
+      "cells_verified": 0,
+      "id": "MQ-06",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "8.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 2,
+      "cells_total": 4,
+      "cells_verified": 0,
+      "id": "MQ-07",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "8.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 2,
+      "cells_total": 4,
+      "cells_verified": 0,
+      "id": "MQ-08",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "8.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 2,
+      "cells_total": 4,
+      "cells_verified": 0,
+      "id": "MQ-09",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "8.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 2,
+      "cells_total": 4,
+      "cells_verified": 0,
+      "id": "MQ-10",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "8.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 2,
+      "cells_total": 4,
+      "cells_verified": 0,
+      "id": "MQ-11",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "8.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 2,
+      "cells_total": 4,
+      "cells_verified": 0,
+      "id": "MQ-12",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "8.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 2,
+      "cells_total": 6,
+      "cells_verified": 0,
+      "id": "MQ-13",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "security"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "16.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 2,
+      "cells_total": 4,
+      "cells_verified": 0,
+      "id": "MQ-14",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "8.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 2,
+      "cells_total": 4,
+      "cells_verified": 0,
+      "id": "MQ-15",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "8.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 2,
+      "cells_total": 4,
+      "cells_verified": 0,
+      "id": "MQ-16",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "8.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 2,
+      "cells_total": 4,
+      "cells_verified": 0,
+      "id": "MQ-17",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "8.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 2,
+      "cells_total": 6,
+      "cells_verified": 0,
+      "id": "MQ-18",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "release"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "16.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "MULTIAGENT-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "MULTIMODAL-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "7.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "NEUROSIM-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "OBJECTIVE-LIFECYCLE-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "7.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "OBSERVABILITY-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "OBSERVE-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "security"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "8.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "OPERATIONS-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "release"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "8.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "OS-AUTOMATION-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "7.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 5,
+      "cells_total": 15,
+      "cells_verified": 0,
+      "id": "PASSF-01",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "35.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 4,
+      "cells_total": 12,
+      "cells_verified": 0,
+      "id": "PASSF-02",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "28.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 3,
+      "cells_total": 6,
+      "cells_verified": 0,
+      "id": "PASSF-03",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "12.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 3,
+      "cells_total": 9,
+      "cells_verified": 0,
+      "id": "PASSF-04",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "21.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 3,
+      "cells_total": 6,
+      "cells_verified": 0,
+      "id": "PASSF-05",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "12.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 3,
+      "cells_total": 9,
+      "cells_verified": 0,
+      "id": "PASSF-06",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "21.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 3,
+      "cells_total": 6,
+      "cells_verified": 0,
+      "id": "PASSF-07",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "12.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 3,
+      "cells_total": 9,
+      "cells_verified": 0,
+      "id": "PASSF-08",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "21.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 3,
+      "cells_total": 12,
+      "cells_verified": 0,
+      "id": "PASSF-09",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live",
+        "portability"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "33.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 2,
+      "cells_total": 8,
+      "cells_verified": 0,
+      "id": "PASSF-10",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "security",
+        "release"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "24.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 2,
+      "cells_total": 6,
+      "cells_verified": 0,
+      "id": "PASSF-11",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "gui"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "14.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 2,
+      "cells_total": 6,
+      "cells_verified": 0,
+      "id": "PASSF-12",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "14.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 3,
+      "cells_total": 15,
+      "cells_verified": 0,
+      "id": "PASSF-13",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live",
+        "portability",
+        "soak"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "45.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 4,
+      "cells_total": 12,
+      "cells_verified": 0,
+      "id": "PASSF-14",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "28.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 5,
+      "cells_verified": 0,
+      "id": "PERF-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live",
+        "gui",
+        "release"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "14.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 4,
+      "cells_verified": 0,
+      "id": "PORTABILITY-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "portability",
+        "release"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "12.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "PRIVACY-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 6,
+      "cells_verified": 0,
+      "id": "PROGRESS-CONTROL-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live",
+        "portability",
+        "release",
+        "soak"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "19.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "PROOF-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "QUANTUM-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "RELEASE-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 4,
+      "cells_verified": 0,
+      "id": "RELEASE-CONTRACT-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "security",
+        "release"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "12.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "REPLICATION-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "portability"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "8.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "REPO-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "RESOURCE-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "complete",
+      "weight_provenance": "default",
+      "weighted_points_total": "7.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "RESOURCE-OWNERSHIP-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "RLC-ANTI-INTERFERENCE-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "security"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "8.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "RLC-BASELINES-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "RLC-BRANCHES-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 4,
+      "cells_verified": 0,
+      "id": "RLC-CAUSAL-INGRESS-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live",
+        "security"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "11.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 4,
+      "cells_verified": 0,
+      "id": "RLC-CLAIMS-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "gui",
+        "release"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "11.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "RLC-COMPUTE-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "RLC-CONSOLIDATION-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "RLC-EXPERIMENTS-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "RLC-FAST-WEIGHTS-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "7.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "RLC-FRESH-TASKS-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 4,
+      "cells_verified": 0,
+      "id": "RLC-FRONTIER-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live",
+        "release"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "11.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 6,
+      "cells_verified": 0,
+      "id": "RLC-INDEPENDENT-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live",
+        "security",
+        "portability",
+        "release"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "19.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "RLC-LATENT-OPT-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "RLC-LIFECYCLE-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 4,
+      "cells_verified": 0,
+      "id": "RLC-LIVE32B-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live",
+        "gui"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "10.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "RLC-MECH-006",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "RLC-MECHANICS-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 4,
+      "cells_verified": 0,
+      "id": "RLC-RECURRENCE-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live",
+        "portability"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "11.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "RLC-RUNTIME-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "7.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 4,
+      "cells_verified": 0,
+      "id": "RLC-SCALING-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live",
+        "release"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "11.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "RLC-SCHEDULE-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "RLC-SCOPE-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "7.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "RLC-WORKSPACE-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "RUNTIME-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "7.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 5,
+      "cells_verified": 0,
+      "id": "RUNTIME-SETTINGS-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live",
+        "gui",
+        "security"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "14.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "SCOPE-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "release"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "8.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "SECURITY-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "security"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "8.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 4,
+      "cells_verified": 0,
+      "id": "SELF-MODEL-MIRROR-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live",
+        "security"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "11.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "SELF-STATE-CHAT-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "7.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "SEMANTIC-REVIEW-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "SHUTDOWN-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "complete",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "SIMWORLD-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "gui"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "7.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "SKILL-EXECUTION-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "7.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "SKILLS-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "complete",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "SM-01-CANONICAL-SELF",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "SM-02-EMBODIMENT-LOCATION",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "SM-03-SELF-OTHER-WORLD",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "SM-04-INTROSPECTION",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "SM-05-AUTHORSHIP",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "SM-06-PREFERENCE-OWNERSHIP",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "SM-07-CONTINUITY",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "SM-08-WORLDVIEW",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "SM-09-SPONTANEOUS-RECOGNITION",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "SM-10-GOVERNANCE-PRIVACY",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "SM-11-CAUSAL-CHALLENGE",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "security"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "8.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "SM-12-LIVE-CERTIFICATION",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "SOAK-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "soak"
+      ],
+      "state_claim": "deferred",
+      "weight_provenance": "default",
+      "weighted_points_total": "8.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "SOCIAL-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "7.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "STATE-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "STORAGE-GATEWAY-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "complete",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "SUBSTRATE-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "7.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 5,
+      "cells_verified": 0,
+      "id": "SUPPORTABILITY-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "gui",
+        "security",
+        "release"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "15.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 4,
+      "cells_verified": 0,
+      "id": "TEST-DEPTH-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "security",
+        "release"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "12.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "THRONG-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 4,
+      "cells_verified": 0,
+      "id": "TOOL-DISPOSITION-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live",
+        "gui"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "10.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "TOOLS-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 4,
+      "cells_verified": 0,
+      "id": "TOPOLOGY-CONSISTENCY-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live",
+        "gui"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "10.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 4,
+      "cells_verified": 0,
+      "id": "UI-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live",
+        "gui"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "10.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 4,
+      "cells_verified": 0,
+      "id": "UI-LONG-CONTENT-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live",
+        "gui"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "10.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 6,
+      "cells_verified": 0,
+      "id": "VALIDATE-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live",
+        "gui",
+        "security",
+        "portability"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "18.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "VALUES-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "VOICE-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "WELFARE-001",
+      "kind": "parent",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "security"
+      ],
+      "state_claim": "open",
+      "weight_provenance": "default",
+      "weighted_points_total": "8.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "WORKSPACE-INGRESS-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "7.00",
+      "weighted_points_verified": "0.00"
+    }
+  ],
+  "schema_version": 1,
+  "scope": {
+    "acceptance_evidence_cells_total": 1581,
+    "acceptance_evidence_cells_verified": 0,
+    "assigned_weight_requirements": 0,
+    "mandatory_requirements": 300,
+    "requirements_total": 301,
+    "scope_baseline_cells": 1581,
+    "weighted_points_remaining": "4007.00",
+    "weighted_points_total": "4007.00",
+    "weighted_points_verified": "0.00"
+  }
+}

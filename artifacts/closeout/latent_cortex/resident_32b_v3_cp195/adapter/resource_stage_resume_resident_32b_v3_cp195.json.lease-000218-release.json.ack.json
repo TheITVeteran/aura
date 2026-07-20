@@ -1,0 +1,1 @@
+{"action":"release","active_lethal_mb":59392.0,"request_sha256":"eed513fdc1d3c102bc33c3511ad97b5358c6e3fde7970c65deff06394b2df429","schema":"aura.resource_stage.compute_lease_ack.v1","sentinel_pid":53446,"sequence":218,"stage":"steady_memory_guard_rearmed","target_pid":50761,"workload":"training_step","written_at":1784568955.629416}

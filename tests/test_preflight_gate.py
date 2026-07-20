@@ -47,6 +47,9 @@ class TestChecklistPin:
             # zero-unmapped source coverage, and the defect-fingerprint
             # ratchet are release-checklist items from 2026-07-18 onward.
             "reqproof_structural",
+            # CP208 adds acceptance-granular completion and total-checkpoint
+            # accounting as an independently recomputed release input.
+            "reqproof_progress",
         ]
 
     def test_deferred_gates_are_named_with_reasons(self):

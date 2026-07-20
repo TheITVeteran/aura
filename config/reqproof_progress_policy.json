@@ -1,0 +1,23 @@
+{
+  "class_weights": {
+    "gui": 3,
+    "implementation": 2,
+    "live": 3,
+    "portability": 4,
+    "release": 4,
+    "security": 4,
+    "soak": 4,
+    "test": 2
+  },
+  "confidence": {
+    "high_verified_basis_points": 7500,
+    "medium_verified_basis_points": 2500
+  },
+  "content_sha256": "51b725d4ff7c375ae98cece8d7d6d4351739689b500450b67b836e7e37006a47",
+  "forecast": {
+    "conservative_points_per_checkpoint": 10,
+    "optimistic_points_per_checkpoint": 30
+  },
+  "legacy_engineering_estimate_basis_points": 2700,
+  "schema_version": 1
+}

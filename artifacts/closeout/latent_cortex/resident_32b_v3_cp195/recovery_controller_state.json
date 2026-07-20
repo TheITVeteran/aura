@@ -1,0 +1,1 @@
+{"controller_pid":35591,"details":{"sentinel":{"heartbeat_sequence":20456,"state":"running"},"trainer":{"heartbeat_sequence":20462,"state":"running"}},"schema":"aura.resident_v3_recovery_controller_state.v1","stage":"wait_resume","state_sha256":"010afb7c501d3a6ebfaf773958fa202f260b13d4b691311ce475d1071dc59d7f","status":"waiting","updated_at":1784571242.146819}

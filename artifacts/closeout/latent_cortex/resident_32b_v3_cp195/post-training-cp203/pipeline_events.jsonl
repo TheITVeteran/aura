@@ -1,0 +1,1 @@
+{"details":{},"event_sha256":"e2a787666fa0b50bed3f4eee370b1ff21fd5646f4b7ce596b010cab81bc5c87d","previous_event_sha256":"","recorded_at":1784552492.933985,"schema":"aura.resident_v3_post_training_pipeline_event.v1","sequence":1,"stage":"wait_for_training_terminal","status":"started"}

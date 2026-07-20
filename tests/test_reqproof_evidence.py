@@ -8,6 +8,7 @@ import pytest
 from reqproof_testkit import make_registry_dict, make_requirement
 
 from tools.reqproof.evidence import (
+    LEDGER_SCHEMA_VERSION,
     EvidenceLedger,
     EvidenceLedgerEntry,
     EvidenceLedgerError,
@@ -29,6 +30,7 @@ def registry(*requirements: dict) -> Registry:
 def evidence_entry(requirement_id: str = "TEST-001") -> EvidenceLedgerEntry:
     return EvidenceLedgerEntry(
         requirement_id=requirement_id,
+        acceptance_ids=("A1",),
         evidence=EvidenceRef(
             evidence_class="implementation",
             ref="artifacts/proof.json",
@@ -62,7 +64,7 @@ class TestLedgerSchema:
         first = evidence_entry("BETA-001")
         second = evidence_entry("ALPHA-001")
         unsorted = EvidenceLedger(
-            schema_version=1,
+            schema_version=LEDGER_SCHEMA_VERSION,
             registry_content_sha256=current.registry_content_sha256,
             entries=(first, second),
         ).to_dict()
@@ -70,7 +72,7 @@ class TestLedgerSchema:
             EvidenceLedger.from_dict(unsorted)
 
         duplicate = EvidenceLedger(
-            schema_version=1,
+            schema_version=LEDGER_SCHEMA_VERSION,
             registry_content_sha256=current.registry_content_sha256,
             entries=(first, first),
         ).to_dict()
@@ -80,7 +82,7 @@ class TestLedgerSchema:
     def test_malformed_requirement_id_is_rejected(self):
         current = EvidenceLedger.empty_for(registry(make_requirement()))
         data = EvidenceLedger(
-            schema_version=1,
+            schema_version=LEDGER_SCHEMA_VERSION,
             registry_content_sha256=current.registry_content_sha256,
             entries=(evidence_entry("not-an-id"),),
         ).to_dict()
@@ -129,6 +131,7 @@ class TestLedgerOperations:
             current_registry,
             requirement_id="TEST-001",
             evidence_class="implementation",
+            acceptance_ids=("A1",),
             ref="artifacts/proof.json",
             commit=COMMIT,
             recorded_at="2026-07-20",
@@ -140,7 +143,67 @@ class TestLedgerOperations:
             current_registry,
             root=tmp_path,
             commit_exists=lambda commit: True,
-            evidence_by_requirement=updated.by_requirement(),
+            evidence_entries_by_requirement=updated.entries_by_requirement(),
+        ) == []
+
+    def test_every_acceptance_class_cell_is_required_for_closure(self, tmp_path: Path):
+        artifact = tmp_path / "proof.json"
+        artifact.write_text("proof", encoding="utf-8")
+        current_registry = registry(
+            make_requirement(
+                state="complete",
+                acceptance=["first", "second"],
+                evidence_required=["implementation", "test"],
+            )
+        )
+        ledger = EvidenceLedger.empty_for(current_registry)
+        ledger = add_entry(
+            ledger,
+            current_registry,
+            requirement_id="TEST-001",
+            evidence_class="implementation",
+            acceptance_ids=("A1", "A2"),
+            ref="proof.json",
+            commit=COMMIT,
+            recorded_at="2026-07-20",
+            root=tmp_path,
+        )
+        ledger = add_entry(
+            ledger,
+            current_registry,
+            requirement_id="TEST-001",
+            evidence_class="test",
+            acceptance_ids=("A1",),
+            ref="proof.json",
+            commit=COMMIT,
+            recorded_at="2026-07-20",
+            root=tmp_path,
+        )
+        defects = validate_registry(
+            current_registry,
+            root=tmp_path,
+            commit_exists=lambda commit: True,
+            evidence_entries_by_requirement=ledger.entries_by_requirement(),
+        )
+        assert len(defects) == 1
+        assert "test[A2]" in defects[0].detail
+
+        ledger = add_entry(
+            ledger,
+            current_registry,
+            requirement_id="TEST-001",
+            evidence_class="test",
+            acceptance_ids=("A2",),
+            ref="proof.json",
+            commit=COMMIT,
+            recorded_at="2026-07-20",
+            root=tmp_path,
+        )
+        assert validate_registry(
+            current_registry,
+            root=tmp_path,
+            commit_exists=lambda commit: True,
+            evidence_entries_by_requirement=ledger.entries_by_requirement(),
         ) == []
 
     def test_duplicate_and_unrequired_class_are_rejected(self, tmp_path: Path):
@@ -155,6 +218,7 @@ class TestLedgerOperations:
             current_registry,
             requirement_id="TEST-001",
             evidence_class="implementation",
+            acceptance_ids=("A1",),
             ref="proof.json",
             commit=COMMIT,
             recorded_at="2026-07-20",
@@ -166,6 +230,7 @@ class TestLedgerOperations:
                 current_registry,
                 requirement_id="TEST-001",
                 evidence_class="implementation",
+                acceptance_ids=("A1",),
                 ref="proof.json",
                 commit=COMMIT,
                 recorded_at="2026-07-20",
@@ -177,6 +242,19 @@ class TestLedgerOperations:
                 current_registry,
                 requirement_id="TEST-001",
                 evidence_class="live",
+                acceptance_ids=("A1",),
+                ref="proof.json",
+                commit=COMMIT,
+                recorded_at="2026-07-20",
+                root=tmp_path,
+            )
+        with pytest.raises(EvidenceLedgerError, match="unknown acceptance IDs"):
+            add_entry(
+                current,
+                current_registry,
+                requirement_id="TEST-001",
+                evidence_class="implementation",
+                acceptance_ids=("A2",),
                 ref="proof.json",
                 commit=COMMIT,
                 recorded_at="2026-07-20",
@@ -190,7 +268,7 @@ class TestLedgerOperations:
         before = path.read_bytes()
 
         second = EvidenceLedger(
-            schema_version=1,
+            schema_version=LEDGER_SCHEMA_VERSION,
             registry_content_sha256=first.registry_content_sha256,
             entries=(evidence_entry(),),
         )

@@ -10,7 +10,7 @@ This document is the map for finishing that.
 |---|---|---|
 | 1 recurrent depth | `core/learning/intrinsic_recurrence.py` | **none** |
 | 2 writable slots | `latent_cortex/engine.py` | live |
-| 3 schedule search | `core/learning/schedule_search.py` | engine has `_resolve_schedule` + `LayerSchedule`; search is not connected to it |
+| 3 schedule search | `latent_cortex/schedules.py` (`ScheduleSearch`) | **ALREADY LIVE** via `_resolve_schedule` -> `ScheduleLibrary`. CP235 added held-out separation, generalization gap and a compute cap to it. |
 | 4 virtual width | `core/consciousness/parallel_branches.py` | live |
 | 5 latent optimization | `latent_cortex/latent_opt.py` | **ALREADY LIVE** — engine.py:1372, with matched-random control AND manifold drift. `core/learning/latent_optimization.py` (CP231) DUPLICATES this; prefer the live one. |
 | 6 fast weights | `latent_cortex/fast_weights.py` | live |
@@ -52,11 +52,34 @@ it. **Search by capability, not by guessed filename.**
 `spec.latent_opt_mode` is validated to `"disabled"` for v2 TRAINING only;
 that is a training constraint, not the live default.
 
-## Then: schedule search (component 3)
+## Component 3 needed no new module either
 
-`engine._resolve_schedule(domain)` already consults `self.library`. Feed
-`evolve_schedules` results into that library. The search REFUSES a single
-scorer for search and held-out -- keep it that way.
+`ScheduleSearch` already existed in `latent_cortex/schedules.py`, and
+`engine._resolve_schedule(domain)` already consults `ScheduleLibrary`.
+CP235 ported the missing safety properties INTO it rather than keeping a
+parallel implementation:
+
+* `holdout_evaluator` scored once after search, on the winner only
+* passing the same callable for both is REFUSED
+* `generalization_gap()` / `overfit_warning()` on the result
+* `max_layer_apps`, which refuses a budget below the seed schedule (the
+  seed enters the pool unconditionally, so such a cap bounds nothing)
+
+Remaining work: feed real verified task scores into `library.record_paired_outcome`.
+
+## AUDIT LESSON (cost real hours on Jul 20)
+
+Three components were reported "NOT BUILT" and rebuilt as duplicates
+because the audit searched GUESSED FILENAMES:
+
+    "schedule_search"  -> missed schedules.py::ScheduleSearch
+    "latent_optim"     -> missed latent_opt.py
+    (verifiable tasks) -> missed heldout_battery.py
+
+`core/learning/schedule_search.py` and `core/learning/latent_optimization.py`
+have been DELETED; their unique properties were ported into the live
+modules. **Search by capability (grep for the behaviour), never by guessed
+module name.**
 
 ## Then: intrinsic recurrence (component 1)
 

@@ -12,6 +12,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 from dataclasses import dataclass, field
 from datetime import date
@@ -31,7 +32,7 @@ from tools.reqproof.schema import (  # noqa: E402
     load_registry,
 )
 
-LEDGER_SCHEMA_VERSION = 1
+LEDGER_SCHEMA_VERSION = 2
 DEFAULT_REGISTRY_PATH = ROOT / "config" / "requirement_registry.json"
 DEFAULT_EVIDENCE_LEDGER_PATH = ROOT / "config" / "requirement_evidence_ledger.json"
 
@@ -87,11 +88,21 @@ def resolve_evidence_target(root: Path, ref: str) -> Path:
 @dataclass(frozen=True)
 class EvidenceLedgerEntry:
     requirement_id: str
+    acceptance_ids: tuple[str, ...]
     evidence: EvidenceRef
 
     ALLOWED_KEYS = frozenset(
-        {"requirement_id", "evidence_class", "ref", "sha256", "commit", "recorded_at"}
+        {
+            "requirement_id",
+            "acceptance_ids",
+            "evidence_class",
+            "ref",
+            "sha256",
+            "commit",
+            "recorded_at",
+        }
     )
+    ACCEPTANCE_ID_RE = re.compile(r"^A[1-9][0-9]*$")
 
     @classmethod
     def from_dict(cls, data: Any, name: str) -> EvidenceLedgerEntry:
@@ -103,13 +114,32 @@ class EvidenceLedgerEntry:
             bool(REQUIREMENT_ID_RE.match(requirement_id)),
             f"{name}.requirement_id does not match the requirement ID pattern",
         )
+        acceptance_raw = data.get("acceptance_ids")
+        _require(isinstance(acceptance_raw, list), f"{name}.acceptance_ids must be a list")
+        acceptance_ids = tuple(
+            _check_string(value, f"{name}.acceptance_ids[{index}]")
+            for index, value in enumerate(acceptance_raw)
+        )
+        _require(bool(acceptance_ids), f"{name}.acceptance_ids must be non-empty")
+        _require(
+            all(cls.ACCEPTANCE_ID_RE.match(value) for value in acceptance_ids),
+            f"{name}.acceptance_ids entries must match A1, A2, ...",
+        )
+        _require(
+            acceptance_ids == tuple(sorted(set(acceptance_ids), key=lambda value: int(value[1:]))),
+            f"{name}.acceptance_ids must be numerically sorted and unique",
+        )
         try:
             evidence = EvidenceRef.from_dict(
                 {key: data.get(key) for key in EvidenceRef.ALLOWED_KEYS}, name
             )
         except RegistrySchemaError as exc:
             raise EvidenceLedgerError(str(exc)) from exc
-        return cls(requirement_id=requirement_id, evidence=evidence)
+        return cls(
+            requirement_id=requirement_id,
+            acceptance_ids=acceptance_ids,
+            evidence=evidence,
+        )
 
     @property
     def sort_key(self) -> tuple[str, ...]:
@@ -117,14 +147,19 @@ class EvidenceLedgerEntry:
         return (
             self.requirement_id,
             evidence.evidence_class,
+            ",".join(self.acceptance_ids),
             evidence.ref,
             evidence.sha256,
             evidence.commit,
             evidence.recorded_at,
         )
 
-    def to_dict(self) -> dict[str, str]:
-        return {"requirement_id": self.requirement_id, **self.evidence.to_dict()}
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "requirement_id": self.requirement_id,
+            "acceptance_ids": list(self.acceptance_ids),
+            **self.evidence.to_dict(),
+        }
 
 
 @dataclass(frozen=True)
@@ -215,6 +250,12 @@ class EvidenceLedger:
             grouped.setdefault(entry.requirement_id, []).append(entry.evidence)
         return {key: tuple(value) for key, value in grouped.items()}
 
+    def entries_by_requirement(self) -> dict[str, tuple[EvidenceLedgerEntry, ...]]:
+        grouped: dict[str, list[EvidenceLedgerEntry]] = {}
+        for entry in self.entries:
+            grouped.setdefault(entry.requirement_id, []).append(entry)
+        return {key: tuple(value) for key, value in grouped.items()}
+
 
 def load_evidence_ledger(path: Path) -> EvidenceLedger:
     try:
@@ -261,6 +302,17 @@ def verify_ledger_binding(ledger: EvidenceLedger, registry: Registry) -> None:
             f"{entry.requirement_id} does not require evidence class "
             f"{entry.evidence.evidence_class}",
         )
+        valid_acceptance_ids = {
+            f"A{index}" for index in range(1, len(requirement.acceptance) + 1)
+        }
+        unknown_acceptance_ids = sorted(
+            set(entry.acceptance_ids) - valid_acceptance_ids
+        )
+        _require(
+            not unknown_acceptance_ids,
+            f"{entry.requirement_id} has unknown acceptance IDs "
+            f"{unknown_acceptance_ids}",
+        )
 
 
 def add_entry(
@@ -269,6 +321,7 @@ def add_entry(
     *,
     requirement_id: str,
     evidence_class: str,
+    acceptance_ids: tuple[str, ...],
     ref: str,
     commit: str,
     recorded_at: str,
@@ -295,7 +348,22 @@ def add_entry(
         )
     except RegistrySchemaError as exc:
         raise EvidenceLedgerError(str(exc)) from exc
-    entry = EvidenceLedgerEntry(requirement_id=requirement_id, evidence=evidence)
+    entry = EvidenceLedgerEntry.from_dict(
+        {
+            "requirement_id": requirement_id,
+            "acceptance_ids": list(acceptance_ids),
+            **evidence.to_dict(),
+        },
+        "evidence entry",
+    )
+    verify_ledger_binding(
+        EvidenceLedger(
+            schema_version=LEDGER_SCHEMA_VERSION,
+            registry_content_sha256=registry.compute_content_sha256(),
+            entries=(entry,),
+        ),
+        registry,
+    )
     entries = tuple(sorted((*ledger.entries, entry), key=lambda item: item.sort_key))
     _require(
         len({item.sort_key for item in entries}) == len(entries),
@@ -334,6 +402,13 @@ def main() -> int:
     record = subparsers.add_parser("record", help="record one exact evidence artifact")
     record.add_argument("--requirement", required=True)
     record.add_argument("--class", dest="evidence_class", required=True)
+    record.add_argument(
+        "--acceptance",
+        dest="acceptance_ids",
+        action="append",
+        required=True,
+        help="acceptance unit ID (A1, A2, ...); repeat for multiple units",
+    )
     record.add_argument("--ref", required=True)
     record.add_argument("--commit", default="HEAD")
     record.add_argument("--recorded-at", default=date.today().isoformat())
@@ -363,12 +438,14 @@ def main() -> int:
                 registry_content_sha256=registry.compute_content_sha256(),
                 entries=ledger.entries,
             )
+            verify_ledger_binding(ledger, registry)
         else:
             ledger = add_entry(
                 ledger,
                 registry,
                 requirement_id=args.requirement,
                 evidence_class=args.evidence_class,
+                acceptance_ids=tuple(args.acceptance_ids),
                 ref=args.ref,
                 commit=_resolve_commit(ROOT, args.commit),
                 recorded_at=args.recorded_at,

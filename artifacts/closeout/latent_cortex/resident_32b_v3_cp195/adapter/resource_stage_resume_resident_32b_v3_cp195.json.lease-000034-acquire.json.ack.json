@@ -1,0 +1,1 @@
+{"action":"acquire","active_lethal_mb":73728.0,"request_sha256":"1d94c73813113df598149f3ff68e1d6ac74a781f380caffcffe264101d7b967e","schema":"aura.resource_stage.compute_lease_ack.v1","sentinel_pid":53446,"sequence":34,"stage":"compute_guard_armed","target_pid":50761,"workload":"training_step","written_at":1784554759.745495}

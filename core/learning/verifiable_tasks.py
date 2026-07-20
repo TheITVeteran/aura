@@ -17,6 +17,16 @@ This module supplies the shared substrate for both halves of the program:
   code. A verifier that can be fooled is worse than none, because policy
   gradient optimizes whatever the grader actually measures.
 
+**Relationship to ``core/learning/heldout_battery.py``** (read this before
+adding generators): that module is the SEALED, contamination-resistant
+battery -- eight mature generators, answer fingerprints, and
+``text_collides_with_battery`` for leak detection. It has no concept of
+task DEPTH. This module is the depth-stratified scaling instrument: it
+exists because Anima Rationis makes d(accuracy)/d(depth) the central
+success criterion, and a battery with no depth axis cannot measure it.
+Use heldout_battery for promotion gating and contamination checks; use this
+for the scaling curve. Do not duplicate its generators here.
+
 Design commitments, each answering a way this could produce fake progress:
 
 * **Graders are programs, not string matches.** ``2/4`` and ``0.5`` are the

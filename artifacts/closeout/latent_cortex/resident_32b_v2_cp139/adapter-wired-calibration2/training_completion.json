@@ -1,0 +1,1 @@
+{"adapter_sha256":"9a8ea0d64fdb715c96a7b13923e69fc61370863e45342de901117cf2870a9fcd","complete":true,"halt_reason":"max_steps","manifest_sha256":"8cdc395eed32c65fcf2a42d41cf82130c0a750bc329992c95313db09d80d511b","receipt_sha256":"018ee610bec02e238a144c7c775ec3dd9a306407dff73208eac254f963263174","schema":"aura.recurrence_native_training_completion.v1","step":2}
