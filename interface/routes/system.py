@@ -1548,6 +1548,9 @@ def _attach_launch_provenance_contract(
             "Aura's runtime is alive, but its signed runtime shell provenance is not verified."
         )
         boot_phase = "runtime_revision_failed"
+    diagnosis = _provenance_failure_diagnosis(provenance, runtime_revision)
+    if diagnosis:
+        status_message = f"{status_message} {diagnosis}"
     result.update(
         {
             "ready": False,
@@ -1559,9 +1562,64 @@ def _attach_launch_provenance_contract(
             "status_message": status_message,
             "boot_phase": boot_phase,
             "blockers": blockers,
+            "provenance_diagnosis": diagnosis,
         }
     )
     return result, 503
+
+
+def _provenance_failure_diagnosis(
+    provenance: dict[str, Any] | None,
+    runtime_revision: dict[str, Any] | None,
+) -> str:
+    """Name the concrete identity mismatch behind a provenance block.
+
+    "Provenance not verified" alone reads as a mysterious breakage; the most
+    common cause is simply a signed Aura.app that predates the current source
+    checkout. Saying WHICH identity diverged (and the remedy) turns a
+    confusing stuck-at-48% boot screen into an actionable one.
+    """
+    revision = dict(runtime_revision) if isinstance(runtime_revision, dict) else {}
+    source = dict(provenance) if isinstance(provenance, dict) else {}
+
+    expected_commit = str(revision.get("expected_commit_sha") or "").strip()
+    actual_commit = str(revision.get("actual_commit_sha") or "").strip()
+    if expected_commit and actual_commit and expected_commit != actual_commit:
+        return (
+            f"Cause: the signed app was built from commit {expected_commit[:9]} but the "
+            f"source checkout is now at {actual_commit[:9]} — the app bundle is stale, "
+            "not the runtime. Remedy: rebuild Aura.app (./build_app.sh) and relaunch."
+        )
+
+    expected_shell = str(revision.get("expected_shell_assets_sha256") or "").strip()
+    actual_shell = str(revision.get("actual_shell_assets_sha256") or "").strip()
+    if expected_shell and actual_shell and expected_shell != actual_shell:
+        return (
+            "Cause: the app's pinned UI shell no longer matches the current interface/ "
+            "assets. Remedy: rebuild Aura.app (./build_app.sh) and relaunch."
+        )
+
+    expected_workspace = str(revision.get("expected_workspace_state_sha256") or "").strip()
+    actual_workspace = str(revision.get("actual_workspace_state_sha256") or "").strip()
+    if expected_workspace and actual_workspace and expected_workspace != actual_workspace:
+        return (
+            "Cause: the source workspace has uncommitted changes that differ from the "
+            "state the app was built against. Remedy: commit or stash the changes, or "
+            "rebuild Aura.app (./build_app.sh) against the current workspace."
+        )
+
+    issues = sorted(
+        {
+            str(item)
+            for item in (
+                list(revision.get("issues") or []) + list(source.get("issues") or [])
+            )
+            if str(item)
+        }
+    )
+    if issues:
+        return "Identity issues: " + ", ".join(issues[:5]) + "."
+    return ""
 
 
 def _launched_from_app_flag() -> bool:
