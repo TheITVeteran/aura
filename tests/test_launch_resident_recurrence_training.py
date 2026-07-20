@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -75,6 +76,16 @@ def _fixture(tmp_path: Path, monkeypatch):
     }
     protocol_path = tmp_path / "proof/protocol.json"
     protocol_raw = _write_json(protocol_path, protocol)
+    failed_receipt = {
+        "returncode": -9,
+        "timed_out": False,
+        "restart_count": 0,
+        "containment_verified": True,
+        "process_group_empty": True,
+        "lineage_empty": True,
+    }
+    failed_receipt_path = tmp_path / "proof/failed_receipt.json"
+    failed_receipt_raw = _write_json(failed_receipt_path, failed_receipt)
     failure = {
         "schema": launch.FAILURE_SCHEMA,
         "process": {
@@ -88,6 +99,11 @@ def _fixture(tmp_path: Path, monkeypatch):
         "kernel_evidence": {
             "termination_classification": "jetsam_largest_compressed_process",
             "compressed_process_mb": 83805,
+        },
+        "detached_receipt": {
+            "path": failed_receipt_path.name,
+            "sha256": hashlib.sha256(failed_receipt_raw).hexdigest(),
+            "size_bytes": len(failed_receipt_raw),
         },
     }
     failure_path = tmp_path / "proof/failure.json"
@@ -145,6 +161,35 @@ def test_launch_command_is_enveloped_and_preserves_v3_contract(tmp_path, monkeyp
     assert target[-1] == "--resume"
     assert launcher[0] == str(tmp_path / ".venv/bin/python")
     assert launcher[-len(target) :] == target
+
+
+def test_partial_phase_uses_same_envelope_without_resume(tmp_path, monkeypatch):
+    protocol_path, amendment_path, wrapper, _trainer = _fixture(tmp_path, monkeypatch)
+    protocol = json.loads(protocol_path.read_text())
+    adapter = Path(protocol["training"]["output_dir"])
+    shutil.rmtree(adapter)
+    amendment = json.loads(amendment_path.read_text())
+    amendment["partial"] = {
+        "run_dir": str(tmp_path / "proof/partial-run"),
+        "name": "resident-test-partial",
+        "timeout_seconds": 1800,
+        "max_minutes": 0.001,
+        "checkpoint_every_steps": 5,
+        "log_every_steps": 5,
+    }
+    _write_json(amendment_path, amendment)
+    monkeypatch.setattr(launch, "_validate_no_competing_model_process", lambda _model: None)
+
+    launcher, target = launch.build_launch_command(
+        protocol_path,
+        amendment_path,
+        phase="partial",
+    )
+
+    assert target[1] == str(wrapper)
+    assert target[target.index("--max-minutes") + 1] == "0.001"
+    assert "--resume" not in target
+    assert launcher[launcher.index("--run-dir") + 1].endswith("partial-run")
 
 
 def test_launch_rejects_changed_resource_wrapper(tmp_path, monkeypatch):

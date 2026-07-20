@@ -21445,3 +21445,52 @@ frontier, external-custody, installed-app, release, or soak credit is awarded.
 Next: publish CP184, launch the enveloped exact resume, build the independent
 resident-v3 admission certificate, and monitor memory/checkpoint evidence while
 continuing model-free closeout work. Final long soaks remain deferred.
+
+## Checkpoint 2026-07-20-185: Resident V3 Graph-Lifetime Barrier and Admission Gate
+
+CP184 proved that the MLX resource envelope is necessary but not sufficient.
+The enveloped resume reached and durably published step five with finite loss
+and holdout evidence, then its external sentinel observed physical footprint
+rise through 57,387.5, 62,422.8, and 66,704.1 MB and killed PID 74373 at the
+59,392-MB ceiling. The detached trainer and sentinel both terminated with
+verified containment; the sentinel tombstone makes the run ineligible. No
+training or capability credit is awarded.
+
+- The retained-lifetime defect is closed in the trainer. Immediately after the
+  AdamW update is materialized, branch-cosine telemetry is converted to Python
+  scalars, the gradient tree and step telemetry are deleted, and the MLX cache
+  is cleared before holdout, checkpoint publication, or construction of the
+  next right-hand-side graph. Each held-out graph is likewise released after
+  scalar extraction. Loss-window receipts now include MLX active, cache, and
+  peak allocator bytes.
+- The old step-five checkpoint is not migrated or relabeled. Trainer source is
+  identity material, so `protocol.json` under `resident_32b_v3_cp185` freezes a
+  fresh adapter ID and output root with the same model, dataset, deterministic
+  order, v3 objective, optimizer, recurrence shape, and pilot decision rules.
+  `resource_failure_cp185.json` binds the CP184 trainer/sentinel receipts,
+  tombstone, footprint trail, diagnosis, and no-credit disposition.
+- `tools/launch_resident_recurrence_training.py` now compiles both the forced-
+  partial and exact-resume phases from a frozen amendment. Both phases require
+  the same 40/2/48-GiB envelope; partial refuses an existing adapter root,
+  resume requires the exact expected wall-clock checkpoint, run directories
+  are create-once, and only resume may carry `--resume`.
+- `tools/verify_resident_v3_training_admission.py` is the independent terminal
+  gate before freeze. It replays both detached journals, command/envelope
+  bindings, both external-sentinel trails, absence of tombstones, complete or
+  >=200-step bounded-partial state, finite terminal loss/holdout trails, the
+  1.5x holdout overfit guard, the complete v2/v3 adapter identity, and exact
+  protocol/model/objective/topology bindings. Its create-once receipt fixes all
+  gain and frontier flags false; admission grants only eligibility for freeze
+  and resident mechanics.
+
+Validation is green: 49/49 focused trainer-gradient, identity, envelope,
+two-phase launch, and admission tests pass. Streamed v2 and v3 gradients still
+match their monolithic objectives; focused Ruff and bytecode compilation pass.
+The CP185 forced-partial and resume runs have not launched at this checkpoint.
+
+Evidence-weighted completion remains 27%. This is checkpoint 185 of the faithful
+292-399 forecast, leaving approximately 107-214 checkpoints. No reasoning-gain,
+frontier, external-custody, installed-app, release, or soak credit is awarded.
+Next: publish CP185, execute the resource-guarded forced partial, require a
+tombstone-free memory profile, then launch the exact resume and continue the
+model-free admission/freeze preparation. Final long soaks remain deferred.

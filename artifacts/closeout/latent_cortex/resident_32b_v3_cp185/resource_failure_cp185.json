@@ -1,0 +1,55 @@
+{
+  "schema": "aura.recurrence_resident_resource_failure.v1",
+  "observed_at": "2026-07-19T23:31:59-07:00",
+  "claim_scope": "resident_v3_training_resource_failure_only",
+  "process": {
+    "pid": 74373,
+    "name": "Python",
+    "detached_returncode": -9,
+    "detached_status": "failed",
+    "timed_out": false,
+    "restart_count": 0,
+    "containment_verified": true,
+    "process_group_empty": true,
+    "lineage_empty": true
+  },
+  "detached_receipt": {
+    "path": "../resident_32b_v3_cp182/detached-resume-envelope-cp184/detached_receipt.json",
+    "sha256": "80e104129a8098a3c069f314f6b8dd7ddb92be5818f9367fab766fa1b5d17623",
+    "size_bytes": 4289
+  },
+  "kernel_evidence": {
+    "source": "external memory sentinel over canonical Darwin physical footprint",
+    "event": "killed target tree at lethal ceiling after managed footprint samples 62422.8 MB and 66704.1 MB",
+    "compressed_process_mb": 66704,
+    "termination_classification": "external_sentinel_lethal_ceiling"
+  },
+  "sentinel_evidence": {
+    "receipt": {
+      "sha256": "676121f8823d072f7b6b63b55aad777795f8e66499af8d2f7c6763c76eb6418e",
+      "size_bytes": 2049
+    },
+    "tombstone": {
+      "sha256": "2dc60c66ebaa9000b660d71049f2fa7eb36564b568601f9f6cbf3804cc6d44f4",
+      "size_bytes": 479
+    },
+    "footprint_ring": {
+      "sha256": "7362d6ca62cf18cc1a0f317589d066ebbae6888f2b85b75f06b39c924c5881e4",
+      "size_bytes": 18153,
+      "peak_managed_mb": 66704.1
+    }
+  },
+  "diagnosis": {
+    "root_cause": "The outer training loop retained the materialized prior gradient tree and v3 telemetry through held-out evaluation, checkpoint publication, and construction of the next step. This overlapped two resident-scale computation lifetimes; MLX wired memory is allocator policy, not a hard whole-process footprint cap.",
+    "repair": "Delete gradient and telemetry references immediately after optimizer materialization, clear the MLX cache before any holdout/checkpoint/next-step work, clear each held-out graph after scalar extraction, and emit allocator telemetry in each loss window.",
+    "durable_checkpoint": "step five exists under the old trainer identity and is retained as diagnostic evidence only; CP185 starts from step zero under a new trainer hash",
+    "disposition": "failed_run_retained_no_training_or_gain_credit"
+  },
+  "claim_flags": {
+    "training_complete": false,
+    "training_admitted": false,
+    "mechanics_proven": false,
+    "reasoning_gain": false,
+    "frontier_level": false
+  }
+}

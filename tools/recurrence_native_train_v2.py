@@ -931,6 +931,8 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
             if not math.isfinite(loss):
                 raise FloatingPointError("non_finite_holdout_loss")
             losses.append(loss)
+            del value
+            mx.clear_cache()
         entry = {
             "step": step,
             "mean_loss": round(sum(losses) / len(losses), 6),
@@ -974,14 +976,20 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
                 break
             optimizer.update(model, gradients)
             mx.eval(model.trainable_parameters(), optimizer.state)
-            step += 1
-            cursor += 1
-            window_losses.append(loss_value)
             step_cosines = [
                 cosine
                 for cosines in step_telemetry.get("pairwise_cos", {}).values()
                 for cosine in cosines
             ]
+            # Do not retain the previous step's gradient graph while building
+            # holdout/checkpoint work or the next RHS. On the resident 32B v3
+            # path that overlap raised physical footprint above 66 GiB even
+            # under the MLX wired limit.
+            del gradients, step_telemetry
+            mx.clear_cache()
+            step += 1
+            cursor += 1
+            window_losses.append(loss_value)
             if step_cosines:
                 window_cosines.append(sum(step_cosines) / len(step_cosines))
             if step % args.log_every == 0:
@@ -995,6 +1003,13 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
                         sum(window_cosines) / len(window_cosines), 6
                     )
                     window_cosines.clear()
+                trail_entry.update(
+                    {
+                        "mlx_active_memory_bytes": int(mx.get_active_memory()),
+                        "mlx_cache_memory_bytes": int(mx.get_cache_memory()),
+                        "mlx_peak_memory_bytes": int(mx.get_peak_memory()),
+                    }
+                )
                 loss_trail.append(trail_entry)
                 window_losses.clear()
                 print(

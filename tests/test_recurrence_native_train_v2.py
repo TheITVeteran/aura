@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from argparse import Namespace
 
 import pytest
@@ -322,3 +323,13 @@ def test_streamed_v3_matches_monolithic_v3_objective():
 def test_run_requires_model_lane_before_any_load():
     with pytest.raises(RuntimeError, match="model-lane lease"):
         _run(Namespace(), model_lane_lease=object())
+
+
+def test_training_loop_releases_step_graph_before_holdout_or_next_rhs():
+    source = inspect.getsource(_run)
+    release = source.index("del gradients, step_telemetry")
+    cache_barrier = source.index("mx.clear_cache()", release)
+    checkpoint_branch = source.index("if step % args.checkpoint_every", release)
+
+    assert release < cache_barrier < checkpoint_branch
+    assert "del value\n            mx.clear_cache()" in source

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Launch a resident recurrence resume only from a frozen resource amendment."""
+"""Launch a resident recurrence phase only from a frozen resource amendment."""
 
 from __future__ import annotations
 
@@ -188,7 +188,11 @@ def _validate_no_competing_model_process(model: Path) -> None:
 def _validate_contract(
     protocol_path: Path,
     amendment_path: Path,
+    *,
+    phase: str = "resume",
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    if phase not in {"partial", "resume"}:
+        _fail("launch_phase_invalid")
     protocol_raw, protocol = _read_json(protocol_path, role="protocol")
     _amendment_raw, amendment = _read_json(amendment_path, role="amendment")
     if protocol.get("schema") != PROTOCOL_SCHEMA:
@@ -210,10 +214,12 @@ def _validate_contract(
     )
     kernel = failure.get("kernel_evidence")
     process = failure.get("process")
+    detached_binding = failure.get("detached_receipt")
     if (
         failure.get("schema") != FAILURE_SCHEMA
         or not isinstance(kernel, Mapping)
         or not isinstance(process, Mapping)
+        or not isinstance(detached_binding, Mapping)
         or kernel.get("termination_classification")
         != failure_ref.get("required_classification")
         or kernel.get("compressed_process_mb")
@@ -226,6 +232,32 @@ def _validate_contract(
         or process.get("lineage_empty") is not True
     ):
         _fail("triggering_failure_mismatch")
+    receipt_candidate = failure_path.parent / str(detached_binding.get("path", ""))
+    if receipt_candidate.is_symlink():
+        _fail("triggering_failure_receipt_path_invalid")
+    try:
+        receipt_path = receipt_candidate.resolve(strict=True)
+        receipt_path.relative_to(amendment_path.parent.parent)
+    except (OSError, ValueError) as exc:
+        raise ResidentRecurrenceLaunchError(
+            "triggering_failure_receipt_path_invalid"
+        ) from exc
+    receipt_raw, failed_receipt = _read_json(
+        receipt_path,
+        role="triggering_failure_receipt",
+    )
+    if (
+        not _binding_matches(receipt_raw, detached_binding)
+        or failed_receipt.get("returncode") != process.get("detached_returncode")
+        or failed_receipt.get("timed_out") != process.get("timed_out")
+        or failed_receipt.get("restart_count") != process.get("restart_count")
+        or failed_receipt.get("containment_verified")
+        != process.get("containment_verified")
+        or failed_receipt.get("process_group_empty")
+        != process.get("process_group_empty")
+        or failed_receipt.get("lineage_empty") != process.get("lineage_empty")
+    ):
+        _fail("triggering_failure_receipt_mismatch")
 
     envelope = amendment.get("resource_envelope")
     if not isinstance(envelope, Mapping):
@@ -247,20 +279,28 @@ def _validate_contract(
         _fail("resource_envelope_source_mismatch")
 
     training = protocol.get("training")
-    resume = amendment.get("resume")
-    if not isinstance(training, Mapping) or not isinstance(resume, Mapping):
+    phase_contract = amendment.get(phase)
+    if not isinstance(training, Mapping) or not isinstance(phase_contract, Mapping):
         _fail("training_contract_invalid")
-    adapter = _absolute_path(training.get("output_dir"), role="adapter", kind="directory")
-    receipt_path = adapter / "receipt.json"
-    _receipt_raw, receipt = _read_json(receipt_path, role="training_receipt")
-    if (
-        receipt.get("complete") is not False
-        or receipt.get("halt_reason") != "wall_clock"
-        or receipt.get("steps") != resume.get("expected_resume_step")
-        or receipt.get("objective_schema") != "aura.recurrence_native_objective.v3"
-    ):
-        _fail("resume_checkpoint_state_mismatch")
-    run_dir = _absolute_path(resume.get("run_dir"), role="run_dir")
+    adapter = _absolute_path(
+        training.get("output_dir"),
+        role="adapter",
+        kind="directory" if phase == "resume" else None,
+    )
+    if phase == "partial":
+        if adapter.exists():
+            _fail("partial_adapter_path_already_exists")
+    else:
+        receipt_path = adapter / "receipt.json"
+        _receipt_raw, receipt = _read_json(receipt_path, role="training_receipt")
+        if (
+            receipt.get("complete") is not False
+            or receipt.get("halt_reason") != "wall_clock"
+            or receipt.get("steps") != phase_contract.get("expected_resume_step")
+            or receipt.get("objective_schema") != "aura.recurrence_native_objective.v3"
+        ):
+            _fail("resume_checkpoint_state_mismatch")
+    run_dir = _absolute_path(phase_contract.get("run_dir"), role="run_dir")
     try:
         run_dir.relative_to(amendment_path.parent)
     except ValueError:
@@ -272,7 +312,7 @@ def _validate_contract(
         envelope_out.relative_to(adapter)
     except ValueError:
         _fail("envelope_out_outside_adapter")
-    if envelope_out.exists():
+    if phase == "partial" and envelope_out.exists():
         _fail("envelope_out_already_exists")
     return protocol, amendment, {"wrapper": wrapper, "trainer": trainer}
 
@@ -281,15 +321,28 @@ def _target_command(
     protocol: Mapping[str, Any],
     amendment: Mapping[str, Any],
     sources: Mapping[str, Path],
+    *,
+    phase: str = "resume",
 ) -> list[str]:
     training = protocol["training"]
     envelope = amendment["resource_envelope"]
-    resume = amendment["resume"]
+    phase_contract = amendment[phase]
+    max_minutes = phase_contract.get("max_minutes")
+    if max_minutes is None:
+        max_minutes = (
+            training.get("hard_training_minutes_after_resume")
+            if phase == "resume"
+            else protocol.get("detached_execution", {}).get("partial_max_minutes")
+        )
     python = REPO_ROOT / ".venv/bin/python"
     if not python.exists():
         _fail("python_launcher_missing")
     model = _absolute_path(training["model_path"] if "model_path" in training else protocol["model"]["path"], role="model", kind="directory")
-    adapter = _absolute_path(training["output_dir"], role="adapter", kind="directory")
+    adapter = _absolute_path(
+        training["output_dir"],
+        role="adapter",
+        kind="directory" if phase == "resume" else None,
+    )
     command = [
         str(python),
         str(sources["wrapper"]),
@@ -355,39 +408,46 @@ def _target_command(
         "--holdout-eval-samples",
         str(_positive_int(training["holdout_eval_samples"], role="holdout_eval_samples")),
         "--max-minutes",
-        str(_positive_int(training["hard_training_minutes_after_resume"], role="max_minutes")),
+        str(_finite_number(max_minutes, role="max_minutes")),
         "--max-steps",
         str(_positive_int(training["max_steps"], role="max_steps")),
         "--checkpoint-every",
-        str(_positive_int(resume["checkpoint_every_steps"], role="checkpoint_every")),
+        str(_positive_int(phase_contract["checkpoint_every_steps"], role="checkpoint_every")),
         "--log-every",
-        str(_positive_int(resume["log_every_steps"], role="log_every")),
-        "--resume",
+        str(_positive_int(phase_contract["log_every_steps"], role="log_every")),
     ]
+    if phase == "resume":
+        command.append("--resume")
     return command
 
 
 def build_launch_command(
     protocol_path: Path,
     amendment_path: Path,
+    *,
+    phase: str = "resume",
 ) -> tuple[list[str], list[str]]:
-    protocol, amendment, sources = _validate_contract(protocol_path, amendment_path)
+    protocol, amendment, sources = _validate_contract(
+        protocol_path,
+        amendment_path,
+        phase=phase,
+    )
     model = _absolute_path(protocol["model"]["path"], role="model", kind="directory")
     _validate_no_competing_model_process(model)
-    target = _target_command(protocol, amendment, sources)
-    resume = amendment["resume"]
+    target = _target_command(protocol, amendment, sources, phase=phase)
+    phase_contract = amendment[phase]
     launcher = [
         str(REPO_ROOT / ".venv/bin/python"),
         str((REPO_ROOT / "tools/run_detached_step.py").resolve(strict=True)),
         "launch",
         "--run-dir",
-        str(resume["run_dir"]),
+        str(phase_contract["run_dir"]),
         "--name",
-        str(resume["name"]),
+        str(phase_contract["name"]),
         "--cwd",
         str(REPO_ROOT),
         "--timeout",
-        str(_positive_int(resume["timeout_seconds"], role="timeout")),
+        str(_positive_int(phase_contract["timeout_seconds"], role="timeout")),
         "--",
         *target,
     ]
@@ -398,9 +458,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--protocol", type=Path, required=True)
     parser.add_argument("--amendment", type=Path, required=True)
+    parser.add_argument("--phase", choices=("partial", "resume"), default="resume")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
-    launcher, target = build_launch_command(args.protocol, args.amendment)
+    launcher, target = build_launch_command(
+        args.protocol,
+        args.amendment,
+        phase=args.phase,
+    )
     if args.dry_run:
         print(
             json.dumps(
