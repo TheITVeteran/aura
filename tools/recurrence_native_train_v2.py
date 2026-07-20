@@ -466,21 +466,23 @@ def _streamed_depth_value_and_grad(
 
         if activation_checkpointing:
             from core.learning.recurrence_native_objective_v2 import (
-                transformer_layer_group_checkpointing,
+                exact_adjoint_live_path_value_and_grad,
             )
 
-            def checkpointed_depth_loss(parameters: Any) -> Any:
-                model.update(parameters)
-                with transformer_layer_group_checkpointing(
+            loss_value, gradients, base_value, cosines = (
+                exact_adjoint_live_path_value_and_grad(
                     model,
-                    parameters,
-                    group_size=4,
-                ):
-                    return depth_loss(model, prompt_tokens, answer_tokens)
-
-            value, gradients = mx.value_and_grad(checkpointed_depth_loss)(
-                model.trainable_parameters()
+                    prompt_tokens,
+                    answer_tokens,
+                    spec=depth_spec,
+                    bridge_tokens=tuple(bridge_tokens),
+                    diversity_weight=float(diversity_weight),
+                    diversity_target_cos=float(diversity_target_cos),
+                )
             )
+            value = mx.array(loss_value)
+            captured["base"] = mx.array(base_value)
+            captured["cosines"] = cosines
         else:
             value, gradients = nn.value_and_grad(model, depth_loss)(
                 model,
@@ -1001,7 +1003,7 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
         },
         "gradient_execution": {
             "schema": (
-                "aura.recurrence_streamed_depth_gradient.v5"
+                "aura.recurrence_streamed_depth_gradient.v6"
                 if args.activation_checkpointing
                 else GRADIENT_EXECUTION_SCHEMA
             ),
@@ -1011,9 +1013,11 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
             "finite_loss_and_gradient_required_before_update": True,
             **(
                 {
-                    "activation_rematerialization": "transformer_layer_group_checkpoint",
-                    "layer_group_size": 4,
-                    "recurrent_transition_checkpointing": True,
+                    "activation_rematerialization": "exact_discrete_adjoint",
+                    "adjoint_schema": "aura.recurrence_exact_discrete_adjoint.v1",
+                    "boundary_state_storage": "materialized_stop_gradient",
+                    "terminal_branch_graphs_concurrent": 1,
+                    "recurrent_transition_graphs_concurrent": 1,
                 }
                 if args.activation_checkpointing
                 else {}

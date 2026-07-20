@@ -21940,3 +21940,61 @@ is awarded. Next: publish CP194, bind all three failed recoveries into a fresh
 step-10 migration, execute the detached one-step calibration, and launch exact
 training only after a tombstone-free checkpoint/rearm verdict. Final long soaks
 remain deferred.
+
+## Checkpoint 2026-07-20-195: Exact Discrete-Adjoint Training Boundary
+
+CP194's migration bound CP189 plus three ordered recovery failures, verified
+the unchanged step-10 state, and launched transition-rematerialized training.
+The run again produced repeated 26-GB low-water intervals and intermediate
+peaks near 39.2 and 54.5 GB, but the first depth graph ultimately reached
+74,192.4 MB against the 73,728-MB ceiling. The independent sentinel killed it
+with trainer return code -9, sentinel return code 0, restart count zero,
+verified containment, and empty process group and lineage. It exceeded the
+boundary by 464.4 MB. Exact step 10 remains intact, no long training launched,
+and no training or capability credit is awarded.
+
+Four live experiments now show that ordinary MLX checkpoint placement changes
+transient shape but not this depth graph's terminal physical peak. CP195 removes
+the monolithic graph rather than moving checkpoints inside it. It implements an
+exact discrete adjoint over the recurrent dynamical system.
+
+- The forward pass materializes only the small prompt-window, anchor, and
+  branch-state boundaries after each complete recurrent transition. Boundary
+  tensors are explicitly stop-gradient values; the original trajectory graph
+  is discarded before the next transition.
+- Terminal answer cross-entropy is differentiated one branch at a time.
+  Parameter gradients are averaged exactly, while each terminal branch-state
+  gradient is retained as the adjoint seed. The joint diversity penalty is
+  differentiated over both terminal states and added to those seeds, preserving
+  active cross-branch pressure.
+- Reverse recurrence replays one coupled transition at a time. A scalar
+  cotangent product yields exact parameter and prior-state gradients; parameter
+  contributions are accumulated and prior-state cotangents become the next
+  reverse boundary. Consensus exchange, decorrelation, RMS anchoring, and both
+  branches remain inside every replayed transition.
+- The method fails closed unless every trainable tensor belongs to the latent
+  window. Prelude, embeddings, seeds, prompts, anchors, and tail embeddings are
+  frozen and materialized explicitly, so dropping their trajectory graphs
+  cannot discard a trainable parameter path.
+- Gradient execution advances to v6 and binds
+  `aura.recurrence_exact_discrete_adjoint.v1`, materialized boundary storage,
+  one concurrent terminal branch graph, and one concurrent recurrent
+  transition graph across config, receipt, migration, manifest, and adapter
+  identity.
+
+Validation is green: 85/85 broad focused recurrence, migration, identity,
+launcher, mechanics, pilot, and post-training tests pass. The coupled two-
+branch test proves equal objective value, equal base/diversity telemetry,
+identical nonzero gradient keys, and per-tensor gradient equality against the
+ordinary monolithic v3 objective. Focused Ruff, bytecode compilation, and diff-
+integrity checks pass. No resident CP195 calibration has launched at this
+source checkpoint.
+
+Evidence-weighted completion remains 27%. This is checkpoint 195 of the
+faithful 292-399 total-checkpoint forecast, leaving approximately 97-204
+checkpoints. No training-completion, mechanics, reasoning-gain, same-checkpoint
+interaction, frontier, external-custody, installed-app, release, or soak credit
+is awarded. Next: publish CP195, bind all four failed recoveries into a fresh
+step-10 migration, execute the detached one-step calibration, and launch exact
+training only after a tombstone-free checkpoint/rearm verdict. Final long soaks
+remain deferred.

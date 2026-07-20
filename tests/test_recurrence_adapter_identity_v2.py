@@ -639,14 +639,16 @@ def _upgrade_bundle_to_migrated_v3():
     config = json.loads(artifacts["training_config.json"])
     receipt = json.loads(artifacts["receipt.json"])
     gradient = {
-        "schema": "aura.recurrence_streamed_depth_gradient.v5",
+        "schema": "aura.recurrence_streamed_depth_gradient.v6",
         "mode": "depth_serial_exact_sum",
         "concurrent_depth_graphs": 1,
         "optimizer_updates_per_sample": 1,
         "finite_loss_and_gradient_required_before_update": True,
-        "activation_rematerialization": "transformer_layer_group_checkpoint",
-        "layer_group_size": 4,
-        "recurrent_transition_checkpointing": True,
+        "activation_rematerialization": "exact_discrete_adjoint",
+        "adjoint_schema": "aura.recurrence_exact_discrete_adjoint.v1",
+        "boundary_state_storage": "materialized_stop_gradient",
+        "terminal_branch_graphs_concurrent": 1,
+        "recurrent_transition_graphs_concurrent": 1,
     }
     config["gradient_execution"] = gradient
     receipt["gradient_execution"] = gradient
@@ -667,9 +669,11 @@ def _upgrade_bundle_to_migrated_v3():
         "failure": {"tombstone": {"sha256": "5" * 64}},
         "recovery_attempts": [],
         "required_execution_change": {
-            "activation_rematerialization": "transformer_layer_group_checkpoint",
-            "layer_group_size": 4,
-            "recurrent_transition_checkpointing": True,
+            "activation_rematerialization": "exact_discrete_adjoint",
+            "adjoint_schema": "aura.recurrence_exact_discrete_adjoint.v1",
+            "boundary_state_storage": "materialized_stop_gradient",
+            "terminal_branch_graphs_concurrent": 1,
+            "recurrent_transition_graphs_concurrent": 1,
         },
         "new_trainer": {"sha256": receipt["trainer_source_sha256"]},
     }
@@ -695,9 +699,8 @@ def _upgrade_bundle_to_migrated_v3():
         "recovery_attempts_sha256": hashlib.sha256(
             canonical_json_bytes(migration["recovery_attempts"])
         ).hexdigest(),
-        "activation_rematerialization": "transformer_layer_group_checkpoint",
-        "layer_group_size": 4,
-        "recurrent_transition_checkpointing": True,
+        "activation_rematerialization": "exact_discrete_adjoint",
+        "adjoint_schema": "aura.recurrence_exact_discrete_adjoint.v1",
         "new_trainer_sha256": migration["new_trainer"]["sha256"],
     }
     config["resume_migration"] = resume_migration
@@ -738,10 +741,11 @@ def test_migrated_v3_bundle_binds_checkpoint_provenance():
     assert receipt["complete"] is True
     assert receipt["resume_migration"]["source_step"] == 7
     assert receipt["resume_migration"]["activation_rematerialization"] == (
-        "transformer_layer_group_checkpoint"
+        "exact_discrete_adjoint"
     )
-    assert receipt["resume_migration"]["layer_group_size"] == 4
-    assert receipt["resume_migration"]["recurrent_transition_checkpointing"] is True
+    assert receipt["resume_migration"]["adjoint_schema"] == (
+        "aura.recurrence_exact_discrete_adjoint.v1"
+    )
     assert receipt["checkpoint_migration_sha256"]
 
 

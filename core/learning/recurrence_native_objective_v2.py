@@ -64,6 +64,21 @@ class LivePathForward:
     bridge_tokens: int
 
 
+@dataclass(frozen=True)
+class _PreparedLivePath:
+    prompt_embeddings: Any
+    tail_embeddings: Any
+    seeds: tuple[Any, ...]
+    prompts_at_window: tuple[Any, ...]
+    states: tuple[Any, ...]
+    anchors: tuple[Any, ...]
+    prelude_end: int
+    coda_start: int
+    prompt_count: int
+    bridge_count: int
+    answer_count: int
+
+
 def _boundaries(model: Any, spec: RLCExecutionSpec) -> tuple[int, int, int]:
     n_layers = len(model.model.layers)
     prelude_end = max(1, int(n_layers * spec.prelude_frac))
@@ -419,16 +434,14 @@ def _persist_and_score(
     return all_logits[:, prediction_start : prediction_start + answer_count, :]
 
 
-def live_path_forward(
+def _prepare_live_path(
     model: Any,
     prompt_tokens: Sequence[int],
     answer_tokens: Sequence[int],
     *,
     spec: RLCExecutionSpec,
-    bridge_tokens: Sequence[int] = (),
-) -> LivePathForward:
-    """Run the differentiable latent-slot path and return per-branch logits."""
-
+    bridge_tokens: Sequence[int],
+) -> _PreparedLivePath:
     import mlx.core as mx
 
     problems = spec.validate()
@@ -459,24 +472,60 @@ def live_path_forward(
     for role in spec.branch_roles:
         seed = _seed_branch(prompt_embeddings, spec, role)
         prompt_at_window, state = _prelude_prompt_and_slots(
-            model, prompt_embeddings, seed, prelude_end
+            model,
+            prompt_embeddings,
+            seed,
+            prelude_end,
         )
         seeds.append(seed)
         prompts_at_window.append(prompt_at_window)
         states.append(state)
         anchors.append(state)
+    return _PreparedLivePath(
+        prompt_embeddings=prompt_embeddings,
+        tail_embeddings=tail_embeddings,
+        seeds=tuple(seeds),
+        prompts_at_window=tuple(prompts_at_window),
+        states=tuple(states),
+        anchors=tuple(anchors),
+        prelude_end=prelude_end,
+        coda_start=coda_start,
+        prompt_count=len(prompt),
+        bridge_count=len(bridge),
+        answer_count=len(answer),
+    )
+
+
+def live_path_forward(
+    model: Any,
+    prompt_tokens: Sequence[int],
+    answer_tokens: Sequence[int],
+    *,
+    spec: RLCExecutionSpec,
+    bridge_tokens: Sequence[int] = (),
+) -> LivePathForward:
+    """Run the differentiable latent-slot path and return per-branch logits."""
+
+    prepared = _prepare_live_path(
+        model,
+        prompt_tokens,
+        answer_tokens,
+        spec=spec,
+        bridge_tokens=bridge_tokens,
+    )
+    states = list(prepared.states)
 
     exchanges = 0
     for step in range(spec.recurrent_steps):
         states = _checkpointed_recurrent_transition(
             model,
-            prompts_at_window,
+            prepared.prompts_at_window,
             states,
-            anchors,
+            prepared.anchors,
             spec,
             step,
-            prelude_end,
-            coda_start,
+            prepared.prelude_end,
+            prepared.coda_start,
         )
         if len(states) > 1 and (step + 1) % spec.exchange_interval == 0:
             exchanges += 1
@@ -484,24 +533,24 @@ def live_path_forward(
     branch_logits = tuple(
         _persist_and_score(
             model,
-            prompt_embeddings,
+            prepared.prompt_embeddings,
             seed,
             state,
-            tail_embeddings,
-            bridge_count=len(bridge),
-            answer_count=len(answer),
-            prelude_end=prelude_end,
-            coda_start=coda_start,
+            prepared.tail_embeddings,
+            bridge_count=prepared.bridge_count,
+            answer_count=prepared.answer_count,
+            prelude_end=prepared.prelude_end,
+            coda_start=prepared.coda_start,
         )
-        for seed, state in zip(seeds, states, strict=True)
+        for seed, state in zip(prepared.seeds, states, strict=True)
     )
     return LivePathForward(
         branch_logits=branch_logits,
         branch_states=tuple(states),
         exchanges=exchanges,
-        prompt_tokens=len(prompt),
-        answer_tokens=len(answer),
-        bridge_tokens=len(bridge),
+        prompt_tokens=prepared.prompt_count,
+        answer_tokens=prepared.answer_count,
+        bridge_tokens=prepared.bridge_count,
     )
 
 
@@ -517,6 +566,224 @@ def branch_mean_answer_loss(forward: LivePathForward, answer_tokens: Sequence[in
         for logits in forward.branch_logits
     ]
     return sum(losses) / len(losses)
+
+
+def exact_adjoint_live_path_value_and_grad(
+    model: Any,
+    prompt_tokens: Sequence[int],
+    answer_tokens: Sequence[int],
+    *,
+    spec: RLCExecutionSpec,
+    bridge_tokens: Sequence[int] = (),
+    diversity_weight: float = 0.0,
+    diversity_target_cos: float = 0.98,
+) -> tuple[float, Any, float, list[float]]:
+    """Compute the exact live-path gradient with bounded graph residency.
+
+    Only recurrent LoRA parameters are trainable. Prelude outputs are therefore
+    parameter-independent boundary values. Recurrence states are materialized
+    between transitions, then exact vector-Jacobian products replay those
+    transitions in reverse. Terminal branch losses are differentiated one at a
+    time and their parameter/state gradients are accumulated algebraically.
+    """
+
+    import math
+    import re
+
+    import mlx.core as mx
+    import mlx.nn as nn
+    from mlx.utils import tree_flatten, tree_map
+
+    if (
+        isinstance(diversity_weight, bool)
+        or not isinstance(diversity_weight, (int, float))
+        or not math.isfinite(float(diversity_weight))
+        or not 0.0 <= float(diversity_weight) <= 10.0
+    ):
+        raise ValueError("diversity_weight must be inside [0, 10]")
+    parameters = model.trainable_parameters()
+    prepared = _prepare_live_path(
+        model,
+        prompt_tokens,
+        answer_tokens,
+        spec=spec,
+        bridge_tokens=bridge_tokens,
+    )
+    layer_pattern = re.compile(r"model\.layers\.(\d+)\.")
+    for path, _value in tree_flatten(parameters):
+        match = layer_pattern.match(path)
+        if match is None or not (
+            prepared.prelude_end <= int(match.group(1)) < prepared.coda_start
+        ):
+            raise RuntimeError("exact_adjoint_requires_window_only_trainables")
+
+    def detached(values: Sequence[Any]) -> tuple[Any, ...]:
+        result = tuple(mx.stop_gradient(value) for value in values)
+        mx.eval(result)
+        return result
+
+    prompt_embeddings = mx.stop_gradient(prepared.prompt_embeddings)
+    tail_embeddings = mx.stop_gradient(prepared.tail_embeddings)
+    seeds = detached(prepared.seeds)
+    mx.eval(prompt_embeddings, tail_embeddings)
+    prompts = detached(prepared.prompts_at_window)
+    anchors = detached(prepared.anchors)
+    history: list[tuple[Any, ...]] = [detached(prepared.states)]
+    current = history[0]
+    for step in range(spec.recurrent_steps):
+        outputs = _advance_recurrent_states(
+            model,
+            prompts,
+            current,
+            anchors,
+            spec,
+            step,
+            prepared.prelude_end,
+            prepared.coda_start,
+        )
+        current = detached(outputs)
+        history.append(current)
+        del outputs
+        mx.clear_cache()
+
+    accumulated: Any | None = None
+
+    def add_parameter_gradient(gradient: Any, scale: float = 1.0) -> None:
+        nonlocal accumulated
+        scaled = tree_map(lambda value: scale * value, gradient)
+        accumulated = (
+            scaled
+            if accumulated is None
+            else tree_map(lambda left, right: left + right, accumulated, scaled)
+        )
+        mx.eval(accumulated)
+
+    targets = mx.array(list(answer_tokens))[None, :]
+    branch_scale = 1.0 / len(current)
+    branch_values: list[float] = []
+    state_cotangents: list[Any] = []
+    for seed, state in zip(seeds, current, strict=True):
+
+        def terminal_loss(
+            parameter_tree: Any,
+            final_state: Any,
+            _seed: Any = seed,
+        ) -> Any:
+            model.update(parameter_tree)
+            logits = _persist_and_score(
+                model,
+                prompt_embeddings,
+                _seed,
+                final_state,
+                tail_embeddings,
+                bridge_count=prepared.bridge_count,
+                answer_count=prepared.answer_count,
+                prelude_end=prepared.prelude_end,
+                coda_start=prepared.coda_start,
+            )
+            return nn.losses.cross_entropy(logits, targets, reduction="mean")
+
+        value, (parameter_gradient, state_gradient) = mx.value_and_grad(
+            terminal_loss,
+            argnums=(0, 1),
+        )(parameters, state)
+        mx.eval(value, parameter_gradient, state_gradient)
+        branch_values.append(float(value))
+        add_parameter_gradient(parameter_gradient, branch_scale)
+        state_cotangents.append(mx.stop_gradient(branch_scale * state_gradient))
+        del value, parameter_gradient, state_gradient
+        mx.clear_cache()
+
+    from core.learning.recurrence_native_objective_v3 import (
+        branch_diversity_penalty,
+    )
+
+    terminal_forward = LivePathForward(
+        branch_logits=(),
+        branch_states=current,
+        exchanges=0,
+        prompt_tokens=prepared.prompt_count,
+        answer_tokens=prepared.answer_count,
+        bridge_tokens=prepared.bridge_count,
+    )
+    diversity_penalty, cosines = branch_diversity_penalty(
+        terminal_forward,
+        target_cos=diversity_target_cos,
+    )
+    mx.eval(diversity_penalty)
+    diversity_value = float(diversity_penalty)
+    if float(diversity_weight) > 0.0:
+
+        def diversity_loss(final_states: tuple[Any, ...]) -> Any:
+            forward = LivePathForward(
+                branch_logits=(),
+                branch_states=final_states,
+                exchanges=0,
+                prompt_tokens=prepared.prompt_count,
+                answer_tokens=prepared.answer_count,
+                bridge_tokens=prepared.bridge_count,
+            )
+            penalty, _cosines = branch_diversity_penalty(
+                forward,
+                target_cos=diversity_target_cos,
+            )
+            return penalty
+
+        _value, diversity_gradients = mx.value_and_grad(diversity_loss)(current)
+        mx.eval(diversity_gradients)
+        state_cotangents = [
+            mx.stop_gradient(existing + float(diversity_weight) * diversity)
+            for existing, diversity in zip(
+                state_cotangents,
+                diversity_gradients,
+                strict=True,
+            )
+        ]
+        mx.eval(state_cotangents)
+        del diversity_gradients
+        mx.clear_cache()
+
+    cotangents = tuple(state_cotangents)
+    for step in range(spec.recurrent_steps - 1, -1, -1):
+        input_states = history[step]
+
+        def transition_pullback(
+            parameter_tree: Any,
+            prior_states: tuple[Any, ...],
+            _step: int = step,
+            _cotangents: tuple[Any, ...] = cotangents,
+        ) -> Any:
+            model.update(parameter_tree)
+            outputs = _advance_recurrent_states(
+                model,
+                prompts,
+                prior_states,
+                anchors,
+                spec,
+                _step,
+                prepared.prelude_end,
+                prepared.coda_start,
+            )
+            return sum(
+                mx.sum(output * cotangent)
+                for output, cotangent in zip(outputs, _cotangents, strict=True)
+            )
+
+        _pullback, (parameter_gradient, input_cotangents) = mx.value_and_grad(
+            transition_pullback,
+            argnums=(0, 1),
+        )(parameters, input_states)
+        mx.eval(parameter_gradient, input_cotangents)
+        add_parameter_gradient(parameter_gradient)
+        cotangents = detached(input_cotangents)
+        del parameter_gradient, input_cotangents
+        mx.clear_cache()
+
+    if accumulated is None:
+        raise RuntimeError("exact adjoint parameter gradient is empty")
+    base_value = sum(branch_values) / len(branch_values)
+    total_value = base_value + float(diversity_weight) * diversity_value
+    return total_value, accumulated, base_value, [float(value) for value in cosines]
 
 
 def live_path_loss(
@@ -595,6 +862,7 @@ __all__ = [
     "branch_mean_answer_loss",
     "depth_curriculum_loss_v2",
     "detached_monotonicity_penalty",
+    "exact_adjoint_live_path_value_and_grad",
     "live_path_forward",
     "live_path_loss",
 ]

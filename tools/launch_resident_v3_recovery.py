@@ -407,12 +407,19 @@ def verify_calibration(migration_path: Path) -> dict[str, Any]:
         or training_receipt.get("halt_reason") != "wall_clock"
         or training_receipt.get("steps") != expected_step
         or training_receipt.get("gradient_execution", {}).get("activation_rematerialization")
-        != "transformer_layer_group_checkpoint"
-        or training_receipt.get("gradient_execution", {}).get("layer_group_size") != 4
+        != "exact_discrete_adjoint"
+        or training_receipt.get("gradient_execution", {}).get("adjoint_schema")
+        != "aura.recurrence_exact_discrete_adjoint.v1"
+        or training_receipt.get("gradient_execution", {}).get("boundary_state_storage")
+        != "materialized_stop_gradient"
         or training_receipt.get("gradient_execution", {}).get(
-            "recurrent_transition_checkpointing"
+            "terminal_branch_graphs_concurrent"
         )
-        is not True
+        != 1
+        or training_receipt.get("gradient_execution", {}).get(
+            "recurrent_transition_graphs_concurrent"
+        )
+        != 1
         or training_receipt.get("resume_migration") != summary
     ):
         failure_points.append("calibration_training_receipt_invalid")

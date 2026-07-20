@@ -251,9 +251,8 @@ def test_migration_copies_exact_state_and_verifies_identity(tmp_path: Path):
 
     assert result["source_step"] == 10
     assert result["source_checkpoint"].startswith("checkpoints/step-00000010-")
-    assert result["activation_rematerialization"] == "transformer_layer_group_checkpoint"
-    assert result["layer_group_size"] == 4
-    assert result["recurrent_transition_checkpointing"] is True
+    assert result["activation_rematerialization"] == "exact_discrete_adjoint"
+    assert result["adjoint_schema"] == "aura.recurrence_exact_discrete_adjoint.v1"
     assert result["new_trainer_sha256"] == paths["trainer_sha256"]
     document = json.loads(migration.read_text(encoding="ascii"))
     for role in ("complete", "adapter", "optimizer"):
