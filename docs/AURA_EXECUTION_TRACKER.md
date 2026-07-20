@@ -21125,3 +21125,58 @@ run a detached resident-32B four-arm causal mechanics smoke from this clean
 source generation, verify ordinary-generation isolation and scoped recurrent
 activation against the frozen adapter, then preregister and execute the fresh
 hidden-task pilot. Final long soaks remain deferred.
+
+## Checkpoint 2026-07-19-177: Resident 32B Frozen-Adapter Mechanics Certificate
+
+CP177 loads the immutable CP176 adapter on Aura's real fused resident 32B and
+closes the causal mechanics gate. It establishes that the trained recurrent
+adapter is active only in the intended latent-slot path and causally changes
+resident inference. It does not establish a reasoning or frontier gain.
+
+- The detached one-task, four-arm campaign used the exact frozen model stack at
+  32,763,876,352 logical parameters and adapter identity
+  `b48e4211df99a1fe68b529d1da8e81a14451b9ca06f7fc3131b828bf9a94493c`.
+  The supervisor completed in 296.69 seconds with no timeout, no restart, an
+  empty process group and lineage, and containment verified. Its return code 2
+  reflects the campaign's fail-honest underpowered grade, not an infrastructure
+  failure.
+- All four arms sealed. Adapter-vanilla and base-vanilla produced byte-identical
+  output at SHA-256
+  `7d04524e719c9bcf322c340091dc6af1182e931c11b36609e1c4d8fb1a03a328`,
+  proving that the scoped adapter did not contaminate ordinary generation.
+- Base RLC reported zero recurrence-adapter activity. Adapter RLC reported 704
+  calls over 11,264 observed and adapted latent-slot positions, and its first-
+  logit digest differed from base RLC. This is direct causal execution evidence
+  for the trained adapter on the resident checkpoint rather than a configuration
+  or import-only assertion.
+- The campaign journal replays all four committed cells at manifest root
+  `37fc64b34f1886338ad9b0478f6af4c56c071e3b9f3ebae118bdd507bd4d6cd9`.
+  The independent mechanics replay binds detached receipt
+  `397d7797d23cbc77857ebbc301417b65845a7b1c9f86a2e268b86995be5541de`,
+  plan `c8916929ca555001a246fcf84ccfa38368d1e109372e9e5f56bc3c5c51915b17`,
+  and grade `034bc3c632dbce2fe356ae5f6b8df00729aec4fe46fde5942aa9867af6a1275a`.
+- `tools/verify_resident_recurrence_mechanics.py` composes the terminal
+  promotion, immutable freeze, resident model/adapter identities, exact campaign
+  plan, detached replay, ordinary-path isolation, and causal activation into a
+  create-once verdict. It also binds the current campaign runner, freeze,
+  adapter-identity, smoke-replay, and mechanics-verifier implementations and
+  rejects model, adapter, path, fallback, eligibility, or promotion
+  substitution.
+- The accepted verdict is
+  `353b70585c1a4ed28b8f4bb137c7291d785bb9aab76bdd409b93d48f130e3b8b`.
+  It sets `ready_for_fresh_hidden_task_pilot=true` while fixing
+  `pilot_result_available`, `reasoning_gain_proven`, `frontier_gain_proven`,
+  and `external_attestation_present` to false. The one mathematics task tied
+  across compared arms and correctly graded `CONJECTURE/incomplete_underpowered`.
+
+Validation is green: 58/58 mechanics, promotion, freeze, and prior-smoke tests
+pass; focused Ruff, bytecode compilation, and diff integrity pass. The live
+model lane is empty after all worker and supervisor processes exited.
+
+Evidence-weighted completion remains 27%. This is checkpoint 177 of the
+faithful 292-399 forecast, leaving approximately 115-222 checkpoints. Next:
+preregister fresh multi-domain pilot seeds and its directional advance rule,
+run the resident four-arm pilot under detached containment, independently
+rescore it, and either promote the adapter to a powered campaign or diagnose a
+negative result without post-hoc task selection. Final long soaks remain
+deferred.
