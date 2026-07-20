@@ -278,6 +278,99 @@ class CalibrationError(RuntimeError):
     """The instrument disagreed with known truth; results are void."""
 
 
+
+def run_vanilla_arm(
+    model,
+    tokenizer,
+    tasks,
+    *,
+    max_tokens: int,
+    samples: int,
+    envelope=None,
+    bridge_text: str = "",
+) -> dict:
+    """Ordinary decoding, plus equal-compute self-consistency.
+
+    Without this the ladder can only say 'the RLC scored X' -- it cannot
+    say whether X beats simply sampling the same model more, which is the
+    cheaper baseline any gain claim has to clear. Reported at matched
+    sample budget so the comparison is about reasoning, not spend.
+    """
+    import mlx.core as mx
+    from mlx_lm import stream_generate
+    from mlx_lm.sample_utils import make_sampler
+
+    from core.brain.llm.latent_cortex.answer_contract import (
+        is_contract_complete,
+    )
+
+    greedy: list[str] = []
+    majority: list[str] = []
+    for task in tasks:
+        # The vanilla control MUST receive the same answer-elicitation cue
+        # the RLC arm gets. Without it this compares 'RLC + bridge' against
+        # 'no bridge' and credits the bridge's compliance effect to
+        # recurrence -- a confound that would collapse any gain claim.
+        rendered = tokenizer.apply_chat_template(
+            [{"role": "user", "content": task.prompt}],
+            add_generation_prompt=True,
+            tokenize=False,
+        ) + bridge_text
+        votes: list[str] = []
+        for sample_index in range(max(1, samples)):
+            kwargs = {}
+            if sample_index > 0:
+                mx.random.seed(20260721 + sample_index)
+                kwargs["sampler"] = make_sampler(temp=0.7, top_p=0.95)
+            pieces: list[str] = []
+            for response in stream_generate(
+                model, tokenizer, prompt=rendered, max_tokens=max_tokens,
+                **kwargs,
+            ):
+                pieces.append(response.text)
+                if "}" in response.text and is_contract_complete(
+                    "".join(pieces)
+                ):
+                    break
+            votes.append("".join(pieces))
+            if envelope is not None:
+                envelope.reclaim(force=True)
+        greedy.append(votes[0])
+        majority.append(_majority_vote(votes))
+    return {
+        "greedy": _tally([_score(t, x) for t, x in zip(tasks, greedy)]),
+        "self_consistency": _tally(
+            [_score(t, x) for t, x in zip(tasks, majority)]
+        ),
+        "samples": samples,
+    }
+
+
+def _majority_vote(votes: list[str]) -> str:
+    """Pick the most common extractable answer; ties go to the first."""
+    from collections import Counter
+
+    keys: list[str] = []
+    for text in votes:
+        state = _contract_state(text)
+        keys.append(str(state) if state is not None else f"__none_{len(keys)}")
+    counts = Counter(keys)
+    winner = min(counts, key=lambda key: (-counts[key], keys.index(key)))
+    return votes[keys.index(winner)]
+
+
+def _contract_state(text: str):
+    from core.brain.llm.latent_cortex.frontier_tasks import (
+        FrontierTaskError,
+        parse_final_answer,
+    )
+
+    try:
+        return parse_final_answer(text)
+    except FrontierTaskError:
+        return None
+
+
 def run_arm(
     model,
     tokenizer,
@@ -406,6 +499,16 @@ def main() -> int:
     parser.add_argument("--max-tokens", type=int, default=48)
     parser.add_argument("--memory-fraction", type=float, default=0.35)
     parser.add_argument(
+        "--vanilla-samples",
+        type=int,
+        default=0,
+        help=(
+            "also run an ordinary-decoding arm with N-sample "
+            "self-consistency. A recurrence gain that does not beat this "
+            "cheaper baseline is not a reasoning gain."
+        ),
+    )
+    parser.add_argument(
         "--bridge",
         choices=("none", "assistant_answer"),
         default="none",
@@ -452,11 +555,12 @@ def main() -> int:
             f"{len(tasks)} eval tasks (seed {args.eval_seed}), depths {depths}",
             flush=True,
         )
+        from core.brain.llm.latent_cortex.engine import (
+            _ASSISTANT_ANSWER_BRIDGE_V3,
+        )
+
         bridge_tokens: tuple = ()
         if args.bridge == "assistant_answer":
-            from core.brain.llm.latent_cortex.engine import (
-                _ASSISTANT_ANSWER_BRIDGE_V3,
-            )
 
             try:
                 encoded = tokenizer.encode(
@@ -476,6 +580,36 @@ def main() -> int:
             envelope,
             bridge_tokens,
         )
+        vanilla = None
+        if args.vanilla_samples > 0:
+            print(
+                f"vanilla arm: {args.vanilla_samples}-sample "
+                "self-consistency",
+                flush=True,
+            )
+            vanilla = run_vanilla_arm(
+                model,
+                tokenizer,
+                tasks,
+                max_tokens=args.max_tokens,
+                samples=args.vanilla_samples,
+                envelope=envelope,
+                bridge_text=(
+                    _ASSISTANT_ANSWER_BRIDGE_V3
+                    if args.bridge == "assistant_answer"
+                    else ""
+                ),
+            )
+            g, s = vanilla["greedy"], vanilla["self_consistency"]
+            print(
+                f"  vanilla greedy      : strict {100*g['accuracy']:.1f}% "
+                f"| REASONING {100*g['reasoning_accuracy']:.1f}%"
+            )
+            print(
+                f"  self-consistency x{args.vanilla_samples}: "
+                f"strict {100*s['accuracy']:.1f}% "
+                f"| REASONING {100*s['reasoning_accuracy']:.1f}%"
+            )
         envelope_receipt = envelope.to_receipt()
     print("\n=== exact-match accuracy by depth ===")
     for depth in depths:
@@ -512,6 +646,7 @@ def main() -> int:
         "memory_envelope": envelope_receipt,
         "bridge": args.bridge,
         "calibration": calibration,
+        "vanilla_arm": vanilla,
         "claims_awarded": [],
         "results": result,
     }
