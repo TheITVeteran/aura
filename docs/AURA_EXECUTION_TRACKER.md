@@ -21549,3 +21549,43 @@ installed-app, release, or soak credit is awarded. Next: publish CP186, run the
 staged forced partial, verify a tombstone-free startup-to-steady transition,
 then run exact resume and issue the independent admission certificate. Final
 long soaks remain deferred.
+
+## Checkpoint 2026-07-20-187: Detached Target Readiness Barrier
+
+The first CP186 partial attempt failed closed before model load. Its detached
+supervisor was observable and the target passed gated manifest verification,
+but the phase launcher read the initial `handoff` status before the supervisor
+published `running`. It incorrectly treated that valid asynchronous state as a
+terminal launch failure and intentionally sent SIGTERM. The immutable journal
+records `TARGET_STARTED` followed by the authenticated stop, return code `-15`,
+0.87-second duration, verified containment, and empty process group and
+lineage. No adapter directory, model-load output, or training step exists.
+
+- The launcher now waits boundedly through detached `handoff`. It admits only a
+  `running` status with a positive child PID, rejects `passed`, `failed`, or
+  `stopped` immediately, and stops the target if a valid running state is not
+  established within 30 seconds. The sentinel still starts before resident
+  model loading can complete, while the CP186 trainer handshake still prevents
+  the first gradient graph until steady-state acknowledgement.
+- The frozen amendment now binds the phase launcher source itself, in addition
+  to trainer, envelope, sentinel, and resource-stage sources. This closes the
+  orchestration provenance gap: a modified launcher cannot consume the frozen
+  protocol even if it would eventually emit a superficially similar target
+  command.
+- `launch_failure_cp187.json` binds the CP186 plan, terminal receipt, and full
+  hash-chained attempt journal with an explicit zero-credit disposition.
+  `resident_32b_v3_cp187` uses fresh adapter, run, envelope, ring, marker, and
+  acknowledgement paths. Scientific variables and all later gain gates remain
+  unchanged.
+
+Validation is green: 9/9 launcher contract tests pass, including asynchronous
+handoff-to-running and terminal-during-handoff paths; focused Ruff, bytecode
+compilation, JSON validation, diff integrity, and the actual resident-32B CP187
+partial dry-run preflight pass. CP187 has not launched at this checkpoint.
+
+Evidence-weighted completion remains 27%. This is checkpoint 187 of the faithful
+292-399 total-checkpoint forecast, leaving approximately 105-212 checkpoints.
+No training, mechanics, reasoning-gain, frontier, external-custody,
+installed-app, release, or soak credit is awarded. Next: publish CP187, execute
+the staged forced partial on the fresh paths, verify the complete transition
+and checkpoint, then resume. Final long soaks remain deferred.

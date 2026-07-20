@@ -25,12 +25,14 @@ def _fixture(tmp_path: Path, monkeypatch):
     wrapper = tmp_path / "tools/run_recurrence_training_envelope.py"
     trainer = tmp_path / "tools/recurrence_native_train_v2.py"
     detached = tmp_path / "tools/run_detached_step.py"
+    launcher_source = tmp_path / "tools/launch_resident_recurrence_training.py"
     sentinel_program = tmp_path / "tools/memory_sentinel.py"
     stage_guard = tmp_path / "core/runtime/resource_stage_guard.py"
     wrapper.parent.mkdir(parents=True)
     wrapper.write_bytes(b"# wrapper\n")
     trainer.write_bytes(b"# trainer\n")
     detached.write_bytes(b"# detached\n")
+    launcher_source.write_bytes(b"# launcher\n")
     sentinel_program.write_bytes(b"# sentinel\n")
     stage_guard.parent.mkdir(parents=True)
     stage_guard.write_bytes(b"# stage guard\n")
@@ -119,6 +121,10 @@ def _fixture(tmp_path: Path, monkeypatch):
             "path": protocol_path.name,
             "sha256": hashlib.sha256(protocol_raw).hexdigest(),
             "size_bytes": len(protocol_raw),
+        },
+        "launcher": {
+            "path": "tools/launch_resident_recurrence_training.py",
+            "sha256": hashlib.sha256(launcher_source.read_bytes()).hexdigest(),
         },
         "triggering_failure": {
             "path": failure_path.name,
@@ -254,6 +260,48 @@ def test_target_waits_for_the_same_phase_resource_marker(tmp_path, monkeypatch):
     )
     assert target[target.index("--resource-startup-lethal-mb") + 1] == "73728.0"
     assert target[target.index("--resource-steady-lethal-mb") + 1] == "59392.0"
+
+
+def test_launcher_waits_through_supervisor_handoff_for_running_target(
+    tmp_path,
+    monkeypatch,
+):
+    statuses = iter(
+        [
+            {"state": "handoff", "child_pid": 0},
+            {"state": "running", "child_pid": 4242},
+        ]
+    )
+    monkeypatch.setattr(
+        launch,
+        "_read_json",
+        lambda *_args, **_kwargs: (b"{}", next(statuses)),
+    )
+    monkeypatch.setattr(launch.time, "sleep", lambda _seconds: None)
+
+    status = launch._wait_for_running_target(tmp_path)
+
+    assert status == {"state": "running", "child_pid": 4242}
+
+
+def test_launcher_rejects_target_that_terminates_during_handoff(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        launch,
+        "_read_json",
+        lambda *_args, **_kwargs: (
+            b"{}",
+            {"state": "failed", "child_pid": 4242},
+        ),
+    )
+
+    with pytest.raises(
+        launch.ResidentRecurrenceLaunchError,
+        match="target_terminal_before_sentinel",
+    ):
+        launch._wait_for_running_target(tmp_path)
 
 
 def test_launch_rejects_changed_resource_wrapper(tmp_path, monkeypatch):

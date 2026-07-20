@@ -1,0 +1,107 @@
+{
+  "schema": "aura.recurrence_native_resident_protocol_amendment.v1",
+  "created_at": "2026-07-20T00:28:00-07:00",
+  "checkpoint": "CP187-resident-v3-detached-readiness-launch",
+  "parent_protocol": {
+    "path": "protocol.json",
+    "sha256": "275f56793449be856c3b836a1ccc83c812be957c809505109fe3cbda62c20780",
+    "size_bytes": 6485
+  },
+  "launcher": {
+    "path": "tools/launch_resident_recurrence_training.py",
+    "sha256": "ce1958b2e9c7fc2a20d33c2948fab890bdcd65ae757e90351215423a46bdba8e"
+  },
+  "triggering_failure": {
+    "path": "resource_failure_cp187.json",
+    "required_classification": "external_sentinel_startup_ceiling_misclassification",
+    "required_compressed_process_mb": 63303
+  },
+  "launch_failure_evidence": {
+    "path": "launch_failure_cp187.json",
+    "receipt_sha256": "7c604165f8b18e68f9081f50b1fa94d980f67495ed810a3226828e77de9b894f",
+    "required_classification": "valid_handoff_misclassified_as_not_running"
+  },
+  "change_scope": {
+    "allowed": [
+      "wait at most 30 seconds for detached state to advance from handoff to a positive-PID running target",
+      "reject terminal target state and stop an unguarded target on malformed status or timeout",
+      "retain the CP185 graph-lifetime barriers and CP186 73728/59392-MB stage handshake",
+      "start a fresh adapter and optimizer state under the unchanged archived trainer identity",
+      "retain the same model, data, deterministic order, objective, bridge, branch topology, optimizer hyperparameters, and pilot decision rules"
+    ],
+    "forbidden": [
+      "treat supervisor observability as target readiness",
+      "start training without a running target-bound sentinel and its acknowledgement",
+      "reuse CP186 run directories",
+      "change capability tasks or scoring based on observed outputs",
+      "freeze or evaluate any run with a sentinel tombstone",
+      "claim reasoning or frontier gains from launch or training mechanics"
+    ]
+  },
+  "resource_envelope": {
+    "schema": "aura.recurrence_training_resource_envelope.v1",
+    "wrapper": "tools/run_recurrence_training_envelope.py",
+    "wrapper_sha256": "53d22ae64012823313bdf81a21eccada52f6289eccf4ffb85c1b6051a2d7996a",
+    "trainer": "tools/recurrence_native_train_v2.py",
+    "trainer_sha256": "0aeb0399faa4473111f8c8965f17912315af13d5f943000fdab58bd0e180eafa",
+    "memory_limit_gb": 40,
+    "cache_limit_gb": 2,
+    "wired_limit_gb": 48,
+    "cache_cleared_before_model_load": true,
+    "envelope_out": "/Users/bryan/.aura/live-source/artifacts/closeout/latent_cortex/resident_32b_v3_cp187/adapter/launch_resource_envelope_cp187.json"
+  },
+  "partial": {
+    "run_dir": "/Users/bryan/.aura/live-source/artifacts/closeout/latent_cortex/resident_32b_v3_cp187/detached-partial",
+    "name": "cp187-resident-32b-v3-detached-readiness-partial",
+    "timeout_seconds": 1800,
+    "max_minutes": 0.001,
+    "checkpoint_every_steps": 5,
+    "log_every_steps": 5,
+    "expected_returncode": 75,
+    "expected_steps": 1,
+    "restart_policy": "never"
+  },
+  "resume": {
+    "run_dir": "/Users/bryan/.aura/live-source/artifacts/closeout/latent_cortex/resident_32b_v3_cp187/detached-resume",
+    "name": "cp187-resident-32b-v3-detached-readiness-resume",
+    "timeout_seconds": 46800,
+    "max_minutes": 720,
+    "expected_resume_step": 1,
+    "checkpoint_every_steps": 5,
+    "log_every_steps": 5,
+    "terminal_complete_returncode": 0,
+    "terminal_bounded_partial_returncode": 75,
+    "restart_policy": "never"
+  },
+  "sentinel": {
+    "program": "tools/memory_sentinel.py",
+    "program_sha256": "e809b77ee2d392572436cd0334d2910ed5d3f3de286b19658df8df29cce41045",
+    "stage_guard_source": "core/runtime/resource_stage_guard.py",
+    "stage_guard_source_sha256": "dcc1607bb195038994016fea07b696939645a450583d028226d726644014dda3",
+    "startup_lethal_mb": 73728,
+    "lethal_mb": 59392,
+    "interval_seconds": 2.0,
+    "required_for_each_phase": true,
+    "tombstone_means_phase_failure": true,
+    "partial_ring": "/Users/bryan/.aura/live-source/artifacts/closeout/latent_cortex/resident_32b_v3_cp187/adapter/physical_footprint_partial_cp187.jsonl",
+    "resume_ring": "/Users/bryan/.aura/live-source/artifacts/closeout/latent_cortex/resident_32b_v3_cp187/adapter/physical_footprint_resume_cp187.jsonl",
+    "partial_stage_path": "/Users/bryan/.aura/live-source/artifacts/closeout/latent_cortex/resident_32b_v3_cp187/adapter/resource_stage_partial_cp187.json",
+    "resume_stage_path": "/Users/bryan/.aura/live-source/artifacts/closeout/latent_cortex/resident_32b_v3_cp187/adapter/resource_stage_resume_cp187.json"
+  },
+  "mechanical_admission": {
+    "complete_path": "complete=true, halt_reason=max_steps, steps=540",
+    "bounded_partial_path": "complete=false, halt_reason=wall_clock, 200<=steps<540, explicit bounded-partial identity scope, never load-eligible before an admission certificate",
+    "required_holdout_guard": "finite nonempty holdout trail and final mean_loss <= 1.5 * minimum mean_loss",
+    "required_resource_guard": "both plans use the exact 40/2/48-GiB envelope; each sentinel records startup and steady samples below 73728/59392 MB; each marker/ack pair validates exact trainer/trainer-PID/sentinel-PID/limit bindings; neither sentinel writes a tombstone",
+    "on_failure": "REFUTED-mechanics; do not freeze or evaluate the adapter"
+  },
+  "claim_flags": {
+    "training_complete": false,
+    "training_admitted": false,
+    "mechanics_proven": false,
+    "reasoning_gain": false,
+    "same_checkpoint_interaction": false,
+    "frontier_level": false,
+    "frontier_plus": false
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "schema": "aura.recurrence_resident_launch_failure.v1",
+  "observed_at": "2026-07-20T00:24:23-07:00",
+  "claim_scope": "resident_v3_detached_launch_orchestration_failure_only",
+  "process": {
+    "pid": 44555,
+    "detached_returncode": -15,
+    "detached_status": "stopped",
+    "stop_signal": 15,
+    "duration_s": 0.873363,
+    "timed_out": false,
+    "restart_count": 0,
+    "containment_verified": true,
+    "process_group_empty": true,
+    "lineage_empty": true
+  },
+  "evidence": {
+    "plan": {
+      "path": "../resident_32b_v3_cp186/detached-partial/detached_plan.json",
+      "sha256": "5b15cdaeb2a18f70536ee70acf6c2a8014670dda8c7739d822b8f8041973271b",
+      "size_bytes": 5698
+    },
+    "receipt": {
+      "path": "../resident_32b_v3_cp186/detached-partial/detached_receipt.json",
+      "sha256": "7c604165f8b18e68f9081f50b1fa94d980f67495ed810a3226828e77de9b894f",
+      "size_bytes": 4741
+    },
+    "journal": {
+      "path": "../resident_32b_v3_cp186/detached-partial/detached_attempts.jsonl",
+      "sha256": "6381ff359160cc3f86a323b8ba70899043b606fbf06b53b7920a1561cb9b6fe6",
+      "size_bytes": 7423
+    }
+  },
+  "diagnosis": {
+    "root_cause": "The phase launcher treated run_detached_step launch as if target readiness were synchronous. The detached contract initially publishes state=handoff while gated target manifest verification proceeds, and later publishes state=running. The launcher observed the valid handoff state, misclassified it as failure, and intentionally stopped the target.",
+    "repair": "Wait up to 30 seconds through handoff for a status-bound positive child PID in state=running; reject terminal states immediately and stop the target on timeout or malformed status before launching the sentinel.",
+    "model_load_started": false,
+    "adapter_created": false,
+    "training_steps": 0,
+    "disposition": "failed_launch_retained_no_training_or_gain_credit"
+  },
+  "claim_flags": {
+    "training_complete": false,
+    "training_admitted": false,
+    "mechanics_proven": false,
+    "reasoning_gain": false,
+    "frontier_level": false
+  }
+}

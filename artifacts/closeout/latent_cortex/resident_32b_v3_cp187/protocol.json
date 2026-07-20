@@ -1,0 +1,121 @@
+{
+  "schema": "aura.recurrence_native_resident_protocol.v2",
+  "created_at": "2026-07-20T00:25:00-07:00",
+  "checkpoint": "CP187-resident-v3-detached-readiness",
+  "lineage": {
+    "cp186_protocol_sha256": "491af1f8fcd0f8b93220a98d856f16058e32fd55f92626b1230bab382ec7a8a9",
+    "cp186_resource_amendment_sha256": "533830f62e721a76ecea8f2f0f93a1741e8ca4fe54dfd2435c4926c271b3b395",
+    "cp186_launch_receipt_sha256": "7c604165f8b18e68f9081f50b1fa94d980f67495ed810a3226828e77de9b894f",
+    "change_reason": "CP186 failed closed during detached supervisor handoff because the phase launcher incorrectly required synchronous target readiness. CP187 adds a bounded handoff-to-running wait and otherwise preserves the frozen CP186 training and resource-stage contracts."
+  },
+  "claim_policy": {
+    "allowed_before_evaluation": ["detached_training_mechanics", "exact_resume_mechanics", "v3_objective_mechanics", "staged_bounded_resource_behavior"],
+    "forbidden_before_evaluation": ["reasoning_gain", "same_checkpoint_interaction", "frontier_level", "frontier_plus", "installed_desktop_gain"]
+  },
+  "model": {
+    "path": "/Users/bryan/.aura/live-source/training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118",
+    "expected_full_weight_sha256": "8eae71e73a14d1228a942d4faf84690d70b62148f25b0f924435535f7c550fad",
+    "personality_adapter": "none_fused_into_resident"
+  },
+  "training": {
+    "adapter_id": "resident-32b-recurrence-v3-cp187",
+    "output_dir": "/Users/bryan/.aura/live-source/artifacts/closeout/latent_cortex/resident_32b_v3_cp187/adapter",
+    "trainer_sha256": "0aeb0399faa4473111f8c8965f17912315af13d5f943000fdab58bd0e180eafa",
+    "objective": "v3",
+    "train_seed": 2026071901,
+    "families": ["khop", "boolean", "modular", "register_trace", "stack_trace", "constraint_order", "causal_intervention", "bayes_update", "budget_plan", "symbolic_rewrite", "premise_audit", "code_trace"],
+    "task_depths": [2, 4, 8],
+    "per_cell": 16,
+    "example_count": 576,
+    "holdout_per_cell": 1,
+    "holdout_count": 36,
+    "train_count": 540,
+    "holdout_eval_samples": 8,
+    "curriculum_depths": [1, 2, 4],
+    "execution_shape_rationale": "Four slots and two branch roles match the resident interactive profile; curriculum depth four exceeds the live two-step profile so added recurrence must learn a positive contribution.",
+    "n_slots": 4,
+    "branch_roles": ["constructive_solution", "counterexample_search"],
+    "exchange_interval": 1,
+    "alpha": 0.5,
+    "alpha_schedule": "constant",
+    "bridge_policy": "assistant_answer",
+    "depth_margin": 0.05,
+    "diversity_weight": 0.25,
+    "diversity_target_cos": 0.98,
+    "lora_rank": 8,
+    "lora_targets": ["o_proj", "v_proj"],
+    "learning_rate": 0.0001,
+    "monotonicity_weight": 0.5,
+    "checkpoint_every_steps": 5,
+    "log_every_steps": 5,
+    "max_steps": 540,
+    "epochs_at_completion": 1,
+    "resume_required_after_forced_partial": true,
+    "hard_training_minutes_after_resume": 720
+  },
+  "detached_execution": {
+    "supervisor": "tools/run_detached_step.py",
+    "restart_policy": "never",
+    "partial_run_dir": "/Users/bryan/.aura/live-source/artifacts/closeout/latent_cortex/resident_32b_v3_cp187/detached-partial",
+    "partial_max_minutes": 0.001,
+    "partial_timeout_seconds": 1800,
+    "expected_partial_returncode": 75,
+    "expected_partial_steps": 1,
+    "resume_run_dir": "/Users/bryan/.aura/live-source/artifacts/closeout/latent_cortex/resident_32b_v3_cp187/detached-resume",
+    "resume_timeout_seconds": 46800,
+    "resume_flag": true,
+    "terminal_success_returncode": 0,
+    "terminal_incomplete_returncode": 75
+  },
+  "memory_safety": {
+    "resource_envelope": {"active_gib": 40, "cache_gib": 2, "wired_gib": 48},
+    "external_sentinel": {
+      "startup_lethal_mb": 73728,
+      "steady_lethal_mb": 59392,
+      "interval_seconds": 2.0,
+      "required_for_partial": true,
+      "required_for_resume": true,
+      "create_once_marker_and_ack_required": true,
+      "tombstone_means_run_failure": true
+    },
+    "rule": "Aura desktop remains down; one resident model process maximum; every model phase requires the MLX envelope, startup sentinel, source/PID/hash-bound transition acknowledgement, and steady-state sentinel before any gradient graph."
+  },
+  "mechanical_admission": {
+    "requirements": [
+      "training_completion complete OR halt wall_clock with >= 200 steps",
+      "finite loss trail and finite holdout trail",
+      "strict v2 identity contract validates objective v3, with explicit non-load-eligible scope for any bounded partial",
+      "holdout mean CE at final checkpoint not worse than 1.5x its minimum",
+      "both phases contain startup and steady samples below their respective ceilings",
+      "both phase marker/ack pairs bind the exact trainer hash, trainer PID, sentinel PID, and 73728/59392-MB transition",
+      "both sentinels terminate without a tombstone"
+    ],
+    "on_failure": "REFUTED-mechanics; no freeze or evaluation compute for the adapter"
+  },
+  "post_training_pilot": {
+    "task_registry_version": "2026.07.18.2",
+    "fresh_seed_count": 2,
+    "domains": ["novel_algorithms", "mathematics", "coding", "scientific_inference", "long_horizon_planning", "calibration", "misleading_premise"],
+    "arms": ["base_vanilla", "base_rlc", "adapter_vanilla", "adapter_rlc"],
+    "decode": "contract-aware termination with decode_max_tokens 768 uniformly across every arm",
+    "advance_only_if": [
+      "adapter_rlc_correct_count > adapter_vanilla_correct_count",
+      "adapter_rlc_correct_count > base_rlc_correct_count",
+      "adapter_vanilla has no material regression against base_vanilla",
+      "adapter-RLC branch scores are not all tied",
+      "ordinary-generation isolation exact; all identity receipts validate"
+    ],
+    "negative_or_inconclusive_action": "diagnose, revise training, preregister a fresh pilot; do not run or claim the confirmatory campaign"
+  },
+  "confirmatory_campaign": {
+    "status": "conditional_not_launched",
+    "minimum_registry_trials_per_domain": 20,
+    "required_arms": ["base_vanilla", "base_rlc", "adapter_vanilla", "adapter_rlc", "base_equal_compute", "adapter_equal_compute"],
+    "required_controls": [
+      "prospective_power_simulation_before_task_issue",
+      "externally held task and provider trust roots",
+      "signed zero-overlap contamination audit against exact training corpus",
+      "independent raw-output and compute verification"
+    ]
+  }
+}

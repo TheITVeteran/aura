@@ -10,6 +10,7 @@ import math
 import os
 import subprocess
 import sys
+import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Never
@@ -205,6 +206,17 @@ def _validate_contract(
         _fail("parent_protocol_binding_mismatch")
     if parent.get("path") != protocol_path.name:
         _fail("parent_protocol_path_mismatch")
+    launcher = amendment.get("launcher")
+    launcher_source = _source_path(
+        launcher.get("path") if isinstance(launcher, Mapping) else None,
+        role="launcher",
+    )
+    if (
+        not isinstance(launcher, Mapping)
+        or launcher_source != REPO_ROOT / "tools/launch_resident_recurrence_training.py"
+        or launcher.get("sha256") != _sha256_file(launcher_source)
+    ):
+        _fail("launcher_source_mismatch")
 
     failure_ref = amendment.get("triggering_failure")
     if not isinstance(failure_ref, Mapping):
@@ -582,6 +594,32 @@ def _stop_unguarded_target(run_dir: Path) -> None:
     )
 
 
+def _wait_for_running_target(
+    run_dir: Path,
+    *,
+    timeout_s: float = 30.0,
+) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        try:
+            _status_raw, status = _read_json(
+                run_dir / "detached_status.json",
+                role="target_status",
+            )
+        except ResidentRecurrenceLaunchError as exc:
+            if exc.code != "target_status_path_invalid":
+                raise
+        else:
+            state = status.get("state")
+            trainer_pid = status.get("child_pid")
+            if state == "running" and type(trainer_pid) is int and trainer_pid > 0:
+                return status
+            if state in {"passed", "failed", "stopped"}:
+                _fail("target_terminal_before_sentinel")
+        time.sleep(0.05)
+    _fail("target_not_running_before_sentinel_timeout")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--protocol", type=Path, required=True)
@@ -609,19 +647,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     _amendment_raw, amendment = _read_json(args.amendment, role="amendment")
     run_dir = Path(str(amendment[args.phase]["run_dir"]))
     try:
-        _status_raw, status = _read_json(
-            run_dir / "detached_status.json",
-            role="target_status",
-        )
+        status = _wait_for_running_target(run_dir)
     except ResidentRecurrenceLaunchError:
         _stop_unguarded_target(run_dir)
         raise
     trainer_pid = status.get("child_pid")
-    if (
-        type(trainer_pid) is not int
-        or trainer_pid < 1
-        or status.get("state") != "running"
-    ):
+    if type(trainer_pid) is not int or trainer_pid < 1:
         _stop_unguarded_target(run_dir)
         _fail("target_not_running_before_sentinel")
     sentinel_launcher = _sentinel_launch_command(
