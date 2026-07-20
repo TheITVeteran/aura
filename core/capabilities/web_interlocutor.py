@@ -184,9 +184,55 @@ class ChromeCDPDialogueBrowser:
     """
 
     def __init__(self, *, endpoint: str = "http://127.0.0.1:9222", timeout: float = 5.0) -> None:
-        self.endpoint = endpoint.rstrip("/")
+        self.endpoint = self._require_loopback_endpoint(endpoint)
         self.timeout = max(1.0, float(timeout or 5.0))
         self._target_ws_url: str = ""
+
+    @staticmethod
+    def _is_loopback_host(host: str) -> bool:
+        host = (host or "").lower().rstrip(".")
+        if host in {"localhost", "127.0.0.1", "::1", "[::1]"}:
+            return True
+        try:
+            import ipaddress
+
+            return ipaddress.ip_address(host.strip("[]")).is_loopback
+        except (ImportError, ValueError):
+            return False
+
+    @classmethod
+    def _require_loopback_endpoint(cls, endpoint: str) -> str:
+        """CDP is a full remote-control channel — bind it to loopback only.
+
+        A configurable endpoint that reached a non-loopback host would let
+        input/runtime commands be sent through, and a webSocketDebuggerUrl be
+        trusted from, an arbitrary (possibly hostile) browser.
+        """
+        cleaned = str(endpoint or "").strip().rstrip("/")
+        try:
+            parts = urllib.parse.urlparse(cleaned)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"invalid Chrome CDP endpoint: {endpoint!r}") from exc
+        if parts.scheme not in {"http", "https"} or not cls._is_loopback_host(parts.hostname or ""):
+            raise ValueError(
+                "Chrome CDP endpoint must be an http(s) loopback address "
+                f"(127.0.0.1/localhost/::1); refusing {endpoint!r}"
+            )
+        return cleaned
+
+    def _assert_loopback_ws(self, ws_url: str) -> str:
+        """Reject a webSocketDebuggerUrl that points off loopback."""
+        try:
+            parts = urllib.parse.urlparse(str(ws_url or ""))
+        except (TypeError, ValueError):
+            parts = None
+        if parts is None or parts.scheme not in {"ws", "wss"} or not self._is_loopback_host(
+            parts.hostname or ""
+        ):
+            raise RuntimeError(
+                "Chrome CDP returned a non-loopback websocket debugger URL; refusing to attach"
+            )
+        return str(ws_url)
 
     def is_available(self) -> bool:
         response = get_network_gateway().request(
@@ -204,9 +250,10 @@ class ChromeCDPDialogueBrowser:
             target = await asyncio.to_thread(self._new_target, url)
         else:
             target = await asyncio.to_thread(self._active_target)
-        self._target_ws_url = str(target.get("webSocketDebuggerUrl") or "")
-        if not self._target_ws_url:
+        ws_url = str(target.get("webSocketDebuggerUrl") or "")
+        if not ws_url:
             raise RuntimeError("Chrome CDP target did not expose a websocket debugger URL")
+        self._target_ws_url = self._assert_loopback_ws(ws_url)
         await asyncio.to_thread(self._cdp_call, "Page.bringToFront", {})
         await asyncio.sleep(1.0)
         return await self.snapshot()
@@ -358,7 +405,9 @@ class ChromeCDPDialogueBrowser:
     def _ensure_target(self) -> None:
         if not self._target_ws_url:
             target = self._active_target()
-            self._target_ws_url = str(target.get("webSocketDebuggerUrl") or "")
+            ws_url = str(target.get("webSocketDebuggerUrl") or "")
+            if ws_url:
+                self._target_ws_url = self._assert_loopback_ws(ws_url)
         if not self._target_ws_url:
             raise RuntimeError("Chrome CDP endpoint has no controllable page target")
 
@@ -421,10 +470,12 @@ class ChromeCDPDialogueBrowser:
             {"expression": expression, "returnByValue": True, "awaitPromise": True},
         )
         response = payload.get("result", {})
-        evaluation = response.get("result", {})
-        if "exceptionDetails" in evaluation:
-            raise RuntimeError(str(evaluation["exceptionDetails"]))
-        remote_object = evaluation.get("result", {})
+        # CDP reports exceptionDetails BESIDE result, not inside it. Reading
+        # the inner object missed every JavaScript exception, degrading real
+        # page errors into empty/misparsed values.
+        if "exceptionDetails" in response:
+            raise RuntimeError(str(response["exceptionDetails"]))
+        remote_object = response.get("result", {})
         value = remote_object.get("value", "")
         try:
             return dict(json.loads(value or "{}"))
@@ -841,14 +892,20 @@ class ChromeVisibleDialogueBrowser:
   const userMessages = Array.from(document.querySelectorAll('[data-message-author-role="user"]'))
     .map((m) => normalize(m.innerText || m.textContent || ''))
     .filter(Boolean);
-  const body = normalize(document.body && document.body.innerText || '');
-  const matched = !!prefix && (
-    userMessages.some((m) => m.indexOf(prefix) !== -1 || prefix.indexOf(m.slice(0, Math.min(60, m.length))) !== -1)
-    || body.indexOf(prefix) !== -1
+  // Verify ONLY against committed user-message nodes. Matching document.body
+  // let the composer's own still-unsent text satisfy the check, producing a
+  // false "sent" receipt when submit failed or was still pending.
+  const composer = document.getElementById('prompt-textarea');
+  const composerText = composer ? normalize(composer.innerText || composer.textContent || '') : '';
+  const matched = !!prefix && userMessages.some(
+    (m) => m.indexOf(prefix) !== -1 || prefix.indexOf(m.slice(0, Math.min(60, m.length))) !== -1
   );
+  // If the composer still holds this exact text, submission did not complete.
+  const still_in_composer = !!prefix && composerText.indexOf(prefix) !== -1;
   return JSON.stringify({{
-    ok: matched,
+    ok: matched && !still_in_composer,
     user_message_count: userMessages.length,
+    still_in_composer,
     latest_user_message: (userMessages[userMessages.length - 1] || '').slice(0, 220),
     prefix
   }});
@@ -3026,36 +3083,59 @@ def _message_was_recently_sent(message: str, turns: list[WebInterlocutorTurn]) -
     return False
 
 
+def _canonical_host(url: str) -> str:
+    """Return the lowercased registrable hostname, or '' if unparseable.
+
+    Substring host checks trusted attacker-controlled lookalikes — a URL
+    like ``https://chatgpt.com.evil.test/`` or ``https://evil/?u=claude.ai``
+    would match a bare ``"claude.ai" in url``. Matching happens on the parsed
+    netloc host only, with an exact-or-dotted-suffix rule.
+    """
+    try:
+        parts = urllib.parse.urlparse(str(url or "").strip())
+    except (TypeError, ValueError):
+        return ""
+    if parts.scheme not in {"http", "https"}:
+        return ""
+    return (parts.hostname or "").lower().rstrip(".")
+
+
+def _host_matches(host: str, domain: str) -> bool:
+    """True when host IS domain or a subdomain of it (never a lookalike)."""
+    return bool(host) and (host == domain or host.endswith("." + domain))
+
+
+_CHAT_SURFACE_HOSTS = (
+    "chatgpt.com",
+    "gemini.google.com",
+    "claude.ai",
+    "poe.com",
+    "copilot.microsoft.com",
+    "deepseek.com",
+    "meta.ai",
+)
+
+_READABILITY_BLOCKED_HOSTS = (
+    "chatgpt.com",
+    "gemini.google.com",
+    "claude.ai",
+    "x.com",
+    "twitter.com",
+    "accounts.google.com",
+    "google.com",
+)
+
+
 def _url_allows_readability_fallback(url: str) -> bool:
-    lowered = str(url or "").lower()
-    if not lowered.startswith(("http://", "https://")):
+    host = _canonical_host(url)
+    if not host:
         return False
-    blocked_hosts = (
-        "chatgpt.com",
-        "gemini.google.com",
-        "claude.ai",
-        "x.com",
-        "twitter.com",
-        "accounts.google.com",
-        "google.com/search",
-    )
-    return not any(host in lowered for host in blocked_hosts)
+    return not any(_host_matches(host, domain) for domain in _READABILITY_BLOCKED_HOSTS)
 
 
 def _url_looks_visible_chat_surface(url: str) -> bool:
-    lowered = str(url or "").lower()
-    return any(
-        host in lowered
-        for host in (
-            "chatgpt.com",
-            "gemini.google.com",
-            "claude.ai",
-            "poe.com",
-            "copilot.microsoft.com",
-            "deepseek.com",
-            "meta.ai",
-        )
-    )
+    host = _canonical_host(url)
+    return any(_host_matches(host, domain) for domain in _CHAT_SURFACE_HOSTS)
 
 
 def _same_origin_or_exact_url(current_url: str, desired_url: str) -> bool:
@@ -3074,11 +3154,21 @@ def _same_origin_or_exact_url(current_url: str, desired_url: str) -> bool:
         return False
     if not current_parts.scheme or not desired_parts.scheme:
         return False
-    return (
-        current_parts.scheme in {"http", "https"}
-        and desired_parts.scheme in {"http", "https"}
-        and current_parts.netloc.lower() == desired_parts.netloc.lower()
-    )
+    if (
+        current_parts.scheme not in {"http", "https"}
+        or desired_parts.scheme not in {"http", "https"}
+        or current_parts.netloc.lower() != desired_parts.netloc.lower()
+    ):
+        return False
+    # Same host is not enough: a specific desired path (a particular chat
+    # thread/account) must actually be reached, or a send could land in an
+    # unrelated conversation on the same provider. Only a bare "/" desired
+    # path is treated as host-level.
+    desired_path = desired_parts.path.rstrip("/")
+    if not desired_path:
+        return True
+    current_path = current_parts.path.rstrip("/")
+    return current_path == desired_path or current_path.startswith(desired_path + "/")
 
 
 def _trim_reply_text(text: str, sent_text: str) -> str:
@@ -3130,6 +3220,25 @@ def _coerce_composition_text(result: Any) -> str:
         if value:
             return str(value)
     return ""
+
+
+async def _call_engine_bounded(fn: Any, prompt: str, kwargs: dict[str, Any]) -> Any:
+    """Invoke an engine method without blocking the event loop.
+
+    A synchronous ``generate``/``think`` that runs a resident model inline
+    would perform full inference on the loop. Async methods are awaited with
+    the compose deadline; sync methods are dispatched to a worker thread and
+    bounded there, so a slow synchronous inference cannot freeze the loop.
+    """
+    if asyncio.iscoroutinefunction(fn):
+        return await asyncio.wait_for(fn(prompt, **kwargs), timeout=_COMPOSE_TIMEOUT_S)
+    result = await asyncio.wait_for(
+        asyncio.to_thread(fn, prompt, **kwargs), timeout=_COMPOSE_TIMEOUT_S
+    )
+    if asyncio.iscoroutine(result):
+        # A sync wrapper that returns a coroutine — await it on the loop.
+        return await asyncio.wait_for(result, timeout=_COMPOSE_TIMEOUT_S)
+    return result
 
 
 async def _maybe_think(engine: Any, prompt: str, context: dict[str, Any]) -> str:
@@ -3193,9 +3302,9 @@ async def _maybe_think(engine: Any, prompt: str, context: dict[str, Any]) -> str
                     "WebInterlocutor cognitive compose: calling generate on %s",
                     type(engine).__name__,
                 )
-                result = engine.generate(prompt, **gen_kwargs)
-                if asyncio.iscoroutine(result):
-                    result = await asyncio.wait_for(result, timeout=_COMPOSE_TIMEOUT_S)
+                result = await _call_engine_bounded(
+                    engine.generate, prompt, gen_kwargs
+                )
                 text = _coerce_composition_text(result)
                 if text.strip():
                     logger.info(
@@ -3209,13 +3318,15 @@ async def _maybe_think(engine: Any, prompt: str, context: dict[str, Any]) -> str
         # or returned nothing.
         if hasattr(engine, "think"):
             try:
-                result = engine.think(prompt, context=think_context, origin=origin)
+                result = await _call_engine_bounded(
+                    engine.think, prompt, {"context": think_context, "origin": origin}
+                )
             except TypeError as exc:
                 if "origin" not in str(exc) or "unexpected" not in str(exc):
                     raise
-                result = engine.think(prompt, context=think_context)
-            if asyncio.iscoroutine(result):
-                result = await asyncio.wait_for(result, timeout=_COMPOSE_TIMEOUT_S)
+                result = await _call_engine_bounded(
+                    engine.think, prompt, {"context": think_context}
+                )
             return _coerce_composition_text(result)
         return ""
     except (asyncio.TimeoutError, TimeoutError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
