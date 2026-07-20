@@ -120,13 +120,18 @@ def _phase_paths(destination_root: Path, phase: str) -> dict[str, Path]:
     if phase not in {"calibration", "resume"}:
         _fail("phase_invalid")
     root = destination_root.parent
+    label = root.name
+    if not label.startswith("resident_32b_v3_cp") or not label.removeprefix(
+        "resident_32b_v3_cp"
+    ).isdigit():
+        _fail("destination_checkpoint_label_invalid")
     return {
         "root": root,
         "run": root / f"detached-{phase}",
         "sentinel": root / f"sentinel-{phase}",
-        "ring": destination_root / f"physical_footprint_{phase}_cp191.jsonl",
-        "stage": destination_root / f"resource_stage_{phase}_cp191.json",
-        "envelope": destination_root / f"launch_resource_envelope_{phase}_cp191.json",
+        "ring": destination_root / f"physical_footprint_{phase}_{label}.jsonl",
+        "stage": destination_root / f"resource_stage_{phase}_{label}.json",
+        "envelope": destination_root / f"launch_resource_envelope_{phase}_{label}.json",
     }
 
 
@@ -144,6 +149,7 @@ def build_commands(
         _fail("migration_scientific_inputs_invalid")
     destination_root = Path(str(migration["destination"]["root"])).resolve(strict=True)
     paths = _phase_paths(destination_root, phase)
+    checkpoint_number = destination_root.parent.name.removeprefix("resident_32b_v3_cp")
     latest = _read_json(destination_root / "latest.json", role="latest")
     if phase == "calibration":
         if latest.get("checkpoint") != summary["source_checkpoint"]:
@@ -189,7 +195,7 @@ def build_commands(
         "--out-dir",
         str(destination_root),
         "--adapter-id",
-        "resident-32b-recurrence-v3-cp191",
+        f"resident-32b-recurrence-v3-cp{checkpoint_number}",
         "--personality-adapter",
         str(config.get("personality_adapter_path") or "none"),
         "--train-seed",
@@ -260,7 +266,7 @@ def build_commands(
         "--run-dir",
         str(paths["run"]),
         "--name",
-        f"cp191-resident-32b-v3-{phase}",
+        f"cp{checkpoint_number}-resident-32b-v3-{phase}",
         "--cwd",
         str(REPO_ROOT),
         "--timeout",
@@ -401,7 +407,7 @@ def verify_calibration(migration_path: Path) -> dict[str, Any]:
         or training_receipt.get("halt_reason") != "wall_clock"
         or training_receipt.get("steps") != expected_step
         or training_receipt.get("gradient_execution", {}).get("activation_rematerialization")
-        != "full_depth_graph_checkpoint"
+        != "per_transformer_layer_checkpoint"
         or training_receipt.get("resume_migration") != summary
     ):
         failure_points.append("calibration_training_receipt_invalid")

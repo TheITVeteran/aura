@@ -13,7 +13,7 @@ from tools import launch_resident_v3_recovery as recovery
 def _documents(tmp_path: Path):
     model = tmp_path / "model"
     model.mkdir()
-    destination = tmp_path / "cp191" / "adapter"
+    destination = tmp_path / "resident_32b_v3_cp191" / "adapter"
     destination.mkdir(parents=True)
     source_checkpoint = "checkpoints/step-00000010-frozen"
     (destination / "latest.json").write_text(

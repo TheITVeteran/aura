@@ -639,17 +639,17 @@ def _upgrade_bundle_to_migrated_v3():
     config = json.loads(artifacts["training_config.json"])
     receipt = json.loads(artifacts["receipt.json"])
     gradient = {
-        "schema": "aura.recurrence_streamed_depth_gradient.v2",
+        "schema": "aura.recurrence_streamed_depth_gradient.v3",
         "mode": "depth_serial_exact_sum",
         "concurrent_depth_graphs": 1,
         "optimizer_updates_per_sample": 1,
         "finite_loss_and_gradient_required_before_update": True,
-        "activation_rematerialization": "full_depth_graph_checkpoint",
+        "activation_rematerialization": "per_transformer_layer_checkpoint",
     }
     config["gradient_execution"] = gradient
     receipt["gradient_execution"] = gradient
     migration_material = {
-        "schema": "aura.recurrence_checkpoint_migration.v1",
+        "schema": "aura.recurrence_checkpoint_migration.v2",
         "source": {
             "checkpoint": "checkpoints/step-00000007-source",
             "step": 7,
@@ -663,8 +663,9 @@ def _upgrade_bundle_to_migrated_v3():
             "optimizer": {"sha256": "4" * 64},
         },
         "failure": {"tombstone": {"sha256": "5" * 64}},
+        "recovery_attempts": [],
         "required_execution_change": {
-            "activation_rematerialization": "full_depth_graph_checkpoint"
+            "activation_rematerialization": "per_transformer_layer_checkpoint"
         },
         "new_trainer": {"sha256": receipt["trainer_source_sha256"]},
     }
@@ -686,7 +687,11 @@ def _upgrade_bundle_to_migrated_v3():
         "adapter_sha256": migration["destination"]["adapter"]["sha256"],
         "optimizer_sha256": migration["destination"]["optimizer"]["sha256"],
         "failure_tombstone_sha256": migration["failure"]["tombstone"]["sha256"],
-        "activation_rematerialization": "full_depth_graph_checkpoint",
+        "recovery_attempt_count": 0,
+        "recovery_attempts_sha256": hashlib.sha256(
+            canonical_json_bytes(migration["recovery_attempts"])
+        ).hexdigest(),
+        "activation_rematerialization": "per_transformer_layer_checkpoint",
         "new_trainer_sha256": migration["new_trainer"]["sha256"],
     }
     config["resume_migration"] = resume_migration
@@ -727,7 +732,7 @@ def test_migrated_v3_bundle_binds_checkpoint_provenance():
     assert receipt["complete"] is True
     assert receipt["resume_migration"]["source_step"] == 7
     assert receipt["resume_migration"]["activation_rematerialization"] == (
-        "full_depth_graph_checkpoint"
+        "per_transformer_layer_checkpoint"
     )
     assert receipt["checkpoint_migration_sha256"]
 

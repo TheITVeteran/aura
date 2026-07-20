@@ -16,16 +16,35 @@ positions. Tiny-Qwen parity tests compare it directly with the live cache path.
 """
 from __future__ import annotations
 
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import Any
 
 from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec
 from core.brain.llm.latent_cortex.recurrence import rms_match
-from core.brain.llm.latent_cortex.recurrence_adapter import recurrence_adapter_scope
+from core.brain.llm.latent_cortex.recurrence_adapter import (
+    current_recurrence_adapter_scope,
+    recurrence_adapter_scope,
+)
 from core.brain.llm.latent_cortex.types import WorkspaceConfig
 from core.brain.llm.latent_cortex.workspace import LatentWorkspace, per_position_rms
 
 RECURRENCE_NATIVE_SCHEMA_V2 = "aura.recurrence_native_objective.v2"
+
+
+@dataclass
+class _LayerCheckpointState:
+    model: Any
+    parameters: Any
+    wrappers: dict[tuple[int, int | None, int | None], Callable[..., Any]]
+
+
+_LAYER_CHECKPOINTS: ContextVar[_LayerCheckpointState | None] = ContextVar(
+    "aura_recurrence_layer_checkpoints",
+    default=None,
+)
 
 
 @dataclass(frozen=True)
@@ -58,10 +77,47 @@ def _logits(model: Any, hidden: Any) -> Any:
     return inner.embed_tokens.as_linear(hidden)
 
 
+@contextmanager
+def transformer_layer_checkpointing(model: Any, parameters: Any) -> Iterator[None]:
+    """Rematerialize each transformer layer while preserving graph semantics."""
+
+    layers = tuple(model.model.layers)
+    if not layers:
+        raise ValueError("model has no transformer layers")
+    token = _LAYER_CHECKPOINTS.set(
+        _LayerCheckpointState(model=model, parameters=parameters, wrappers={})
+    )
+    try:
+        yield
+    finally:
+        _LAYER_CHECKPOINTS.reset(token)
+
+
 def _causal_layer(layer: Any, hidden: Any) -> Any:
     from mlx_lm.models.base import create_attention_mask
 
-    return layer(hidden, create_attention_mask(hidden, None), None)
+    checkpointed = _LAYER_CHECKPOINTS.get()
+    mask = create_attention_mask(hidden, None)
+    if checkpointed is None:
+        return layer(hidden, mask, None)
+    activation = current_recurrence_adapter_scope()
+    start = activation.start if activation is not None else None
+    stop = activation.stop if activation is not None else None
+    key = (id(layer), start, stop)
+    call = checkpointed.wrappers.get(key)
+    if call is None:
+        import mlx.core as mx
+
+        def layer_call(all_parameters: Any, value: Any, attention_mask: Any) -> Any:
+            checkpointed.model.update(all_parameters)
+            if start is None or stop is None:
+                return layer(value, attention_mask, None)
+            with recurrence_adapter_scope(start=start, stop=stop):
+                return layer(value, attention_mask, None)
+
+        call = mx.checkpoint(layer_call)
+        checkpointed.wrappers[key] = call
+    return call(checkpointed.parameters, hidden, mask)
 
 
 def _seed_branch(
@@ -365,7 +421,7 @@ def detached_monotonicity_penalty(losses: Sequence[Any]) -> Any:
     if len(losses) < 2:
         raise ValueError("monotonicity penalty needs at least two depths")
     penalty = mx.zeros(())
-    for shallow, deep in zip(losses, losses[1:]):
+    for shallow, deep in zip(losses, losses[1:], strict=False):
         penalty = penalty + mx.maximum(deep - mx.stop_gradient(shallow), 0.0)
     return penalty
 

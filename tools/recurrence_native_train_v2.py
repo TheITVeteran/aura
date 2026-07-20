@@ -465,16 +465,18 @@ def _streamed_depth_value_and_grad(
             )
 
         if activation_checkpointing:
-            # The parameter tree must be an explicit checkpoint input.
-            # Capturing ``model`` alone makes MLX treat its trainable arrays as
-            # constants and silently returns zero gradients.
+            from core.learning.recurrence_native_objective_v2 import (
+                transformer_layer_checkpointing,
+            )
+
             def checkpointed_depth_loss(parameters: Any) -> Any:
                 model.update(parameters)
-                return depth_loss(model, prompt_tokens, answer_tokens)
+                with transformer_layer_checkpointing(model, parameters):
+                    return depth_loss(model, prompt_tokens, answer_tokens)
 
-            value, gradients = mx.value_and_grad(
-                mx.checkpoint(checkpointed_depth_loss)
-            )(model.trainable_parameters())
+            value, gradients = mx.value_and_grad(checkpointed_depth_loss)(
+                model.trainable_parameters()
+            )
         else:
             value, gradients = nn.value_and_grad(model, depth_loss)(
                 model,
@@ -995,7 +997,7 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
         },
         "gradient_execution": {
             "schema": (
-                "aura.recurrence_streamed_depth_gradient.v2"
+                "aura.recurrence_streamed_depth_gradient.v3"
                 if args.activation_checkpointing
                 else GRADIENT_EXECUTION_SCHEMA
             ),
@@ -1004,7 +1006,7 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
             "optimizer_updates_per_sample": 1,
             "finite_loss_and_gradient_required_before_update": True,
             **(
-                {"activation_rematerialization": "full_depth_graph_checkpoint"}
+                {"activation_rematerialization": "per_transformer_layer_checkpoint"}
                 if args.activation_checkpointing
                 else {}
             ),

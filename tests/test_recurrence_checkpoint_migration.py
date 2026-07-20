@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from core.learning.recurrence_checkpoint_migration import (
+    RecoveryAttemptEvidence,
     RecurrenceCheckpointMigrationError,
     prepare_migration,
     verify_migration,
@@ -106,6 +107,7 @@ def _fixture(tmp_path: Path) -> dict[str, Path | str]:
             "process_group_empty": True,
             "lineage_empty": True,
             "receipt_sha256": "1" * 64,
+            "started_at": 1.0,
         },
     )
     sentinel = tmp_path / "sentinel.json"
@@ -146,7 +148,80 @@ def _fixture(tmp_path: Path) -> dict[str, Path | str]:
     }
 
 
-def _prepare(paths: dict[str, Path | str]) -> Path:
+def _recovery_attempt(tmp_path: Path) -> RecoveryAttemptEvidence:
+    previous_root = tmp_path / "previous" / "adapter"
+    previous_root.mkdir(parents=True)
+    previous_migration = tmp_path / "previous_migration.json"
+    migration_material = {
+        "schema": "aura.recurrence_checkpoint_migration.v1",
+        "destination": {"root": str(previous_root)},
+    }
+    _write_json(
+        previous_migration,
+        {
+            **migration_material,
+            "migration_sha256": _sha(_canonical(migration_material)),
+        },
+    )
+    trainer = tmp_path / "recovery_trainer.json"
+    _write_json(
+        trainer,
+        {
+            "returncode": -9,
+            "containment_verified": True,
+            "process_group_empty": True,
+            "lineage_empty": True,
+            "receipt_sha256": "6" * 64,
+            "started_at": 2.0,
+            "command": [
+                "trainer.py",
+                "--out-dir",
+                str(previous_root),
+                "--resume-migration-evidence",
+                str(previous_migration),
+            ],
+        },
+    )
+    sentinel = tmp_path / "recovery_sentinel.json"
+    _write_json(
+        sentinel,
+        {
+            "returncode": 0,
+            "containment_verified": True,
+            "receipt_sha256": "7" * 64,
+        },
+    )
+    sample = {
+        "managed_mb": 75_192.0,
+        "active_lethal_mb": 73_728.0,
+        "guard_stage": "compute",
+    }
+    tombstone = tmp_path / "recovery_tombstone.json"
+    _write_json(
+        tombstone,
+        {
+            "schema": "aura.memory_sentinel.tombstone.v1",
+            "guard_stage": "compute",
+            "reason": "external sentinel killed process tree at lethal ceiling",
+            "final_sample": sample,
+        },
+    )
+    ring = tmp_path / "recovery_ring.jsonl"
+    _write_json(ring, sample, newline=True)
+    return RecoveryAttemptEvidence(
+        checkpoint_migration=previous_migration,
+        trainer_receipt=trainer,
+        sentinel_receipt=sentinel,
+        tombstone=tombstone,
+        footprint_ring=ring,
+    )
+
+
+def _prepare(
+    paths: dict[str, Path | str],
+    *,
+    recovery_attempts: tuple[RecoveryAttemptEvidence, ...] = (),
+) -> Path:
     destination = Path(paths["destination"])
     output = destination / "checkpoint_migration.json"
     prepare_migration(
@@ -159,6 +234,7 @@ def _prepare(paths: dict[str, Path | str]) -> Path:
         amendment=Path(paths["amendment"]),
         new_trainer=Path(paths["trainer"]),
         output=output,
+        recovery_attempts=recovery_attempts,
     )
     return output
 
@@ -175,7 +251,7 @@ def test_migration_copies_exact_state_and_verifies_identity(tmp_path: Path):
 
     assert result["source_step"] == 10
     assert result["source_checkpoint"].startswith("checkpoints/step-00000010-")
-    assert result["activation_rematerialization"] == "full_depth_graph_checkpoint"
+    assert result["activation_rematerialization"] == "per_transformer_layer_checkpoint"
     assert result["new_trainer_sha256"] == paths["trainer_sha256"]
     document = json.loads(migration.read_text(encoding="ascii"))
     for role in ("complete", "adapter", "optimizer"):
@@ -227,4 +303,33 @@ def test_migration_requires_the_bound_recovery_trainer(tmp_path: Path):
             migration,
             expected_destination_root=Path(paths["destination"]),
             expected_trainer_sha256="f" * 64,
+        )
+
+
+def test_migration_binds_and_verifies_ordered_recovery_failure_chain(tmp_path: Path):
+    paths = _fixture(tmp_path)
+    attempt = _recovery_attempt(tmp_path)
+    migration = _prepare(paths, recovery_attempts=(attempt,))
+
+    result = verify_migration(
+        migration,
+        expected_destination_root=Path(paths["destination"]),
+        expected_trainer_sha256=str(paths["trainer_sha256"]),
+    )
+
+    document = json.loads(migration.read_text(encoding="ascii"))
+    assert result["recovery_attempt_count"] == 1
+    assert result["recovery_attempts_sha256"] == _sha(
+        _canonical(document["recovery_attempts"])
+    )
+
+    attempt.footprint_ring.write_bytes(attempt.footprint_ring.read_bytes() + b" ")
+    with pytest.raises(
+        RecurrenceCheckpointMigrationError,
+        match="recovery_attempt_evidence_changed|migration_artifact_binding_changed",
+    ):
+        verify_migration(
+            migration,
+            expected_destination_root=Path(paths["destination"]),
+            expected_trainer_sha256=str(paths["trainer_sha256"]),
         )

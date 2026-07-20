@@ -41,7 +41,7 @@ ACCEPTED_OBJECTIVE_SCHEMAS = frozenset({OBJECTIVE_SCHEMA_V2, OBJECTIVE_SCHEMA_V3
 RECEIPT_V3_EXTRA_KEYS = frozenset({"objective_options", "holdout_trail"})
 CONFIG_V3_EXTRA_KEYS = frozenset({"objective_options", "bridge", "holdout"})
 DATASET_V3_EXTRA_KEYS = frozenset({"holdout_per_cell", "holdout_indices"})
-RESUME_MIGRATION_SCHEMA_V1 = "aura.recurrence_checkpoint_migration.v1"
+RESUME_MIGRATION_SCHEMA = "aura.recurrence_checkpoint_migration.v2"
 RESUME_MIGRATION_KEYS = frozenset(
     {
         "schema",
@@ -55,6 +55,8 @@ RESUME_MIGRATION_KEYS = frozenset(
         "adapter_sha256",
         "optimizer_sha256",
         "failure_tombstone_sha256",
+        "recovery_attempt_count",
+        "recovery_attempts_sha256",
         "activation_rematerialization",
         "new_trainer_sha256",
     }
@@ -206,7 +208,7 @@ def _artifact_binding(
 
 def _resume_migration_identity(value: Any) -> dict[str, Any]:
     value = _exact(value, set(RESUME_MIGRATION_KEYS), role="resume_migration")
-    if value.get("schema") != RESUME_MIGRATION_SCHEMA_V1:
+    if value.get("schema") != RESUME_MIGRATION_SCHEMA:
         _fail("resume_migration_schema_invalid")
     source_checkpoint = _relative_path(
         value.get("source_checkpoint"),
@@ -217,7 +219,7 @@ def _resume_migration_identity(value: Any) -> dict[str, Any]:
     ):
         _fail("resume_migration_source_checkpoint_invalid")
     normalized = {
-        "schema": RESUME_MIGRATION_SCHEMA_V1,
+        "schema": RESUME_MIGRATION_SCHEMA,
         "migration_sha256": _sha(value.get("migration_sha256"), role="resume_migration"),
         "source_checkpoint": source_checkpoint,
         "source_step": _integer(
@@ -235,12 +237,19 @@ def _resume_migration_identity(value: Any) -> dict[str, Any]:
         "adapter_sha256",
         "optimizer_sha256",
         "failure_tombstone_sha256",
+        "recovery_attempts_sha256",
         "new_trainer_sha256",
     ):
         normalized[key] = _sha(value.get(key), role=f"resume_migration_{key}")
-    if value.get("activation_rematerialization") != "full_depth_graph_checkpoint":
+    normalized["recovery_attempt_count"] = _integer(
+        value.get("recovery_attempt_count"),
+        role="resume_migration_recovery_attempt_count",
+        minimum=0,
+        maximum=100_000,
+    )
+    if value.get("activation_rematerialization") != "per_transformer_layer_checkpoint":
         _fail("resume_migration_rematerialization_invalid")
-    normalized["activation_rematerialization"] = "full_depth_graph_checkpoint"
+    normalized["activation_rematerialization"] = "per_transformer_layer_checkpoint"
     return normalized
 
 
@@ -250,7 +259,7 @@ def _migration_certificate_summary(value: Any) -> dict[str, Any]:
     material = dict(value)
     claimed = material.pop("migration_sha256", None)
     if (
-        value.get("schema") != RESUME_MIGRATION_SCHEMA_V1
+        value.get("schema") != RESUME_MIGRATION_SCHEMA
         or claimed != sha256_bytes(canonical_json_bytes(material))
     ):
         _fail("checkpoint_migration_digest_invalid")
@@ -259,10 +268,11 @@ def _migration_certificate_summary(value: Any) -> dict[str, Any]:
     failure = value.get("failure")
     change = value.get("required_execution_change")
     trainer = value.get("new_trainer")
+    recovery_attempts = value.get("recovery_attempts")
     if not all(
         isinstance(item, Mapping)
         for item in (source, destination, failure, change, trainer)
-    ):
+    ) or not isinstance(recovery_attempts, list):
         _fail("checkpoint_migration_schema_invalid")
     complete = destination.get("complete")
     adapter = destination.get("adapter")
@@ -286,6 +296,10 @@ def _migration_certificate_summary(value: Any) -> dict[str, Any]:
             "adapter_sha256": adapter.get("sha256"),
             "optimizer_sha256": optimizer.get("sha256"),
             "failure_tombstone_sha256": tombstone.get("sha256"),
+            "recovery_attempt_count": len(recovery_attempts),
+            "recovery_attempts_sha256": sha256_bytes(
+                canonical_json_bytes(recovery_attempts)
+            ),
             "activation_rematerialization": change.get("activation_rematerialization"),
             "new_trainer_sha256": trainer.get("sha256"),
         }
@@ -959,7 +973,11 @@ def validate_v2_adapter_identity(
         "optimizer_updates_per_sample": 1,
         "finite_loss_and_gradient_required_before_update": True,
     }
-    if schema == "aura.recurrence_streamed_depth_gradient.v2":
+    if schema == "aura.recurrence_streamed_depth_gradient.v3":
+        expected_gradient_execution["activation_rematerialization"] = (
+            "per_transformer_layer_checkpoint"
+        )
+    elif schema == "aura.recurrence_streamed_depth_gradient.v2":
         expected_gradient_execution["activation_rematerialization"] = (
             "full_depth_graph_checkpoint"
         )
@@ -979,7 +997,7 @@ def validate_v2_adapter_identity(
         _fail("gradient_execution_cross_binding_mismatch")
     resume_migration: dict[str, Any] | None = None
     if migration_manifest_present:
-        if schema != "aura.recurrence_streamed_depth_gradient.v2":
+        if schema != "aura.recurrence_streamed_depth_gradient.v3":
             _fail("resume_migration_rematerialization_invalid")
         resume_migration = _resume_migration_identity(config.get("resume_migration"))
         if receipt.get("resume_migration") != resume_migration:

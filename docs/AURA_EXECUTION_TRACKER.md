@@ -21770,3 +21770,74 @@ is awarded. Next: publish CP190, create and verify the real step-10 migration,
 run the rematerialized resident calibration, repair further if its empirical
 memory evidence fails, then launch exact detached training and the automatic
 post-training proof continuation. Final long soaks remain deferred.
+
+## Checkpoint 2026-07-20-191: Full-Depth Rematerialization Falsified
+
+The real CP191 migration copied CP189's exact step-10 adapter, optimizer,
+cursor, evidence accumulators, dataset, execution specification, and source
+configuration into a fresh root. Its self-hashed certificate was verified
+before the detached calibration launched. The resident model loaded, the
+external resource lease entered compute, and the first rematerialized training
+graph then reached 75,192.0 MB against the immutable 73,728-MB compute ceiling.
+The sentinel killed the process tree. Trainer return code -9, sentinel return
+code 0, restart count zero, verified containment, and empty process group and
+lineage establish a clean resource-envelope failure. The exact migrated
+step-10 checkpoint remains intact and no long resume launched.
+
+This result falsifies full-depth graph checkpointing as a sufficient memory
+repair on this resident 32B execution path. Wrapping the complete objective did
+not shorten the lifetime of transformer-layer activations; its 75,192.0-MB
+terminal footprint was slightly worse than CP189's 74,846.3-MB failure. The
+failure is not reclassified as success, and no training or capability claim is
+awarded.
+
+Evidence-weighted completion remains 27%. This is checkpoint 191 of the
+faithful 292-399 total-checkpoint forecast, leaving approximately 101-208
+checkpoints. No training-completion, mechanics, reasoning-gain, same-checkpoint
+interaction, frontier, external-custody, installed-app, release, or soak credit
+is awarded. Next: replace whole-objective rematerialization with independently
+recomputed transformer layers, prove exact value/gradient parity, bind CP191's
+failed recovery into the next migration generation, and recalibrate before any
+long launch. Final long soaks remain deferred.
+
+## Checkpoint 2026-07-20-192: Layerwise Rematerialization Recovery Boundary
+
+The CP192 repair checkpoints each transformer layer independently while keeping
+the trainable model parameter tree explicit to MLX automatic differentiation.
+Backward recomputation occurs after the outer recurrence-adapter context has
+returned, so every checkpoint closure captures and reopens the exact active
+adapter span. This closes two experimentally reproduced silent-failure modes:
+capturing the model without explicit trainable parameters produced zero LoRA
+gradients, and recomputing outside the scoped adapter context also produced
+zero gradients despite a correct forward value.
+
+- The v3 gradient execution identity now states
+  `per_transformer_layer_checkpoint`. A focused differentiable model proves
+  exact objective-value parity, identical nonzero gradient keys, per-tensor
+  gradient equality, and equal objective telemetry between ordinary and
+  checkpointed execution.
+- Migration certificates advance to schema v2. Each certificate contains an
+  ordered recovery-attempt chain binding the predecessor migration, failed
+  trainer and sentinel receipts, lethal tombstone, and complete footprint ring.
+  It validates cross-binding, terminal-sample equality, chronological order,
+  and every artifact hash. The adapter identity carries both the attempt count
+  and chain digest, while the migration's own digest binds the full evidence.
+- Recovery launch paths derive their checkpoint number from a strict
+  `resident_32b_v3_cpNNN` destination. Adapter identity, detached run names,
+  stage markers, footprint rings, and resource envelopes therefore cannot
+  silently retain CP191 labels in CP192 evidence.
+
+Validation is green: 84/84 broad focused recurrence, migration, launcher,
+mechanics, pilot, and post-training tests pass before the recovery-chain
+extension; 44/44 migration, identity, trainer, and launcher tests pass after
+it. Focused Ruff, bytecode compilation, and diff-integrity checks pass. No
+resident CP192 calibration has launched at this source checkpoint.
+
+Evidence-weighted completion remains 27%. This is checkpoint 192 of the
+faithful 292-399 total-checkpoint forecast, leaving approximately 100-207
+checkpoints. No training-completion, mechanics, reasoning-gain, same-checkpoint
+interaction, frontier, external-custody, installed-app, release, or soak credit
+is awarded. Next: publish CP192, create the fresh step-10 migration with CP189
+and CP191 failure lineage, execute the detached one-step resident calibration,
+and launch exact training only if independently measured footprint remains
+below every certified ceiling. Final long soaks remain deferred.
