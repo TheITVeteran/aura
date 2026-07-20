@@ -455,6 +455,8 @@ def _surface_generation_control_receipt(
         "surface_quality_gate_attempts",
         "surface_quality_gate_reasons",
         "surface_quality_gate_error",
+        "surface_quality_gate_exemption",
+        "surface_quality_gate_waived_reasons",
         "instruction_shape_repair_applied",
     ):
         if key in state:
@@ -514,27 +516,8 @@ def _surface_quality_failure_reasons(
         return []
     reasons = list(assessment.reasons) or ["surface_quality_gate_failed"]
     if bool(job.get("capability_inventory_contract", False)):
-        # Capability inventory questions contain "tools", "external", and
-        # "desktop", which overlap operational-status classifiers. A concise
-        # governed inventory is valid when it names concrete categories,
-        # governance, effect evidence, and the non-execution boundary.
-        reply = str(response_text or "").lower()
-        has_category = "browser/web research" in reply or (
-            "browser" in reply and ("file" in reply or "desktop" in reply)
-        )
-        has_governance = any(
-            marker in reply
-            for marker in ("will/authority", "will and authority", "permission", "governed")
-        )
-        has_boundary = (
-            "not executing" in reply
-            or "not opening" in reply
-            or "hypothetical" in reply
-            or "in this turn" in reply
-        )
-        has_effect_evidence = "receipt" in reply or "effect verification" in reply
-        has_minimum_grounding = has_category and has_governance
-        if has_minimum_grounding and (has_boundary or not has_effect_evidence):
+        grounded, _evidence = _capability_inventory_minimum_grounding(response_text)
+        if grounded:
             reasons = [
                 reason
                 for reason in reasons
@@ -547,6 +530,39 @@ def _surface_quality_failure_reasons(
                 }
             ]
     return reasons
+
+
+def _capability_inventory_minimum_grounding(
+    response_text: Any,
+) -> tuple[bool, dict[str, bool]]:
+    """Evidence check for the capability-inventory thin-response exemption.
+
+    Capability inventory questions contain "tools", "external", and
+    "desktop", which overlap operational-status classifiers, so a concise
+    governed inventory may be exempted from thin-response failures — but
+    ONLY when it actually shows its documented evidence: concrete
+    categories, governance, and the non-execution boundary. The boundary is
+    non-negotiable; the old `or not effect-evidence` escape admitted
+    answers with NEITHER effect evidence NOR a boundary.
+    """
+    reply = str(response_text or "").lower()
+    evidence = {
+        "category": "browser/web research" in reply
+        or ("browser" in reply and ("file" in reply or "desktop" in reply)),
+        "governance": any(
+            marker in reply
+            for marker in ("will/authority", "will and authority", "permission", "governed")
+        ),
+        "boundary": (
+            "not executing" in reply
+            or "not opening" in reply
+            or "hypothetical" in reply
+            or "in this turn" in reply
+        ),
+        "effect_evidence": "receipt" in reply or "effect verification" in reply,
+    }
+    grounded = evidence["category"] and evidence["governance"] and evidence["boundary"]
+    return grounded, evidence
 
 
 # Residual quality-gate reasons that are STYLE/COMPLETENESS defects, not
@@ -597,29 +613,34 @@ def _salvage_exhausted_user_surface(
     job: dict[str, Any],
     response_text: Any,
     rejection_reasons: list[str],
-) -> tuple[str, list[str]]:
+) -> tuple[str, list[str], list[str]]:
     """Best honest draft after quality-gate retries are exhausted.
 
-    Returns (text, residual_reasons); empty text means nothing was safely
-    deliverable and the caller keeps the fail-closed empty reply.
+    Returns (text, residual_reasons, applied_repairs); empty text means
+    nothing was safely deliverable and the caller keeps the fail-closed
+    empty reply. Every deterministic amendment is named in
+    ``applied_repairs`` so the caller can disclose it as a text mutation —
+    scaffolding must never pass as model output silently.
     """
     draft = str(response_text or "").strip()
     if len(draft) < 40:
-        return "", list(rejection_reasons)
+        return "", list(rejection_reasons), []
 
     reasons = list(rejection_reasons)
+    applied_repairs: list[str] = []
     if "missing_self_claim_evidence_boundary" in reasons:
         amended = draft + _SELF_CLAIM_BOUNDARY_SUFFIX
         amended_reasons = _surface_quality_failure_reasons(job, amended)
         if "missing_self_claim_evidence_boundary" not in amended_reasons:
             draft = amended
             reasons = list(amended_reasons)
+            applied_repairs.append("self_claim_boundary_suffix")
 
     if not reasons:
-        return draft, []
+        return draft, [], applied_repairs
     if set(reasons) <= _DELIVERABLE_RESIDUAL_SURFACE_REASONS:
-        return draft, reasons
-    return "", reasons
+        return draft, reasons, applied_repairs
+    return "", reasons, applied_repairs
 
 
 def _repair_live_user_surface_self_claims(response_text: Any) -> str:
@@ -1080,13 +1101,22 @@ def _sanitize_telemetry_leakage(text: str, is_proof: bool = False) -> str | None
             if len(path_like) >= 3 or path_chars > max(120, int(len(text) * 0.35)):
                 return None
 
-    # 3) Extreme numeric sequences. If a single word/number has more than 20 digits, it's a hallucination.
-    if re.search(r'\d{20,}', text):
+    # 3) Extreme numeric sequences: in conversational output a 20+ digit run
+    # is a hallucination signature. Proof/eval answers are exempt — large
+    # integers, hashes, and numeric test vectors are legitimate exact
+    # answers there, and correctness is the eval harness's job to score.
+    if not is_proof and re.search(r'\d{20,}', text):
         return None
 
-    # 4) Corrupted lexical output is a model-state failure, not a usable answer.
-    if not is_proof and _contains_corrupted_language(text):
+    # 4) Corrupted lexical output is a model-state failure, not a usable
+    # answer — in EVERY mode. A proof answer containing corruption tokens is
+    # corrupted evidence, so the proof exemption never applied here.
+    if _contains_corrupted_language(text):
         return None
+    # Backend-symbolic surface markers stay non-proof only: the pattern
+    # includes common English words ("proceeding", "field coherence") that
+    # legitimately occur in eval/proof task content; proof corruption is
+    # covered by the corrupted-language and path-wall checks above.
     if not is_proof and _BACKEND_SYMBOLIC_SURFACE_MARKERS.search(text):
         return None
 
@@ -1514,6 +1544,27 @@ def _operator_evidence_rejection_reasons(text: str) -> list[str]:
     return reasons
 
 
+def _operator_evidence_model_contribution_insufficient(continuation: str) -> bool:
+    """True when the model's OWN continuation cannot carry the evidence claim.
+
+    The delivered operator answer is prefix + continuation, and the fixed
+    prefix already contains every required evidence term — so the combined
+    checks alone let scaffolding satisfy the contract while the model
+    contributed a fragment of fluff. The model's share must be substantive
+    and clean on its own.
+    """
+    body = str(continuation or "").strip()
+    if len(body.split()) < 16:
+        return True
+    if _BACKEND_SYMBOLIC_SURFACE_MARKERS.search(body):
+        return True
+    if _OPERATOR_EVIDENCE_DRIFT_MARKERS.search(body):
+        return True
+    if _OPERATOR_EVIDENCE_META_MARKERS.search(body):
+        return True
+    return False
+
+
 def _trim_complete_operator_evidence(text: str) -> str:
     """Keep complete model-derived sentences before a clipped operator tail."""
     stripped = str(text or "").strip()
@@ -1573,10 +1624,38 @@ def _first_token_suppression_ids(tokenizer: Any) -> list[int]:
 
 
 def _proof_evaluation_fragment_incomplete(text: str) -> bool:
-    """Return True when a proof/eval generation is only a fragment."""
+    """Return True when a proof/eval generation is only a fragment.
+
+    A closed delimiter is necessary but NOT sufficient: where the surface
+    shape declares its own type (python/json fences, bare JSON, CSV), the
+    content must actually parse as that type. Semantic/task validation
+    stays with the caller's verifier — this gate only refuses to certify
+    completeness from delimiters alone.
+    """
 
     stripped = str(text or "").strip()
-    if re.search(r"```[A-Za-z0-9_-]*\s*\n.+?\n```", stripped, flags=re.DOTALL):
+    fence_match = re.search(
+        r"```(?P<lang>[A-Za-z0-9_-]*)\s*\n(?P<body>.+?)\n```",
+        stripped,
+        flags=re.DOTALL,
+    )
+    if fence_match:
+        lang = (fence_match.group("lang") or "").lower()
+        body = fence_match.group("body")
+        if lang in {"python", "py"}:
+            import ast as _ast
+
+            try:
+                _ast.parse(body)
+                return False
+            except (SyntaxError, ValueError, MemoryError, RecursionError):
+                return True
+        if lang == "json":
+            try:
+                json.loads(body)
+                return False
+            except (TypeError, ValueError, json.JSONDecodeError):
+                return True
         return False
     if stripped.startswith(("{", "[")):
         try:
@@ -1586,7 +1665,14 @@ def _proof_evaluation_fragment_incomplete(text: str) -> bool:
             return True
     if "\n" in stripped and "," in stripped:
         lines = [line for line in stripped.splitlines() if line.strip()]
-        if len(lines) >= 2 and all("," in line for line in lines[:2]):
+        if (
+            len(lines) >= 2
+            and all("," in line for line in lines)
+            and len({line.count(",") for line in lines}) == 1
+        ):
+            # Tabular claim requires uniform column structure across EVERY
+            # line — two comma-bearing lines out front no longer certify an
+            # arbitrary tail.
             return False
     if len(stripped) < 80:
         return True
@@ -1604,12 +1690,35 @@ def _proof_evaluation_fragment_incomplete(text: str) -> bool:
     return False
 
 
+def _collapse_escape_noise(text: str) -> str:
+    """Collapse literal ``\\n``/``\\r``/``\\t`` sequences ONLY when backslash
+    plays no other role in the text.
+
+    The old normalization replaced EVERY backslash with a space, silently
+    corrupting exact literals — Windows paths, regexes, LaTeX, escaped
+    values — while the result still looked contract-compliant. If any
+    backslash remains after removing the whitespace-escape sequences, the
+    content is treated as literal and preserved verbatim.
+    """
+    if "\\" not in text:
+        return text
+    without_escapes = re.sub(r"\\[nrt]", "", text, flags=re.IGNORECASE)
+    if "\\" in without_escapes:
+        return text
+    return re.sub(r"\\[nrt]", " ", text, flags=re.IGNORECASE)
+
+
 def _normalize_strict_answer_response(text: str, *, envelope_prefixed: bool) -> str:
     """Normalize strict proof output without changing the model-derived answer."""
     cleaned = _CHAT_CONTROL_TOKEN_RE.sub("", str(text or "")).strip()
     cleaned = _strip_leading_chatml_prefix(cleaned).strip()
-    cleaned = re.sub(r"\\[nrt]", " ", cleaned, flags=re.IGNORECASE)
-    cleaned = cleaned.replace("\\", " ")
+    # Envelope extraction runs BEFORE escape rewriting: a well-formed
+    # <answer> body is the model's exact value and must survive unaltered.
+    match = _STRICT_ANSWER_ENVELOPE_RE.search(cleaned)
+    if match:
+        answer = match.group(1).strip()
+        return f"<answer>{answer}</answer>" if answer else ""
+    cleaned = _collapse_escape_noise(cleaned)
     match = _STRICT_ANSWER_ENVELOPE_RE.search(cleaned)
     if match:
         answer = match.group(1).strip()
@@ -1714,8 +1823,7 @@ def _normalize_strict_value_response(text: str, *, expected_value: str = "") -> 
     """Return a compact model-derived value or empty when the draft is unusable."""
     cleaned = _CHAT_CONTROL_TOKEN_RE.sub("", str(text or "")).strip()
     cleaned = _strip_leading_chatml_prefix(cleaned).strip()
-    cleaned = re.sub(r"\\[nrt]", " ", cleaned, flags=re.IGNORECASE)
-    cleaned = cleaned.replace("\\", " ")
+    cleaned = _collapse_escape_noise(cleaned)
     cleaned, _ = _truncate_role_continuation(cleaned)
     cleaned = _LEADING_GENERATION_ROLE_RE.sub("", cleaned).strip()
     cleaned = _LEADING_ROLE_NO_SEPARATOR_RE.sub("", cleaned).strip()
@@ -3344,6 +3452,13 @@ def _mlx_worker_loop(
 
                 strict_envelope_prefixed = False
                 operator_response_prefix = ""
+                # Contract-truth flags surfaced in the response payload: an
+                # exhausted proof retry, a seeded strict-value replacement,
+                # and the operator-evidence scaffolding/model composition
+                # must be visible to the caller, not silently absorbed.
+                proof_contract_incomplete = False
+                strict_value_normalized_from_draft = ""
+                operator_evidence_receipt: dict[str, Any] = {}
                 if not (
                     strict_answer_contract
                     or strict_value_contract
@@ -3944,6 +4059,18 @@ def _mlx_worker_loop(
                                         else current_response
                                     )
                                     if operator_evidence_contract:
+                                        # Composition disclosure: downstream must see
+                                        # how much of the delivered evidence came from
+                                        # fixed scaffolding vs the model itself.
+                                        operator_evidence_receipt = {
+                                            "prefix_chars": len(operator_response_prefix or ""),
+                                            "model_chars": len(current_response or ""),
+                                            "model_substantive": not (
+                                                _operator_evidence_model_contribution_insufficient(
+                                                    current_response
+                                                )
+                                            ),
+                                        }
                                         trimmed_response = _trim_complete_operator_evidence(response_text)
                                         if trimmed_response != response_text:
                                             logger.warning(
@@ -3956,9 +4083,31 @@ def _mlx_worker_loop(
                                     total_generated_tokens = token_count
 
                                     if soft_cancelled:
-                                        # Preempted turn: return the partial response
-                                        # as-is — contract/quality retries would defeat
-                                        # the point of cancelling.
+                                        # Preempted turn: retries would defeat the
+                                        # point of cancelling, but the PURE terminal
+                                        # transforms still run — a cancelled partial
+                                        # must not ship internal leakage or an
+                                        # unnormalized strict fragment.
+                                        sanitized_partial = _sanitize_telemetry_leakage(
+                                            response_text,
+                                            is_proof=(
+                                                proof_evaluation_contract
+                                                or strict_answer_contract
+                                                or strict_value_contract
+                                            ),
+                                        )
+                                        response_text = sanitized_partial or ""
+                                        if response_text:
+                                            if strict_value_contract:
+                                                response_text = _normalize_strict_value_response(
+                                                    response_text,
+                                                    expected_value=expected_strict_value,
+                                                )
+                                            elif strict_answer_contract:
+                                                response_text = _normalize_strict_answer_response(
+                                                    response_text,
+                                                    envelope_prefixed=strict_envelope_prefixed,
+                                                )
                                         logger.info(
                                             "✋ [WORKER] Soft-cancel honored for job seq=%d after %d tokens.",
                                             job_seq,
@@ -3989,9 +4138,26 @@ def _mlx_worker_loop(
                                         logger.warning(
                                             "🚨 [WORKER] Proof/evaluation response remained incomplete after retries."
                                         )
+                                        # The draft is still delivered (a partial
+                                        # proof may hold scoreable content), but the
+                                        # contract verdict is FAILED — the payload
+                                        # flag stops callers from trusting a
+                                        # fragment as a completed proof.
+                                        proof_contract_incomplete = True
 
-                                    if operator_evidence_contract and _operator_evidence_fragment_incomplete(response_text):
+                                    if operator_evidence_contract and (
+                                        _operator_evidence_fragment_incomplete(response_text)
+                                        or _operator_evidence_model_contribution_insufficient(
+                                            current_response
+                                        )
+                                    ):
                                         rejection_reasons = _operator_evidence_rejection_reasons(response_text)
+                                        if _operator_evidence_model_contribution_insufficient(
+                                            current_response
+                                        ):
+                                            rejection_reasons.append(
+                                                "model_contribution_insufficient"
+                                            )
                                         logger.warning(
                                             "⚠️ [WORKER] Rejected operator-evidence draft reasons=%s excerpt=%r",
                                             ",".join(rejection_reasons[:8]) or "unknown",
@@ -4072,6 +4238,21 @@ def _mlx_worker_loop(
                                             response_text,
                                             expected_value=expected_strict_value,
                                         )
+                                        # Seeded-probe integrity: when the prompt was
+                                        # built FROM the expected value and normalization
+                                        # replaced a non-exact draft with it, the result
+                                        # measures protocol echo, not model merit — the
+                                        # payload must say so and preserve the raw draft
+                                        # for audit.
+                                        if (
+                                            expected_strict_value
+                                            and response_text == expected_strict_value
+                                            and raw_strict_value_text.strip()
+                                            != expected_strict_value
+                                        ):
+                                            strict_value_normalized_from_draft = (
+                                                raw_strict_value_text.strip()[:240]
+                                            )
                                         if response_text.strip():
                                             sanitized_text = _sanitize_telemetry_leakage(response_text, is_proof=True)
                                             if sanitized_text is None:
@@ -4223,14 +4404,43 @@ def _mlx_worker_loop(
                                                     }
                                                 )
                                             ):
-                                                logger.warning(
-                                                    "🛡️ [WORKER] Passing clipped capability inventory draft "
-                                                    "downstream for deterministic completion instead of "
-                                                    "spending another foreground Cortex retry."
+                                                # Waive ONLY on evidence: a clipped draft
+                                                # that already shows categories, governance,
+                                                # and the non-execution boundary is safe for
+                                                # downstream deterministic completion. A
+                                                # draft without that grounding stays failed —
+                                                # relabeling it "passed" asserted a pass that
+                                                # never happened.
+                                                inventory_grounded, inventory_evidence = (
+                                                    _capability_inventory_minimum_grounding(
+                                                        response_text
+                                                    )
                                                 )
-                                                surface_control_state["surface_quality_gate_passed"] = True
-                                                surface_control_state["surface_quality_gate_reasons"] = []
-                                                break
+                                                if inventory_grounded:
+                                                    logger.warning(
+                                                        "🛡️ [WORKER] Waiving thin-response reasons for a "
+                                                        "grounded capability inventory draft; downstream "
+                                                        "deterministic completion finishes the tail."
+                                                    )
+                                                    surface_control_state["surface_quality_gate_passed"] = True
+                                                    surface_control_state["surface_quality_gate_reasons"] = []
+                                                    surface_control_state[
+                                                        "surface_quality_gate_exemption"
+                                                    ] = "capability_inventory_minimum_grounding"
+                                                    surface_control_state[
+                                                        "surface_quality_gate_waived_reasons"
+                                                    ] = rejection_reasons[:8]
+                                                    break
+                                                logger.warning(
+                                                    "⚠️ [WORKER] Clipped capability inventory draft lacks "
+                                                    "minimum grounding (%s); keeping the gate failure.",
+                                                    ",".join(
+                                                        key
+                                                        for key, present in inventory_evidence.items()
+                                                        if not present
+                                                    )
+                                                    or "unknown",
+                                                )
                                             surface_wall_exceeded = _surface_retry_wall_exceeded(
                                                 surface_retry_started, surface_retry_wall_s
                                             )
@@ -4325,7 +4535,7 @@ def _mlx_worker_loop(
                                                 surface_control_state["surface_quality_gate_passed"] = True
                                                 surface_control_state["surface_quality_gate_reasons"] = []
                                             else:
-                                                best_draft, residual_reasons = (
+                                                best_draft, residual_reasons, salvage_repairs = (
                                                     _salvage_exhausted_user_surface(
                                                         job,
                                                         response_text,
@@ -4335,13 +4545,19 @@ def _mlx_worker_loop(
                                                 if best_draft:
                                                     logger.info(
                                                         "🛡️ [WORKER] Delivering best honest draft after gate "
-                                                        "exhaustion (residual=%s) instead of a dead turn.",
+                                                        "exhaustion (residual=%s, repairs=%s) instead of a dead turn.",
                                                         ",".join(residual_reasons) or "none",
+                                                        ",".join(salvage_repairs) or "none",
                                                     )
                                                     append_text_mutation(
                                                         surface_control_state,
                                                         stage="mlx_worker.exhaustion_salvage",
-                                                        method="best_honest_draft",
+                                                        method=(
+                                                            "best_honest_draft+"
+                                                            + "+".join(salvage_repairs)
+                                                            if salvage_repairs
+                                                            else "best_honest_draft"
+                                                        ),
                                                         reasons=rejection_reasons,
                                                         before=response_text,
                                                         after=best_draft,
@@ -4453,7 +4669,7 @@ def _mlx_worker_loop(
 
                     # : Tag with action: "generate" so client can distinguish
                     # from init/heartbeat responses unambiguously.
-                    ipc_writer.put({
+                    generate_payload: dict[str, Any] = {
                         "id": job.get("id"),
                         "action": "generate",
                         "status": "ok",
@@ -4469,7 +4685,26 @@ def _mlx_worker_loop(
                             surface_control_state,
                         ),
                         "interoception": interoception_payload,
-                    })
+                    }
+                    # Contract-truth verdicts: callers must never have to
+                    # infer these from the text.
+                    if proof_evaluation_contract:
+                        generate_payload["proof_contract_incomplete"] = bool(
+                            proof_contract_incomplete
+                        )
+                    if strict_value_contract:
+                        generate_payload["strict_value_seeded"] = bool(
+                            expected_strict_value
+                        )
+                        if strict_value_normalized_from_draft:
+                            generate_payload["strict_value_draft"] = (
+                                strict_value_normalized_from_draft
+                            )
+                    if operator_evidence_contract and operator_evidence_receipt:
+                        generate_payload["operator_evidence_composition"] = dict(
+                            operator_evidence_receipt
+                        )
+                    ipc_writer.put(generate_payload)
                 except (ImportError, AttributeError, RuntimeError) as e:
                     _record_mlx_degradation(
                         e,

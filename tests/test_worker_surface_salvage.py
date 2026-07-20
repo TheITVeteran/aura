@@ -48,7 +48,7 @@ def test_boundary_suffix_satisfies_the_honesty_gate():
 
 
 def test_salvage_appends_evidence_boundary_and_delivers():
-    text, residual = _salvage_exhausted_user_surface(
+    text, residual, repairs = _salvage_exhausted_user_surface(
         _job_for(_CONSCIOUSNESS_PROMPT),
         _SUBSTANTIVE_DRAFT,
         ["missing_self_claim_evidence_boundary"],
@@ -56,20 +56,24 @@ def test_salvage_appends_evidence_boundary_and_delivers():
     assert text, "a substantive honest draft must be delivered, not a dead turn"
     assert _SELF_CLAIM_BOUNDARY_SUFFIX.strip() in text
     assert "missing_self_claim_evidence_boundary" not in residual
+    # The deterministic suffix must be DISCLOSED as an applied repair so the
+    # caller records it as a text mutation, never as silent model output.
+    assert "self_claim_boundary_suffix" in repairs
 
 
 def test_salvage_delivers_style_only_residuals_with_receipt():
-    text, residual = _salvage_exhausted_user_surface(
+    text, residual, repairs = _salvage_exhausted_user_surface(
         _job_for("Reply and include the phrase 'quantum duck' somewhere."),
         _SUBSTANTIVE_DRAFT,
         ["missing_requested_phrase"],
     )
     assert text == _SUBSTANTIVE_DRAFT
     assert residual == ["missing_requested_phrase"]
+    assert repairs == [], "an unamended draft must report no applied repairs"
 
 
 def test_salvage_refuses_integrity_leaks():
-    text, residual = _salvage_exhausted_user_surface(
+    text, residual, _repairs = _salvage_exhausted_user_surface(
         _job_for("How are you?"),
         _SUBSTANTIVE_DRAFT,
         ["raw_lane_telemetry", "missing_requested_phrase"],
@@ -79,7 +83,7 @@ def test_salvage_refuses_integrity_leaks():
 
 
 def test_salvage_refuses_trivial_drafts():
-    text, _ = _salvage_exhausted_user_surface(
+    text, _, _ = _salvage_exhausted_user_surface(
         _job_for("How are you?"),
         "ok.",
         ["missing_requested_phrase"],
@@ -105,7 +109,7 @@ def test_worker_repairs_compact_explicit_shape_before_retry_decode():
 
 def test_live_failure_shape_now_delivers():
     """The exact reason pair observed live must produce a delivered draft."""
-    text, residual = _salvage_exhausted_user_surface(
+    text, residual, _repairs = _salvage_exhausted_user_surface(
         _job_for(_CONSCIOUSNESS_PROMPT + " Include the phrase 'the mirror test'."),
         _SUBSTANTIVE_DRAFT,
         ["missing_self_claim_evidence_boundary", "missing_requested_phrase"],
