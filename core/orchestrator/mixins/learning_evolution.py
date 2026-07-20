@@ -109,17 +109,23 @@ class LearningEvolutionMixin:
                     # and we don't have local backups available.
                     router = ServiceContainer.get("llm_router", default=None)
                     if router:
+                        # endpoints is dict[str, LLMEndpoint]: iterate VALUES —
+                        # iterating the dict yielded key strings, so ep.name /
+                        # ep.tier raised AttributeError on every evaluation.
+                        # peek_healthy: this is an observability read and must
+                        # not consume the circuit's half-open probe lease.
+                        monitor = router.health_monitor
+                        peek = getattr(monitor, "peek_healthy", monitor.is_healthy)
                         # Check if PRIMARY models (Gemini) are rate-limited
                         is_gemini_limited = any(
-                            ep.name.startswith("Gemini")
-                            and not router.health_monitor.is_healthy(ep.name)
-                            for ep in router.endpoints
+                            ep.name.startswith("Gemini") and not peek(ep.name)
+                            for ep in router.endpoints.values()
                         )
                         # Check if SECONDARY (Local) is available
                         local_online = any(
                             ep.tier in ("local", "secondary", "tertiary")
-                            and router.health_monitor.is_healthy(ep.name)
-                            for ep in router.endpoints
+                            and peek(ep.name)
+                            for ep in router.endpoints.values()
                         )
 
                         if is_gemini_limited and not local_online:

@@ -314,7 +314,7 @@ class TestLLMRouterFailover:
             assert found, f"Fatal pattern '{pattern}' not detected in response text"
 
     def test_health_monitor_recovery_after_threshold(self):
-        """Endpoint should recover after recovery_time passes."""
+        """Endpoint should admit a half-open probe after the cooldown passes."""
         from core.brain.llm.llm_router import LLMHealthMonitor
         monitor = LLMHealthMonitor()
         monitor.recovery_time = 1  # 1 second for testing
@@ -322,9 +322,16 @@ class TestLLMRouterFailover:
         for _ in range(3):
             monitor.record_failure("test_ep", "test_error")
         assert not monitor.is_healthy("test_ep"), "Should be unhealthy after 3 failures"
-        # Simulate recovery_time passing
-        monitor.last_success["test_ep"] = time.time() - 2
-        assert monitor.is_healthy("test_ep"), "Should recover after recovery_time"
+        # Simulate the monotonic cooldown elapsing (the monitor no longer
+        # derives recovery from wall-clock last_success — clock adjustments
+        # reopened/blocked endpoints incorrectly).
+        monitor.cooldown_until["test_ep"] = time.monotonic() - 0.1
+        assert monitor.is_healthy("test_ep"), "Should admit a probe after cooldown"
+        # Half-open admits exactly ONE probe; a concurrent caller keeps
+        # failing over until the probe reports success.
+        assert not monitor.is_healthy("test_ep"), "Second caller must not enter half-open"
+        monitor.record_success("test_ep")
+        assert monitor.is_healthy("test_ep"), "Successful probe closes the circuit"
 
     def test_default_tier_priority_includes_secondary(self):
         """v53 fix: default failover chain must include SECONDARY (cloud)."""
@@ -552,11 +559,18 @@ class TestEmergencyFallback:
         assert isinstance(result, str)
         assert len(result) > 10, "Emergency fallback must return meaningful text"
 
-    def test_emergency_fallback_includes_error(self):
+    def test_emergency_fallback_never_leaks_raw_error(self):
+        # CP126 semantic finding: the raw last_error can carry filesystem
+        # paths, model internals, or request fragments — it belongs in logs,
+        # never in the user-visible fallback string.
         from core.brain.llm.llm_router import IntelligentLLMRouter
         router = IntelligentLLMRouter.__new__(IntelligentLLMRouter)
-        result = router._emergency_fallback("test prompt", "MLX_CRASH")
-        assert "MLX_CRASH" in result, "Emergency fallback should include error for debugging"
+        result = router._emergency_fallback(
+            "test prompt", "MLX_CRASH at /Users/private/model.bin token=abc123"
+        )
+        assert "MLX_CRASH" not in result
+        assert "/Users/private" not in result
+        assert len(result) > 10, "Emergency fallback must still return meaningful text"
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

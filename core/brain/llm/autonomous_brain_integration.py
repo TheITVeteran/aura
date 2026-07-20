@@ -56,6 +56,22 @@ def _record_brain_degradation(
     )
 
 
+
+def _peek_endpoint_health(router, name: str) -> bool:
+    """Pure health read for endpoint SELECTION.
+
+    is_healthy() is the routing admission check and can consume the circuit's
+    single half-open probe lease; selection scans must not steal that lease
+    from the actual dispatch path.
+    """
+    monitor = getattr(router, "health_monitor", None)
+    if monitor is None:
+        return True
+    peek = getattr(monitor, "peek_healthy", None)
+    if callable(peek):
+        return bool(peek(name))
+    return bool(monitor.is_healthy(name))
+
 class ReflexClient:
     """A minimal rule-based client that provides emergency cognitive output."""
     async def think(self, prompt: str, **kwargs) -> str:
@@ -441,23 +457,23 @@ class AutonomousCognitiveEngine:
             if self.llm_router and hasattr(self.llm_router, 'endpoints'):
                 # Primary conversational path: keep user-facing work on the 32B.
                 for name in [PRIMARY_ENDPOINT, "Gemini-Fast", "Chat-Fast", BRAINSTEM_ENDPOINT]:
-                    if name in self.llm_router.endpoints and self.llm_router.health_monitor.is_healthy(name):
+                    if name in self.llm_router.endpoints and _peek_endpoint_health(self.llm_router, name):
                         fast_endpoint = self.llm_router.endpoints[name]
                         break
 
                 # Background path: 7B first, CPU emergency second.
                 for name in [BRAINSTEM_ENDPOINT, FALLBACK_ENDPOINT]:
-                    if name in self.llm_router.endpoints and self.llm_router.health_monitor.is_healthy(name):
+                    if name in self.llm_router.endpoints and _peek_endpoint_health(self.llm_router, name):
                         background_endpoint = self.llm_router.endpoints[name]
                         break
                 
                 for name in [DEEP_ENDPOINT, "Gemini-Thinking", "Gemini-Pro"]:
-                    if name in self.llm_router.endpoints and self.llm_router.health_monitor.is_healthy(name):
+                    if name in self.llm_router.endpoints and _peek_endpoint_health(self.llm_router, name):
                         thinking_endpoint = self.llm_router.endpoints[name]
                         break
 
                 for name, ep in self.llm_router.endpoints.items():
-                    if hasattr(ep.client, "think_and_act") and self.llm_router.health_monitor.is_healthy(name):
+                    if hasattr(ep.client, "think_and_act") and _peek_endpoint_health(self.llm_router, name):
                         agentic_endpoint = ep
                         break
                 
