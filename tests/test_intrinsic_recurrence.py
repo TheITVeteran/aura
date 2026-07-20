@@ -191,3 +191,88 @@ def test_invalid_plans_are_refused():
         recurrent_hidden_states(
             _model(), TOKENS, RecurrentDepthPlan(prelude_end=2, coda_start=99)
         )
+
+
+# ── Cached decode: O(n), and each pass keeps its own history ────────────
+
+
+def _stepwise_divergence(model, plan) -> float:
+    """Relative gap between prefill and token-by-token cached decode."""
+    from core.learning.intrinsic_recurrence import make_recurrent_caches
+
+    reference = recurrent_logits(model, TOKENS, plan)
+    caches = make_recurrent_caches(model, plan)
+    stepwise = None
+    for index in range(TOKENS.shape[1]):
+        stepwise = recurrent_logits(
+            model, TOKENS[:, index : index + 1], plan, caches=caches
+        )
+    gap = float(mx.max(mx.abs(reference[:, -1:, :] - stepwise)))
+    return gap / max(float(mx.max(mx.abs(reference))), 1e-9)
+
+
+def test_cached_decode_adds_no_error_beyond_the_base_models_own():
+    """The cache is an optimization, not a different model.
+
+    Batched prefill and single-token decode reduce in different orders, so
+    they never agree bitwise -- that gap exists at T=1, where the pass IS
+    the unmodified base model. The honest contract is therefore that
+    recurrence adds no error ON TOP of that, which an arbitrary tolerance
+    would not have distinguished from a genuine cache bug.
+    """
+    model = _model()
+    baseline = _stepwise_divergence(
+        model, RecurrentDepthPlan(prelude_end=2, coda_start=6, iterations=1)
+    )
+    assert baseline < 5e-3, "base-model decode itself should be close"
+    for iterations in (2, 3, 4):
+        recurrent = _stepwise_divergence(
+            model, RecurrentDepthPlan(2, 6, iterations=iterations)
+        )
+        assert recurrent < max(baseline * 3.0, 5e-3), (
+            f"T={iterations} diverges beyond the base model's own decode gap "
+            f"({recurrent:.2e} vs {baseline:.2e}) -- that is a cache defect, "
+            "not float noise"
+        )
+
+
+def test_cached_decode_agrees_on_the_chosen_token():
+    """What decode actually consumes is the argmax, not the raw logits."""
+    from core.learning.intrinsic_recurrence import make_recurrent_caches
+
+    model = _model()
+    plan = RecurrentDepthPlan(prelude_end=2, coda_start=6, iterations=3)
+    reference = recurrent_logits(model, TOKENS, plan)
+    caches = make_recurrent_caches(model, plan)
+    stepwise = None
+    for index in range(TOKENS.shape[1]):
+        stepwise = recurrent_logits(
+            model, TOKENS[:, index : index + 1], plan, caches=caches
+        )
+    assert int(mx.argmax(reference[0, -1])) == int(mx.argmax(stepwise[0, -1]))
+
+
+def test_each_iteration_gets_its_own_history():
+    """One shared cache would let pass 4 read pass 1's keys and silently
+    corrupt the recurrence."""
+    from core.learning.intrinsic_recurrence import make_recurrent_caches
+
+    model = _model()
+    plan = RecurrentDepthPlan(prelude_end=2, coda_start=6, iterations=3)
+    caches = make_recurrent_caches(model, plan)
+    assert len(caches["window"]) == 3
+    assert len({id(c) for row in caches["window"] for c in row}) == 3 * 4
+    assert len(caches["prelude"]) == 2
+    assert len(caches["coda"]) == LAYERS - 6
+
+
+def test_mismatched_caches_are_refused():
+    from core.learning.intrinsic_recurrence import make_recurrent_caches
+
+    model = _model()
+    plan = RecurrentDepthPlan(prelude_end=2, coda_start=6, iterations=3)
+    wrong = make_recurrent_caches(model, RecurrentDepthPlan(2, 6, iterations=2))
+    with pytest.raises(ValueError, match="cache iteration count"):
+        recurrent_hidden_states(model, TOKENS, plan, caches=wrong)
+    with pytest.raises(ValueError, match="make_recurrent_caches"):
+        recurrent_hidden_states(model, TOKENS, plan, caches={"prelude": []})

@@ -121,18 +121,57 @@ def _rms(tensor: Any) -> Any:
     return mx.sqrt(mx.mean(mx.square(tensor), axis=-1, keepdims=True) + 1e-6)
 
 
-def _run(layers: Any, hidden: Any) -> Any:
+def _run(layers: Any, hidden: Any, caches: Any = None) -> Any:
     from mlx_lm.models.base import create_attention_mask
 
-    for layer in layers:
-        hidden = layer(hidden, create_attention_mask(hidden, None), None)
+    layer_list = list(layers)
+    if caches is None:
+        mask = create_attention_mask(hidden, None)
+        for layer in layer_list:
+            hidden = layer(hidden, mask, None)
+        return hidden
+    if len(caches) != len(layer_list):
+        raise ValueError("cache count does not match the layer count")
+    mask = create_attention_mask(hidden, caches)
+    for layer, cache in zip(layer_list, caches):
+        hidden = layer(hidden, mask, cache)
     return hidden
+
+
+def make_recurrent_caches(model: Any, plan: RecurrentDepthPlan) -> dict[str, Any]:
+    """Per-iteration KV caches for an intrinsically-recurrent decode.
+
+    Each pass through the window is a DIFFERENT computation over the same
+    weights, so pass ``t`` must attend to the keys previous tokens produced
+    at pass ``t`` -- one shared cache would let iteration 4 read iteration
+    1's history and silently corrupt the recurrence. This is also what
+    makes decode O(n) instead of O(n^2); the unbounded quadratic version is
+    what drove this host to 103 GB.
+    """
+    from mlx_lm.models.cache import KVCache
+
+    inner = getattr(model, "model", None)
+    layers = getattr(inner, "layers", None)
+    if not layers:
+        raise ValueError("model has no transformer layers")
+    if plan.coda_start > len(layers):
+        raise ValueError("plan's coda_start exceeds the model's layer count")
+    window = plan.window_size()
+    return {
+        "prelude": [KVCache() for _ in range(plan.prelude_end)],
+        "window": [
+            [KVCache() for _ in range(window)] for _ in range(plan.iterations)
+        ],
+        "coda": [KVCache() for _ in range(len(layers) - plan.coda_start)],
+    }
 
 
 def recurrent_hidden_states(
     model: Any,
     tokens: Any,
     plan: RecurrentDepthPlan,
+    *,
+    caches: dict[str, Any] | None = None,
 ) -> tuple[Any, list[Any]]:
     """Run the intrinsically-recurrent forward pass.
 
@@ -151,8 +190,17 @@ def recurrent_hidden_states(
     if plan.coda_start > len(layers):
         raise ValueError("plan's coda_start exceeds the model's layer count")
 
+    if caches is not None and set(caches) != {"prelude", "window", "coda"}:
+        raise ValueError("caches must come from make_recurrent_caches")
+    if caches is not None and len(caches["window"]) != plan.iterations:
+        raise ValueError("cache iteration count does not match the plan")
+
     hidden = inner.embed_tokens(tokens)
-    hidden = _run(layers[: plan.prelude_end], hidden)
+    hidden = _run(
+        layers[: plan.prelude_end],
+        hidden,
+        caches["prelude"] if caches else None,
+    )
     anchor = hidden
     anchor_rms = _rms(anchor) if plan.renormalize else None
 
@@ -167,17 +215,27 @@ def recurrent_hidden_states(
             if plan.renormalize:
                 hidden = hidden * (anchor_rms / _rms(hidden))
         with recurrent_iteration(iteration):
-            hidden = _run(window, hidden)
+            hidden = _run(
+                window, hidden, caches["window"][iteration] if caches else None
+            )
         trajectory.append(hidden)
 
-    hidden = _run(layers[plan.coda_start :], hidden)
+    hidden = _run(
+        layers[plan.coda_start :], hidden, caches["coda"] if caches else None
+    )
     hidden = inner.norm(hidden)
     return hidden, trajectory
 
 
-def recurrent_logits(model: Any, tokens: Any, plan: RecurrentDepthPlan) -> Any:
+def recurrent_logits(
+    model: Any,
+    tokens: Any,
+    plan: RecurrentDepthPlan,
+    *,
+    caches: dict[str, Any] | None = None,
+) -> Any:
     """Logits from the intrinsically-recurrent pass."""
-    hidden, _ = recurrent_hidden_states(model, tokens, plan)
+    hidden, _ = recurrent_hidden_states(model, tokens, plan, caches=caches)
     if getattr(model, "lm_head", None) is not None:
         return model.lm_head(hidden)
     return model.model.embed_tokens.as_linear(hidden)
@@ -271,6 +329,7 @@ __all__ = [
     "INTRINSIC_RECURRENCE_SCHEMA",
     "RecurrentDepthPlan",
     "current_iteration",
+    "make_recurrent_caches",
     "recurrent_hidden_states",
     "recurrent_iteration",
     "recurrent_logits",
