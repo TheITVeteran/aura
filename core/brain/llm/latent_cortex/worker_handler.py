@@ -104,6 +104,7 @@ _CONFIG_KEYS = {
     "rms_clip_ratio",
     "schedule",
     "seed",
+    "halting",
     "probe_cache",
     "telemetry",
     "verifier_accept_non_regression",
@@ -262,6 +263,7 @@ def config_from_job(job_config: dict[str, Any] | None) -> CortexConfig:
         escape=raw.get("escape"),
         telemetry_enabled=_typed_value(raw, "telemetry", True, bool),
         probe_cache_enabled=_typed_value(raw, "probe_cache", True, bool),
+        halting=raw.get("halting"),
     )
     problems = cfg.validate()
     if problems:

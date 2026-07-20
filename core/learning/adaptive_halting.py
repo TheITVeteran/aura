@@ -79,6 +79,49 @@ class HaltingHead:
     def parameter_count(self) -> int:
         return int(sum(p.size for p in self.parameters().values()))
 
+    # ── Persistence (the live engine loads a TRAINED head from disk) ────
+    def save(self, path: Any) -> None:
+        """Serialize weights + threshold so a trained head can go live."""
+        import numpy as np
+
+        from pathlib import Path
+
+        target = Path(path).expanduser()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        np.savez(
+            target,
+            weight=np.array(self.weight, dtype=np.float32),
+            bias=np.array(self.bias, dtype=np.float32),
+            threshold=np.array([self.threshold], dtype=np.float32),
+            hidden_size=np.array([self.hidden_size], dtype=np.int64),
+        )
+
+    @classmethod
+    def load(cls, path: Any) -> "HaltingHead":
+        """Rebuild a head exactly as saved; malformed files fail loudly."""
+        import numpy as np
+
+        import mlx.core as mx
+        from pathlib import Path
+
+        source = Path(path).expanduser()
+        with np.load(source) as payload:
+            required = {"weight", "bias", "threshold", "hidden_size"}
+            if set(payload.files) != required:
+                raise ValueError(
+                    f"halting head file {source} missing fields: "
+                    f"{sorted(required - set(payload.files))}"
+                )
+            hidden_size = int(payload["hidden_size"][0])
+            head = cls(hidden_size, threshold=float(payload["threshold"][0]))
+            weight = payload["weight"].astype(np.float32)
+            bias = payload["bias"].astype(np.float32)
+            if weight.shape != (hidden_size, 1) or bias.shape != (1,):
+                raise ValueError(f"halting head file {source} has wrong shapes")
+            head.weight = mx.array(weight)
+            head.bias = mx.array(bias)
+        return head
+
 
 @dataclass(frozen=True)
 class HaltingPolicy:

@@ -1121,6 +1121,10 @@ class LatentCortexEngine:
             escape_cfg=escape_cfg,
         )
         ensemble.telemetry = telemetry if telemetry.enabled else None
+        halting_head = self._resolve_halting_head()
+        if halting_head is not None:
+            for branch in ensemble.branches:
+                branch.halting.halting_head = halting_head
         if ensemble.branches and ensemble.branches[0].workspace.context_slots:
             seeded = ensemble.branches[0].workspace.context_slots
             by_source = {
@@ -1352,6 +1356,29 @@ class LatentCortexEngine:
                 if "failed" in outcomes:
                     receipt.flag("attractor_escape_failed")
         receipt.escape = escape_receipts
+        halting_mode = str((self.config.halting or {}).get("mode", "residual"))
+        head_halt_branches = [
+            branch.index
+            for branch in ensemble.branches
+            if branch.halt_reason.startswith("head_satisfied")
+        ]
+        receipt.halting = {
+            "mode": halting_mode,
+            "head_attached": halting_head is not None,
+            "head_halts": {
+                str(branch.index): branch.halting.head_halts
+                for branch in ensemble.branches
+                if branch.halting.head_halts
+            },
+            "head_halted_branches": head_halt_branches,
+            # The honest question about a learned policy: did it decide
+            # anything, or did every stop come from the residual floor?
+            "head_was_causal": bool(
+                halting_mode == "learned" and head_halt_branches
+            ),
+        }
+        if halting_mode == "learned" and not head_halt_branches:
+            receipt.flag("learned_halting_not_causal")
         stage_started = self._stage_checkpoint(
             receipt=receipt,
             budget=budget,
@@ -1817,6 +1844,50 @@ class LatentCortexEngine:
                     action="dropped consolidation candidate after export failed",
                     severity="warning",
                 )
+
+    # ── Learned halting attachment (CP234 seam made loadable) ──────────
+    def _resolve_halting_head(self):
+        """Load the trained halting head when learned mode is configured.
+
+        Returns None in residual mode (the engine's historical policy,
+        byte-for-byte). In learned mode a head that cannot load REFUSES the
+        episode: silently falling back would report learned allocation while
+        running the residual rule — the exact mechanism-present-but-not-
+        firing failure this codebase keeps finding.
+        """
+        halting = self.config.halting or {}
+        if str(halting.get("mode", "residual")) != "learned":
+            return None
+        from core.learning.adaptive_halting import HaltingHead
+
+        head_path = Path(str(halting.get("head_path", ""))).expanduser()
+        try:
+            stat = head_path.stat()
+        except OSError as exc:
+            raise ValueError(
+                f"learned halting requested but head is unreadable: {head_path}"
+            ) from exc
+        cache_key = (str(head_path), stat.st_mtime_ns, stat.st_size)
+        cached = getattr(self, "_halting_head_cache", None)
+        if cached is not None and cached[0] == cache_key:
+            head = cached[1]
+        else:
+            try:
+                head = HaltingHead.load(head_path)
+            except (OSError, ValueError, KeyError) as exc:
+                raise ValueError(
+                    f"learned halting head failed to load: {head_path}"
+                ) from exc
+            self._halting_head_cache = (cache_key, head)
+        threshold = halting.get("threshold")
+        if threshold is not None:
+            head.threshold = float(threshold)
+        if head.is_identity():
+            # Attaching an untrained head is legal (it reproduces the
+            # residual policy exactly) but the operator should know the
+            # learned mode is not yet earning anything.
+            logger.info("Learned halting head is identity-zero; policy unchanged.")
+        return head
 
     # ── Fast-weight helpers ─────────────────────────────────────────────
     def _enforce_fast_weight_canaries(

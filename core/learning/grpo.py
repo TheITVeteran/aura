@@ -119,6 +119,97 @@ def group_advantages(
     }
 
 
+def step_scores_from_ce(ce_trail: Sequence[float]) -> list[float]:
+    """Map a per-step answer-CE trail to bounded higher-is-better scores."""
+    scores: list[float] = []
+    for value in ce_trail:
+        ce = float(value)
+        if math.isnan(ce) or math.isinf(ce) or ce < 0.0:
+            raise ValueError("CE trail must contain finite non-negative values")
+        scores.append(math.exp(-ce))
+    return scores
+
+
+def trajectory_shaped_rewards(
+    final_rewards: Sequence[float],
+    step_score_trails: Sequence[Sequence[float]],
+    *,
+    shaping_weight: float = 0.25,
+) -> dict[str, Any]:
+    """Blend verifier outcomes with latent-trajectory credit (RLTT-style).
+
+    Final-outcome GRPO gives poor credit assignment to internal latent
+    steps: a group where every completion fails is a zero-advantage group,
+    even when some trajectories moved decisively TOWARD the answer before
+    missing it. Distributing bounded credit over the internal trajectory —
+    scored by how much each window pass improved the answer's decodability
+    (``latent_step_answer_ce``) — turns those wasted groups into signal.
+
+    Honesty contract:
+    - the verifier stays the last word: shaping is bounded to
+      ±``shaping_weight`` and never manufactured from a learned reward
+      head, only from measured per-step answer scores;
+    - whenever shaping REORDERS two completions relative to their final
+      rewards, the receipt says so (``shaping_reordered``) — silent
+      reordering would be reward hacking's front door;
+    - a trail too short to have increments contributes zero shaping.
+    """
+    if len(final_rewards) != len(step_score_trails):
+        raise ValueError("final rewards and step trails must align")
+    if not final_rewards:
+        raise ValueError("nothing to shape")
+    if (
+        isinstance(shaping_weight, bool)
+        or not isinstance(shaping_weight, (int, float))
+        or not 0.0 <= float(shaping_weight) <= 0.49
+    ):
+        raise ValueError(
+            "shaping_weight must be inside [0, 0.49]: at 0.5+ the shaping "
+            "could outweigh a full verifier grade gap"
+        )
+    rows: list[dict[str, Any]] = []
+    shaped: list[float] = []
+    for reward, trail in zip(final_rewards, step_score_trails, strict=True):
+        final = float(reward)
+        if math.isnan(final) or math.isinf(final):
+            raise ValueError("final rewards must be finite")
+        scores = [float(score) for score in trail]
+        if any(math.isnan(s) or math.isinf(s) for s in scores):
+            raise ValueError("step scores must be finite")
+        if any(not 0.0 <= s <= 1.0 for s in scores):
+            raise ValueError("step scores must be inside [0, 1]")
+        improvements = [
+            after - before for before, after in zip(scores, scores[1:])
+        ]
+        shaping = (
+            float(shaping_weight) * (sum(improvements) / len(improvements))
+            if improvements
+            else 0.0
+        )
+        shaped.append(final + shaping)
+        rows.append(
+            {
+                "final_reward": round(final, 6),
+                "shaping": round(shaping, 6),
+                "shaped_reward": round(final + shaping, 6),
+                "steps": len(scores),
+            }
+        )
+    order_by_final = sorted(
+        range(len(final_rewards)), key=lambda i: (float(final_rewards[i]), i)
+    )
+    order_by_shaped = sorted(
+        range(len(shaped)), key=lambda i: (shaped[i], i)
+    )
+    return {
+        "schema": GRPO_SCHEMA,
+        "shaped_rewards": shaped,
+        "rows": rows,
+        "shaping_weight": float(shaping_weight),
+        "shaping_reordered": order_by_final != order_by_shaped,
+    }
+
+
 def sequence_logprob(logits: Any, tokens: Any) -> Any:
     """Sum of token log-probabilities for one completion.
 
@@ -269,4 +360,6 @@ __all__ = [
     "grpo_loss",
     "reward_from_verdict",
     "sequence_logprob",
+    "step_scores_from_ce",
+    "trajectory_shaped_rewards",
 ]

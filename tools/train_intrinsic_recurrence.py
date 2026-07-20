@@ -160,6 +160,13 @@ def main() -> int:
     parser.add_argument("--lora-targets", default="o_proj,v_proj")
     parser.add_argument("--learning-rate", type=float, default=1e-4)
     parser.add_argument("--anchor-weight", type=float, default=1.0)
+    # Direct pressure on the CP226 obstacle (cos(pass1,pass2)=0.9994):
+    # penalize same-ray consecutive increments so repetition must become
+    # computation. 0.0 keeps the objective byte-identical to CP227's.
+    parser.add_argument("--rotation-weight", type=float, default=0.0)
+    # Re-inject the post-prelude state at every window RE-entry (driven
+    # recurrence, the retrofitted-recurrence stabilizer). 0.0 = free-running.
+    parser.add_argument("--anchor-injection", type=float, default=0.0)
     parser.add_argument("--no-depth-conditioned", action="store_true")
     parser.add_argument("--checkpoint-group", type=int, default=4)
     parser.add_argument("--max-minutes", type=float, default=180.0)
@@ -185,6 +192,8 @@ def main() -> int:
         coda_start=args.coda_start,
         depths=tuple(int(d) for d in args.depths.split(",")),
         anchor_weight=args.anchor_weight,
+        rotation_weight=args.rotation_weight,
+        anchor_injection=args.anchor_injection,
     )
     bridge = {"assistant_answer": "\n\nFINAL_ANSWER: "}.get(args.bridge, args.bridge)
     families = [f.strip() for f in args.families.split(",") if f.strip()]

@@ -295,6 +295,13 @@ class CortexConfig:
     # Per-episode decode-probe memoization: identical latent states decode
     # once; the cache flushes on every fast-weight function change.
     probe_cache_enabled: bool = True
+    # Learned halting attachment (learned_halting_bridge). None ⇒ residual
+    # policy, byte-for-byte the engine's historical behaviour. Learned mode
+    # requires a trained head on disk: {"mode": "learned",
+    # "head_path": "...", "threshold": optional (0,1)}. A requested head
+    # that cannot load REFUSES the episode rather than silently reporting
+    # learned allocation while running the residual rule.
+    halting: dict[str, Any] | None = None
 
     def validate(self) -> list[str]:
         """Return a list of human-readable violations (empty ⇒ valid)."""
@@ -500,6 +507,28 @@ class CortexConfig:
             problems.append("telemetry_enabled must be boolean")
         if type(self.probe_cache_enabled) is not bool:
             problems.append("probe_cache_enabled must be boolean")
+        if self.halting is not None:
+            if not isinstance(self.halting, dict):
+                problems.append("halting must be a mapping or null")
+            else:
+                mode = self.halting.get("mode", "residual")
+                if mode not in {"residual", "learned"}:
+                    problems.append("halting.mode must be residual or learned")
+                head_path = self.halting.get("head_path")
+                if mode == "learned" and (
+                    not isinstance(head_path, str) or not head_path.strip()
+                ):
+                    problems.append("halting.learned requires head_path")
+                threshold = self.halting.get("threshold")
+                if threshold is not None and (
+                    isinstance(threshold, bool)
+                    or not isinstance(threshold, (int, float))
+                    or not 0.0 < float(threshold) < 1.0
+                ):
+                    problems.append("halting.threshold must be inside (0, 1)")
+                unknown = set(self.halting) - {"mode", "head_path", "threshold"}
+                if unknown:
+                    problems.append(f"halting has unknown keys: {sorted(unknown)}")
         if self.escape is not None:
             if not isinstance(self.escape, dict):
                 problems.append("escape must be a mapping or null")
@@ -646,6 +675,11 @@ class EpisodeReceipt:
     # Attractor-escape evidence: per-branch ladder receipts (rungs tried,
     # triggers, probation outcomes). Empty when no branch needed escape.
     escape: dict[str, Any] = field(default_factory=dict)
+    # Halting-policy evidence: mode, per-branch head halts, and whether the
+    # learned head actually determined any stop (head_was_causal) — a
+    # learned run whose every stop came from the residual floor is the old
+    # policy under a new name, and the receipt must say so.
+    halting: dict[str, Any] = field(default_factory=dict)
     # Neural-bytecode trace: one event per non-window instruction the
     # schedule program executed (exchange/savepoint/verify_probe outcomes,
     # probe scores, backtracks). Empty for plain window programs.
@@ -767,6 +801,7 @@ class EpisodeReceipt:
             "decode_repetition_penalty_applied": self.decode_repetition_penalty_applied,
             "verifier_guidance": dict(self.verifier_guidance),
             "escape": dict(self.escape),
+            "halting": dict(self.halting),
             "bytecode_events": [dict(row) for row in self.bytecode_events],
             "latent_telemetry": dict(self.latent_telemetry),
             "probe_cache": dict(self.probe_cache),

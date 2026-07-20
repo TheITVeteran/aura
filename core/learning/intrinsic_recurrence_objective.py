@@ -57,6 +57,14 @@ class IntrinsicTrainingSpec:
     # Weight on the T=1 anchor's own CE, over and above its role in the
     # priced selection. Base ability is not a free variable.
     anchor_weight: float = 1.0
+    # Direct pressure on CP226's measured obstacle: cos(pass1, pass2) =
+    # 0.9994 — the loop moves 42% in magnitude but barely rotates, so each
+    # re-entry re-computes the previous increment instead of taking a NEW
+    # algorithm step. This term penalizes cos² between consecutive window-
+    # pass increments, punishing both idempotence (cos→+1) and the period-2
+    # oscillation CP210 caught (cos→−1); orthogonal increments — what
+    # distinct computation steps look like — cost nothing. 0.0 = off.
+    rotation_weight: float = 0.0
 
     def __post_init__(self) -> None:
         if self.prelude_end >= self.coda_start:
@@ -79,6 +87,12 @@ class IntrinsicTrainingSpec:
             or not 0.0 <= float(self.anchor_weight) <= 10.0
         ):
             raise ValueError("anchor_weight must be inside [0, 10]")
+        if (
+            isinstance(self.rotation_weight, bool)
+            or not isinstance(self.rotation_weight, (int, float))
+            or not 0.0 <= float(self.rotation_weight) <= 10.0
+        ):
+            raise ValueError("rotation_weight must be inside [0, 10]")
 
     def plan_at(self, depth: int):
         from core.learning.intrinsic_recurrence import RecurrentDepthPlan
@@ -102,6 +116,7 @@ class IntrinsicTrainingSpec:
             "compute_price": self.compute_price,
             "depth_temperature": self.depth_temperature,
             "anchor_weight": self.anchor_weight,
+            "rotation_weight": self.rotation_weight,
         }
 
 
@@ -164,6 +179,100 @@ def answer_cross_entropy(
     return mx.mean(losses), trajectory
 
 
+def rotation_pressure(trajectory: Sequence[Any]) -> tuple[Any, dict[str, Any]]:
+    """Penalize consecutive window-pass increments that point the same way.
+
+    CP226 reduced the obstacle to one number: cos(pass1, pass2) = 0.9994.
+    The state moves 42% in magnitude and barely rotates — re-entering the
+    window adds another increment along nearly the same ray, so extra depth
+    re-computes the last step instead of taking a new one. This term is the
+    first DIRECT training pressure on that geometry:
+
+        loss = mean over consecutive increment pairs of cos²(Δt, Δt+1)
+
+    cos² punishes both failure shapes we have measured: idempotence
+    (cos→+1, CP226) and the period-2 limit cycle (cos→−1, CP210).
+    Orthogonal increments — what distinct steps of an algorithm look like —
+    cost nothing. Computed in float32; fp16 reductions on residual streams
+    overflow (the CP226 meter bug).
+
+    Needs at least three trajectory states (two increments); below that it
+    returns zero loss with the receipt saying why.
+    """
+    import mlx.core as mx
+
+    states = list(trajectory)
+    if len(states) < 3:
+        return mx.zeros(()), {
+            "pairs": 0,
+            "mean_cos": None,
+            "reason": "needs_at_least_two_increments",
+        }
+    increments = [
+        (states[index + 1] - states[index]).astype(mx.float32)
+        for index in range(len(states) - 1)
+    ]
+    cosines = []
+    for first, second in zip(increments, increments[1:], strict=False):
+        flat_first = mx.reshape(first, (-1,))
+        flat_second = mx.reshape(second, (-1,))
+        denominator = mx.maximum(
+            mx.linalg.norm(flat_first) * mx.linalg.norm(flat_second), 1e-6
+        )
+        cosines.append(mx.sum(flat_first * flat_second) / denominator)
+    stacked = mx.stack(cosines)
+    loss = mx.mean(mx.square(stacked))
+    return loss, {
+        "pairs": len(cosines),
+        "mean_cos": round(float(mx.mean(stacked)), 6),
+        "mean_cos_sq": round(float(loss), 6),
+    }
+
+
+def latent_step_answer_ce(
+    model: Any,
+    tokens: Any,
+    answer_tokens: Any,
+    plan: Any,
+) -> list[float]:
+    """Answer CE decoded from EACH intermediate window state via the coda.
+
+    The per-step score curve latent-trajectory credit assignment needs:
+    which internal passes actually moved the state toward the answer. The
+    final entry equals the ordinary recurrent forward's CE by construction.
+    Costs one coda pass per iteration — bounded by the plan's depth.
+    """
+    import mlx.core as mx
+    import mlx.nn as nn
+
+    from core.learning.intrinsic_recurrence import recurrent_hidden_states
+
+    answer_count = int(answer_tokens.shape[-1])
+    if answer_count < 1:
+        raise ValueError("answer_tokens must contain at least one token")
+    full = mx.concatenate([tokens, answer_tokens], axis=1)
+    _, trajectory = recurrent_hidden_states(model, full, plan)
+    inner = model.model
+    layers = inner.layers
+    start = int(full.shape[1]) - answer_count - 1
+    from core.learning.intrinsic_recurrence import _run
+
+    scores: list[float] = []
+    for state in trajectory:
+        hidden = _run(layers[plan.coda_start :], state)
+        hidden = inner.norm(hidden)
+        if getattr(model, "lm_head", None) is not None:
+            logits = model.lm_head(hidden)
+        else:
+            logits = inner.embed_tokens.as_linear(hidden)
+        predicted = logits[:, start : start + answer_count, :]
+        losses = nn.losses.cross_entropy(
+            predicted.astype(mx.float32), answer_tokens, reduction="none"
+        )
+        scores.append(float(mx.mean(losses)))
+    return scores
+
+
 def intrinsic_depth_loss(
     model: Any,
     tokens: Any,
@@ -184,14 +293,21 @@ def intrinsic_depth_loss(
     depth_losses: list[Any] = []
     per_depth: dict[str, float] = {}
     anchor_loss: Any = None
+    rotation_terms: list[Any] = []
+    rotation_evidence: dict[str, Any] = {}
     for depth in spec.depths:
-        loss, _ = answer_cross_entropy(
+        loss, trajectory = answer_cross_entropy(
             model, tokens, answer_tokens, spec.plan_at(depth)
         )
         depth_losses.append(loss)
         per_depth[f"T{depth}"] = float(loss)
         if depth == 1:
             anchor_loss = loss
+        if spec.rotation_weight > 0.0 and depth >= 3:
+            term, evidence = rotation_pressure(trajectory)
+            if evidence.get("pairs"):
+                rotation_terms.append(term)
+                rotation_evidence[f"T{depth}"] = evidence
 
     # adaptive_depth_loss returns (loss, priced costs, selected DEPTH).
     # The third value is the depth itself, not an index into spec.depths --
@@ -206,7 +322,13 @@ def intrinsic_depth_loss(
     # The anchor is added OUTSIDE the softmin. Inside, a model could win by
     # making every depth equally bad; outside, base ability has to hold.
     total = selected + spec.anchor_weight * anchor_loss
-    return total, {
+    rotation_total: Any = None
+    if rotation_terms:
+        import mlx.core as mx
+
+        rotation_total = mx.mean(mx.stack(rotation_terms))
+        total = total + spec.rotation_weight * rotation_total
+    telemetry: dict[str, Any] = {
         "schema": INTRINSIC_OBJECTIVE_SCHEMA,
         "per_depth_ce": per_depth,
         "priced_costs": [round(float(c), 4) for c in priced_costs],
@@ -215,6 +337,13 @@ def intrinsic_depth_loss(
         "priced_ce": float(selected),
         "total": float(total),
     }
+    if rotation_total is not None:
+        telemetry["rotation"] = {
+            "weight": spec.rotation_weight,
+            "loss": round(float(rotation_total), 6),
+            "per_depth": rotation_evidence,
+        }
+    return total, telemetry
 
 
 def depth_tolerance(per_depth_ce: dict[str, float]) -> dict[str, Any]:
@@ -266,4 +395,6 @@ __all__ = [
     "checkpointed_window",
     "depth_tolerance",
     "intrinsic_depth_loss",
+    "latent_step_answer_ce",
+    "rotation_pressure",
 ]
