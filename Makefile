@@ -1,4 +1,4 @@
-.PHONY: update update-live rollback release-status lint test live-test typecheck compile quality smoke setup setup-dev setup-prod run demo demo-full demo-autonomy demo-learning triage contract-doc fmea-doc report bench courtroom baselines longevity longevity-24h longevity-4h chaos governance-lint reqproof-gate reqproof-release cognitive-gate-audit skill-catalog-audit model-load-audit resource-observation-audit security enterprise-gate enterprise-collect enterprise-strict production-gate frontend-contract architecture-map provenance decisive proof-bundle behavioral-proof activation-audit source-hygiene clean-bench aletheia-validate final-proof person-box-proof sovereignty-proof doctor diagnostic-bundle backup restore restore-test memory-export memory-purge data-export data-purge log-purge closeout-audit closeout-semantic-status closeout-rubric identity-reset certify aletheia-live-proof aura-certify-boot
+.PHONY: update update-live rollback release-status lint test live-test typecheck compile quality smoke setup setup-dev setup-prod run demo demo-full demo-autonomy demo-learning triage contract-doc fmea-doc report bench courtroom baselines longevity longevity-24h longevity-4h chaos governance-lint reqproof-gate reqproof-release reqproof-progress cognitive-gate-audit skill-catalog-audit model-load-audit resource-observation-audit security enterprise-gate enterprise-collect enterprise-strict production-gate frontend-contract architecture-map provenance decisive proof-bundle behavioral-proof activation-audit source-hygiene clean-bench aletheia-validate final-proof person-box-proof sovereignty-proof doctor diagnostic-bundle backup restore restore-test memory-export memory-purge data-export data-purge log-purge closeout-audit closeout-semantic-status closeout-rubric identity-reset certify aletheia-live-proof aura-certify-boot
 
 
 PYTHON ?= python
@@ -122,6 +122,10 @@ reqproof-gate:
 reqproof-release:
 	@echo "📋 Requirement-to-proof RELEASE gate (blocks until zero open mandatory scope)..."
 	@$(PYTHON) tools/reqproof/gate.py --mode release
+
+reqproof-progress:
+	@echo "📈 Generating evidence-weighted progress and checkpoint forecast..."
+	@$(PYTHON) tools/reqproof/progress.py
 
 cognitive-gate-audit:
 	@echo "🧠 Auditing cognitive candidate-gate coverage..."
@@ -658,3 +662,10 @@ final-proof:
 	python tools/final_claim_validator.py \
 	  --claims CLAIMS_MATRIX.md \
 	  --artifacts artifacts/current
+
+app:
+	@echo "🖥  Ensuring Aura.app matches HEAD..."
+	@$(PYTHON) tools/app_bundle_freshness.py ensure
+
+app-check:
+	@$(PYTHON) tools/app_bundle_freshness.py check

@@ -1,0 +1,31 @@
+{
+  "schema": "aura.rlc_decode_path_verification.v1",
+  "model": "models/Qwen2.5-1.5B-Instruct-4bit",
+  "max_tokens": 20,
+  "memory_envelope": {
+    "schema": "aura.mlx_memory_guard.v1",
+    "memory_limit_gb": 19.2,
+    "cache_limit_gb": 2.0,
+    "wired_limit_gb": 28.8,
+    "reclaim_every": 16,
+    "host_memory_gb": 64.0
+  },
+  "rows": [
+    {
+      "prompt": "What is 2 + 2? Answer with just the number.",
+      "reference": "4",
+      "rlc": "      2 + 2 = 4",
+      "rlc_nonempty": true,
+      "prefix_agreement": 0.0
+    },
+    {
+      "prompt": "Name the capital of France in one word.",
+      "reference": "Paris",
+      "rlc": "\u683c\u9152\n\u4e8b\u5b9efact:  \n (cinema) 1 word is Paris.",
+      "rlc_nonempty": true,
+      "prefix_agreement": 0.0
+    }
+  ],
+  "decoder_live": true,
+  "verdict": "DECODER LIVE \u2014 produces model-authored text"
+}
