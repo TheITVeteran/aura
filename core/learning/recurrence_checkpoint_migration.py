@@ -448,6 +448,7 @@ def verify_migration(
     *,
     expected_destination_root: Path,
     expected_trainer_sha256: str,
+    allow_destination_pointer_advance: bool = False,
 ) -> dict[str, Any]:
     _raw, document = _read_json(path, role="checkpoint_migration")
     claimed = document.get("migration_sha256")
@@ -512,7 +513,6 @@ def verify_migration(
         (source.get("training_config"), _MAX_JSON_BYTES),
         (source.get("dataset_manifest"), _MAX_JSON_BYTES),
         (source.get("execution_spec"), _MAX_JSON_BYTES),
-        (destination.get("latest"), _MAX_JSON_BYTES),
         (destination.get("complete"), _MAX_JSON_BYTES),
         (destination.get("adapter"), _MAX_TENSOR_BYTES),
         (destination.get("optimizer"), _MAX_TENSOR_BYTES),
@@ -523,6 +523,8 @@ def verify_migration(
         (failure.get("sentinel_receipt"), _MAX_JSON_BYTES),
         (failure.get("tombstone"), _MAX_JSON_BYTES),
     ]
+    if not allow_destination_pointer_advance:
+        bindings.append((destination.get("latest"), _MAX_JSON_BYTES))
     previous_started_at = failure.get("trainer_started_at")
     if (
         not isinstance(previous_started_at, (int, float))
@@ -564,6 +566,52 @@ def verify_migration(
         for binding, max_bytes in bindings
     ):
         _fail("migration_artifact_binding_changed")
+    if allow_destination_pointer_advance:
+        latest_binding = destination.get("latest")
+        if not isinstance(latest_binding, Mapping):
+            _fail("migration_evidence_invalid")
+        latest_path = Path(str(latest_binding.get("path")))
+        destination_root = expected_destination_root.resolve(strict=True)
+        if latest_path.resolve(strict=True) != destination_root / "latest.json":
+            _fail("destination_advanced_pointer_invalid")
+        latest_raw, latest = _read_json(latest_path, role="destination_latest")
+        checkpoint_relative = latest.get("checkpoint")
+        if (
+            latest.get("schema") != POINTER_SCHEMA
+            or not isinstance(checkpoint_relative, str)
+            or not checkpoint_relative.startswith("checkpoints/")
+        ):
+            _fail("destination_advanced_pointer_invalid")
+        checkpoint = (destination_root / checkpoint_relative).resolve(strict=True)
+        if checkpoint.parent != (destination_root / "checkpoints").resolve(strict=True):
+            _fail("destination_advanced_pointer_invalid")
+        complete_raw, complete = _read_json(
+            checkpoint / "complete.json",
+            role="destination_advanced_complete",
+        )
+        step = complete.get("step")
+        if (
+            complete.get("schema") != CHECKPOINT_SCHEMA
+            or type(step) is not int
+            or step <= int(source.get("step", -1))
+            or latest.get("complete_sha256") != _sha(complete_raw)
+        ):
+            _fail("destination_advanced_pointer_invalid")
+        for role in ("adapter", "optimizer"):
+            tensor = complete.get(role)
+            if not isinstance(tensor, Mapping):
+                _fail("destination_advanced_checkpoint_invalid")
+            relative = tensor.get("path")
+            if not isinstance(relative, str) or Path(relative).name != relative:
+                _fail("destination_advanced_checkpoint_invalid")
+            observed = _binding(checkpoint / relative, max_bytes=_MAX_TENSOR_BYTES)
+            if (
+                observed["sha256"] != tensor.get("sha256")
+                or observed["size_bytes"] != tensor.get("size_bytes")
+            ):
+                _fail("destination_advanced_checkpoint_invalid")
+        if not latest_raw:
+            _fail("destination_advanced_pointer_invalid")
     training_config_raw, observed_training_config = _read_json(
         Path(str(source_training_config["path"])),
         role="source_training_config",

@@ -68,7 +68,11 @@ def test_calibration_command_changes_only_execution_memory_and_paths(tmp_path, m
     migration, summary, destination = _documents(tmp_path)
     migration_path = tmp_path / "migration.json"
     migration_path.write_text("{}", encoding="ascii")
-    monkeypatch.setattr(recovery, "_migration", lambda _path: (migration, summary))
+    monkeypatch.setattr(
+        recovery,
+        "_migration",
+        lambda _path, **_kwargs: (migration, summary),
+    )
     monkeypatch.setattr(recovery, "_validate_no_competing_model_process", lambda _model: None)
 
     launcher, target, paths = recovery.build_commands(
@@ -94,7 +98,11 @@ def test_calibration_rejects_latest_pointer_drift(tmp_path, monkeypatch):
         json.dumps({"checkpoint": "checkpoints/step-00000011-other"}),
         encoding="ascii",
     )
-    monkeypatch.setattr(recovery, "_migration", lambda _path: (migration, summary))
+    monkeypatch.setattr(
+        recovery,
+        "_migration",
+        lambda _path, **_kwargs: (migration, summary),
+    )
 
     with pytest.raises(recovery.ResidentV3RecoveryError, match="source_checkpoint_changed"):
         recovery.build_commands(tmp_path / "migration.json", phase="calibration")
@@ -102,7 +110,11 @@ def test_calibration_rejects_latest_pointer_drift(tmp_path, monkeypatch):
 
 def test_resume_requires_positive_calibration_verdict(tmp_path, monkeypatch):
     migration, summary, _destination = _documents(tmp_path)
-    monkeypatch.setattr(recovery, "_migration", lambda _path: (migration, summary))
+    monkeypatch.setattr(
+        recovery,
+        "_migration",
+        lambda _path, **_kwargs: (migration, summary),
+    )
     monkeypatch.setattr(recovery, "verify_calibration", lambda _path: {"passed": False})
 
     with pytest.raises(recovery.ResidentV3RecoveryError, match="calibration_not_admitted"):

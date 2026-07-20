@@ -295,6 +295,72 @@ def test_migration_rejects_source_config_tamper(tmp_path: Path):
         )
 
 
+def test_migration_allows_verified_destination_pointer_advance(tmp_path: Path):
+    paths = _fixture(tmp_path)
+    migration = _prepare(paths)
+    destination = Path(paths["destination"])
+    checkpoint = destination / "checkpoints" / "step-00000011-advanced"
+    checkpoint.mkdir()
+    adapter = b"advanced-adapter"
+    optimizer = b"advanced-optimizer"
+    (checkpoint / "adapter.safetensors").write_bytes(adapter)
+    (checkpoint / "optimizer.safetensors").write_bytes(optimizer)
+    complete = {
+        "schema": "aura.recurrence_native_checkpoint.v3",
+        "step": 11,
+        "adapter": {
+            "path": "adapter.safetensors",
+            "sha256": _sha(adapter),
+            "size_bytes": len(adapter),
+        },
+        "optimizer": {
+            "path": "optimizer.safetensors",
+            "sha256": _sha(optimizer),
+            "size_bytes": len(optimizer),
+        },
+    }
+    complete_raw = _write_json(checkpoint / "complete.json", complete, newline=True)
+    _write_json(
+        destination / "latest.json",
+        {
+            "schema": "aura.recurrence_native_checkpoint_pointer.v1",
+            "checkpoint": "checkpoints/step-00000011-advanced",
+            "complete_sha256": _sha(complete_raw),
+        },
+        newline=True,
+    )
+
+    with pytest.raises(
+        RecurrenceCheckpointMigrationError,
+        match="migration_artifact_binding_changed",
+    ):
+        verify_migration(
+            migration,
+            expected_destination_root=destination,
+            expected_trainer_sha256=str(paths["trainer_sha256"]),
+        )
+
+    result = verify_migration(
+        migration,
+        expected_destination_root=destination,
+        expected_trainer_sha256=str(paths["trainer_sha256"]),
+        allow_destination_pointer_advance=True,
+    )
+    assert result["source_step"] == 10
+
+    (checkpoint / "adapter.safetensors").write_bytes(b"tampered")
+    with pytest.raises(
+        RecurrenceCheckpointMigrationError,
+        match="destination_advanced_checkpoint_invalid",
+    ):
+        verify_migration(
+            migration,
+            expected_destination_root=destination,
+            expected_trainer_sha256=str(paths["trainer_sha256"]),
+            allow_destination_pointer_advance=True,
+        )
+
+
 def test_migration_requires_the_bound_recovery_trainer(tmp_path: Path):
     paths = _fixture(tmp_path)
     migration = _prepare(paths)

@@ -22068,3 +22068,45 @@ interaction, frontier, external-custody, installed-app, release, or soak credit
 is awarded. Next: publish CP197, launch the controller against the active CP195
 calibration, and let a positive immutable calibration verdict promote directly
 to detached training. Final long soaks remain deferred.
+
+## Checkpoint 2026-07-20-198: Exact-Adjoint Calibration Admitted
+
+The repaired CP195 calibration is scientifically and operationally positive.
+It resumed the cryptographically bound step-10 adapter and optimizer, executed
+one exact discrete-adjoint training step, evaluated eight held-out examples,
+and atomically advanced to step 11. Held-out mean loss was 0.56615. The external
+sentinel observed a 29,474.9-MB compute peak against the immutable 73,728-MB
+compute ceiling, a 45,371.4-MB reduction from CP189's terminal peak. Two signed
+compute leases, `training_step` and `holdout_eval`, each completed
+acquire/drain/release; the lease-chain digest is
+`44a6ccaf2172315fddfab3abb9babdb942bb5713e74b4c0308fc46f7b72d2c37`.
+Trainer and sentinel containment are clean, no restart or tombstone exists, and
+the self-hashed calibration verdict has no failure points.
+
+Promotion initially failed closed because the migration verifier required the
+destination `latest.json` to remain byte-identical to its pre-run step-10 copy.
+That rule correctly protects launch admission but incorrectly classified the
+intended atomic step-11 advancement as artifact tampering. The verifier now has
+an explicit post-run mode. It continues to require the migration document,
+source state, copied step-10 complete/adapter/optimizer, failed-attempt chain,
+protocol, amendment, and trainer bindings unchanged. Only the destination
+pointer may advance, and its target must remain inside the destination
+checkpoint directory with a valid checkpoint schema, strictly greater step,
+matching complete-document digest, and matching adapter and optimizer tensor
+hashes and sizes. Pre-run verification remains byte-exact and rejects the same
+pointer change.
+
+Validation is green: 15/15 focused migration, recovery-launch, and detached
+controller tests pass, including default rejection of pointer drift, accepted
+verified advancement, and rejection after advanced tensor tampering. Focused
+Ruff and bytecode compilation pass. The real calibration verdict is PASS with
+digest `d839b8f395c3a97a430c819f77fe8289ed44b9d924a3c18f22d85b9c2ebec910`.
+
+Evidence-weighted completion remains 27%. This is checkpoint 198 of the
+faithful 292-399 total-checkpoint forecast, leaving approximately 94-201
+checkpoints. Calibration and memory-feasibility credit are earned; training-
+completion, mechanics, reasoning-gain, same-checkpoint interaction, frontier,
+external-custody, installed-app, release, and soak credit remain open. Next:
+publish CP198 and launch exact detached resident training from the admitted
+step-11 state under the same external sentinel. Final long soaks remain
+deferred.

@@ -77,7 +77,11 @@ def _read_json(path: Path, *, role: str) -> dict[str, Any]:
     return value
 
 
-def _migration(migration_path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+def _migration(
+    migration_path: Path,
+    *,
+    allow_destination_pointer_advance: bool = False,
+) -> tuple[dict[str, Any], dict[str, Any]]:
     migration = _read_json(migration_path, role="migration")
     destination = migration.get("destination")
     trainer = migration.get("new_trainer")
@@ -87,6 +91,7 @@ def _migration(migration_path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
         migration_path,
         expected_destination_root=Path(str(destination.get("root"))),
         expected_trainer_sha256=str(trainer.get("sha256")),
+        allow_destination_pointer_advance=allow_destination_pointer_advance,
     )
     if trainer.get("sha256") != _sha_file(REPO_ROOT / "tools/recurrence_native_train_v2.py"):
         _fail("trainer_source_changed")
@@ -140,7 +145,10 @@ def build_commands(
     *,
     phase: str,
 ) -> tuple[list[str], list[str], dict[str, Path]]:
-    migration, summary = _migration(migration_path)
+    migration, summary = _migration(
+        migration_path,
+        allow_destination_pointer_advance=phase == "resume",
+    )
     source = migration["source"]
     config = source.get("training_config_document")
     dataset = source.get("dataset_manifest_document")
@@ -364,7 +372,10 @@ def _terminal_receipt(path: Path, *, role: str) -> dict[str, Any]:
 
 
 def verify_calibration(migration_path: Path) -> dict[str, Any]:
-    migration, summary = _migration(migration_path)
+    migration, summary = _migration(
+        migration_path,
+        allow_destination_pointer_advance=True,
+    )
     destination = Path(str(migration["destination"]["root"])).resolve(strict=True)
     paths = _phase_paths(destination, "calibration")
     output = paths["root"] / "calibration_verdict.json"
