@@ -193,6 +193,13 @@ def main() -> int:
     train_tasks = curriculum.task_battery(
         families, [args.task_depth], args.per_cell, seed=args.seed
     )
+    # task_battery groups by family, so stepping through it in order trains
+    # on 64 consecutive khop examples, then 64 modular, and so on -- the
+    # model would fit each family and forget the previous one. Shuffle once,
+    # deterministically, so a resumed run sees the same sequence.
+    import random as _random
+
+    _random.Random(args.seed).shuffle(train_tasks)
     holdout = curriculum.task_battery(
         families, [args.task_depth], args.holdout_per_cell, seed=args.seed + 9973
     )
@@ -240,40 +247,47 @@ def main() -> int:
             model,
             lambda m, p, a: intrinsic_depth_loss(m, p, a, spec)[0],
         )
-        while step < args.max_steps and time.time() < deadline:
-            task = train_tasks[step % len(train_tasks)]
-            prompt, answer = encode_example(tokenizer, task, bridge)
-            # start=None adapts EVERY position: the whole stream recurs
-            # here, unlike the slot architecture where only four positions
-            # were ever adapted.
-            with recurrence_adapter_scope(start=None, stop=None):
-                with checkpointed_window(model, group_size=args.checkpoint_group):
-                    loss, grads = loss_and_grad(model, prompt, answer)
-                optimizer.update(model, grads)
-                mx.eval(model.parameters(), optimizer.state)
-            step += 1
-            if step % 10 == 0:
-                envelope.reclaim(force=True)
-                print(
-                    f"[step {step}] loss={float(loss):.4f} "
-                    f"({(time.time()-started)/60:.1f}m)",
-                    flush=True,
-                )
-            if step % args.eval_every == 0 or step == args.max_steps:
-                with recurrence_adapter_scope(start=None, stop=None):
-                    report = evaluate(
-                        model, tokenizer, holdout, spec, bridge, envelope=envelope
-                    )
-                if baseline is None:
-                    baseline = report
-                report["step"] = step
-                history.append(report)
-                print(
-                    f"[eval {step}] ce={report['ce']} "
-                    f"collapse_repaired={report['collapse_repaired']} "
-                    f"depth_helps={report['depth_helps']}",
-                    flush=True,
-                )
+        # ONE checkpoint scope for the whole run. Entering it per step
+        # rebuilt the mx.checkpoint closures every iteration, so MLX
+        # recompiled them and its graph cache grew without bound --
+        # measured as 13.8s -> 18s -> 24s per step over 40 steps.
+        checkpoint_scope = checkpointed_window(
+            model, group_size=args.checkpoint_group
+        )
+        with checkpoint_scope:
+          while step < args.max_steps and time.time() < deadline:
+              task = train_tasks[step % len(train_tasks)]
+              prompt, answer = encode_example(tokenizer, task, bridge)
+              # start=None adapts EVERY position: the whole stream recurs
+              # here, unlike the slot architecture where only four positions
+              # were ever adapted.
+              with recurrence_adapter_scope(start=None, stop=None):
+                  loss, grads = loss_and_grad(model, prompt, answer)
+                  optimizer.update(model, grads)
+                  mx.eval(model.parameters(), optimizer.state)
+              step += 1
+              if step % 10 == 0:
+                  envelope.reclaim(force=True)
+                  print(
+                      f"[step {step}] loss={float(loss):.4f} "
+                      f"({(time.time()-started)/60:.1f}m)",
+                      flush=True,
+                  )
+              if step % args.eval_every == 0 or step == args.max_steps:
+                  with recurrence_adapter_scope(start=None, stop=None):
+                      report = evaluate(
+                          model, tokenizer, holdout, spec, bridge, envelope=envelope
+                      )
+                  if baseline is None:
+                      baseline = report
+                  report["step"] = step
+                  history.append(report)
+                  print(
+                      f"[eval {step}] ce={report['ce']} "
+                      f"collapse_repaired={report['collapse_repaired']} "
+                      f"depth_helps={report['depth_helps']}",
+                      flush=True,
+                  )
 
         adapter_path = out_dir / "adapters.safetensors"
         mx.save_safetensors(
