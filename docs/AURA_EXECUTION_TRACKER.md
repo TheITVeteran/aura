@@ -22323,3 +22323,39 @@ installed-app, release, and soak gates remain open. Next: publish CP204 and
 build a separately source-bound confirmatory watcher that can consume only a
 positive CP203 directional verdict and otherwise terminates with the exact
 repair diagnoses. Final long soaks remain deferred.
+
+## Checkpoint 2026-07-20-205: Confirmatory Disposition Watcher
+
+`tools/watch_resident_v3_confirmatory_gate.py` provides a detached, model-free
+successor to the live directional pipeline. It binds the immutable CP203 config,
+its own source and statistical/trust implementations, and waits for the
+self-hashed pipeline verdict. A negative, inconclusive, or infrastructure
+verdict produces a terminal repair disposition with the original failure
+points. Only the exact positive directional decision, with all stronger claim
+flags still false, proceeds to artifact verification.
+
+On that positive path the watcher independently verifies the frozen adapter,
+activation candidate, mechanics verdict, pilot contract, preflight, and pilot
+result before sealing an external-campaign handoff. The handoff fixes seven
+domains, six arms, 411 observations per domain, 2,877 tasks, and 17,262 cells.
+It labels that exact certificate correctly as the zero-loss noninferiority floor
+only; a preregistered positive-interaction power simulation remains mandatory.
+It also requires a separately signed revisioned policy, distinct issuer and
+runner attestations, post-freeze hidden-task commitment and contamination
+audit, and a post-evidence independent-verifier attestation. Missing external
+custody yields `external_custody_required`, never a local frontier claim.
+
+Validation is green: 4/4 focused watcher tests pass for exact power/config
+binding, negative disposition, positive external handoff, and rejection of a
+rehashed premature reasoning claim. The adjacent exact-statistics and pipeline
+suite passed before the final watcher-only scope clarification; focused Ruff
+and bytecode compilation pass. Training has reached step 30 under clean leases,
+and CP203 remains in its four-party terminal wait with advancing heartbeats.
+
+Evidence-weighted completion remains 27%. This is checkpoint 205 of the
+faithful 292-399 total-checkpoint forecast, leaving approximately 87-194
+checkpoints. The watcher closes automation and truthfulness around the next
+decision; it does not supply independently administered credentials or earn
+gain/frontier credit. Next: publish CP205, create and launch its live immutable
+configuration, then continue bounded non-model closeout work without changing
+the source files frozen by CP203/CP205. Final long soaks remain deferred.
