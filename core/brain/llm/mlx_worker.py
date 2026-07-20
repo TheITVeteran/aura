@@ -237,6 +237,67 @@ def _surface_control_recurrent_loops(job: dict[str, Any]) -> int:
     return max(1, min(_safe_int(configured, 1), 2))
 
 
+# Typed finite-range admission for sampling controls crossing the IPC
+# boundary. Malformed or hostile values previously reached sampler
+# construction unclamped (NaN temperature crashes decode; enormous values
+# request unbounded work).
+_SAMPLING_LIMITS = {
+    "temp": (0.0, 2.0, 0.7),
+    "top_p": (0.01, 1.0, 0.9),
+    "min_p": (0.0, 1.0, 0.05),
+    "repetition_penalty": (0.8, 3.0, 1.15),
+    "presence_penalty": (-2.0, 2.0, 0.0),
+}
+# Absolute per-request decode ceiling. Nothing legitimate asks a resident
+# worker for more in one request; malformed IPC could previously request
+# unbounded decode work.
+_ABSOLUTE_MAX_TOKENS = 16384
+
+
+def _admit_sampling_control(job: dict[str, Any], key: str) -> float:
+    lower, upper, default = _SAMPLING_LIMITS[key]
+    return min(max(_safe_float(job.get(key, default), default), lower), upper)
+
+
+def _admit_max_tokens(value: Any, default: int) -> int:
+    return max(1, min(_safe_int(value, default), _ABSOLUTE_MAX_TOKENS))
+
+
+def _render_messages_fallback(messages: Any, prompt: Any) -> str:
+    """Deterministic role-labeled rendering when the native template fails.
+
+    The old fallback silently reused the preexisting ``prompt`` variable —
+    dropping the entire message transcript (and answering a stale, null, or
+    different task). Role labels are preserved so conversational authority
+    survives; non-text fragments are skipped visibly rather than silently.
+    """
+    if not isinstance(messages, (list, tuple)) or not messages:
+        return str(prompt or "")
+    lines: list[str] = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        role = str(message.get("role") or "user").strip().lower() or "user"
+        content = message.get("content")
+        if isinstance(content, str):
+            text = content
+        elif isinstance(content, (list, tuple)):
+            fragments = [
+                str(fragment.get("text") or "")
+                for fragment in content
+                if isinstance(fragment, dict) and fragment.get("type") == "text"
+            ]
+            text = "\n".join(fragment for fragment in fragments if fragment)
+        else:
+            text = str(content or "")
+        if text.strip():
+            lines.append(f"{role.capitalize()}:\n{text.strip()}")
+    if not lines:
+        return str(prompt or "")
+    lines.append("Assistant:")
+    return "\n\n".join(lines)
+
+
 def _apply_surface_generation_controls(
     engine: Any,
     model: Any,
@@ -246,7 +307,7 @@ def _apply_surface_generation_controls(
     if not _surface_generation_contract_enabled(job):
         return {"enabled": False}
 
-    state: dict[str, Any] = {"enabled": True}
+    state: dict[str, Any] = {"enabled": True, "apply_errors": []}
 
     if engine is not None:
         state["engine"] = engine
@@ -262,12 +323,13 @@ def _apply_surface_generation_controls(
                     hook._alpha = min(float(getattr(hook, "_alpha", alpha) or alpha), alpha)
             state["surface_alpha_applied"] = alpha
         except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            state["apply_errors"].append(f"steering_clamp:{type(exc).__name__}")
             _record_mlx_degradation(
                 exc,
-                action="continued user-surface generation after steering clamp failed",
-                severity="warning",
+                action="recorded steering clamp failure for fail-closed surface admission",
+                severity="error",
             )
-            logger.debug("Surface steering clamp failed: %s", exc)
+            logger.warning("Surface steering clamp failed: %s", exc)
 
     inner = getattr(model, "model", None)
     if inner is not None and getattr(inner, "_recurrent_depth_config", None):
@@ -279,20 +341,40 @@ def _apply_surface_generation_controls(
             inner._recurrent_depth_runtime_loops = loops
             state["recurrent_runtime_loops_applied"] = loops
         except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            state["apply_errors"].append(f"recurrent_clamp:{type(exc).__name__}")
             _record_mlx_degradation(
                 exc,
-                action="continued user-surface generation after recurrent-depth clamp failed",
-                severity="warning",
+                action="recorded recurrent-depth clamp failure for fail-closed surface admission",
+                severity="error",
             )
-            logger.debug("Surface recurrent-depth clamp failed: %s", exc)
+            logger.warning("Surface recurrent-depth clamp failed: %s", exc)
 
     return state
 
 
-def _restore_surface_generation_controls(state: dict[str, Any]) -> None:
-    if not state.get("enabled"):
-        return
+def _enforce_surface_controls_or_fail(job: dict[str, Any], state: dict[str, Any]) -> None:
+    """Fail closed when a user-visible contract selected controls that did
+    not apply.
 
+    Decoding a clean-user-surface job WITHOUT the steering/recurrent clamps
+    its contract selected serves latent-embellished prose to a user; the
+    receipt honestly said applied=False but nothing enforced it. Strict,
+    proof, and health jobs keep their own gates and are not blocked here.
+    """
+    errors = list(state.get("apply_errors") or [])
+    if errors and bool(job.get("clean_user_surface_contract", False)):
+        raise RuntimeError(
+            "surface_controls_unavailable:" + ";".join(errors)[:200]
+        )
+
+
+def _restore_surface_generation_controls(state: dict[str, Any]) -> bool:
+    """Restore pre-job control state; False means the resident model may be
+    contaminated and the worker must not serve further jobs on it."""
+    if not state.get("enabled"):
+        return True
+
+    restored = True
     engine = state.get("engine")
     if engine is not None:
         try:
@@ -303,12 +385,13 @@ def _restore_surface_generation_controls(state: dict[str, Any]) -> None:
                     if alpha is not None:
                         hook._alpha = alpha
         except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            restored = False
             _record_mlx_degradation(
                 exc,
-                action="continued after user-surface steering restore failed",
-                severity="warning",
+                action="flagged worker for recycle after user-surface steering restore failed",
+                severity="critical",
             )
-            logger.debug("Surface steering restore failed: %s", exc)
+            logger.error("Surface steering restore failed: %s", exc)
 
     inner = state.get("recurrent_inner")
     if inner is not None:
@@ -318,12 +401,14 @@ def _restore_surface_generation_controls(state: dict[str, Any]) -> None:
             elif hasattr(inner, "_recurrent_depth_runtime_loops"):
                 delattr(inner, "_recurrent_depth_runtime_loops")
         except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            restored = False
             _record_mlx_degradation(
                 exc,
-                action="continued after user-surface recurrent-depth restore failed",
-                severity="warning",
+                action="flagged worker for recycle after user-surface recurrent-depth restore failed",
+                severity="critical",
             )
-            logger.debug("Surface recurrent-depth restore failed: %s", exc)
+            logger.error("Surface recurrent-depth restore failed: %s", exc)
+    return restored
 
 
 def _surface_generation_control_receipt(
@@ -345,6 +430,21 @@ def _surface_generation_control_receipt(
         generation_max_tokens = 1
     receipt: dict[str, Any] = {
         "enabled": enabled,
+        # PROVENANCE: the fields named in caller_declared_fields are ECHOES
+        # of the caller's job booleans — the worker cannot independently
+        # verify them and consumers must not read them as worker-proven
+        # facts. Worker-measured evidence lives in worker_verified.
+        "caller_declared_fields": [
+            "live_mind_controls_bound",
+            "clean_user_surface_contract",
+            "strict_answer_contract",
+            "strict_value_contract",
+            "proof_evaluation_contract",
+            "operator_evidence_contract",
+            "health_probe",
+            "runtime_fact_status_contract",
+            "grounded_runtime_status_contract",
+        ],
         "live_mind_controls_bound": bool(job.get("live_mind_controls_bound", False)),
         "clean_user_surface_contract": bool(job.get("clean_user_surface_contract", False)),
         "surface_validation_prompt_present": bool(
@@ -411,6 +511,25 @@ def _surface_generation_control_receipt(
     # values alone cannot explain an incident) plus how fresh the substrate
     # sync was. steering_sync_age_s = -1.0 means the sync never ran.
     receipt_engine = state.get("engine")
+    # Worker-MEASURED facts (not caller echoes): live steering engine state
+    # and clamp application outcomes, sampled at receipt time.
+    try:
+        receipt["worker_verified"] = {
+            "steering_engine_present": receipt_engine is not None,
+            "steering_engine_active": bool(
+                receipt_engine.is_active()
+            )
+            if receipt_engine is not None
+            else False,
+            "surface_clamp_errors": list(state.get("apply_errors") or []),
+        }
+    except (AttributeError, RuntimeError, TypeError) as verify_exc:
+        receipt["worker_verified"] = {
+            "steering_engine_present": receipt_engine is not None,
+            "steering_engine_active": False,
+            "verification_error": f"{type(verify_exc).__name__}: {verify_exc}",
+            "surface_clamp_errors": list(state.get("apply_errors") or []),
+        }
     receipt_hooks = list(getattr(receipt_engine, "_hooks", []) or []) if receipt_engine is not None else []
     if receipt_hooks:
         effective_alphas = [
@@ -1142,6 +1261,28 @@ def _proof_prompt_expects_artifact(text: str) -> bool:
     return bool(_ARTIFACT_REQUEST_RE.search(str(text or "")))
 
 
+_EXPLICIT_FORMAT_REQUEST_RE = re.compile(
+    r"(?:\bin\s+(?:one|two|a\s+single)\s+(?:word|sentence|line|number)s?\b"
+    r"|\bexactly\s+\d+\s+(?:words?|sentences?|lines?|items?|bullets?)\b"
+    r"|\b(?:as|in)\s+a\s+(?:markdown\s+)?table\b"
+    r"|\bbullet(?:ed)?\s+(?:list|points?)\b"
+    r"|\bnumbered\s+(?:list|steps?)\b"
+    r"|\bone[- ]word\s+answer\b"
+    r"|\bonly\s+the\s+(?:number|value|answer|word)\b"
+    r"|\banswer\s+with\s+(?:only|just|a\s+single)\b"
+    r"|\brespond\s+with\s+(?:only|just|a\s+single)\b"
+    r"|\bformat\s*:)",
+    re.IGNORECASE,
+)
+
+
+def _proof_prompt_declares_format(text: str) -> bool:
+    """True when the task states its own output shape — exact counts,
+    tables, lists, single values — which must override the generic
+    3-6 sentence proof rendering default."""
+    return bool(_EXPLICIT_FORMAT_REQUEST_RE.search(str(text or "")))
+
+
 def _strip_leading_chatml_prefix(text: str) -> str:
     cleaned = str(text or "")
     prefixes = (
@@ -1362,8 +1503,14 @@ def _build_proof_evaluation_prompt(messages: Any, fallback_prompt: Any) -> str:
                 continue
             if role == "system":
                 system_parts.append(content)
-            else:
+            elif role in {"user", "human"}:
                 user_parts.append(content)
+            else:
+                # Preserve provenance in the flattened rendering: prior
+                # assistant/tool turns folded in unlabeled changed
+                # conversational authority (their text read as the user's
+                # task statement).
+                user_parts.append(f"[{role} said earlier]\n{content}")
     if not user_parts and fallback_prompt is not None:
         user_parts.append(str(fallback_prompt))
 
@@ -1379,6 +1526,19 @@ def _build_proof_evaluation_prompt(messages: Any, fallback_prompt: Any) -> str:
             "complete fenced block in the requested language. Do not add prose, role labels, "
             "analysis, caveats, or follow-up questions. The artifact must be syntactically "
             "valid and complete.\n<|im_end|>\n"
+            f"<|im_start|>user\n{user_text}\n<|im_end|>\n"
+            "<|im_start|>assistant\n"
+        )
+    if _proof_prompt_declares_format(user_text):
+        # The task states its OWN output format (exact counts, tables,
+        # lists, single values). Imposing the 3-6 sentence default here
+        # directly contradicted the contract being evaluated.
+        return (
+            f"<|im_start|>system\n{system_text}\n"
+            "Follow the task's explicit output-format instructions exactly — "
+            "exact counts, structure, and length take precedence. Do not emit "
+            "role labels or start a new user turn. Finish after the final "
+            "required content.\n<|im_end|>\n"
             f"<|im_start|>user\n{user_text}\n<|im_end|>\n"
             "<|im_start|>assistant\n"
         )
@@ -2565,10 +2725,12 @@ class _PromptCacheLRU:
         if last_cache_index == len(tokens) - 1:
             return _PromptCacheSearchResult(tokens, None, None, 0)
 
-        shorter = tokens[: last_cache_index + 1] if last_cache_index > 0 else None
+        # Index 0 is a valid one-token cached prefix; the old > 0 test threw
+        # it away and forced an avoidable full prefill.
+        shorter = tokens[: last_cache_index + 1] if last_cache_index >= 0 else None
         longer = None
         common_prefix = index
-        if index > 0 and last_cache_index <= 0:
+        if index > 0 and last_cache_index < 0:
             best = None
             stack = [(current, [])]
             while stack:
@@ -3394,7 +3556,10 @@ def _mlx_worker_loop(
             if action == "generate":
                 # Gate generation on true latent steering
                 try:
-                    if engine is not None and not engine.is_active():
+                    if engine is None or not engine.is_active():
+                        # None is fail-CLOSED: init crashes on failed steering
+                        # attach, so a None engine here means the invariant
+                        # broke — never a license to decode unsteered.
                         # We must not silently fall back to prompt-driven roleplay.
                         # If the latent bridge is severed, the system must act severed.
                         _record_mlx_degradation(
@@ -3496,17 +3661,33 @@ def _mlx_worker_loop(
                             tokenize=False
                         )
                     except (RuntimeError, AttributeError, TypeError, ValueError) as e:
+                        if tools:
+                            # A tool-calling contract cannot degrade to prose:
+                            # the model would answer without the tool schema
+                            # and the caller would parse hallucinated calls.
+                            _record_mlx_degradation(
+                                e,
+                                action="failed generation because tool template could not render",
+                                severity="error",
+                            )
+                            raise RuntimeError(
+                                f"chat_template_failed_with_tools:{e}"
+                            ) from e
                         _record_mlx_degradation(
                             e,
-                            action="continued generation with raw prompt after native chat/tool template failed",
+                            action="continued generation with role-labeled fallback after native chat template failed",
                             severity="degraded",
                         )
                         logger.warning("❌ [WORKER] Native template compilation failed: %s", e)
+                        # NEVER the stale prompt variable: render the actual
+                        # transcript deterministically so the model answers
+                        # the admitted task.
+                        prompt = _render_messages_fallback(messages, prompt)
 
-                temp = job.get("temp", 0.7)
-                top_p = job.get("top_p", 0.9)
-                min_p = job.get("min_p", 0.05)
-                repetition_penalty = job.get("repetition_penalty", 1.15)
+                temp = _admit_sampling_control(job, "temp")
+                top_p = _admit_sampling_control(job, "top_p")
+                min_p = _admit_sampling_control(job, "min_p")
+                repetition_penalty = _admit_sampling_control(job, "repetition_penalty")
                 artifact_generation_contract = bool(
                     proof_evaluation_contract
                     and _proof_prompt_expects_artifact(prompt)
@@ -3538,10 +3719,7 @@ def _mlx_worker_loop(
                     top_p = min(_safe_float(top_p, 0.8), 0.8)
                     min_p = max(_safe_float(min_p, 0.03), 0.03)
                     repetition_penalty = max(_safe_float(repetition_penalty, 1.15), 1.18)
-                try:
-                    max_tokens = max(1, int(job.get("max_tokens", 512) or 512))
-                except (TypeError, ValueError):
-                    max_tokens = 512
+                max_tokens = _admit_max_tokens(job.get("max_tokens", 512), 512)
                 if operator_evidence_contract:
                     max_tokens = min(max_tokens, 192)
                 hard_output_token_ceiling = _safe_int(
@@ -3726,6 +3904,7 @@ def _mlx_worker_loop(
                     total_generated_tokens = 0
                     interoception_payload = None
                     surface_control_state = _apply_surface_generation_controls(engine, model, job)
+                    _enforce_surface_controls_or_fail(job, surface_control_state)
                     surface_quality_gate_enabled = _surface_quality_gate_enabled(job)
                     surface_control_state["surface_quality_gate_enabled"] = surface_quality_gate_enabled
                     surface_control_state["surface_quality_gate_passed"] = not surface_quality_gate_enabled
@@ -3799,9 +3978,22 @@ def _mlx_worker_loop(
                                             substrate_mem=substrate_mem,
                                         )
                                     except (ImportError, AttributeError, RuntimeError) as _sent_exc:
+                                        if bool(job.get("clean_user_surface_contract", False)):
+                                            # User-visible prose without the
+                                            # capitulation/persona/ontology guard is
+                                            # fail-OPEN safety; refuse the job with a
+                                            # correlated error instead.
+                                            _record_mlx_degradation(
+                                                _sent_exc,
+                                                action="refused user-surface generation without TokenSentinel",
+                                                severity="critical",
+                                            )
+                                            raise RuntimeError(
+                                                f"token_sentinel_unavailable:{_sent_exc}"
+                                            ) from _sent_exc
                                         _record_mlx_degradation(
                                             _sent_exc,
-                                            action="continued generation without TokenSentinel intervention checks",
+                                            action="continued non-surface generation without TokenSentinel intervention checks",
                                             severity="degraded",
                                         )
                                         sentinel = None
@@ -4019,15 +4211,20 @@ def _mlx_worker_loop(
                                         # reallocate GPU memory every 32 tokens, creating micro-stalls.
                                         # Post-generation cleanup (line ~988) still ensures clean state.
 
-                                        # [FRONTIER UPGRADE] Absolute safety cap expanded so it never stops midway
-                                        if token_count > 8192:
+                                        # Absolute safety cap: >= so the 8192nd token is
+                                        # the LAST admitted one (the old > check exposed
+                                        # an 8193rd token past the documented limit).
+                                        if token_count >= 8192:
                                             logger.warning("🏁 [WORKER] Hard token limit (8192) reached. Truncating.")
                                             break
 
                                         stop_hit = role_continuation_hit
                                         for stop in stop_sequences:
                                             stop_index = current_response.find(stop)
-                                            if stop_index > 0:
+                                            # index zero is a real stop (response BEGINS
+                                            # with the stop sequence) — same fix the
+                                            # stream path received.
+                                            if stop_index >= 0:
                                                 current_response = current_response[:stop_index]
                                                 stop_hit = True
                                                 break
@@ -4613,7 +4810,23 @@ def _mlx_worker_loop(
                                 finally:
                                     watchdog.stop_job()
                     finally:
-                        _restore_surface_generation_controls(surface_control_state)
+                        if not _restore_surface_generation_controls(surface_control_state):
+                            # Unknown steering/recurrent state on the resident
+                            # model: serve THIS response, then exit so the
+                            # parent respawns a clean worker instead of
+                            # letting the contamination leak into every
+                            # subsequent job.
+                            worker_active = False
+                            ipc_writer.put(
+                                {
+                                    "status": "degraded",
+                                    "action": "surface_restore_failed",
+                                    "message": (
+                                        "surface control restore failed; worker will exit "
+                                        "after this response for a clean respawn"
+                                    ),
+                                }
+                            )
 
                     expected_empty_precompile = bool(
                         not response_text.strip()
@@ -4733,7 +4946,10 @@ def _mlx_worker_loop(
                 # RAW (no sentinel/quality gates): the truth-engine verifiers
                 # on the parent side are the selection mechanism.
                 try:
-                    if engine is not None and not engine.is_active():
+                    if engine is None or not engine.is_active():
+                        # None is fail-CLOSED: init crashes on failed steering
+                        # attach, so a None engine here means the invariant
+                        # broke — never a license to decode unsteered.
                         ipc_writer.put({
                             "id": job.get("id"),
                             "action": "generate_batch",
@@ -4747,12 +4963,23 @@ def _mlx_worker_loop(
                     watchdog.start_job(str(job.get("id") or ""), "generate_batch")
                     try:
                         batch_prompt = str(job.get("prompt") or "")
+                        if len(batch_prompt) > 400_000:
+                            # Bounded input: an unbounded prompt string
+                            # tokenizes into unbounded Metal work before any
+                            # admission check can see it.
+                            raise ValueError(
+                                f"batch_prompt_too_large:{len(batch_prompt)}"
+                            )
                         n = max(1, min(16, _safe_int(job.get("n"), 4)))
                         batch_max_tokens = max(
                             1,
                             min(2048, _safe_int(job.get("max_tokens"), 512)),
                         )
-                        batch_temp = _safe_float(job.get("temperature"), 0.8)
+                        # Finite-range temperature: NaN/inf reached the
+                        # sampler unchecked through the bare float coercion.
+                        batch_temp = min(
+                            max(_safe_float(job.get("temperature"), 0.8), 0.0), 2.0
+                        )
                         token_ids = tokenizer.encode(batch_prompt)
                         watchdog.activity()
                         batch_result = batch_generate(
@@ -4767,14 +4994,28 @@ def _mlx_worker_loop(
                         tokens_used_by_candidate = [
                             len(tokenizer.encode(text)) if text else 0 for text in texts
                         ]
-                        ipc_writer.put({
+                        # Cardinality is part of the contract: trusting any
+                        # iterable length let a decode fault report ok with
+                        # fewer (or zero) candidates than the caller paid for.
+                        nonempty = sum(1 for text in texts if text)
+                        batch_status = "ok" if (len(texts) == n and nonempty > 0) else "error"
+                        batch_payload: dict[str, Any] = {
                             "id": job.get("id"),
                             "action": "generate_batch",
-                            "status": "ok",
+                            "status": batch_status,
                             "texts": texts,
+                            "candidates_requested": n,
+                            "candidates_returned": len(texts),
+                            "candidates_nonempty": nonempty,
                             "tokens_used": sum(tokens_used_by_candidate),
                             "tokens_used_by_candidate": tokens_used_by_candidate,
-                        })
+                        }
+                        if batch_status == "error":
+                            batch_payload["message"] = (
+                                f"batch_cardinality_violation:requested={n}:"
+                                f"returned={len(texts)}:nonempty={nonempty}"
+                            )
+                        ipc_writer.put(batch_payload)
                     finally:
                         watchdog.stop_job()
                 except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as e:
@@ -4796,7 +5037,10 @@ def _mlx_worker_loop(
 
             elif action == "stream":
                 try:
-                    if engine is not None and not engine.is_active():
+                    if engine is None or not engine.is_active():
+                        # None is fail-CLOSED: init crashes on failed steering
+                        # attach, so a None engine here means the invariant
+                        # broke — never a license to decode unsteered.
                         _record_mlx_degradation(
                             RuntimeError("Affective steering became inactive during streaming"),
                             action="blocked stream because steering liveness failed",
@@ -4830,14 +5074,13 @@ def _mlx_worker_loop(
                     continue
 
                 prompt = job.get("prompt")
-                temp = job.get("temp", 0.7)
-                top_p = job.get("top_p", 0.9)
-                try:
-                    max_tokens = max(1, int(job.get("max_tokens", 512) or 512))
-                except (TypeError, ValueError):
-                    max_tokens = 512
-                min_p = job.get("min_p", 0.05)
-                repetition_penalty = job.get("repetition_penalty", 1.1)
+                # Typed finite-range admission: streaming controls previously
+                # flowed unvalidated from IPC into sampler construction.
+                temp = _admit_sampling_control(job, "temp")
+                top_p = _admit_sampling_control(job, "top_p")
+                max_tokens = _admit_max_tokens(job.get("max_tokens", 512), 512)
+                min_p = _admit_sampling_control(job, "min_p")
+                repetition_penalty = _admit_sampling_control(job, "repetition_penalty")
 
                 kwargs = {"max_tokens": max_tokens}
                 if make_sampler:
@@ -4857,9 +5100,9 @@ def _mlx_worker_loop(
                 logits_processors = []
                 try:
                     from mlx_lm.sample_utils import make_logits_processors
-                    _rp = job.get("repetition_penalty", repetition_penalty)
-                    _rcs = job.get("repetition_context_size", 30)
-                    _pp = job.get("presence_penalty", 0.0)
+                    _rp = repetition_penalty
+                    _rcs = max(1, min(_safe_int(job.get("repetition_context_size"), 30), 512))
+                    _pp = _admit_sampling_control(job, "presence_penalty")
                     if _rp and _rp > 1.0:
                         lp = make_logits_processors(
                             repetition_penalty=_rp,
@@ -4883,6 +5126,7 @@ def _mlx_worker_loop(
                     # : NO GPUSentinel — same rationale as generate path.
 
                     surface_control_state = _apply_surface_generation_controls(engine, model, job)
+                    _enforce_surface_controls_or_fail(job, surface_control_state)
                     try:
                         with metal_semaphore:
                             watchdog.start_job(str(job.get("id") or ""), "stream")
@@ -4902,7 +5146,25 @@ def _mlx_worker_loop(
                                         affect_interval=16,
                                         substrate_mem=substrate_mem,
                                     )
-                                except (ImportError, AttributeError, RuntimeError):
+                                except (ImportError, AttributeError, RuntimeError) as _stream_sent_exc:
+                                    if bool(job.get("clean_user_surface_contract", False)):
+                                        # Streamed tokens reach the user in real
+                                        # time — there is no post-hoc retraction,
+                                        # so decoding without the mid-generation
+                                        # guard is refused, not degraded.
+                                        _record_mlx_degradation(
+                                            _stream_sent_exc,
+                                            action="refused user-surface stream without TokenSentinel",
+                                            severity="critical",
+                                        )
+                                        raise RuntimeError(
+                                            f"token_sentinel_unavailable:{_stream_sent_exc}"
+                                        ) from _stream_sent_exc
+                                    _record_mlx_degradation(
+                                        _stream_sent_exc,
+                                        action="continued non-surface stream without TokenSentinel intervention checks",
+                                        severity="degraded",
+                                    )
                                     stream_sentinel = None
 
                                 # [STABILITY v60] Definitive scrub of legacy kwargs.
@@ -5009,7 +5271,18 @@ def _mlx_worker_loop(
                             finally:
                                 watchdog.stop_job()
                     finally:
-                        _restore_surface_generation_controls(surface_control_state)
+                        if not _restore_surface_generation_controls(surface_control_state):
+                            worker_active = False
+                            ipc_writer.put(
+                                {
+                                    "status": "degraded",
+                                    "action": "surface_restore_failed",
+                                    "message": (
+                                        "surface control restore failed; worker will exit "
+                                        "after this stream for a clean respawn"
+                                    ),
+                                }
+                            )
 
                     # One authoritative terminal frame, correlated to the
                     # request: consumers previously saw an id-less ok done
@@ -5294,6 +5567,11 @@ def _mlx_worker_loop(
                                 not _steering_active
                                 or isinstance(applied_alpha, bool)
                                 or not isinstance(applied_alpha, (int, float))
+                                # A numeric alpha outside the surface-control
+                                # admission range proves the clamp did NOT
+                                # produce this value — reject, don't trust.
+                                or not (0.0 < float(applied_alpha) <= 1.0)
+                                or surface_control_state.get("apply_errors")
                             ):
                                 body = {
                                     "status": "error",
@@ -5314,9 +5592,21 @@ def _mlx_worker_loop(
                                     progress=_latent_progress,
                                 )
                         finally:
-                            _restore_surface_generation_controls(
+                            if not _restore_surface_generation_controls(
                                 surface_control_state
-                            )
+                            ):
+                                worker_active = False
+                                ipc_writer.put(
+                                    {
+                                        "status": "degraded",
+                                        "action": "surface_restore_failed",
+                                        "message": (
+                                            "surface control restore failed; worker will "
+                                            "exit after this latent episode for a clean "
+                                            "respawn"
+                                        ),
+                                    }
+                                )
                         recycle_after_response = body.pop("requires_worker_recycle", False)
                         if body.pop("requires_cache_clear", False):
                             # Fast-weight erase unproven ⇒ pre-episode prompt
