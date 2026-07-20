@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Launch and verify the exact CP191 recurrence-checkpoint recovery phases."""
+"""Launch and verify certified resident-v3 checkpoint recovery phases."""
 
 from __future__ import annotations
 
