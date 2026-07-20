@@ -120,10 +120,22 @@ async def test_engine_think_no_response(engine):
 
 @pytest.mark.asyncio
 async def test_engine_health_check(engine):
+    # CP126: check_health previously returned "healthy" unconditionally —
+    # a zero-phase engine with no repository reported a full spectrum. The
+    # honest contract names its gaps.
     health = await engine.check_health()
-    assert health["status"] == "healthy"
+    assert health["status"] == "degraded"
+    assert "no_phases_loaded" in health["issues"]
+    assert "state_repository_absent" in health["issues"]
     assert health["modular"] is True
     assert "phases_count" in health
+
+    # Equipped engine reports healthy with no issues.
+    engine._phases = [object()]
+    engine.state_repository = object()
+    health = await engine.check_health()
+    assert health["status"] == "healthy"
+    assert health["issues"] == []
 
 @pytest.mark.asyncio
 async def test_reactive_recovery_does_not_hold_lock_while_rollback_runs(engine):
