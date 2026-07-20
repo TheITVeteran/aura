@@ -16,15 +16,17 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **Checkpoint 171 is the current
-  reviewed source candidate in the `main` worktree; checkpoints through CP170
+- Current bounded implementation milestone: **Checkpoint 175 is the current
+  reviewed source candidate in the `main` worktree; checkpoints through CP174
   are pushed. The corrected resident-32B path completed clean one-, two-, and
   five-step calibrations with finite durable checkpoints, exact source identity,
   no memory ratchet, and a 48-GiB MLX wired-residency limit. The full detached
-  576-step run is active from exact pushed CP147 source at step 525/576 with
-  finite losses and durable five-step checkpoints; it remains governed by the
-  24-hour training deadline and 26-hour containment timeout. No
-  reasoning-gain or frontier claim exists yet. Completed training,
+  576-step run completed from exact pushed CP147 source at step 576/576 with
+  one invocation, a passed detached receipt, finite losses, and durable
+  checkpoints. Its preterminal
+  acceptance target is now fixed and the terminal promotion gate independently
+  replays all 576 generated examples through the exact MLX tokenizer path. No
+  reasoning-gain or frontier claim exists yet. Full terminal promotion, freeze,
   independently administered authenticated role roots, the
   paired pilot, external-frontier comparison, and exact rebuilt-app proof remain
   open**. Checkpoint 80
@@ -246,7 +248,7 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   release, and causal-proof obligations remain open unless their rows
   explicitly close.
 - Overall completion percentage: **27% evidence-weighted planning estimate at
-  Checkpoint 168**. The exact
+  Checkpoint 175**. The exact
   Checkpoint 80 app earns bounded live credit for readiness, health, base boot,
   and one-attempt chat latency, but not output quality, sustained load, GUI
   frame SLO, portability, semantic review, release, or soak. The newly
@@ -268,7 +270,7 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   release, or soak credit yet and therefore does not move the rounded
   percentage.
 - Total checkpoint forecast: **approximately 292-399 total checkpoints for the
-  expanded program, with 162 checkpoints and approximately 130-237 remaining before
+  expanded program, with 175 checkpoints and approximately 117-224 remaining before
   final soak/release closure**. The Recursive Latent Cortex / Anima Rationis
   requirement adds **40-56 total checkpoints** for independent foundation
   review; seven-mechanism hardening; exact compute and lifecycle accounting;
@@ -20985,5 +20987,86 @@ output-binding supervisor from launch.
 
 Evidence-weighted completion remains 27%; this is checkpoint 174 of the faithful
 292-399 forecast, leaving approximately 118-225 checkpoints. No reasoning-gain,
+frontier, external-custody campaign, live-app, release, or soak credit is
+awarded. Final soaks remain deferred.
+
+## Checkpoint 2026-07-19-175: Terminal Training Promotion Gate
+
+CP175 builds the fail-closed admission path that a completed resident-32B
+recurrence adapter must traverse before immutable freeze. It turns the CP174
+preterminal contract into enforced evidence rather than a passive planning
+artifact.
+
+- Promotion replays the authoritative detached supervisor journal and rejects
+  orphan self-hashed receipts, no-op launchers, changed command generations,
+  incomplete containment, and substituted plans. It checks exact launcher,
+  worktree, wrapper, trainer, model, output root, resource envelope, and command
+  option identity.
+- The fixed acceptance contract is self-hash checked and bound into the final
+  verifier receipt. Its exact plan, four preterminal artifacts, model identity,
+  workload, optimizer, streamed-gradient method, producer sources, resource
+  minima, claim scope, limitations, and required successor gates must all match
+  the terminal producer generation.
+- Dataset validation reconstructs the complete trusted curriculum and now uses
+  the producer-equivalent `mlx_lm` tokenizer-only loader with the model's exact
+  EOS contract. A live preterminal replay reproduced all 576 examples, 36
+  factorial cells, 62,675 prompt tokens, and 8,907 answer tokens, with semantic
+  example root
+  `49df15f21294bd36e3450f473b82abec6ba338ae33cb9efce85414d02f7d0bec`.
+  Raw Hugging Face loading was explicitly rejected after it failed to reproduce
+  example zero; no 32B weights are loaded for token validation. Pre/post replay
+  hashes also proved one unchanged model-behavior bundle generation at
+  `7eb54f8b670bba6e5b37ae5f9c6d016e9628034951b3ee702ca0096123c5e674`.
+- Loss records must cover the exact configured cadence, preserve order and
+  terminal partial windows, and contain finite nonnegative values. Checkpoint
+  state must preserve exact sampler, order, cursor, epoch, invocation, artifact,
+  optimizer, and adapter tensor identities. Detached and trainer durations are
+  cross-checked against their timestamps and fixed timeout.
+- Safetensors parsing rejects duplicate JSON keys, non-finite metadata,
+  truncation, overlap, gaps, invalid shapes/dtypes, and unaccounted payload
+  bytes. Stable reads and repeated generation bindings reject cross-read
+  mutation.
+- The public `verify()` composition path is covered end to end over a real
+  on-disk fixture, with only journal, freeze, tokenizer, and live model identity
+  boundaries substituted; each boundary has separate production-path tests.
+  The emitted receipt can certify terminal training and immutable identity only,
+  and fixes pilot, reasoning-gain, frontier-gain, and external-attestation flags
+  to false.
+
+Validation is green: the focused promotion suite passes 29/29, the expanded
+trainer, contract, freeze, identity, campaign, and mechanics set passes 74/74,
+and the detached-supervisor lifecycle set passes 43/43 in 105.07 seconds.
+Repository lint, governance lint at the exact 1,875-call/1,760-bucket baseline,
+bytecode, formatting, diff checks, and all 20 closeout rubric criteria pass.
+
+The staged all-line audit mechanically enumerated 1,311,321 code lines but
+correctly returned FAIL rather than granting wholesale closeout. In addition to
+the expected dirty-worktree rejection, it found unregistered model-load owners
+in `tools/cortex_generation_upgrade.py` and the exact bound
+`tools/recurrence_native_train_v2.py`, plus direct `psutil.process_iter` and
+`psutil.virtual_memory` observations in
+`core/learning/cortex_generation_upgrade.py`. Those ownership findings remain
+open and must be closed before a clean all-line audit can pass.
+
+During that final audit, the detached trainer completed step 576/576 in one
+invocation. Its terminal supervisor receipt passed with return code zero and no
+timeout; the produced manifest binds adapter SHA-256
+`4bbd88d77a262cf4ef9c23b7c9c88044d0073832084988089a43813cd232ade0`.
+This records availability only: CP175 has not yet promoted, frozen, loaded, or
+benchmarked that adapter.
+
+The original detached run still does not causally bind its output root in the
+supervisor terminal event, and training began before CP174 was committed. CP175
+does not erase either limitation. It establishes the strongest honest internal
+mechanics admission available for this run; an externally claim-eligible
+reproduction still requires an output-binding supervisor from launch. CP176+
+must validate the terminal generation, freeze the exact adapter, run the fresh
+resident-32B frozen mechanics smoke, and then proceed through independently
+administered pilot, powered, external-frontier, live-desktop, release, and soak
+gates. It must also close the newly surfaced model-load and resource-observation
+ownership findings before rerunning the clean all-line audit.
+
+Evidence-weighted completion remains 27%; this is checkpoint 175 of the faithful
+292-399 forecast, leaving approximately 117-224 checkpoints. No reasoning-gain,
 frontier, external-custody campaign, live-app, release, or soak credit is
 awarded. Final soaks remain deferred.
