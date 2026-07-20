@@ -52,7 +52,9 @@ def _render(tokenizer, task):
     return prompt
 
 
-def _decode_answer(model, tokenizer, prepared, state, max_tokens: int):
+def _decode_answer(
+    model, tokenizer, prepared, state, max_tokens: int, envelope=None
+):
     """Greedy-decode an answer conditioned on the persisted slot state."""
     import mlx.core as mx
 
@@ -68,7 +70,7 @@ def _decode_answer(model, tokenizer, prepared, state, max_tokens: int):
     # harness, not a model result.
     produced: list[int] = []
     text = ""
-    for _ in range(max_tokens):
+    for index in range(max_tokens):
         logits = _persist_and_score(
             model,
             prepared.prompt_embeddings,
@@ -81,6 +83,13 @@ def _decode_answer(model, tokenizer, prepared, state, max_tokens: int):
             coda_start=prepared.coda_start,
         )
         token = int(mx.argmax(logits[0, -1]))
+        # Materialize and release before the next full forward. Each step
+        # re-runs the whole stack over a GROWING sequence, so without this
+        # the retained graphs are O(n^2) -- an unguarded version of this
+        # loop drove the host to 103 GB and forced a shutdown.
+        del logits
+        if envelope is not None:
+            envelope.reclaim(index)
         produced.append(token)
         text = tokenizer.decode(produced)
         if is_contract_complete(text):
@@ -140,6 +149,7 @@ def run_arm(
     depths: list[int],
     n_slots: int,
     max_tokens: int,
+    envelope=None,
 ) -> dict:
     import mlx.core as mx
 
@@ -185,14 +195,17 @@ def run_arm(
             if depth not in by_depth:
                 continue
             text = _decode_answer(
-                model, tokenizer, prepared, states[0], max_tokens
+                model, tokenizer, prepared, states[0], max_tokens, envelope
             )
             outcome = _score(task, text)
             by_depth[depth].append(outcome)
             by_family.setdefault(task.family, {}).setdefault(depth, []).append(
                 outcome
             )
-        mx.clear_cache()
+        if envelope is not None:
+            envelope.reclaim(force=True)
+        else:
+            mx.clear_cache()
     return {
         "by_depth": {
             str(depth): _tally(values) for depth, values in by_depth.items()
@@ -238,25 +251,39 @@ def main() -> int:
     parser.add_argument("--depths", default="1,2,4,8")
     parser.add_argument("--n-slots", type=int, default=4)
     parser.add_argument("--max-tokens", type=int, default=48)
+    parser.add_argument("--memory-fraction", type=float, default=0.35)
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
 
     from mlx_lm import load
 
+    from core.runtime.mlx_memory_guard import mlx_memory_envelope
+
     depths = [int(v) for v in args.depths.split(",") if v.strip()]
     families = [v.strip() for v in args.families.split(",") if v.strip()]
     started = time.time()
-    print(f"loading {args.model}", flush=True)
-    load_kwargs = {"adapter_path": args.adapter} if args.adapter else {}
-    model, tokenizer = load(args.model, **load_kwargs)
-    tasks = _load_tasks(families, args.task_depth, args.per_cell, args.eval_seed)
-    print(
-        f"{len(tasks)} eval tasks (seed {args.eval_seed}), depths {depths}",
-        flush=True,
-    )
-    result = run_arm(
-        model, tokenizer, tasks, depths, args.n_slots, args.max_tokens
-    )
+    with mlx_memory_envelope(fraction=args.memory_fraction) as envelope:
+        print(f"memory envelope: {envelope.to_receipt()}", flush=True)
+        print(f"loading {args.model}", flush=True)
+        load_kwargs = {"adapter_path": args.adapter} if args.adapter else {}
+        model, tokenizer = load(args.model, **load_kwargs)
+        tasks = _load_tasks(
+            families, args.task_depth, args.per_cell, args.eval_seed
+        )
+        print(
+            f"{len(tasks)} eval tasks (seed {args.eval_seed}), depths {depths}",
+            flush=True,
+        )
+        result = run_arm(
+            model,
+            tokenizer,
+            tasks,
+            depths,
+            args.n_slots,
+            args.max_tokens,
+            envelope,
+        )
+        envelope_receipt = envelope.to_receipt()
     print("\n=== exact-match accuracy by depth ===")
     for depth in depths:
         row = result["by_depth"][str(depth)]
@@ -288,6 +315,7 @@ def main() -> int:
         "max_tokens": args.max_tokens,
         "elapsed_s": round(time.time() - started, 3),
         "metric": "exact_match_correctness",
+        "memory_envelope": envelope_receipt,
         "claims_awarded": [],
         "results": result,
     }
