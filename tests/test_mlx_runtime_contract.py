@@ -746,9 +746,7 @@ def _install_worker_fakes(monkeypatch, mlx_worker, *, load_impl, steering_engine
             self.items = list(items)
             self.writes = []
 
-        def get(self, *_, timeout=None, **__):
-            # Mirrors the real loop contract: the worker polls with a bounded
-            # timeout. Over-reading an exhausted queue is still a test defect.
+        def get(self):
             if not self.items:
                 raise AssertionError("worker read from an empty fake request queue")
             return self.items.pop(0)
@@ -759,10 +757,6 @@ def _install_worker_fakes(monkeypatch, mlx_worker, *, load_impl, steering_engine
     class FakeIPCWriter:
         def __init__(self, response_queue):
             self.response_queue = response_queue
-            # The real writer exposes a broken-pipe event the loop checks
-            # every iteration; without it every pass raised AttributeError
-            # into the catch-and-continue handler — an infinite spin.
-            self.broken = types.SimpleNamespace(is_set=lambda: False)
 
         def start(self):
             return None
@@ -774,16 +768,16 @@ def _install_worker_fakes(monkeypatch, mlx_worker, *, load_impl, steering_engine
         def __init__(self, *_, **__):
             return None
 
-        def start(self, *_, **__):
+        def start(self):
             return None
 
-        def start_job(self, *_, **__):
+        def start_job(self):
             return None
 
-        def activity(self, *_, **__):
+        def activity(self):
             return None
 
-        def stop_job(self, *_, **__):
+        def stop_job(self):
             return None
 
     mlx_core = types.ModuleType("mlx.core")

@@ -1,0 +1,22 @@
+{
+  "model": "/Users/bryan/.aura/live-source/models/Qwen2.5-1.5B-Instruct-4bit",
+  "task_depth": 8,
+  "families": [
+    "khop",
+    "boolean",
+    "modular",
+    "register_trace",
+    "code_trace"
+  ],
+  "n_tasks": 15,
+  "mean_ce_by_depth": {
+    "1": 2.8376214106877646,
+    "2": 2.822485113143921,
+    "4": 2.7125746409098306,
+    "8": 2.638013172149658
+  },
+  "absolute_spread": 0.1996082385381066,
+  "relative_spread": 0.07034350593292388,
+  "best_depth": 8,
+  "verdict": "recurrence changes the loss; depth is a real lever"
+}

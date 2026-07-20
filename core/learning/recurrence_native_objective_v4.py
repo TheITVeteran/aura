@@ -41,6 +41,9 @@ from typing import Any, Sequence
 from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec
 from core.learning.recurrence_native_objective_v2 import (
     LivePathForward,
+    _advance_recurrent_states,
+    _persist_and_score,
+    _prepare_live_path,
     live_path_forward,
 )
 
@@ -193,6 +196,141 @@ def load_balance_penalty(weights: Sequence[float], branch_count: int) -> Any:
     return mx.array(
         sum((float(weight) - uniform) ** 2 for weight in weights) / branch_count
     )
+
+
+def trajectory_answer_losses(
+    model: Any,
+    prompt_tokens: Sequence[int],
+    answer_tokens: Sequence[int],
+    *,
+    spec: RLCExecutionSpec,
+    depth: int,
+    probe_steps: Sequence[int] | None = None,
+    bridge_tokens: Sequence[int] = (),
+) -> tuple[list[Any], list[Any]]:
+    """Answer CE decoded from intermediate states WITHIN one trajectory.
+
+    Every earlier objective scored only the final state, or compared
+    SEPARATE runs at different depths. Neither can see what the state does
+    step to step, which is how a period-2 limit cycle went unnoticed:
+    measured on the untrained 1.5B at depth 16, answer CE alternates and
+    both parities degrade monotonically (khop odd steps 2.00->2.25, even
+    steps 1.92->2.12), so the best answer arrives at step 2 and every step
+    after that makes it worse.
+
+    This returns the per-step answer losses and the per-step states, which
+    is the only signal that can force later steps to think rather than
+    spin. Probing every step costs one persist+score per step, so
+    ``probe_steps`` selects a subset for large models.
+
+    Returns ``(losses at probe steps, states at probe steps)``.
+    """
+    import mlx.core as mx
+    import mlx.nn as nn
+
+    if type(depth) is not int or depth < 1:
+        raise ValueError("depth must be a positive integer")
+    wanted = (
+        sorted({int(step) for step in probe_steps})
+        if probe_steps is not None
+        else list(range(1, depth + 1))
+    )
+    if not wanted or any(step < 1 or step > depth for step in wanted):
+        raise ValueError("probe_steps must be inside [1, depth]")
+
+    prepared = _prepare_live_path(
+        model,
+        prompt_tokens,
+        answer_tokens,
+        spec=spec.with_depth(depth),
+        bridge_tokens=tuple(bridge_tokens),
+    )
+    targets = mx.array(list(answer_tokens))[None, :]
+    states = list(prepared.states)
+    losses: list[Any] = []
+    probed: list[Any] = []
+    for step in range(depth):
+        states = _advance_recurrent_states(
+            model,
+            prepared.prompts_at_window,
+            states,
+            prepared.anchors,
+            spec.with_depth(depth),
+            step,
+            prepared.prelude_end,
+            prepared.coda_start,
+        )
+        if (step + 1) not in wanted:
+            continue
+        logits = _persist_and_score(
+            model,
+            prepared.prompt_embeddings,
+            prepared.seeds[0],
+            states[0],
+            prepared.tail_embeddings,
+            bridge_count=prepared.bridge_count,
+            answer_count=prepared.answer_count,
+            prelude_end=prepared.prelude_end,
+            coda_start=prepared.coda_start,
+        )
+        losses.append(nn.losses.cross_entropy(logits, targets, reduction="mean"))
+        probed.append(states[0])
+    return losses, probed
+
+
+def monotone_improvement_penalty(
+    step_losses: Sequence[Any],
+    *,
+    margin: float = 0.02,
+) -> Any:
+    """Require each probed step to beat the previous one by ``margin``.
+
+    This is the objective that separates thinking from spinning. The
+    previous step is gradient-detached so the optimizer cannot satisfy the
+    constraint by making EARLIER steps worse -- the only way through is to
+    make later steps genuinely better.
+    """
+    import mlx.core as mx
+
+    if len(step_losses) < 2:
+        return mx.zeros(())
+    step_margin = _validate_scalar("margin", margin, low=0.0, high=2.0)
+    penalty = mx.zeros(())
+    for previous, current in zip(step_losses, step_losses[1:]):
+        penalty = penalty + mx.maximum(
+            current - mx.stop_gradient(previous) + step_margin, 0.0
+        )
+    return penalty / (len(step_losses) - 1)
+
+
+def oscillation_penalty(states: Sequence[Any]) -> tuple[Any, list[float]]:
+    """Penalize period-2 ping-pong in the state trajectory.
+
+    Measured signature of the failure: successive update directions are
+    anti-correlated, so the state alternates between two phases instead of
+    advancing. Penalizing negative cosine between consecutive deltas
+    targets exactly that, leaving consistent motion (cos > 0) free.
+
+    Returns ``(penalty, detached consecutive-delta cosines)``.
+    """
+    import mlx.core as mx
+
+    if len(states) < 3:
+        return mx.zeros(()), []
+    deltas = [
+        mx.reshape(current - previous, (-1,))
+        for previous, current in zip(states, states[1:])
+    ]
+    penalty = mx.zeros(())
+    cosines: list[float] = []
+    for previous, current in zip(deltas, deltas[1:]):
+        denominator = mx.maximum(
+            mx.linalg.norm(previous) * mx.linalg.norm(current), 1e-9
+        )
+        cosine = mx.sum(previous * current) / denominator
+        penalty = penalty + mx.maximum(-cosine, 0.0)
+        cosines.append(float(cosine))
+    return penalty / len(cosines), cosines
 
 
 def adaptive_depth_loss(
@@ -360,5 +498,89 @@ __all__ = [
     "depth_curriculum_loss_v4",
     "load_balance_penalty",
     "pairwise_separations",
+    "monotone_improvement_penalty",
+    "oscillation_penalty",
     "softmin_answer_loss",
+    "trajectory_answer_losses",
+    "trajectory_loss_v4",
 ]
+
+
+def trajectory_loss_v4(
+    model: Any,
+    prompt_tokens: Sequence[int],
+    answer_tokens: Sequence[int],
+    *,
+    spec: RLCExecutionSpec,
+    depth: int = 8,
+    probe_steps: Sequence[int] | None = None,
+    improvement_weight: float = 1.0,
+    improvement_margin: float = 0.02,
+    oscillation_weight: float = 0.5,
+    final_weight: float = 1.0,
+    bridge_tokens: Sequence[int] = (),
+) -> tuple[Any, dict[str, Any]]:
+    """The objective that trains recurrence to THINK rather than spin.
+
+    Three terms, each answering a measured failure:
+
+    * ``final``       — the endpoint answer must be good (what v2/v3 had).
+    * ``improvement`` — every probed step must beat the previous one by a
+      margin. Measured failure: answer CE peaks at step 2 and degrades
+      monotonically thereafter (khop best->last +10.3%), so extra depth was
+      cost without cognition.
+    * ``oscillation`` — consecutive update directions must not be
+      anti-correlated. Measured failure: a period-2 limit cycle in which
+      the state ping-pongs between two phases while both degrade.
+
+    Together these make "later steps produce measurably better answers" a
+    trained property instead of an assumption. Telemetry returns the full
+    per-step curve so the property is auditable every step, not inferred.
+    """
+    import mlx.core as mx
+
+    improve_scale = _validate_scalar(
+        "improvement_weight", improvement_weight, low=0.0, high=10.0
+    )
+    oscillate_scale = _validate_scalar(
+        "oscillation_weight", oscillation_weight, low=0.0, high=10.0
+    )
+    final_scale = _validate_scalar(
+        "final_weight", final_weight, low=0.0, high=10.0
+    )
+    step_losses, states = trajectory_answer_losses(
+        model,
+        prompt_tokens,
+        answer_tokens,
+        spec=spec,
+        depth=depth,
+        probe_steps=probe_steps,
+        bridge_tokens=bridge_tokens,
+    )
+    improvement = monotone_improvement_penalty(
+        step_losses, margin=improvement_margin
+    )
+    oscillation, cosines = oscillation_penalty(states)
+    final = step_losses[-1]
+    loss = (
+        final_scale * final
+        + improve_scale * improvement
+        + oscillate_scale * oscillation
+    )
+    detached = [float(value) for value in step_losses]
+    improving = sum(
+        1 for index in range(1, len(detached)) if detached[index] < detached[index - 1]
+    )
+    telemetry = {
+        "schema": RECURRENCE_NATIVE_SCHEMA_V4,
+        "depth": int(depth),
+        "step_losses": [round(value, 6) for value in detached],
+        "best_step_index": int(min(range(len(detached)), key=detached.__getitem__)),
+        "improving_steps": improving,
+        "probed_steps": len(detached),
+        "improvement_penalty": round(float(improvement), 6),
+        "oscillation_penalty": round(float(oscillation), 6),
+        "delta_cosines": [round(value, 6) for value in cosines],
+        "final_loss": round(float(final), 6),
+    }
+    return loss, telemetry

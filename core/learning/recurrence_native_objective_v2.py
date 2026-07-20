@@ -16,6 +16,7 @@ positions. Tiny-Qwen parity tests compare it directly with the live cache path.
 """
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -50,6 +51,31 @@ _LAYER_CHECKPOINTS: ContextVar[_LayerCheckpointState | None] = ContextVar(
     "aura_recurrence_layer_checkpoints",
     default=None,
 )
+
+# Per-step phase scale. A ContextVar rather than an RLCExecutionSpec field
+# on purpose: the spec is hash-bound into adapter identity receipts, so
+# adding a key would invalidate every existing bundle. Default 0.0 keeps
+# behavior bit-identical unless a caller explicitly opts in.
+_PHASE_SCALE: ContextVar[float] = ContextVar(
+    "aura_recurrence_phase_scale",
+    default=0.0,
+)
+
+
+@contextmanager
+def recurrent_phase(scale: float) -> Iterator[None]:
+    """Give each recurrent step an identity for the duration of a forward."""
+    if (
+        isinstance(scale, bool)
+        or not isinstance(scale, (int, float))
+        or not 0.0 <= float(scale) <= 1.0
+    ):
+        raise ValueError("phase scale must be inside [0, 1]")
+    token = _PHASE_SCALE.set(float(scale))
+    try:
+        yield
+    finally:
+        _PHASE_SCALE.reset(token)
 
 
 @dataclass(frozen=True)
@@ -209,15 +235,52 @@ def _prelude_prompt_and_slots(
     return hidden[:, :prompt_length, :], hidden[:, prompt_length:, :]
 
 
+def recurrent_phase_code(step: int, hidden: int) -> Any:
+    """Parameter-free sinusoidal code identifying a recurrent step (CP210).
+
+    The recurrence applies the SAME operator every step, so no step can
+    know which step it is and no staged algorithm (encode -> retrieve ->
+    compare -> verify) is expressible. Measured consequence: the operator
+    is a contraction (residual 0.302 -> 0.026, asymptoting) that reaches a
+    fixed point by step ~10 and stops computing — which is why depth
+    saturates at 8, why deeper mildly hurts, and why branches (all falling
+    into the same fixed point) collapse.
+
+    Injecting this code gives each step an identity, exactly as positional
+    encoding differentiates otherwise-identical tokens. Measured on the
+    untrained 1.5B over khop: best-depth CE 1.8072 -> 1.6958 (-6.2%), with
+    the gain GROWING at depth (d4 -2.4%, d8 -6.2%, d16 -7.6%).
+
+    It is an input-side signal, so it does not by itself break the
+    contraction (residual ratio moved only 0.1142 -> 0.1048); a trained
+    phase-conditioned OPERATOR is required for that. This is the free part.
+    """
+    import mlx.core as mx
+
+    positions = mx.arange(hidden, dtype=mx.float32)
+    frequency = mx.exp(
+        -math.log(10000.0) * (2 * mx.floor(positions / 2)) / hidden
+    )
+    angle = float(step) * frequency
+    return mx.where(positions % 2 == 0, mx.sin(angle), mx.cos(angle))
+
+
 def _window_pass(
     model: Any,
     prompt_at_window: Any,
     slots: Any,
     prelude_end: int,
     coda_start: int,
+    *,
+    phase_step: int | None = None,
 ) -> Any:
     import mlx.core as mx
 
+    phase_scale = _PHASE_SCALE.get()
+    if phase_step is not None and phase_scale > 0.0:
+        rms = mx.sqrt(mx.mean(mx.square(slots)) + 1e-9)
+        code = recurrent_phase_code(phase_step, int(slots.shape[-1]))
+        slots = slots + phase_scale * rms * code[None, None, :]
     prompt_length = int(prompt_at_window.shape[1])
     slot_count = int(slots.shape[1])
     prompt_hidden = prompt_at_window
@@ -330,6 +393,7 @@ def _advance_recurrent_states(
             state,
             prelude_end,
             coda_start,
+            phase_step=step,
         )
         updated.append(
             (1.0 - alpha) * state

@@ -33,8 +33,11 @@ from core.learning.recurrence_native_objective_v4 import (  # noqa: E402
     branch_decorrelation_penalty,
     depth_curriculum_loss_v4,
     load_balance_penalty,
+    monotone_improvement_penalty,
+    oscillation_penalty,
     pairwise_separations,
     softmin_answer_loss,
+    trajectory_loss_v4,
 )
 
 PROMPT = [5, 9, 17, 3, 42]
@@ -361,4 +364,103 @@ def test_adaptive_depth_validates_inputs():
     with pytest.raises(ValueError, match="compute_price"):
         adaptive_depth_loss(
             [mx.array(1.0), mx.array(1.0)], (1, 2), compute_price=5.0
+        )
+
+
+# ── Trajectory objective: thinking vs spinning ──────────────────────────
+
+
+def test_monotone_improvement_penalizes_a_degrading_trajectory():
+    """The measured failure: CE peaks at step 2 then degrades monotonically."""
+    degrading = [mx.array(v) for v in (1.92, 2.04, 2.08, 2.12, 2.15)]
+    improving = [mx.array(v) for v in (2.15, 2.02, 1.94, 1.88, 1.80)]
+    # mean over 4 transitions of relu(delta + margin): (0.14+0.06+0.06+0.05)/4
+    assert float(monotone_improvement_penalty(degrading, margin=0.02)) == pytest.approx(
+        0.0775, abs=1e-4
+    )
+    # A trajectory that actually improves clears the hinge entirely.
+    assert float(monotone_improvement_penalty(improving, margin=0.02)) == 0.0
+
+
+def test_improvement_cannot_be_won_by_damaging_earlier_steps():
+    """Previous step is gradient-detached: the only way through the hinge
+    is to make LATER steps genuinely better."""
+
+    def penalty_for_earlier(earlier):
+        return monotone_improvement_penalty(
+            [earlier, mx.array(2.0)], margin=0.02
+        )
+
+    def penalty_for_later(later):
+        return monotone_improvement_penalty(
+            [mx.array(2.0), later], margin=0.02
+        )
+
+    assert float(mx.grad(penalty_for_earlier)(mx.array(2.0))) == 0.0
+    assert float(mx.grad(penalty_for_later)(mx.array(2.0))) == 1.0
+
+
+def test_oscillation_penalty_targets_the_measured_period_2_cycle():
+    """Ping-pong (anti-correlated deltas) is penalized; consistent motion
+    in one direction rides free."""
+    base = mx.ones((1, 4, 8))
+    step = 0.1 * mx.ones((1, 4, 8))
+    ping_pong = [base, base + step, base, base + step, base]
+    advancing = [base + float(index) * step for index in range(5)]
+
+    osc_penalty, osc_cos = oscillation_penalty(ping_pong)
+    adv_penalty, adv_cos = oscillation_penalty(advancing)
+
+    assert float(osc_penalty) > 0.9  # deltas are anti-parallel
+    assert all(value < -0.9 for value in osc_cos)
+    assert float(adv_penalty) == 0.0
+    assert all(value > 0.9 for value in adv_cos)
+
+
+def test_oscillation_needs_three_states():
+    penalty, cosines = oscillation_penalty([mx.ones((1, 2, 4))])
+    assert float(penalty) == 0.0 and cosines == []
+
+
+def test_trajectory_loss_scores_every_probed_step_and_reports_the_curve():
+    model = _model()
+    spec = _spec(branch_roles=("constructive_solution",))
+    loss, telemetry = trajectory_loss_v4(
+        model, PROMPT, ANSWER, spec=spec, depth=4
+    )
+    assert bool(mx.isfinite(loss))
+    assert telemetry["probed_steps"] == 4
+    assert len(telemetry["step_losses"]) == 4
+    assert len(telemetry["delta_cosines"]) == 2
+    assert 0 <= telemetry["best_step_index"] < 4
+    assert telemetry["improvement_penalty"] >= 0.0
+    assert telemetry["oscillation_penalty"] >= 0.0
+
+
+def test_trajectory_loss_is_learnable_through_the_recurrent_adapter():
+    model = _model()
+    spec = _spec(branch_roles=("constructive_solution",))
+
+    def loss_for_b(lora_b):
+        model.model.layers[1].self_attn.o_proj.lora_b = lora_b
+        loss, _telemetry = trajectory_loss_v4(
+            model, PROMPT, ANSWER, spec=spec, depth=3
+        )
+        return loss
+
+    wrapped = model.model.layers[1].self_attn.o_proj
+    gradient = mx.grad(loss_for_b)(wrapped.lora_b)
+    assert float(mx.linalg.norm(mx.reshape(gradient, (-1,)))) > 0.0
+
+
+def test_probe_steps_subset_bounds_cost_on_large_models():
+    model = _model()
+    spec = _spec(branch_roles=("constructive_solution",))
+    _loss, telemetry = trajectory_loss_v4(
+        model, PROMPT, ANSWER, spec=spec, depth=8, probe_steps=(1, 4, 8)
+    )
+    assert telemetry["probed_steps"] == 3
+    with pytest.raises(ValueError, match="probe_steps"):
+        trajectory_loss_v4(
+            model, PROMPT, ANSWER, spec=spec, depth=4, probe_steps=(1, 9)
         )

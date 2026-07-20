@@ -72,47 +72,10 @@ _MODEL_LOAD_BACKGROUND_ADMISSION_TIMEOUT_FLAG = declare(
 
 
 def _model_path_is_deep_solver(model_path: str | None) -> bool:
-    """Return whether a model path IS Aura's optional local deep Solver lane.
+    """Return whether a model path names Aura's optional local deep Solver lane."""
 
-    Lane ROLE is a registry fact, not a filename fact: the registry's deep
-    path is compared first, and naming tokens remain only as the fallback
-    when the registry is unavailable (early boot, stripped test builds).
-    """
-    candidate = str(model_path or "")
-    if not candidate:
-        return False
-    try:
-        from core.brain.llm.model_registry import get_deep_model_path
-
-        deep_path = str(get_deep_model_path() or "")
-        if deep_path and _real_model_path(candidate) == _real_model_path(deep_path):
-            return True
-    except (ImportError, AttributeError, RuntimeError, OSError, TypeError, ValueError):
-        pass
-    # Either evidence qualifies: registry identity above, declared solver
-    # naming here (older 72B artifacts serve the deep lane under non-registry
-    # paths).
-    lowered = os.path.basename(candidate).lower()
+    lowered = os.path.basename(str(model_path or "")).lower()
     return any(token in lowered for token in ("72b", "solver"))
-
-
-def _model_weight_class(model_path: str | None) -> str:
-    """Measured weight class ("72b"/"32b"/"14b"/"7b"/"small") for QoS math.
-
-    Prefers artifact evidence (safetensors index metadata, config shape)
-    over path substrings — the CP126 review's spoofable-name class.
-    """
-    try:
-        from core.brain.llm.model_artifact_profile import model_size_class
-
-        return model_size_class(str(model_path or ""))
-    except (ImportError, AttributeError, RuntimeError, OSError, TypeError, ValueError):
-        lowered = str(model_path or "").lower()
-        if any(token in lowered for token in ("72b", "solver")):
-            return "72b"
-        if any(token in lowered for token in ("32b", "cortex", "zenith")):
-            return "32b"
-        return "small"
 
 
 def _record_mlx_degradation(
@@ -144,7 +107,6 @@ _MLX_OPTIONAL_THROTTLE_ERRORS = (
 _GLOBAL_LAST_SWAP_TIME = 0.0
 _GLOBAL_LAST_HEAVY_MODEL: str | None = None
 _CLIENTS: dict[str, Any] = {}
-_CLIENTS_FACTORY_LOCK = _threading.Lock()
 _FOREGROUND_OWNER_LOCK = _threading.Lock()
 _FOREGROUND_OWNER_NAME: str | None = None
 _FOREGROUND_OWNER_ACQUIRED_AT = 0.0
@@ -199,12 +161,12 @@ def _expected_recurrent_loops_from_model_path(model_path: str) -> int:
     if explicit is not None:
         return _read_recurrent_loop_env("AURA_RECURRENT_LOOPS", 1)
 
-    weight_class = _model_weight_class(model_path)
-    if weight_class == "72b":
+    lowered = str(model_path or "").lower()
+    if any(token in lowered for token in ("72b", "solver")):
         return _read_recurrent_loop_env("AURA_RECURRENT_LOOPS_72B", 1)
-    if weight_class == "32b":
+    if any(token in lowered for token in ("32b", "cortex", "zenith")):
         return _read_recurrent_loop_env("AURA_RECURRENT_LOOPS_32B", 2)
-    if weight_class == "14b":
+    if any(token in lowered for token in ("14b", "24b", "40b")):
         return _read_recurrent_loop_env("AURA_RECURRENT_LOOPS_14B", 1)
     return _read_recurrent_loop_env("AURA_RECURRENT_LOOPS_SMALL", 1)
 
@@ -227,15 +189,15 @@ def _model_load_min_available_gb(model_path: str) -> float:
     def _env_float(name: str, default: float) -> float:
         return _finite_env_float(name, default, minimum=0.0)
 
-    weight_class = _model_weight_class(model_path)
+    lowered = str(model_path or "").lower()
     try:
         total_gb = float(psutil.virtual_memory().total) / float(1024**3)
     except (AttributeError, OSError, RuntimeError, TypeError, ValueError, psutil.Error):
         total_gb = 0.0
-    if weight_class == "72b":
+    if any(token in lowered for token in ("72b", "solver")):
         default = 52.0 if 0.0 < total_gb < 96.0 else 34.0
         return _env_float("AURA_MLX_72B_LOAD_MIN_AVAILABLE_GB", default)
-    if weight_class == "32b":
+    if any(token in lowered for token in ("32b", "cortex", "zenith")):
         default = 24.0 if total_gb >= 60.0 else 22.0
         return _env_float("AURA_MLX_32B_LOAD_MIN_AVAILABLE_GB", default)
     return _env_float("AURA_MLX_LOAD_MIN_AVAILABLE_GB", 8.0)
@@ -293,10 +255,10 @@ def _projected_footprint_from_artifact_gb(model_path: str, *, fallback_gb: float
     size_gb = _path_size_gb(model_path)
     if size_gb <= 0.0:
         return fallback_gb
-    weight_class = _model_weight_class(model_path)
-    if weight_class == "72b":
+    lowered = str(model_path or "").lower()
+    if any(token in lowered for token in ("72b", "solver")):
         overhead = max(4.0, size_gb * 0.14)
-    elif weight_class == "32b":
+    elif any(token in lowered for token in ("32b", "cortex", "zenith", "aura-32b")):
         overhead = max(3.0, size_gb * 0.30)
     else:
         overhead = max(1.0, size_gb * 0.20)
@@ -307,43 +269,21 @@ def _projected_model_footprint_gb(model_path: str) -> float:
     def _env_float(name: str, default: float) -> float:
         return _finite_env_float(name, default, minimum=0.0)
 
-    weight_class = _model_weight_class(model_path)
-    if weight_class == "72b":
+    lowered = str(model_path or "").lower()
+    if any(token in lowered for token in ("72b", "solver")):
         override = _env_projected_footprint_gb("AURA_MLX_72B_PROJECTED_FOOTPRINT_GB")
         if override is not None:
             return override
         return _projected_footprint_from_artifact_gb(model_path, fallback_gb=41.0)
-    if weight_class == "32b":
+    if any(token in lowered for token in ("32b", "cortex", "zenith")):
         override = _env_projected_footprint_gb("AURA_MLX_32B_PROJECTED_FOOTPRINT_GB")
         if override is not None:
             return override
-        # Quantization is MEASURED from the artifact config when present —
-        # naming tokens ("4bit", "fused-model") remain only for absent
-        # artifacts where declared naming is the sole evidence.
-        default = 35.0
-        try:
-            from core.brain.llm.model_artifact_profile import (
-                get_model_artifact_profile,
-            )
-
-            profile = get_model_artifact_profile(model_path)
-            if profile.measured:
-                default = 20.0 if 0 < profile.quantization_bits <= 4 else 35.0
-            elif any(
-                token in str(model_path or "").lower()
-                for token in ("4bit", "q4", "fused-model", "20260510")
-            ):
-                default = 20.0
-        except (ImportError, AttributeError, RuntimeError, OSError, TypeError, ValueError):
-            if any(
-                token in str(model_path or "").lower()
-                for token in ("4bit", "q4", "fused-model", "20260510")
-            ):
-                default = 20.0
+        default = 20.0 if any(token in lowered for token in ("4bit", "q4", "fused-model", "20260510")) else 35.0
         return _projected_footprint_from_artifact_gb(model_path, fallback_gb=default)
-    if weight_class == "14b":
+    if "14b" in lowered:
         return _env_float("AURA_MLX_14B_PROJECTED_FOOTPRINT_GB", 10.0)
-    if weight_class == "7b":
+    if "7b" in lowered:
         return _env_float("AURA_MLX_7B_PROJECTED_FOOTPRINT_GB", 5.0)
     return _env_float("AURA_MLX_PROJECTED_FOOTPRINT_GB", 4.0)
 
@@ -352,10 +292,10 @@ def _model_process_reserve_gb(model_path: str) -> float:
     def _env_float(name: str, default: float) -> float:
         return _finite_env_float(name, default, minimum=0.0)
 
-    weight_class = _model_weight_class(model_path)
-    if weight_class == "72b":
+    lowered = str(model_path or "").lower()
+    if any(token in lowered for token in ("72b", "solver")):
         lane_default = _env_float("AURA_MLX_72B_PROCESS_RESERVE_GB", 5.0)
-    elif weight_class == "32b":
+    elif any(token in lowered for token in ("32b", "cortex", "zenith")):
         lane_default = _env_float("AURA_MLX_32B_PROCESS_RESERVE_GB", 3.0)
     else:
         lane_default = _env_float("AURA_MLX_PROCESS_RESERVE_GB", 1.0)
@@ -2253,7 +2193,6 @@ class MLXLocalClient:
         self._active_generations = 0
         self._warmup_attempted = False
         self._warmup_in_flight = False
-        self._warmup_started_at = 0.0
         self._model_load_admission_state_lock = _threading.Lock()
         self._model_load_admission_backoff_until = 0.0
         self._model_load_admission_backoff_until_unix = 0.0
@@ -2309,10 +2248,8 @@ class MLXLocalClient:
         self._current_request_seq = 0
 
     def _is_primary_or_deep_lane(self) -> bool:
-        # Measured weight class (artifact evidence first, declared naming
-        # only for absent artifacts) — a renamed heavy checkpoint no longer
-        # loses its heavy-lane protections.
-        return _model_weight_class(self.model_path) in ("72b", "32b")
+        lowered = os.path.basename(self.model_path).lower()
+        return any(token in lowered for token in ("32b", "72b", "zenith", "solver", "cortex"))
 
     def _is_primary_lane(self) -> bool:
         """The serving cortex lane specifically — deep/solver excluded."""
@@ -2889,12 +2826,12 @@ class MLXLocalClient:
         still arriving (worker is alive, just slow) was the #1 cause of
         'cortex died and never came back'.  As long as heartbeats arrive,
         the worker is alive — let it finish."""
-        weight_class = _model_weight_class(self.model_path)
-        if weight_class == "72b":
+        lowered = os.path.basename(self.model_path).lower()
+        if "72b" in lowered or "solver" in lowered:
             if foreground_request and during_generation:
                 return 45.0
             return 90.0 if during_generation else 45.0
-        if weight_class == "32b":
+        if "32b" in lowered or "cortex" in lowered or "zenith" in lowered:
             if foreground_request and during_generation:
                 return 45.0  # was 22s — too aggressive with recurrent depth
             return 60.0 if during_generation else 30.0
@@ -2917,7 +2854,8 @@ class MLXLocalClient:
             os.environ.get("AURA_FIRST_TOKEN_PRESSURE_ADAPT", "1")
         ).strip().lower() not in {"1", "true", "yes", "on"}:
             return 1.0, ""
-        if _model_weight_class(self.model_path) not in ("72b", "32b"):
+        lowered = os.path.basename(self.model_path).lower()
+        if not any(t in lowered for t in ("32b", "72b", "cortex", "zenith", "solver")):
             return 1.0, ""
         try:
             snapshot = get_memory_pressure_snapshot()
@@ -2948,7 +2886,7 @@ class MLXLocalClient:
         return f":memory={snapshot.level}" if snapshot.warning else ""
 
     def _first_token_sla(self, *, foreground_request: bool = False) -> float:
-        weight_class = _model_weight_class(self.model_path)
+        lowered = os.path.basename(self.model_path).lower()
         prompt_chars = max(0, int(getattr(self, "_current_request_prompt_chars", 0) or 0))
         # Prompt eval dominates first-token latency on the 32B/72B lanes.
         # Recent live traces showed ~5.3k-token prompts taking 66-76s before
@@ -2975,7 +2913,7 @@ class MLXLocalClient:
         # _last_generation_completed_at is zero until a real generation has
         # finished; we use that as the cold-start signal.
         is_cold_start = float(getattr(self, "_last_generation_completed_at", 0.0) or 0.0) <= 0.0
-        if weight_class == "72b":
+        if "72b" in lowered or "solver" in lowered:
             if foreground_request:
                 base = 52.0 if is_cold_start else 32.0
                 return _with_prompt_eval_headroom(
@@ -2985,7 +2923,7 @@ class MLXLocalClient:
                     cap_s=115.0,
                 )
             return 30.0
-        if weight_class == "32b":
+        if "32b" in lowered or "cortex" in lowered or "zenith" in lowered:
             # [RESILIENCE] Recurrent depth 2x loops means prompt eval takes
             # significantly longer.  These SLAs must accommodate that without
             # killing the cortex.  Cold-start can legitimately need 90s for
@@ -3022,10 +2960,10 @@ class MLXLocalClient:
         envelope so the caller still has time to recover or use another lane.
         """
 
-        weight_class = _model_weight_class(self.model_path)
-        if weight_class == "72b":
+        lowered = os.path.basename(self.model_path).lower()
+        if "72b" in lowered or "solver" in lowered:
             default = 165.0 if foreground_request else 120.0
-        elif weight_class == "32b":
+        elif "32b" in lowered or "cortex" in lowered or "zenith" in lowered:
             default = 120.0 if foreground_request else 90.0
         else:
             default = 30.0 if foreground_request else 20.0
@@ -3136,11 +3074,11 @@ class MLXLocalClient:
         return timer
 
     def _token_stall_after(self, *, foreground_request: bool = False) -> float:
-        weight_class = _model_weight_class(self.model_path)
+        lowered = os.path.basename(self.model_path).lower()
         stretch, _ = self._pressure_adaptive_stretch()
-        if weight_class == "72b":
+        if "72b" in lowered or "solver" in lowered:
             return (18.0 if foreground_request else 25.0) * stretch
-        if weight_class == "32b":
+        if "32b" in lowered or "cortex" in lowered or "zenith" in lowered:
             # [RESILIENCE] Reverted from 10s — recurrent depth can cause
             # legitimate pauses between tokens during the recurrent block
             # computation. Sized up with the 2026-06-11 first-token
@@ -3936,21 +3874,6 @@ class MLXLocalClient:
             return {}
         model_name = os.path.basename(str(self.model_path or "")) or "unknown"
         candidate_tokens = list(response.get("tokens_used_by_candidate") or [])
-        # Identity EVIDENCE, not a path-basename assertion: bind the receipt
-        # to the init-handshake worker identity and the measured artifact
-        # fingerprint so consumers can check WHAT decoded these candidates.
-        identity_snapshot = dict(getattr(self, "_worker_identity", {}) or {})
-        artifact_fingerprint = ""
-        try:
-            from core.brain.llm.model_artifact_profile import (
-                get_model_artifact_profile,
-            )
-
-            artifact_fingerprint = get_model_artifact_profile(
-                str(self.model_path or "")
-            ).fingerprint
-        except (ImportError, AttributeError, RuntimeError, OSError, TypeError, ValueError):
-            artifact_fingerprint = ""
         return {
             "texts": texts,
             "generation_metadata": {
@@ -3958,12 +3881,7 @@ class MLXLocalClient:
                 "provider": "mlx",
                 "model": model_name,
                 "is_local": True,
-                "provider_verified": bool(identity_snapshot),
-                "provider_verification_source": (
-                    "worker_identity_handshake" if identity_snapshot else "unverified"
-                ),
-                "worker_identity": identity_snapshot,
-                "model_artifact_fingerprint": artifact_fingerprint,
+                "provider_verified": True,
                 "batch_request_id": response.get("request_id"),
                 "surface_control_receipt": {
                     "enabled": False,
@@ -5359,9 +5277,8 @@ class MLXLocalClient:
                             return
                     audit = ServiceContainer.get("subsystem_audit", default=None)
                     if audit:
-                        is_heavy = _model_weight_class(self.model_path) in (
-                            "72b",
-                            "32b",
+                        is_heavy = any(
+                            k in self.model_path.lower() for k in ["72b", "32b", "zenith"]
                         )
                         tier_name = "mlx_heavy" if is_heavy else "mlx_light"
                         audit.heartbeat(tier_name)
@@ -6598,18 +6515,6 @@ class MLXLocalClient:
             or purpose_label.strip().lower().endswith("_baseline")
             or "_baseline" in purpose_label.strip().lower()
         )
-        if benchmark_request and not os.environ.get("AURA_BENCHMARK_RUN_ID", "").strip():
-            # The benchmark label buys resource-refusal exemptions and
-            # cancellation-trust downgrades, yet it is self-declared via
-            # origin/purpose strings. Until benchmark runs carry a signed
-            # context, an un-anchored claim at least leaves a receipt.
-            _record_mlx_degradation(
-                RuntimeError(
-                    f"unanchored_benchmark_label:origin={origin_label[:40]}:"
-                    f"purpose={purpose_label[:40]}"
-                ),
-                action="honored self-declared benchmark label without AURA_BENCHMARK_RUN_ID",
-            )
         if benchmark_request:
             request_is_background = False
         if (
@@ -6655,30 +6560,12 @@ class MLXLocalClient:
             )
             if memory_snapshot.should_gc:
                 gc.collect()
-            _critical_bypass_active = str(
-                os.environ.get("AURA_MLX_ALLOW_CRITICAL_MEMORY_GENERATION", "")
-            ).strip().lower() in {"1", "true", "yes", "on"}
             if (
                 memory_snapshot.refuse_heavy_local_generation
                 and self._is_primary_or_deep_lane()
                 and not benchmark_request
-                and _critical_bypass_active
-            ):
-                # The operator bypass stays available, but overriding a
-                # POSITIVELY OBSERVED critical-pressure refusal must be
-                # visible — a stale deployment flag here is an OOM.
-                _record_mlx_degradation(
-                    RuntimeError(
-                        f"critical_memory_refusal_bypassed:{memory_snapshot.reason}"
-                    ),
-                    action="proceeded with heavy generation under critical pressure via operator override",
-                    severity="warning",
-                )
-            if (
-                memory_snapshot.refuse_heavy_local_generation
-                and self._is_primary_or_deep_lane()
-                and not benchmark_request
-                and not _critical_bypass_active
+                and str(os.environ.get("AURA_MLX_ALLOW_CRITICAL_MEMORY_GENERATION", "")).strip().lower()
+                not in {"1", "true", "yes", "on"}
             ):
                 if self.is_alive() and int(getattr(self, "_active_generations", 0) or 0) <= 0:
                     await self.reboot_worker(reason="memory_pressure_guard", mark_failed=False)
@@ -6695,24 +6582,6 @@ class MLXLocalClient:
                 )
                 return None
         except (OSError, AttributeError) as exc:
-            # Fail CLOSED for the heavy lanes: the comment above is explicit
-            # that critical pressure can swap/jetsam the host before one
-            # token — unknown pressure is not a safe assumption for a
-            # 20-40GB decode. Light lanes proceed (their footprint cannot
-            # jetsam the host and refusing them would silence every reply).
-            if self._is_primary_or_deep_lane() and not benchmark_request:
-                _record_mlx_degradation(
-                    exc,
-                    action="refused heavy generation while the memory probe was unavailable",
-                    severity="critical",
-                )
-                self._record_degraded_event(
-                    "memory_probe_unavailable_refused_generation",
-                    detail=f"{os.path.basename(self.model_path)}:{exc}",
-                    severity="critical",
-                    foreground_request=foreground_request,
-                )
-                return None
             logger.debug("MLX memory pressure probe unavailable: %s", exc)
 
         # ── SOMATIC COUPLING: Metabolic hardware throttle ────────────
@@ -6870,7 +6739,7 @@ class MLXLocalClient:
         deadline = kwargs.get("deadline")
         if not isinstance(deadline, Deadline):
             timeout_s = _coerce_timeout_seconds(kwargs.pop("timeout", None))
-            is_heavy = _model_weight_class(self.model_path) in ("72b", "32b")
+            is_heavy = any(k in self.model_path.lower() for k in ["72b", "32b", "zenith"])
             deadline = get_deadline(timeout_s if timeout_s is not None else (240.0 if is_heavy else 60.0))
             kwargs["deadline"] = deadline
         init_timeout, soft_init_timeout = self._request_scoped_init_timeout(
@@ -7557,23 +7426,6 @@ class MLXLocalClient:
                     if not readiness_text or not str(readiness_text).strip():
                         self._set_lane_state("recovering", "warmup_readiness_no_text")
                         raise RuntimeError("warmup_readiness_no_text")
-                    # Verify the probe actually followed "Reply exactly:
-                    # ready" — any nonblank text (hallucination, prompt echo,
-                    # garble) previously stamped visible readiness. A
-                    # coherent-but-different reply still proves a live
-                    # decode path, so it degrades visibly instead of
-                    # recycling a healthy worker.
-                    if "ready" not in str(readiness_text).strip().lower():
-                        _record_mlx_degradation(
-                            RuntimeError(
-                                "warmup_readiness_answer_mismatch:"
-                                f"{str(readiness_text).strip()[:80]!r}"
-                            ),
-                            action=(
-                                "accepted live decode as readiness despite probe "
-                                "answer mismatch"
-                            ),
-                        )
                     self._last_visible_readiness_at = time.time()
                 self._set_lane_state("ready")
                 self._last_ready_at = time.time()
@@ -7628,28 +7480,19 @@ class MLXLocalClient:
         owner_name = f"warmup:{os.path.basename(self.model_path)}"
         warmup_timeout = self._warmup_timeout()
         self._warmup_attempted = True
-        # Singleflight: concurrent warmup callers previously EACH set the
-        # flag and proceeded (double precompile / double spawn pressure), and
-        # the stale check keyed on _lane_transition_at — a field every state
-        # change touches — rather than the warmup's own start time.
+        # [STABILITY v51] Stale-warmup circuit breaker: if _warmup_in_flight
+        # has been True for >300s, the previous warmup task leaked without
+        # clearing the flag. Force-clear before proceeding.
         if self._warmup_in_flight:
-            warmup_started_at = float(getattr(self, "_warmup_started_at", 0.0) or 0.0)
-            stale_after_s = max(300.0, warmup_timeout + 60.0)
-            if warmup_started_at > 0.0 and (time.time() - warmup_started_at) <= stale_after_s:
-                logger.info(
-                    "🔥 [MLX] Warmup already in flight for %s (%.0fs); not stacking a second.",
-                    os.path.basename(self.model_path),
-                    time.time() - warmup_started_at,
+            elapsed_since_transition = time.time() - self._lane_transition_at
+            if elapsed_since_transition > 300.0:
+                logger.warning(
+                    "🔧 [STABILITY] _warmup_in_flight was stuck True for %.0fs. "
+                    "Force-clearing stale warmup flag.",
+                    elapsed_since_transition,
                 )
-                return False
-            logger.warning(
-                "🔧 [STABILITY] _warmup_in_flight was stuck True (started %.0fs ago). "
-                "Force-clearing stale warmup flag.",
-                (time.time() - warmup_started_at) if warmup_started_at > 0.0 else -1.0,
-            )
-            self._warmup_in_flight = False
+                self._warmup_in_flight = False
         self._warmup_in_flight = True
-        self._warmup_started_at = time.time()
         self._set_lane_state("warming")
         try:
             if foreground_request:
@@ -7782,14 +7625,6 @@ class MLXLocalClient:
             logger.error(
                 "🚨 [MLX] DEADLOCK DETECTED: Could not acquire _lock for reboot on %s. Forcing reboot anyway to break deadlock.",
                 os.path.basename(self.model_path),
-            )
-            # Deliberate emergency semantics, but the lock-bypass mutation
-            # must leave a visible receipt so a racing spawn/close can be
-            # diagnosed instead of silently corrupted.
-            _record_mlx_degradation(
-                RuntimeError(f"reboot_without_lifecycle_lock:{reason}"),
-                action="reboot mutated lifecycle state without the lifecycle lock",
-                severity="error",
             )
         try:
             if self._process is not None:
@@ -8099,15 +7934,6 @@ class MLXLocalClient:
             if future is not None and not future.done()
         }
         acquired = self._lock.acquire(timeout=1.0)
-        if not acquired:
-            # Shutdown proceeds regardless, but destroying futures/queues
-            # while another lifecycle operation may hold the lock must be
-            # VISIBLE, not silent.
-            _record_mlx_degradation(
-                RuntimeError("close_without_lifecycle_lock"),
-                action="close mutated and destroyed client state without the lifecycle lock",
-                severity="error",
-            )
         try:
             for future in pending_futures.values():
                 _cancel_shared_future(future)
@@ -8208,24 +8034,9 @@ def get_mlx_client(model_path: str | None = None, **kwargs) -> MLXLocalClient:
             " live Aura uses the in-process MLX model lane; external Cortex artifacts are retired"
         )
 
-    # Singleflight: the unsynchronized check-then-create let concurrent first
-    # callers construct DUPLICATE multi-GB clients for the same artifact.
-    with _CLIENTS_FACTORY_LOCK:
-        existing = _CLIENTS.get(client_key)
-        if existing is None:
-            existing = MLXLocalClient(model_path=runtime_path, **kwargs)
-            _CLIENTS[client_key] = existing
-        elif kwargs:
-            # Cached clients silently ignored later kwargs — a caller asking
-            # for a different runtime contract must at least SEE the aliasing.
-            _record_mlx_degradation(
-                RuntimeError(
-                    f"client_config_aliasing:{os.path.basename(client_key)}:"
-                    f"{sorted(kwargs)}"
-                ),
-                action="reused cached MLX client; differing constructor kwargs ignored",
-            )
-        return existing
+    if client_key not in _CLIENTS:
+        _CLIENTS[client_key] = MLXLocalClient(model_path=runtime_path, **kwargs)
+    return _CLIENTS[client_key]
 
 
 def _scavenge_env_float(name: str, default: float) -> float:

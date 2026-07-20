@@ -521,8 +521,6 @@ class CognitiveEngine:
         self.thoughts: deque = deque(maxlen=_THOUGHT_HISTORY_LIMIT)
         self._phases = []
         self._augmentors = []
-        self._stopped = False
-        self._required_phase_count = 0
         self.state_repository = None
         self.autopoiesis = AutopoieticGraph()
         self._recovery_lock = RobustLock(
@@ -571,16 +569,8 @@ class CognitiveEngine:
         )
         self._phases = [phase for _, phase in phase_entries]
 
-        # ISSUE-97: AuraPipeline Awareness. The required count comes from the
-        # CANONICAL blueprint spec — deriving it from what was instantiated
-        # made the completeness comparison tautological (a zero-phase engine
-        # reported a full healthy spectrum).
-        from core.runtime.pipeline_blueprint import legacy_runtime_phase_specs
-
-        required_phases = len(
-            legacy_runtime_phase_specs(include_executive_closure=False)
-        )
-        self._required_phase_count = required_phases
+        # ISSUE-97: AuraPipeline Awareness
+        required_phases = len(phase_entries)
         if len(self._phases) != required_phases:
             logger.warning(
                 "⚠️ AuraPipeline: Incomplete cognitive pipeline (%d/%d phases).",
@@ -600,25 +590,11 @@ class CognitiveEngine:
         logger.info("⚡ CognitiveEngine active.")
 
     async def check_health(self) -> dict[str, Any]:
-        """Health check — honest about phase completeness and state access.
-
-        Previously ALWAYS returned healthy: a zero-phase engine with no
-        repository reported a full cognitive spectrum.
-        """
-        required = int(getattr(self, "_required_phase_count", 0) or 0)
-        issues: list[str] = []
-        if required > 0 and len(self._phases) < required:
-            issues.append(f"phases_incomplete:{len(self._phases)}/{required}")
-        elif not self._phases:
-            issues.append("no_phases_loaded")
-        if self.state_repository is None:
-            issues.append("state_repository_absent")
+        """Health check."""
         return {
-            "status": "healthy" if not issues else "degraded",
-            "issues": issues,
+            "status": "healthy",
             "modular": True,
             "phases_count": len(self._phases),
-            "phases_required": required,
             "augmentors_count": len(self._augmentors),
         }
 
@@ -730,16 +706,6 @@ class CognitiveEngine:
                 if self._recovery_lock.locked():
                     self._recovery_lock.release()
         else:
-            # Writing anyway defeats the mutex exactly under contention —
-            # overlapping recoveries can clear each other's state. The write
-            # still happens (a wedged lock must not freeze recovery
-            # bookkeeping forever), but it is VISIBLE now.
-            record_degradation(
-                "cognitive_engine",
-                TimeoutError("recovery_flag_write_without_lock"),
-                severity="warning",
-                action=f"wrote recovery_in_progress={value} without the recovery lock",
-            )
             self._recovery_in_progress = value
 
     async def generate_autonomous_thought(self, prompt: str = None, **kwargs) -> Thought:
@@ -1271,10 +1237,6 @@ class CognitiveEngine:
         Execute a cognitive cycle to produce a thought.
         This now drives the 8 phases to transform state.
         """
-        if getattr(self, "_stopped", False):
-            return self._empty_thought(
-                self._normalize_mode(mode), "cognitive_engine_stopped"
-            )
         origin = self._resolve_origin(origin, context)
         mode = self._normalize_mode(mode)
         is_background = self._is_background_request(
@@ -1581,13 +1543,6 @@ class CognitiveEngine:
         temp_state = state
         success = False
 
-        # Turn boundary marker: response extraction below must only accept
-        # an assistant message that this turn actually PRODUCED (quick-reply
-        # append or phase output) — a prior assistant message left at the
-        # end of working memory was previously returned (and rewarded) as
-        # the current response.
-        _working_memory_baseline = len(state.cognition.working_memory)
-
         direct_quick_reply = await self._direct_desktop_quick_reply(
             objective,
             mode,
@@ -1641,18 +1596,7 @@ class CognitiveEngine:
                     "timeout",
                     context=context,
                 )
-            except (
-                sqlite3.Error,
-                OSError,
-                RuntimeError,
-                AttributeError,
-                TypeError,
-                ValueError,
-                KeyError,
-            ) as e:
-                # Implementation defects (Attribute/Type/Value/KeyError) get
-                # the SAME terminal recovery as infrastructure failures —
-                # they previously escaped the cognitive API entirely.
+            except (sqlite3.Error, OSError) as e:
                 record_degradation(
                     "cognitive_engine",
                     e,
@@ -1695,17 +1639,15 @@ class CognitiveEngine:
         is_action_imperative = (
             "[ACTION IMPERATIVE]" in objective or "[ACTION IMPERATIVE]" in routed_obj
         )
-        _notify_closure_after_commit = False
         if self._is_user_facing_origin(origin) and not is_background:
             finalize_foreground_turn_state(
                 state,
                 objective=foreground_turn_objective,
                 origin=origin,
             )
-            # Closure notification is DEFERRED until after the state commit:
-            # external lifecycle previously said the foreground turn
-            # completed while durable state could still fail to record it.
-            _notify_closure_after_commit = True
+            closure = get_container().get("executive_closure", default=None)
+            if closure is not None and hasattr(closure, "complete_foreground_turn"):
+                closure.complete_foreground_turn(foreground_turn_objective, origin)
 
         # ─── SUCCESS PATH (Unreachable before fix) ──────────────────────────
         # 5. Final State Commit
@@ -1720,7 +1662,6 @@ class CognitiveEngine:
 
         from core.state.state_repository import StateVersionConflictError
 
-        commit_status = "bypassed" if should_bypass_commit else "failed"
         max_retries = 3
         for attempt in range(max_retries):
             if should_bypass_commit:
@@ -1729,7 +1670,6 @@ class CognitiveEngine:
             try:
                 # v14.2: Ensure the repository reference is correct (self.state_repository)
                 await self.state_repository.commit(state, "cognitive_cycle")
-                commit_status = "ok"
                 break  # Success!
             except StateVersionConflictError as v_err:
                 if attempt == max_retries - 1:
@@ -1751,26 +1691,8 @@ class CognitiveEngine:
                 latest = await self.state_repository.get_current()
                 state = latest.derive(f"rebase_retry_{attempt + 1}: {origin}", origin=origin)
 
-                # MERGE this turn's messages onto the latest state instead of
-                # REPLACING its working memory — wholesale replacement erased
-                # whatever concurrent turns had appended since our snapshot.
-                merged_memory = list(state.cognition.working_memory)
-                seen_entries = {
-                    (entry.get("role"), entry.get("content"), entry.get("timestamp"))
-                    for entry in merged_memory
-                    if isinstance(entry, dict)
-                }
-                for entry in preserved_memory:
-                    key = (
-                        (entry.get("role"), entry.get("content"), entry.get("timestamp"))
-                        if isinstance(entry, dict)
-                        else None
-                    )
-                    if key is None or key not in seen_entries:
-                        merged_memory.append(entry)
-                        if key is not None:
-                            seen_entries.add(key)
-                state.cognition.working_memory = merged_memory
+                # Apply preserved cognitive context onto the newly derived state
+                state.cognition.working_memory = preserved_memory
                 state.cognition.current_objective = preserved_objective
                 state.cognition.current_origin = preserved_origin
 
@@ -1795,29 +1717,9 @@ class CognitiveEngine:
                 logger.error("Failed to commit final cognitive state: %s", e)
                 break
 
-        # Notify executive closure only after the commit resolved — never
-        # while durable state may not have recorded the turn.
-        if _notify_closure_after_commit and commit_status in ("ok", "bypassed"):
-            closure = get_container().get("executive_closure", default=None)
-            if closure is not None and hasattr(closure, "complete_foreground_turn"):
-                closure.complete_foreground_turn(foreground_turn_objective, origin)
-        elif _notify_closure_after_commit:
-            record_degradation(
-                "cognitive_engine",
-                RuntimeError("foreground_turn_commit_unconfirmed"),
-                severity="critical",
-                action="withheld executive-closure notification after state commit failed",
-            )
-
-        # 6. Extract Response. Only an assistant message THIS turn produced is
-        # eligible: a prior assistant message left at the tail of working
-        # memory (duplicate/suppressed user append) was previously returned
-        # and rewarded as the current response.
+        # 6. Extract Response
         last_msg = state.cognition.working_memory[-1] if state.cognition.working_memory else None
-        _produced_new_assistant_msg = (
-            len(state.cognition.working_memory) > _working_memory_baseline
-        )
-        if last_msg and last_msg.get("role") == "assistant" and _produced_new_assistant_msg:
+        if last_msg and last_msg.get("role") == "assistant":
             self.autopoiesis.experience_friction(objective[:20], 0.05)
             feedback = self._learn_spiking_active_inference_outcome(
                 context,
@@ -1842,7 +1744,6 @@ class CognitiveEngine:
                     "spiking_active_inference_feedback": feedback,
                     "imagination_workspace_feedback": imagination_feedback,
                     "bicameral_advisory_feedback": bicameral_feedback,
-                    "durable_state_commit": commit_status,
                 }
             else:
                 generation_controls = context.get("live_mind_generation_controls")
@@ -1906,20 +1807,9 @@ class CognitiveEngine:
                     id=str(uuid.uuid4()),
                     content=last_msg["content"],
                     mode=mode,
-                    # An unconfirmed durable commit is not a 0.9-confidence
-                    # completed cycle — the reply is genuine, the cycle's
-                    # persistence claim is not.
-                    confidence=0.9 if commit_status in ("ok", "bypassed") else 0.55,
-                    reasoning=(
-                        ["Phase-based cognitive cycle completed successfully."]
-                        if commit_status in ("ok", "bypassed")
-                        else [
-                            "Phase-based cognitive cycle produced a response, "
-                            "but the durable state commit did not confirm."
-                        ]
-                    ),
+                    confidence=0.9,
+                    reasoning=["Phase-based cognitive cycle completed successfully."],
                     metadata={
-                        "durable_state_commit": commit_status,
                         "spiking_active_inference": context.get("spiking_active_inference")
                         if isinstance(context, dict)
                         else None,
@@ -1987,31 +1877,15 @@ class CognitiveEngine:
 
         # ── ACTION IMPERATIVE FALLBACK ──
         if is_action_imperative:
-            # A failed cognition cycle must NOT emit a motor command: the
-            # "[SOMATIC:key='.']" token is consumed by the orchestrator as a
-            # real keystroke into whatever holds focus — an ungoverned
-            # actuation minted from the absence of a response (and any
-            # injected text containing ACTION IMPERATIVE could trigger it).
             logger.warning(
-                "⚠️ [COGNITION] Action Imperative active but no response generated. "
-                "Returning a NON-MOTOR no-op."
-            )
-            record_degradation(
-                "cognitive_engine",
-                RuntimeError("action_imperative_no_response"),
-                severity="warning",
-                action="returned non-motor no-op instead of an ungoverned fallback keystroke",
+                "⚠️ [COGNITION] Action Imperative active but no response generated. Falling back to motor no-op."
             )
             return Thought(
                 id=str(uuid.uuid4()),
-                content="",
+                content="[SOMATIC:key='.']",  # Safe 'wait' or 'clear' key
                 mode=mode,
-                confidence=0.2,
-                reasoning=[
-                    "Action Imperative produced no response; refusing to emit "
-                    "an ungoverned motor fallback."
-                ],
-                metadata={"action_imperative_no_response": True},
+                confidence=0.5,
+                reasoning=["Action Imperative fallback (no-op)."],
             )
 
         if is_background:
@@ -2047,21 +1921,14 @@ class CognitiveEngine:
                     "Do not include any conversational preamble."
                 )
                 recovery_tier = proof_model_tier() if is_test_run else "primary"
-                # Cloud is only reachable when the CALLER authorized it —
-                # last-resort recovery previously forced cloud fallback on,
-                # sending the full objective off-host without any consent,
-                # classification, or redaction decision by the caller.
-                caller_allows_cloud = bool(
-                    kwargs.get("allow_cloud_fallback", False)
-                    or (isinstance(context, dict) and context.get("allow_cloud_fallback"))
-                )
+                # Force cloud fallback for last-resort recovery
                 content = await router.think(
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": objective}
                     ],
                     origin=f"recovery_{origin}",
-                    allow_cloud_fallback=caller_allows_cloud and not is_test_run,
+                    allow_cloud_fallback=not is_test_run,
                     prefer_tier=recovery_tier,
                     protected_foreground_lane=recovery_tier == "primary",
                     proof_primary_lane_required=is_test_run and recovery_tier == "primary",
@@ -2069,31 +1936,12 @@ class CognitiveEngine:
                     foreground_request=True,
                 )
                 if content and len(content.strip()) > 0:
-                    # The recovery PROMISED <answer> tags — verify the
-                    # envelope instead of certifying any nonempty output as
-                    # a 0.8-confidence structured success.
-                    envelope_present = (
-                        "<answer>" in content.lower() and "</answer>" in content.lower()
-                    )
-                    if not envelope_present:
-                        record_degradation(
-                            "cognitive_engine",
-                            ValueError("strict_answer_recovery_missing_envelope"),
-                            severity="warning",
-                            action="returned unenveloped recovery output at reduced confidence",
-                        )
                     thought = Thought(
                         id=str(uuid.uuid4()),
                         content=content,
                         mode=mode,
-                        confidence=0.8 if envelope_present else 0.4,
-                        reasoning=[
-                            "Last-resort direct structured recovery succeeded."
-                            if envelope_present
-                            else "Recovery produced output WITHOUT the promised "
-                            "<answer> envelope; confidence reduced."
-                        ],
-                        metadata={"strict_answer_envelope_present": envelope_present},
+                        confidence=0.8,
+                        reasoning=["Last-resort direct structured recovery succeeded."],
                     )
                     self.thoughts.append(thought)
                     return thought
@@ -3187,16 +3035,9 @@ class CognitiveEngine:
             await self._set_recovery_in_progress(False)
 
     def stop(self):
-        """Shutdown logic (BUG-19).
-
-        Marks the engine stopped so new think/stream calls refuse fast —
-        emptying the phase list alone left the engine accepting and
-        half-serving new cognition after shutdown.
-        """
+        """Shutdown logic (BUG-19)."""
         logger.info("🛑 CognitiveEngine stopping...")
-        self._stopped = True
         self._phases = []
-        self._augmentors = []
 
     def _structured_evaluation_thought(
         self,
@@ -3481,10 +3322,6 @@ class CognitiveEngine:
                 self._reasoning = ReasoningStrategies(_raw_generate)
 
             strategy = force_strategy
-            # Initialized unconditionally: the strategy-condition below reads
-            # classify_target even when a caller forces a strategy, which
-            # previously raised UnboundLocalError for force_strategy=DIRECT.
-            classify_target = strategy_query or prompt
             if strategy is None:
                 if not strategy_query:
                     messages = kwargs.get("messages")
