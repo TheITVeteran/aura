@@ -554,6 +554,40 @@ class LatentCortexService:
             errors.append("decode_request_mismatch")
         if not positive_int(receipt, "decode_generated_tokens"):
             errors.append("decode_output_empty")
+        decode_contract = config.get("decode_contract", "none")
+        contract_required = decode_contract == "final_answer_v1"
+        configured_contract_grace = config.get(
+            "decode_contract_grace_tokens",
+            0,
+        )
+        if contract_required:
+            if receipt.get("decode_contract_required") is not True:
+                errors.append("decode_contract_requirement_unreceipted")
+            if receipt.get("decode_contract_satisfied") is not True:
+                errors.append("decode_contract_unsatisfied")
+            if receipt.get("decode_termination") != "contract_complete":
+                errors.append("decode_contract_termination_mismatch")
+            if (
+                type(configured_contract_grace) is not int
+                or configured_contract_grace < 0
+                or receipt.get("decode_contract_grace_tokens")
+                != configured_contract_grace
+            ):
+                errors.append("decode_contract_grace_mismatch")
+            grace_used = receipt.get("decode_contract_grace_used_tokens")
+            expected_grace_used = max(
+                0,
+                int(receipt.get("decode_generated_tokens") or 0)
+                - int(receipt.get("decode_requested_tokens") or 0),
+            )
+            if (
+                type(grace_used) is not int
+                or not 0 <= grace_used <= configured_contract_grace
+                or grace_used != expected_grace_used
+            ):
+                errors.append("decode_contract_grace_accounting_invalid")
+        elif receipt.get("decode_contract_required") is True:
+            errors.append("unexpected_decode_contract")
         configured_probe_tokens = config.get("verifier_probe_max_tokens", 48)
         if (
             type(configured_probe_tokens) is not int

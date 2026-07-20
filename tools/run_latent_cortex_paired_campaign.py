@@ -1211,6 +1211,9 @@ def _build_rlc_config(
         WorkspaceConfig,
     )
 
+    contract_grace_tokens = min(max(0, int(args.decode_max_tokens)), 512)
+    verifier_probe_tokens = min(max(16, int(args.decode_max_tokens)), 192)
+
     if execution_spec is not None:
         from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec
 
@@ -1243,6 +1246,8 @@ def _build_rlc_config(
             coda_frac=spec.coda_frac,
             decode_max_tokens=args.decode_max_tokens,
             decode_contract="final_answer_v1",
+            decode_contract_grace_tokens=contract_grace_tokens,
+            verifier_probe_max_tokens=verifier_probe_tokens,
             decode_bridge_policy=(
                 "assistant_answer_v3"
                 if spec.decode_bridge_policy == "assistant_answer"
@@ -1269,8 +1274,9 @@ def _build_rlc_config(
             ),
             decode_max_tokens=args.decode_max_tokens,
             decode_contract="final_answer_v1",
+            decode_contract_grace_tokens=contract_grace_tokens,
             decode_min_tokens=min(96, max(0, args.decode_max_tokens - 1)),
-            verifier_probe_max_tokens=24,
+            verifier_probe_max_tokens=verifier_probe_tokens,
             verifier_accept_non_regression=True,
             decode_bridge_policy="assistant_answer_v3",
             decode_repetition_penalty=1.25,
@@ -1283,6 +1289,8 @@ def _build_rlc_config(
         branches=BranchConfig(n_branches=args.branches),
         decode_max_tokens=args.decode_max_tokens,
         decode_contract="final_answer_v1",
+        decode_contract_grace_tokens=contract_grace_tokens,
+        verifier_probe_max_tokens=verifier_probe_tokens,
         decode_repetition_penalty=1.25,
         decode_repetition_window=72,
         allow_vanilla_fallback=False,
@@ -1329,6 +1337,14 @@ def _execution_config(
         ),
         "rlc_profile": args.rlc_profile,
         "decode_max_tokens": args.decode_max_tokens,
+        "response_contract_policy": {
+            "schema": "public_response_contract_v1",
+            "termination": "final_answer_v1",
+            "contract_grace_tokens": effective.decode_contract_grace_tokens,
+            "verifier_probe_max_tokens": effective.verifier_probe_max_tokens,
+            "applies_identically_to_all_decode_arms": True,
+            "output_editing": False,
+        },
         "episode_timeout_s": args.episode_timeout,
         "load_timeout_s": args.load_timeout,
         "warmup_timeout_s": args.warmup_timeout,
@@ -1679,16 +1695,17 @@ def _vanilla_once(
     # truncating answers that finish honestly.
     pieces: list[str] = []
     generated_tokens = 0
+    contract_grace_tokens = min(max(0, int(max_tokens)), 512)
     for response in stream_generate(
         model,
         tokenizer,
         prompt=rendered,
-        max_tokens=max_tokens,
+        max_tokens=max_tokens + contract_grace_tokens,
         **kwargs,
     ):
         pieces.append(response.text)
         generated_tokens = int(response.generation_tokens)
-        if "}" in response.text and is_contract_complete("".join(pieces)):
+        if is_contract_complete("".join(pieces)):
             break
     text = "".join(pieces)
     prompt_tokens = len(tokenizer.encode(rendered))
@@ -1762,7 +1779,10 @@ def _run_rlc(
     from core.brain.llm.latent_cortex.task_verifiers import EpisodeTaskVerifier
     from core.brain.llm.latent_cortex.types import ComputeBudget
 
-    verifier = EpisodeTaskVerifier(task.prompt)
+    verifier = EpisodeTaskVerifier(
+        task.prompt,
+        response_contract=task.response_contract,
+    )
     budget = ComputeBudget(wall_clock_s=args.episode_timeout)
     result = engine.reason(
         messages=[{"role": "user", "content": task.prompt}],

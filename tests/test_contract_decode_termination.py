@@ -63,13 +63,17 @@ class _ContractAtFive:
         return CONTRACT_TEXT if len(ids) >= 5 else "still reasoning"
 
 
-def _config(decode_contract: str) -> CortexConfig:
+def _config(decode_contract: str, **overrides) -> CortexConfig:
+    values = {
+        "decode_max_tokens": 48,
+        "decode_contract": decode_contract,
+    }
+    values.update(overrides)
     return CortexConfig(
         workspace=WorkspaceConfig(n_slots=4, seed=3),
         recurrence=RecurrenceConfig(max_steps=2, min_steps=1),
         branches=BranchConfig(n_branches=1),
-        decode_max_tokens=48,
-        decode_contract=decode_contract,
+        **values,
     )
 
 
@@ -89,6 +93,77 @@ def test_engine_contract_off_preserves_historical_behavior():
     )
     result = engine.reason(token_ids=PROMPT_TOKENS, budget=ComputeBudget())
     assert result.receipt.decode_termination != "contract_complete"
+
+
+class _CharacterTokenizer:
+    eos_token_id = 0
+
+    def encode(self, text, **kwargs):
+        return [ord(char) for char in str(text)[:16]] or [5]
+
+    def decode(self, ids):
+        return "".join(chr(int(token)) for token in ids if int(token) != 0)
+
+
+def test_contract_masks_early_eos_and_completes_inside_bounded_grace():
+    text = 'FINAL_ANSWER: {"node":6}'
+    engine = LatentCortexEngine(
+        _tiny_model(),
+        _CharacterTokenizer(),
+        config=_config(
+            "final_answer_v1",
+            decode_max_tokens=8,
+            decode_contract_grace_tokens=len(text),
+        ),
+    )
+    remaining = iter(ord(char) for char in text)
+    observed_eos_logits: list[float] = []
+
+    def eos_pressured_sample(logits, _temperature, _top_p):
+        eos_logit = float(logits[0].item())
+        observed_eos_logits.append(eos_logit)
+        if eos_logit > -1e8:
+            return 0
+        return next(remaining)
+
+    engine._sample = eos_pressured_sample
+    result = engine.reason(token_ids=PROMPT_TOKENS, budget=ComputeBudget())
+
+    assert result.ok, result.reason
+    assert result.text == text
+    assert result.receipt.decode_termination == "contract_complete"
+    assert result.receipt.decode_contract_required is True
+    assert result.receipt.decode_contract_satisfied is True
+    assert result.receipt.decode_generated_tokens == len(text)
+    assert result.receipt.decode_contract_grace_used_tokens == len(text) - 8
+    assert observed_eos_logits
+    assert all(value < -1e8 for value in observed_eos_logits)
+
+
+def test_contract_incomplete_exhaustion_is_bounded_and_receipted():
+    engine = LatentCortexEngine(
+        _tiny_model(),
+        _CharacterTokenizer(),
+        config=_config(
+            "final_answer_v1",
+            decode_max_tokens=4,
+            decode_contract_grace_tokens=3,
+        ),
+    )
+
+    def never_complete(logits, _temperature, _top_p):
+        return ord("x") if float(logits[0].item()) < -1e8 else 0
+
+    engine._sample = never_complete
+    result = engine.reason(token_ids=PROMPT_TOKENS, budget=ComputeBudget())
+
+    assert result.ok, result.reason
+    assert result.text == "x" * 7
+    assert result.receipt.decode_termination == "token_limit_contract_incomplete"
+    assert result.receipt.decode_contract_required is True
+    assert result.receipt.decode_contract_satisfied is False
+    assert result.receipt.decode_contract_grace_tokens == 3
+    assert result.receipt.decode_contract_grace_used_tokens == 3
 
 
 def test_service_receipt_contract_accepts_contract_complete():
@@ -112,11 +187,46 @@ def test_service_receipt_contract_accepts_contract_complete():
         "decode_requested_tokens": 48,
         "decode_generated_tokens": 5,
         "decode_termination": "contract_complete",
+        "decode_contract_required": True,
+        "decode_contract_satisfied": True,
+        "decode_contract_grace_tokens": 48,
+        "decode_contract_grace_used_tokens": 0,
         "honest_flags": [],
     }
-    config = {"n_slots": 4, "n_branches": 1}
+    config = {
+        "n_slots": 4,
+        "n_branches": 1,
+        "decode_contract": "final_answer_v1",
+        "decode_contract_grace_tokens": 48,
+    }
     errors = LatentCortexService._receipt_contract_errors(receipt, config)
     assert "decode_incomplete" not in errors
+    assert "decode_contract_unsatisfied" not in errors
+
+
+def test_service_rejects_forged_or_incomplete_contract_completion():
+    from core.brain.latent_cortex_service import LatentCortexService
+
+    receipt = {
+        "decode_requested_tokens": 48,
+        "decode_generated_tokens": 52,
+        "decode_termination": "contract_complete",
+        "decode_contract_required": True,
+        "decode_contract_satisfied": False,
+        "decode_contract_grace_tokens": 8,
+        "decode_contract_grace_used_tokens": 2,
+    }
+    config = {
+        "n_slots": 4,
+        "n_branches": 1,
+        "decode_contract": "final_answer_v1",
+        "decode_contract_grace_tokens": 8,
+    }
+
+    errors = LatentCortexService._receipt_contract_errors(receipt, config)
+
+    assert "decode_contract_unsatisfied" in errors
+    assert "decode_contract_grace_accounting_invalid" in errors
 
 
 def test_campaign_vanilla_stream_stops_at_contract(monkeypatch):

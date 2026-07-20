@@ -16,8 +16,8 @@ from core.brain.llm.latent_cortex.task_verifiers import (
     check_code_blocks,
     check_facet_coverage,
     check_objective_grounding,
+    check_response_contract,
 )
-
 
 # ── Arithmetic recomputation ────────────────────────────────────────────
 
@@ -311,3 +311,19 @@ def test_receipt_exposes_gradeable_facet_judgments():
     assert "whereas" in judgments["compare"]["excerpt"].lower()
     assert judgments["select"]["satisfied"] is True
     assert receipt["facet_reliability"] == {}
+
+
+def test_public_response_contract_controls_branch_score_and_receipt():
+    contract = '{"count":int,"witness":list[int]}'
+    valid = 'FINAL_ANSWER: {"count":2,"witness":[3,5]}'
+    invalid = 'FINAL_ANSWER: {"count":"2","witness":[3,5]}'
+    verifier = EpisodeTaskVerifier(
+        "Find the witness.",
+        response_contract=contract,
+    )
+
+    assert verifier(valid) > verifier(invalid)
+    assert check_response_contract(valid, contract)["valid"] is True
+    receipt = verifier.to_receipt()
+    assert receipt["response_contract_required"] is True
+    assert receipt["response_contract_satisfied"] is True

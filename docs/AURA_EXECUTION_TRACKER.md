@@ -21311,7 +21311,7 @@ Evidence-weighted completion remains 27%. This is checkpoint 179 of the faithful
 frontier, external-custody, installed-app, release, or soak credit is awarded.
 Final long soaks remain deferred.
 
-## Checkpoint 2026-07-19-182: CP180-182 — Contract Surface, V3 Objective, Resident V3 Launch
+## Checkpoint 2026-07-20-182: CP180-182 — Contract Surface, V3 Objective, Resident V3 Launch
 
 Answers all four CP179 diagnoses with landed, tested machinery, then launches
 the corrected training under a frozen protocol.
@@ -21347,7 +21347,58 @@ the corrected training under a frozen protocol.
   overfitting guard in mechanical admission, contract-aware four-arm pilot
   whose advance rules include virtual-width-alive, conditional confirmatory
   campaign requiring the signed contamination audit and independent
-  evidence verification). The forced partial is running detached.
+  evidence verification). The forced partial completed at step 1 with the
+  expected bounded-partial exit, and the 720-minute resume is running detached
+  from the pushed CP182 source.
 - No reasoning-gain, resident-32B, frontier, external-custody,
   installed-app, release, or soak credit. The pilot and confirmatory
   campaign remain the only doors to those claims.
+
+## Checkpoint 2026-07-20-183: Typed Contract and Bounded Decode Integrity
+
+CP183 closes the remaining semantic and runtime-integrity gaps in CP180's
+contract surface. Syntactic object completion is now paired with exact public
+payload-shape validation, an explicitly bounded completion window, cryptographic
+request binding, and live-service receipt enforcement. This improves the next
+pilot's validity; it does not itself establish a reasoning or frontier gain.
+
+- A bounded recursive-descent parser validates the public response-contract
+  DSL: exact object keys; integer, string, and boolean primitives; literal
+  unions; rational-string shapes; homogeneous lists; fixed tuples; and nested
+  objects. Public task construction rejects malformed contracts before plan
+  admission.
+- `EpisodeTaskVerifier` v2 applies each task's public shape during branch
+  arbitration and receipts whether the contract was required and satisfied.
+  The contract contains no answer values, so sealed-answer isolation remains
+  intact while schema-invalid branches lose the exact typed check.
+- Contract-required decode suppresses early EOS and sentence stopping until a
+  model-emitted terminal object completes or a separately configured grace
+  bound is exhausted. Exhaustion terminates as
+  `token_limit_contract_incomplete`; output is never edited or padded. The
+  receipt binds required/satisfied state, configured grace, and exact grace
+  consumption.
+- Vanilla, adapter-vanilla, RLC, adapter-RLC, and equal-compute arms share the
+  same completion predicate and grace bound. Campaign plans freeze that policy,
+  raise the previously underpowered resident branch preview to at most 192
+  tokens with early completion, and explicitly forbid output editing.
+- The resident client, worker, and request digest bind the exact response
+  contract. Malformed contracts fail before engine construction. The live
+  service rejects forged completion labels, unsatisfied contracts, grace
+  mismatch, and impossible token accounting; scientific campaigns still retain
+  bounded incomplete text as honest negative evidence.
+- Adversarial tests cover EOS pressure, completion inside grace, exact bounded
+  exhaustion, no trailing-stream consumption, typed branch scoring, malformed
+  worker admission, client validation, and response-contract digest changes.
+
+Validation is green: 285/285 focused parser, engine, worker/client, service,
+campaign, and runtime-identity tests pass; focused Ruff, bytecode compilation,
+and diff integrity pass. The detached resident-v3 resume remains independent of
+this checkpoint because CP183 changes neither the trainer nor its frozen source
+snapshot set.
+
+Evidence-weighted completion remains 27%. This is checkpoint 183 of the faithful
+292-399 forecast, leaving approximately 109-216 checkpoints. No reasoning-gain,
+frontier, external-custody, installed-app, release, or soak credit is awarded.
+Next: monitor and certify resident-v3 training, freeze the adapter, run mechanics
+and a fresh directional pilot, and advance only a positive result to the powered
+externally rooted campaign. Final long soaks remain deferred.

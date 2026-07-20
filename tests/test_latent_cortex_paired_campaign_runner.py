@@ -1513,6 +1513,9 @@ def test_effective_full_stack_shape_is_frozen_not_cli_placeholder():
     assert effective.recurrence.max_steps == 2
     assert effective.latent_opt.enabled is True
     assert effective.fast_weights.enabled is True
+    assert effective.decode_contract == "final_answer_v1"
+    assert effective.decode_contract_grace_tokens == 512
+    assert effective.verifier_probe_max_tokens == 192
 
 
 def test_v2_execution_spec_overrides_cli_and_preserves_training_graph():
@@ -1541,6 +1544,85 @@ def test_v2_execution_spec_overrides_cli_and_preserves_training_graph():
     assert effective.latent_opt.enabled is False
     assert effective.fast_weights.enabled is False
     assert effective.escape == {"enabled": False}
+    assert effective.decode_contract == "final_answer_v1"
+    assert effective.decode_contract_grace_tokens == 128
+    assert effective.verifier_probe_max_tokens == 128
+
+
+def test_vanilla_decode_uses_same_contract_stop_and_bounded_grace(monkeypatch):
+    task = generate_task_battery(
+        [7], domains=("mathematics",), difficulty=1
+    )[0].public
+    generated = 'work\nFINAL_ANSWER: {"answer":7}TRAILING'
+    consumed: list[str] = []
+    observed: dict = {}
+
+    def stream_generate(_model, _tokenizer, *, prompt, max_tokens, **kwargs):
+        observed["prompt"] = prompt
+        observed["max_tokens"] = max_tokens
+        for index, character in enumerate(generated, start=1):
+            consumed.append(character)
+            yield SimpleNamespace(text=character, generation_tokens=index)
+
+    import mlx_lm
+
+    monkeypatch.setattr(mlx_lm, "stream_generate", stream_generate)
+
+    class Tokenizer:
+        def apply_chat_template(self, *_args, **_kwargs):
+            return "rendered"
+
+        def encode(self, text):
+            return list(str(text))
+
+    model = SimpleNamespace(model=SimpleNamespace(layers=[object(), object()]))
+    text, layer_apps = runner._vanilla_once(
+        model,
+        Tokenizer(),
+        task,
+        max_tokens=64,
+    )
+
+    expected = 'work\nFINAL_ANSWER: {"answer":7}'
+    assert text == expected
+    assert "TRAILING" not in text
+    assert "".join(consumed) == expected
+    assert observed["max_tokens"] == 128
+    assert layer_apps == (len("rendered") + len(expected)) * 2
+
+
+def test_rlc_campaign_verifier_receives_public_response_contract():
+    from core.brain.llm.latent_cortex.types import (
+        EpisodeReceipt,
+        LatentReasoningResult,
+    )
+
+    task = generate_task_battery(
+        [7], domains=("mathematics",), difficulty=1
+    )[0].public
+    captured: dict = {}
+
+    class Engine:
+        def reason(self, **kwargs):
+            captured.update(kwargs)
+            verifier = kwargs["verifier"]
+            verifier('FINAL_ANSWER: {"count":2,"witness":[1,2]}')
+            return LatentReasoningResult(
+                ok=True,
+                text='FINAL_ANSWER: {"count":2,"witness":[1,2]}',
+                receipt=EpisodeReceipt(),
+            )
+
+    text, _cost, receipt = runner._run_rlc(
+        Engine(),
+        task,
+        SimpleNamespace(episode_timeout=10.0, decode_max_tokens=128),
+    )
+
+    assert text.startswith("FINAL_ANSWER:")
+    assert captured["verifier"].response_contract == task.response_contract
+    assert receipt["verifier_guidance"]["response_contract_required"] is True
+    assert receipt["verifier_guidance"]["response_contract_satisfied"] is True
 
 
 def test_projection_resolution_is_exact_and_rejects_missing_owner():

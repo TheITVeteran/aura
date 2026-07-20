@@ -263,6 +263,9 @@ class CortexConfig:
     # uniform serving-side stop rule so bounded budgets measure reasoning,
     # not truncation. "none" preserves historical behavior.
     decode_contract: str = "none"
+    # Additional model-generated tokens allowed to close a required terminal
+    # answer object after decode_max_tokens. Zero preserves the hard ceiling.
+    decode_contract_grace_tokens: int = 0
     # CTRL-style sliding-window repetition penalty for the answer decode.
     # 1.0 disables; the resident live profile runs 1.25 over 72 tokens —
     # CP105's live turn proved a degeneration loop survives temperature
@@ -417,12 +420,14 @@ class CortexConfig:
                 "decode_min_tokens must be an integer inside [0, 512] and "
                 "below decode_max_tokens"
             )
-        if not integer_in(self.verifier_probe_max_tokens, 16, 64):
-            problems.append("verifier_probe_max_tokens outside [16, 64]")
+        if not integer_in(self.verifier_probe_max_tokens, 16, 512):
+            problems.append("verifier_probe_max_tokens outside [16, 512]")
         if self.decode_contract not in ("none", "final_answer_v1"):
             problems.append(
                 "decode_contract must be 'none' or 'final_answer_v1'"
             )
+        if not integer_in(self.decode_contract_grace_tokens, 0, 4096):
+            problems.append("decode_contract_grace_tokens outside [0, 4096]")
         if type(self.verifier_accept_non_regression) is not bool:
             problems.append("verifier_accept_non_regression must be boolean")
         if self.decode_bridge_policy not in {
@@ -621,11 +626,15 @@ class EpisodeReceipt:
     # the adaptation on regression — the verifier, not the proxy, has the
     # last word over fast weights too. Empty when arbitration did not run.
     fast_weight_verifier: dict[str, Any] = field(default_factory=dict)
-    # Decode completeness. A token-limit or EOS stop is complete; a budget stop
-    # is a truncated answer and cannot satisfy the production receipt contract.
+    # Decode completeness. Contract-required tasks separately receipt whether
+    # generated text actually satisfied the terminal answer contract.
     decode_requested_tokens: int = 0
     decode_generated_tokens: int = 0
     decode_termination: str = "not_started"
+    decode_contract_required: bool = False
+    decode_contract_satisfied: bool = False
+    decode_contract_grace_tokens: int = 0
+    decode_contract_grace_used_tokens: int = 0
     # Times the decode sampler masked a pure-newline token because the run
     # already held _MAX_NEWLINE_RUN — a sampling constraint, never text
     # editing; nonzero values reveal the model still trying to babble.
@@ -748,6 +757,12 @@ class EpisodeReceipt:
             "decode_requested_tokens": self.decode_requested_tokens,
             "decode_generated_tokens": self.decode_generated_tokens,
             "decode_termination": self.decode_termination,
+            "decode_contract_required": self.decode_contract_required,
+            "decode_contract_satisfied": self.decode_contract_satisfied,
+            "decode_contract_grace_tokens": self.decode_contract_grace_tokens,
+            "decode_contract_grace_used_tokens": (
+                self.decode_contract_grace_used_tokens
+            ),
             "decode_newline_suppressions": self.decode_newline_suppressions,
             "decode_repetition_penalty_applied": self.decode_repetition_penalty_applied,
             "verifier_guidance": dict(self.verifier_guidance),

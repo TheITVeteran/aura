@@ -32,10 +32,15 @@ from typing import Any
 from core.brain.llm.latent_cortex.output_quality import (
     evaluate_facet_coverage,
 )
+from core.brain.llm.latent_cortex.response_contracts import (
+    ResponseContractError,
+    parse_response_contract,
+    validate_response_payload,
+)
 
 logger = logging.getLogger("Aura.LatentCortex.TaskVerifiers")
 
-TASK_VERIFIER_SCHEMA = "aura.latent_task_verifier.v1"
+TASK_VERIFIER_SCHEMA = "aura.latent_task_verifier.v2"
 
 # The trailing guard rejects decimal continuations ("= 40.5") without
 # rejecting sentence-final claims ("= 40."). The leading guard keeps the
@@ -183,6 +188,39 @@ def check_objective_grounding(text: str, objective: str) -> dict[str, Any]:
     }
 
 
+def check_response_contract(text: str, response_contract: str) -> dict[str, Any]:
+    """Validate the public final-answer marker, JSON, keys, and value types."""
+
+    from core.brain.llm.latent_cortex.frontier_tasks import (
+        FrontierTaskError,
+        parse_final_answer,
+    )
+
+    try:
+        parsed_contract = parse_response_contract(response_contract)
+        payload = parse_final_answer(text)
+        validation = validate_response_payload(payload, parsed_contract)
+    except (FrontierTaskError, ResponseContractError) as exc:
+        return {
+            "applicable": True,
+            "valid": False,
+            "failures": [str(exc)],
+            "score": 0.0,
+        }
+    return {
+        "applicable": True,
+        "valid": validation["valid"],
+        "failures": list(validation["errors"]),
+        "score": 1.0 if validation["valid"] else 0.0,
+    }
+
+
+def response_satisfies_contract(text: str, response_contract: str) -> bool:
+    """Return whether text is already a complete, exact public answer."""
+
+    return bool(check_response_contract(text, response_contract)["valid"])
+
+
 class EpisodeTaskVerifier:
     """Deterministic candidate scorer for one episode's objective.
 
@@ -194,6 +232,7 @@ class EpisodeTaskVerifier:
     """
 
     _WEIGHTS = {
+        "response_contract": 0.55,
         "arithmetic": 0.35,
         "code": 0.25,
         "facets": 0.25,
@@ -204,9 +243,13 @@ class EpisodeTaskVerifier:
         self,
         objective: str,
         *,
+        response_contract: str = "",
         facet_reliability: dict[str, float] | None = None,
     ) -> None:
         self.objective = str(objective or "")
+        self.response_contract = str(response_contract or "")
+        if self.response_contract:
+            parse_response_contract(self.response_contract)
         self.evaluations: list[dict[str, Any]] = []
         # Held-out calibration: per-facet reliability learned from GRADED
         # verdicts (Verifier Foundry Wilson bounds, human ground truth). A
@@ -246,6 +289,11 @@ class EpisodeTaskVerifier:
             "facets": check_facet_coverage(text, self.objective),
             "grounding": check_objective_grounding(text, self.objective),
         }
+        if self.response_contract:
+            checks["response_contract"] = check_response_contract(
+                text,
+                self.response_contract,
+            )
         if self.facet_reliability:
             checks["facets"]["score"] = self._facet_weighted_score(
                 checks["facets"]
@@ -286,7 +334,12 @@ class EpisodeTaskVerifier:
     def to_receipt(self) -> dict[str, Any]:
         """Bounded evidence: every evaluation's score + the best row's why."""
         if not self.evaluations:
-            return {"schema": TASK_VERIFIER_SCHEMA, "evaluations": 0}
+            return {
+                "schema": TASK_VERIFIER_SCHEMA,
+                "evaluations": 0,
+                "response_contract_required": bool(self.response_contract),
+                "response_contract_satisfied": False,
+            }
         best = max(self.evaluations, key=lambda row: row["score"])
         facets = best["checks"].get("facets") or {}
         # Per-facet judgments on the WINNING candidate, excerpt included —
@@ -316,6 +369,10 @@ class EpisodeTaskVerifier:
             },
             "facet_judgments": judgments,
             "facet_reliability": dict(self.facet_reliability),
+            "response_contract_required": bool(self.response_contract),
+            "response_contract_satisfied": bool(
+                best["checks"].get("response_contract", {}).get("valid", False)
+            ),
         }
 
 
@@ -327,4 +384,6 @@ __all__ = [
     "check_degeneracy",
     "check_facet_coverage",
     "check_objective_grounding",
+    "check_response_contract",
+    "response_satisfies_contract",
 ]

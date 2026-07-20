@@ -11,6 +11,7 @@ Job contract (all optional except the prompt source):
   "id": "...",
   "prompt": "..."            # or "messages": [...]
   "domain": "general",
+  "response_contract": "{...}", # optional public shape DSL, no answer values
   "config": {                # conservative defaults; hard caps in types.py
      "n_slots": 16, "n_branches": 2, "max_steps": 8,
      "latent_opt": false, "fast_weights": false,
@@ -61,6 +62,8 @@ _CONFIG_KEYS = {
     "comm_slot",
     "convergence_eps",
     "decode_max_tokens",
+    "decode_contract",
+    "decode_contract_grace_tokens",
     "decode_min_tokens",
     "decode_bridge_policy",
     "decode_repetition_penalty",
@@ -228,6 +231,10 @@ def config_from_job(job_config: dict[str, Any] | None) -> CortexConfig:
         coda_frac=_typed_value(raw, "coda_frac", 0.25, float),
         schedule=raw.get("schedule"),
         decode_max_tokens=_typed_value(raw, "decode_max_tokens", 512, int),
+        decode_contract=_typed_value(raw, "decode_contract", "none", str),
+        decode_contract_grace_tokens=_typed_value(
+            raw, "decode_contract_grace_tokens", 0, int
+        ),
         decode_min_tokens=_typed_value(raw, "decode_min_tokens", 0, int),
         verifier_probe_max_tokens=_typed_value(
             raw, "verifier_probe_max_tokens", 48, int
@@ -304,7 +311,51 @@ def handle_latent_reason(
     if not prompt and not messages:
         return {"status": "error", "message": "latent_reason requires prompt or messages"}
 
-    config = config_from_job(job.get("config"))
+    response_contract = job.get("response_contract")
+    if response_contract is not None:
+        if not isinstance(response_contract, str) or not response_contract.strip():
+            return {
+                "status": "error",
+                "message": "latent_reason response_contract must be a non-empty string",
+            }
+        try:
+            from core.brain.llm.latent_cortex.response_contracts import (
+                parse_response_contract,
+            )
+
+            parse_response_contract(response_contract)
+        except ValueError as exc:
+            return {
+                "status": "error",
+                "message": f"latent_reason response_contract rejected: {exc}",
+            }
+        if tokenizer is None:
+            return {
+                "status": "error",
+                "message": "latent_reason response_contract requires a tokenizer",
+            }
+
+    raw_config = job.get("config")
+    if response_contract is not None:
+        if raw_config is not None and not isinstance(raw_config, dict):
+            return {"status": "error", "message": "latent_reason config must be a mapping"}
+        raw_config = dict(raw_config or {})
+        configured_contract = raw_config.get("decode_contract")
+        if configured_contract not in (None, "final_answer_v1"):
+            return {
+                "status": "error",
+                "message": (
+                    "latent_reason response_contract conflicts with "
+                    "config.decode_contract"
+                ),
+            }
+        raw_config["decode_contract"] = "final_answer_v1"
+        raw_config.setdefault(
+            "decode_contract_grace_tokens",
+            min(int(raw_config.get("decode_max_tokens", 512)), 512),
+        )
+
+    config = config_from_job(raw_config)
     budget = budget_from_job(job.get("budget"))
     cognitive_context = job.get("cognitive_context")
     if cognitive_context is not None:
@@ -355,7 +406,9 @@ def handle_latent_reason(
     # trajectory converged prettier. Tokenizer required: verification reads
     # decoded probe text.
     task_verifier = None
-    if bool(job.get("verifier_guidance")) and tokenizer is not None:
+    if (
+        bool(job.get("verifier_guidance")) or response_contract is not None
+    ) and tokenizer is not None:
         from core.brain.llm.latent_cortex.task_verifiers import (
             _ANSWER_FACET_HINTS,
             EpisodeTaskVerifier,
@@ -391,7 +444,9 @@ def handle_latent_reason(
                         objective = content
                         break
         task_verifier = EpisodeTaskVerifier(
-            objective, facet_reliability=facet_reliability
+            objective,
+            facet_reliability=facet_reliability,
+            response_contract=str(response_contract or ""),
         )
     result = engine.reason(
         prompt=prompt if isinstance(prompt, str) else None,
@@ -459,6 +514,7 @@ def handle_latent_reason(
         budget=job.get("budget"),
         runtime_controls=job.get("runtime_controls"),
         cognitive_context=cognitive_context,
+        response_contract=response_contract,
     )
     body = result.to_dict()
     body["status"] = "ok" if result.ok else "error"

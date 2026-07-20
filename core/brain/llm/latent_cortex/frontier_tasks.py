@@ -23,6 +23,10 @@ from types import MappingProxyType
 from typing import Any, NoReturn, cast
 
 from core.brain.frontier_evidence_v5 import canonical_json_bytes
+from core.brain.llm.latent_cortex.response_contracts import (
+    ResponseContractError,
+    parse_response_contract,
+)
 
 REGISTRY_SCHEMA = "aura.latent_cortex.frontier_task_registry.v1"
 TASK_SCHEMA = "aura.latent_cortex.frontier_task.v1"
@@ -408,7 +412,9 @@ class PublicTaskRecord:
         _require_identifier(self.scorer_id, field="scorer_id")
         _require_difficulty(self.difficulty)
         _require_prompt(self.prompt)
-        if not isinstance(self.response_contract, str) or not self.response_contract:
+        try:
+            parse_response_contract(self.response_contract)
+        except ResponseContractError:
             _fail("response_contract_invalid")
         _require_sha256(self.answer_commitment_sha256, field="answer_commitment_sha256")
         _require_sha256(self.task_payload_sha256, field="task_payload_sha256")

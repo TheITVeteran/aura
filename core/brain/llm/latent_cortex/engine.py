@@ -31,9 +31,9 @@ from core.brain.llm.latent_cortex.capability_canaries import (
 )
 from core.brain.llm.latent_cortex.escape import EscapeConfig
 from core.brain.llm.latent_cortex.fast_weights import EpisodicFastWeights
-from core.brain.llm.latent_cortex.probe_cache import DecodeProbeCache
 from core.brain.llm.latent_cortex.governance import CheckpointInvariant
 from core.brain.llm.latent_cortex.latent_opt import LatentOptimizer, build_proxy_loss
+from core.brain.llm.latent_cortex.probe_cache import DecodeProbeCache
 from core.brain.llm.latent_cortex.recurrence import WindowRunner
 from core.brain.llm.latent_cortex.schedules import LayerSchedule, ScheduleLibrary
 from core.brain.llm.latent_cortex.telemetry import LatentTelemetry
@@ -141,6 +141,10 @@ class LatentCortexEngine:
         # count for the episode receipt.
         self._newline_token_cache: dict[int, bool] = {}
         self._last_decode_newline_suppressions = 0
+        self._last_decode_contract_required = False
+        self._last_decode_contract_satisfied = False
+        self._last_decode_contract_grace_tokens = 0
+        self._last_decode_contract_grace_used_tokens = 0
         inner = getattr(model, "model", None)
         layers = getattr(inner, "layers", None)
         if not layers:
@@ -431,6 +435,7 @@ class LatentCortexEngine:
         progress: Callable[[dict], None] | None = None,
         wall_reserve_s: float = 0.0,
         sentence_grace_tokens: int | None = None,
+        contract_grace_tokens: int | None = None,
     ) -> tuple[list[int], str]:
         """Minimal sampler: first token from ``initial_logits`` (the logits of
         the last persisted position — prompt tail or final thought slot), then
@@ -441,7 +446,9 @@ class LatentCortexEngine:
         attached, so a long answer degrades to token truncation instead of
         endangering the erase proof. ``sentence_grace_tokens=0`` is the hard
         cap used by internal verifier previews; final answers retain the
-        product-facing sentence-completion grace by default."""
+        product-facing sentence-completion grace by default. Contract tasks
+        use a separate bounded window and suppress EOS until completion or
+        exhaustion."""
         import mlx.core as mx
         from mlx_lm.models.base import create_attention_mask
 
@@ -457,11 +464,28 @@ class LatentCortexEngine:
         )
         if type(grace_tokens) is not int or grace_tokens < 0:
             raise ValueError("sentence_grace_tokens must be a non-negative integer")
+        contract_grace = (
+            self.config.decode_contract_grace_tokens
+            if contract_grace_tokens is None
+            else contract_grace_tokens
+        )
+        if type(contract_grace) is not int or not 0 <= contract_grace <= 4096:
+            raise ValueError("contract_grace_tokens must be an integer in [0, 4096]")
 
         out: list[int] = []
         newline_run = 0
         suppressions = 0
         self._last_decode_newline_suppressions = 0
+        contract_required = self.config.decode_contract == "final_answer_v1"
+        if contract_required and self.tokenizer is None:
+            raise ValueError("final_answer_v1 decode contract requires a tokenizer")
+        contract_satisfied = False
+        self._last_decode_contract_required = contract_required
+        self._last_decode_contract_satisfied = False
+        self._last_decode_contract_grace_tokens = (
+            contract_grace if contract_required else 0
+        )
+        self._last_decode_contract_grace_used_tokens = 0
         if budget.exhausted:
             return out, "budget_exhausted"
 
@@ -496,7 +520,10 @@ class LatentCortexEngine:
             # EOS floor: below decode_min_tokens, end-of-sequence logits are
             # masked so sampling variance cannot abandon the answer a few
             # tokens in (min-new-tokens, the standard serving constraint).
-            if eos and len(out) < min_tokens:
+            if eos and (
+                len(out) < min_tokens
+                or (contract_required and not contract_satisfied)
+            ):
                 eos_ids = mx.array(sorted(eos))
                 gathered = logits[eos_ids]
                 logits = logits.at[eos_ids].add(
@@ -523,22 +550,8 @@ class LatentCortexEngine:
         # The full-text check runs only when the newest piece could have
         # closed an object ("}") or on a periodic beat after the marker
         # might exist — text work, never model work.
-        contract_active = (
-            self.config.decode_contract == "final_answer_v1"
-            and self.tokenizer is not None
-        )
-        contract_check_beat = 0
-
-        def contract_complete_now(latest_token: int) -> bool:
-            nonlocal contract_check_beat
-            if not contract_active:
-                return False
-            contract_check_beat += 1
-            try:
-                piece = self.tokenizer.decode([latest_token])
-            except (TypeError, ValueError, KeyError, AttributeError):
-                piece = ""
-            if "}" not in str(piece) and contract_check_beat % 8 != 0:
+        def contract_complete_now() -> bool:
+            if not contract_required:
                 return False
             from core.brain.llm.latent_cortex.answer_contract import (
                 is_contract_complete,
@@ -553,20 +566,26 @@ class LatentCortexEngine:
         token = sample_disciplined(initial_logits)
         termination = "token_limit"
         decode_started = time.monotonic()
-        for index in range(max(1, int(limit)) + grace_tokens):
+        extension = contract_grace if contract_required else grace_tokens
+        for index in range(max(1, int(limit) + extension)):
             if self._cancel_requested(cancel_check):
                 raise _LatentEpisodeCancelled("decode")
             if token in eos:
                 termination = "eos"
                 break
             out.append(token)
-            if contract_complete_now(token):
+            contract_satisfied = contract_complete_now()
+            if contract_satisfied:
                 termination = "contract_complete"
                 break
             newline_run = newline_run + 1 if self._is_pure_newline_token(token) else 0
             sentence_done = self.tokenizer is None or self._token_ends_sentence(token)
             if index + 1 >= int(limit):
-                if sentence_done:
+                if contract_required:
+                    if index + 1 >= int(limit) + contract_grace:
+                        termination = "token_limit_contract_incomplete"
+                        break
+                elif sentence_done:
                     termination = (
                         "token_limit"
                         if index + 1 == int(limit)
@@ -590,7 +609,7 @@ class LatentCortexEngine:
                 rate_s = max(0.02, (time.monotonic() - decode_started) / max(1, len(out)))
                 winding_down = (
                     budget.remaining_wall_s
-                    < wall_reserve_s + grace_tokens * rate_s
+                    < wall_reserve_s + extension * rate_s
                 )
                 if winding_down and sentence_done:
                     termination = "wall_reserve_sentence_grace"
@@ -619,6 +638,11 @@ class LatentCortexEngine:
                     },
                 )
         self._last_decode_newline_suppressions = suppressions
+        self._last_decode_contract_satisfied = contract_satisfied
+        self._last_decode_contract_grace_used_tokens = max(
+            0,
+            len(out) - int(limit),
+        )
         return out, termination
 
     # ── Probe decoding for branch selection / verifier loops ────────────
@@ -679,6 +703,7 @@ class LatentCortexEngine:
                 max_tokens=probe_tokens,
                 temperature=0.0,
                 sentence_grace_tokens=0,
+                contract_grace_tokens=0,
             )[0]
         finally:
             _restore_recurrent_caches(cache, 0, self.n_layers, snaps)
@@ -781,6 +806,14 @@ class LatentCortexEngine:
         receipt.decode_top_p = float(self.config.decode_top_p)
         receipt.decode_bridge_policy = self.config.decode_bridge_policy
         receipt.verifier_probe_max_tokens = self.config.verifier_probe_max_tokens
+        receipt.decode_contract_required = (
+            self.config.decode_contract == "final_answer_v1"
+        )
+        receipt.decode_contract_grace_tokens = (
+            self.config.decode_contract_grace_tokens
+            if receipt.decode_contract_required
+            else 0
+        )
 
         self.invariant.pre_episode()
         receipt.checkpoint_fingerprint = self.invariant.file_receipt.get("fingerprint", "")
@@ -858,6 +891,12 @@ class LatentCortexEngine:
                         )
                         receipt.decode_generated_tokens = len(out_tokens)
                         receipt.decode_termination = decode_termination
+                        receipt.decode_contract_satisfied = bool(
+                            self._last_decode_contract_satisfied
+                        )
+                        receipt.decode_contract_grace_used_tokens = int(
+                            self._last_decode_contract_grace_used_tokens
+                        )
                         if decode_termination.startswith("budget_"):
                             receipt.flag(f"decode_{decode_termination}")
                     except _LatentEpisodeCancelled:
@@ -910,6 +949,9 @@ class LatentCortexEngine:
             # object closed and parsed — the strongest completion signal a
             # contract task has (CP180).
             "contract_complete",
+            # A bounded negative output remains valid scientific evidence.
+            # The live service rejects it as product-incomplete.
+            "token_limit_contract_incomplete",
             "token_limit",
             # The limit landed mid-sentence and sampling continued a few
             # model-chosen tokens to the natural boundary — a complete
@@ -986,7 +1028,15 @@ class LatentCortexEngine:
         )
         bridge_tokens = self._decode_bridge_tokens()
         prefill_cost = len(tokens) * self.n_layers
-        decode_cost = max(0, int(decode_limit) - 1) * self.n_layers
+        contract_grace = (
+            self.config.decode_contract_grace_tokens
+            if self.config.decode_contract == "final_answer_v1"
+            else 0
+        )
+        decode_cost = max(
+            0,
+            int(decode_limit) + int(contract_grace) - 1,
+        ) * self.n_layers
         persist_cost = self.config.workspace.n_slots * self.n_layers
         bridge_cost = len(bridge_tokens) * self.n_layers
         fast_weight_probe_cost = (
@@ -1623,6 +1673,12 @@ class LatentCortexEngine:
             receipt.decode_requested_tokens = decode_limit
             receipt.decode_generated_tokens = len(out_tokens)
             receipt.decode_termination = decode_termination
+            receipt.decode_contract_satisfied = bool(
+                self._last_decode_contract_satisfied
+            )
+            receipt.decode_contract_grace_used_tokens = int(
+                self._last_decode_contract_grace_used_tokens
+            )
             receipt.decode_newline_suppressions = int(
                 self._last_decode_newline_suppressions
             )

@@ -89,6 +89,8 @@ def _identity_receipt_for_request(request, **overrides):
             config=request.get("config"),
             budget=request.get("budget"),
             runtime_controls=request.get("runtime_controls"),
+            cognitive_context=request.get("cognitive_context"),
+            response_contract=request.get("response_contract"),
         )
     )
     receipt.update(overrides)
@@ -212,6 +214,74 @@ def test_handler_requires_prompt(monkeypatch):
     assert "requires prompt" in body["message"]
 
 
+def test_handler_rejects_malformed_response_contract_before_engine(monkeypatch):
+    monkeypatch.delenv("AURA_LATENT_CORTEX", raising=False)
+    constructed = False
+
+    class ForbiddenEngine:
+        def __init__(self, *args, **kwargs):
+            nonlocal constructed
+            constructed = True
+
+    import core.brain.llm.latent_cortex.worker_handler as handler_mod
+
+    monkeypatch.setattr(handler_mod, "LatentCortexEngine", ForbiddenEngine)
+    body = handle_latent_reason(
+        {"prompt": "answer", "response_contract": '{"answer":not_a_type}'},
+        model=object(),
+        tokenizer=object(),
+        model_path="/models/test-32b",
+    )
+
+    assert body["status"] == "error"
+    assert "response_contract rejected" in body["message"]
+    assert constructed is False
+
+
+def test_handler_wires_response_contract_into_config_and_verifier(monkeypatch):
+    from core.brain.llm.latent_cortex.types import EpisodeReceipt, LatentReasoningResult
+
+    monkeypatch.delenv("AURA_LATENT_CORTEX", raising=False)
+    captured: dict = {}
+
+    class StubEngine:
+        def __init__(self, model, tokenizer, config, **kwargs):
+            captured["config"] = config
+
+        def reason(self, **kwargs):
+            captured.update(kwargs)
+            return LatentReasoningResult(
+                ok=True,
+                text='FINAL_ANSWER: {"answer":7}',
+                receipt=EpisodeReceipt(),
+            )
+
+    import core.brain.llm.latent_cortex.worker_handler as handler_mod
+
+    monkeypatch.setattr(handler_mod, "LatentCortexEngine", StubEngine)
+    body = handle_latent_reason(
+        {
+            "prompt": "answer with an integer",
+            "response_contract": '{"answer":int}',
+            "config": {"decode_max_tokens": 96},
+        },
+        model=object(),
+        tokenizer=object(),
+        model_path="/models/test-32b",
+        worker_identity=dict(_WORKER_IDENTITY),
+    )
+
+    assert body["status"] == "ok"
+    assert captured["config"].decode_contract == "final_answer_v1"
+    assert captured["config"].decode_contract_grace_tokens == 96
+    verifier = captured["verifier"]
+    assert verifier is not None
+    assert verifier.response_contract == '{"answer":int}'
+    assert body["receipt"]["verifier_guidance"][
+        "response_contract_required"
+    ] is True
+
+
 def test_handler_compacts_messages_but_hashes_the_original_request(monkeypatch):
     from core.brain.llm.latent_cortex.types import (
         EpisodeReceipt,
@@ -329,6 +399,7 @@ async def test_client_latent_reason_owns_and_releases_resident_lane(monkeypatch)
         client.latent_reason_async(
             prompt="reason deeply",
             config={"decode_max_tokens": 16},
+            response_contract='{"answer":int}',
             runtime_controls={
                 "clean_user_surface_recurrent_loops": 2,
                 "clean_user_surface_steering_alpha": 0.30,
@@ -364,6 +435,7 @@ async def test_client_latent_reason_owns_and_releases_resident_lane(monkeypatch)
         "clean_user_surface_recurrent_loops": 2,
         "clean_user_surface_steering_alpha": 0.30,
     }
+    assert request["response_contract"] == '{"answer":int}'
     assert result["ok"] is True and result["text"] == "answer"
     assert client._active_generations == 0
     assert client._current_request_id == ""
@@ -709,6 +781,13 @@ async def test_client_latent_reason_rejects_invalid_inputs_before_lane_fence(mon
             prompt="q", foreground_request="false"
         )
     )["reason"] == "invalid_foreground_request"
+    assert (
+        await client.latent_reason_async(
+            prompt="q",
+            response_contract='{"answer":unknown}',
+            foreground_request=False,
+        )
+    )["reason"] == "invalid_response_contract"
     assert fence_calls == []
     assert client._request_lock.locked() is False
 

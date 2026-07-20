@@ -3930,6 +3930,7 @@ class MLXLocalClient:
         verifier_guidance: bool = False,
         facet_reliability: dict[str, float] | None = None,
         cognitive_context: list | None = None,
+        response_contract: str | None = None,
     ) -> dict[str, Any]:
         """Run a Recursive Latent Cortex episode on the RESIDENT worker model.
 
@@ -3954,6 +3955,17 @@ class MLXLocalClient:
             return {**base, "reason": "invalid_budget"}
         if runtime_controls is not None and not isinstance(runtime_controls, dict):
             return {**base, "reason": "invalid_runtime_controls"}
+        if response_contract is not None:
+            if not isinstance(response_contract, str) or not response_contract.strip():
+                return {**base, "reason": "invalid_response_contract"}
+            try:
+                from core.brain.llm.latent_cortex.response_contracts import (
+                    parse_response_contract,
+                )
+
+                parse_response_contract(response_contract)
+            except ValueError:
+                return {**base, "reason": "invalid_response_contract"}
         wire_cognitive_context: list[dict[str, str]] | None = None
         if cognitive_context is not None:
             if not isinstance(cognitive_context, list) or len(cognitive_context) > 6:
@@ -4014,6 +4026,7 @@ class MLXLocalClient:
                     wire_runtime_controls if runtime_controls is not None else None
                 ),
                 cognitive_context=wire_cognitive_context,
+                response_contract=response_contract,
             )
         except (TypeError, ValueError, OverflowError):
             return {**base, "reason": "invalid_request_payload"}
@@ -4116,6 +4129,8 @@ class MLXLocalClient:
                 job.update(wire_runtime_controls)
             if wire_cognitive_context is not None:
                 job["cognitive_context"] = wire_cognitive_context
+            if response_contract is not None:
+                job["response_contract"] = response_contract
 
             fut = _new_shared_future()
             self._pending_generations[req_id] = fut

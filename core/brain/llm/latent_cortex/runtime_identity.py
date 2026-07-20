@@ -49,6 +49,7 @@ def latent_request_payload_sha256(
     budget: Any,
     runtime_controls: Any,
     cognitive_context: Any = None,
+    response_contract: Any = None,
 ) -> str:
     payload = {
         "prompt": prompt,
@@ -62,6 +63,8 @@ def latent_request_payload_sha256(
     # without typed cognitive context hash exactly as they always did.
     if cognitive_context is not None:
         payload["cognitive_context"] = cognitive_context
+    if response_contract is not None:
+        payload["response_contract"] = response_contract
     encoded = json.dumps(
         payload,
         sort_keys=True,
