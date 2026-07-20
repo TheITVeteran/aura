@@ -21891,3 +21891,52 @@ is awarded. Next: publish CP193, create the fresh step-10 migration with both
 failed recovery generations, execute the detached one-step calibration, and
 launch exact training only after a tombstone-free checkpoint/rearm verdict.
 Final long soaks remain deferred.
+
+## Checkpoint 2026-07-20-194: Recurrent-Transition Rematerialization Boundary
+
+CP193's migration bound CP189 plus the CP191 and CP192 recovery failures in
+chronological order, verified the unchanged step-10 adapter and optimizer, and
+launched under an otherwise idle host. Four-layer grouping produced repeated
+low-water intervals near 22-23 GB and transient peaks at 39.2 and 54.5 GB, but
+the graph ultimately climbed to 74,133.9 MB against the 73,728-MB ceiling. The
+sentinel killed it with trainer return code -9, sentinel return code 0, restart
+count zero, verified containment, and empty process group and lineage. The
+grouped peak was 405.9 MB over the boundary. Exact step 10 remains intact, no
+long training launched, and no training or capability credit is awarded.
+
+The similar terminal peaks under per-layer and grouped-layer execution
+localize the remaining retained state above transformer boundaries: recurrent
+workspace trajectories and differentiable branch exchange remain connected
+across every recurrence step. CP194 adds an outer checkpoint around each
+complete recurrent transition.
+
+- Every transition takes the complete trainable tree, all branch window
+  prompts, prior branch states, and fixed anchors as explicit differentiable
+  inputs. It recomputes both branches, RMS anchoring, consensus exchange,
+  anti-collapse decorrelation, and scoped LoRA calls as one causal unit during
+  backward rather than retaining the full recurrent trajectory.
+- Transition recomputation temporarily suppresses nested layer checkpoints;
+  the transition boundary already owns all intermediate layer state. Prelude,
+  persistence, and coda execution retain four-layer checkpoints, so no large
+  unbounded region is introduced outside recurrence.
+- Cross-branch causality remains exact. No branch is detached, frozen, or
+  scored under a surrogate. Gradient execution advances to v5 and binds both
+  layer-group size four and recurrent-transition checkpointing across config,
+  receipt, migration summary, manifest, and adapter identity.
+
+Validation is green: 85/85 broad focused recurrence, migration, identity,
+launcher, mechanics, pilot, and post-training tests pass. Exact ordinary-
+versus-checkpointed objective values, nonzero identical gradient keys, per-
+tensor gradient equality, and telemetry parity remain green after the outer
+transition boundary. Focused Ruff, bytecode compilation, and diff-integrity
+checks pass. No resident CP194 calibration has launched at this source
+checkpoint.
+
+Evidence-weighted completion remains 27%. This is checkpoint 194 of the
+faithful 292-399 total-checkpoint forecast, leaving approximately 98-205
+checkpoints. No training-completion, mechanics, reasoning-gain, same-checkpoint
+interaction, frontier, external-custody, installed-app, release, or soak credit
+is awarded. Next: publish CP194, bind all three failed recoveries into a fresh
+step-10 migration, execute the detached one-step calibration, and launch exact
+training only after a tombstone-free checkpoint/rearm verdict. Final long soaks
+remain deferred.

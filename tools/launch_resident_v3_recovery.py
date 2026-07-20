@@ -409,6 +409,10 @@ def verify_calibration(migration_path: Path) -> dict[str, Any]:
         or training_receipt.get("gradient_execution", {}).get("activation_rematerialization")
         != "transformer_layer_group_checkpoint"
         or training_receipt.get("gradient_execution", {}).get("layer_group_size") != 4
+        or training_receipt.get("gradient_execution", {}).get(
+            "recurrent_transition_checkpointing"
+        )
+        is not True
         or training_receipt.get("resume_migration") != summary
     ):
         failure_points.append("calibration_training_receipt_invalid")

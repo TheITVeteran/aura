@@ -639,13 +639,14 @@ def _upgrade_bundle_to_migrated_v3():
     config = json.loads(artifacts["training_config.json"])
     receipt = json.loads(artifacts["receipt.json"])
     gradient = {
-        "schema": "aura.recurrence_streamed_depth_gradient.v4",
+        "schema": "aura.recurrence_streamed_depth_gradient.v5",
         "mode": "depth_serial_exact_sum",
         "concurrent_depth_graphs": 1,
         "optimizer_updates_per_sample": 1,
         "finite_loss_and_gradient_required_before_update": True,
         "activation_rematerialization": "transformer_layer_group_checkpoint",
         "layer_group_size": 4,
+        "recurrent_transition_checkpointing": True,
     }
     config["gradient_execution"] = gradient
     receipt["gradient_execution"] = gradient
@@ -668,6 +669,7 @@ def _upgrade_bundle_to_migrated_v3():
         "required_execution_change": {
             "activation_rematerialization": "transformer_layer_group_checkpoint",
             "layer_group_size": 4,
+            "recurrent_transition_checkpointing": True,
         },
         "new_trainer": {"sha256": receipt["trainer_source_sha256"]},
     }
@@ -695,6 +697,7 @@ def _upgrade_bundle_to_migrated_v3():
         ).hexdigest(),
         "activation_rematerialization": "transformer_layer_group_checkpoint",
         "layer_group_size": 4,
+        "recurrent_transition_checkpointing": True,
         "new_trainer_sha256": migration["new_trainer"]["sha256"],
     }
     config["resume_migration"] = resume_migration
@@ -738,6 +741,7 @@ def test_migrated_v3_bundle_binds_checkpoint_provenance():
         "transformer_layer_group_checkpoint"
     )
     assert receipt["resume_migration"]["layer_group_size"] == 4
+    assert receipt["resume_migration"]["recurrent_transition_checkpointing"] is True
     assert receipt["checkpoint_migration_sha256"]
 
 

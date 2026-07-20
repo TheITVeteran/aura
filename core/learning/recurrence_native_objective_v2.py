@@ -43,6 +43,7 @@ class _LayerCheckpointState:
         tuple[tuple[int, ...], int | None, int | None],
         Callable[..., Any],
     ]
+    transition_wrappers: dict[int, Callable[..., Any]]
 
 
 _LAYER_CHECKPOINTS: ContextVar[_LayerCheckpointState | None] = ContextVar(
@@ -101,6 +102,7 @@ def transformer_layer_group_checkpointing(
             parameters=parameters,
             group_size=group_size,
             wrappers={},
+            transition_wrappers={},
         )
     )
     try:
@@ -289,6 +291,101 @@ def _exchange_and_decorrelate(
     return exchanged
 
 
+def _advance_recurrent_states(
+    model: Any,
+    prompts_at_window: Sequence[Any],
+    states: Sequence[Any],
+    anchors: Sequence[Any],
+    spec: RLCExecutionSpec,
+    step: int,
+    prelude_end: int,
+    coda_start: int,
+) -> list[Any]:
+    updated: list[Any] = []
+    alpha = _alpha_at(spec, step)
+    for prompt_at_window, state, anchor in zip(
+        prompts_at_window,
+        states,
+        anchors,
+        strict=True,
+    ):
+        candidate = _window_pass(
+            model,
+            prompt_at_window,
+            state,
+            prelude_end,
+            coda_start,
+        )
+        updated.append(
+            (1.0 - alpha) * state
+            + alpha * rms_match(candidate, anchor, spec.rms_clip_ratio)
+        )
+    if len(updated) > 1 and (step + 1) % spec.exchange_interval == 0:
+        return _exchange_and_decorrelate(updated, spec, step + 1)
+    return updated
+
+
+def _checkpointed_recurrent_transition(
+    model: Any,
+    prompts_at_window: Sequence[Any],
+    states: Sequence[Any],
+    anchors: Sequence[Any],
+    spec: RLCExecutionSpec,
+    step: int,
+    prelude_end: int,
+    coda_start: int,
+) -> list[Any]:
+    checkpointed = _LAYER_CHECKPOINTS.get()
+    if checkpointed is None:
+        return _advance_recurrent_states(
+            model,
+            prompts_at_window,
+            states,
+            anchors,
+            spec,
+            step,
+            prelude_end,
+            coda_start,
+        )
+    branch_count = len(states)
+    call = checkpointed.transition_wrappers.get(step)
+    if call is None:
+        import mlx.core as mx
+
+        def transition(all_parameters: Any, *values: Any) -> tuple[Any, ...]:
+            checkpointed.model.update(all_parameters)
+            prompts = values[:branch_count]
+            current_states = values[branch_count : 2 * branch_count]
+            current_anchors = values[2 * branch_count :]
+            token = _LAYER_CHECKPOINTS.set(None)
+            try:
+                return tuple(
+                    _advance_recurrent_states(
+                        checkpointed.model,
+                        prompts,
+                        current_states,
+                        current_anchors,
+                        spec,
+                        step,
+                        prelude_end,
+                        coda_start,
+                    )
+                )
+            finally:
+                _LAYER_CHECKPOINTS.reset(token)
+
+        call = mx.checkpoint(transition)
+        checkpointed.transition_wrappers[step] = call
+    return list(
+        call(
+            checkpointed.parameters,
+            *prompts_at_window,
+            *states,
+            *anchors,
+        )
+    )
+
+
 def _persist_and_score(
     model: Any,
     prompt_embeddings: Any,
@@ -371,25 +468,17 @@ def live_path_forward(
 
     exchanges = 0
     for step in range(spec.recurrent_steps):
-        updated: list[Any] = []
-        alpha = _alpha_at(spec, step)
-        for prompt_at_window, state, anchor in zip(
-            prompts_at_window, states, anchors, strict=True
-        ):
-            candidate = _window_pass(
-                model,
-                prompt_at_window,
-                state,
-                prelude_end,
-                coda_start,
-            )
-            updated.append(
-                (1.0 - alpha) * state
-                + alpha * rms_match(candidate, anchor, spec.rms_clip_ratio)
-            )
-        states = updated
+        states = _checkpointed_recurrent_transition(
+            model,
+            prompts_at_window,
+            states,
+            anchors,
+            spec,
+            step,
+            prelude_end,
+            coda_start,
+        )
         if len(states) > 1 and (step + 1) % spec.exchange_interval == 0:
-            states = _exchange_and_decorrelate(states, spec, step + 1)
             exchanges += 1
 
     branch_logits = tuple(

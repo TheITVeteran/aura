@@ -1001,7 +1001,7 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
         },
         "gradient_execution": {
             "schema": (
-                "aura.recurrence_streamed_depth_gradient.v4"
+                "aura.recurrence_streamed_depth_gradient.v5"
                 if args.activation_checkpointing
                 else GRADIENT_EXECUTION_SCHEMA
             ),
@@ -1013,6 +1013,7 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
                 {
                     "activation_rematerialization": "transformer_layer_group_checkpoint",
                     "layer_group_size": 4,
+                    "recurrent_transition_checkpointing": True,
                 }
                 if args.activation_checkpointing
                 else {}
