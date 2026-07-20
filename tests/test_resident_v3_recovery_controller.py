@@ -152,3 +152,72 @@ def test_controller_rejects_tampered_terminal_verdict(tmp_path):
         assert exc.code == "controller_verdict_invalid"
     else:
         raise AssertionError("tampered controller verdict was accepted")
+
+
+def test_controller_attaches_only_to_cross_bound_resume_plans(tmp_path, monkeypatch):
+    migration, root = _migration(tmp_path)
+    run_dir = root / "detached-resume"
+    sentinel_dir = root / "sentinel-resume"
+    run_dir.mkdir()
+    sentinel_dir.mkdir()
+    adapter = root / "adapter"
+    stage = adapter / f"resource_stage_resume_{root.name}.json"
+    ring = adapter / f"physical_footprint_resume_{root.name}.jsonl"
+    trainer = {
+        "plan_sha256": "d" * 64,
+        "command": [
+            "python",
+            "trainer.py",
+            "--out-dir",
+            str(adapter),
+            "--max-minutes",
+            "2880.0",
+            "--resource-stage-path",
+            str(stage),
+            "--resume",
+            "--resume-migration-evidence",
+            str(migration),
+        ],
+    }
+    sentinel = {
+        "plan_sha256": "e" * 64,
+        "command": [
+            "python",
+            "memory_sentinel.py",
+            "--pid",
+            "123",
+            "--steady-marker",
+            str(stage),
+            "--ring",
+            str(ring),
+        ],
+    }
+    (run_dir / "detached_plan.json").write_text(json.dumps(trainer), encoding="ascii")
+    (sentinel_dir / "detached_plan.json").write_text(
+        json.dumps(sentinel),
+        encoding="ascii",
+    )
+    monkeypatch.setattr(
+        controller.detached,
+        "_status",
+        lambda path: {
+            "completion_indeterminate": False,
+            "child_pid": 123 if path == run_dir else 456,
+        },
+    )
+
+    result = controller._launch_or_attach_resume(migration, root)
+
+    assert result["attached"] is True
+    assert result["trainer_pid"] == 123
+    sentinel["command"][-1] = str(root / "wrong.jsonl")
+    (sentinel_dir / "detached_plan.json").write_text(
+        json.dumps(sentinel),
+        encoding="ascii",
+    )
+    try:
+        controller._launch_or_attach_resume(migration, root)
+    except controller.ResidentV3RecoveryControllerError as exc:
+        assert exc.code == "resume_attach_plan_invalid"
+    else:
+        raise AssertionError("cross-unbound resume plan was accepted")

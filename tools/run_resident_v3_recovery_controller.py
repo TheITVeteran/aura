@@ -144,6 +144,72 @@ def _receipt_summary(statuses: Mapping[str, Mapping[str, Any]]) -> dict[str, Any
     return result
 
 
+def _command_option(command: Sequence[str], option: str) -> str:
+    positions = [index for index, value in enumerate(command) if value == option]
+    if len(positions) != 1 or positions[0] + 1 >= len(command):
+        _fail("resume_attach_plan_invalid")
+    return str(command[positions[0] + 1])
+
+
+def _launch_or_attach_resume(migration_path: Path, root: Path) -> dict[str, Any]:
+    run_dir = root / "detached-resume"
+    sentinel_dir = root / "sentinel-resume"
+    present = [path.exists() or path.is_symlink() for path in (run_dir, sentinel_dir)]
+    if not any(present):
+        return recovery.launch_phase(migration_path, phase="resume")
+    if not all(present) or run_dir.is_symlink() or sentinel_dir.is_symlink():
+        _fail("resume_attach_paths_incomplete")
+    statuses = {
+        "trainer": detached._status(run_dir),
+        "sentinel": detached._status(sentinel_dir),
+    }
+    if any(status.get("completion_indeterminate") is True for status in statuses.values()):
+        _fail("resume_attach_completion_indeterminate")
+    migration = _read_json(migration_path, role="migration")
+    destination = migration.get("destination")
+    if not isinstance(destination, Mapping):
+        _fail("migration_destination_invalid")
+    adapter_root = Path(str(destination.get("root"))).resolve(strict=True)
+    trainer_plan = _read_json(run_dir / "detached_plan.json", role="resume_trainer_plan")
+    sentinel_plan = _read_json(
+        sentinel_dir / "detached_plan.json",
+        role="resume_sentinel_plan",
+    )
+    trainer_command = trainer_plan.get("command")
+    sentinel_command = sentinel_plan.get("command")
+    trainer_pid = statuses["trainer"].get("child_pid")
+    if (
+        not isinstance(trainer_command, list)
+        or not all(isinstance(value, str) for value in trainer_command)
+        or not isinstance(sentinel_command, list)
+        or not all(isinstance(value, str) for value in sentinel_command)
+        or type(trainer_pid) is not int
+        or trainer_pid < 1
+        or trainer_command.count("--resume") != 1
+        or _command_option(trainer_command, "--resume-migration-evidence")
+        != str(migration_path.expanduser().resolve(strict=True))
+        or _command_option(trainer_command, "--out-dir") != str(adapter_root)
+        or _command_option(trainer_command, "--max-minutes") != "2880.0"
+        or _command_option(trainer_command, "--resource-stage-path")
+        != str(adapter_root / f"resource_stage_resume_{root.name}.json")
+        or _command_option(sentinel_command, "--pid") != str(trainer_pid)
+        or _command_option(sentinel_command, "--steady-marker")
+        != str(adapter_root / f"resource_stage_resume_{root.name}.json")
+        or _command_option(sentinel_command, "--ring")
+        != str(adapter_root / f"physical_footprint_resume_{root.name}.jsonl")
+    ):
+        _fail("resume_attach_plan_invalid")
+    return {
+        "phase": "resume",
+        "attached": True,
+        "trainer_pid": trainer_pid,
+        "run_dir": str(run_dir),
+        "sentinel_run_dir": str(sentinel_dir),
+        "trainer_plan_sha256": trainer_plan.get("plan_sha256"),
+        "sentinel_plan_sha256": sentinel_plan.get("plan_sha256"),
+    }
+
+
 def _write_verdict(
     root: Path,
     *,
@@ -221,7 +287,7 @@ def run_controller(
                 status="running",
                 details={"calibration_verdict_sha256": calibration_verdict["verdict_sha256"]},
             )
-            launch = recovery.launch_phase(migration_path, phase="resume")
+            launch = _launch_or_attach_resume(migration_path, root)
             _write_state(
                 root,
                 stage="wait_resume",

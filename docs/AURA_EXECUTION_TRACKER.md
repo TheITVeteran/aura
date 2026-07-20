@@ -22143,3 +22143,37 @@ remain open. Next: publish CP199, preserve the failed startup attempt, relaunch
 the detached resume from step 11, and confirm model load plus the first active
 training lease before estimating completion from measured step cadence. Final
 long soaks remain deferred.
+
+## Checkpoint 2026-07-20-200: Resident 32B Long Training Live
+
+The corrected detached resume launched at 05:03 PDT from the admitted exact
+step-11 checkpoint. The trainer independently verified the migration and
+advanced pointer, loaded the resident Aura 32B base under the 40/2/48-GiB MLX
+envelope, restored epoch 0 cursor 11, published the signed resource-stage
+marker, received the sentinel's steady-stage acknowledgement, and acquired its
+first `training_step` compute lease. Trainer PID 50761 and sentinel PID 53446
+remain live with restart count zero. Early step-12 footprint samples are about
+25.6 GB against the 73,728-MB compute ceiling. This is active recurrent
+training, not only supervisor launch, but no completion or capability credit is
+awarded before terminal evidence and downstream experiments.
+
+The recovery controller now supports a rigorously verified attach path for a
+resume that was launched manually between controller generations. It requires
+both create-once run directories, valid detached journals and plans, determinate
+completion state, the exact migration and output roots, 48-hour training bound,
+resume flag, resource-stage path, trainer PID binding in the sentinel command,
+and exact sentinel ring path. Partial or symlinked paths, indeterminate runs, or
+any cross-binding mismatch fail closed. It never launches a duplicate trainer.
+
+Validation is green: 5/5 focused controller tests pass, including positive
+attach and rejection after sentinel-ring plan tampering. Focused Ruff and
+bytecode compilation pass.
+
+Evidence-weighted completion remains 27%. This is checkpoint 200 of the
+faithful 292-399 total-checkpoint forecast, leaving approximately 92-199
+checkpoints. The long run is detached, but training-completion, mechanics,
+reasoning-gain, same-checkpoint interaction, frontier, external-custody,
+installed-app, release, and soak gates remain open. Next: publish CP200, attach
+the durable controller to this exact live run, measure initial step cadence,
+and build the recovery-aware strict admission and post-training continuation
+while the model lane remains occupied. Final long soaks remain deferred.
