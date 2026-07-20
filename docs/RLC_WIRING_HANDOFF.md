@@ -12,9 +12,9 @@ This document is the map for finishing that.
 | 2 writable slots | `latent_cortex/engine.py` | live |
 | 3 schedule search | `core/learning/schedule_search.py` | engine has `_resolve_schedule` + `LayerSchedule`; search is not connected to it |
 | 4 virtual width | `core/consciousness/parallel_branches.py` | live |
-| 5 latent optimization | `core/learning/latent_optimization.py` | **none** (`spec.latent_opt_mode` exists, "disabled") |
+| 5 latent optimization | `latent_cortex/latent_opt.py` | **ALREADY LIVE** — engine.py:1372, with matched-random control AND manifold drift. `core/learning/latent_optimization.py` (CP231) DUPLICATES this; prefer the live one. |
 | 6 fast weights | `latent_cortex/fast_weights.py` | live |
-| 7 adaptive halting | `core/learning/adaptive_halting.py` | **bridge built** (`latent_cortex/learned_halting_bridge.py`), not called |
+| 7 adaptive halting | `core/learning/adaptive_halting.py` | **LIVE** — `HaltingController.halting_head` (recurrence.py); None = old policy |
 | RLVR | `core/learning/grpo.py` + `tools/train_grpo.py` | n/a (training) |
 | verifiable tasks | `core/learning/verifiable_tasks.py` | n/a (data) |
 
@@ -36,18 +36,21 @@ ensemble check is `engine.py:1236` (`ensemble.all_halted()`).
    came from the residual floor is the old policy under a new name.
 4. Default MUST stay `residual` until a trained head beats it offline.
 
-## Then: latent optimization (component 5)
+## Component 5 needs NO wiring — it was already live
 
-`spec.latent_opt_mode` is validated to `"disabled"` for v2 training. Wire
-`optimize_latent` into the engine between recurrence and fast-weights (the
-docstring order at `engine.py:2` already names this slot). Two
-non-negotiables from Anima Rationis:
+`latent_cortex/latent_opt.py` is wired at `engine.py:1372` and already has
+both honesty controls: `control_mode` applies matched-magnitude random
+perturbations sized from the true gradient step, and the objective carries
+a manifold term (RMS + cosine drift from the post-prelude seed).
 
-* the score fn must be verifier-grounded (line 220 -- optimizing confidence
-  strengthens confident mistakes); `LatentObjective` refuses an objective
-  with neither verifier nor consistency term.
-* `matched_random_control` must run on every claim (line 453). It ships in
-  the module, not the tests, for this reason.
+`core/learning/latent_optimization.py` (CP231) was written without finding
+this and duplicates it. It is not wrong, but it is redundant — an audit
+that searched `latent_optim` missed a module named `latent_opt`. Prefer the
+live one; treat CP231 as a standalone reference implementation or delete
+it. **Search by capability, not by guessed filename.**
+
+`spec.latent_opt_mode` is validated to `"disabled"` for v2 TRAINING only;
+that is a training constraint, not the live default.
 
 ## Then: schedule search (component 3)
 

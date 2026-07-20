@@ -96,6 +96,11 @@ class HaltingController:
     best_step: int = -1
     best_score: float = -math.inf
     best_state: Any = None
+    # Optional learned halting head (CP230/234). None => the residual policy
+    # this controller has always run. Attaching a head grants nothing on its
+    # own: the head is zero-initialised, so an untrained one never fires.
+    halting_head: Any = None
+    head_halts: int = 0
 
     def observe(
         self,
@@ -136,6 +141,22 @@ class HaltingController:
             and residual < self.config.convergence_eps
         ):
             return HaltDecision(True, "converged")
+
+        # Learned allocation, consulted only AFTER the convergence floor.
+        # Residual halting answers "has this loop stopped changing?"; the
+        # head answers "does this problem deserve more thought?" CP226
+        # measured where those come apart -- a loop still moving healthily
+        # (deltas 0.55, 0.50, 0.32) while accuracy fell to zero. Residual
+        # halting sees motion and keeps going.
+        if (
+            self.halting_head is not None
+            and not self.config.fixed_depth
+            and step + 1 >= self.config.min_steps
+        ):
+            probability = float(self.halting_head.halt_probability(z_next))
+            if probability >= self.halting_head.threshold:
+                self.head_halts += 1
+                return HaltDecision(True, "head_satisfied")
         return HaltDecision(False)
 
     def final_state(self, z_last) -> tuple[Any, bool]:

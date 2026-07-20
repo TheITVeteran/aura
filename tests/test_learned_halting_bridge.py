@@ -162,3 +162,78 @@ def test_invalid_configuration_fails_closed():
         should_halt(step=0, residual_trail=[], config=HaltingBridgeConfig())
     with pytest.raises(ValueError, match="no halting verdicts"):
         bridge_receipt([], HaltingBridgeConfig())
+
+
+# ── The head is actually wired into the live controller ─────────────────
+
+
+def _controller(**overrides):
+    from core.brain.llm.latent_cortex.recurrence import (
+        HaltingController,
+        RecurrenceConfig,
+    )
+
+    defaults = dict(max_steps=8, min_steps=1, convergence_eps=0.01, fixed_depth=False)
+    defaults.update(overrides)
+    return HaltingController(config=RecurrenceConfig(**defaults))
+
+
+def test_controller_without_a_head_is_the_old_policy():
+    controller = _controller()
+    assert controller.halting_head is None
+    decision = controller.observe(0, mx.ones((1, 4, HIDDEN)), residual=0.5)
+    assert decision.should_halt is False
+    assert controller.head_halts == 0
+
+
+def test_an_attached_untrained_head_changes_nothing():
+    """Attaching the mechanism must grant nothing -- the head is zero-init."""
+    controller = _controller()
+    controller.halting_head = HaltingHead(HIDDEN, threshold=0.75)
+    decision = controller.observe(0, mx.ones((1, 4, HIDDEN)), residual=0.5)
+    assert decision.should_halt is False
+    assert controller.head_halts == 0
+
+
+def test_a_trained_head_halts_a_still_moving_loop_in_the_controller():
+    """The CP226 case, now inside the live halting path."""
+    controller = _controller()
+    head = HaltingHead(HIDDEN, threshold=0.5)
+    head.bias = mx.array([10.0])
+    controller.halting_head = head
+    decision = controller.observe(0, mx.ones((1, 4, HIDDEN)), residual=0.5)
+    assert decision.should_halt is True
+    assert decision.reason == "head_satisfied"
+    assert controller.head_halts == 1
+
+
+def test_convergence_still_wins_over_an_eager_head_in_the_controller():
+    controller = _controller()
+    head = HaltingHead(HIDDEN, threshold=0.5)
+    head.bias = mx.array([-50.0])   # never wants to stop
+    controller.halting_head = head
+    decision = controller.observe(0, mx.ones((1, 4, HIDDEN)), residual=0.0001)
+    assert decision.should_halt is True
+    assert decision.reason == "converged", "the fixed-point floor must hold"
+
+
+def test_fixed_depth_training_ignores_the_head():
+    """v2 training requires fixed-depth recurrence; the head must not
+    silently reintroduce variable depth under it."""
+    controller = _controller(fixed_depth=True)
+    head = HaltingHead(HIDDEN, threshold=0.5)
+    head.bias = mx.array([10.0])
+    controller.halting_head = head
+    decision = controller.observe(0, mx.ones((1, 4, HIDDEN)), residual=0.5)
+    assert decision.should_halt is False
+    assert controller.head_halts == 0
+
+
+def test_divergence_still_preempts_the_head():
+    controller = _controller()
+    head = HaltingHead(HIDDEN, threshold=0.5)
+    head.bias = mx.array([10.0])
+    controller.halting_head = head
+    bad = mx.full((1, 4, HIDDEN), float("nan"))
+    decision = controller.observe(0, bad, residual=0.5)
+    assert decision.reason == "diverged_nonfinite"
