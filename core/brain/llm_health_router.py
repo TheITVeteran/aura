@@ -110,24 +110,36 @@ _GENERATION_GATE_LAST_OWNER = ""
 # validation's third coding repair died exactly that way while holding
 # an unused 240s budget. 75s covers one slow turn plus margin; callers
 # with shorter deadlines still bail via their own timeouts.
-_GENERATION_GATE_WAIT_S = float(
-    os.environ.get("AURA_GENERATION_GATE_WAIT_S", "75") or 75
-)
+def _gate_budget_env_s(name: str, default: float) -> float:
+    """Parse a gate timing budget safely at import time.
+
+    A malformed value must not prevent the router module from importing,
+    and NaN/inf/negative budgets must not reach semaphore timeouts where
+    they disable or invert the wait semantics.
+    """
+    try:
+        value = float(os.environ.get(name, str(default)) or default)
+    except (TypeError, ValueError):
+        return float(default)
+    if not math.isfinite(value) or value < 0.0:
+        return float(default)
+    return value
+
+
+_GENERATION_GATE_WAIT_S = _gate_budget_env_s("AURA_GENERATION_GATE_WAIT_S", 75.0)
 # Background work never owns recovery authority over the serving lane. It may
 # wait briefly for naturally available capacity, then returns a retryable
 # deferral instead of accumulating 75-second waiters or killing a warm worker.
-_BACKGROUND_GENERATION_GATE_WAIT_S = float(
-    os.environ.get("AURA_BACKGROUND_GENERATION_GATE_WAIT_S", "5") or 5
+_BACKGROUND_GENERATION_GATE_WAIT_S = _gate_budget_env_s(
+    "AURA_BACKGROUND_GENERATION_GATE_WAIT_S", 5.0
 )
 # Foreground preemption ladder budgets: a user turn waits only this grace
 # before asking a BACKGROUND gate holder to yield cooperatively (the worker
 # stops between tokens and stays warm), then this long for the yield to land.
 # Foreground-vs-foreground contention still honors the full gate window.
-_FOREGROUND_GATE_GRACE_S = float(
-    os.environ.get("AURA_FOREGROUND_GATE_GRACE_S", "5") or 5
-)
-_FOREGROUND_SOFT_CANCEL_WAIT_S = float(
-    os.environ.get("AURA_FOREGROUND_SOFT_CANCEL_WAIT_S", "10") or 10
+_FOREGROUND_GATE_GRACE_S = _gate_budget_env_s("AURA_FOREGROUND_GATE_GRACE_S", 5.0)
+_FOREGROUND_SOFT_CANCEL_WAIT_S = _gate_budget_env_s(
+    "AURA_FOREGROUND_SOFT_CANCEL_WAIT_S", 10.0
 )
 _GATE_SATURATION_RESULT = {
     "ok": False,
@@ -632,6 +644,11 @@ class CircuitState(Enum):
     HALF_OPEN = "half_open" # Testing — one probe request allowed
 
 
+# A half-open probe that never reports back must not wedge the endpoint
+# closed forever.
+_ENDPOINT_HALF_OPEN_LEASE_TTL_S = 30.0
+
+
 @dataclass
 class EndpointHealth:
     name: str
@@ -641,12 +658,24 @@ class EndpointHealth:
     tier: Any = "local" # Matches LLMTier enum or str ("local", "api_deep", "api_fast")
     client: Any = None
 
-    # Circuit breaker
+    # Circuit breaker. failure_count is the CURRENT consecutive-failure
+    # streak (reset by any success); lifetime_failure_count is the honest
+    # historical total that reports label "failures". The old design mixed
+    # the two: intermittent failures accumulated across successes until they
+    # opened the circuit, and recovery erased history.
     state: CircuitState = CircuitState.CLOSED
     failure_count: int = 0
+    lifetime_failure_count: int = 0
+    transient_trip_count: int = 0
     success_count: int = 0
     last_failure: float = 0.0
     last_success: float = 0.0
+    last_failure_reason: str = ""
+    # Monotonic deadline for OPEN→HALF_OPEN eligibility (wall-clock
+    # last_failure is display-only; clock adjustments must not reopen or
+    # wedge circuits).
+    cooldown_until_monotonic: float = 0.0
+    half_open_probe_at_monotonic: float = 0.0
 
     # Performance tracking
     avg_latency_ms: float = 0.0
@@ -659,78 +688,141 @@ class EndpointHealth:
     recovery_timeout: float = 30.0
     min_tokens_for_success: int = 1
 
+    def __post_init__(self) -> None:
+        # dataclass + concurrent async/thread callers: every state
+        # transition runs under this lock (the router allocated a lock and
+        # never used it for endpoint state — all transitions raced).
+        self._lock = threading.Lock()
+
     def record_success(self, tokens: int, latency_ms: float):
-        self.success_count += 1
-        self.total_requests += 1
-        self.total_tokens += tokens
-        self.last_success = time.time()
-
-        # Rolling average latency
-        if self.avg_latency_ms == 0:
-            self.avg_latency_ms = latency_ms
-        else:
-            self.avg_latency_ms = (self.avg_latency_ms * 0.8) + (latency_ms * 0.2)
-
-        if self.state == CircuitState.HALF_OPEN:
-            logger.info("Circuit CLOSED for %s — probe succeeded", self.name)
-            self.state = CircuitState.CLOSED
+        with self._lock:
+            self.success_count += 1
+            self.total_requests += 1
+            self.total_tokens += tokens
+            self.last_success = time.time()
+            # A success ends the consecutive-failure streak in EVERY state —
+            # intermittent failures must not silently accumulate across
+            # healthy successes until they open the circuit.
             self.failure_count = 0
+            self.half_open_probe_at_monotonic = 0.0
+
+            if self.state != CircuitState.CLOSED:
+                logger.info("Circuit CLOSED for %s — probe succeeded", self.name)
+                self.state = CircuitState.CLOSED
+
+            # Rolling average latency
+            if latency_ms >= 0:
+                if self.avg_latency_ms == 0:
+                    self.avg_latency_ms = latency_ms
+                else:
+                    self.avg_latency_ms = (self.avg_latency_ms * 0.8) + (latency_ms * 0.2)
 
     def record_failure(self, reason: str):
-        self.failure_count += 1
-        self.total_requests += 1
-        self.last_failure = time.time()
+        with self._lock:
+            self.failure_count += 1
+            self.lifetime_failure_count += 1
+            self.total_requests += 1
+            self.last_failure = time.time()
+            self.last_failure_reason = str(reason or "")[:200]
+            self.half_open_probe_at_monotonic = 0.0
 
-        if self.failure_count >= self.failure_threshold:
-            if self.state != CircuitState.OPEN:
-                logger.warning(
-                    "Circuit OPEN for %s after %d failures. Reason: %s",
-                    self.name, self.failure_count, reason
-                )
-            self.state = CircuitState.OPEN
+            if self.state == CircuitState.HALF_OPEN or self.failure_count >= self.failure_threshold:
+                if self.state != CircuitState.OPEN:
+                    logger.warning(
+                        "Circuit OPEN for %s after %d failures. Reason: %s",
+                        self.name, self.failure_count, reason
+                    )
+                self.state = CircuitState.OPEN
+                self.cooldown_until_monotonic = time.monotonic() + self.recovery_timeout
 
     def trip_temporarily(self, reason: str):
-        """Open the circuit on a transient MLX-runtime failure without poisoning health counters."""
-        self.total_requests += 1
-        self.last_failure = time.time()
-        if self.state != CircuitState.OPEN:
-            logger.warning(
-                "Circuit OPEN for %s on transient runtime failure. Reason: %s",
-                self.name,
-                reason,
-            )
-        self.state = CircuitState.OPEN
+        """Open the circuit on a transient MLX-runtime failure without poisoning the failure streak."""
+        with self._lock:
+            self.total_requests += 1
+            self.transient_trip_count += 1
+            self.last_failure = time.time()
+            self.last_failure_reason = f"transient:{str(reason or '')[:180]}"
+            self.half_open_probe_at_monotonic = 0.0
+            if self.state != CircuitState.OPEN:
+                logger.warning(
+                    "Circuit OPEN for %s on transient runtime failure. Reason: %s",
+                    self.name,
+                    reason,
+                )
+            self.state = CircuitState.OPEN
+            self.cooldown_until_monotonic = time.monotonic() + self.recovery_timeout
 
     def record_empty(self):
         """Zero-token or whitespace-only response — treat as failure."""
-        self.empty_responses += 1
+        with self._lock:
+            self.empty_responses += 1
         self.record_failure("empty_response")
 
     def is_available(self) -> bool:
-        if self.state == CircuitState.CLOSED:
-            return True
-        if self.state == CircuitState.OPEN:
-            # Check if recovery timeout has passed
-            if time.time() - self.last_failure > self.recovery_timeout:
+        """ADMISSION check — may grant the single half-open probe lease.
+
+        Routing calls this before dispatch. An OPEN circuit whose cooldown
+        elapsed admits exactly ONE caller as the probe; concurrent callers
+        keep failing over until the probe records success. Pure observers
+        (health reports, readiness, GUI) must use :meth:`peek_available` —
+        reads that transition circuit state were themselves a defect.
+        """
+        with self._lock:
+            if self.state == CircuitState.CLOSED:
+                return True
+            now = time.monotonic()
+            if self.state == CircuitState.OPEN:
+                if now < self.cooldown_until_monotonic:
+                    return False
                 logger.info("Circuit HALF-OPEN for %s — probing", self.name)
                 self.state = CircuitState.HALF_OPEN
+                self.half_open_probe_at_monotonic = now
+                return True
+            # HALF_OPEN: only the lease holder proceeds; a stale lease
+            # (probe never reported) is re-grantable after the TTL.
+            lease = self.half_open_probe_at_monotonic
+            if lease <= 0.0 or (now - lease) > _ENDPOINT_HALF_OPEN_LEASE_TTL_S:
+                self.half_open_probe_at_monotonic = now
                 return True
             return False
-        if self.state == CircuitState.HALF_OPEN:
-            return True
-        return False
+
+    def peek_available(self) -> bool:
+        """Pure availability snapshot — never mutates circuit state."""
+        with self._lock:
+            return self.state == CircuitState.CLOSED
+
+    def probe_eligible(self) -> bool:
+        """Non-mutating routing eligibility: would :meth:`is_available` admit a caller?
+
+        Candidate-list building must use this instead of ``is_available`` so
+        that merely ENUMERATING endpoints does not consume half-open probe
+        leases or flip OPEN circuits to HALF_OPEN. The mutating admission
+        check runs once, immediately before dispatch to the chosen endpoint.
+        """
+        with self._lock:
+            if self.state == CircuitState.CLOSED:
+                return True
+            now = time.monotonic()
+            if self.state == CircuitState.OPEN:
+                return now >= self.cooldown_until_monotonic
+            lease = self.half_open_probe_at_monotonic
+            return lease <= 0.0 or (now - lease) > _ENDPOINT_HALF_OPEN_LEASE_TTL_S
 
     def status_dict(self) -> dict[str, Any]:
-        return {
-            "name": self.name,
-            "tier": getattr(self, "tier", "standard"),
-            "state": self.state.value,
-            "failures": self.failure_count,
-            "successes": self.success_count,
-            "empty_responses": self.empty_responses,
-            "avg_latency_ms": round(self.avg_latency_ms, 1),
-            "total_tokens": self.total_tokens,
-        }
+        with self._lock:
+            return {
+                "name": self.name,
+                "tier": getattr(self, "tier", "standard"),
+                "state": self.state.value,
+                "failures": self.lifetime_failure_count,
+                "failure_streak": self.failure_count,
+                "transient_trips": self.transient_trip_count,
+                "successes": self.success_count,
+                "empty_responses": self.empty_responses,
+                "last_failure_reason": self.last_failure_reason,
+                "avg_latency_ms": round(self.avg_latency_ms, 1),
+                "total_tokens": self.total_tokens,
+            }
 
 
 # ── Validator ─────────────────────────────────────────────────────────────────
@@ -749,23 +841,44 @@ def validate_response(text: str | None, min_tokens: int = 1) -> tuple[bool, str]
     stripped = text.strip()
     if not stripped:
         return False, "empty_whitespace"
-    if len(stripped) < 1:
-        return False, "empty_whitespace"
     words = stripped.split()
     if len(words) < min_tokens:
         return False, f"below_min_tokens_{min_tokens}"
-    # Check for pure error markers
+    # Punctuation-only output (".", "???", "---") is not a served response.
+    if not any(ch.isalnum() for ch in stripped):
+        return False, "punctuation_only"
     lower = stripped.lower()
-    error_markers = [
-        "i am currently offline",
-        "i cannot process that",
-        "error:",
-        "connection refused",
-        "timeout",
-    ]
-    for marker in error_markers:
-        if lower.startswith(marker):
-            return False, f"error_marker:{marker}"
+    # Error-marker screening is length-bounded: a provider error body is a
+    # short marker-led string, while a legitimate explanation that merely
+    # BEGINS with a word like "timeout" must not be rejected. Unambiguous
+    # markers get a wider bound than generic English words.
+    if len(stripped) <= 400:
+        for marker in (
+            "i am currently offline",
+            "i cannot process that",
+            "error:",
+            "[error]",
+            "model_not_found",
+            '{"error"',
+            "<html",
+        ):
+            if lower.startswith(marker):
+                return False, f"error_marker:{marker}"
+    if len(stripped) <= 120:
+        for marker in (
+            "connection refused",
+            "connection reset",
+            "timeout",
+            "timed out",
+            "internal server error",
+            "service unavailable",
+            "rate limit",
+            "too many requests",
+            "model not loaded",
+            "context length exceeded",
+        ):
+            if lower.startswith(marker):
+                return False, f"error_marker:{marker}"
     return True, "ok"
 
 
@@ -920,11 +1033,11 @@ class HealthMonitorShim:
         self._router = router
 
     def is_healthy(self, name: str) -> bool:
-        """Check if an endpoint is available for routing."""
+        """Observer health check — must not consume half-open probe leases."""
         ep = self._router.endpoints.get(name)
         if not ep:
             return False
-        return ep.is_available()
+        return ep.peek_available()
 
 class HealthAwareLLMRouter:
     """
@@ -995,7 +1108,9 @@ class HealthAwareLLMRouter:
         for name, ep in self.endpoints.items():
             total_calls += ep.total_requests
             total_tokens += ep.total_tokens
-            total_failures += ep.failure_count
+            # Lifetime totals: failure_count is the CURRENT streak and resets
+            # on success — summing it under-reported historical failures.
+            total_failures += ep.lifetime_failure_count
             total_empty += ep.empty_responses
             endpoint_stats[name] = ep.status_dict()
         return {
@@ -1027,10 +1142,17 @@ class HealthAwareLLMRouter:
             return False
         if not bool(lane_audit.get("ok", True)):
             return False
+        # Readiness is an OBSERVER: probe_eligible never mutates circuit
+        # state, and an endpoint with neither a client nor a callable URL
+        # cannot serve regardless of its circuit state.
         return any(
-            ep.is_available()
+            ep.probe_eligible()
             for ep in self.endpoints.values()
             if str(getattr(ep, "name", "") or "").strip().lower() != "static-reflex"
+            and (
+                ep.client is not None
+                or str(getattr(ep, "url", "") or "").startswith(("http://", "https://"))
+            )
         )
 
     def force_release_generation_gate(self, reason: str = "hard_generation_deadline") -> bool:
@@ -1117,7 +1239,41 @@ class HealthAwareLLMRouter:
         failure_threshold: int = 3,
         recovery_timeout: float = 30.0,
     ) -> HealthAwareLLMRouter:
-        name = normalize_endpoint_name(name) or name
+        name = normalize_endpoint_name(name) or str(name or "").strip()
+        if not name:
+            raise ValueError("endpoint registration requires a non-empty name")
+        # Fail-safe parameter validation: a bad threshold must not create an
+        # endpoint whose circuit can never open (or opens on every call).
+        try:
+            failure_threshold = max(1, int(failure_threshold))
+        except (TypeError, ValueError):
+            failure_threshold = 3
+        try:
+            recovery_timeout = float(recovery_timeout)
+        except (TypeError, ValueError):
+            recovery_timeout = 30.0
+        if not math.isfinite(recovery_timeout) or recovery_timeout <= 0:
+            recovery_timeout = 30.0
+
+        existing = self.endpoints.get(name)
+        if existing is not None:
+            # Re-registration updates CONFIGURATION but preserves live circuit
+            # state — replacing the EndpointHealth object silently reset an
+            # OPEN circuit to CLOSED, bypassing the breaker entirely.
+            with existing._lock:
+                existing.url = url
+                existing.model = model
+                existing.is_local = is_local
+                existing.tier = tier
+                existing.client = client
+                existing.failure_threshold = failure_threshold
+                existing.recovery_timeout = recovery_timeout
+            logger.info(
+                "Re-registered endpoint %s (%s) tier=%s local=%s — circuit state preserved (%s)",
+                name, model, tier, is_local, existing.state.value,
+            )
+            return self
+
         ep = EndpointHealth(
             name=name,
             url=url,
@@ -1735,12 +1891,15 @@ class HealthAwareLLMRouter:
             allow_cloud_fallback,
             is_background=is_bg,
         )
-        available = [ep for ep in self.endpoints.values() if ep.is_available()]
+        # probe_eligible: candidate ENUMERATION must not consume half-open
+        # probe leases; the mutating is_available admission runs per-endpoint
+        # immediately before dispatch below.
+        available = [ep for ep in self.endpoints.values() if ep.probe_eligible()]
         ordered: list[EndpointHealth] = []
         seen = set()
         for name in preferred_names:
             ep = self.endpoints.get(name)
-            if ep and ep.is_available():
+            if ep and ep.probe_eligible():
                 ordered.append(ep)
                 seen.add(ep.name)
         for ep in available:
@@ -1764,6 +1923,11 @@ class HealthAwareLLMRouter:
             client = ep.client
             if not client or not hasattr(client, "think_and_act"):
                 continue
+            # Admission check at dispatch time — grants the half-open probe
+            # lease only to the endpoint we actually call.
+            if not ep.is_available():
+                continue
+            call_started = time.monotonic()
             try:
                 result = await client.think_and_act(
                     objective,
@@ -1775,7 +1939,10 @@ class HealthAwareLLMRouter:
                 )
                 text = str((result or {}).get("content", "") or "").strip()
                 if text:
-                    ep.record_success(len(text.split()), 0.0)
+                    ep.record_success(
+                        len(text.split()),
+                        (time.monotonic() - call_started) * 1000,
+                    )
                     self.last_tier = ep.tier
                     self.last_endpoint = ep.name
                     if is_bg:
@@ -2177,7 +2344,11 @@ class HealthAwareLLMRouter:
             return False
         try:
             guard_secs = float(os.environ.get("AURA_SAFE_BOOT_BACKGROUND_GUARD_SECS", "180"))
-        except (httpx.HTTPError, OSError, ConnectionError, TimeoutError):
+        except (TypeError, ValueError):
+            # float() raises conversion errors, not network errors — the old
+            # tuple let a malformed env value abort routing entirely.
+            guard_secs = 180.0
+        if not math.isfinite(guard_secs):
             guard_secs = 180.0
         if guard_secs <= 0:
             return False
@@ -2593,7 +2764,10 @@ class HealthAwareLLMRouter:
         guidance = None if isolated_generation_contract else await self._get_mycelial_direction(prompt)
         tier_preference = guidance.get("tier_preference") if guidance else None
 
-        available = [ep for ep in self.endpoints.values() if ep.is_available()]
+        # probe_eligible: enumeration must not consume half-open probe leases
+        # or flip OPEN circuits; the mutating admission check runs once per
+        # endpoint at dispatch time in the attempt loop below.
+        available = [ep for ep in self.endpoints.values() if ep.probe_eligible()]
 
         # Tier-Based Filtering
         # If a tier is preferred, we restrict the candidate list to prevent
@@ -2664,8 +2838,19 @@ class HealthAwareLLMRouter:
                     )
                 )
             )
-        except (RuntimeError, AttributeError, TypeError, ValueError):
-            strict_primary_proof_lane = False
+        except (RuntimeError, AttributeError, TypeError, ValueError) as _proof_policy_exc:
+            # Fail CLOSED for proof routing: an explicit caller requirement
+            # survives a policy-probe failure — a silently disabled proof
+            # lane could produce a result from a disallowed model tier that
+            # is later mistaken for a valid proof-lane result.
+            strict_primary_proof_lane = bool(
+                kwargs.get("proof_primary_lane_required", False)
+            )
+            _record_router_degradation(
+                _proof_policy_exc,
+                action="kept explicit proof-lane requirement after proof policy probe failed",
+                severity="degraded",
+            )
         if strict_primary_proof_lane:
             kwargs["proof_primary_lane_required"] = True
             kwargs["proof_model_tier"] = "primary"
@@ -2874,22 +3059,24 @@ class HealthAwareLLMRouter:
                     self._last_fallback_warning_at = now
                 available = []
         
-        # Apply Mycelial Preference
+        # Apply Mycelial Preference as an ORDERING, never a filter: guidance
+        # promotes the preferred locality to the front but must not delete
+        # otherwise-authorized fallback lanes (one unhealthy preferred lane
+        # would otherwise turn a recoverable turn into total failure).
         if tier_preference == "local":
-            # Filter to locals first
-            available = [ep for ep in available if ep.is_local] or available
+            available.sort(key=lambda ep: not ep.is_local)
         elif tier_preference == "cloud" and allow_cloud_fallback:
-            # Filter to cloud first
-            available = [ep for ep in available if not ep.is_local] or available
+            available.sort(key=lambda ep: ep.is_local)
         elif tier_preference == "cloud":
             logger.debug(
                 "Router: ignoring cloud tier preference because cloud fallback was not explicitly allowed."
             )
 
-        # Standard local-first ordering only when no explicit routing plan was applied.
-        if not selectors:
+        # Standard local-first ordering only when no explicit routing plan
+        # or mycelial ordering was applied.
+        if not selectors and tier_preference not in ("local", "cloud"):
             available.sort(key=lambda x: x.is_local, reverse=True)
-        unavailable = [ep for ep in self.endpoints.values() if not ep.is_available()]
+        unavailable = [ep for ep in self.endpoints.values() if not ep.probe_eligible()]
 
         if unavailable:
             logger.debug(
@@ -2936,16 +3123,21 @@ class HealthAwareLLMRouter:
         for ep in available:
             if cloud_only and ep.is_local:
                 continue
+            # Receipts are honest: an entry claims "attempted" only once the
+            # endpoint is actually dispatched; every guard that skips the
+            # endpoint records WHY it was skipped instead.
             chain_entry: dict[str, Any] = {
                 "endpoint": ep.name,
                 "model": ep.model,
                 "provider": _endpoint_provider_identity(ep),
-                "status": "attempted",
+                "status": "considered",
             }
             fallback_chain.append(chain_entry)
             # Guard: background tasks must NEVER use the primary conversation lane.
             if is_bg and ep.name == PRIMARY_ENDPOINT:
                 logger.debug("🛡️ Router: Skipping %s for background request (origin=%s).", PRIMARY_ENDPOINT, origin)
+                chain_entry["status"] = "skipped"
+                chain_entry["skip_reason"] = "background_blocked_from_primary_lane"
                 continue
             tier_name = self._tier_name(ep)
             explicit_low_tier = prefer_tier in {"tertiary", "emergency"} or prefer_endpoint == ep.name
@@ -2954,6 +3146,8 @@ class HealthAwareLLMRouter:
                     "🛡️ Router: Skipping background-only endpoint %s for foreground request.",
                     ep.name,
                 )
+                chain_entry["status"] = "skipped"
+                chain_entry["skip_reason"] = "background_only_tier_for_foreground"
                 continue
             if (
                 is_bg
@@ -2980,7 +3174,18 @@ class HealthAwareLLMRouter:
                     reason=last_error,
                     endpoint=ep.name,
                 )
+                chain_entry["status"] = "skipped"
+                chain_entry["skip_reason"] = last_error
                 continue
+            # Dispatch-time admission: candidate enumeration used the
+            # non-mutating probe_eligible, so grant the (single) half-open
+            # probe lease here — and never dispatch to a circuit that is not
+            # admitting, including endpoints re-added by safe fallback order.
+            if not ep.is_available():
+                chain_entry["status"] = "skipped"
+                chain_entry["skip_reason"] = "circuit_not_admitting"
+                continue
+            chain_entry["status"] = "attempted"
             watchdog_aborted = {"value": False}
             try:
                 try:
@@ -3126,7 +3331,8 @@ class HealthAwareLLMRouter:
                     severity="degraded",
                 )
                 logger.error("Endpoint %s raised exception: %s", ep.name, exc)
-                ep.record_failure(str(exc))
+                if not getattr(exc, "_aura_endpoint_failure_recorded", False):
+                    ep.record_failure(str(exc))
                 last_error = str(exc)
                 chain_entry["status"] = "error"
                 chain_entry["error"] = last_error[:240]
@@ -3147,6 +3353,37 @@ class HealthAwareLLMRouter:
             "fallback_chain": fallback_chain,
         }
 
+    async def _probe_client_availability(self, client: Any) -> bool | None:
+        """Check ``client.is_available`` without loop-blocking or truthy-coroutine bugs.
+
+        Returns True/False when the client answered, None when it has no
+        checker or the check itself crashed (unknown — the generation call
+        is the authoritative probe in that case). Sync implementations run
+        in a worker thread; async implementations are actually awaited (the
+        old direct ``bool(client.is_available())`` treated an un-awaited
+        coroutine as truthy, i.e. always available). A hung checker times
+        out and reports unavailable.
+        """
+        checker = getattr(client, "is_available", None)
+        if not callable(checker):
+            return None
+        try:
+            availability = await asyncio.wait_for(
+                asyncio.to_thread(checker), timeout=5.0
+            )
+            if inspect.isawaitable(availability):
+                availability = await asyncio.wait_for(availability, timeout=5.0)
+            return bool(availability)
+        except TimeoutError:
+            return False
+        except (AttributeError, RuntimeError, TypeError, ValueError, OSError) as exc:
+            _record_router_degradation(
+                exc,
+                action="treated crashed client availability check as unknown; generation call will decide",
+                severity="degraded",
+            )
+            return None
+
     async def _call_endpoint(
         self,
         ep: EndpointHealth,
@@ -3157,7 +3394,10 @@ class HealthAwareLLMRouter:
         **kwargs,
     ) -> dict[str, Any]:
         """Make the actual call and validate the response."""
-        start = time.time()
+        # Monotonic: latency deltas below subtract from this same clock —
+        # mixing time.time() here with time.monotonic() at the subtraction
+        # produced huge negative latencies that corrupted endpoint averages.
+        start = time.monotonic()
 
         try:
             def _call_kwargs(method: Any) -> dict[str, Any]:
@@ -3209,12 +3449,20 @@ class HealthAwareLLMRouter:
                     client = ep.client
                     raw_text = None
                     token_count = 0
-                    if hasattr(client, "is_available") and not bool(client.is_available()):
+                    client_available = await self._probe_client_availability(client)
+                    if client_available is False:
                         availability_reason = ""
                         if hasattr(client, "availability_reason"):
                             try:
                                 availability_reason = str(client.availability_reason() or "")
-                            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError):
+                            except (
+                                AttributeError,
+                                RuntimeError,
+                                TypeError,
+                                ValueError,
+                                httpx.HTTPError,
+                                OSError,
+                            ):
                                 availability_reason = ""
                         availability_reason = availability_reason or "client_unavailable"
                         ep.record_failure(availability_reason)
@@ -3391,7 +3639,9 @@ class HealthAwareLLMRouter:
                                     severity="warning",
                                 )
                         
-                        is_valid, reason = validate_response(raw_text)
+                        is_valid, reason = validate_response(
+                            raw_text, ep.min_tokens_for_success
+                        )
                         if not is_valid:
                             payload = {
                                 "ok": True,
@@ -3532,8 +3782,8 @@ class HealthAwareLLMRouter:
             data = json.loads(body_text or "{}")
             raw_text = data.get("message", {}).get("content") or ""
             
-            is_valid, reason = validate_response(raw_text)
-            latency_ms = (time.time() - start) * 1000
+            is_valid, reason = validate_response(raw_text, ep.min_tokens_for_success)
+            latency_ms = (time.monotonic() - start) * 1000
 
             if not is_valid:
                 if benchmark_request:
@@ -3566,57 +3816,83 @@ class HealthAwareLLMRouter:
                 severity="error",
             )
             ep.record_failure(str(exc))
+            # Tag so the outer fallback loop does not record the SAME
+            # exception a second time (double-counting opened low-threshold
+            # circuits at half their configured tolerance).
+            exc._aura_endpoint_failure_recorded = True  # type: ignore[attr-defined]
             raise
 
+    def _tier_display_label(self, ep: EndpointHealth | None) -> str | None:
+        """Human-readable lane label derived from the ACTUAL registered model.
+
+        Hardcoded labels ("Cortex (32B)", "Cloud (Gemini)") misreported the
+        active model whenever the registry served a different checkpoint or a
+        non-Gemini cloud adapter was registered.
+        """
+        if ep is None:
+            return None
+        model = str(getattr(ep, "model", "") or "").strip()
+        tier = str(getattr(ep, "tier", "") or "")
+        role = {
+            "local": "Cortex",
+            "local_deep": "Solver",
+            "local_fast": "Brainstem",
+            "emergency": "Reflex",
+        }.get(tier)
+        if role is None:
+            role = "Cloud" if "api" in tier else (tier.upper() or "UNKNOWN")
+        return f"{role} ({model})" if model else role
+
     def get_health_report(self) -> dict[str, Any]:
-        """Summary of router state for the GUI."""
+        """Summary of router state for the GUI.
+
+        Strictly an OBSERVER: it must not mutate circuit state (counting via
+        ``is_available`` flipped OPEN circuits to HALF_OPEN and consumed
+        probe leases from a GUI refresh).
+        """
         active_name = self.last_user_endpoint or "Unknown"
         background_name = self.last_background_endpoint
 
-        # Map internal tiers to human-readable strings for the GUI
-        tier_display = "UNKNOWN"
-        if active_name and active_name != "Unknown":
-            # Find the actual endpoint object to get its tier
-            ep = next((e for e in self.endpoints.values() if e.name == active_name), None)
-            if ep:
-                if ep.tier == "local":
-                    tier_display = "Cortex (32B)"
-                elif ep.tier == "local_deep":
-                    tier_display = "Solver (72B)"
-                elif "api" in ep.tier:
-                    tier_display = "Cloud (Gemini)"
-                else:
-                    tier_display = ep.tier.upper()
-
+        active_ep = self.endpoints.get(active_name) if active_name != "Unknown" else None
+        tier_display = self._tier_display_label(active_ep) or "UNKNOWN"
         foreground_tier = self.last_user_tier or None
-        background_tier_display = None
-        if background_name:
-            ep = next((e for e in self.endpoints.values() if e.name == background_name), None)
-            if ep:
-                if ep.tier == "local":
-                    background_tier_display = "Cortex (32B)"
-                elif ep.tier == "local_deep":
-                    background_tier_display = "Solver (72B)"
-                elif "api" in ep.tier:
-                    background_tier_display = "Cloud (Gemini)"
-                else:
-                    background_tier_display = ep.tier.upper()
+        background_tier_display = self._tier_display_label(
+            self.endpoints.get(background_name) if background_name else None
+        )
 
-        lane_audit = audit_lane_assignments()
+        # Fail CLOSED on the lane audit: an audit that cannot run, or that
+        # returns no verdict, is not evidence that lanes are healthy.
+        try:
+            lane_audit = audit_lane_assignments()
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            _record_router_degradation(
+                exc,
+                action="reported lane audit unavailable in router health report",
+                severity="degraded",
+            )
+            lane_audit = {"ok": False, "issues": [f"lane_audit_unavailable:{exc}"]}
         return {
             "endpoints": [ep.status_dict() for ep in self.endpoints.values()],
-            "available_count": sum(1 for ep in self.endpoints.values() if ep.is_available()),
+            "available_count": sum(
+                1 for ep in self.endpoints.values() if ep.peek_available()
+            ),
+            "probe_eligible_count": sum(
+                1 for ep in self.endpoints.values() if ep.probe_eligible()
+            ),
             "total_count": len(self.endpoints),
             "current_tier": tier_display,
             "foreground_tier": foreground_tier,
             "active_endpoint": active_name,
+            "active_endpoint_state": (
+                active_ep.state.value if active_ep is not None else "unknown"
+            ),
             "foreground_endpoint": active_name,
             "background_endpoint": background_name,
             "background_tier": background_tier_display,
             "background_tier_key": self.last_background_tier,
             "last_user_error": self.last_user_error,
             "last_background_error": self.last_background_error,
-            "lane_audit_ok": bool(lane_audit.get("ok", True)),
+            "lane_audit_ok": bool(lane_audit.get("ok", False)),
             "lane_audit_issues": list(lane_audit.get("issues", [])),
         }
 
@@ -3632,12 +3908,22 @@ def build_router_from_config(config) -> HealthAwareLLMRouter:
             self.target_path = target_path
             self.kwargs = kwargs
             self._client = None
-            
+            self._construct_lock = threading.Lock()
+
         def _get_client(self):
-            if not self._client:
-                from core.brain.llm.mlx_client import get_mlx_client
-                logger.info("🧠 [LAZY LOAD] Instantiating local runtime client for %s on demand.", self.target_path)
-                self._client = get_mlx_client(model_path=self.target_path, **self.kwargs)
+            # Singleflight: concurrent first calls must not construct two
+            # multi-GB runtime clients for the same lane.
+            if self._client is None:
+                with self._construct_lock:
+                    if self._client is None:
+                        from core.brain.llm.mlx_client import get_mlx_client
+                        logger.info(
+                            "🧠 [LAZY LOAD] Instantiating local runtime client for %s on demand.",
+                            self.target_path,
+                        )
+                        self._client = get_mlx_client(
+                            model_path=self.target_path, **self.kwargs
+                        )
             return self._client
             
         async def generate_text_async(self, prompt: str, **kwargs):
@@ -3875,16 +4161,28 @@ def build_router_from_config(config) -> HealthAwareLLMRouter:
 # orchestrator has booted yet (supports test harnesses and standalone scripts).
 # ─────────────────────────────────────────────────────────────────────────────
 
+_ROUTER_CONSTRUCTION_LOCK = threading.Lock()
+
+
 def get_llm_router() -> HealthAwareLLMRouter:
-    """Return the process-wide router, constructing it on first use if needed."""
+    """Return the process-wide router, constructing it on first use if needed.
+
+    Singleflight: concurrent first callers previously each ran the full
+    check-build-register sequence, constructing multiple routers (with
+    prewarm tasks and cloud adapters) and racing the container registration.
+    """
     from core.container import ServiceContainer
     existing = ServiceContainer.get("llm_router", default=None)
     if existing is not None:
         return existing
-    from core.config import config
-    router = build_router_from_config(config)
-    ServiceContainer.register_instance("llm_router", router)
-    return router
+    with _ROUTER_CONSTRUCTION_LOCK:
+        existing = ServiceContainer.get("llm_router", default=None)
+        if existing is not None:
+            return existing
+        from core.config import config
+        router = build_router_from_config(config)
+        ServiceContainer.register_instance("llm_router", router)
+        return router
 
 
 class _LazyRouterProxy:
