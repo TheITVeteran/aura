@@ -16,8 +16,12 @@ from core.runtime.resource_observation import (
 )
 from core.runtime.resource_stage_guard import (
     ack_path,
+    lease_ack_path,
+    lease_request_path,
+    publish_compute_lease_request,
     publish_ready_marker,
     read_armed_ack,
+    read_compute_lease_ack,
 )
 from tools import memory_sentinel
 from tools.memory_sentinel import should_kill_for_memory
@@ -276,6 +280,127 @@ def test_memory_sentinel_kills_target_on_invalid_stage_handshake(
     assert killed == [123]
     tombstone = next(tmp_path.glob("sentinel_tombstone_*.json"))
     assert "invalid steady-stage" in tombstone.read_text(encoding="utf-8")
+
+
+def test_memory_sentinel_enforces_compute_lease_and_low_water_rearm(
+    tmp_path,
+    monkeypatch,
+):
+    provenance = ObservationProvenance(
+        source=ObservationSource.HOST,
+        scenario_id="sentinel-compute-lease-test",
+    )
+    target = ProcessObservation(
+        provenance=provenance,
+        pid=123,
+        ppid=1,
+        create_time=100.0,
+        status="running",
+        name="trainer",
+        cmdline=("python", "trainer.py"),
+        rss_bytes=100 * 1024 * 1024,
+    )
+    live = ProcessTableObservation(provenance=provenance, processes=(target,))
+    dead = ProcessTableObservation(provenance=provenance, processes=())
+
+    class Observer:
+        def __init__(self):
+            self.calls = 0
+
+        def process_tree(self, _pid, *, recursive):
+            assert recursive is True
+            self.calls += 1
+            return live if self.calls <= 4 else dead
+
+    marker_path = tmp_path / "ready.json"
+    _marker, marker_raw = publish_ready_marker(
+        marker_path,
+        target_pid=123,
+        trainer_sha256="e" * 64,
+    )
+    ring = tmp_path / "ring.jsonl"
+    sleeps = {"count": 0}
+
+    def advance_trainer(_seconds):
+        sleeps["count"] += 1
+        if sleeps["count"] == 1:
+            _initial, initial_ack_raw = read_armed_ack(
+                marker_path,
+                marker_raw=marker_raw,
+                expected_target_pid=123,
+                startup_lethal_mb=73728.0,
+                steady_lethal_mb=59392.0,
+            )
+            publish_compute_lease_request(
+                marker_path,
+                marker_raw=marker_raw,
+                target_pid=123,
+                sequence=1,
+                workload="training_step",
+                action="acquire",
+                predecessor_ack_raw=initial_ack_raw,
+            )
+        elif sleeps["count"] == 2:
+            acquire_path = lease_request_path(
+                marker_path,
+                sequence=1,
+                action="acquire",
+            )
+            acquire_raw = acquire_path.read_bytes()
+            _acquire, acquire_ack_raw = read_compute_lease_ack(
+                acquire_path,
+                request_raw=acquire_raw,
+                expected_target_pid=123,
+                sequence=1,
+                workload="training_step",
+                action="acquire",
+                active_lethal_mb=73728.0,
+            )
+            publish_compute_lease_request(
+                marker_path,
+                marker_raw=marker_raw,
+                target_pid=123,
+                sequence=1,
+                workload="training_step",
+                action="release",
+                predecessor_ack_raw=acquire_ack_raw,
+            )
+
+    monkeypatch.setattr(memory_sentinel, "_OBSERVER", Observer())
+    monkeypatch.setattr(
+        memory_sentinel,
+        "tree_rss_mb",
+        lambda *_args, **_kwargs: (56000.0, 0.0, 1, 56000.0),
+    )
+    monkeypatch.setattr(memory_sentinel.time, "sleep", advance_trainer)
+
+    assert memory_sentinel.main(
+        [
+            "--pid",
+            "123",
+            "--lethal-mb",
+            "59392",
+            "--startup-lethal-mb",
+            "73728",
+            "--steady-marker",
+            str(marker_path),
+            "--interval",
+            "0.5",
+            "--ring",
+            str(ring),
+            "--tombstone-dir",
+            str(tmp_path),
+        ]
+    ) == 0
+
+    release_path = lease_request_path(
+        marker_path,
+        sequence=1,
+        action="release",
+    )
+    assert lease_ack_path(release_path).is_file()
+    stages = [json.loads(line)["guard_stage"] for line in ring.read_text().splitlines()]
+    assert stages == ["steady", "compute", "draining", "steady"]
 
 
 def test_memory_sentinel_default_ceiling_is_host_safe_on_64gb_node(monkeypatch):

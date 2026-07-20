@@ -21589,3 +21589,58 @@ No training, mechanics, reasoning-gain, frontier, external-custody,
 installed-app, release, or soak credit is awarded. Next: publish CP187, execute
 the staged forced partial on the fresh paths, verify the complete transition
 and checkpoint, then resume. Final long soaks remain deferred.
+
+## Checkpoint 2026-07-20-188: Externally Enforced Per-Graph Compute Leases
+
+CP187 passed detached readiness, resident model loading, and the cryptographic
+startup-to-steady handshake. From a post-load low-water footprint near 18.3
+GiB, the first isolated gradient graph then rose through 49,984.3, 55,030.4,
+60,298.8, and 63,371.8 MB. The sentinel correctly enforced its configured
+59,392-MB ceiling and killed the run before step completion. This proves that
+59,392 MB is a valid between-graph low-water boundary but not a valid ceiling
+while one resident graph's activations are live. The run remains failed and
+earns no adapter or capability credit.
+
+- The shared resource-stage guard now defines immutable, canonical compute-
+  lease requests and acknowledgements. Each phase marker anchors a contiguous
+  hash chain. Every acquire/release pair binds marker hash and nonce, trainer
+  source and PID, sentinel PID, sequence, workload (`training_step` or
+  `holdout_eval`), predecessor acknowledgement, request hash, active ceiling,
+  and timestamp. Missing, duplicate, reordered, forged, or stale artifacts fail
+  closed.
+- The trainer acquires a compute lease before every training or held-out graph.
+  It may acquire only after the sentinel is steady at or below 59,392 MB. The
+  graph runs under a 73,728-MB ceiling. After MLX materialization, graph
+  reference deletion, and cache clearing, the trainer publishes its release
+  request and blocks until the sentinel independently observes footprint back
+  below 59,392 MB. Checkpointing and all later graphs occur only after rearm.
+- The external sentinel is now a four-stage state machine:
+  `startup -> steady -> compute -> draining -> steady`. Its stage cannot skip
+  or regress. Compute and draining retain the 73,728-MB guard; steady enforces
+  the 59,392-MB low-water limit. Sampling increases from 2.0 to 0.5 seconds,
+  immediate overshoot kill tightens to 1.05x, and a 46,800-second ring window
+  preserves every sample across the maximum detached run.
+- The independent admission verifier replays the complete stage transition
+  trace and every compute-lease artifact, proves contiguous sequencing and
+  hash-chain ancestry, verifies sentinel identity on both acknowledgements,
+  requires at least one training-step lease, rejects any sample at or above its
+  active ceiling, and summarizes per-stage peaks and workload counts.
+- `resource_failure_cp188.json` binds CP187's trainer and sentinel receipts,
+  tombstone, complete footprint ring, measured growth, diagnosis, and no-credit
+  disposition. `resident_32b_v3_cp188` freezes fresh adapter and runtime paths
+  against the new trainer, sentinel, launcher, and shared-guard hashes while
+  keeping every scientific variable and gain gate unchanged.
+
+Validation is green: 62/62 focused stage-schema, hash-chain, sentinel state-
+machine, trainer graph-bracketing, launcher, admission, exact-resume, and
+streamed-gradient tests pass; focused Ruff, bytecode compilation, JSON
+validation, diff integrity, and the actual resident-32B CP188 partial dry-run
+preflight pass. CP188 has not launched at this checkpoint.
+
+Evidence-weighted completion remains 27%. This is checkpoint 188 of the faithful
+292-399 total-checkpoint forecast, leaving approximately 104-211 checkpoints.
+No training, mechanics, reasoning-gain, frontier, external-custody,
+installed-app, release, or soak credit is awarded. Next: publish CP188, execute
+the one-step forced partial, require a tombstone-free compute/drain/rearm cycle
+and durable checkpoint, then exact-resume under the same per-graph protocol.
+Final long soaks remain deferred.

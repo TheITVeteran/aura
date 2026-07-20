@@ -1,0 +1,49 @@
+{
+  "schema": "aura.recurrence_resident_resource_failure.v1",
+  "observed_at": "2026-07-20T00:44:28-07:00",
+  "claim_scope": "resident_v3_training_resource_failure_only",
+  "process": {
+    "pid": 3686,
+    "name": "Python",
+    "detached_returncode": -9,
+    "detached_status": "failed",
+    "timed_out": false,
+    "restart_count": 0,
+    "containment_verified": true,
+    "process_group_empty": true,
+    "lineage_empty": true
+  },
+  "detached_receipt": {
+    "path": "../resident_32b_v3_cp187/detached-partial/detached_receipt.json",
+    "sha256": "888f894f5f6e7a37565a8e8fac47dd96fad3997fee88d278306361bc824464ff",
+    "size_bytes": 4744
+  },
+  "kernel_evidence": {
+    "source": "external memory sentinel over canonical Darwin physical footprint",
+    "event": "after a valid startup-to-steady handshake, the first isolated resident gradient graph rose from a post-load low-water baseline through 49984.3, 55030.4, 60298.8, and 63371.8 MB and was killed by the static steady ceiling before step completion",
+    "compressed_process_mb": 63372,
+    "termination_classification": "external_sentinel_single_graph_ceiling_misclassification"
+  },
+  "sentinel_evidence": {
+    "receipt_sha256": "5a1edffb24ff512876985693a58fa024002ad96040c369bb3487862b39696f3b",
+    "receipt_size_bytes": 2444,
+    "tombstone_sha256": "57f6e7d05b28606147220ee9f3f965d77b558071bc7b1e7d236318c00867b45f",
+    "tombstone_size_bytes": 595,
+    "footprint_ring_sha256": "1718862b39f65e9e40bad6550b0f30cf2ef41e56ff0617180c303e1de8b8e4be",
+    "footprint_ring_size_bytes": 11444,
+    "startup_peak_managed_mb": 18267.8,
+    "steady_first_graph_peak_managed_mb": 63371.8
+  },
+  "diagnosis": {
+    "root_cause": "The CP186 handshake correctly separated model load from training but still applied the low-water 59392-MB ceiling while a legitimate single gradient graph was live. The low-water threshold is appropriate between graphs, not during one graph's bounded activation lifetime.",
+    "repair": "Require a hash-chained external compute lease for every training and holdout graph. Acquire only from an independently observed <=59392-MB baseline, guard the isolated graph and drain at 73728 MB, then require a create-once release request and independent return to <=59392 MB before checkpointing or acquiring another graph. Sample every 0.5 seconds, kill immediate overshoot at 1.05x, and retain the complete 13-hour ring.",
+    "disposition": "failed_run_retained_no_training_or_gain_credit"
+  },
+  "claim_flags": {
+    "training_complete": false,
+    "training_admitted": false,
+    "mechanics_proven": false,
+    "reasoning_gain": false,
+    "frontier_level": false
+  }
+}

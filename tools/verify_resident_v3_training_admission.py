@@ -32,7 +32,10 @@ from core.runtime.file_read_gateway import read_stable_bytes  # noqa: E402
 from core.runtime.resource_stage_guard import (  # noqa: E402
     ResourceStageGuardError,
     ack_path,
+    lease_request_path,
     read_armed_ack,
+    read_compute_lease_ack,
+    read_compute_lease_request,
     read_ready_marker,
 )
 from tools import run_detached_step as detached  # noqa: E402
@@ -458,6 +461,11 @@ def _verify_footprint(
     try:
         lethal_mb = float(options.get("--lethal-mb", "nan"))
         startup_lethal_mb = float(options.get("--startup-lethal-mb", "nan"))
+        interval_s = float(options.get("--interval", "nan"))
+        overshoot_factor = float(
+            options.get("--immediate-kill-overshoot", "nan")
+        )
+        ring_window_s = float(options.get("--ring-window-seconds", "nan"))
     except (TypeError, ValueError, OverflowError) as exc:
         raise ResidentV3TrainingAdmissionError(
             "memory_sentinel_command_mismatch"
@@ -467,6 +475,9 @@ def _verify_footprint(
         or int(options.get("--pid", "-1")) != trainer_pid
         or lethal_mb != 59392.0
         or startup_lethal_mb != 73728.0
+        or interval_s != 0.5
+        or overshoot_factor != 1.05
+        or ring_window_s != 46800.0
         or Path(options.get("--steady-marker", "")) != stage_path
         or Path(options.get("--ring", "")) != ring_path
     ):
@@ -490,35 +501,59 @@ def _verify_footprint(
     if not samples:
         _fail("memory_samples_missing")
     stages: list[str] = []
-    startup_values: list[float] = []
-    steady_values: list[float] = []
+    values_by_stage: dict[str, list[float]] = {
+        "startup": [],
+        "steady": [],
+        "compute": [],
+        "draining": [],
+    }
+    lease_workloads: dict[int, str] = {}
     for sample in samples:
         managed = sample.get("managed_mb")
         stage = sample.get("guard_stage")
         active_lethal = sample.get("active_lethal_mb")
         marker_observed = sample.get("marker_observed")
-        expected_lethal = startup_lethal_mb if stage == "startup" else lethal_mb
+        lease_sequence = sample.get("lease_sequence")
+        lease_workload = sample.get("lease_workload")
+        expected_lethal = (
+            lethal_mb if stage == "steady" else startup_lethal_mb
+        )
         if (
             isinstance(managed, bool)
             or not isinstance(managed, (int, float))
             or not math.isfinite(float(managed))
             or float(managed) < 0.0
-            or stage not in {"startup", "steady"}
+            or stage not in values_by_stage
             or active_lethal != expected_lethal
             or type(marker_observed) is not bool
-            or (stage == "steady" and marker_observed is not True)
+            or (stage != "startup" and marker_observed is not True)
+            or type(lease_sequence) is not int
+            or lease_sequence < 1
+            or not isinstance(lease_workload, str)
+            or (stage in {"compute", "draining"} and not lease_workload)
+            or (stage in {"startup", "steady"} and lease_workload)
         ):
             _fail("memory_sample_invalid")
         if float(managed) >= expected_lethal:
             _fail("memory_envelope_exceeded")
         stages.append(stage)
-        (startup_values if stage == "startup" else steady_values).append(
-            float(managed)
-        )
-    if not startup_values or not steady_values:
+        values_by_stage[stage].append(float(managed))
+        if stage in {"compute", "draining"}:
+            prior = lease_workloads.setdefault(lease_sequence, lease_workload)
+            if prior != lease_workload:
+                _fail("memory_lease_workload_changed")
+    if any(not values_by_stage[stage] for stage in values_by_stage):
         _fail("memory_guard_stage_evidence_missing")
-    first_steady = stages.index("steady")
-    if "startup" in stages[first_steady:]:
+    allowed_transitions = {
+        "startup": {"startup", "steady"},
+        "steady": {"steady", "compute"},
+        "compute": {"compute", "draining"},
+        "draining": {"draining", "steady"},
+    }
+    if any(
+        following not in allowed_transitions[current]
+        for current, following in zip(stages, stages[1:], strict=False)
+    ):
         _fail("memory_guard_stage_regressed")
     try:
         marker, marker_raw = read_ready_marker(
@@ -541,12 +576,85 @@ def _verify_footprint(
         or acknowledgement.get("sentinel_pid") != receipt.get("child_pid")
     ):
         _fail("memory_guard_handshake_binding_mismatch")
+    sequences = sorted(lease_workloads)
+    if not sequences or sequences != list(range(1, sequences[-1] + 1)):
+        _fail("memory_compute_lease_sequence_invalid")
+    predecessor_ack_raw = acknowledgement_raw
+    lease_chain = hashlib.sha256()
+    workload_counts: dict[str, int] = {}
+    for sequence in sequences:
+        try:
+            acquire_path, acquire, acquire_raw = read_compute_lease_request(
+                stage_path,
+                marker_raw=marker_raw,
+                expected_target_pid=trainer_pid,
+                sequence=sequence,
+                workload=None,
+                action="acquire",
+                predecessor_ack_raw=predecessor_ack_raw,
+            )
+            workload = str(acquire["workload"])
+            acquire_ack, acquire_ack_raw = read_compute_lease_ack(
+                acquire_path,
+                request_raw=acquire_raw,
+                expected_target_pid=trainer_pid,
+                sequence=sequence,
+                workload=workload,
+                action="acquire",
+                active_lethal_mb=startup_lethal_mb,
+            )
+            release_path, _release, release_raw = read_compute_lease_request(
+                stage_path,
+                marker_raw=marker_raw,
+                expected_target_pid=trainer_pid,
+                sequence=sequence,
+                workload=workload,
+                action="release",
+                predecessor_ack_raw=acquire_ack_raw,
+            )
+            release_ack, release_ack_raw = read_compute_lease_ack(
+                release_path,
+                request_raw=release_raw,
+                expected_target_pid=trainer_pid,
+                sequence=sequence,
+                workload=workload,
+                action="release",
+                active_lethal_mb=lethal_mb,
+            )
+        except ResourceStageGuardError as exc:
+            raise ResidentV3TrainingAdmissionError(
+                "memory_compute_lease_invalid"
+            ) from exc
+        if (
+            lease_workloads.get(sequence) != workload
+            or acquire_ack.get("sentinel_pid") != receipt.get("child_pid")
+            or release_ack.get("sentinel_pid") != receipt.get("child_pid")
+        ):
+            _fail("memory_compute_lease_binding_mismatch")
+        for artifact in (acquire_raw, acquire_ack_raw, release_raw, release_ack_raw):
+            lease_chain.update(len(artifact).to_bytes(8, "big"))
+            lease_chain.update(artifact)
+        predecessor_ack_raw = release_ack_raw
+        workload_counts[workload] = workload_counts.get(workload, 0) + 1
+    if workload_counts.get("training_step", 0) < 1:
+        _fail("memory_training_compute_lease_missing")
+    if lease_request_path(
+        stage_path,
+        sequence=sequences[-1] + 1,
+        action="acquire",
+    ).exists():
+        _fail("memory_compute_lease_incomplete")
     return {
         "sample_count": len(samples),
-        "startup_sample_count": len(startup_values),
-        "steady_sample_count": len(steady_values),
-        "startup_peak_managed_mb": max(startup_values),
-        "steady_peak_managed_mb": max(steady_values),
+        "stage_sample_counts": {
+            stage: len(values) for stage, values in values_by_stage.items()
+        },
+        "stage_peak_managed_mb": {
+            stage: max(values) for stage, values in values_by_stage.items()
+        },
+        "compute_lease_count": len(sequences),
+        "compute_lease_workloads": workload_counts,
+        "compute_lease_chain_sha256": lease_chain.hexdigest(),
         "startup_lethal_mb": startup_lethal_mb,
         "steady_lethal_mb": lethal_mb,
         "head_at": samples[0].get("at"),

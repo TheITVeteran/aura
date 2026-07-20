@@ -161,7 +161,9 @@ def _fixture(tmp_path: Path, monkeypatch):
             ).hexdigest(),
             "lethal_mb": 59392,
             "startup_lethal_mb": 73728,
-            "interval_seconds": 2.0,
+            "interval_seconds": 0.5,
+            "immediate_kill_overshoot": 1.05,
+            "ring_window_seconds": 46800,
             "required_for_each_phase": True,
             "tombstone_means_phase_failure": True,
             "partial_ring": str(adapter / "partial-ring.jsonl"),
@@ -238,8 +240,10 @@ def test_sentinel_launcher_is_phase_bound(tmp_path, monkeypatch):
     assert command[command.index("--steady-marker") + 1].endswith(
         "resume-stage.json"
     )
-    assert command[command.index("--interval") + 1] == "2.0"
+    assert command[command.index("--interval") + 1] == "0.5"
+    assert command[command.index("--immediate-kill-overshoot") + 1] == "1.05"
     assert command[command.index("--ring") + 1].endswith("resume-ring.jsonl")
+    assert command[command.index("--ring-window-seconds") + 1] == "46800.0"
     assert command[command.index("--run-dir") + 1].endswith("sentinel-resume")
 
 

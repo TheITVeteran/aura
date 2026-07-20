@@ -330,9 +330,11 @@ def test_training_loop_releases_step_graph_before_holdout_or_next_rhs():
     release = source.index("del gradients, step_telemetry")
     cache_barrier = source.index("mx.clear_cache()", release)
     checkpoint_branch = source.index("if step % args.checkpoint_every", release)
+    holdout_release = source.index("del value")
+    holdout_cache_barrier = source.index("mx.clear_cache()", holdout_release)
 
     assert release < cache_barrier < checkpoint_branch
-    assert "del value\n            mx.clear_cache()" in source
+    assert holdout_release < holdout_cache_barrier
 
 
 def test_resource_guard_ack_precedes_training_clock_and_first_graph():
@@ -342,3 +344,20 @@ def test_resource_guard_ack_precedes_training_clock_and_first_graph():
     training_loop = source.index("while step < args.max_steps")
 
     assert handshake < training_clock < training_loop
+
+
+def test_each_graph_is_bracketed_by_external_compute_lease():
+    source = inspect.getsource(_run)
+    training_acquire = source.index(
+        'resource_compute_guard.acquire("training_step")'
+    )
+    graph = source.index("_streamed_depth_value_and_grad(", training_acquire)
+    graph_release = source.index("del gradients, step_telemetry", graph)
+    external_release = source.index(
+        "resource_compute_guard.release(compute_lease)",
+        graph_release,
+    )
+    checkpoint_branch = source.index("if step % args.checkpoint_every", external_release)
+
+    assert training_acquire < graph < graph_release < external_release < checkpoint_branch
+    assert 'resource_compute_guard.acquire("holdout_eval")' in source

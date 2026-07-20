@@ -314,7 +314,17 @@ def _validate_contract(
         )
         != 73728.0
         or _finite_number(sentinel.get("interval_seconds"), role="sentinel_interval")
-        != 2.0
+        != 0.5
+        or _finite_number(
+            sentinel.get("immediate_kill_overshoot"),
+            role="sentinel_immediate_kill_overshoot",
+        )
+        != 1.05
+        or _finite_number(
+            sentinel.get("ring_window_seconds"),
+            role="sentinel_ring_window_seconds",
+        )
+        != 46800.0
         or sentinel.get("required_for_each_phase") is not True
         or sentinel.get("tombstone_means_phase_failure") is not True
     ):
@@ -573,8 +583,22 @@ def _sentinel_launch_command(
         str(sentinel[f"{phase}_stage_path"]),
         "--interval",
         str(_finite_number(sentinel["interval_seconds"], role="sentinel_interval")),
+        "--immediate-kill-overshoot",
+        str(
+            _finite_number(
+                sentinel["immediate_kill_overshoot"],
+                role="sentinel_immediate_kill_overshoot",
+            )
+        ),
         "--ring",
         str(sentinel[f"{phase}_ring"]),
+        "--ring-window-seconds",
+        str(
+            _finite_number(
+                sentinel["ring_window_seconds"],
+                role="sentinel_ring_window_seconds",
+            )
+        ),
         "--tombstone-dir",
         str(sentinel_dir),
     ]

@@ -52,7 +52,10 @@ from core.runtime.resource_observation import (  # noqa: E402
 )
 from core.runtime.resource_stage_guard import (  # noqa: E402
     ResourceStageGuardError,
+    lease_request_path,
     publish_armed_ack,
+    publish_compute_lease_ack,
+    read_compute_lease_request,
     read_ready_marker,
 )
 
@@ -65,7 +68,7 @@ _OBSERVER = HostResourceObserver(
 
 RING_MAX_LINES = 600  # ~20 minutes at 2s
 RING_WINDOW_S = 20 * 60
-RING_MAX_LINES_LIMIT = 7_200
+RING_MAX_LINES_LIMIT = 100_000
 IMMEDIATE_KILL_OVERSHOOT = 1.15
 _RING_LINE_COUNTS: dict[Path, int] = {}
 
@@ -217,9 +220,19 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--interval", type=float, default=1.0)
     parser.add_argument(
+        "--immediate-kill-overshoot",
+        type=float,
+        default=IMMEDIATE_KILL_OVERSHOOT,
+    )
+    parser.add_argument(
         "--ring",
         type=Path,
         default=Path("data/error_logs/memory/sentinel_ring.jsonl"),
+    )
+    parser.add_argument(
+        "--ring-window-seconds",
+        type=float,
+        default=RING_WINDOW_S,
     )
     parser.add_argument(
         "--tombstone-dir",
@@ -239,6 +252,15 @@ def main(argv: list[str] | None = None) -> int:
             "--startup-lethal-mb and --steady-marker must be supplied together, "
             "with startup ceiling greater than a positive steady ceiling"
         )
+    if (
+        not math.isfinite(args.interval)
+        or args.interval < 0.5
+        or not math.isfinite(args.immediate_kill_overshoot)
+        or not 1.0 <= args.immediate_kill_overshoot <= 1.5
+        or not math.isfinite(args.ring_window_seconds)
+        or not 60.0 <= args.ring_window_seconds <= 50_000.0
+    ):
+        parser.error("interval or immediate-kill overshoot is outside safe bounds")
 
     tree = _OBSERVER.process_tree(args.pid, recursive=True)
     target = _root_process(tree, args.pid)
@@ -275,11 +297,18 @@ def main(argv: list[str] | None = None) -> int:
     guard_stage = "startup" if staged else "steady"
     marker_observed = False
     active_lethal_mb = float(args.startup_lethal_mb or args.lethal_mb)
+    marker_raw: bytes | None = None
+    predecessor_ack_raw: bytes | None = None
+    lease_sequence = 1
+    lease_workload = ""
+    acquire_ack_raw: bytes | None = None
+    release_request_path: Path | None = None
+    release_request_raw: bytes | None = None
     ring_max_lines = max(
         RING_MAX_LINES,
         min(
             RING_MAX_LINES_LIMIT,
-            int(RING_WINDOW_S / max(0.5, float(args.interval))) + 1,
+            int(args.ring_window_seconds / max(0.5, float(args.interval))) + 1,
         ),
     )
     # Bounded by the target's own lifetime: the sentinel exists exactly
@@ -300,7 +329,7 @@ def main(argv: list[str] | None = None) -> int:
                     expected_target_pid=args.pid,
                 )
                 if managed <= args.lethal_mb:
-                    publish_armed_ack(
+                    _ack_path, _ack, predecessor_ack_raw = publish_armed_ack(
                         args.steady_marker,
                         marker_raw=marker_raw,
                         target_pid=args.pid,
@@ -340,6 +369,119 @@ def main(argv: list[str] | None = None) -> int:
                     f"target tree killed: {exc} killed={killed}"
                 )
                 return 2
+        elif (
+            guard_stage == "steady"
+            and marker_raw is not None
+            and predecessor_ack_raw is not None
+        ):
+            acquire_path = lease_request_path(
+                args.steady_marker,
+                sequence=lease_sequence,
+                action="acquire",
+            )
+            if acquire_path.exists() and managed <= args.lethal_mb:
+                try:
+                    _path, request, request_raw = read_compute_lease_request(
+                        args.steady_marker,
+                        marker_raw=marker_raw,
+                        expected_target_pid=args.pid,
+                        sequence=lease_sequence,
+                        workload=None,
+                        action="acquire",
+                        predecessor_ack_raw=predecessor_ack_raw,
+                    )
+                    lease_workload = str(request["workload"])
+                    _ack_path, _ack, acquire_ack_raw = publish_compute_lease_ack(
+                        acquire_path,
+                        request_raw=request_raw,
+                        target_pid=args.pid,
+                        sentinel_pid=os.getpid(),
+                        sequence=lease_sequence,
+                        workload=lease_workload,
+                        action="acquire",
+                        active_lethal_mb=float(args.startup_lethal_mb),
+                    )
+                    guard_stage = "compute"
+                    active_lethal_mb = float(args.startup_lethal_mb)
+                    consecutive_over = 0
+                    _evidence(
+                        f"compute lease acquired: sequence={lease_sequence} "
+                        f"workload={lease_workload}"
+                    )
+                except ResourceStageGuardError as exc:
+                    killed = kill_tree(args.pid)
+                    _evidence(
+                        "exiting: invalid compute-acquire handshake; "
+                        f"target tree killed: {exc} killed={killed}"
+                    )
+                    return 2
+        elif guard_stage == "compute" and acquire_ack_raw is not None:
+            candidate = lease_request_path(
+                args.steady_marker,
+                sequence=lease_sequence,
+                action="release",
+            )
+            if candidate.exists():
+                try:
+                    release_request_path, _request, release_request_raw = (
+                        read_compute_lease_request(
+                            args.steady_marker,
+                            marker_raw=marker_raw,
+                            expected_target_pid=args.pid,
+                            sequence=lease_sequence,
+                            workload=lease_workload,
+                            action="release",
+                            predecessor_ack_raw=acquire_ack_raw,
+                        )
+                    )
+                    guard_stage = "draining"
+                    _evidence(
+                        f"compute lease draining: sequence={lease_sequence} "
+                        f"workload={lease_workload}"
+                    )
+                except ResourceStageGuardError as exc:
+                    killed = kill_tree(args.pid)
+                    _evidence(
+                        "exiting: invalid compute-release handshake; "
+                        f"target tree killed: {exc} killed={killed}"
+                    )
+                    return 2
+        elif (
+            guard_stage == "draining"
+            and release_request_path is not None
+            and release_request_raw is not None
+            and managed <= args.lethal_mb
+        ):
+            try:
+                _ack_path, _ack, predecessor_ack_raw = publish_compute_lease_ack(
+                    release_request_path,
+                    request_raw=release_request_raw,
+                    target_pid=args.pid,
+                    sentinel_pid=os.getpid(),
+                    sequence=lease_sequence,
+                    workload=lease_workload,
+                    action="release",
+                    active_lethal_mb=float(args.lethal_mb),
+                )
+                guard_stage = "steady"
+                active_lethal_mb = float(args.lethal_mb)
+                consecutive_over = 0
+                _evidence(
+                    f"compute lease released: sequence={lease_sequence} "
+                    f"workload={lease_workload}"
+                )
+                lease_sequence += 1
+                lease_workload = ""
+                acquire_ack_raw = None
+                release_request_path = None
+                release_request_raw = None
+            except ResourceStageGuardError as exc:
+                killed = kill_tree(args.pid)
+                _evidence(
+                    "exiting: invalid compute-release acknowledgement; "
+                    f"target tree killed: {exc} killed={killed}"
+                )
+                return 2
         entry = {
             "at": time.time(),
             "core_mb": round(core_mb, 1),
@@ -352,6 +494,8 @@ def main(argv: list[str] | None = None) -> int:
             "guard_stage": guard_stage,
             "active_lethal_mb": active_lethal_mb,
             "marker_observed": marker_observed,
+            "lease_sequence": lease_sequence,
+            "lease_workload": lease_workload,
         }
         write_ring(args.ring, entry, max_lines=ring_max_lines)
 
@@ -369,6 +513,7 @@ def main(argv: list[str] | None = None) -> int:
             managed_mb=managed,
             lethal_mb=active_lethal_mb,
             consecutive_over=consecutive_over,
+            overshoot_factor=args.immediate_kill_overshoot,
         ):
             killed = kill_tree(args.pid)
             tombstone = {

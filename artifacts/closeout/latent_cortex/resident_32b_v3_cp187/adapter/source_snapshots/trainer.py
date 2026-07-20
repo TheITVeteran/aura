@@ -171,7 +171,7 @@ def _await_resource_guard(
         raise ResourceStageGuardError(
             "resource guard acknowledgement exists before trainer marker"
         )
-    marker, marker_raw = publish_ready_marker(
+    _marker, marker_raw = publish_ready_marker(
         marker_path,
         target_pid=os.getpid(),
         trainer_sha256=trainer_sha256,
@@ -180,7 +180,7 @@ def _await_resource_guard(
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         if acknowledgement.exists():
-            acknowledgement_payload, ack_raw = read_armed_ack(
+            _ack, ack_raw = read_armed_ack(
                 marker_path,
                 marker_raw=marker_raw,
                 expected_target_pid=os.getpid(),
@@ -195,119 +195,11 @@ def _await_resource_guard(
             return {
                 "marker_sha256": sha256_bytes(marker_raw),
                 "ack_sha256": sha256_bytes(ack_raw),
-                "marker": marker,
-                "ack": acknowledgement_payload,
-                "marker_raw": marker_raw,
-                "ack_raw": ack_raw,
             }
         time.sleep(0.25)
     raise ResourceStageGuardError(
         "external sentinel did not acknowledge the steady memory guard in time"
     )
-
-
-@dataclass(slots=True)
-class _ResourceComputeGuard:
-    marker_path: Path
-    marker_raw: bytes
-    predecessor_ack_raw: bytes
-    target_pid: int
-    compute_lethal_mb: float
-    steady_lethal_mb: float
-    timeout_s: float = 120.0
-    sequence: int = 0
-
-    def _await_ack(
-        self,
-        request_path: Path,
-        *,
-        request_raw: bytes,
-        sequence: int,
-        workload: str,
-        action: str,
-        active_lethal_mb: float,
-    ) -> bytes:
-        from core.runtime.resource_stage_guard import (
-            ResourceStageGuardError,
-            lease_ack_path,
-            read_compute_lease_ack,
-        )
-
-        acknowledgement = lease_ack_path(request_path)
-        deadline = time.monotonic() + self.timeout_s
-        while time.monotonic() < deadline:
-            if acknowledgement.exists():
-                _payload, raw = read_compute_lease_ack(
-                    request_path,
-                    request_raw=request_raw,
-                    expected_target_pid=self.target_pid,
-                    sequence=sequence,
-                    workload=workload,
-                    action=action,
-                    active_lethal_mb=active_lethal_mb,
-                )
-                return raw
-            time.sleep(0.1)
-        raise ResourceStageGuardError(
-            f"external sentinel did not acknowledge compute lease {sequence} {action}"
-        )
-
-    def acquire(self, workload: str) -> tuple[int, str, bytes]:
-        from core.runtime.resource_stage_guard import publish_compute_lease_request
-
-        self.sequence += 1
-        request_path, _request, request_raw = publish_compute_lease_request(
-            self.marker_path,
-            marker_raw=self.marker_raw,
-            target_pid=self.target_pid,
-            sequence=self.sequence,
-            workload=workload,
-            action="acquire",
-            predecessor_ack_raw=self.predecessor_ack_raw,
-        )
-        acknowledgement_raw = self._await_ack(
-            request_path,
-            request_raw=request_raw,
-            sequence=self.sequence,
-            workload=workload,
-            action="acquire",
-            active_lethal_mb=self.compute_lethal_mb,
-        )
-        print(
-            f"resource compute lease acquired: sequence={self.sequence} "
-            f"workload={workload}",
-            flush=True,
-        )
-        return self.sequence, workload, acknowledgement_raw
-
-    def release(self, lease: tuple[int, str, bytes]) -> None:
-        from core.runtime.resource_stage_guard import publish_compute_lease_request
-
-        sequence, workload, acquire_ack_raw = lease
-        if sequence != self.sequence:
-            raise RuntimeError("resource compute lease release order is invalid")
-        request_path, _request, request_raw = publish_compute_lease_request(
-            self.marker_path,
-            marker_raw=self.marker_raw,
-            target_pid=self.target_pid,
-            sequence=sequence,
-            workload=workload,
-            action="release",
-            predecessor_ack_raw=acquire_ack_raw,
-        )
-        self.predecessor_ack_raw = self._await_ack(
-            request_path,
-            request_raw=request_raw,
-            sequence=sequence,
-            workload=workload,
-            action="release",
-            active_lethal_mb=self.steady_lethal_mb,
-        )
-        print(
-            f"resource compute lease released: sequence={sequence} "
-            f"workload={workload}",
-            flush=True,
-        )
 
 
 def _source_binding(path: Path) -> dict[str, Any]:
@@ -1043,20 +935,11 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
             flush=True,
         )
 
-    resource_compute_guard: _ResourceComputeGuard | None = None
     if resource_guard_enabled:
-        handshake = _await_resource_guard(
+        _await_resource_guard(
             args.resource_stage_path.expanduser(),
             trainer_sha256=sources["trainer"]["sha256"],
             startup_lethal_mb=float(args.resource_startup_lethal_mb),
-            steady_lethal_mb=float(args.resource_steady_lethal_mb),
-        )
-        resource_compute_guard = _ResourceComputeGuard(
-            marker_path=args.resource_stage_path.expanduser(),
-            marker_raw=handshake["marker_raw"],
-            predecessor_ack_raw=handshake["ack_raw"],
-            target_pid=os.getpid(),
-            compute_lethal_mb=float(args.resource_startup_lethal_mb),
             steady_lethal_mb=float(args.resource_steady_lethal_mb),
         )
 
@@ -1113,37 +996,22 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
         start = (holdout_eval_count * count) % len(holdout_examples)
         holdout_eval_count += 1
         losses: list[float] = []
-        compute_lease = (
-            resource_compute_guard.acquire("holdout_eval")
-            if resource_compute_guard is not None
-            else None
-        )
-        try:
-            for offset in range(count):
-                example = holdout_examples[(start + offset) % len(holdout_examples)]
-                value = live_path_loss(
-                    model,
-                    example["prompt_tokens"],
-                    example["answer_tokens"],
-                    spec=spec.with_depth(max(ladder)),
-                    bridge_tokens=bridge_tokens,
-                )
-                try:
-                    mx.eval(value)
-                    loss = float(value)
-                finally:
-                    del value
-                    mx.clear_cache()
-                if not math.isfinite(loss):
-                    raise FloatingPointError("non_finite_holdout_loss")
-                losses.append(loss)
-        except BaseException:
+        for offset in range(count):
+            example = holdout_examples[(start + offset) % len(holdout_examples)]
+            value = live_path_loss(
+                model,
+                example["prompt_tokens"],
+                example["answer_tokens"],
+                spec=spec.with_depth(max(ladder)),
+                bridge_tokens=bridge_tokens,
+            )
+            mx.eval(value)
+            loss = float(value)
+            if not math.isfinite(loss):
+                raise FloatingPointError("non_finite_holdout_loss")
+            losses.append(loss)
+            del value
             mx.clear_cache()
-            if compute_lease is not None:
-                resource_compute_guard.release(compute_lease)
-            raise
-        if compute_lease is not None:
-            resource_compute_guard.release(compute_lease)
         entry = {
             "step": step,
             "mean_loss": round(sum(losses) / len(losses), 6),
@@ -1167,11 +1035,6 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
                 cursor = 0
                 order = _deterministic_order(len(train_examples), args.train_seed, epoch)
             example = train_examples[order[cursor]]
-            compute_lease = (
-                resource_compute_guard.acquire("training_step")
-                if resource_compute_guard is not None
-                else None
-            )
             try:
                 loss_value, gradients, step_telemetry = (
                     _streamed_depth_value_and_grad(
@@ -1188,9 +1051,6 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
                     )
                 )
             except FloatingPointError:
-                mx.clear_cache()
-                if compute_lease is not None:
-                    resource_compute_guard.release(compute_lease)
                 halt_reason = "non_finite_loss"
                 break
             optimizer.update(model, gradients)
@@ -1206,8 +1066,6 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
             # under the MLX wired limit.
             del gradients, step_telemetry
             mx.clear_cache()
-            if compute_lease is not None:
-                resource_compute_guard.release(compute_lease)
             step += 1
             cursor += 1
             window_losses.append(loss_value)

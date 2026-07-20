@@ -1,0 +1,109 @@
+{
+  "schema": "aura.recurrence_native_resident_protocol.v2",
+  "created_at": "2026-07-20T00:45:00-07:00",
+  "checkpoint": "CP188-resident-v3-external-compute-leases",
+  "lineage": {
+    "cp187_protocol_sha256": "275f56793449be856c3b836a1ccc83c812be957c809505109fe3cbda62c20780",
+    "cp187_resource_amendment_sha256": "3d7e75d8605bfd7a934213dd709be396232a71da7f4dbacad4dddea4ebba8a3b",
+    "change_reason": "CP187 proved the startup handshake but showed that one isolated resident gradient graph legitimately exceeds the low-water threshold. CP188 turns the low-water boundary into an externally enforced between-graph invariant and grants each graph a bounded, hash-chained compute lease."
+  },
+  "claim_policy": {
+    "allowed_before_evaluation": ["detached_training_mechanics", "exact_resume_mechanics", "v3_objective_mechanics", "externally_enforced_graph_lifetime_isolation"],
+    "forbidden_before_evaluation": ["reasoning_gain", "same_checkpoint_interaction", "frontier_level", "frontier_plus", "installed_desktop_gain"]
+  },
+  "model": {
+    "path": "/Users/bryan/.aura/live-source/training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118",
+    "expected_full_weight_sha256": "8eae71e73a14d1228a942d4faf84690d70b62148f25b0f924435535f7c550fad",
+    "personality_adapter": "none_fused_into_resident"
+  },
+  "training": {
+    "adapter_id": "resident-32b-recurrence-v3-cp188",
+    "output_dir": "/Users/bryan/.aura/live-source/artifacts/closeout/latent_cortex/resident_32b_v3_cp188/adapter",
+    "trainer_sha256": "7fd9e2778d4f9e5641231025e65156ccff9422119f3e54126a320f8ad292932b",
+    "objective": "v3",
+    "train_seed": 2026071901,
+    "families": ["khop", "boolean", "modular", "register_trace", "stack_trace", "constraint_order", "causal_intervention", "bayes_update", "budget_plan", "symbolic_rewrite", "premise_audit", "code_trace"],
+    "task_depths": [2, 4, 8],
+    "per_cell": 16,
+    "example_count": 576,
+    "holdout_per_cell": 1,
+    "holdout_count": 36,
+    "train_count": 540,
+    "holdout_eval_samples": 8,
+    "curriculum_depths": [1, 2, 4],
+    "execution_shape_rationale": "Four slots and two branch roles match the resident interactive profile; curriculum depth four exceeds the live two-step profile so added recurrence must learn a positive contribution.",
+    "n_slots": 4,
+    "branch_roles": ["constructive_solution", "counterexample_search"],
+    "exchange_interval": 1,
+    "alpha": 0.5,
+    "alpha_schedule": "constant",
+    "bridge_policy": "assistant_answer",
+    "depth_margin": 0.05,
+    "diversity_weight": 0.25,
+    "diversity_target_cos": 0.98,
+    "lora_rank": 8,
+    "lora_targets": ["o_proj", "v_proj"],
+    "learning_rate": 0.0001,
+    "monotonicity_weight": 0.5,
+    "checkpoint_every_steps": 5,
+    "log_every_steps": 5,
+    "max_steps": 540,
+    "epochs_at_completion": 1,
+    "resume_required_after_forced_partial": true,
+    "hard_training_minutes_after_resume": 720
+  },
+  "detached_execution": {
+    "supervisor": "tools/run_detached_step.py",
+    "restart_policy": "never",
+    "partial_run_dir": "/Users/bryan/.aura/live-source/artifacts/closeout/latent_cortex/resident_32b_v3_cp188/detached-partial",
+    "partial_max_minutes": 0.001,
+    "partial_timeout_seconds": 1800,
+    "expected_partial_returncode": 75,
+    "expected_partial_steps": 1,
+    "resume_run_dir": "/Users/bryan/.aura/live-source/artifacts/closeout/latent_cortex/resident_32b_v3_cp188/detached-resume",
+    "resume_timeout_seconds": 46800,
+    "resume_flag": true,
+    "terminal_success_returncode": 0,
+    "terminal_incomplete_returncode": 75
+  },
+  "memory_safety": {
+    "resource_envelope": {"active_gib": 40, "cache_gib": 2, "wired_gib": 48},
+    "external_sentinel": {
+      "compute_lethal_mb": 73728,
+      "low_water_mb": 59392,
+      "interval_seconds": 0.5,
+      "immediate_kill_overshoot": 1.05,
+      "ring_window_seconds": 46800,
+      "create_once_initial_and_per_graph_hash_chain_required": true,
+      "tombstone_means_run_failure": true
+    },
+    "rule": "Every training and holdout graph requires a create-once external compute lease acquired from <=59392 MB, remains below 73728 MB while computing/draining, and must return to <=59392 MB before checkpointing or the next lease."
+  },
+  "mechanical_admission": {
+    "requirements": [
+      "training_completion complete OR halt wall_clock with >= 200 steps",
+      "finite loss trail and finite holdout trail",
+      "strict v2 identity contract validates objective v3, with explicit non-load-eligible scope for any bounded partial",
+      "holdout mean CE at final checkpoint not worse than 1.5x its minimum",
+      "complete startup-steady-compute-draining stage evidence below active ceilings for both phases",
+      "contiguous create-once compute-lease hash chain with exact trainer PID, sentinel PID, workload, sequence, request, acknowledgement, and low-water rearm bindings",
+      "no sentinel tombstone"
+    ],
+    "on_failure": "REFUTED-mechanics; no freeze or evaluation compute for the adapter"
+  },
+  "post_training_pilot": {
+    "task_registry_version": "2026.07.18.2",
+    "fresh_seed_count": 2,
+    "domains": ["novel_algorithms", "mathematics", "coding", "scientific_inference", "long_horizon_planning", "calibration", "misleading_premise"],
+    "arms": ["base_vanilla", "base_rlc", "adapter_vanilla", "adapter_rlc"],
+    "decode": "contract-aware termination with decode_max_tokens 768 uniformly across every arm",
+    "advance_only_if": ["adapter_rlc_correct_count > adapter_vanilla_correct_count", "adapter_rlc_correct_count > base_rlc_correct_count", "adapter_vanilla has no material regression against base_vanilla", "adapter-RLC branch scores are not all tied", "ordinary-generation isolation exact; all identity receipts validate"],
+    "negative_or_inconclusive_action": "diagnose, revise training, preregister a fresh pilot; do not run or claim the confirmatory campaign"
+  },
+  "confirmatory_campaign": {
+    "status": "conditional_not_launched",
+    "minimum_registry_trials_per_domain": 20,
+    "required_arms": ["base_vanilla", "base_rlc", "adapter_vanilla", "adapter_rlc", "base_equal_compute", "adapter_equal_compute"],
+    "required_controls": ["prospective_power_simulation_before_task_issue", "externally held task and provider trust roots", "signed zero-overlap contamination audit against exact training corpus", "independent raw-output and compute verification"]
+  }
+}

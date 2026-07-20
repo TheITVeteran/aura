@@ -1,0 +1,105 @@
+{
+  "schema": "aura.recurrence_native_resident_protocol_amendment.v1",
+  "created_at": "2026-07-20T00:47:00-07:00",
+  "checkpoint": "CP188-resident-v3-external-compute-leases-launch",
+  "parent_protocol": {
+    "path": "protocol.json",
+    "sha256": "3d9a63550147a0969621895332984a0f1a77bd47321cfff03174ee8ca9f79645",
+    "size_bytes": 6410
+  },
+  "launcher": {
+    "path": "tools/launch_resident_recurrence_training.py",
+    "sha256": "0824075d592d9f436f66e58b9d0f6d33905bd69d8ef5a779e872595577c4f84d"
+  },
+  "triggering_failure": {
+    "path": "resource_failure_cp188.json",
+    "required_classification": "external_sentinel_single_graph_ceiling_misclassification",
+    "required_compressed_process_mb": 63372
+  },
+  "change_scope": {
+    "allowed": [
+      "acquire a 73728-MB compute lease for each training-step or holdout graph only from a <=59392-MB external low-water observation",
+      "publish create-once acquire/release requests and sentinel acknowledgements in one contiguous hash chain",
+      "block trainer progress until the sentinel independently observes post-graph drain to <=59392 MB",
+      "sample physical footprint every 0.5 seconds, immediately kill at 1.05x the active ceiling, and retain the full 46800-second ring",
+      "retain the CP185 in-process graph release barrier and CP187 detached readiness barrier",
+      "start a fresh adapter and optimizer state while retaining all scientific variables and pilot rules"
+    ],
+    "forbidden": [
+      "construct a training or holdout graph outside a compute lease",
+      "acquire overlapping leases or skip low-water rearm",
+      "reuse CP187 adapter, run, ring, marker, or lease artifacts",
+      "change tasks, objective, optimizer, recurrence shape, scoring, or advancement rules",
+      "freeze or evaluate any run with a sentinel tombstone",
+      "claim reasoning or frontier gains from resource mechanics"
+    ]
+  },
+  "resource_envelope": {
+    "schema": "aura.recurrence_training_resource_envelope.v1",
+    "wrapper": "tools/run_recurrence_training_envelope.py",
+    "wrapper_sha256": "53d22ae64012823313bdf81a21eccada52f6289eccf4ffb85c1b6051a2d7996a",
+    "trainer": "tools/recurrence_native_train_v2.py",
+    "trainer_sha256": "7fd9e2778d4f9e5641231025e65156ccff9422119f3e54126a320f8ad292932b",
+    "memory_limit_gb": 40,
+    "cache_limit_gb": 2,
+    "wired_limit_gb": 48,
+    "cache_cleared_before_model_load": true,
+    "envelope_out": "/Users/bryan/.aura/live-source/artifacts/closeout/latent_cortex/resident_32b_v3_cp188/adapter/launch_resource_envelope_cp188.json"
+  },
+  "partial": {
+    "run_dir": "/Users/bryan/.aura/live-source/artifacts/closeout/latent_cortex/resident_32b_v3_cp188/detached-partial",
+    "name": "cp188-resident-32b-v3-compute-lease-partial",
+    "timeout_seconds": 1800,
+    "max_minutes": 0.001,
+    "checkpoint_every_steps": 5,
+    "log_every_steps": 5,
+    "expected_returncode": 75,
+    "expected_steps": 1,
+    "restart_policy": "never"
+  },
+  "resume": {
+    "run_dir": "/Users/bryan/.aura/live-source/artifacts/closeout/latent_cortex/resident_32b_v3_cp188/detached-resume",
+    "name": "cp188-resident-32b-v3-compute-lease-resume",
+    "timeout_seconds": 46800,
+    "max_minutes": 720,
+    "expected_resume_step": 1,
+    "checkpoint_every_steps": 5,
+    "log_every_steps": 5,
+    "terminal_complete_returncode": 0,
+    "terminal_bounded_partial_returncode": 75,
+    "restart_policy": "never"
+  },
+  "sentinel": {
+    "program": "tools/memory_sentinel.py",
+    "program_sha256": "48c0051bc32849273d9242ba4390d8c6c36722ec064d9d792033e747f288b1ed",
+    "stage_guard_source": "core/runtime/resource_stage_guard.py",
+    "stage_guard_source_sha256": "36dd9480b7c0d3198103f7396dfde3c3d9c3f91ca944e460a0e058be5934cb54",
+    "startup_lethal_mb": 73728,
+    "lethal_mb": 59392,
+    "interval_seconds": 0.5,
+    "immediate_kill_overshoot": 1.05,
+    "ring_window_seconds": 46800,
+    "required_for_each_phase": true,
+    "tombstone_means_phase_failure": true,
+    "partial_ring": "/Users/bryan/.aura/live-source/artifacts/closeout/latent_cortex/resident_32b_v3_cp188/adapter/physical_footprint_partial_cp188.jsonl",
+    "resume_ring": "/Users/bryan/.aura/live-source/artifacts/closeout/latent_cortex/resident_32b_v3_cp188/adapter/physical_footprint_resume_cp188.jsonl",
+    "partial_stage_path": "/Users/bryan/.aura/live-source/artifacts/closeout/latent_cortex/resident_32b_v3_cp188/adapter/resource_stage_partial_cp188.json",
+    "resume_stage_path": "/Users/bryan/.aura/live-source/artifacts/closeout/latent_cortex/resident_32b_v3_cp188/adapter/resource_stage_resume_cp188.json"
+  },
+  "mechanical_admission": {
+    "complete_path": "complete=true, halt_reason=max_steps, steps=540",
+    "bounded_partial_path": "complete=false, halt_reason=wall_clock, 200<=steps<540, explicit bounded-partial identity scope, never load-eligible before an admission certificate",
+    "required_holdout_guard": "finite nonempty holdout trail and final mean_loss <= 1.5 * minimum mean_loss",
+    "required_resource_guard": "exact 40/2/48-GiB envelope; complete startup/steady/compute/draining trail below active ceilings; contiguous acquire/release hash chain; trainer and sentinel identity bindings; no tombstone",
+    "on_failure": "REFUTED-mechanics; do not freeze or evaluate the adapter"
+  },
+  "claim_flags": {
+    "training_complete": false,
+    "training_admitted": false,
+    "mechanics_proven": false,
+    "reasoning_gain": false,
+    "same_checkpoint_interaction": false,
+    "frontier_level": false,
+    "frontier_plus": false
+  }
+}

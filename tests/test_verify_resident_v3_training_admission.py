@@ -7,6 +7,8 @@ import pytest
 
 from core.runtime.resource_stage_guard import (
     publish_armed_ack,
+    publish_compute_lease_ack,
+    publish_compute_lease_request,
     publish_ready_marker,
 )
 from tools import verify_resident_v3_training_admission as admission
@@ -216,6 +218,58 @@ def test_footprint_requires_clean_sentinel_and_stays_below_lethal(tmp_path, monk
     sentinel_dir = tmp_path / "sentinel"
     sentinel_dir.mkdir()
     ring = tmp_path / "ring.jsonl"
+    stage_path = tmp_path / "stage.json"
+    _marker, marker_raw = publish_ready_marker(
+        stage_path,
+        target_pid=123,
+        trainer_sha256="c" * 64,
+    )
+    _initial_path, _initial, initial_ack_raw = publish_armed_ack(
+        stage_path,
+        marker_raw=marker_raw,
+        target_pid=123,
+        sentinel_pid=456,
+        startup_lethal_mb=73728.0,
+        steady_lethal_mb=59392.0,
+    )
+    acquire_path, _acquire, acquire_raw = publish_compute_lease_request(
+        stage_path,
+        marker_raw=marker_raw,
+        target_pid=123,
+        sequence=1,
+        workload="training_step",
+        action="acquire",
+        predecessor_ack_raw=initial_ack_raw,
+    )
+    _path, _ack, acquire_ack_raw = publish_compute_lease_ack(
+        acquire_path,
+        request_raw=acquire_raw,
+        target_pid=123,
+        sentinel_pid=456,
+        sequence=1,
+        workload="training_step",
+        action="acquire",
+        active_lethal_mb=73728.0,
+    )
+    release_path, _release, release_raw = publish_compute_lease_request(
+        stage_path,
+        marker_raw=marker_raw,
+        target_pid=123,
+        sequence=1,
+        workload="training_step",
+        action="release",
+        predecessor_ack_raw=acquire_ack_raw,
+    )
+    publish_compute_lease_ack(
+        release_path,
+        request_raw=release_raw,
+        target_pid=123,
+        sentinel_pid=456,
+        sequence=1,
+        workload="training_step",
+        action="release",
+        active_lethal_mb=59392.0,
+    )
     ring.write_text(
         "\n".join(
             json.dumps(
@@ -225,32 +279,22 @@ def test_footprint_requires_clean_sentinel_and_stays_below_lethal(tmp_path, monk
                     "guard_stage": stage,
                     "active_lethal_mb": lethal,
                     "marker_observed": observed,
+                    "lease_sequence": sequence,
+                    "lease_workload": workload,
                 }
             )
-            for index, (managed, stage, lethal, observed) in enumerate(
+            for index, (managed, stage, lethal, observed, sequence, workload) in enumerate(
                 (
-                    (22000.0, "startup", 73728.0, False),
-                    (57000.0, "steady", 59392.0, True),
-                    (41000.0, "steady", 59392.0, True),
+                    (22000.0, "startup", 73728.0, False, 1, ""),
+                    (21000.0, "steady", 59392.0, True, 1, ""),
+                    (65000.0, "compute", 73728.0, True, 1, "training_step"),
+                    (57000.0, "draining", 73728.0, True, 1, "training_step"),
+                    (41000.0, "steady", 59392.0, True, 2, ""),
                 ),
                 start=1,
             )
         )
         + "\n"
-    )
-    stage_path = tmp_path / "stage.json"
-    _marker, marker_raw = publish_ready_marker(
-        stage_path,
-        target_pid=123,
-        trainer_sha256="c" * 64,
-    )
-    publish_armed_ack(
-        stage_path,
-        marker_raw=marker_raw,
-        target_pid=123,
-        sentinel_pid=456,
-        startup_lethal_mb=73728.0,
-        steady_lethal_mb=59392.0,
     )
     plan = {
         "command": [
@@ -265,9 +309,13 @@ def test_footprint_requires_clean_sentinel_and_stays_below_lethal(tmp_path, monk
             "--steady-marker",
             str(stage_path),
             "--interval",
-            "2.0",
+            "0.5",
+            "--immediate-kill-overshoot",
+            "1.05",
             "--ring",
             str(ring),
+            "--ring-window-seconds",
+            "46800",
             "--tombstone-dir",
             str(sentinel_dir),
         ],
@@ -289,9 +337,9 @@ def test_footprint_requires_clean_sentinel_and_stays_below_lethal(tmp_path, monk
         stage_path=stage_path,
         expected_trainer_sha256="c" * 64,
     )
-    assert evidence["sample_count"] == 3
-    assert evidence["startup_peak_managed_mb"] == 22000.0
-    assert evidence["steady_peak_managed_mb"] == 57000.0
+    assert evidence["sample_count"] == 5
+    assert evidence["stage_peak_managed_mb"]["compute"] == 65000.0
+    assert evidence["compute_lease_workloads"] == {"training_step": 1}
 
     (sentinel_dir / "sentinel_tombstone_1.json").write_text("{}")
     with pytest.raises(

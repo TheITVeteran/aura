@@ -17,9 +17,17 @@ MARKER_SCHEMA = "aura.resource_stage.marker.v1"
 ACK_SCHEMA = "aura.resource_stage.ack.v1"
 READY_STAGE = "ready_for_steady_memory_guard"
 ARMED_STAGE = "steady_memory_guard_armed"
+LEASE_REQUEST_SCHEMA = "aura.resource_stage.compute_lease_request.v1"
+LEASE_ACK_SCHEMA = "aura.resource_stage.compute_lease_ack.v1"
+LEASE_ACTIONS = frozenset({"acquire", "release"})
+LEASE_STAGES = {
+    "acquire": "compute_guard_armed",
+    "release": "steady_memory_guard_rearmed",
+}
 MAX_DOCUMENT_BYTES = 16 * 1024
 _SHA256_RE = re.compile(r"[0-9a-f]{64}")
 _NONCE_RE = re.compile(r"[0-9a-f]{32}")
+_WORKLOAD_RE = re.compile(r"[a-z][a-z0-9_]{0,47}")
 
 
 class ResourceStageGuardError(RuntimeError):
@@ -28,6 +36,18 @@ class ResourceStageGuardError(RuntimeError):
 
 def ack_path(marker_path: Path) -> Path:
     return marker_path.with_name(f"{marker_path.name}.armed.json")
+
+
+def lease_request_path(marker_path: Path, *, sequence: int, action: str) -> Path:
+    if type(sequence) is not int or sequence < 1 or action not in LEASE_ACTIONS:
+        raise ResourceStageGuardError("compute lease path state is invalid")
+    return marker_path.with_name(
+        f"{marker_path.name}.lease-{sequence:06d}-{action}.json"
+    )
+
+
+def lease_ack_path(request_path: Path) -> Path:
+    return request_path.with_name(f"{request_path.name}.ack.json")
 
 
 def _strict_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -272,4 +292,191 @@ def read_armed_ack(
         or not _valid_timestamp(payload.get("written_at"))
     ):
         raise ResourceStageGuardError("resource guard acknowledgement contract is invalid")
+    return payload, raw
+
+
+def publish_compute_lease_request(
+    marker_path: Path,
+    *,
+    marker_raw: bytes,
+    target_pid: int,
+    sequence: int,
+    workload: str,
+    action: str,
+    predecessor_ack_raw: bytes,
+) -> tuple[Path, dict[str, Any], bytes]:
+    marker, observed_marker_raw = read_ready_marker(
+        marker_path,
+        expected_target_pid=target_pid,
+    )
+    if observed_marker_raw != marker_raw:
+        raise ResourceStageGuardError("compute lease marker binding changed")
+    if (
+        type(sequence) is not int
+        or sequence < 1
+        or not isinstance(workload, str)
+        or _WORKLOAD_RE.fullmatch(workload) is None
+        or action not in LEASE_ACTIONS
+        or not predecessor_ack_raw
+    ):
+        raise ResourceStageGuardError("compute lease request state is invalid")
+    payload = {
+        "schema": LEASE_REQUEST_SCHEMA,
+        "target_pid": target_pid,
+        "trainer_sha256": marker["trainer_sha256"],
+        "marker_sha256": sha256_bytes(marker_raw),
+        "nonce": marker["nonce"],
+        "sequence": sequence,
+        "workload": workload,
+        "action": action,
+        "predecessor_ack_sha256": sha256_bytes(predecessor_ack_raw),
+        "written_at": time.time(),
+    }
+    raw = canonical_bytes(payload)
+    destination = lease_request_path(
+        marker_path,
+        sequence=sequence,
+        action=action,
+    )
+    _write_create_once(destination, raw)
+    return destination, payload, raw
+
+
+def read_compute_lease_request(
+    marker_path: Path,
+    *,
+    marker_raw: bytes,
+    expected_target_pid: int,
+    sequence: int,
+    workload: str | None,
+    action: str,
+    predecessor_ack_raw: bytes,
+) -> tuple[Path, dict[str, Any], bytes]:
+    destination = lease_request_path(
+        marker_path,
+        sequence=sequence,
+        action=action,
+    )
+    payload, raw = _read_canonical(destination)
+    marker, observed_marker_raw = read_ready_marker(
+        marker_path,
+        expected_target_pid=expected_target_pid,
+    )
+    if (
+        observed_marker_raw != marker_raw
+        or set(payload)
+        != {
+            "schema",
+            "target_pid",
+            "trainer_sha256",
+            "marker_sha256",
+            "nonce",
+            "sequence",
+            "workload",
+            "action",
+            "predecessor_ack_sha256",
+            "written_at",
+        }
+        or payload.get("schema") != LEASE_REQUEST_SCHEMA
+        or payload.get("target_pid") != expected_target_pid
+        or payload.get("trainer_sha256") != marker["trainer_sha256"]
+        or payload.get("marker_sha256") != sha256_bytes(marker_raw)
+        or payload.get("nonce") != marker["nonce"]
+        or payload.get("sequence") != sequence
+        or not isinstance(payload.get("workload"), str)
+        or _WORKLOAD_RE.fullmatch(payload["workload"]) is None
+        or (workload is not None and payload.get("workload") != workload)
+        or payload.get("action") != action
+        or payload.get("predecessor_ack_sha256")
+        != sha256_bytes(predecessor_ack_raw)
+        or not _valid_timestamp(payload.get("written_at"))
+    ):
+        raise ResourceStageGuardError("compute lease request contract is invalid")
+    return destination, payload, raw
+
+
+def publish_compute_lease_ack(
+    request_path: Path,
+    *,
+    request_raw: bytes,
+    target_pid: int,
+    sentinel_pid: int,
+    sequence: int,
+    workload: str,
+    action: str,
+    active_lethal_mb: float,
+) -> tuple[Path, dict[str, Any], bytes]:
+    if (
+        type(target_pid) is not int
+        or target_pid < 1
+        or type(sentinel_pid) is not int
+        or sentinel_pid < 1
+        or type(sequence) is not int
+        or sequence < 1
+        or not isinstance(workload, str)
+        or _WORKLOAD_RE.fullmatch(workload) is None
+        or action not in LEASE_ACTIONS
+        or isinstance(active_lethal_mb, bool)
+        or not math.isfinite(float(active_lethal_mb))
+        or float(active_lethal_mb) <= 0.0
+    ):
+        raise ResourceStageGuardError("compute lease acknowledgement state is invalid")
+    payload = {
+        "schema": LEASE_ACK_SCHEMA,
+        "target_pid": target_pid,
+        "sentinel_pid": sentinel_pid,
+        "request_sha256": sha256_bytes(request_raw),
+        "sequence": sequence,
+        "workload": workload,
+        "action": action,
+        "stage": LEASE_STAGES[action],
+        "active_lethal_mb": float(active_lethal_mb),
+        "written_at": time.time(),
+    }
+    raw = canonical_bytes(payload)
+    destination = lease_ack_path(request_path)
+    _write_create_once(destination, raw)
+    return destination, payload, raw
+
+
+def read_compute_lease_ack(
+    request_path: Path,
+    *,
+    request_raw: bytes,
+    expected_target_pid: int,
+    sequence: int,
+    workload: str,
+    action: str,
+    active_lethal_mb: float,
+) -> tuple[dict[str, Any], bytes]:
+    payload, raw = _read_canonical(lease_ack_path(request_path))
+    if (
+        set(payload)
+        != {
+            "schema",
+            "target_pid",
+            "sentinel_pid",
+            "request_sha256",
+            "sequence",
+            "workload",
+            "action",
+            "stage",
+            "active_lethal_mb",
+            "written_at",
+        }
+        or payload.get("schema") != LEASE_ACK_SCHEMA
+        or payload.get("target_pid") != expected_target_pid
+        or type(payload.get("sentinel_pid")) is not int
+        or int(payload["sentinel_pid"]) < 1
+        or payload.get("request_sha256") != sha256_bytes(request_raw)
+        or payload.get("sequence") != sequence
+        or payload.get("workload") != workload
+        or payload.get("action") != action
+        or payload.get("stage") != LEASE_STAGES[action]
+        or payload.get("active_lethal_mb") != float(active_lethal_mb)
+        or not _valid_timestamp(payload.get("written_at"))
+    ):
+        raise ResourceStageGuardError(
+            "compute lease acknowledgement contract is invalid"
+        )
     return payload, raw
