@@ -276,9 +276,12 @@ def _validate_safetensors(path: Path, *, role: str) -> dict[str, Any]:
     intervals: list[tuple[int, int, str]] = []
     for name, record in header.items():
         if name == "__metadata__":
-            if not isinstance(record, dict) or any(
-                not isinstance(key, str) or not isinstance(value, str)
-                for key, value in record.items()
+            if record is not None and (
+                not isinstance(record, dict)
+                or any(
+                    not isinstance(key, str) or not isinstance(value, str)
+                    for key, value in record.items()
+                )
             ):
                 _fail(f"{role}_safetensors_metadata_invalid")
             continue

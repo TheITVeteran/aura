@@ -21070,3 +21070,58 @@ Evidence-weighted completion remains 27%; this is checkpoint 175 of the faithful
 292-399 forecast, leaving approximately 117-224 checkpoints. No reasoning-gain,
 frontier, external-custody campaign, live-app, release, or soak credit is
 awarded. Final soaks remain deferred.
+
+## Checkpoint 2026-07-19-176: Resident Training Promotion and Immutable Freeze
+
+CP176 applies the CP175 gate to the completed resident-32B recurrence run,
+repairs two production-schema mismatches exposed by the real artifacts, and
+publishes an immutable adapter generation eligible for a mechanics smoke. It
+does not award reasoning-gain, frontier, pilot, installed-app, release, or soak
+credit.
+
+- Terminal supervisor replay accepts the one and only detached invocation at
+  return code zero with no timeout, empty process group and lineage, and all 576
+  optimizer steps complete. The terminal adapter contains 128 tensors at
+  SHA-256 `4bbd88d77a262cf4ef9c23b7c9c88044d0073832084988089a43813cd232ade0`;
+  its optimizer contains 258 tensors at
+  `67a626fdd108c026a24f7702d283c4f3156735ada200578acc398920fc9bf3d7`.
+- Exact curriculum replay reconstructs all 576 unique examples across 36
+  family/depth cells, 62,675 prompt tokens, and 8,907 answer tokens. Its
+  semantic example root is
+  `49df15f21294bd36e3450f473b82abec6ba338ae33cb9efce85414d02f7d0bec`,
+  and the resident model-behavior bundle remains
+  `7eb54f8b670bba6e5b37ae5f9c6d016e9628034951b3ee702ca0096123c5e674`.
+- The real model identity correctly represents the intentionally absent
+  personality adapter with an empty bundle hash. Freeze construction and
+  verification now share one strict schema validator that accepts only this
+  exact absence representation or a valid SHA-256. A maliciously rehashed
+  certificate with any malformed model-identity field fails closed.
+- The real MLX checkpoint emits `"__metadata__": null` in safetensors. The
+  terminal validator now accepts the format's explicit null metadata as well
+  as a string-to-string metadata map while retaining strict tensor shapes,
+  dtypes, offsets, exact byte coverage, duplicate-key rejection, and stable
+  reads. Non-string metadata values remain rejected.
+- The manifest-bounded 17-artifact read-only snapshot is frozen at content root
+  `d26c241817f04441baf8a3a7fd1e2e9f1096c73eb0f9e929247c0b1cb0e49f17`
+  and certificate SHA-256
+  `c9a1f288f72aa931a8b31b76099817d2bbe745c95d3676d644ca6b4af4162e80`.
+  Independent promotion composes that freeze with the terminal supervisor,
+  fixed acceptance contract, model identity, dataset replay, checkpoints,
+  losses, and resource envelope at receipt SHA-256
+  `9f886bb2fad1eda3a5b1cd8f6a874eff75187f8e1e92630c5b60ddca650af119`.
+- Promotion fixes `pilot_eligible`, `reasoning_gain_proven`,
+  `frontier_gain_proven`, and `external_attestation_present` to false. Its only
+  successor is `resident_32b_frozen_adapter_mechanics_smoke`; successful
+  training is not treated as capability evidence.
+
+Validation is green: the focused freeze/promotion suite passes 43/43; focused
+Ruff, bytecode compilation, formatting, and diff integrity pass. The immutable
+adapter and evidence receipts remain local evidence artifacts and are not
+committed as source.
+
+Evidence-weighted completion remains 27%. This is checkpoint 176 of the
+faithful 292-399 forecast, leaving approximately 116-223 checkpoints. Next:
+run a detached resident-32B four-arm causal mechanics smoke from this clean
+source generation, verify ordinary-generation isolation and scoped recurrent
+activation against the frozen adapter, then preregister and execute the fresh
+hidden-task pilot. Final long soaks remain deferred.

@@ -332,6 +332,31 @@ def inventory_root_sha256(inventory: list[dict[str, Any]]) -> str:
     )
 
 
+def _validated_model_identity(model_identity: Mapping[str, Any]) -> dict[str, Any]:
+    required = {
+        "fingerprint",
+        "files",
+        "model_behavior_bundle_sha256",
+        "runtime_bundle_sha256",
+        "runtime_environment_identity_sha256",
+        "personality_adapter_bundle_sha256",
+        "effective_stack_sha256",
+    }
+    if set(model_identity) != required:
+        _fail("adapter_freeze_model_identity_invalid")
+    files = model_identity.get("files")
+    personality = model_identity.get("personality_adapter_bundle_sha256")
+    sha_roles = required - {"files", "personality_adapter_bundle_sha256"}
+    if (
+        type(files) is not int
+        or files < 1
+        or any(not _is_sha256(model_identity.get(role)) for role in sha_roles)
+        or not (personality == "" or _is_sha256(personality))
+    ):
+        _fail("adapter_freeze_model_identity_invalid")
+    return dict(model_identity)
+
+
 def build_adapter_freeze_certificate(
     *,
     adapter_id: str,
@@ -350,23 +375,7 @@ def build_adapter_freeze_certificate(
         or identity_receipt.get("complete") is not True
     ):
         _fail("adapter_identity_receipt_invalid")
-    required_model = {
-        "fingerprint",
-        "files",
-        "model_behavior_bundle_sha256",
-        "runtime_bundle_sha256",
-        "runtime_environment_identity_sha256",
-        "personality_adapter_bundle_sha256",
-        "effective_stack_sha256",
-    }
-    if set(model_identity) != required_model:
-        _fail("adapter_freeze_model_identity_invalid")
-    if not all(
-        _is_sha256(value)
-        for key, value in model_identity.items()
-        if key != "files"
-    ) or type(model_identity["files"]) is not int:
-        _fail("adapter_freeze_model_identity_invalid")
+    validated_model_identity = _validated_model_identity(model_identity)
     if not validator_identity or any(
         not isinstance(key, str) or not _is_sha256(value)
         for key, value in validator_identity.items()
@@ -378,7 +387,7 @@ def build_adapter_freeze_certificate(
         "content_root_sha256": inventory_root_sha256(inventory),
         "artifacts": inventory,
         "identity_receipt": dict(identity_receipt),
-        "model_identity": dict(model_identity),
+        "model_identity": validated_model_identity,
         "validator_identity": dict(sorted(validator_identity.items())),
     }
     return {**material, "certificate_sha256": _sha256(material)}
@@ -421,6 +430,10 @@ def verify_adapter_freeze(root: Path) -> dict[str, Any]:
         or certificate.get("content_root_sha256") != inventory_root_sha256(inventory)
     ):
         _fail("adapter_freeze_content_mismatch")
+    model_identity = certificate.get("model_identity")
+    if not isinstance(model_identity, Mapping):
+        _fail("adapter_freeze_model_identity_invalid")
+    _validated_model_identity(model_identity)
     receipt = certificate.get("identity_receipt")
     if (
         not isinstance(receipt, Mapping)

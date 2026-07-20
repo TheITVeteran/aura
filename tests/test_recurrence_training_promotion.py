@@ -1021,6 +1021,28 @@ def test_safetensors_rejects_duplicate_header_keys(tmp_path: Path) -> None:
         promotion._validate_safetensors(path, role="test")
 
 
+def test_safetensors_accepts_explicit_null_metadata(tmp_path: Path) -> None:
+    header = b'{"__metadata__":null,"x":{"dtype":"F32","shape":[1],"data_offsets":[0,4]}}'
+    path = tmp_path / "null-metadata.safetensors"
+    path.write_bytes(len(header).to_bytes(8, "little") + header + b"\x00" * 4)
+
+    evidence = promotion._validate_safetensors(path, role="test")
+
+    assert evidence["tensor_count"] == 1
+
+
+def test_safetensors_rejects_non_string_metadata(tmp_path: Path) -> None:
+    header = b'{"__metadata__":{"step":576},"x":{"dtype":"F32","shape":[1],"data_offsets":[0,4]}}'
+    path = tmp_path / "invalid-metadata.safetensors"
+    path.write_bytes(len(header).to_bytes(8, "little") + header + b"\x00" * 4)
+
+    with pytest.raises(
+        promotion.TrainingPromotionError,
+        match="test_safetensors_metadata_invalid",
+    ):
+        promotion._validate_safetensors(path, role="test")
+
+
 def test_promotion_receipt_is_create_or_verify(tmp_path: Path) -> None:
     output = tmp_path / "promotion.json"
     document = {"schema": promotion.SCHEMA, "promotion_sha256": "a" * 64}

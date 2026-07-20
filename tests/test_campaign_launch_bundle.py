@@ -126,7 +126,7 @@ def _freeze(root: Path, *, adapter_id: str = "resident-test") -> Path:
         "model_behavior_bundle_sha256": "2" * 64,
         "runtime_bundle_sha256": "3" * 64,
         "runtime_environment_identity_sha256": "4" * 64,
-        "personality_adapter_bundle_sha256": "5" * 64,
+        "personality_adapter_bundle_sha256": "",
         "effective_stack_sha256": "6" * 64,
     }
     certificate = build_adapter_freeze_certificate(
@@ -437,6 +437,7 @@ def test_adapter_snapshot_is_exact_read_only_and_tamper_evident(tmp_path: Path):
     try:
         certificate = verify_adapter_freeze(frozen)
         assert certificate["content_root_sha256"]
+        assert certificate["model_identity"]["personality_adapter_bundle_sha256"] == ""
         assert stat.S_IMODE((frozen / ADAPTER_FREEZE_FILE).stat().st_mode) == 0o400
 
         adapter = frozen / "adapters.safetensors"
@@ -445,6 +446,33 @@ def test_adapter_snapshot_is_exact_read_only_and_tamper_evident(tmp_path: Path):
         adapter.chmod(0o400)
         with pytest.raises(
             CampaignLaunchBundleError, match="adapter_adapter_binding_mismatch"
+        ):
+            verify_adapter_freeze(frozen)
+    finally:
+        _make_writable(frozen)
+
+
+def test_adapter_snapshot_rejects_rehashed_malformed_model_identity(tmp_path: Path):
+    frozen = _freeze(tmp_path)
+    certificate_path = frozen / ADAPTER_FREEZE_FILE
+    try:
+        certificate = verify_adapter_freeze(frozen)
+        certificate["model_identity"]["runtime_bundle_sha256"] = "not-a-sha"
+        material = {
+            key: value
+            for key, value in certificate.items()
+            if key != "certificate_sha256"
+        }
+        certificate["certificate_sha256"] = hashlib.sha256(
+            canonical_json_bytes(material)
+        ).hexdigest()
+        certificate_path.chmod(0o600)
+        _write_json(certificate_path, certificate)
+        certificate_path.chmod(0o400)
+
+        with pytest.raises(
+            CampaignLaunchBundleError,
+            match="adapter_freeze_model_identity_invalid",
         ):
             verify_adapter_freeze(frozen)
     finally:
