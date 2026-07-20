@@ -3876,6 +3876,12 @@ class HealthAwareLLMRouter:
                     clean_kwargs[k] = v
                 else:
                     clean_kwargs[k] = str(v)
+            # The caller's structured-output schema must reach clients that
+            # accept one — it was a named parameter here but never forwarded,
+            # so the same request produced JSON on one endpoint and prose on
+            # the next.
+            if schema is not None and "schema" not in clean_kwargs:
+                clean_kwargs["schema"] = schema
             call_origin = str(clean_kwargs.get("origin", "") or "").lower()
             call_purpose = str(clean_kwargs.get("purpose", "") or "").lower()
             benchmark_request = bool(clean_kwargs.get("benchmark_request", False)) or (
@@ -4206,6 +4212,18 @@ class HealthAwareLLMRouter:
                     raise e
 
             # 3. Fallback to HTTP API proxying (if no direct client)
+            proxy_messages = clean_kwargs.get("messages")
+            if not isinstance(proxy_messages, list) or not proxy_messages:
+                # The proxy body previously dropped the system prompt
+                # entirely — the same request got different instructions
+                # depending on whether a direct client existed.
+                proxy_messages = []
+                if system_prompt:
+                    proxy_messages.append(
+                        {"role": "system", "content": str(system_prompt)}
+                    )
+                proxy_messages.append({"role": "user", "content": prompt})
+            proxy_kwargs = {k: v for k, v in clean_kwargs.items() if k != "messages"}
             gateway_response = await asyncio.to_thread(
                 get_network_gateway().request,
                 "POST",
@@ -4213,8 +4231,8 @@ class HealthAwareLLMRouter:
                 headers={"Content-Type": "application/json"},
                 data=json.dumps({
                     "model": ep.model,
-                    "messages": [{"role": "user", "content": prompt}],
-                    **clean_kwargs,
+                    "messages": proxy_messages,
+                    **proxy_kwargs,
                 }),
                 timeout=timeout,
                 source=f"llm_provider:health_router:{ep.name}",
