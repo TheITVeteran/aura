@@ -48,14 +48,12 @@ TRAINING_CONFIG_SCHEMA = "aura.recurrence_native_training_config.v2"
 TRAINING_DATASET_SCHEMA = "aura.recurrence_native_dataset.v2"
 TRAINING_RECEIPT_SCHEMA = "aura.recurrence_native_train.v2"
 TRAINING_COMPLETION_SCHEMA = "aura.recurrence_native_training_completion.v1"
-TRAINING_CHECKPOINT_SCHEMA = "aura.recurrence_native_checkpoint.v2"
+TRAINING_CHECKPOINT_SCHEMA = "aura.recurrence_native_checkpoint.v3"
 TRAINING_POINTER_SCHEMA = "aura.recurrence_native_checkpoint_pointer.v1"
 _MAX_FILE_BYTES = 1 << 40
 _GIB = 1024**3
 _CURRICULUM_PATH = REPO_ROOT / "core/learning/recurrence_curriculum.py"
-_DEFAULT_CONTRACT_PATH = (
-    REPO_ROOT / "config/latent_cortex/resident_32b_training_contract.json"
-)
+_DEFAULT_CONTRACT_PATH = REPO_ROOT / "config/latent_cortex/resident_32b_training_contract.json"
 _SAFETENSOR_DTYPES = {
     "BOOL": 1,
     "F16": 2,
@@ -201,8 +199,7 @@ def _load_bound_tokenizer(model: Path) -> Any:
         eos_token_ids = config.get("eos_token_id") if isinstance(config, Mapping) else None
         eos_values = eos_token_ids if isinstance(eos_token_ids, list) else [eos_token_ids]
         if not eos_values or any(
-            type(token_id) is not int or not 0 <= token_id < 2**31
-            for token_id in eos_values
+            type(token_id) is not int or not 0 <= token_id < 2**31 for token_id in eos_values
         ):
             _fail("training_tokenizer_eos_contract_invalid")
         return load_tokenizer(model, eos_token_ids=eos_token_ids)
@@ -219,9 +216,7 @@ def _load_bound_tokenizer(model: Path) -> Any:
         raise TrainingPromotionError("training_tokenizer_unavailable") from exc
 
 
-def _stable_tokenizer_behavior_sha256(
-    before: Mapping[str, Any], after: Mapping[str, Any]
-) -> str:
+def _stable_tokenizer_behavior_sha256(before: Mapping[str, Any], after: Mapping[str, Any]) -> str:
     if before != after:
         _fail("training_tokenizer_generation_changed")
     digest = before.get("bundle_sha256")
@@ -317,10 +312,7 @@ def _validate_safetensors(path: Path, *, role: str) -> dict[str, Any]:
         not intervals
         or intervals[0][0] != 0
         or intervals[-1][1] != data_size
-        or any(
-            left[1] != right[0]
-            for left, right in zip(intervals, intervals[1:], strict=False)
-        )
+        or any(left[1] != right[0] for left, right in zip(intervals, intervals[1:], strict=False))
     ):
         _fail(f"{role}_safetensors_layout_invalid")
     return {
@@ -359,18 +351,24 @@ def _authoritative_detached_evidence(
         or len(inspection["attempt_journal_head_sha256"]) != 64
     ):
         _fail("detached_training_journal_binding_invalid")
-    return plan, receipt, {
-        "attempt_event_count": inspection["attempt_event_count"],
-        "attempt_journal_head_sha256": inspection["attempt_journal_head_sha256"],
-        "supervisor_attempt": inspection["supervisor_attempt"],
-    }
+    return (
+        plan,
+        receipt,
+        {
+            "attempt_event_count": inspection["attempt_event_count"],
+            "attempt_journal_head_sha256": inspection["attempt_journal_head_sha256"],
+            "supervisor_attempt": inspection["supervisor_attempt"],
+        },
+    )
 
 
 def _validate_python_launcher(plan: Mapping[str, Any], launcher: Path) -> dict[str, Any]:
     binding = plan.get("executable_binding")
     venv_root = launcher.parent.parent
     pyvenv_path = venv_root / "pyvenv.cfg"
-    resolved_value = Path(str(binding.get("resolved_path") or "")) if isinstance(binding, Mapping) else Path()
+    resolved_value = (
+        Path(str(binding.get("resolved_path") or "")) if isinstance(binding, Mapping) else Path()
+    )
     if (
         not isinstance(binding, Mapping)
         or binding.get("schema") != "aura.detached_step.launcher_binding.v1"
@@ -437,11 +435,7 @@ def _validate_training_dataset(
     tokenizer: Any,
 ) -> dict[str, Any]:
     source_records = manifest.get("sources")
-    source = (
-        source_records.get("task_generator")
-        if isinstance(source_records, Mapping)
-        else None
-    )
+    source = source_records.get("task_generator") if isinstance(source_records, Mapping) else None
     if not isinstance(source, Mapping) or set(source) != {
         "origin_path",
         "snapshot_path",
@@ -513,9 +507,7 @@ def _validate_training_dataset(
     semantic_examples: list[dict[str, Any]] = []
     prompt_token_count = 0
     answer_token_count = 0
-    for index, (example, task) in enumerate(
-        zip(examples, expected_tasks, strict=True)
-    ):
+    for index, (example, task) in enumerate(zip(examples, expected_tasks, strict=True)):
         if not isinstance(example, Mapping) or set(example) != {
             "family",
             "depth",
@@ -561,10 +553,7 @@ def _validate_training_dataset(
             if (
                 not isinstance(tokens, list)
                 or not tokens
-                or any(
-                    type(token) is not int or not 0 <= token < 2**31
-                    for token in tokens
-                )
+                or any(type(token) is not int or not 0 <= token < 2**31 for token in tokens)
             ):
                 _fail(f"training_dataset_{token_role}_invalid")
         if (
@@ -616,15 +605,12 @@ def _validate_acceptance_contract(
         "schema",
         "workload",
     }
-    material = {
-        key: value for key, value in contract.items() if key != "contract_sha256"
-    }
+    material = {key: value for key, value in contract.items() if key != "contract_sha256"}
     limitations = contract.get("evidence_limitations")
     required_next = contract.get("required_next_gates")
     if (
         set(contract) != expected_keys
-        or contract.get("schema")
-        != "aura.recurrence_training_acceptance_contract.v1"
+        or contract.get("schema") != "aura.recurrence_training_acceptance_contract.v1"
         or contract.get("contract_sha256") != _sha256(material)
         or contract.get("claim_scope") != "internal_mechanics_acceptance_only"
         or contract.get("external_attestation_present") is not False
@@ -658,18 +644,14 @@ def _validate_acceptance_contract(
         "broker_policy_sha256": detached_plan.get("broker_policy_sha256"),
         "command_sha256": detached_plan.get("command_sha256"),
         "executable_sha256": detached_plan.get("executable_sha256"),
-        "execution_environment_sha256": detached_plan.get(
-            "execution_environment_sha256"
-        ),
+        "execution_environment_sha256": detached_plan.get("execution_environment_sha256"),
         "fork_policy": detached_plan.get("fork_policy"),
         "name": detached_plan.get("name"),
         "plan_sha256": detached_plan.get("plan_sha256"),
         "restart_policy": detached_plan.get("restart_policy"),
         "resume_contract": detached_plan.get("resume_contract"),
         "target_execution_manifest_sha256": (
-            target_manifest.get("manifest_sha256")
-            if isinstance(target_manifest, Mapping)
-            else None
+            target_manifest.get("manifest_sha256") if isinstance(target_manifest, Mapping) else None
         ),
         "timeout_s": detached_plan.get("timeout_s"),
     }
@@ -713,9 +695,7 @@ def _validate_acceptance_contract(
         ),
         "base_checkpoint_files": base.get("files") if isinstance(base, Mapping) else None,
         "model_behavior_bundle_sha256": (
-            behavior.get("bundle_sha256")
-            if isinstance(behavior, Mapping)
-            else None
+            behavior.get("bundle_sha256") if isinstance(behavior, Mapping) else None
         ),
         "training_runtime_identity_sha256": (
             runtime.get("identity_sha256") if isinstance(runtime, Mapping) else None
@@ -726,8 +706,7 @@ def _validate_acceptance_contract(
     if (
         contract.get("workload") != dict(workload)
         or contract.get("optimizer") != training_config.get("optimizer")
-        or contract.get("gradient_execution")
-        != training_config.get("gradient_execution")
+        or contract.get("gradient_execution") != training_config.get("gradient_execution")
     ):
         _fail("training_acceptance_workload_mismatch")
 
@@ -755,13 +734,10 @@ def _validate_acceptance_contract(
         or not isinstance(accepted_resource, Mapping)
         or accepted_resource.get("memory_limit_bytes")
         != resource_envelope.get("memory_limit_bytes")
-        or accepted_resource.get("cache_limit_bytes")
-        != resource_envelope.get("cache_limit_bytes")
-        or accepted_resource.get("wired_limit_bytes")
-        != resource_envelope.get("wired_limit_bytes")
+        or accepted_resource.get("cache_limit_bytes") != resource_envelope.get("cache_limit_bytes")
+        or accepted_resource.get("wired_limit_bytes") != resource_envelope.get("wired_limit_bytes")
         or not isinstance(device.get("memory_size"), int)
-        or device["memory_size"]
-        < accepted_resource.get("minimum_device_memory_bytes", 2**63)
+        or device["memory_size"] < accepted_resource.get("minimum_device_memory_bytes", 2**63)
         or not isinstance(device.get("max_recommended_working_set_size"), int)
         or device["max_recommended_working_set_size"]
         < accepted_resource.get("minimum_recommended_working_set_bytes", 2**63)
@@ -871,6 +847,10 @@ def _latest_checkpoint_evidence(
             "elapsed_training_s",
             "invocation_count",
             "loss_trail",
+            "pending_window_losses",
+            "pending_window_cosines",
+            "holdout_trail",
+            "holdout_eval_count",
             "sampler",
             "stochastic_state",
             "adapter",
@@ -1042,9 +1022,7 @@ def _validate_documents(
         or detached_plan.get("broker_policy") != []
         or type(detached_evidence.get("attempt_event_count")) is not int
         or detached_evidence["attempt_event_count"] < 4
-        or not isinstance(
-            detached_evidence.get("attempt_journal_head_sha256"), str
-        )
+        or not isinstance(detached_evidence.get("attempt_journal_head_sha256"), str)
         or len(detached_evidence["attempt_journal_head_sha256"]) != 64
         or detached_evidence.get("supervisor_attempt") != 1
     ):
@@ -1170,9 +1148,7 @@ def _validate_documents(
         role="detached_training_monotonicity_weight",
     )
     alpha = _float_option(trainer_options, "--alpha", role="detached_training_alpha")
-    max_minutes = _float_option(
-        trainer_options, "--max-minutes", role="detached_training_minutes"
-    )
+    max_minutes = _float_option(trainer_options, "--max-minutes", role="detached_training_minutes")
     if max_minutes <= 0.0:
         _fail("detached_training_minutes_invalid")
     checkpoint_every = _integer_option(
@@ -1342,8 +1318,7 @@ def _validate_documents(
         or checkpoint.get("cursor") != expected_cursor
         or checkpoint.get("order") != expected_order
         or checkpoint.get("invocation_count") != 1
-        or checkpoint.get("sampler")
-        != "sha256_stateless_epoch_permutation.v1"
+        or checkpoint.get("sampler") != "sha256_stateless_epoch_permutation.v1"
         or checkpoint.get("stochastic_state") != "none_all_keys_explicit"
         or not isinstance(checkpoint_elapsed, (int, float))
         or isinstance(checkpoint_elapsed, bool)
@@ -1368,12 +1343,7 @@ def _validate_documents(
         or isinstance(detached_finished, bool)
         or not math.isfinite(float(detached_started))
         or not math.isfinite(float(detached_finished))
-        or abs(
-            float(detached_finished)
-            - float(detached_started)
-            - float(detached_duration)
-        )
-        > 1.0
+        or abs(float(detached_finished) - float(detached_started) - float(detached_duration)) > 1.0
         or not 0.0
         <= float(detached_duration) - float(receipt_elapsed)
         <= min(7200.0, max_minutes * 60.0)
@@ -1420,9 +1390,7 @@ def _validate_documents(
         "detached_plan_sha256": detached_plan["plan_sha256"],
         "detached_receipt_sha256": detached_receipt["receipt_sha256"],
         "detached_attempt_event_count": detached_evidence["attempt_event_count"],
-        "detached_attempt_journal_head_sha256": detached_evidence[
-            "attempt_journal_head_sha256"
-        ],
+        "detached_attempt_journal_head_sha256": detached_evidence["attempt_journal_head_sha256"],
         "frozen_adapter": str(frozen_adapter),
         "launcher": launcher_identity,
         "latest_checkpoint": checkpoint_evidence["checkpoint"],
@@ -1461,16 +1429,12 @@ def verify(args: argparse.Namespace) -> dict[str, Any]:
         role="training_acceptance_contract",
         kind="file",
     )
-    acceptance_contract = read_canonical_json(
-        contract_path, role="training_acceptance_contract"
-    )
-    acceptance_contract_binding = _file_binding(
-        contract_path, role="training_acceptance_contract"
-    )
+    acceptance_contract = read_canonical_json(contract_path, role="training_acceptance_contract")
+    acceptance_contract_binding = _file_binding(contract_path, role="training_acceptance_contract")
     tokenizer_behavior_before = campaign_runner.model_behavior_bundle_identity(model)
     tokenizer = _load_bound_tokenizer(model)
-    detached_plan, detached_receipt, detached_evidence = (
-        _authoritative_detached_evidence(detached_run)
+    detached_plan, detached_receipt, detached_evidence = _authoritative_detached_evidence(
+        detached_run
     )
     resource_path = _canonical_path(args.resource_envelope, role="resource_envelope", kind="file")
     resource = read_canonical_json(resource_path, role="resource_envelope")
@@ -1496,12 +1460,12 @@ def verify(args: argparse.Namespace) -> dict[str, Any]:
     source_inventory = adapter_artifact_inventory(source_adapter, reject_unplanned=False)
     freeze_certificate = verify_adapter_freeze(frozen_adapter)
     expected_freeze_validators = {
-        "campaign_runner_sha256": _file_binding(
-            preparation.RUNNER_PATH, role="campaign_runner"
-        )["sha256"],
-        "freeze_contract_sha256": _file_binding(
-            preparation.FREEZE_PATH, role="freeze_contract"
-        )["sha256"],
+        "campaign_runner_sha256": _file_binding(preparation.RUNNER_PATH, role="campaign_runner")[
+            "sha256"
+        ],
+        "freeze_contract_sha256": _file_binding(preparation.FREEZE_PATH, role="freeze_contract")[
+            "sha256"
+        ],
         "identity_validator_sha256": _file_binding(
             preparation.IDENTITY_PATH, role="identity_validator"
         )["sha256"],
@@ -1517,8 +1481,7 @@ def verify(args: argparse.Namespace) -> dict[str, Any]:
         )
     )
     if (
-        adapter_identity.get("identity_receipt")
-        != freeze_certificate.get("identity_receipt")
+        adapter_identity.get("identity_receipt") != freeze_certificate.get("identity_receipt")
         or preparation._selected_model_identity(model_identity)
         != freeze_certificate.get("model_identity")
         or model_identity.get("model_behavior_bundle") != tokenizer_behavior_before
@@ -1586,21 +1549,15 @@ def verify(args: argparse.Namespace) -> dict[str, Any]:
         "external_attestation_present": False,
         "external_trust_required_before_claim_campaign": True,
         "validator_identity": {
-            "promotion_verifier_sha256": _file_binding(
-                Path(__file__), role="promotion_verifier"
-            )["sha256"],
+            "promotion_verifier_sha256": _file_binding(Path(__file__), role="promotion_verifier")[
+                "sha256"
+            ],
             "detached_step_verifier_sha256": _file_binding(
                 Path(detached.__file__), role="detached_step_verifier"
             )["sha256"],
-            "freeze_contract_sha256": expected_freeze_validators[
-                "freeze_contract_sha256"
-            ],
-            "identity_validator_sha256": expected_freeze_validators[
-                "identity_validator_sha256"
-            ],
-            "training_acceptance_contract_file_sha256": acceptance_contract_binding[
-                "sha256"
-            ],
+            "freeze_contract_sha256": expected_freeze_validators["freeze_contract_sha256"],
+            "identity_validator_sha256": expected_freeze_validators["identity_validator_sha256"],
+            "training_acceptance_contract_file_sha256": acceptance_contract_binding["sha256"],
         },
         "training": training,
         "freeze_certificate_sha256": freeze_certificate["certificate_sha256"],

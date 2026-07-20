@@ -1,4 +1,5 @@
 """Crash and identity contracts for recurrence-native training checkpoints."""
+
 from __future__ import annotations
 
 import json
@@ -35,6 +36,11 @@ def _save(root, *, step=7):
             "epoch": 1,
             "cursor": 3,
             "order": [2, 0, 1],
+            "loss_trail": [{"step": 5, "mean_loss": 1.25}],
+            "pending_window_losses": [1.0, 0.75],
+            "pending_window_cosines": [0.5],
+            "holdout_trail": [{"step": 5, "mean_loss": 1.5}],
+            "holdout_eval_count": 1,
         },
     )
 
@@ -42,9 +48,9 @@ def _save(root, *, step=7):
 def _load(root, **changes):
     identities = dict(IDENTITIES)
     identities.update(changes)
-    return load_recurrence_checkpoint(root, **{
-        f"expected_{key}": value for key, value in identities.items()
-    })
+    return load_recurrence_checkpoint(
+        root, **{f"expected_{key}": value for key, value in identities.items()}
+    )
 
 
 def test_checkpoint_round_trip_preserves_adapter_optimizer_and_cursor(tmp_path):
@@ -53,11 +59,9 @@ def test_checkpoint_round_trip_preserves_adapter_optimizer_and_cursor(tmp_path):
     assert loaded.checkpoint_dir == checkpoint
     assert loaded.state["step"] == 7
     assert loaded.state["order"] == [2, 0, 1]
-    assert bool(
-        mx.array_equal(
-            loaded.adapter_tensors["model.layers.1.lora_a"], mx.ones((2, 2))
-        )
-    )
+    assert loaded.state["pending_window_losses"] == [1.0, 0.75]
+    assert loaded.state["holdout_eval_count"] == 1
+    assert bool(mx.array_equal(loaded.adapter_tensors["model.layers.1.lora_a"], mx.ones((2, 2))))
     assert int(loaded.optimizer_state["step"]) == 7
 
 
@@ -94,3 +98,16 @@ def test_latest_pointer_digest_is_binding(tmp_path):
     pointer_path.write_text(json.dumps(pointer))
     with pytest.raises(RecurrenceCheckpointError, match="completion digest"):
         _load(root)
+
+
+def test_checkpoint_rejects_incomplete_exact_evidence_state(tmp_path):
+    with pytest.raises(
+        RecurrenceCheckpointError,
+        match="exact evidence state is incomplete",
+    ):
+        save_recurrence_checkpoint(
+            tmp_path / "run",
+            adapter_tensors={"adapter": mx.ones((1,))},
+            optimizer_tensors={"step": mx.array(1)},
+            state={**IDENTITIES, "step": 1},
+        )

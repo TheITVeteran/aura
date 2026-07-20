@@ -42,9 +42,7 @@ class FrozenCurriculum:
     task_battery: Callable[..., list[Any]]
 
 
-def _execute_frozen_curriculum(
-    source_bytes: bytes, *, origin: Path
-) -> FrozenCurriculum:
+def _execute_frozen_curriculum(source_bytes: bytes, *, origin: Path) -> FrozenCurriculum:
     if not source_bytes or len(source_bytes) > MAX_CURRICULUM_SOURCE_BYTES:
         raise RuntimeError("curriculum source size is invalid")
     digest = hashlib.sha256(source_bytes).hexdigest()
@@ -94,10 +92,7 @@ def _capture_frozen_curriculum(path: Path = TASK_GENERATOR_SOURCE) -> FrozenCurr
     descriptor = os.open(resolved, os.O_RDONLY | os.O_NOFOLLOW)
     try:
         before = os.fstat(descriptor)
-        if (
-            not stat.S_ISREG(before.st_mode)
-            or before.st_size > MAX_CURRICULUM_SOURCE_BYTES
-        ):
+        if not stat.S_ISREG(before.st_mode) or before.st_size > MAX_CURRICULUM_SOURCE_BYTES:
             raise RuntimeError("curriculum source is not a bounded regular file")
         with os.fdopen(descriptor, "rb", closefd=False) as handle:
             source_bytes = handle.read(MAX_CURRICULUM_SOURCE_BYTES + 1)
@@ -132,9 +127,7 @@ def _csv_ints(value: str) -> tuple[int, ...]:
     try:
         parsed = tuple(int(item.strip()) for item in value.split(",") if item.strip())
     except ValueError as exc:
-        raise argparse.ArgumentTypeError(
-            "must contain comma-separated integers"
-        ) from exc
+        raise argparse.ArgumentTypeError("must contain comma-separated integers") from exc
     if not parsed or any(item <= 0 for item in parsed):
         raise argparse.ArgumentTypeError("all values must be positive integers")
     return parsed
@@ -168,9 +161,7 @@ def _await_resource_guard(
 
     acknowledgement = ack_path(marker_path)
     if acknowledgement.exists():
-        raise ResourceStageGuardError(
-            "resource guard acknowledgement exists before trainer marker"
-        )
+        raise ResourceStageGuardError("resource guard acknowledgement exists before trainer marker")
     marker, marker_raw = publish_ready_marker(
         marker_path,
         target_pid=os.getpid(),
@@ -188,8 +179,7 @@ def _await_resource_guard(
                 steady_lethal_mb=steady_lethal_mb,
             )
             print(
-                "resource guard steady-stage acknowledgement accepted: "
-                f"{acknowledgement}",
+                f"resource guard steady-stage acknowledgement accepted: {acknowledgement}",
                 flush=True,
             )
             return {
@@ -274,8 +264,7 @@ class _ResourceComputeGuard:
             active_lethal_mb=self.compute_lethal_mb,
         )
         print(
-            f"resource compute lease acquired: sequence={self.sequence} "
-            f"workload={workload}",
+            f"resource compute lease acquired: sequence={self.sequence} workload={workload}",
             flush=True,
         )
         return self.sequence, workload, acknowledgement_raw
@@ -304,8 +293,7 @@ class _ResourceComputeGuard:
             active_lethal_mb=self.steady_lethal_mb,
         )
         print(
-            f"resource compute lease released: sequence={sequence} "
-            f"workload={workload}",
+            f"resource compute lease released: sequence={sequence} workload={workload}",
             flush=True,
         )
 
@@ -326,9 +314,7 @@ def _deterministic_order(size: int, seed: int, epoch: int) -> list[int]:
         raise ValueError("training set must not be empty")
     return sorted(
         range(size),
-        key=lambda index: hashlib.sha256(
-            f"{seed}:{epoch}:{index}".encode("ascii")
-        ).digest(),
+        key=lambda index: hashlib.sha256(f"{seed}:{epoch}:{index}".encode("ascii")).digest(),
     )
 
 
@@ -483,20 +469,15 @@ def _streamed_depth_value_and_grad(
             answer_tokens,
         )
         finite_flags = [
-            mx.all(mx.isfinite(gradient))
-            for _path, gradient in tree_flatten(gradients)
+            mx.all(mx.isfinite(gradient)) for _path, gradient in tree_flatten(gradients)
         ]
         mx.eval(value, gradients, finite_flags)
         loss_value = float(value)
-        if not math.isfinite(loss_value) or not all(
-            bool(flag) for flag in finite_flags
-        ):
+        if not math.isfinite(loss_value) or not all(bool(flag) for flag in finite_flags):
             raise FloatingPointError("non_finite_streamed_depth_gradient")
         # The hinge compares pure answer CE across depths — diversity
         # pressure must never be able to fake (or hide) a depth advantage.
-        base_value = (
-            float(captured["base"]) if "base" in captured else loss_value
-        )
+        base_value = float(captured["base"]) if "base" in captured else loss_value
         if not math.isfinite(base_value):
             raise FloatingPointError("non_finite_streamed_depth_gradient")
         pairwise_cosines[str(depth)] = [
@@ -526,9 +507,7 @@ def _streamed_depth_value_and_grad(
 
     if accumulated is None:
         raise RuntimeError("streamed gradient accumulator is empty")
-    objective_value = sum(loss_values) / len(loss_values) + float(
-        monotonicity_weight
-    ) * sum(
+    objective_value = sum(loss_values) / len(loss_values) + float(monotonicity_weight) * sum(
         max(deep - shallow + float(depth_margin), 0.0)
         for shallow, deep in zip(base_values, base_values[1:], strict=False)
     )
@@ -548,9 +527,7 @@ def _render_example(tokenizer: Any, task: Any) -> dict[str, Any]:
         )
     )
     try:
-        answer_tokens = list(
-            tokenizer.encode(str(task.answer), add_special_tokens=False)
-        )
+        answer_tokens = list(tokenizer.encode(str(task.answer), add_special_tokens=False))
     except TypeError:
         answer_tokens = list(tokenizer.encode(str(task.answer)))
     eos = getattr(tokenizer, "eos_token_id", None)
@@ -597,13 +574,9 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--exchange-interval", type=_positive_int, default=1)
     parser.add_argument("--alpha", type=float, default=0.5)
-    parser.add_argument(
-        "--alpha-schedule", choices=("constant", "cosine"), default="constant"
-    )
+    parser.add_argument("--alpha-schedule", choices=("constant", "cosine"), default="constant")
     parser.add_argument("--lora-rank", type=_positive_int, default=8)
-    parser.add_argument(
-        "--lora-targets", type=_csv_strings, default=("o_proj", "v_proj")
-    )
+    parser.add_argument("--lora-targets", type=_csv_strings, default=("o_proj", "v_proj"))
     parser.add_argument("--learning-rate", type=float, default=1e-4)
     parser.add_argument("--monotonicity-weight", type=float, default=0.5)
     # CP181 v3 objective surface. Defaults keep v2 behavior bit-for-bit;
@@ -677,6 +650,10 @@ def _checkpoint_payload(
     elapsed_training_s: float,
     invocation_count: int,
     loss_trail: list[dict[str, Any]],
+    pending_window_losses: list[float],
+    pending_window_cosines: list[float],
+    holdout_trail: list[dict[str, Any]],
+    holdout_eval_count: int,
 ) -> dict[str, Any]:
     return {
         "step": step,
@@ -689,9 +666,39 @@ def _checkpoint_payload(
         "elapsed_training_s": round(elapsed_training_s, 6),
         "invocation_count": invocation_count,
         "loss_trail": list(loss_trail),
+        "pending_window_losses": list(pending_window_losses),
+        "pending_window_cosines": list(pending_window_cosines),
+        "holdout_trail": list(holdout_trail),
+        "holdout_eval_count": holdout_eval_count,
         "sampler": "sha256_stateless_epoch_permutation.v1",
         "stochastic_state": "none_all_keys_explicit",
     }
+
+
+def _project_terminal_loss_trail(
+    loss_trail: list[dict[str, Any]],
+    *,
+    step: int,
+    pending_window_losses: list[float],
+    pending_window_cosines: list[float],
+) -> list[dict[str, Any]]:
+    """Return receipt telemetry without mutating resumable window state."""
+
+    projected = [dict(entry) for entry in loss_trail]
+    if not pending_window_losses:
+        return projected
+    terminal: dict[str, Any] = {
+        "step": step,
+        "mean_loss": round(sum(pending_window_losses) / len(pending_window_losses), 6),
+        "window_steps": len(pending_window_losses),
+        "partial_window": True,
+    }
+    if pending_window_cosines:
+        terminal["pairwise_cos_mean"] = round(
+            sum(pending_window_cosines) / len(pending_window_cosines), 6
+        )
+    projected.append(terminal)
+    return projected
 
 
 def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
@@ -715,18 +722,11 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
         and args.resource_startup_lethal_mb > args.resource_steady_lethal_mb > 0.0
     ):
         raise ValueError("resource guard ceilings are invalid")
-    if (
-        not math.isfinite(args.monotonicity_weight)
-        or not 0.0 <= args.monotonicity_weight <= 10.0
-    ):
+    if not math.isfinite(args.monotonicity_weight) or not 0.0 <= args.monotonicity_weight <= 10.0:
         raise ValueError("monotonicity-weight must be inside [0, 10]")
     objective_is_v3 = args.objective == "v3"
-    if not objective_is_v3 and (
-        args.bridge_policy != "none" or args.holdout_per_cell
-    ):
-        raise ValueError(
-            "bridge-policy and holdout options require --objective v3"
-        )
+    if not objective_is_v3 and (args.bridge_policy != "none" or args.holdout_per_cell):
+        raise ValueError("bridge-policy and holdout options require --objective v3")
     if not 0 <= args.holdout_per_cell < args.per_cell:
         raise ValueError("holdout-per-cell must be inside [0, per-cell)")
     depth_margin = float(args.depth_margin) if objective_is_v3 else 0.0
@@ -760,9 +760,7 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
     )
 
     objective_schema = (
-        RECURRENCE_NATIVE_SCHEMA_V3
-        if args.objective == "v3"
-        else RECURRENCE_NATIVE_SCHEMA_V2
+        RECURRENCE_NATIVE_SCHEMA_V3 if args.objective == "v3" else RECURRENCE_NATIVE_SCHEMA_V2
     )
     from core.learning.recurrence_training_state import (
         canonical_json_bytes,
@@ -798,13 +796,9 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
 
     out_dir = ensure_private_directory(Path(args.out_dir).expanduser())
     model_path = str(Path(args.model).expanduser().resolve(strict=True))
-    personality_adapter = _resolve_personality_adapter(
-        args.personality_adapter, model_path
-    )
+    personality_adapter = _resolve_personality_adapter(args.personality_adapter, model_path)
     load_kwargs = {"adapter_path": personality_adapter} if personality_adapter else {}
-    print(
-        f"loading {model_path} personality={personality_adapter or 'none'}", flush=True
-    )
+    print(f"loading {model_path} personality={personality_adapter or 'none'}", flush=True)
     model, tokenizer = load(model_path, **load_kwargs)
     # Bridge parity (CP181): train through the SAME decode-bridge tokens the
     # live engine prepends before answers, so the trained operator meets the
@@ -816,9 +810,7 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
         )
 
         try:
-            encoded_bridge = tokenizer.encode(
-                _ASSISTANT_ANSWER_BRIDGE_V3, add_special_tokens=False
-            )
+            encoded_bridge = tokenizer.encode(_ASSISTANT_ANSWER_BRIDGE_V3, add_special_tokens=False)
         except TypeError:
             encoded_bridge = tokenizer.encode(_ASSISTANT_ANSWER_BRIDGE_V3)
         bridge_tokens = tuple(int(token) for token in encoded_bridge)
@@ -855,18 +847,14 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
     if args.holdout_per_cell:
         cell_members: dict[tuple[str, int], list[int]] = {}
         for index, example in enumerate(examples):
-            cell_members.setdefault(
-                (str(example["family"]), int(example["depth"])), []
-            ).append(index)
+            cell_members.setdefault((str(example["family"]), int(example["depth"])), []).append(
+                index
+            )
         for members in cell_members.values():
             holdout_indices.extend(members[-args.holdout_per_cell :])
     holdout_set = frozenset(holdout_indices)
     holdout_examples = [examples[index] for index in sorted(holdout_set)]
-    train_examples = [
-        example
-        for index, example in enumerate(examples)
-        if index not in holdout_set
-    ]
+    train_examples = [example for index, example in enumerate(examples) if index not in holdout_set]
     if not train_examples:
         raise RuntimeError("holdout split left no training examples")
     dataset_payload = {
@@ -901,29 +889,19 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
         "recurrence_adapter": _source_binding(
             REPO_ROOT / "core/brain/llm/latent_cortex/recurrence_adapter.py"
         ),
-        "workspace": _source_binding(
-            REPO_ROOT / "core/brain/llm/latent_cortex/workspace.py"
-        ),
-        "recurrence": _source_binding(
-            REPO_ROOT / "core/brain/llm/latent_cortex/recurrence.py"
-        ),
-        "branches": _source_binding(
-            REPO_ROOT / "core/brain/llm/latent_cortex/branches.py"
-        ),
+        "workspace": _source_binding(REPO_ROOT / "core/brain/llm/latent_cortex/workspace.py"),
+        "recurrence": _source_binding(REPO_ROOT / "core/brain/llm/latent_cortex/recurrence.py"),
+        "branches": _source_binding(REPO_ROOT / "core/brain/llm/latent_cortex/branches.py"),
         "task_generator": curriculum.binding,
     }
     if set(sources) != set(SOURCE_ROLES):
-        raise RuntimeError(
-            "training source inventory differs from v2 identity contract"
-        )
+        raise RuntimeError("training source inventory differs from v2 identity contract")
     source_snapshot_dir = ensure_private_directory(out_dir / "source_snapshots")
     source_artifacts: dict[str, dict[str, Any]] = {}
     for role, source in sorted(sources.items()):
         source_path = REPO_ROOT / source["path"]
         source_bytes = (
-            curriculum.source_bytes
-            if role == "task_generator"
-            else source_path.read_bytes()
+            curriculum.source_bytes if role == "task_generator" else source_path.read_bytes()
         )
         if (
             len(source_bytes) != source["size_bytes"]
@@ -982,17 +960,13 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
         config_payload["bridge"] = {
             "policy": args.bridge_policy,
             "token_count": len(bridge_tokens),
-            "tokens_sha256": sha256_bytes(
-                canonical_json_bytes(list(bridge_tokens))
-            ),
+            "tokens_sha256": sha256_bytes(canonical_json_bytes(list(bridge_tokens))),
         }
         config_payload["holdout"] = {
             "per_cell": args.holdout_per_cell,
             "count": len(holdout_examples),
             "eval_samples": args.holdout_eval_samples,
-            "indices_sha256": sha256_bytes(
-                canonical_json_bytes(sorted(holdout_set))
-            ),
+            "indices_sha256": sha256_bytes(canonical_json_bytes(sorted(holdout_set))),
         }
     config_bytes = canonical_json_bytes(config_payload)
     config_sha256 = sha256_bytes(config_bytes)
@@ -1010,6 +984,10 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
     prior_elapsed_s = 0.0
     invocation_count = 1
     loss_trail: list[dict[str, Any]] = []
+    window_losses: list[float] = []
+    window_cosines: list[float] = []
+    holdout_trail: list[dict[str, Any]] = []
+    holdout_eval_count = 0
     last_checkpoint_step = -1
     last_checkpoint_path: Path | None = None
     if args.resume:
@@ -1028,14 +1006,16 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
         cursor = int(state["cursor"])
         order = [int(value) for value in state["order"]]
         if order != _deterministic_order(len(train_examples), args.train_seed, epoch):
-            raise RuntimeError(
-                "checkpoint sample order differs from deterministic epoch"
-            )
+            raise RuntimeError("checkpoint sample order differs from deterministic epoch")
         if not 0 <= cursor <= len(order):
             raise RuntimeError("checkpoint sample cursor is invalid")
         prior_elapsed_s = float(state["elapsed_training_s"])
         invocation_count = int(state["invocation_count"]) + 1
-        loss_trail = list(state.get("loss_trail") or [])
+        loss_trail = list(state["loss_trail"])
+        window_losses = [float(value) for value in state["pending_window_losses"]]
+        window_cosines = [float(value) for value in state["pending_window_cosines"]]
+        holdout_trail = list(state["holdout_trail"])
+        holdout_eval_count = int(state["holdout_eval_count"])
         last_checkpoint_step = step
         last_checkpoint_path = loaded.checkpoint_dir
         print(
@@ -1062,7 +1042,6 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
 
     started_monotonic = time.monotonic()
     deadline = started_monotonic + args.max_minutes * 60.0
-    window_losses: list[float] = []
 
     def elapsed_training_s() -> float:
         return prior_elapsed_s + (time.monotonic() - started_monotonic)
@@ -1092,26 +1071,26 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
                 elapsed_training_s=elapsed_training_s(),
                 invocation_count=invocation_count,
                 loss_trail=loss_trail,
+                pending_window_losses=window_losses,
+                pending_window_cosines=window_cosines,
+                holdout_trail=holdout_trail,
+                holdout_eval_count=holdout_eval_count,
             ),
         )
         last_checkpoint_step = step
         return last_checkpoint_path
 
-    holdout_trail: list[dict[str, Any]] = []
-    holdout_eval_count = 0
-
-    def holdout_eval() -> None:
+    def holdout_eval(*, durable: bool) -> dict[str, Any] | None:
         """Gradient-free held-out CE at max depth over a rotating window."""
         nonlocal holdout_eval_count
         if not holdout_examples:
-            return
+            return None
         from core.learning.recurrence_native_objective_v2 import (
             live_path_loss,
         )
 
         count = min(int(args.holdout_eval_samples), len(holdout_examples))
         start = (holdout_eval_count * count) % len(holdout_examples)
-        holdout_eval_count += 1
         losses: list[float] = []
         compute_lease = (
             resource_compute_guard.acquire("holdout_eval")
@@ -1150,16 +1129,17 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
             "examples": count,
             "depth": max(ladder),
         }
-        holdout_trail.append(entry)
+        if durable:
+            holdout_eval_count += 1
+            holdout_trail.append(entry)
         print(
-            f"holdout step={step} mean_loss={entry['mean_loss']:.5f} "
-            f"n={count}",
+            f"holdout step={step} mean_loss={entry['mean_loss']:.5f} n={count}",
             flush=True,
         )
+        return entry
 
     halt_reason = "wall_clock"
     interrupted = False
-    window_cosines: list[float] = []
     try:
         while step < args.max_steps and time.monotonic() < deadline:
             if cursor >= len(order):
@@ -1173,19 +1153,17 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
                 else None
             )
             try:
-                loss_value, gradients, step_telemetry = (
-                    _streamed_depth_value_and_grad(
-                        model,
-                        example["prompt_tokens"],
-                        example["answer_tokens"],
-                        spec=spec,
-                        depths=ladder,
-                        monotonicity_weight=args.monotonicity_weight,
-                        depth_margin=depth_margin,
-                        diversity_weight=diversity_weight,
-                        diversity_target_cos=float(args.diversity_target_cos),
-                        bridge_tokens=bridge_tokens,
-                    )
+                loss_value, gradients, step_telemetry = _streamed_depth_value_and_grad(
+                    model,
+                    example["prompt_tokens"],
+                    example["answer_tokens"],
+                    spec=spec,
+                    depths=ladder,
+                    monotonicity_weight=args.monotonicity_weight,
+                    depth_margin=depth_margin,
+                    diversity_weight=diversity_weight,
+                    diversity_target_cos=float(args.diversity_target_cos),
+                    bridge_tokens=bridge_tokens,
                 )
             except FloatingPointError:
                 mx.clear_cache()
@@ -1244,7 +1222,7 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
                     flush=True,
                 )
             if step % args.checkpoint_every == 0:
-                holdout_eval()
+                holdout_eval(durable=True)
                 published = checkpoint()
                 print(f"checkpoint={published.name}", flush=True)
         if step >= args.max_steps:
@@ -1253,23 +1231,33 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
         halt_reason = "interrupted"
         interrupted = True
 
-    if window_losses:
-        loss_trail.append(
-            {
-                "step": step,
-                "mean_loss": round(sum(window_losses) / len(window_losses), 6),
-                "window_steps": len(window_losses),
-                "partial_window": True,
-            }
+    complete_run = step >= args.max_steps and halt_reason == "max_steps" and not interrupted
+    if complete_run and window_losses:
+        loss_trail = _project_terminal_loss_trail(
+            loss_trail,
+            step=step,
+            pending_window_losses=window_losses,
+            pending_window_cosines=window_cosines,
         )
         window_losses.clear()
+        window_cosines.clear()
         last_checkpoint_step = -1
+    receipt_holdout_trail = [dict(entry) for entry in holdout_trail]
     try:
-        holdout_eval()
+        if not holdout_trail or holdout_trail[-1].get("step") != step:
+            terminal_holdout = holdout_eval(durable=complete_run)
+            if terminal_holdout is not None and not complete_run:
+                receipt_holdout_trail.append(terminal_holdout)
     except FloatingPointError:
         # A non-finite held-out loss at shutdown must not cost the receipt;
         # the trail's absence for this step is itself honest evidence.
         print("holdout eval non-finite at shutdown; omitted", flush=True)
+    receipt_loss_trail = _project_terminal_loss_trail(
+        loss_trail,
+        step=step,
+        pending_window_losses=window_losses,
+        pending_window_cosines=window_cosines,
+    )
     final_checkpoint = checkpoint()
     adapter_bytes = (final_checkpoint / "adapter.safetensors").read_bytes()
     atomic_write_bytes(out_dir / "adapters.safetensors", adapter_bytes)
@@ -1319,15 +1307,13 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
         "elapsed_training_s": round(elapsed_training_s(), 6),
         "invocation_count": invocation_count,
         "halt_reason": halt_reason,
-        "complete": (
-            step >= args.max_steps and halt_reason == "max_steps" and not interrupted
-        ),
+        "complete": complete_run,
         "final_checkpoint": final_checkpoint.name,
-        "loss_trail": loss_trail,
+        "loss_trail": receipt_loss_trail,
     }
     if objective_is_v3:
         receipt["objective_options"] = config_payload["objective_options"]
-        receipt["holdout_trail"] = holdout_trail
+        receipt["holdout_trail"] = receipt_holdout_trail
     receipt_bytes = canonical_json_bytes(receipt)
     atomic_write_bytes(out_dir / "receipt.json", receipt_bytes)
     from core.brain.llm.latent_cortex.adapter_identity import (
@@ -1335,8 +1321,7 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
     )
 
     tensor_metadata = [
-        tensor.to_dict()
-        for tensor in inspect_mlx_tensor_metadata(out_dir / "adapters.safetensors")
+        tensor.to_dict() for tensor in inspect_mlx_tensor_metadata(out_dir / "adapters.safetensors")
     ]
 
     def artifact_binding(path: str, payload: bytes) -> dict[str, Any]:
@@ -1378,9 +1363,7 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
         "receipt_sha256": manifest["training_receipt"]["sha256"],
         "manifest_sha256": sha256_bytes(manifest_bytes),
     }
-    atomic_write_bytes(
-        out_dir / "training_completion.json", canonical_json_bytes(completion)
-    )
+    atomic_write_bytes(out_dir / "training_completion.json", canonical_json_bytes(completion))
     print(
         f"halt={halt_reason} step={step} adapter={manifest['adapter']['sha256']}",
         flush=True,

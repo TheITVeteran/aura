@@ -24,6 +24,8 @@ from core.runtime.resource_stage_guard import ack_path  # noqa: E402
 PROTOCOL_SCHEMA = "aura.recurrence_native_resident_protocol.v2"
 AMENDMENT_SCHEMA = "aura.recurrence_native_resident_protocol_amendment.v1"
 FAILURE_SCHEMA = "aura.recurrence_resident_resource_failure.v1"
+PARTIAL_CHECKPOINT_EVIDENCE_SCHEMA = "aura.recurrence_partial_checkpoint_evidence.v1"
+TRAINING_CHECKPOINT_SCHEMA = "aura.recurrence_native_checkpoint.v3"
 _MAX_JSON_BYTES = 8 * 1024 * 1024
 
 
@@ -74,10 +76,9 @@ def _reject_nonfinite(value: str) -> Never:
 
 
 def _binding_matches(raw: bytes, binding: Mapping[str, Any]) -> bool:
-    return (
-        binding.get("sha256") == hashlib.sha256(raw).hexdigest()
-        and binding.get("size_bytes") == len(raw)
-    )
+    return binding.get("sha256") == hashlib.sha256(raw).hexdigest() and binding.get(
+        "size_bytes"
+    ) == len(raw)
 
 
 def _source_path(value: Any, *, role: str) -> Path:
@@ -105,6 +106,215 @@ def _sha256_file(path: Path) -> str:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def _canonical_json_bytes(value: Any) -> bytes:
+    return json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("ascii")
+
+
+def _raw_binding(path: Path, raw: bytes) -> dict[str, Any]:
+    return {
+        "path": str(path),
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "size_bytes": len(raw),
+    }
+
+
+def _write_create_or_verify(path: Path, document: Mapping[str, Any]) -> None:
+    payload = _canonical_json_bytes(document) + b"\n"
+    if path.exists() or path.is_symlink():
+        if path.is_symlink() or path.read_bytes() != payload:
+            _fail("partial_checkpoint_evidence_exists_different")
+        return
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(path, flags, 0o600)
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+    except FileExistsError:
+        if path.is_symlink() or path.read_bytes() != payload:
+            _fail("partial_checkpoint_evidence_exists_different")
+
+
+def _partial_checkpoint_material(
+    *,
+    adapter: Path,
+    expected_step: int,
+) -> dict[str, Any]:
+    receipt_raw, receipt = _read_json(
+        adapter / "receipt.json",
+        role="training_receipt",
+    )
+    latest_raw, latest = _read_json(
+        adapter / "latest.json",
+        role="training_latest",
+    )
+    checkpoint_relative = latest.get("checkpoint")
+    if (
+        not isinstance(checkpoint_relative, str)
+        or not checkpoint_relative.startswith("checkpoints/")
+        or Path(checkpoint_relative).parent != Path("checkpoints")
+    ):
+        _fail("partial_checkpoint_path_invalid")
+    try:
+        checkpoint_dir = (adapter / checkpoint_relative).resolve(strict=True)
+        checkpoint_dir.relative_to((adapter / "checkpoints").resolve(strict=True))
+    except (OSError, ValueError) as exc:
+        raise ResidentRecurrenceLaunchError("partial_checkpoint_path_invalid") from exc
+    complete_path = checkpoint_dir / "complete.json"
+    complete_raw, complete = _read_json(
+        complete_path,
+        role="partial_checkpoint_complete",
+    )
+    if (
+        latest.get("schema") != "aura.recurrence_native_checkpoint_pointer.v1"
+        or latest.get("complete_sha256") != hashlib.sha256(complete_raw).hexdigest()
+        or receipt.get("complete") is not False
+        or receipt.get("halt_reason") != "wall_clock"
+        or receipt.get("steps") != expected_step
+        or receipt.get("final_checkpoint") != complete.get("checkpoint_id")
+        or complete.get("schema") != TRAINING_CHECKPOINT_SCHEMA
+        or complete.get("step") != expected_step
+        or complete.get("checkpoint_id") != checkpoint_dir.name
+        or complete.get("holdout_trail") != []
+        or complete.get("holdout_eval_count") != 0
+    ):
+        _fail("partial_checkpoint_state_mismatch")
+    loss_trail = complete.get("loss_trail")
+    pending_losses = complete.get("pending_window_losses")
+    pending_cosines = complete.get("pending_window_cosines")
+    if (
+        not isinstance(loss_trail, list)
+        or not isinstance(pending_losses, list)
+        or len(pending_losses) != expected_step
+        or any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            for value in pending_losses
+        )
+        or not isinstance(pending_cosines, list)
+        or any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            for value in pending_cosines
+        )
+    ):
+        _fail("partial_checkpoint_exact_evidence_invalid")
+    projected_loss = [dict(entry) for entry in loss_trail]
+    terminal_loss: dict[str, Any] = {
+        "step": expected_step,
+        "mean_loss": round(sum(pending_losses) / len(pending_losses), 6),
+        "window_steps": len(pending_losses),
+        "partial_window": True,
+    }
+    if pending_cosines:
+        terminal_loss["pairwise_cos_mean"] = round(sum(pending_cosines) / len(pending_cosines), 6)
+    projected_loss.append(terminal_loss)
+    holdout_receipt = receipt.get("holdout_trail")
+    if (
+        receipt.get("loss_trail") != projected_loss
+        or not isinstance(holdout_receipt, list)
+        or len(holdout_receipt) != 1
+        or holdout_receipt[0].get("step") != expected_step
+    ):
+        _fail("partial_checkpoint_receipt_projection_mismatch")
+    tensor_bindings: dict[str, dict[str, Any]] = {}
+    for role in ("adapter", "optimizer"):
+        binding = complete.get(role)
+        if not isinstance(binding, Mapping) or set(binding) != {
+            "path",
+            "sha256",
+            "size_bytes",
+        }:
+            _fail(f"partial_checkpoint_{role}_binding_invalid")
+        tensor_path = checkpoint_dir / str(binding["path"])
+        if tensor_path.is_symlink() or tensor_path.parent != checkpoint_dir:
+            _fail(f"partial_checkpoint_{role}_path_invalid")
+        raw = tensor_path.read_bytes()
+        if not _binding_matches(raw, binding):
+            _fail(f"partial_checkpoint_{role}_binding_mismatch")
+        tensor_bindings[role] = _raw_binding(tensor_path, raw)
+    return {
+        "training_receipt": receipt,
+        "training_receipt_binding": _raw_binding(adapter / "receipt.json", receipt_raw),
+        "latest_binding": _raw_binding(adapter / "latest.json", latest_raw),
+        "checkpoint": checkpoint_relative,
+        "checkpoint_complete": complete,
+        "checkpoint_complete_binding": _raw_binding(complete_path, complete_raw),
+        "checkpoint_tensors": tensor_bindings,
+    }
+
+
+def capture_partial_checkpoint_evidence(
+    protocol_path: Path,
+    amendment_path: Path,
+) -> dict[str, Any]:
+    protocol_raw, protocol = _read_json(protocol_path, role="protocol")
+    amendment_raw, amendment = _read_json(amendment_path, role="amendment")
+    resume = amendment.get("resume")
+    training = protocol.get("training")
+    if not isinstance(resume, Mapping) or not isinstance(training, Mapping):
+        _fail("resume_contract_invalid")
+    evidence_path = _absolute_path(
+        resume.get("partial_checkpoint_evidence_path"),
+        role="partial_checkpoint_evidence",
+    )
+    try:
+        evidence_path.relative_to(amendment_path.parent)
+    except ValueError:
+        _fail("partial_checkpoint_evidence_path_invalid")
+    stable_material = {
+        "schema": PARTIAL_CHECKPOINT_EVIDENCE_SCHEMA,
+        "protocol_sha256": hashlib.sha256(protocol_raw).hexdigest(),
+        "amendment_sha256": hashlib.sha256(amendment_raw).hexdigest(),
+        "trainer_sha256": amendment["resource_envelope"]["trainer_sha256"],
+        **_partial_checkpoint_material(
+            adapter=Path(str(training["output_dir"])).resolve(strict=True),
+            expected_step=_positive_int(
+                resume.get("expected_resume_step"), role="expected_resume_step"
+            ),
+        ),
+    }
+    if evidence_path.exists() or evidence_path.is_symlink():
+        _existing_raw, existing = _read_json(
+            evidence_path,
+            role="partial_checkpoint_evidence",
+        )
+        existing_material = dict(existing)
+        claimed = existing_material.pop("evidence_sha256", None)
+        captured_at = existing_material.pop("captured_at", None)
+        if (
+            existing_material != stable_material
+            or not isinstance(captured_at, (int, float))
+            or isinstance(captured_at, bool)
+            or not math.isfinite(float(captured_at))
+            or claimed
+            != hashlib.sha256(
+                _canonical_json_bytes({**stable_material, "captured_at": captured_at})
+            ).hexdigest()
+        ):
+            _fail("partial_checkpoint_evidence_exists_different")
+        return existing
+    material = {**stable_material, "captured_at": time.time()}
+    document = {
+        **material,
+        "evidence_sha256": hashlib.sha256(_canonical_json_bytes(material)).hexdigest(),
+    }
+    _write_create_or_verify(evidence_path, document)
+    return document
 
 
 def _absolute_path(value: Any, *, role: str, kind: str | None = None) -> Path:
@@ -222,9 +432,7 @@ def _validate_contract(
     if not isinstance(failure_ref, Mapping):
         _fail("triggering_failure_invalid")
     failure_path = (amendment_path.parent / str(failure_ref.get("path", ""))).absolute()
-    _failure_raw, failure = _read_json(
-        failure_path, role="triggering_failure"
-    )
+    _failure_raw, failure = _read_json(failure_path, role="triggering_failure")
     kernel = failure.get("kernel_evidence")
     process = failure.get("process")
     detached_binding = failure.get("detached_receipt")
@@ -233,10 +441,8 @@ def _validate_contract(
         or not isinstance(kernel, Mapping)
         or not isinstance(process, Mapping)
         or not isinstance(detached_binding, Mapping)
-        or kernel.get("termination_classification")
-        != failure_ref.get("required_classification")
-        or kernel.get("compressed_process_mb")
-        != failure_ref.get("required_compressed_process_mb")
+        or kernel.get("termination_classification") != failure_ref.get("required_classification")
+        or kernel.get("compressed_process_mb") != failure_ref.get("required_compressed_process_mb")
         or process.get("detached_returncode") != -9
         or process.get("timed_out") is not False
         or process.get("restart_count") != 0
@@ -252,9 +458,7 @@ def _validate_contract(
         receipt_path = receipt_candidate.resolve(strict=True)
         receipt_path.relative_to(amendment_path.parent.parent)
     except (OSError, ValueError) as exc:
-        raise ResidentRecurrenceLaunchError(
-            "triggering_failure_receipt_path_invalid"
-        ) from exc
+        raise ResidentRecurrenceLaunchError("triggering_failure_receipt_path_invalid") from exc
     receipt_raw, failed_receipt = _read_json(
         receipt_path,
         role="triggering_failure_receipt",
@@ -264,10 +468,8 @@ def _validate_contract(
         or failed_receipt.get("returncode") != process.get("detached_returncode")
         or failed_receipt.get("timed_out") != process.get("timed_out")
         or failed_receipt.get("restart_count") != process.get("restart_count")
-        or failed_receipt.get("containment_verified")
-        != process.get("containment_verified")
-        or failed_receipt.get("process_group_empty")
-        != process.get("process_group_empty")
+        or failed_receipt.get("containment_verified") != process.get("containment_verified")
+        or failed_receipt.get("process_group_empty") != process.get("process_group_empty")
         or failed_receipt.get("lineage_empty") != process.get("lineage_empty")
     ):
         _fail("triggering_failure_receipt_mismatch")
@@ -304,17 +506,14 @@ def _validate_contract(
         or sentinel_program != REPO_ROOT / "tools/memory_sentinel.py"
         or stage_guard_source != REPO_ROOT / "core/runtime/resource_stage_guard.py"
         or sentinel.get("program_sha256") != _sha256_file(sentinel_program)
-        or sentinel.get("stage_guard_source_sha256")
-        != _sha256_file(stage_guard_source)
-        or _finite_number(sentinel.get("lethal_mb"), role="sentinel_lethal_mb")
-        != 59392.0
+        or sentinel.get("stage_guard_source_sha256") != _sha256_file(stage_guard_source)
+        or _finite_number(sentinel.get("lethal_mb"), role="sentinel_lethal_mb") != 59392.0
         or _finite_number(
             sentinel.get("startup_lethal_mb"),
             role="sentinel_startup_lethal_mb",
         )
         != 73728.0
-        or _finite_number(sentinel.get("interval_seconds"), role="sentinel_interval")
-        != 0.5
+        or _finite_number(sentinel.get("interval_seconds"), role="sentinel_interval") != 0.5
         or _finite_number(
             sentinel.get("immediate_kill_overshoot"),
             role="sentinel_immediate_kill_overshoot",
@@ -352,6 +551,14 @@ def _validate_contract(
             or receipt.get("objective_schema") != "aura.recurrence_native_objective.v3"
         ):
             _fail("resume_checkpoint_state_mismatch")
+        evidence_path = _absolute_path(
+            phase_contract.get("partial_checkpoint_evidence_path"),
+            role="partial_checkpoint_evidence",
+        )
+        try:
+            evidence_path.relative_to(amendment_path.parent)
+        except ValueError:
+            _fail("partial_checkpoint_evidence_path_invalid")
     run_dir = _absolute_path(phase_contract.get("run_dir"), role="run_dir")
     try:
         run_dir.relative_to(amendment_path.parent)
@@ -410,7 +617,11 @@ def _target_command(
     python = REPO_ROOT / ".venv/bin/python"
     if not python.exists():
         _fail("python_launcher_missing")
-    model = _absolute_path(training["model_path"] if "model_path" in training else protocol["model"]["path"], role="model", kind="directory")
+    model = _absolute_path(
+        training["model_path"] if "model_path" in training else protocol["model"]["path"],
+        role="model",
+        kind="directory",
+    )
     adapter = _absolute_path(
         training["output_dir"],
         role="adapter",
@@ -665,6 +876,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         )
         return 0
+    if args.phase == "resume":
+        capture_partial_checkpoint_evidence(args.protocol, args.amendment)
     completed = subprocess.run(launcher, cwd=REPO_ROOT, check=False)
     if completed.returncode != 0:
         _fail("detached_launcher_failed")

@@ -32,6 +32,7 @@ from core.learning.recurrence_training_state import (  # noqa: E402
 )
 from tools.recurrence_native_train_v2 import (  # noqa: E402
     _deterministic_order,
+    _project_terminal_loss_trail,
     _run,
     _streamed_depth_value_and_grad,
     _wrap_window_layers,
@@ -102,8 +103,7 @@ def test_window_wrapper_is_scoped_and_only_lora_is_trainable():
         "model.layers.2.self_attn.o_proj",
     ]
     assert all(
-        isinstance(model.model.layers[index].self_attn.o_proj, ScopedLoRALinear)
-        for index in (1, 2)
+        isinstance(model.model.layers[index].self_attn.o_proj, ScopedLoRALinear) for index in (1, 2)
     )
     keys = [key for key, _value in tree_flatten(model.trainable_parameters())]
     assert keys
@@ -132,10 +132,7 @@ def test_fresh_adapter_initialization_is_reproducible_from_training_seed():
     first_params = dict(tree_flatten(first.trainable_parameters()))
     second_params = dict(tree_flatten(second.trainable_parameters()))
     assert set(first_params) == set(second_params)
-    assert all(
-        bool(mx.array_equal(first_params[key], second_params[key]))
-        for key in first_params
-    )
+    assert all(bool(mx.array_equal(first_params[key], second_params[key])) for key in first_params)
 
 
 def test_scoped_adapter_composes_over_frozen_personality_lora():
@@ -175,7 +172,18 @@ def test_resume_matches_uninterrupted_adapter_and_optimizer_state(tmp_path):
         tmp_path / "run",
         adapter_tensors=dict(tree_flatten(resumed_source.trainable_parameters())),
         optimizer_tensors=dict(tree_flatten(resumed_optimizer.state)),
-        state={**identities, "step": 1, "epoch": 0, "cursor": 1, "order": [0]},
+        state={
+            **identities,
+            "step": 1,
+            "epoch": 0,
+            "cursor": 1,
+            "order": [0],
+            "loss_trail": [],
+            "pending_window_losses": [1.0],
+            "pending_window_cosines": [0.25],
+            "holdout_trail": [],
+            "holdout_eval_count": 0,
+        },
     )
     loaded = load_recurrence_checkpoint(
         tmp_path / "run",
@@ -198,8 +206,7 @@ def test_resume_matches_uninterrupted_adapter_and_optimizer_state(tmp_path):
     resumed_state = dict(tree_flatten(optimizer_after_resume.state))
     assert set(continuous_state) == set(resumed_state)
     assert all(
-        bool(mx.array_equal(continuous_state[key], resumed_state[key]))
-        for key in continuous_state
+        bool(mx.array_equal(continuous_state[key], resumed_state[key])) for key in continuous_state
     )
 
 
@@ -227,9 +234,7 @@ def test_streamed_depth_gradient_matches_monolithic_objective():
             monotonicity_weight=weight,
         )
 
-    expected_value, expected_gradients = nn.value_and_grad(
-        monolithic, loss_fn
-    )(monolithic)
+    expected_value, expected_gradients = nn.value_and_grad(monolithic, loss_fn)(monolithic)
     actual_value, actual_gradients, telemetry = _streamed_depth_value_and_grad(
         streamed,
         prompt,
@@ -244,9 +249,7 @@ def test_streamed_depth_gradient_matches_monolithic_objective():
     actual = dict(tree_flatten(actual_gradients))
     assert set(actual) == set(expected)
     for key in expected:
-        assert bool(
-            mx.allclose(actual[key], expected[key], rtol=1e-4, atol=1e-5)
-        ), key
+        assert bool(mx.allclose(actual[key], expected[key], rtol=1e-4, atol=1e-5)), key
     # v3 defaults are inert: base losses equal composite losses, no cosines.
     assert len(telemetry["depth_base_losses"]) == len(depths)
     assert all(not cosines for cosines in telemetry["pairwise_cos"].values())
@@ -289,9 +292,7 @@ def test_streamed_v3_matches_monolithic_v3_objective():
         )
         return loss
 
-    expected_value, expected_gradients = nn.value_and_grad(
-        monolithic, loss_fn
-    )(monolithic)
+    expected_value, expected_gradients = nn.value_and_grad(monolithic, loss_fn)(monolithic)
     actual_value, actual_gradients, telemetry = _streamed_depth_value_and_grad(
         streamed,
         prompt,
@@ -304,20 +305,14 @@ def test_streamed_v3_matches_monolithic_v3_objective():
         diversity_target_cos=target_cos,
     )
     mx.eval(expected_value, expected_gradients, actual_gradients)
-    assert actual_value == pytest.approx(
-        float(expected_value), rel=1e-4, abs=1e-4
-    )
+    assert actual_value == pytest.approx(float(expected_value), rel=1e-4, abs=1e-4)
     expected = dict(tree_flatten(expected_gradients))
     actual = dict(tree_flatten(actual_gradients))
     assert set(actual) == set(expected)
     for key in expected:
-        assert bool(
-            mx.allclose(actual[key], expected[key], rtol=1e-3, atol=1e-4)
-        ), key
+        assert bool(mx.allclose(actual[key], expected[key], rtol=1e-3, atol=1e-4)), key
     # Diversity telemetry is live: one cosine pair per depth for 2 branches.
-    assert all(
-        len(cosines) == 1 for cosines in telemetry["pairwise_cos"].values()
-    )
+    assert all(len(cosines) == 1 for cosines in telemetry["pairwise_cos"].values())
 
 
 def test_run_requires_model_lane_before_any_load():
@@ -346,11 +341,56 @@ def test_resource_guard_ack_precedes_training_clock_and_first_graph():
     assert handshake < training_clock < training_loop
 
 
+def test_terminal_projection_does_not_mutate_resumable_window_state():
+    loss_trail = [{"step": 5, "mean_loss": 2.0}]
+    pending_losses = [1.5, 1.0]
+    pending_cosines = [0.4, 0.2]
+
+    projected = _project_terminal_loss_trail(
+        loss_trail,
+        step=7,
+        pending_window_losses=pending_losses,
+        pending_window_cosines=pending_cosines,
+    )
+
+    assert projected[-1] == {
+        "step": 7,
+        "mean_loss": 1.25,
+        "window_steps": 2,
+        "partial_window": True,
+        "pairwise_cos_mean": 0.3,
+    }
+    assert loss_trail == [{"step": 5, "mean_loss": 2.0}]
+    assert pending_losses == [1.5, 1.0]
+    assert pending_cosines == [0.4, 0.2]
+
+
+def test_checkpoint_captures_every_exact_evidence_accumulator():
+    source = inspect.getsource(_run)
+    checkpoint_call = source[source.index("state=_checkpoint_payload(") :]
+
+    for binding in (
+        "pending_window_losses=window_losses",
+        "pending_window_cosines=window_cosines",
+        "holdout_trail=holdout_trail",
+        "holdout_eval_count=holdout_eval_count",
+    ):
+        assert binding in checkpoint_call
+
+
+def test_partial_shutdown_telemetry_is_projection_not_checkpoint_mutation():
+    source = inspect.getsource(_run)
+    complete = source.index("if complete_run and window_losses:")
+    receipt_projection = source.index("receipt_loss_trail =", complete)
+    checkpoint = source.index("final_checkpoint = checkpoint()", receipt_projection)
+
+    assert complete < receipt_projection < checkpoint
+    assert "holdout_eval(durable=complete_run)" in source
+
+
 def test_each_graph_is_bracketed_by_external_compute_lease():
     source = inspect.getsource(_run)
-    training_acquire = source.index(
-        'resource_compute_guard.acquire("training_step")'
-    )
+    training_acquire = source.index('resource_compute_guard.acquire("training_step")')
     graph = source.index("_streamed_depth_value_and_grad(", training_acquire)
     graph_release = source.index("del gradients, step_telemetry", graph)
     external_release = source.index(

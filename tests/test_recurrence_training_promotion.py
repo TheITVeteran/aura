@@ -191,10 +191,7 @@ def _promotion_fixture(tmp_path: Path) -> dict:
             for task in tasks
         ],
     }
-    loss_trail = [
-        {"step": step, "mean_loss": round(1.0 / step, 6)}
-        for step in range(1, 9)
-    ]
+    loss_trail = [{"step": step, "mean_loss": round(1.0 / step, 6)} for step in range(1, 9)]
     receipt = {
         "schema": promotion.TRAINING_RECEIPT_SCHEMA,
         "complete": True,
@@ -300,6 +297,10 @@ def _promotion_fixture(tmp_path: Path) -> dict:
         "elapsed_training_s": 12.0,
         "invocation_count": 1,
         "loss_trail": loss_trail,
+        "pending_window_losses": [],
+        "pending_window_cosines": [],
+        "holdout_trail": [],
+        "holdout_eval_count": 0,
         "sampler": "sha256_stateless_epoch_permutation.v1",
         "stochastic_state": "none_all_keys_explicit",
         "adapter": {
@@ -474,17 +475,15 @@ def _promotion_fixture(tmp_path: Path) -> dict:
             "broker_policy_sha256": plan["broker_policy_sha256"],
             "command_sha256": plan["command_sha256"],
             "executable_sha256": plan["executable_sha256"],
-            "execution_environment_sha256": plan[
-                "execution_environment_sha256"
-            ],
+            "execution_environment_sha256": plan["execution_environment_sha256"],
             "fork_policy": plan["fork_policy"],
             "name": plan["name"],
             "plan_sha256": plan["plan_sha256"],
             "restart_policy": plan["restart_policy"],
             "resume_contract": plan["resume_contract"],
-            "target_execution_manifest_sha256": plan[
-                "target_execution_manifest"
-            ]["manifest_sha256"],
+            "target_execution_manifest_sha256": plan["target_execution_manifest"][
+                "manifest_sha256"
+            ],
             "timeout_s": plan["timeout_s"],
         },
         "adapter_id": "resident-test",
@@ -502,9 +501,7 @@ def _promotion_fixture(tmp_path: Path) -> dict:
             "base_checkpoint_fingerprint": base_checkpoint["fingerprint"],
             "base_checkpoint_files": base_checkpoint["files"],
             "model_behavior_bundle_sha256": model_behavior["bundle_sha256"],
-            "training_runtime_identity_sha256": training_runtime[
-                "identity_sha256"
-            ],
+            "training_runtime_identity_sha256": training_runtime["identity_sha256"],
         },
         "optimizer": config["optimizer"],
         "producer_sources": {
@@ -918,9 +915,7 @@ def test_bound_tokenizer_uses_mlx_loader_and_model_eos(
 
 
 @pytest.mark.parametrize("eos_token_id", [None, True, -1, [], [151645, "151643"]])
-def test_bound_tokenizer_rejects_invalid_model_eos(
-    tmp_path: Path, eos_token_id: object
-) -> None:
+def test_bound_tokenizer_rejects_invalid_model_eos(tmp_path: Path, eos_token_id: object) -> None:
     model = tmp_path / "model"
     model.mkdir()
     _write_json(model / "config.json", {"eos_token_id": eos_token_id})
@@ -936,10 +931,7 @@ def test_bound_tokenizer_rejects_invalid_model_eos(
     "loss_trail",
     [
         [{"step": 8, "mean_loss": 1.0}],
-        [
-            {"step": step, "mean_loss": 1.0}
-            for step in [1, 2, 4, 3, 5, 6, 7, 8]
-        ],
+        [{"step": step, "mean_loss": 1.0} for step in [1, 2, 4, 3, 5, 6, 7, 8]],
         [
             *({"step": step, "mean_loss": 1.0} for step in range(1, 8)),
             {"step": 8, "mean_loss": float("nan")},

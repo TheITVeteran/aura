@@ -189,22 +189,25 @@ def test_memory_sentinel_transitions_from_startup_to_steady_guard(
     )
     monkeypatch.setattr(memory_sentinel.time, "sleep", lambda _seconds: None)
 
-    assert memory_sentinel.main(
-        [
-            "--pid",
-            "123",
-            "--lethal-mb",
-            "59392",
-            "--startup-lethal-mb",
-            "73728",
-            "--steady-marker",
-            str(marker_path),
-            "--ring",
-            str(ring),
-            "--tombstone-dir",
-            str(tmp_path),
-        ]
-    ) == 0
+    assert (
+        memory_sentinel.main(
+            [
+                "--pid",
+                "123",
+                "--lethal-mb",
+                "59392",
+                "--startup-lethal-mb",
+                "73728",
+                "--steady-marker",
+                str(marker_path),
+                "--ring",
+                str(ring),
+                "--tombstone-dir",
+                str(tmp_path),
+            ]
+        )
+        == 0
+    )
 
     acknowledgement, _raw = read_armed_ack(
         marker_path,
@@ -261,22 +264,25 @@ def test_memory_sentinel_kills_target_on_invalid_stage_handshake(
         lambda pid: killed.append(pid) or [pid],
     )
 
-    assert memory_sentinel.main(
-        [
-            "--pid",
-            "123",
-            "--lethal-mb",
-            "59392",
-            "--startup-lethal-mb",
-            "73728",
-            "--steady-marker",
-            str(marker_path),
-            "--ring",
-            str(tmp_path / "ring.jsonl"),
-            "--tombstone-dir",
-            str(tmp_path),
-        ]
-    ) == 2
+    assert (
+        memory_sentinel.main(
+            [
+                "--pid",
+                "123",
+                "--lethal-mb",
+                "59392",
+                "--startup-lethal-mb",
+                "73728",
+                "--steady-marker",
+                str(marker_path),
+                "--ring",
+                str(tmp_path / "ring.jsonl"),
+                "--tombstone-dir",
+                str(tmp_path),
+            ]
+        )
+        == 2
+    )
     assert killed == [123]
     tombstone = next(tmp_path.glob("sentinel_tombstone_*.json"))
     assert "invalid steady-stage" in tombstone.read_text(encoding="utf-8")
@@ -374,24 +380,27 @@ def test_memory_sentinel_enforces_compute_lease_and_low_water_rearm(
     )
     monkeypatch.setattr(memory_sentinel.time, "sleep", advance_trainer)
 
-    assert memory_sentinel.main(
-        [
-            "--pid",
-            "123",
-            "--lethal-mb",
-            "59392",
-            "--startup-lethal-mb",
-            "73728",
-            "--steady-marker",
-            str(marker_path),
-            "--interval",
-            "0.5",
-            "--ring",
-            str(ring),
-            "--tombstone-dir",
-            str(tmp_path),
-        ]
-    ) == 0
+    assert (
+        memory_sentinel.main(
+            [
+                "--pid",
+                "123",
+                "--lethal-mb",
+                "59392",
+                "--startup-lethal-mb",
+                "73728",
+                "--steady-marker",
+                str(marker_path),
+                "--interval",
+                "0.5",
+                "--ring",
+                str(ring),
+                "--tombstone-dir",
+                str(tmp_path),
+            ]
+        )
+        == 0
+    )
 
     release_path = lease_request_path(
         marker_path,
@@ -401,6 +410,89 @@ def test_memory_sentinel_enforces_compute_lease_and_low_water_rearm(
     assert lease_ack_path(release_path).is_file()
     stages = [json.loads(line)["guard_stage"] for line in ring.read_text().splitlines()]
     assert stages == ["steady", "compute", "draining", "steady"]
+
+
+def test_memory_sentinel_tombstones_invalid_compute_acquire(
+    tmp_path,
+    monkeypatch,
+):
+    provenance = ObservationProvenance(
+        source=ObservationSource.HOST,
+        scenario_id="sentinel-invalid-compute-test",
+    )
+    target = ProcessObservation(
+        provenance=provenance,
+        pid=123,
+        ppid=1,
+        create_time=100.0,
+        status="running",
+        name="trainer",
+        cmdline=("python", "trainer.py"),
+        rss_bytes=100 * 1024 * 1024,
+    )
+    table = ProcessTableObservation(provenance=provenance, processes=(target,))
+
+    class Observer:
+        def process_tree(self, _pid, *, recursive):
+            assert recursive is True
+            return table
+
+    marker_path = tmp_path / "ready.json"
+    _marker, marker_raw = publish_ready_marker(
+        marker_path,
+        target_pid=123,
+        trainer_sha256="f" * 64,
+    )
+    sleeps = {"count": 0}
+
+    def write_invalid_acquire(_seconds):
+        sleeps["count"] += 1
+        if sleeps["count"] == 1:
+            lease_request_path(
+                marker_path,
+                sequence=1,
+                action="acquire",
+            ).write_text("{}\n", encoding="utf-8")
+
+    killed: list[int] = []
+    monkeypatch.setattr(memory_sentinel, "_OBSERVER", Observer())
+    monkeypatch.setattr(
+        memory_sentinel,
+        "tree_rss_mb",
+        lambda *_args, **_kwargs: (56000.0, 0.0, 1, 56000.0),
+    )
+    monkeypatch.setattr(memory_sentinel.time, "sleep", write_invalid_acquire)
+    monkeypatch.setattr(
+        memory_sentinel,
+        "kill_tree",
+        lambda pid: killed.append(pid) or [pid],
+    )
+
+    assert (
+        memory_sentinel.main(
+            [
+                "--pid",
+                "123",
+                "--lethal-mb",
+                "59392",
+                "--startup-lethal-mb",
+                "73728",
+                "--steady-marker",
+                str(marker_path),
+                "--interval",
+                "0.5",
+                "--ring",
+                str(tmp_path / "ring.jsonl"),
+                "--tombstone-dir",
+                str(tmp_path),
+            ]
+        )
+        == 2
+    )
+    assert killed == [123]
+    tombstone = next(tmp_path.glob("sentinel_tombstone_*.json"))
+    payload = json.loads(tombstone.read_text(encoding="utf-8"))
+    assert payload["reason"] == ("invalid compute-acquire resource-guard handshake")
 
 
 def test_memory_sentinel_default_ceiling_is_host_safe_on_64gb_node(monkeypatch):
@@ -453,7 +545,9 @@ def test_desktop_boot_memory_protection_registers_armed_external_sentinel(monkey
     monkeypatch.setenv("AURA_MEMORY_SENTINEL", "1")
     monkeypatch.setenv("AURA_MEMWATCH_LETHAL_MB", "46080")
     monkeypatch.setenv("AURA_MEMORY_SENTINEL_INTERVAL_S", "0.5")
-    monkeypatch.setattr(resource, "getrlimit", lambda _kind: (resource.RLIM_INFINITY, resource.RLIM_INFINITY))
+    monkeypatch.setattr(
+        resource, "getrlimit", lambda _kind: (resource.RLIM_INFINITY, resource.RLIM_INFINITY)
+    )
     monkeypatch.setattr(resource, "setrlimit", lambda _kind, _limits: None)
     monkeypatch.setattr(aura_main.subprocess, "Popen", FakePopen)
 
@@ -473,7 +567,9 @@ def test_desktop_boot_memory_protection_registers_armed_external_sentinel(monkey
 
 def test_disabled_external_memory_sentinel_is_never_reported_armed(monkeypatch):
     monkeypatch.setenv("AURA_MEMORY_SENTINEL", "0")
-    monkeypatch.setattr(resource, "getrlimit", lambda _kind: (resource.RLIM_INFINITY, resource.RLIM_INFINITY))
+    monkeypatch.setattr(
+        resource, "getrlimit", lambda _kind: (resource.RLIM_INFINITY, resource.RLIM_INFINITY)
+    )
     monkeypatch.setattr(resource, "setrlimit", lambda _kind, _limits: None)
 
     aura_main._install_systemwide_memory_protection()
@@ -510,18 +606,20 @@ def _observe_running_pid(resource_observer, pid):
     respawned sentinel is armed only if its pid is observed running."""
     from core.runtime.resource_observation import ProcessObservation
 
-    resource_observer.configure_processes([
-        ProcessObservation(
-            provenance=resource_observer.provenance,
-            pid=pid,
-            ppid=os.getpid(),
-            create_time=1_700_000_000.0,
-            status="running",
-            name="memory-sentinel",
-            cmdline=("python", "-m", "tools.memory_sentinel"),
-            rss_bytes=1024,
-        )
-    ])
+    resource_observer.configure_processes(
+        [
+            ProcessObservation(
+                provenance=resource_observer.provenance,
+                pid=pid,
+                ppid=os.getpid(),
+                create_time=1_700_000_000.0,
+                status="running",
+                name="memory-sentinel",
+                cmdline=("python", "-m", "tools.memory_sentinel"),
+                rss_bytes=1024,
+            )
+        ]
+    )
 
 
 class TestSentinelRearm:
@@ -626,7 +724,9 @@ def test_boot_registers_supervised_sentinel(monkeypatch):
         aura_main, "_start_memory_sentinel_supervisor", lambda status: supervisors.append(status)
     )
     monkeypatch.setenv("AURA_MEMORY_SENTINEL", "1")
-    monkeypatch.setattr(resource, "getrlimit", lambda _kind: (resource.RLIM_INFINITY, resource.RLIM_INFINITY))
+    monkeypatch.setattr(
+        resource, "getrlimit", lambda _kind: (resource.RLIM_INFINITY, resource.RLIM_INFINITY)
+    )
     monkeypatch.setattr(resource, "setrlimit", lambda _kind, _limits: None)
     monkeypatch.setattr(aura_main.subprocess, "Popen", FakePopen)
 

@@ -147,18 +147,17 @@ def _fixture(tmp_path: Path, monkeypatch):
             "name": "resident-test",
             "timeout_seconds": 46800,
             "expected_resume_step": 1,
+            "partial_checkpoint_evidence_path": str(
+                tmp_path / "proof/partial-checkpoint-evidence.json"
+            ),
             "checkpoint_every_steps": 5,
             "log_every_steps": 5,
         },
         "sentinel": {
             "program": "tools/memory_sentinel.py",
-            "program_sha256": hashlib.sha256(
-                sentinel_program.read_bytes()
-            ).hexdigest(),
+            "program_sha256": hashlib.sha256(sentinel_program.read_bytes()).hexdigest(),
             "stage_guard_source": "core/runtime/resource_stage_guard.py",
-            "stage_guard_source_sha256": hashlib.sha256(
-                stage_guard.read_bytes()
-            ).hexdigest(),
+            "stage_guard_source_sha256": hashlib.sha256(stage_guard.read_bytes()).hexdigest(),
             "lethal_mb": 59392,
             "startup_lethal_mb": 73728,
             "interval_seconds": 0.5,
@@ -177,6 +176,76 @@ def _fixture(tmp_path: Path, monkeypatch):
     return protocol_path, amendment_path, wrapper, trainer
 
 
+def _write_partial_checkpoint(adapter: Path) -> None:
+    checkpoint = adapter / "checkpoints/step-00000001-test"
+    checkpoint.mkdir(parents=True)
+    adapter_tensor = checkpoint / "adapter.safetensors"
+    optimizer_tensor = checkpoint / "optimizer.safetensors"
+    adapter_tensor.write_bytes(b"adapter")
+    optimizer_tensor.write_bytes(b"optimizer")
+    pending_loss = 1.25
+    pending_cosine = 0.5
+    complete = {
+        "schema": launch.TRAINING_CHECKPOINT_SCHEMA,
+        "checkpoint_id": checkpoint.name,
+        "step": 1,
+        "epoch": 0,
+        "cursor": 1,
+        "order": [0],
+        "config_sha256": "a" * 64,
+        "dataset_sha256": "b" * 64,
+        "execution_spec_sha256": "c" * 64,
+        "elapsed_training_s": 1.0,
+        "invocation_count": 1,
+        "loss_trail": [],
+        "pending_window_losses": [pending_loss],
+        "pending_window_cosines": [pending_cosine],
+        "holdout_trail": [],
+        "holdout_eval_count": 0,
+        "sampler": "sha256_stateless_epoch_permutation.v1",
+        "stochastic_state": "none_all_keys_explicit",
+        "adapter": {
+            "path": adapter_tensor.name,
+            "sha256": hashlib.sha256(adapter_tensor.read_bytes()).hexdigest(),
+            "size_bytes": adapter_tensor.stat().st_size,
+        },
+        "optimizer": {
+            "path": optimizer_tensor.name,
+            "sha256": hashlib.sha256(optimizer_tensor.read_bytes()).hexdigest(),
+            "size_bytes": optimizer_tensor.stat().st_size,
+        },
+    }
+    complete_raw = _write_json(checkpoint / "complete.json", complete)
+    _write_json(
+        adapter / "latest.json",
+        {
+            "schema": "aura.recurrence_native_checkpoint_pointer.v1",
+            "checkpoint": f"checkpoints/{checkpoint.name}",
+            "complete_sha256": hashlib.sha256(complete_raw).hexdigest(),
+        },
+    )
+    _write_json(
+        adapter / "receipt.json",
+        {
+            "complete": False,
+            "halt_reason": "wall_clock",
+            "steps": 1,
+            "objective_schema": "aura.recurrence_native_objective.v3",
+            "final_checkpoint": checkpoint.name,
+            "loss_trail": [
+                {
+                    "step": 1,
+                    "mean_loss": pending_loss,
+                    "window_steps": 1,
+                    "partial_window": True,
+                    "pairwise_cos_mean": pending_cosine,
+                }
+            ],
+            "holdout_trail": [{"step": 1, "mean_loss": 2.0, "examples": 8, "depth": 4}],
+        },
+    )
+
+
 def test_launch_command_is_enveloped_and_preserves_v3_contract(tmp_path, monkeypatch):
     protocol_path, amendment_path, wrapper, trainer = _fixture(tmp_path, monkeypatch)
     monkeypatch.setattr(launch, "_validate_no_competing_model_process", lambda _model: None)
@@ -193,6 +262,54 @@ def test_launch_command_is_enveloped_and_preserves_v3_contract(tmp_path, monkeyp
     assert target[-1] == "--resume"
     assert launcher[0] == str(tmp_path / ".venv/bin/python")
     assert launcher[-len(target) :] == target
+
+
+def test_resume_captures_exact_partial_checkpoint_before_launch(
+    tmp_path,
+    monkeypatch,
+):
+    protocol_path, amendment_path, _wrapper, _trainer = _fixture(tmp_path, monkeypatch)
+    protocol = json.loads(protocol_path.read_text())
+    adapter = Path(protocol["training"]["output_dir"])
+    _write_partial_checkpoint(adapter)
+
+    evidence = launch.capture_partial_checkpoint_evidence(
+        protocol_path,
+        amendment_path,
+    )
+
+    evidence_path = tmp_path / "proof/partial-checkpoint-evidence.json"
+    assert evidence_path.is_file()
+    assert evidence["checkpoint_complete"]["schema"] == (launch.TRAINING_CHECKPOINT_SCHEMA)
+    assert evidence["checkpoint_complete"]["pending_window_losses"] == [1.25]
+    assert evidence["checkpoint_complete"]["holdout_eval_count"] == 0
+    assert evidence["training_receipt"]["loss_trail"][-1]["partial_window"] is True
+    assert (
+        launch.capture_partial_checkpoint_evidence(
+            protocol_path,
+            amendment_path,
+        )
+        == evidence
+    )
+
+
+def test_resume_rejects_partial_receipt_that_mutated_durable_loss_window(
+    tmp_path,
+    monkeypatch,
+):
+    protocol_path, amendment_path, _wrapper, _trainer = _fixture(tmp_path, monkeypatch)
+    protocol = json.loads(protocol_path.read_text())
+    adapter = Path(protocol["training"]["output_dir"])
+    _write_partial_checkpoint(adapter)
+    receipt = json.loads((adapter / "receipt.json").read_text())
+    receipt["loss_trail"][0]["mean_loss"] = 9.0
+    _write_json(adapter / "receipt.json", receipt)
+
+    with pytest.raises(
+        launch.ResidentRecurrenceLaunchError,
+        match="partial_checkpoint_receipt_projection_mismatch",
+    ):
+        launch.capture_partial_checkpoint_evidence(protocol_path, amendment_path)
 
 
 def test_partial_phase_uses_same_envelope_without_resume(tmp_path, monkeypatch):
@@ -237,9 +354,7 @@ def test_sentinel_launcher_is_phase_bound(tmp_path, monkeypatch):
     assert command[command.index("--pid") + 1] == "4242"
     assert command[command.index("--lethal-mb") + 1] == "59392.0"
     assert command[command.index("--startup-lethal-mb") + 1] == "73728.0"
-    assert command[command.index("--steady-marker") + 1].endswith(
-        "resume-stage.json"
-    )
+    assert command[command.index("--steady-marker") + 1].endswith("resume-stage.json")
     assert command[command.index("--interval") + 1] == "0.5"
     assert command[command.index("--immediate-kill-overshoot") + 1] == "1.05"
     assert command[command.index("--ring") + 1].endswith("resume-ring.jsonl")
@@ -248,9 +363,7 @@ def test_sentinel_launcher_is_phase_bound(tmp_path, monkeypatch):
 
 
 def test_target_waits_for_the_same_phase_resource_marker(tmp_path, monkeypatch):
-    protocol_path, amendment_path, _wrapper, _trainer = _fixture(
-        tmp_path, monkeypatch
-    )
+    protocol_path, amendment_path, _wrapper, _trainer = _fixture(tmp_path, monkeypatch)
 
     monkeypatch.setattr(
         launch,
@@ -259,9 +372,7 @@ def test_target_waits_for_the_same_phase_resource_marker(tmp_path, monkeypatch):
     )
     _launcher, target = launch.build_launch_command(protocol_path, amendment_path)
 
-    assert target[target.index("--resource-stage-path") + 1].endswith(
-        "resume-stage.json"
-    )
+    assert target[target.index("--resource-stage-path") + 1].endswith("resume-stage.json")
     assert target[target.index("--resource-startup-lethal-mb") + 1] == "73728.0"
     assert target[target.index("--resource-steady-lethal-mb") + 1] == "59392.0"
 

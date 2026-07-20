@@ -47,6 +47,8 @@ SCHEMA = "aura.resident_v3_training_admission.v1"
 PROTOCOL_SCHEMA = "aura.recurrence_native_resident_protocol.v2"
 AMENDMENT_SCHEMA = "aura.recurrence_native_resident_protocol_amendment.v1"
 RESOURCE_SCHEMA = "aura.recurrence_training_resource_envelope.v1"
+PARTIAL_CHECKPOINT_EVIDENCE_SCHEMA = "aura.recurrence_partial_checkpoint_evidence.v1"
+TRAINING_CHECKPOINT_SCHEMA = "aura.recurrence_native_checkpoint.v3"
 _MAX_JSON_BYTES = 256 * 1024 * 1024
 _MAX_ARTIFACT_BYTES = 1 << 40
 _GIB = 1024**3
@@ -121,6 +123,248 @@ def _file_binding(path: Path, *, role: str) -> dict[str, Any]:
 
 def _binding_matches(raw: bytes, binding: Mapping[str, Any]) -> bool:
     return binding.get("sha256") == _sha256(raw) and binding.get("size_bytes") == len(raw)
+
+
+def _project_loss_trail(
+    committed: Any,
+    pending_losses: Any,
+    pending_cosines: Any,
+    *,
+    step: int,
+) -> list[dict[str, Any]]:
+    if (
+        not isinstance(committed, list)
+        or any(not isinstance(entry, dict) for entry in committed)
+        or not isinstance(pending_losses, list)
+        or any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            for value in pending_losses
+        )
+        or not isinstance(pending_cosines, list)
+        or any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            for value in pending_cosines
+        )
+    ):
+        _fail("training_checkpoint_exact_evidence_invalid")
+    projected = [dict(entry) for entry in committed]
+    if pending_losses:
+        terminal: dict[str, Any] = {
+            "step": step,
+            "mean_loss": round(sum(pending_losses) / len(pending_losses), 6),
+            "window_steps": len(pending_losses),
+            "partial_window": True,
+        }
+        if pending_cosines:
+            terminal["pairwise_cos_mean"] = round(sum(pending_cosines) / len(pending_cosines), 6)
+        projected.append(terminal)
+    return projected
+
+
+def _checkpoint_complete(
+    adapter_dir: Path,
+    checkpoint_relative: Any,
+    *,
+    expected_binding: Mapping[str, Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    if (
+        not isinstance(checkpoint_relative, str)
+        or not checkpoint_relative.startswith("checkpoints/")
+        or Path(checkpoint_relative).parent != Path("checkpoints")
+    ):
+        _fail("training_checkpoint_path_invalid")
+    try:
+        checkpoint_dir = (adapter_dir / checkpoint_relative).resolve(strict=True)
+        checkpoint_dir.relative_to((adapter_dir / "checkpoints").resolve(strict=True))
+    except (OSError, ValueError) as exc:
+        raise ResidentV3TrainingAdmissionError("training_checkpoint_path_invalid") from exc
+    complete_path = checkpoint_dir / "complete.json"
+    complete_raw, complete = _read_json(
+        complete_path,
+        role="training_checkpoint_complete",
+    )
+    binding = _file_binding(complete_path, role="training_checkpoint_complete")
+    if expected_binding is not None and (
+        expected_binding.get("sha256") != binding["sha256"]
+        or expected_binding.get("size_bytes") != binding["size_bytes"]
+        or expected_binding.get("path") != binding["path"]
+    ):
+        _fail("partial_checkpoint_completion_binding_mismatch")
+    if (
+        complete.get("schema") != TRAINING_CHECKPOINT_SCHEMA
+        or complete.get("checkpoint_id") != checkpoint_dir.name
+    ):
+        _fail("training_checkpoint_schema_invalid")
+    for role in ("adapter", "optimizer"):
+        declared = complete.get(role)
+        if not isinstance(declared, Mapping) or set(declared) != {
+            "path",
+            "sha256",
+            "size_bytes",
+        }:
+            _fail(f"training_checkpoint_{role}_binding_invalid")
+        artifact = checkpoint_dir / str(declared["path"])
+        observed = _file_binding(artifact, role=f"training_checkpoint_{role}")
+        if (
+            artifact.parent != checkpoint_dir
+            or declared.get("sha256") != observed["sha256"]
+            or declared.get("size_bytes") != observed["size_bytes"]
+        ):
+            _fail(f"training_checkpoint_{role}_binding_mismatch")
+    return complete, binding
+
+
+def _verify_partial_checkpoint_evidence(
+    *,
+    evidence_path: Path,
+    adapter_dir: Path,
+    protocol_raw: bytes,
+    amendment_raw: bytes,
+    trainer_sha256: str,
+    expected_step: int,
+    partial_finished_at: float,
+    resume_started_at: float,
+) -> dict[str, Any]:
+    _raw, evidence = _read_json(
+        evidence_path,
+        role="partial_checkpoint_evidence",
+    )
+    claimed = evidence.get("evidence_sha256")
+    material = dict(evidence)
+    material.pop("evidence_sha256", None)
+    captured_at = evidence.get("captured_at")
+    complete, binding = _checkpoint_complete(
+        adapter_dir,
+        evidence.get("checkpoint"),
+        expected_binding=(
+            evidence.get("checkpoint_complete_binding")
+            if isinstance(evidence.get("checkpoint_complete_binding"), Mapping)
+            else None
+        ),
+    )
+    receipt = evidence.get("training_receipt")
+    if (
+        evidence.get("schema") != PARTIAL_CHECKPOINT_EVIDENCE_SCHEMA
+        or claimed != _sha256(canonical_json_bytes(material))
+        or evidence.get("protocol_sha256") != _sha256(protocol_raw)
+        or evidence.get("amendment_sha256") != _sha256(amendment_raw)
+        or evidence.get("trainer_sha256") != trainer_sha256
+        or not isinstance(captured_at, (int, float))
+        or isinstance(captured_at, bool)
+        or not partial_finished_at <= float(captured_at) <= resume_started_at
+        or evidence.get("checkpoint_complete") != complete
+        or not isinstance(receipt, Mapping)
+        or receipt.get("complete") is not False
+        or receipt.get("halt_reason") != "wall_clock"
+        or receipt.get("steps") != expected_step
+        or complete.get("step") != expected_step
+        or complete.get("loss_trail") != []
+        or len(complete.get("pending_window_losses") or []) != expected_step
+        or complete.get("holdout_trail") != []
+        or complete.get("holdout_eval_count") != 0
+        or receipt.get("loss_trail")
+        != _project_loss_trail(
+            complete.get("loss_trail"),
+            complete.get("pending_window_losses"),
+            complete.get("pending_window_cosines"),
+            step=expected_step,
+        )
+        or not isinstance(receipt.get("holdout_trail"), list)
+        or len(receipt["holdout_trail"]) != 1
+        or receipt["holdout_trail"][0].get("step") != expected_step
+    ):
+        _fail("partial_checkpoint_evidence_invalid")
+    checkpoint_dir = (adapter_dir / str(evidence["checkpoint"])).resolve(strict=True)
+    tensor_evidence = evidence.get("checkpoint_tensors")
+    if not isinstance(tensor_evidence, Mapping):
+        _fail("partial_checkpoint_tensor_evidence_invalid")
+    for role in ("adapter", "optimizer"):
+        declared = complete[role]
+        observed = _file_binding(
+            checkpoint_dir / str(declared["path"]),
+            role=f"partial_checkpoint_{role}",
+        )
+        if tensor_evidence.get(role) != observed:
+            _fail("partial_checkpoint_tensor_evidence_mismatch")
+    return {
+        "evidence_sha256": claimed,
+        "checkpoint": evidence["checkpoint"],
+        "checkpoint_complete_sha256": binding["sha256"],
+        "pending_loss_count": len(complete["pending_window_losses"]),
+        "durable_holdout_eval_count": complete["holdout_eval_count"],
+        "captured_at": captured_at,
+    }
+
+
+def _verify_terminal_checkpoint_state(
+    adapter_dir: Path,
+    receipt: Mapping[str, Any],
+    *,
+    log_every: int,
+) -> dict[str, Any]:
+    latest_raw, latest = _read_json(
+        adapter_dir / "latest.json",
+        role="training_latest",
+    )
+    complete, binding = _checkpoint_complete(
+        adapter_dir,
+        latest.get("checkpoint"),
+    )
+    steps = receipt.get("steps")
+    if type(steps) is not int or steps < 1:
+        _fail("training_checkpoint_step_invalid")
+    pending_losses = complete.get("pending_window_losses")
+    holdout_trail = complete.get("holdout_trail")
+    holdout_count = complete.get("holdout_eval_count")
+    complete_run = receipt.get("complete") is True
+    if (
+        latest.get("schema") != "aura.recurrence_native_checkpoint_pointer.v1"
+        or latest.get("complete_sha256") != binding["sha256"]
+        or receipt.get("final_checkpoint") != complete.get("checkpoint_id")
+        or complete.get("step") != steps
+        or type(holdout_count) is not int
+        or holdout_count < 0
+        or not isinstance(holdout_trail, list)
+        or holdout_count != len(holdout_trail)
+        or (complete_run and pending_losses != [])
+        or (
+            not complete_run
+            and isinstance(pending_losses, list)
+            and len(pending_losses) != steps % log_every
+        )
+        or receipt.get("loss_trail")
+        != _project_loss_trail(
+            complete.get("loss_trail"),
+            pending_losses,
+            complete.get("pending_window_cosines"),
+            step=steps,
+        )
+    ):
+        _fail("terminal_checkpoint_exact_evidence_mismatch")
+    receipt_holdout = receipt.get("holdout_trail")
+    if not isinstance(receipt_holdout, list):
+        _fail("terminal_checkpoint_holdout_evidence_invalid")
+    if complete_run:
+        if receipt_holdout != holdout_trail:
+            _fail("terminal_checkpoint_holdout_evidence_mismatch")
+    elif receipt_holdout != holdout_trail:
+        if (
+            len(receipt_holdout) != len(holdout_trail) + 1
+            or receipt_holdout[:-1] != holdout_trail
+            or receipt_holdout[-1].get("step") != steps
+        ):
+            _fail("terminal_checkpoint_holdout_evidence_mismatch")
+    return {
+        "checkpoint": latest["checkpoint"],
+        "checkpoint_complete_sha256": binding["sha256"],
+        "latest_sha256": _sha256(latest_raw),
+        "pending_loss_count": len(pending_losses or []),
+        "holdout_eval_count": holdout_count,
+    }
 
 
 def _contained_file(root: Path, relative: Any, *, role: str) -> Path:
@@ -310,20 +554,15 @@ def _verify_resume_command(
         memory_limit = float(wrapper_options.get("--memory-limit-gb", "nan"))
         cache_limit = float(wrapper_options.get("--cache-limit-gb", "nan"))
         wired_limit = float(wrapper_options.get("--wired-limit-gb", "nan"))
-        startup_lethal_mb = float(
-            trainer_options.get("--resource-startup-lethal-mb", "nan")
-        )
-        steady_lethal_mb = float(
-            trainer_options.get("--resource-steady-lethal-mb", "nan")
-        )
+        startup_lethal_mb = float(trainer_options.get("--resource-startup-lethal-mb", "nan"))
+        steady_lethal_mb = float(trainer_options.get("--resource-steady-lethal-mb", "nan"))
         max_steps = int(trainer_options.get("--max-steps", "-1"))
         checkpoint_every = int(trainer_options.get("--checkpoint-every", "-1"))
     except (TypeError, ValueError, OverflowError) as exc:
         raise ResidentV3TrainingAdmissionError("resume_command_contract_mismatch") from exc
     if (
         command[1] != str(REPO_ROOT / envelope.get("wrapper", ""))
-        or wrapper_options.get("--trainer")
-        != str(REPO_ROOT / envelope.get("trainer", ""))
+        or wrapper_options.get("--trainer") != str(REPO_ROOT / envelope.get("trainer", ""))
         or memory_limit != 40.0
         or cache_limit != 2.0
         or wired_limit != 48.0
@@ -332,8 +571,7 @@ def _verify_resume_command(
         or trainer_options.get("--out-dir") != training.get("output_dir")
         or trainer_options.get("--adapter-id") != training.get("adapter_id")
         or trainer_options.get("--objective") != "v3"
-        or trainer_options.get("--resource-stage-path")
-        != sentinel.get(f"{phase}_stage_path")
+        or trainer_options.get("--resource-stage-path") != sentinel.get(f"{phase}_stage_path")
         or startup_lethal_mb != 73728.0
         or steady_lethal_mb != 59392.0
         or max_steps != training.get("max_steps")
@@ -439,7 +677,9 @@ def evaluate_training_state(
         "holdout_minimum_mean_loss": minimum,
         "holdout_final_mean_loss": final,
         "holdout_limit_ratio": holdout_ratio_limit,
-        "holdout_observed_ratio": final / minimum if minimum > 0.0 else (1.0 if final == 0.0 else math.inf),
+        "holdout_observed_ratio": final / minimum
+        if minimum > 0.0
+        else (1.0 if final == 0.0 else math.inf),
     }
 
 
@@ -462,14 +702,10 @@ def _verify_footprint(
         lethal_mb = float(options.get("--lethal-mb", "nan"))
         startup_lethal_mb = float(options.get("--startup-lethal-mb", "nan"))
         interval_s = float(options.get("--interval", "nan"))
-        overshoot_factor = float(
-            options.get("--immediate-kill-overshoot", "nan")
-        )
+        overshoot_factor = float(options.get("--immediate-kill-overshoot", "nan"))
         ring_window_s = float(options.get("--ring-window-seconds", "nan"))
     except (TypeError, ValueError, OverflowError) as exc:
-        raise ResidentV3TrainingAdmissionError(
-            "memory_sentinel_command_mismatch"
-        ) from exc
+        raise ResidentV3TrainingAdmissionError("memory_sentinel_command_mismatch") from exc
     if (
         command[1] != str(REPO_ROOT / "tools/memory_sentinel.py")
         or int(options.get("--pid", "-1")) != trainer_pid
@@ -515,9 +751,7 @@ def _verify_footprint(
         marker_observed = sample.get("marker_observed")
         lease_sequence = sample.get("lease_sequence")
         lease_workload = sample.get("lease_workload")
-        expected_lethal = (
-            lethal_mb if stage == "steady" else startup_lethal_mb
-        )
+        expected_lethal = lethal_mb if stage == "steady" else startup_lethal_mb
         if (
             isinstance(managed, bool)
             or not isinstance(managed, (int, float))
@@ -568,13 +802,10 @@ def _verify_footprint(
             steady_lethal_mb=lethal_mb,
         )
     except ResourceStageGuardError as exc:
-        raise ResidentV3TrainingAdmissionError(
-            "memory_guard_handshake_invalid"
-        ) from exc
-    if (
-        marker.get("trainer_sha256") != expected_trainer_sha256
-        or acknowledgement.get("sentinel_pid") != receipt.get("child_pid")
-    ):
+        raise ResidentV3TrainingAdmissionError("memory_guard_handshake_invalid") from exc
+    if marker.get("trainer_sha256") != expected_trainer_sha256 or acknowledgement.get(
+        "sentinel_pid"
+    ) != receipt.get("child_pid"):
         _fail("memory_guard_handshake_binding_mismatch")
     sequences = sorted(lease_workloads)
     if not sequences or sequences != list(range(1, sequences[-1] + 1)):
@@ -622,9 +853,7 @@ def _verify_footprint(
                 active_lethal_mb=lethal_mb,
             )
         except ResourceStageGuardError as exc:
-            raise ResidentV3TrainingAdmissionError(
-                "memory_compute_lease_invalid"
-            ) from exc
+            raise ResidentV3TrainingAdmissionError("memory_compute_lease_invalid") from exc
         if (
             lease_workloads.get(sequence) != workload
             or acquire_ack.get("sentinel_pid") != receipt.get("child_pid")
@@ -646,12 +875,8 @@ def _verify_footprint(
         _fail("memory_compute_lease_incomplete")
     return {
         "sample_count": len(samples),
-        "stage_sample_counts": {
-            stage: len(values) for stage, values in values_by_stage.items()
-        },
-        "stage_peak_managed_mb": {
-            stage: max(values) for stage, values in values_by_stage.items()
-        },
+        "stage_sample_counts": {stage: len(values) for stage, values in values_by_stage.items()},
+        "stage_peak_managed_mb": {stage: max(values) for stage, values in values_by_stage.items()},
         "compute_lease_count": len(sequences),
         "compute_lease_workloads": workload_counts,
         "compute_lease_chain_sha256": lease_chain.hexdigest(),
@@ -830,24 +1055,46 @@ def verify(args: argparse.Namespace) -> dict[str, Any]:
         _fail("complete_identity_scope_mismatch")
     if resume_receipt.get("returncode") != (0 if state["complete"] else 75):
         _fail("resume_result_training_state_mismatch")
+    try:
+        partial_finished_at = float(partial_receipt["finished_at"])
+        resume_started_at = float(resume_receipt["started_at"])
+    except (KeyError, TypeError, ValueError, OverflowError) as exc:
+        raise ResidentV3TrainingAdmissionError("detached_training_chronology_invalid") from exc
+    if (
+        not math.isfinite(partial_finished_at)
+        or not math.isfinite(resume_started_at)
+        or partial_finished_at > resume_started_at
+    ):
+        _fail("detached_training_chronology_invalid")
+    exact_partial_evidence = _verify_partial_checkpoint_evidence(
+        evidence_path=Path(amendment["resume"]["partial_checkpoint_evidence_path"]),
+        adapter_dir=adapter_dir,
+        protocol_raw=protocol_raw,
+        amendment_raw=amendment_raw,
+        trainer_sha256=str(amendment["resource_envelope"]["trainer_sha256"]),
+        expected_step=int(amendment["resume"]["expected_resume_step"]),
+        partial_finished_at=partial_finished_at,
+        resume_started_at=resume_started_at,
+    )
+    terminal_checkpoint_evidence = _verify_terminal_checkpoint_state(
+        adapter_dir,
+        training_receipt,
+        log_every=int(amendment["resume"]["log_every_steps"]),
+    )
 
     partial_footprint = _verify_footprint(
         args.partial_footprint_ring,
         args.partial_sentinel_run_dir,
         trainer_pid=int(partial_receipt["child_pid"]),
         stage_path=Path(amendment["sentinel"]["partial_stage_path"]),
-        expected_trainer_sha256=str(
-            amendment["resource_envelope"]["trainer_sha256"]
-        ),
+        expected_trainer_sha256=str(amendment["resource_envelope"]["trainer_sha256"]),
     )
     resume_footprint = _verify_footprint(
         args.resume_footprint_ring,
         args.resume_sentinel_run_dir,
         trainer_pid=int(resume_receipt["child_pid"]),
         stage_path=Path(amendment["sentinel"]["resume_stage_path"]),
-        expected_trainer_sha256=str(
-            amendment["resource_envelope"]["trainer_sha256"]
-        ),
+        expected_trainer_sha256=str(amendment["resource_envelope"]["trainer_sha256"]),
     )
     payload = {
         "schema": SCHEMA,
@@ -861,6 +1108,7 @@ def verify(args: argparse.Namespace) -> dict[str, Any]:
             "receipt_sha256": partial_receipt.get("receipt_sha256"),
             "returncode": partial_receipt.get("returncode"),
             "footprint": partial_footprint,
+            "exact_checkpoint": exact_partial_evidence,
         },
         "resume": {
             **command_evidence,
@@ -870,6 +1118,7 @@ def verify(args: argparse.Namespace) -> dict[str, Any]:
         "resource_envelope": resource_evidence,
         "footprint": resume_footprint,
         "training_state": state,
+        "terminal_checkpoint": terminal_checkpoint_evidence,
         "identity_receipt": identity,
         "claim_flags": {
             "training_admitted": True,

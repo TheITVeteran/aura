@@ -1,0 +1,59 @@
+{
+  "schema": "aura.recurrence_exact_resume_failure.v1",
+  "observed_at": "2026-07-20T01:10:09-07:00",
+  "claim_scope": "resident_v3_exact_resume_evidence_failure_only",
+  "partial_run": {
+    "disposition": "resource_mechanics_success_training_inadmissible_for_cp189_resume",
+    "steps": 1,
+    "detached_receipt": {
+      "path": "../resident_32b_v3_cp188/detached-partial/detached_receipt.json",
+      "sha256": "8a5d22d6c42f5494f33bf376367cdd5eee7659c375a8a8a6f9ba834c991ef81f",
+      "size_bytes": 4744
+    },
+    "sentinel_receipt": {
+      "path": "../resident_32b_v3_cp188/sentinel-partial/detached_receipt.json",
+      "sha256": "fc3b3ccf6bb93134382afc400a5310e4c9c7b7c1d2823b44110222a7bd7413de",
+      "size_bytes": 2583
+    },
+    "training_receipt": {
+      "path": "../resident_32b_v3_cp188/adapter/receipt.json",
+      "sha256": "07a2f629f9aa95edef36d4a38d85d55fd42282241dd59cd826a6a348a2c48f6f",
+      "size_bytes": 4898
+    },
+    "resource_result": "startup, steady, training compute, drain, holdout compute, drain, and rearm completed below active ceilings without tombstone"
+  },
+  "stopped_resume": {
+    "disposition": "operator_stopped_before_additional_optimizer_step_after_prelaunch_semantic_audit",
+    "detached_returncode": -15,
+    "timed_out": false,
+    "restart_count": 0,
+    "containment_verified": true,
+    "process_group_empty": true,
+    "lineage_empty": true,
+    "detached_receipt": {
+      "path": "../resident_32b_v3_cp188/detached-resume/detached_receipt.json",
+      "sha256": "f4ba27fbd95e36e46d11a1caf7968a0bcdd206d507b51ab7dcb7b356608d406d",
+      "size_bytes": 4764
+    },
+    "sentinel_receipt": {
+      "path": "../resident_32b_v3_cp188/sentinel-resume/detached_receipt.json",
+      "sha256": "cc93b91dd3abbabdd04e661f2240639abac69ad99ce61bd0fa63ccf3695d2e11",
+      "size_bytes": 2577
+    }
+  },
+  "diagnosis": {
+    "defect": "The v2 checkpoint restored weights, optimizer, cursor, and committed loss entries but omitted pending loss/cosine windows, durable holdout history, and holdout rotation count. Shutdown then committed partial telemetry into resumable state. A resumed run therefore could not produce the same evidence schedule as an uninterrupted run.",
+    "repair": "Checkpoint schema v3 durably binds pending loss and cosine windows, committed holdout history, and holdout rotation count. Partial shutdown projects terminal telemetry into its receipt without mutating checkpoint state. A create-once pre-resume attestation preserves and independently replays the exact partial generation after resume.",
+    "disposition": "cp188_resume_invalidated_before_compute_no_training_gain_or_frontier_credit"
+  },
+  "claim_flags": {
+    "training_complete": false,
+    "training_admitted": false,
+    "adapter_freeze_eligible": false,
+    "mechanics_proven": false,
+    "reasoning_gain": false,
+    "same_checkpoint_interaction": false,
+    "frontier_level": false,
+    "frontier_plus": false
+  }
+}

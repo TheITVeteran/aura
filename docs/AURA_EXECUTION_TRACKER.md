@@ -16,9 +16,15 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **Checkpoint 175 is the current
-  reviewed source candidate in the `main` worktree; checkpoints through CP174
-  are pushed. The corrected resident-32B path completed clean one-, two-, and
+- Current bounded implementation milestone: **Checkpoint 189 is the current
+  reviewed source candidate in the `main` worktree; checkpoints through CP188
+  are pushed. CP188 proved tombstone-free per-graph resource containment on a
+  resident-32B partial, but its resume was intentionally stopped before a
+  second optimizer step when review found that checkpoint v2 omitted pending
+  telemetry windows and holdout rotation. CP189 migrates to exact-evidence
+  checkpoint v3, preserves partial shutdown telemetry only as a receipt
+  projection, and adds a create-once pre-resume attestation independently
+  replayed by final admission. The corrected resident-32B path completed clean one-, two-, and
   five-step calibrations with finite durable checkpoints, exact source identity,
   no memory ratchet, and a 48-GiB MLX wired-residency limit. The full detached
   576-step run completed from exact pushed CP147 source at step 576/576 with
@@ -248,7 +254,7 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   release, and causal-proof obligations remain open unless their rows
   explicitly close.
 - Overall completion percentage: **27% evidence-weighted planning estimate at
-  Checkpoint 175**. The exact
+  Checkpoint 189**. The exact
   Checkpoint 80 app earns bounded live credit for readiness, health, base boot,
   and one-attempt chat latency, but not output quality, sustained load, GUI
   frame SLO, portability, semantic review, release, or soak. The newly
@@ -270,7 +276,7 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   release, or soak credit yet and therefore does not move the rounded
   percentage.
 - Total checkpoint forecast: **approximately 292-399 total checkpoints for the
-  expanded program, with 175 checkpoints and approximately 117-224 remaining before
+  expanded program, with 189 checkpoints and approximately 103-210 remaining before
   final soak/release closure**. The Recursive Latent Cortex / Anima Rationis
   requirement adds **40-56 total checkpoints** for independent foundation
   review; seven-mechanism hardening; exact compute and lifecycle accounting;
@@ -21644,3 +21650,57 @@ installed-app, release, or soak credit is awarded. Next: publish CP188, execute
 the one-step forced partial, require a tombstone-free compute/drain/rearm cycle
 and durable checkpoint, then exact-resume under the same per-graph protocol.
 Final long soaks remain deferred.
+
+## Checkpoint 2026-07-20-189: Exact-Evidence Resident Resume Contract
+
+CP188's forced partial successfully completed one resident-32B optimizer step,
+one held-out evaluation, and both externally enforced compute/drain/rearm
+cycles below their active ceilings without a sentinel tombstone. Its resume was
+then intentionally stopped before another optimizer step after semantic review
+found a distinct scientific-integrity defect: checkpoint v2 restored model,
+optimizer, cursor, and committed losses, but omitted pending loss/cosine
+windows, durable holdout history, and holdout rotation. Shutdown also promoted
+partial telemetry into resumable state. The resulting run could continue the
+weights exactly while changing the evidence schedule, so it is not admissible.
+
+- Checkpoint schema v3 now requires all five exact-evidence fields on every
+  save and load. Missing, malformed, non-finite, or legacy state fails before
+  tensor acceptance. Old CP188 checkpoint bytes are deliberately ineligible
+  for CP189 resume.
+- Partial shutdown no longer mutates durable loss or holdout state. It projects
+  pending loss/cosine statistics and one terminal held-out observation only
+  into the partial receipt. A complete terminal run commits its final window;
+  a resume therefore reaches each producer log boundary and holdout window in
+  the same order as uninterrupted execution.
+- Before resume launch, the source-bound launcher creates one immutable
+  attestation over the partial training receipt, latest pointer, v3 completion
+  record, pending windows, holdout counter, and exact adapter/optimizer bytes.
+  Retry is idempotent only when every stable field still matches. The
+  independent admission verifier later reopens those bytes, checks chronology,
+  reconstructs the receipt projection, and separately validates the terminal
+  checkpoint's committed/pending state.
+- Every malformed startup, acquire, release, or release-ack handshake now kills
+  the target and writes a distinct sentinel tombstone. Previously only the
+  initial steady-stage failure path guaranteed a tombstone.
+- `evidence_failure_cp189.json` binds the successful CP188 partial and the
+  operator-stopped resume with zero training-completion or capability credit.
+  The fresh CP189 protocol preserves model, corpus, deterministic order, v3
+  objective, optimizer, recurrence topology, holdout guard, resource ceilings,
+  and pilot/confirmatory decision rules while using fresh adapter and runtime
+  paths.
+
+Validation is green: 101 focused checkpoint, trainer, promotion, launcher,
+admission, sentinel, resource-stage, and exact-gradient tests pass; focused
+Ruff, bytecode compilation, JSON validation, diff integrity, and the actual
+resident CP189 partial dry-run preflight pass. CP189 has not launched at this
+source checkpoint.
+
+Evidence-weighted completion remains 27%. This is checkpoint 189 of the
+faithful 292-399 total-checkpoint forecast, leaving approximately 103-210
+checkpoints. No training-completion, mechanics, reasoning-gain, frontier,
+external-custody, installed-app, release, or soak credit is awarded. Next:
+publish CP189, execute and attest the forced partial, launch exact resume, and
+stage the detached admission/freeze/mechanics/pilot continuation. Fusion or
+runtime activation remains conditional on positive causal and non-regression
+evidence; it must not contaminate the preregistered baseline arms. Final long
+soaks remain deferred.

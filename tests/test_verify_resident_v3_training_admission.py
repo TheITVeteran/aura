@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -11,7 +13,101 @@ from core.runtime.resource_stage_guard import (
     publish_compute_lease_request,
     publish_ready_marker,
 )
+from tools import launch_resident_recurrence_training as launch
 from tools import verify_resident_v3_training_admission as admission
+
+
+def _write_json(path: Path, value: object) -> bytes:
+    raw = (json.dumps(value, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(raw)
+    return raw
+
+
+def _checkpoint_fixture(
+    adapter: Path,
+    *,
+    complete_run: bool,
+) -> tuple[dict, dict]:
+    step = 5 if complete_run else 1
+    checkpoint = adapter / f"checkpoints/step-{step:08d}-test"
+    checkpoint.mkdir(parents=True)
+    adapter_tensor = checkpoint / "adapter.safetensors"
+    optimizer_tensor = checkpoint / "optimizer.safetensors"
+    adapter_tensor.write_bytes(b"adapter")
+    optimizer_tensor.write_bytes(b"optimizer")
+    committed_loss = [{"step": 5, "mean_loss": 1.0}] if complete_run else []
+    pending_losses = [] if complete_run else [1.25]
+    pending_cosines = [] if complete_run else [0.5]
+    durable_holdout = (
+        [{"step": 5, "mean_loss": 1.5, "examples": 8, "depth": 4}] if complete_run else []
+    )
+    checkpoint_complete = {
+        "schema": admission.TRAINING_CHECKPOINT_SCHEMA,
+        "checkpoint_id": checkpoint.name,
+        "step": step,
+        "epoch": 0,
+        "cursor": step,
+        "order": list(range(5)),
+        "config_sha256": "a" * 64,
+        "dataset_sha256": "b" * 64,
+        "execution_spec_sha256": "c" * 64,
+        "elapsed_training_s": 10.0,
+        "invocation_count": 1 if not complete_run else 2,
+        "loss_trail": committed_loss,
+        "pending_window_losses": pending_losses,
+        "pending_window_cosines": pending_cosines,
+        "holdout_trail": durable_holdout,
+        "holdout_eval_count": len(durable_holdout),
+        "sampler": "sha256_stateless_epoch_permutation.v1",
+        "stochastic_state": "none_all_keys_explicit",
+        "adapter": {
+            "path": adapter_tensor.name,
+            "sha256": hashlib.sha256(adapter_tensor.read_bytes()).hexdigest(),
+            "size_bytes": adapter_tensor.stat().st_size,
+        },
+        "optimizer": {
+            "path": optimizer_tensor.name,
+            "sha256": hashlib.sha256(optimizer_tensor.read_bytes()).hexdigest(),
+            "size_bytes": optimizer_tensor.stat().st_size,
+        },
+    }
+    complete_raw = _write_json(checkpoint / "complete.json", checkpoint_complete)
+    _write_json(
+        adapter / "latest.json",
+        {
+            "schema": "aura.recurrence_native_checkpoint_pointer.v1",
+            "checkpoint": f"checkpoints/{checkpoint.name}",
+            "complete_sha256": hashlib.sha256(complete_raw).hexdigest(),
+        },
+    )
+    receipt = {
+        "complete": complete_run,
+        "halt_reason": "max_steps" if complete_run else "wall_clock",
+        "steps": step,
+        "final_checkpoint": checkpoint.name,
+        "objective_schema": "aura.recurrence_native_objective.v3",
+        "loss_trail": (
+            committed_loss
+            if complete_run
+            else [
+                {
+                    "step": 1,
+                    "mean_loss": 1.25,
+                    "window_steps": 1,
+                    "partial_window": True,
+                    "pairwise_cos_mean": 0.5,
+                }
+            ]
+        ),
+        "holdout_trail": (
+            durable_holdout
+            if complete_run
+            else [{"step": 1, "mean_loss": 2.0, "examples": 8, "depth": 4}]
+        ),
+    }
+    _write_json(adapter / "receipt.json", receipt)
+    return checkpoint_complete, receipt
 
 
 def _receipt(*, complete: bool, steps: int, halt_reason: str):
@@ -152,7 +248,11 @@ def _resume_contract(tmp_path: Path):
         "59392",
         "--resume",
     ]
-    return protocol, amendment, {"command": command, "plan_sha256": "a" * 64, "command_sha256": "b" * 64}
+    return (
+        protocol,
+        amendment,
+        {"command": command, "plan_sha256": "a" * 64, "command_sha256": "b" * 64},
+    )
 
 
 def test_resume_command_requires_envelope_and_exact_limits(tmp_path, monkeypatch):
@@ -366,3 +466,81 @@ def test_admission_output_is_create_once(tmp_path):
         match="admission_output_exists_different",
     ):
         admission._write_once(output, {"schema": admission.SCHEMA, "decision": "reject"})
+
+
+def test_terminal_checkpoint_requires_empty_pending_state_on_completion(tmp_path):
+    adapter = tmp_path / "adapter"
+    _checkpoint, receipt = _checkpoint_fixture(adapter, complete_run=True)
+
+    evidence = admission._verify_terminal_checkpoint_state(
+        adapter,
+        receipt,
+        log_every=5,
+    )
+
+    assert evidence["pending_loss_count"] == 0
+    assert evidence["holdout_eval_count"] == 1
+
+    checkpoint_path = adapter / evidence["checkpoint"] / "complete.json"
+    checkpoint = json.loads(checkpoint_path.read_text())
+    checkpoint["pending_window_losses"] = [9.0]
+    checkpoint_raw = _write_json(checkpoint_path, checkpoint)
+    latest_path = adapter / "latest.json"
+    latest = json.loads(latest_path.read_text())
+    latest["complete_sha256"] = hashlib.sha256(checkpoint_raw).hexdigest()
+    _write_json(latest_path, latest)
+    with pytest.raises(
+        admission.ResidentV3TrainingAdmissionError,
+        match="terminal_checkpoint_exact_evidence_mismatch",
+    ):
+        admission._verify_terminal_checkpoint_state(
+            adapter,
+            receipt,
+            log_every=5,
+        )
+
+
+def test_admission_replays_pre_resume_partial_checkpoint_attestation(tmp_path):
+    adapter = tmp_path / "adapter"
+    checkpoint, _receipt = _checkpoint_fixture(adapter, complete_run=False)
+    protocol_path = tmp_path / "protocol.json"
+    protocol_raw = _write_json(
+        protocol_path,
+        {"training": {"output_dir": str(adapter)}},
+    )
+    evidence_path = tmp_path / "partial-checkpoint-evidence.json"
+    amendment_path = tmp_path / "amendment.json"
+    amendment_raw = _write_json(
+        amendment_path,
+        {
+            "resource_envelope": {"trainer_sha256": "d" * 64},
+            "resume": {
+                "expected_resume_step": 1,
+                "partial_checkpoint_evidence_path": str(evidence_path),
+            },
+        },
+    )
+    before = time.time()
+    launch.capture_partial_checkpoint_evidence(protocol_path, amendment_path)
+    after = time.time()
+
+    evidence = admission._verify_partial_checkpoint_evidence(
+        evidence_path=evidence_path,
+        adapter_dir=adapter,
+        protocol_raw=protocol_raw,
+        amendment_raw=amendment_raw,
+        trainer_sha256="d" * 64,
+        expected_step=1,
+        partial_finished_at=before,
+        resume_started_at=after,
+    )
+
+    assert evidence["pending_loss_count"] == 1
+    assert evidence["durable_holdout_eval_count"] == 0
+    assert (
+        evidence["checkpoint_complete_sha256"]
+        == hashlib.sha256(
+            (adapter / "checkpoints/step-00000001-test/complete.json").read_bytes()
+        ).hexdigest()
+    )
+    assert checkpoint["loss_trail"] == []

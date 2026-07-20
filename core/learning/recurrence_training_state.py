@@ -1,12 +1,15 @@
 """Crash-consistent checkpoints for recurrence-native v2 training."""
+
 from __future__ import annotations
 
 import hashlib
 import json
+import math
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, cast
+from typing import Any, cast
 
 from core.runtime.atomic_writer import (
     atomic_write_bytes,
@@ -16,12 +19,45 @@ from core.runtime.atomic_writer import (
     interprocess_file_lock,
 )
 
-TRAINING_CHECKPOINT_SCHEMA = "aura.recurrence_native_checkpoint.v2"
+TRAINING_CHECKPOINT_SCHEMA = "aura.recurrence_native_checkpoint.v3"
 LATEST_POINTER_SCHEMA = "aura.recurrence_native_checkpoint_pointer.v1"
 
 
 class RecurrenceCheckpointError(RuntimeError):
     """Checkpoint bytes or identities are incomplete, stale, or inconsistent."""
+
+
+_EXACT_EVIDENCE_KEYS = {
+    "loss_trail",
+    "pending_window_losses",
+    "pending_window_cosines",
+    "holdout_trail",
+    "holdout_eval_count",
+}
+
+
+def _validate_exact_evidence_state(state: Mapping[str, Any]) -> None:
+    missing = _EXACT_EVIDENCE_KEYS.difference(state)
+    if missing:
+        raise RecurrenceCheckpointError(
+            "checkpoint exact evidence state is incomplete: " + ", ".join(sorted(missing))
+        )
+    for role in ("loss_trail", "holdout_trail"):
+        trail = state.get(role)
+        if not isinstance(trail, list) or any(not isinstance(entry, dict) for entry in trail):
+            raise RecurrenceCheckpointError(f"checkpoint {role} is invalid")
+    for role in ("pending_window_losses", "pending_window_cosines"):
+        values = state.get(role)
+        if not isinstance(values, list) or any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            for value in values
+        ):
+            raise RecurrenceCheckpointError(f"checkpoint {role} is invalid")
+    holdout_eval_count = state.get("holdout_eval_count")
+    if type(holdout_eval_count) is not int or holdout_eval_count < 0:
+        raise RecurrenceCheckpointError("checkpoint holdout_eval_count is invalid")
 
 
 @dataclass(frozen=True)
@@ -93,6 +129,7 @@ def save_recurrence_checkpoint(
 ) -> Path:
     """Publish an immutable generation, then atomically advance ``latest``."""
 
+    _validate_exact_evidence_state(state)
     root = ensure_private_directory(Path(out_dir).expanduser())
     checkpoints = ensure_private_directory(root / "checkpoints")
     lock_path = root / ".checkpoint.lock"
@@ -167,6 +204,7 @@ def load_recurrence_checkpoint(
         state = _read_json(complete_path, role="checkpoint completion record")
         if state.get("schema") != TRAINING_CHECKPOINT_SCHEMA:
             raise RecurrenceCheckpointError("checkpoint schema differs")
+        _validate_exact_evidence_state(state)
         expected = {
             "config_sha256": expected_config_sha256,
             "dataset_sha256": expected_dataset_sha256,
@@ -195,9 +233,7 @@ def load_recurrence_checkpoint(
                 raise RecurrenceCheckpointError(f"checkpoint {role} digest mismatch")
             loaded_tensors = mx.load(str(path))
             if not isinstance(loaded_tensors, dict):
-                raise RecurrenceCheckpointError(
-                    f"checkpoint {role} tensor container is invalid"
-                )
+                raise RecurrenceCheckpointError(f"checkpoint {role} tensor container is invalid")
             tensors[role] = dict(loaded_tensors)
         optimizer_state = tree_unflatten(tensors["optimizer"])
         if not isinstance(optimizer_state, dict):

@@ -72,6 +72,7 @@ RING_MAX_LINES_LIMIT = 100_000
 IMMEDIATE_KILL_OVERSHOOT = 1.15
 _RING_LINE_COUNTS: dict[Path, int] = {}
 
+
 def phys_footprint_mb(pid: int) -> float:
     """Current RSS + compressed + IOKit-mapped footprint."""
     return darwin_phys_footprint_bytes(pid) / (1024 * 1024)
@@ -114,9 +115,7 @@ def tree_rss_mb(
     if not observed.available or root is None:
         return 0.0, 0.0, 0, 0.0
     core = float(root.rss_bytes) / (1024 * 1024)
-    descendants = [
-        process for process in observed.processes if process.pid != int(root_pid)
-    ]
+    descendants = [process for process in observed.processes if process.pid != int(root_pid)]
     children = sum(float(process.rss_bytes) for process in descendants) / (1024 * 1024)
     footprint = phys_footprint_mb(root_pid)
     for child in descendants:
@@ -174,6 +173,45 @@ def kill_tree(root_pid: int) -> list[int]:
             killed.append(proc.pid)
         except psutil.Error:
             continue
+    return killed
+
+
+def _write_tombstone(directory: Path, payload: dict) -> Path | None:
+    """Best-effort durable incident record for every sentinel kill path."""
+
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / f"sentinel_tombstone_{time.time_ns()}.json"
+        path.write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        return path
+    except OSError:
+        return None
+
+
+def _kill_invalid_handshake(
+    *,
+    args: argparse.Namespace,
+    guard_stage: str,
+    reason: str,
+    error: ResourceStageGuardError,
+) -> list[int]:
+    killed = kill_tree(args.pid)
+    _write_tombstone(
+        args.tombstone_dir,
+        {
+            "schema": "aura.memory_sentinel.tombstone.v1",
+            "reason": reason,
+            "guard_stage": guard_stage,
+            "startup_lethal_mb": args.startup_lethal_mb,
+            "steady_lethal_mb": args.lethal_mb,
+            "error": str(error),
+            "killed_pids": killed,
+            "written_at": time.time(),
+        },
+    )
     return killed
 
 
@@ -345,35 +383,18 @@ def main(argv: list[str] | None = None) -> int:
                         f"steady lethal_mb={active_lethal_mb:.0f}"
                     )
             except ResourceStageGuardError as exc:
-                killed = kill_tree(args.pid)
-                tombstone = {
-                    "schema": "aura.memory_sentinel.tombstone.v1",
-                    "reason": "invalid steady-stage resource-guard handshake",
-                    "guard_stage": guard_stage,
-                    "startup_lethal_mb": args.startup_lethal_mb,
-                    "steady_lethal_mb": args.lethal_mb,
-                    "error": str(exc),
-                    "killed_pids": killed,
-                    "written_at": time.time(),
-                }
-                try:
-                    args.tombstone_dir.mkdir(parents=True, exist_ok=True)
-                    (
-                        args.tombstone_dir
-                        / f"sentinel_tombstone_{int(time.time())}.json"
-                    ).write_text(json.dumps(tombstone, indent=2))
-                except OSError:
-                    pass
+                killed = _kill_invalid_handshake(
+                    args=args,
+                    guard_stage=guard_stage,
+                    reason="invalid steady-stage resource-guard handshake",
+                    error=exc,
+                )
                 _evidence(
                     "exiting: invalid steady-stage handshake; "
                     f"target tree killed: {exc} killed={killed}"
                 )
                 return 2
-        elif (
-            guard_stage == "steady"
-            and marker_raw is not None
-            and predecessor_ack_raw is not None
-        ):
+        elif guard_stage == "steady" and marker_raw is not None and predecessor_ack_raw is not None:
             acquire_path = lease_request_path(
                 args.steady_marker,
                 sequence=lease_sequence,
@@ -409,7 +430,12 @@ def main(argv: list[str] | None = None) -> int:
                         f"workload={lease_workload}"
                     )
                 except ResourceStageGuardError as exc:
-                    killed = kill_tree(args.pid)
+                    killed = _kill_invalid_handshake(
+                        args=args,
+                        guard_stage=guard_stage,
+                        reason="invalid compute-acquire resource-guard handshake",
+                        error=exc,
+                    )
                     _evidence(
                         "exiting: invalid compute-acquire handshake; "
                         f"target tree killed: {exc} killed={killed}"
@@ -440,7 +466,12 @@ def main(argv: list[str] | None = None) -> int:
                         f"workload={lease_workload}"
                     )
                 except ResourceStageGuardError as exc:
-                    killed = kill_tree(args.pid)
+                    killed = _kill_invalid_handshake(
+                        args=args,
+                        guard_stage=guard_stage,
+                        reason="invalid compute-release resource-guard handshake",
+                        error=exc,
+                    )
                     _evidence(
                         "exiting: invalid compute-release handshake; "
                         f"target tree killed: {exc} killed={killed}"
@@ -467,8 +498,7 @@ def main(argv: list[str] | None = None) -> int:
                 active_lethal_mb = float(args.lethal_mb)
                 consecutive_over = 0
                 _evidence(
-                    f"compute lease released: sequence={lease_sequence} "
-                    f"workload={lease_workload}"
+                    f"compute lease released: sequence={lease_sequence} workload={lease_workload}"
                 )
                 lease_sequence += 1
                 lease_workload = ""
@@ -476,7 +506,12 @@ def main(argv: list[str] | None = None) -> int:
                 release_request_path = None
                 release_request_raw = None
             except ResourceStageGuardError as exc:
-                killed = kill_tree(args.pid)
+                killed = _kill_invalid_handshake(
+                    args=args,
+                    guard_stage=guard_stage,
+                    reason=("invalid compute-release-ack resource-guard handshake"),
+                    error=exc,
+                )
                 _evidence(
                     "exiting: invalid compute-release acknowledgement; "
                     f"target tree killed: {exc} killed={killed}"
@@ -525,13 +560,7 @@ def main(argv: list[str] | None = None) -> int:
                 "killed_pids": killed,
                 "written_at": time.time(),
             }
-            try:
-                args.tombstone_dir.mkdir(parents=True, exist_ok=True)
-                (
-                    args.tombstone_dir / f"sentinel_tombstone_{int(time.time())}.json"
-                ).write_text(json.dumps(tombstone, indent=2))
-            except OSError:
-                pass
+            _write_tombstone(args.tombstone_dir, tombstone)
             _evidence(
                 f"exiting: killed target tree at lethal ceiling "
                 f"(managed_mb={managed:.0f} >= lethal_mb={active_lethal_mb:.0f}, killed={killed})"
@@ -549,7 +578,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         capture = subprocess.run(
             [
-                "log", "show", "--last", "3m",
+                "log",
+                "show",
+                "--last",
+                "3m",
                 "--predicate",
                 f'eventMessage CONTAINS "{args.pid}" OR '
                 'eventMessage CONTAINS "memorystatus" OR '
@@ -563,8 +595,7 @@ def main(argv: list[str] | None = None) -> int:
         out_path = args.tombstone_dir / f"death_syslog_{int(time.time())}.log"
         args.tombstone_dir.mkdir(parents=True, exist_ok=True)
         out_path.write_text(
-            f"target pid {args.pid} vanished at {time.time()}\n"
-            + (capture.stdout or "")[-200_000:]
+            f"target pid {args.pid} vanished at {time.time()}\n" + (capture.stdout or "")[-200_000:]
         )
     except (OSError, subprocess.SubprocessError):
         pass
