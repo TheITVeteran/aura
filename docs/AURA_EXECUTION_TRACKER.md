@@ -22208,3 +22208,47 @@ checkpoints. Training remains live and no completion or capability credit is
 awarded. Next: publish CP201, launch the archivist against the active CP195
 resume and bind its receipt into recovery-aware strict admission. Final long
 soaks remain deferred.
+
+## Checkpoint 2026-07-20-202: Recovery-Native Training Admission
+
+The recovered resident-32B run now has a dedicated strict admission boundary
+instead of depending on the pre-migration verifier's original single-ring
+assumptions. `tools/verify_resident_v3_recovery_training_admission.py` verifies
+the migration and its advanced descendant, the positive calibration verdict,
+the recovery controller's terminal verdict, the complete exact-adjoint adapter,
+the resume command, the terminal checkpoint, the operational sentinel, and the
+append-only sentinel archive as one cross-bound evidence chain. It requires
+the controller to bind both trainer and sentinel receipt digests and the exact
+calibration verdict. It separately proves that the archivist command targeted
+the operational ring, immutable archive, state, receipt, trainer PID, and
+five-second copy interval. Substituted paths, symlinks, malformed JSON,
+content/hash mismatch, incomplete training, migration drift, missing lease
+history, or any detached-journal mismatch fail closed. The resulting receipt
+admits only freeze and mechanics verification; every intelligence and installed
+desktop claim remains explicitly false.
+
+The shared footprint verifier can now parse an immutable archive while proving
+that the sentinel command wrote the distinct operational ring. A regression
+test exercises that split directly. Recovery admission tests cover scalar and
+symlinked evidence, hashed-document tamper, migration-derived protocol identity,
+resume model substitution, controller trainer/sentinel substitution, and
+archive-source substitution. The detached recovery test harness also now gives
+the cryptographic execution-manifest build its production-realistic transport
+budget; under concurrent resident training its previous ten-second test-only
+deadline expired even though the isolated recovery path completed correctly.
+
+Validation is green: 39 focused and adjacent recovery, admission, archive, and
+detached-recovery tests pass; focused Ruff and bytecode compilation pass. The
+live trainer has independently advanced through step 20, including held-out
+evaluation and a durable checkpoint, with 11 complete compute leases and no
+sentinel tombstone.
+
+Evidence-weighted completion remains 27%. This is checkpoint 202 of the
+faithful 292-399 total-checkpoint forecast, leaving approximately 90-197
+checkpoints. Training-completion, immutable freeze, mechanics, directional and
+powered reasoning-gain, same-checkpoint interaction, frontier, external-custody,
+installed-app, release, and soak gates remain open. Next: publish CP202 and
+launch a recovery-aware detached post-training controller that waits for the
+trainer, sentinel, recovery-controller, and archivist receipts before invoking
+this admission boundary and the immutable downstream proof chain. Final long
+soaks remain deferred.

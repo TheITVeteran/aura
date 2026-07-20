@@ -441,6 +441,18 @@ def test_footprint_requires_clean_sentinel_and_stays_below_lethal(tmp_path, monk
     assert evidence["stage_peak_managed_mb"]["compute"] == 65000.0
     assert evidence["compute_lease_workloads"] == {"training_step": 1}
 
+    archive_ring = tmp_path / "archive.jsonl"
+    archive_ring.write_bytes(ring.read_bytes())
+    archived = admission._verify_footprint(
+        archive_ring,
+        sentinel_dir,
+        trainer_pid=123,
+        stage_path=stage_path,
+        expected_trainer_sha256="c" * 64,
+        command_ring_path=ring,
+    )
+    assert archived["ring_sha256"] == evidence["ring_sha256"]
+
     (sentinel_dir / "sentinel_tombstone_1.json").write_text("{}")
     with pytest.raises(
         admission.ResidentV3TrainingAdmissionError,

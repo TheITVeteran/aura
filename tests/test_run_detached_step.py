@@ -326,7 +326,7 @@ def _launch(
         check=True,
         capture_output=True,
         text=True,
-        timeout=10.0,
+        timeout=30.0,
     )
     return json.loads(result.stdout)
 

@@ -698,6 +698,7 @@ def _verify_footprint(
     trainer_pid: int,
     stage_path: Path,
     expected_trainer_sha256: str,
+    command_ring_path: Path | None = None,
 ) -> dict[str, Any]:
     plan, receipt = _detached_terminal(sentinel_dir, role="memory_sentinel")
     if receipt.get("returncode") != 0 or receipt.get("status") != "passed":
@@ -723,7 +724,7 @@ def _verify_footprint(
         or overshoot_factor != 1.05
         or ring_window_s != 46800.0
         or Path(options.get("--steady-marker", "")) != stage_path
-        or Path(options.get("--ring", "")) != ring_path
+        or Path(options.get("--ring", "")) != (command_ring_path or ring_path)
     ):
         _fail("memory_sentinel_command_mismatch")
     if any(sentinel_dir.glob("sentinel_tombstone_*.json")):
