@@ -1242,6 +1242,7 @@ def _build_rlc_config(
             prelude_frac=spec.prelude_frac,
             coda_frac=spec.coda_frac,
             decode_max_tokens=args.decode_max_tokens,
+            decode_contract="final_answer_v1",
             decode_bridge_policy=(
                 "assistant_answer_v3"
                 if spec.decode_bridge_policy == "assistant_answer"
@@ -1267,6 +1268,7 @@ def _build_rlc_config(
                 export_candidates=False,
             ),
             decode_max_tokens=args.decode_max_tokens,
+            decode_contract="final_answer_v1",
             decode_min_tokens=min(96, max(0, args.decode_max_tokens - 1)),
             verifier_probe_max_tokens=24,
             verifier_accept_non_regression=True,
@@ -1280,6 +1282,7 @@ def _build_rlc_config(
         recurrence=RecurrenceConfig(max_steps=args.rlc_steps, min_steps=2),
         branches=BranchConfig(n_branches=args.branches),
         decode_max_tokens=args.decode_max_tokens,
+        decode_contract="final_answer_v1",
         decode_repetition_penalty=1.25,
         decode_repetition_window=72,
         allow_vanilla_fallback=False,
@@ -1656,7 +1659,11 @@ def _vanilla_once(
     sample_seed: int | None = None,
 ) -> tuple[str, int]:
     import mlx.core as mx
-    from mlx_lm import generate
+    from mlx_lm import stream_generate
+
+    from core.brain.llm.latent_cortex.answer_contract import (
+        is_contract_complete,
+    )
 
     kwargs: dict[str, Any] = {}
     if sample_seed is not None:
@@ -1665,16 +1672,27 @@ def _vanilla_once(
         mx.random.seed(sample_seed)
         kwargs["sampler"] = make_sampler(temp=0.7, top_p=0.95)
     rendered = _render_prompt(tokenizer, task)
-    text = generate(
+    # CP180: uniform contract-aware stop for EVERY arm that decodes through
+    # this path — the moment one FINAL_ANSWER JSON object completes, more
+    # tokens can only break terminality. Within the same hard cap, budget
+    # goes to reasoning instead of post-answer babble, and the cap stops
+    # truncating answers that finish honestly.
+    pieces: list[str] = []
+    generated_tokens = 0
+    for response in stream_generate(
         model,
         tokenizer,
         prompt=rendered,
         max_tokens=max_tokens,
-        verbose=False,
         **kwargs,
-    )
+    ):
+        pieces.append(response.text)
+        generated_tokens = int(response.generation_tokens)
+        if "}" in response.text and is_contract_complete("".join(pieces)):
+            break
+    text = "".join(pieces)
     prompt_tokens = len(tokenizer.encode(rendered))
-    output_tokens = max(1, len(tokenizer.encode(text)))
+    output_tokens = max(1, generated_tokens)
     return text, (prompt_tokens + output_tokens) * len(model.model.layers)
 
 

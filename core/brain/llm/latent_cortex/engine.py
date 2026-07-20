@@ -518,6 +518,38 @@ class LatentCortexEngine:
                 token = self._sample(masked, temp, nucleus)
             return token
 
+        # Contract-aware termination (CP180): once a single FINAL_ANSWER
+        # JSON object completes, more tokens can only break terminality.
+        # The full-text check runs only when the newest piece could have
+        # closed an object ("}") or on a periodic beat after the marker
+        # might exist — text work, never model work.
+        contract_active = (
+            self.config.decode_contract == "final_answer_v1"
+            and self.tokenizer is not None
+        )
+        contract_check_beat = 0
+
+        def contract_complete_now(latest_token: int) -> bool:
+            nonlocal contract_check_beat
+            if not contract_active:
+                return False
+            contract_check_beat += 1
+            try:
+                piece = self.tokenizer.decode([latest_token])
+            except (TypeError, ValueError, KeyError, AttributeError):
+                piece = ""
+            if "}" not in str(piece) and contract_check_beat % 8 != 0:
+                return False
+            from core.brain.llm.latent_cortex.answer_contract import (
+                is_contract_complete,
+            )
+
+            try:
+                text = self.tokenizer.decode(out)
+            except (TypeError, ValueError, KeyError, AttributeError):
+                return False
+            return is_contract_complete(text)
+
         token = sample_disciplined(initial_logits)
         termination = "token_limit"
         decode_started = time.monotonic()
@@ -528,6 +560,9 @@ class LatentCortexEngine:
                 termination = "eos"
                 break
             out.append(token)
+            if contract_complete_now(token):
+                termination = "contract_complete"
+                break
             newline_run = newline_run + 1 if self._is_pure_newline_token(token) else 0
             sentence_done = self.tokenizer is None or self._token_ends_sentence(token)
             if index + 1 >= int(limit):
@@ -871,6 +906,10 @@ class LatentCortexEngine:
         receipt.budget = budget.to_receipt()
         if not failure_reason and receipt.decode_termination not in {
             "eos",
+            # The public answer contract completed: one FINAL_ANSWER JSON
+            # object closed and parsed — the strongest completion signal a
+            # contract task has (CP180).
+            "contract_complete",
             "token_limit",
             # The limit landed mid-sentence and sampling continued a few
             # model-chosen tokens to the natural boundary — a complete

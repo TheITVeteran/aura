@@ -562,6 +562,9 @@ class LatentCortexService:
             errors.append("verifier_probe_profile_mismatch")
         if receipt.get("decode_termination") not in {
             "eos",
+            # The public answer contract completed (one FINAL_ANSWER JSON
+            # object closed and parsed) — a complete answer by construction.
+            "contract_complete",
             "token_limit",
             # Sentence grace: the limit landed mid-sentence and sampling
             # continued a few model-chosen tokens to the natural boundary.

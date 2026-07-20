@@ -258,6 +258,11 @@ class CortexConfig:
     decode_temperature: float = 0.0
     decode_top_p: float = 1.0
     decode_bridge_policy: str = "none"
+    # Contract-aware decode termination (CP180): "final_answer_v1" stops the
+    # decode the moment a single FINAL_ANSWER JSON object completes — a
+    # uniform serving-side stop rule so bounded budgets measure reasoning,
+    # not truncation. "none" preserves historical behavior.
+    decode_contract: str = "none"
     # CTRL-style sliding-window repetition penalty for the answer decode.
     # 1.0 disables; the resident live profile runs 1.25 over 72 tokens —
     # CP105's live turn proved a degeneration loop survives temperature
@@ -414,6 +419,10 @@ class CortexConfig:
             )
         if not integer_in(self.verifier_probe_max_tokens, 16, 64):
             problems.append("verifier_probe_max_tokens outside [16, 64]")
+        if self.decode_contract not in ("none", "final_answer_v1"):
+            problems.append(
+                "decode_contract must be 'none' or 'final_answer_v1'"
+            )
         if type(self.verifier_accept_non_regression) is not bool:
             problems.append("verifier_accept_non_regression must be boolean")
         if self.decode_bridge_policy not in {
