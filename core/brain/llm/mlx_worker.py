@@ -1786,6 +1786,11 @@ class IPCWriterThread(threading.Thread):
         self.mp_queue = mp_queue
         self.local_queue = queue.Queue(maxsize=100)
         self._stop_event = threading.Event()
+        # Set when the response pipe is persistently broken: the parent can
+        # no longer hear ANY result, so the request loop must stop consuming
+        # jobs instead of burning GPU work into a void (zombie worker).
+        self.broken = threading.Event()
+        self._consecutive_pipe_failures = 0
 
     @staticmethod
     def _is_essential(item: Any) -> bool:
@@ -1809,12 +1814,30 @@ class IPCWriterThread(threading.Thread):
                 dropped = True
                 continue
             retained.append(queued)
-        for queued in retained:
+        for index, queued in enumerate(retained):
             try:
                 self.local_queue.put(queued, block=False)
             except queue.Full:
-                # Only possible under concurrent producer pressure; the oldest
-                # retained telemetry has already been preferred for shedding.
+                # Concurrent producers refilled the buffer. The remaining
+                # retained items were previously dropped WHOLESALE — including
+                # essential init/generation/error messages. Essentials go
+                # straight to the parent queue; only telemetry is discarded.
+                for leftover in retained[index:]:
+                    if self._is_essential(leftover):
+                        try:
+                            self.mp_queue.put(leftover, block=True, timeout=5.0)
+                        except (
+                            queue.Full,
+                            RuntimeError,
+                            AttributeError,
+                            TypeError,
+                            ValueError,
+                        ) as exc:
+                            _record_mlx_degradation(
+                                exc,
+                                action="dropped essential IPC message during shed requeue",
+                                severity="critical",
+                            )
                 break
         return dropped
 
@@ -1846,6 +1869,47 @@ class IPCWriterThread(threading.Thread):
     def stop(self):
         self._stop_event.set()
 
+    def put_terminal_direct(self, item: Any, *, flush_timeout: float = 2.0) -> bool:
+        """Synchronously deliver a terminal message straight to the parent queue.
+
+        Death paths (memory fuse, watchdog kill) hard-exit immediately after
+        reporting: the daemon writer thread AND mp.Queue's internal feeder
+        thread die with the process, so an async put can silently lose the
+        last — and most important — diagnostic. This hands the payload to the
+        queue and then closes it, joining the feeder (bounded) so the bytes
+        actually reach the pipe before ``os._exit``.
+
+        Only call this when the process is about to terminate: the queue is
+        unusable for further writes afterwards.
+        """
+        try:
+            self.mp_queue.put(item, block=True, timeout=max(0.1, flush_timeout))
+        except (queue.Full, ValueError, OSError, RuntimeError, AttributeError, TypeError) as exc:
+            _record_mlx_degradation(
+                exc,
+                action="lost terminal IPC diagnostic before worker hard exit",
+                severity="critical",
+            )
+            return False
+        flushed = threading.Event()
+
+        def _flush() -> None:
+            try:
+                self.mp_queue.close()
+                self.mp_queue.join_thread()
+                flushed.set()
+            except (OSError, RuntimeError, ValueError) as flush_exc:
+                logger.debug("Terminal IPC flush failed: %s", flush_exc)
+
+        # join_thread has no timeout parameter; bound it via a helper thread
+        # so a parent that stopped draining cannot wedge the death path.
+        flusher = threading.Thread(
+            target=_flush, name="MLX-IPC-TerminalFlush", daemon=True
+        )
+        flusher.start()
+        flusher.join(max(0.1, flush_timeout))
+        return flushed.is_set()
+
     def run(self):
         while not self._stop_event.is_set():
             try:
@@ -1855,6 +1919,7 @@ class IPCWriterThread(threading.Thread):
                 # thread blocks on nwait() forever, starving the event loop and
                 # causing tick stalls that kill the WebSocket connection.
                 self.mp_queue.put(item, block=True, timeout=5.0)
+                self._consecutive_pipe_failures = 0
             except queue.Empty:
                 continue
             except queue.Full as exc:
@@ -1878,12 +1943,30 @@ class IPCWriterThread(threading.Thread):
                             )
                     time.sleep(0.05)
                 continue
-            except (OSError, ConnectionError, TimeoutError):
-                # Queue broken or unavailable — drop the item and continue
-                # rather than blocking the entire IPC pipeline.
-                if not self._stop_event.is_set():
-                    continue
-                break
+            except (OSError, ConnectionError, TimeoutError) as pipe_exc:
+                if self._stop_event.is_set():
+                    break
+                # Broken pipe is NOT backpressure: the parent will never see
+                # this item. Dropping essentials silently left the parent to
+                # time out while this child kept consuming a full GPU lane.
+                self._consecutive_pipe_failures += 1
+                if self._is_essential(item):
+                    _record_mlx_degradation(
+                        pipe_exc,
+                        action="lost essential IPC message on broken response pipe",
+                        severity="critical",
+                    )
+                if (
+                    self._consecutive_pipe_failures >= 3
+                    and not self.broken.is_set()
+                ):
+                    self.broken.set()
+                    logger.critical(
+                        "🛑 [MLX_IPC] Response pipe broken (%d consecutive failures); "
+                        "flagging worker for shutdown so it cannot become a zombie.",
+                        self._consecutive_pipe_failures,
+                    )
+                continue
 
 class HeartbeatThread(threading.Thread):
     """
@@ -1895,9 +1978,15 @@ class HeartbeatThread(threading.Thread):
     detection.  Added parent-PID liveness check: if the parent process
     dies (crash, restart), the worker self-terminates to prevent orphans.
     """
-    def __init__(self, writer: IPCWriterThread):
+    # An active job with no token/loop activity for this long is reported as
+    # stalled in the heartbeat itself — liveness claims must carry progress
+    # evidence, not just prove the process exists.
+    LOOP_STALL_REPORT_S = 30.0
+
+    def __init__(self, writer: IPCWriterThread, watchdog: "JobWatchdog | None" = None):
         super().__init__(name="MLX-Heartbeat", daemon=True)
         self.writer = writer
+        self.watchdog = watchdog
         self._stop_event = threading.Event()
         self._parent_pid = os.getppid()
 
@@ -1918,7 +2007,32 @@ class HeartbeatThread(threading.Thread):
             if not self._parent_alive():
                 logger.critical("🛑 [MLX_HEARTBEAT] Parent process %s is dead. Self-terminating orphaned worker.", self._parent_pid)
                 os._exit(1)
-            self.writer.put({"status": "heartbeat", "timestamp": time.time(), "type": "mlx_worker"})
+            payload: dict[str, Any] = {
+                "status": "heartbeat",
+                "timestamp": time.time(),
+                "type": "mlx_worker",
+            }
+            # Inference-loop progress evidence: a wedged decode loop must not
+            # keep advertising unqualified worker liveness (a heartbeat that
+            # only proves the process exists hid Metal stalls until the 360s
+            # watchdog fired).
+            if self.watchdog is not None:
+                try:
+                    payload.update(self.watchdog.snapshot())
+                    if (
+                        payload.get("active_job")
+                        and float(payload.get("job_age_s") or 0.0)
+                        > self.LOOP_STALL_REPORT_S
+                    ):
+                        payload["loop_stalled"] = True
+                except (AttributeError, TypeError, ValueError) as snap_exc:
+                    logger.debug("Heartbeat progress snapshot failed: %s", snap_exc)
+            try:
+                payload["ipc_backlog"] = int(self.writer.local_queue.qsize())
+                payload["ipc_broken"] = bool(self.writer.broken.is_set())
+            except (AttributeError, NotImplementedError, OSError):
+                logger.debug("Heartbeat IPC health probe unavailable.")
+            self.writer.put(payload)
             time.sleep(2.0)
 
 
@@ -1975,13 +2089,20 @@ class WorkerMemorySentinel(threading.Thread):
                 pass
         return default_limit
 
-    def _sample_rss_gb(self) -> float:
+    def _sample_rss_gb(self) -> float | None:
+        """Per-worker RSS in GB, or None when the probe FAILED.
+
+        Failure must stay distinguishable from a real sample: converting it
+        to 0.0 silently disabled the per-worker RSS fuse (0.0 is always
+        below the limit) exactly when monitoring was broken.
+        """
         try:
             from core.utils.memory_monitor import process_memory_bytes
 
-            return float(process_memory_bytes(self._pid)) / float(1024**3)
+            sampled = float(process_memory_bytes(self._pid)) / float(1024**3)
         except (ImportError, OSError, RuntimeError, AttributeError, TypeError, ValueError):
-            return 0.0
+            return None
+        return sampled if sampled > 0.0 else None
 
     def _exit_for_memory_fuse(self, reason: str) -> bool:
         """Hard-exit only when the sentinel was created inside a worker child."""
@@ -1995,33 +2116,98 @@ class WorkerMemorySentinel(threading.Thread):
             return False
         os._exit(137)
 
+    # ~10s of continuous probe blindness (0.5s cadence) before the lost
+    # enforcement surface is escalated to parent health.
+    BLIND_PROBE_THRESHOLD = 20
+
     def run(self):
+        consecutive_blind = 0
+        blind_reported = False
         while not self._stop_event.is_set():
             try:
-                from core.utils.memory_monitor import get_memory_pressure_snapshot
+                snapshot = None
+                try:
+                    from core.utils.memory_monitor import get_memory_pressure_snapshot
 
-                snapshot = get_memory_pressure_snapshot()
+                    snapshot = get_memory_pressure_snapshot()
+                except (ImportError, OSError, RuntimeError, AttributeError, TypeError, ValueError) as probe_exc:
+                    logger.debug("MLX worker memory pressure probe unavailable: %s", probe_exc)
                 rss_gb = self._sample_rss_gb()
-                rss_limit_gb = self._worker_rss_limit_gb(float(snapshot.total_gb or 0.0))
+
+                if snapshot is None and rss_gb is None:
+                    # Fully blind: BOTH enforcement surfaces (per-worker RSS
+                    # fuse and system-pressure fuse) are suspended. That is a
+                    # lost safety layer, not a debug detail — it must reach
+                    # parent health with a receipt instead of failing open
+                    # silently until the host OOMs.
+                    consecutive_blind += 1
+                    if (
+                        consecutive_blind >= self.BLIND_PROBE_THRESHOLD
+                        and not blind_reported
+                    ):
+                        blind_reported = True
+                        blind_error = RuntimeError(
+                            "memory_sentinel_blind: RSS and pressure probes both failing"
+                        )
+                        _record_mlx_degradation(
+                            blind_error,
+                            action="memory fuse enforcement suspended while probes fail",
+                            severity="critical",
+                        )
+                        self.writer.put(
+                            {
+                                "status": "degraded",
+                                "action": "memory_sentinel_degraded",
+                                "message": str(blind_error),
+                                "model": os.path.basename(self.model_path),
+                            }
+                        )
+                    time.sleep(0.5)
+                    continue
+                if blind_reported:
+                    logger.warning(
+                        "🟢 [MLX_MEMORY] Memory sentinel probes recovered after %d blind cycles.",
+                        consecutive_blind,
+                    )
+                    self.writer.put(
+                        {
+                            "status": "degraded",
+                            "action": "memory_sentinel_recovered",
+                            "message": f"probes recovered after {consecutive_blind} blind cycles",
+                            "model": os.path.basename(self.model_path),
+                        }
+                    )
+                consecutive_blind = 0
+                blind_reported = False
+
+                total_gb = float(getattr(snapshot, "total_gb", 0.0) or 0.0)
+                rss_limit_gb = self._worker_rss_limit_gb(total_gb)
                 reason = ""
-                if rss_gb >= rss_limit_gb:
+                if rss_gb is not None and rss_gb >= rss_limit_gb:
                     reason = f"worker_rss:{rss_gb:.1f}GB/{rss_limit_gb:.1f}GB"
-                elif snapshot.emergency:
+                elif snapshot is not None and snapshot.emergency:
                     reason = snapshot.reason or "system_memory_emergency"
-                elif snapshot.available_gb < max(1.0, snapshot.min_available_gb / 2.0):
+                elif snapshot is not None and snapshot.available_gb < max(
+                    1.0, snapshot.min_available_gb / 2.0
+                ):
                     reason = snapshot.reason or f"available_memory:{snapshot.available_gb:.1f}GB"
 
                 if reason:
                     message = f"MLX worker memory fuse tripped for {os.path.basename(self.model_path)}: {reason}"
                     logger.critical("🛑 [MLX_MEMORY] %s", message)
-                    self.writer.put(
-                        {
-                            "status": "error",
-                            "action": "memory_fuse",
-                            "message": message,
-                            "memory_pressure": snapshot.to_dict(),
-                        }
-                    )
+                    fuse_payload = {
+                        "status": "error",
+                        "action": "memory_fuse",
+                        "message": message,
+                        "memory_pressure": snapshot.to_dict() if snapshot is not None else {},
+                    }
+                    if self._hard_exit_allowed:
+                        # The process dies in the next call: deliver the
+                        # diagnostic synchronously and flush the pipe, or the
+                        # parent sees only an unexplained SIGKILL-style death.
+                        self.writer.put_terminal_direct(fuse_payload)
+                    else:
+                        self.writer.put(fuse_payload)
                     self._exit_for_memory_fuse(reason)
                     return
             except (ImportError, OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
@@ -2383,28 +2569,75 @@ class JobWatchdog(threading.Thread):
     progress after 90s, the worker is stuck and must self-terminate so the
     parent can respawn it.
     """
-    def __init__(self, timeout=60.0):
+    def __init__(self, timeout=60.0, writer: IPCWriterThread | None = None):
         super().__init__(daemon=True)
         self.timeout = timeout
+        self.writer = writer
         self.last_activity = time.monotonic()
         self.active_job = False
+        self.current_request_id = ""
+        self.current_action = ""
         self._stop_event = threading.Event()
 
     def activity(self):
         self.last_activity = time.monotonic()
 
-    def start_job(self):
+    def start_job(self, request_id: str = "", action: str = ""):
+        self.current_request_id = str(request_id or "")
+        self.current_action = str(action or "")
         self.active_job = True
         self.last_activity = time.monotonic()
 
     def stop_job(self):
         self.active_job = False
+        self.current_request_id = ""
+        self.current_action = ""
+
+    def snapshot(self) -> dict[str, Any]:
+        """Progress evidence for the heartbeat: is a job active, how stale."""
+        active = bool(self.active_job)
+        age_s = max(0.0, time.monotonic() - self.last_activity) if active else 0.0
+        return {
+            "active_job": active,
+            "job_age_s": round(age_s, 3),
+            "request_id": self.current_request_id if active else "",
+        }
 
     def run(self):
         while not self._stop_event.is_set():
             if self.active_job and (time.monotonic() - self.last_activity > self.timeout):
-                logger.critical("🛑 [MLX_WATCHDOG] Job timeout triggered (%ss). Self-terminating worker.", self.timeout)
-                os._exit(1)
+                request_id = self.current_request_id
+                logger.critical(
+                    "🛑 [MLX_WATCHDOG] Job timeout triggered (%ss) for request %s. "
+                    "Self-terminating worker.",
+                    self.timeout,
+                    request_id or "<unknown>",
+                )
+                # Killing IS the recovery for a wedged Metal stall (there is
+                # no soft-cancel of stuck GPU work), but dying without a
+                # correlated terminal receipt left the parent to diagnose an
+                # opaque crash. Deliver attribution synchronously first.
+                if self.writer is not None:
+                    delivered = self.writer.put_terminal_direct(
+                        {
+                            "id": request_id,
+                            "status": "error",
+                            "action": self.current_action or "generate",
+                            "watchdog_timeout": True,
+                            "attribution": "worker_job_watchdog",
+                            "timeout_s": float(self.timeout),
+                            "message": (
+                                "MLX worker watchdog killed the process: no token "
+                                f"progress for {float(self.timeout):.0f}s"
+                            ),
+                        }
+                    )
+                    if not delivered:
+                        logger.critical(
+                            "🛑 [MLX_WATCHDOG] Terminal receipt could not be flushed; "
+                            "parent will see an unattributed worker death."
+                        )
+                os._exit(2)
             time.sleep(1.0)
 
 def soft_cancel_requested(cancel_seq: Any, job_seq: int) -> bool:
@@ -2434,7 +2667,11 @@ def clear_stale_soft_cancel(cancel_seq: Any, job_seq: int) -> None:
         return
     try:
         stale = int(getattr(cancel_seq, "value", 0))
-        if stale not in (0, int(job_seq)):
+        # Only a LOWER sequence is stale (an older request that ended before
+        # observing its cancel). A HIGHER sequence is a legitimate
+        # cancellation already posted for a later queued job — clearing it
+        # here made that job uncancellable.
+        if stale != 0 and stale < int(job_seq):
             cancel_seq.value = 0
     except (TypeError, ValueError, OSError):
         logger.debug("Stale soft-cancel clear failed; continuing.")
@@ -2707,7 +2944,12 @@ def _mlx_worker_loop(
     ipc_writer = IPCWriterThread(response_queue)
     ipc_writer.start()
 
-    heartbeat = HeartbeatThread(ipc_writer)
+    # Watchdog before heartbeat: the heartbeat publishes the watchdog's
+    # job-progress snapshot so liveness claims carry inference evidence.
+    watchdog = JobWatchdog(timeout=360.0, writer=ipc_writer)  # Align with the protected foreground solver envelope.
+    watchdog.start()
+
+    heartbeat = HeartbeatThread(ipc_writer, watchdog=watchdog)
     heartbeat.start()
 
     memory_sentinel = WorkerMemorySentinel(
@@ -2716,9 +2958,6 @@ def _mlx_worker_loop(
         hard_exit_allowed=mp.current_process().name != "MainProcess",
     )
     memory_sentinel.start()
-
-    watchdog = JobWatchdog(timeout=360.0)  # Align with the protected foreground solver envelope.
-    watchdog.start()
 
     try:
         import mlx.core as mx
@@ -3005,8 +3244,21 @@ def _mlx_worker_loop(
     worker_active = True
     while worker_active:
         try:
+            if ipc_writer.broken.is_set():
+                # The parent cannot hear ANY result. Consuming further jobs
+                # would burn a full GPU lane into a void while the parent
+                # times out against a silent child — exit visibly instead.
+                logger.critical(
+                    "🛑 [WORKER] Response pipe is broken; exiting so the parent "
+                    "can detect death and respawn instead of timing out."
+                )
+                break
             try:
-                job = request_queue.get()
+                # Bounded wait (not an infinite block) so the broken-pipe
+                # check above runs even when the request queue is idle.
+                job = request_queue.get(timeout=5.0)
+            except queue.Empty:
+                continue
             except KeyboardInterrupt:
                 logger.info("🛑 [WORKER] Shutdown signal received while idle; exiting quietly.")
                 break
@@ -3015,6 +3267,19 @@ def _mlx_worker_loop(
                 break
             if job is None:
                 worker_active = False
+                continue
+            if not isinstance(job, dict):
+                # A non-mapping frame has no id to correlate a receipt to;
+                # reject it visibly instead of raising inside the loop.
+                _record_mlx_degradation(
+                    TypeError(f"non_mapping_ipc_job:{type(job).__name__}"),
+                    action="rejected malformed IPC job envelope",
+                    severity="warning",
+                )
+                logger.error(
+                    "🛑 [WORKER] Rejected malformed IPC job envelope of type %s.",
+                    type(job).__name__,
+                )
                 continue
 
             action = job.get("action")
@@ -3387,7 +3652,7 @@ def _mlx_worker_loop(
                                     1,
                                     _safe_int(kwargs.get("max_tokens"), max_tokens),
                                 )
-                                watchdog.start_job()
+                                watchdog.start_job(str(job.get("id") or ""), "generate")
                                 try:
                                     surface_control_state[
                                         "instruction_shape_repair_applied"
@@ -4244,7 +4509,7 @@ def _mlx_worker_loop(
                     from mlx_lm import batch_generate
                     from mlx_lm.sample_utils import make_sampler
 
-                    watchdog.start_job()
+                    watchdog.start_job(str(job.get("id") or ""), "generate_batch")
                     try:
                         batch_prompt = str(job.get("prompt") or "")
                         n = max(1, min(16, _safe_int(job.get("n"), 4)))
@@ -4385,7 +4650,7 @@ def _mlx_worker_loop(
                     surface_control_state = _apply_surface_generation_controls(engine, model, job)
                     try:
                         with metal_semaphore:
-                            watchdog.start_job()
+                            watchdog.start_job(str(job.get("id") or ""), "stream")
                             try:
                                 full_text = ""
                                 token_count = 0
@@ -4561,7 +4826,7 @@ def _mlx_worker_loop(
                             }
                         )
                     else:
-                        watchdog.start_job()
+                        watchdog.start_job(request_id, "nonparametric_ingest")
 
                         def _ingest_progress(
                             payload: dict[str, Any],
@@ -4759,7 +5024,7 @@ def _mlx_worker_loop(
                 response = {"id": request_id, "action": "latent_reason"}
                 recycle_after_response = False
                 clear_stale_soft_cancel(cancel_seq, job_seq)
-                watchdog.start_job()
+                watchdog.start_job(request_id, "latent_reason")
 
                 def _latent_progress(payload: dict[str, Any]) -> None:
                     watchdog.activity()

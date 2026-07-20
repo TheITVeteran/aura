@@ -2171,6 +2171,10 @@ class MLXLocalClient:
         # Concurrency Hardening
         self._listener_task: asyncio.Task | None = None
         self._last_heartbeat = 0.0
+        # Once-per-episode reporting latches for worker self-reported health
+        # evidence (heartbeat loop_stalled / ipc_broken frames).
+        self._worker_loop_stall_reported = False
+        self._worker_ipc_broken_reported = False
         self._last_progress_at = 0.0
         self._last_token_progress_at = 0.0
         self._latent_progress_by_request: dict[str, dict[str, Any]] = {}
@@ -5124,6 +5128,10 @@ class MLXLocalClient:
         from core.container import ServiceContainer
 
         _consecutive_errors = 0
+        # Fresh pipe, fresh reporting state: a new worker must not inherit a
+        # previous worker's stall/broken-pipe report latches.
+        self._worker_loop_stall_reported = False
+        self._worker_ipc_broken_reported = False
         while not _runtime_shutdown_requested():
             if self._res_q is None:
                 break
@@ -5170,6 +5178,32 @@ class MLXLocalClient:
                 if status == "heartbeat":
                     self._last_heartbeat = time.time()
                     self._mark_progress()
+                    # Worker-reported progress evidence: the heartbeat now
+                    # carries the inference-loop's own stall verdict, so a
+                    # wedged decode loop is visible BEFORE the worker-side
+                    # watchdog (360s) or a caller timeout fires. Surface it
+                    # once per stall episode; liveness semantics stay as-is.
+                    stalled = bool(res.get("loop_stalled"))
+                    if stalled and not self._worker_loop_stall_reported:
+                        self._worker_loop_stall_reported = True
+                        _record_mlx_degradation(
+                            RuntimeError(
+                                "worker_loop_stalled:"
+                                f"request={res.get('request_id') or '<unknown>'}:"
+                                f"age_s={res.get('job_age_s')}"
+                            ),
+                            action="worker heartbeat reports an active job without token progress",
+                            severity="error",
+                        )
+                    elif not stalled:
+                        self._worker_loop_stall_reported = False
+                    if bool(res.get("ipc_broken")) and not self._worker_ipc_broken_reported:
+                        self._worker_ipc_broken_reported = True
+                        _record_mlx_degradation(
+                            RuntimeError("worker_response_pipe_broken"),
+                            action="worker heartbeat reports a broken response pipe; expecting worker exit",
+                            severity="critical",
+                        )
                     owner_id, fencing_token, _receipt_id = (
                         self._durable_model_lane_owner_snapshot()
                     )
@@ -5295,6 +5329,67 @@ class MLXLocalClient:
                         self._mark_progress()
                         _set_shared_future_result(self._current_gen_future, res)
                         continue
+                elif status == "degraded":
+                    # Worker self-reported health frames (e.g. the memory
+                    # sentinel going blind/recovering). Not terminal, never
+                    # correlated to a request — surface them as degradations
+                    # instead of ignoring them.
+                    _record_mlx_degradation(
+                        RuntimeError(
+                            f"worker_degraded:{action or 'unknown'}:{res.get('message', '')}"
+                        ),
+                        action=f"worker self-reported degradation ({action or 'unknown'})",
+                        severity=(
+                            "critical"
+                            if action == "memory_sentinel_degraded"
+                            else "warning"
+                        ),
+                    )
+                    logger.warning(
+                        "⚠️ [MLX] Worker degradation frame (%s): %s",
+                        action,
+                        res.get("message"),
+                    )
+                    continue
+                elif status == "error" and action == "memory_fuse":
+                    # The worker's memory sentinel is about to hard-exit the
+                    # process. This frame is intentionally id-less (it is not
+                    # a request result) — attribute the imminent death to
+                    # every in-flight request NOW instead of letting each one
+                    # discover it via timeout against a dead process.
+                    fuse_message = str(res.get("message") or "worker_memory_fuse")
+                    _record_mlx_degradation(
+                        RuntimeError(f"worker_memory_fuse:{fuse_message}"),
+                        action="worker memory fuse tripped; failing in-flight requests with attribution",
+                        severity="critical",
+                    )
+                    logger.critical("🛑 [MLX] %s", fuse_message)
+                    for pending_id, pending in list(self._pending_generations.items()):
+                        if pending is not None and not pending.done():
+                            _set_shared_future_result(
+                                pending,
+                                {
+                                    "status": "error",
+                                    "action": "generate",
+                                    "id": str(pending_id),
+                                    "message": f"worker_memory_fuse:{fuse_message}",
+                                    "memory_pressure": res.get("memory_pressure") or {},
+                                },
+                            )
+                    self._pending_generations.clear()
+                    current_fut = self._current_gen_future
+                    if current_fut is not None and not current_fut.done():
+                        _set_shared_future_result(
+                            current_fut,
+                            {
+                                "status": "error",
+                                "action": "generate",
+                                "id": self._current_request_id,
+                                "message": f"worker_memory_fuse:{fuse_message}",
+                                "memory_pressure": res.get("memory_pressure") or {},
+                            },
+                        )
+                    continue
                 elif status == "error":
                     init_error = (
                         self._init_future is not None
