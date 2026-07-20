@@ -22359,3 +22359,31 @@ decision; it does not supply independently administered credentials or earn
 gain/frontier credit. Next: publish CP205, create and launch its live immutable
 configuration, then continue bounded non-model closeout work without changing
 the source files frozen by CP203/CP205. Final long soaks remain deferred.
+
+## Checkpoint 2026-07-20-206: Live Confirmatory Handoff
+
+The CP205 confirmatory watcher is now instantiated from pushed source commit
+`52f4edc843e396ee9ddb470d8171dd7d88c759a0`. Its immutable configuration has
+digest `201d77d230d46e58ade3d17a6298e866798eecb95fbba1a210146fc63c5fa062`
+and binds the CP203 pipeline verdict, the exact paired-grade implementation,
+campaign preparation and trust code, paired campaign runner, and frontier
+verifier. The launch receipt has digest
+`e96e703d4afcf11827a505293b409a367308ae128864210240530190016fc1b0`.
+
+Watcher PID 27892 is detached under PID 1 with an independent `caffeinate`
+child. Its self-hashed state is live at `waiting_for_directional_verdict` and
+names only the immutable CP203 pipeline verdict path. It has not loaded a model,
+issued tasks, generated external credentials, or changed the active training
+sources. The resumed resident-32B trainer, operational memory sentinel,
+recovery controller, append-only sentinel archivist, and CP203 post-training
+controller also remain live. Training resumed from durable step 11, reached
+durable step 30 with held-out evaluation, and has started its next leased
+training step without a sentinel tombstone.
+
+Evidence-weighted completion remains 27%. This is checkpoint 206 of the
+faithful 292-399 total-checkpoint forecast, leaving approximately 86-193
+checkpoints. Launching the watcher earns no training-completion, reasoning-gain,
+interaction, frontier, external-custody, installed-app, release, or soak credit.
+Next: publish CP206 and continue bounded non-model closeout work outside every
+source file bound by the live CP203 and CP205 configurations. Final long soaks
+remain deferred.
