@@ -2095,14 +2095,18 @@ def _should_emit_generation_progress(
 def _prompt_cache_entry_budget_for_model(model_path: str) -> int:
     from core.runtime.desktop_boot_safety import desktop_resource_guard_enabled
 
-    lowered = os.path.basename(str(model_path or "")).lower()
-    if any(token in lowered for token in ("72b", "solver")):
+    # Measured weight class (artifact evidence first): a renamed heavy model
+    # previously inherited the 12-entry cache budget of an unknown small lane.
+    from core.brain.llm.model_artifact_profile import model_size_class
+
+    weight_class = model_size_class(str(model_path or ""))
+    if weight_class == "72b":
         return 0
-    if any(token in lowered for token in ("32b", "cortex", "zenith")):
+    if weight_class == "32b":
         if desktop_resource_guard_enabled():
             return 0
         return 2
-    if any(token in lowered for token in ("14b", "7b", "brainstem")):
+    if weight_class in ("14b", "7b"):
         return 6
     return 12
 
@@ -2389,11 +2393,14 @@ class WorkerMemorySentinel(threading.Thread):
 
     def _worker_rss_limit_gb(self, total_gb: float) -> float:
         def _default_limit() -> float:
-            if any(token in self.model_path.lower() for token in ("72b", "solver")):
+            from core.brain.llm.model_artifact_profile import model_size_class
+
+            weight_class = model_size_class(self.model_path)
+            if weight_class == "72b":
                 if total_gb < 80.0:
                     return min(40.0, max(34.0, total_gb * 0.60))
                 return min(64.0, max(48.0, total_gb * 0.55))
-            if any(token in self.model_path.lower() for token in ("32b", "cortex", "zenith")):
+            if weight_class == "32b":
                 if total_gb < 80.0:
                     return min(36.0, max(28.0, total_gb * 0.56))
                 return min(56.0, max(42.0, total_gb * 0.48))
@@ -3317,8 +3324,9 @@ def _load_speculative_draft(model_path: str, target_tokenizer: Any) -> Any:
     }
     if not enabled:
         return None
-    lowered = str(model_path).lower()
-    if not any(k in lowered for k in ("32b", "72b", "zenith", "solver", "cortex")):
+    from core.brain.llm.model_artifact_profile import model_size_class
+
+    if model_size_class(str(model_path)) not in ("72b", "32b"):
         return None  # drafting for a small model is pointless
     draft_candidates = [
         Path(__file__).resolve().parents[3] / "models" / "Qwen2.5-1.5B-Instruct-4bit",
@@ -3686,8 +3694,10 @@ def _mlx_worker_loop(
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as rd_exc:
             explicit_disable = str(os.environ.get("AURA_RECURRENT_LOOPS", "")).strip() == "0"
             size_disable = str(os.environ.get("AURA_RECURRENT_LOOPS_32B", "")).strip() == "0"
+            from core.brain.llm.model_artifact_profile import model_size_class as _msc
+
             recurrent_depth_status["required"] = (
-                any(token in str(model_path).lower() for token in ("32b", "cortex", "zenith"))
+                _msc(str(model_path)) == "32b"
                 and not explicit_disable
                 and not size_disable
             )
