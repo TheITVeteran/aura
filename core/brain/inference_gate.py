@@ -320,6 +320,7 @@ class InferenceGate:
     _last_status_recovery_schedule_at: float = 0.0
     _last_cortex_policy_deferred_log_at: float = 0.0
     _last_stale_reset_log_at: float = 0.0
+    _last_forced_warmup_override_log_at: float = 0.0
 
     def __init__(self, orch=None):
         self.orch = orch
@@ -347,10 +348,15 @@ class InferenceGate:
         self._last_stale_reset_log_at: float = (
             0.0  # [HARDENING v54] Rate-limit stale state warnings
         )
-        self._last_successful_generation_at: float = time.time()
+        # 0.0 means "no successful generation yet" — a fresh gate must not
+        # report a recent success it never produced. Consumers derive ages
+        # from _constructed_wall_at when this is unset.
+        self._last_successful_generation_at: float = 0.0
+        self._constructed_wall_at: float = time.time()
         self._prewarm_task: asyncio.Task | None = None
         self._deferred_prewarm_task: asyncio.Task | None = None
         self._maintenance_task: asyncio.Task | None = None
+        self._status_recovery_task: asyncio.Task | None = None
         self._foreground_ready_lock = _threading.Lock()
         self._last_background_memory_shed_at: float = 0.0
         self._last_spare_maintenance_at: float = 0.0
@@ -519,6 +525,27 @@ class InferenceGate:
                     ][:8]
         self._publish_generation_metadata(metadata, receipt)
 
+    def _credit_action_seq(self) -> int:
+        """Monotonic per-gate counter so credit action ids never collide."""
+        value = int(getattr(self, "_credit_action_counter", 0)) + 1
+        self._credit_action_counter = value
+        return value
+
+    def _annotate_last_generation_metadata(self, **fields: Any) -> None:
+        """Amend the just-published metadata after post-generation validation.
+
+        Success metadata is recorded at the client boundary before integrity
+        and user-facing assessment run. When those checks reject the draft the
+        published record must be downgraded, otherwise a later metadata read
+        treats the rejected generation as proof of a valid response.
+        """
+        metadata = self.get_last_generation_metadata()
+        if not metadata:
+            return
+        metadata.update(fields)
+        receipt = dict(metadata.get("surface_control_receipt") or {})
+        self._publish_generation_metadata(metadata, receipt)
+
     @classmethod
     def _user_facing_recovery_response(cls, prompt: str) -> str:
         # [HARDENING v54] NEVER echo prompt content back to the user.
@@ -548,10 +575,19 @@ class InferenceGate:
             if fallback and len(str(fallback).strip()) > 0:
                 return fallback
         except _INFERENCE_RECOVERABLE_ERRORS as _exc:
-            logger.debug("Suppressed %s in core.brain.inference_gate: %s", type(_exc).__name__, _exc)
-        
-        # Last resort: structured acknowledgment that always works
-        return "I'm processing that. My inference pipeline is working on your request—let me take a moment."
+            _record_inference_degradation(
+                _exc,
+                action="fell through to terminal recovery text after offline fallback generation failed",
+            )
+            logger.warning("Offline fallback response generation failed: %s", _exc)
+
+        # Last resort: an honest terminal response. Both generation paths have
+        # already failed at this point and no asynchronous continuation exists,
+        # so the text must not promise that work is still in progress.
+        return (
+            "I couldn't finish generating a response just now — my language "
+            "backend hit an internal problem. Please try again in a moment."
+        )
 
     def _stabilize_user_facing_text(
         self,
@@ -593,7 +629,11 @@ class InferenceGate:
                 metadata["post_generation_repair_applied"] = True
                 self._publish_generation_metadata(metadata, receipt)
             return stabilized
-        except (ImportError, AttributeError, TypeError, ValueError):
+        except (ImportError, AttributeError, TypeError, ValueError) as exc:
+            _record_inference_degradation(
+                exc,
+                action="returned unstabilized user-facing text after output stabilization failed",
+            )
             return original
 
     def _finalize_nonlocal_user_facing_text(
@@ -724,11 +764,31 @@ class InferenceGate:
         }
 
     @staticmethod
-    def _env_float(name: str, default: float) -> float:
+    def _env_float(
+        name: str,
+        default: float,
+        *,
+        minimum: float | None = None,
+        maximum: float | None = None,
+    ) -> float:
+        """Read a float env knob, rejecting NaN/inf and out-of-range values.
+
+        Non-finite deadlines, thresholds, and windows disable comparisons
+        downstream (NaN fails every branch, inf never expires), so a malformed
+        or hostile environment value must fall back to the engineered default
+        rather than silently rewriting admission or backoff policy.
+        """
         try:
-            return float(os.environ.get(name, str(default)))
+            value = float(os.environ.get(name, str(default)))
         except (TypeError, ValueError):
             return float(default)
+        if not math.isfinite(value):
+            return float(default)
+        if minimum is not None and value < minimum:
+            return float(minimum)
+        if maximum is not None and value > maximum:
+            return float(maximum)
+        return value
 
     @staticmethod
     def _cortex_worker_is_legitimately_loading(client: Any) -> bool:
@@ -817,6 +877,7 @@ class InferenceGate:
                 "min_available_gb": min_available,
                 "can_admit": can_admit,
                 "reason": reason,
+                "measured": True,
             }
         except (AttributeError, TypeError, ValueError, OSError) as exc:
             _record_inference_degradation(
@@ -827,6 +888,9 @@ class InferenceGate:
             force_warmup = str(
                 os.environ.get("AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE", "")
             ).strip().lower() in {"1", "true", "yes", "on"}
+            # measured=False marks every numeric field below as UNKNOWN, not a
+            # real observation — consumers must not treat these zeros as a
+            # calm-memory measurement.
             return {
                 "context": str(context or "background"),
                 "pressure_pct": 0.0,
@@ -835,7 +899,12 @@ class InferenceGate:
                 "max_pressure_pct": 100.0,
                 "min_available_gb": 0.0,
                 "can_admit": force_warmup,
-                "reason": "" if force_warmup else "memory_probe_failed",
+                "reason": (
+                    "memory_probe_failed_forced_override"
+                    if force_warmup
+                    else "memory_probe_failed"
+                ),
+                "measured": False,
             }
 
     def _note_cortex_stuck_kill(self) -> None:
@@ -896,6 +965,33 @@ class InferenceGate:
             "yes",
             "on",
         }:
+            # The force override may skip the soft admission thresholds and
+            # warmup backoff, but never the host-survival floor: a cold 32B
+            # load into single-digit free GB risks jetsam/swap-death of the
+            # whole process tree, which no operator override should authorize.
+            snapshot = self._cortex_warmup_admission_snapshot(context)
+            hard_floor_gb = self._env_float(
+                "AURA_FORCE_CORTEX_WARMUP_HARD_FLOOR_GB", 10.0, minimum=4.0
+            )
+            if snapshot.get("measured", True) and (
+                float(snapshot.get("available_gb", 0.0) or 0.0) < hard_floor_gb
+            ):
+                return (
+                    "forced_warmup_denied_survival_floor:"
+                    f"{float(snapshot.get('available_gb', 0.0) or 0.0):.1f}GB"
+                    f"<{hard_floor_gb:.1f}GB"
+                )
+            now = time.monotonic()
+            last_log = getattr(self, "_last_forced_warmup_override_log_at", 0.0)
+            if (now - last_log) > 60.0:
+                self._last_forced_warmup_override_log_at = now
+                logger.warning(
+                    "⚠️ AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE active — bypassing "
+                    "%s warmup admission (available=%.1fGB, survival floor %.1fGB).",
+                    context,
+                    float(snapshot.get("available_gb", 0.0) or 0.0),
+                    hard_floor_gb,
+                )
             return None
         backoff = self._cortex_warmup_backoff_reason()
         if backoff is not None:
@@ -1066,7 +1162,7 @@ class InferenceGate:
             tier = str(requested_tier or "primary").strip().lower()
 
             def _threshold(name: str, default: str) -> float:
-                return float(os.environ.get(name, default))
+                return InferenceGate._env_float(name, float(default))
 
             if tier == "secondary":
                 max_pressure = _threshold(
@@ -1123,11 +1219,19 @@ class InferenceGate:
                 "min_available_gb": min_available_gb,
                 "can_admit": can_admit,
                 "reason": reason,
+                "measured": True,
             }
-        except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError, psutil.Error):
+        except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError, psutil.Error) as exc:
+            _record_inference_degradation(
+                exc,
+                action="returned unmeasured foreground headroom snapshot after memory probe failed",
+            )
             force_admit = str(
                 os.environ.get("AURA_FORCE_FOREGROUND_HEADROOM_ON_PROBE_FAILURE", "")
             ).strip().lower() in {"1", "true", "yes", "on"}
+            # measured=False: the zeros below are UNKNOWN values, not calm
+            # telemetry — scheduling and health consumers must not treat this
+            # snapshot as evidence of memory abundance.
             return {
                 "tier": str(requested_tier or "primary"),
                 "pressure_pct": 0.0,
@@ -1138,7 +1242,12 @@ class InferenceGate:
                 "max_pressure_pct": 100.0,
                 "min_available_gb": 0.0,
                 "can_admit": force_admit,
-                "reason": "" if force_admit else "memory_probe_failed",
+                "reason": (
+                    "memory_probe_failed_forced_override"
+                    if force_admit
+                    else "memory_probe_failed"
+                ),
+                "measured": False,
             }
 
     @staticmethod
@@ -1233,40 +1342,124 @@ class InferenceGate:
                 logger.warning("Force-abort failed for local inference client: %s", exc)
         return aborted
 
-    def cleanup(self) -> None:
-        """Release managed local inference clients during ServiceContainer shutdown."""
-        for task_attr in ("_prewarm_task", "_deferred_prewarm_task", "_maintenance_task"):
+    _SHUTDOWN_TASK_ATTRS = (
+        "_prewarm_task",
+        "_deferred_prewarm_task",
+        "_maintenance_task",
+        "_status_recovery_task",
+    )
+
+    def _cancel_owned_background_tasks(self) -> list[asyncio.Task]:
+        """Cancel every owned background task and return the live handles.
+
+        Handles are returned so the async shutdown path can await actual
+        termination — cancellation alone does not stop a task, and its
+        finally blocks may still hold worker processes or reservations.
+        """
+        tasks: list[asyncio.Task] = []
+        for task_attr in self._SHUTDOWN_TASK_ATTRS:
             task = getattr(self, task_attr, None)
             if task is not None and not task.done():
                 task.cancel()
+                tasks.append(task)
             setattr(self, task_attr, None)
+        return tasks
 
+    def _shutdown_client_candidates(self) -> list[Any]:
         candidates: list[Any] = []
         if self._mlx_client is not None:
             candidates.append(self._mlx_client)
         candidates.extend(self._iter_local_clients().values())
-
         seen: set[int] = set()
+        unique: list[Any] = []
         for client in candidates:
-            if client is None:
+            if client is None or id(client) in seen:
                 continue
-            ident = id(client)
-            if ident in seen:
-                continue
-            seen.add(ident)
+            seen.add(id(client))
+            unique.append(client)
+        return unique
+
+    async def on_stop_async(self) -> None:
+        """Async shutdown: await task termination and client closes.
+
+        Preferred by ServiceContainer over the sync `cleanup`. Awaiting the
+        cancelled tasks lets their finally blocks release worker processes and
+        reservations before clients are closed and state is declared cold.
+        """
+        tasks = self._cancel_owned_background_tasks()
+        if tasks:
+            done, pending = await asyncio.wait(tasks, timeout=5.0)
+            for task in pending:
+                logger.warning(
+                    "Inference background task %s did not terminate within the "
+                    "shutdown grace period.",
+                    task.get_name(),
+                )
+        for client in self._shutdown_client_candidates():
             close = getattr(client, "close", None)
             if not callable(close):
                 continue
             try:
                 result = close()
                 if inspect.isawaitable(result):
-                    coroutine_close = getattr(result, "close", None)
-                    if callable(coroutine_close):
-                        coroutine_close()
-                    raise RuntimeError(
-                        f"{type(client).__name__}.close returned an awaitable during sync shutdown"
-                    )
-            except _INFERENCE_RECOVERABLE_ERRORS as exc:
+                    await asyncio.wait_for(result, timeout=10.0)
+            except (TimeoutError, *_INFERENCE_RECOVERABLE_ERRORS) as exc:
+                _record_inference_degradation(
+                    exc,
+                    action=f"continued inference shutdown after {type(client).__name__}.close failed",
+                    severity="warning",
+                )
+                logger.debug(
+                    "Inference client close failed for %s: %s", type(client).__name__, exc
+                )
+        self._mlx_client = None
+        self._initialized = False
+
+    def cleanup(self) -> None:
+        """Release managed local inference clients during ServiceContainer shutdown.
+
+        Synchronous fallback path. When no event loop is running in this
+        thread, awaitable client closes are driven to completion on a private
+        loop; when a loop IS running here, blocking is impossible, so the
+        close is scheduled and recorded as a degradation instead of being
+        silently discarded.
+        """
+        cancelled_tasks = self._cancel_owned_background_tasks()
+
+        try:
+            running_loop: asyncio.AbstractEventLoop | None = asyncio.get_running_loop()
+        except RuntimeError:
+            running_loop = None
+        if cancelled_tasks and running_loop is None:
+            logger.warning(
+                "Sync inference cleanup cancelled %d background task(s) without "
+                "awaiting termination; prefer on_stop_async for ordered shutdown.",
+                len(cancelled_tasks),
+            )
+
+        for client in self._shutdown_client_candidates():
+            close = getattr(client, "close", None)
+            if not callable(close):
+                continue
+            try:
+                result = close()
+                if inspect.isawaitable(result):
+                    if running_loop is not None:
+                        task = running_loop.create_task(
+                            asyncio.wait_for(result, timeout=10.0),
+                            name=f"inference_gate_close_{type(client).__name__}",
+                        )
+                        task.add_done_callback(self._log_task_exception)
+                        _record_inference_degradation(
+                            RuntimeError(
+                                f"{type(client).__name__}.close deferred to running loop "
+                                "during sync shutdown"
+                            ),
+                            action="scheduled async client close instead of blocking sync shutdown",
+                        )
+                    else:
+                        asyncio.run(asyncio.wait_for(result, timeout=10.0))
+            except (TimeoutError, *_INFERENCE_RECOVERABLE_ERRORS) as exc:
                 _record_inference_degradation(
                     exc,
                     action=f"continued inference shutdown after {type(client).__name__}.close failed",
@@ -1572,8 +1765,18 @@ class InferenceGate:
             "last_failure_reason": self._init_error or "",
             "conversation_ready": False,
             "cortex_recovery_attempts": getattr(self, "_cortex_recovery_attempts", 0),
+            # When no generation has ever succeeded, the honest age is
+            # "at least since the gate was constructed" — never zero.
+            "has_generated_successfully": bool(
+                getattr(self, "_last_successful_generation_at", 0.0) > 0.0
+            ),
             "time_since_last_success_s": max(
-                0, time.time() - getattr(self, "_last_successful_generation_at", time.time())
+                0,
+                time.time()
+                - (
+                    getattr(self, "_last_successful_generation_at", 0.0)
+                    or getattr(self, "_constructed_wall_at", time.time())
+                ),
             ),
             "last_transition_at": 0.0,
             "last_ready_at": 0.0,
@@ -1730,9 +1933,10 @@ class InferenceGate:
                         except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                             logger.debug("Best-effort Cortex recovery scheduling skipped: %s", exc)
         lane_state = str(lane.get("state", "") or "").lower()
+        _last_success_at = getattr(self, "_last_successful_generation_at", 0.0)
         recent_success = (
-            now_wall - getattr(self, "_last_successful_generation_at", now_wall)
-        ) <= 30.0
+            _last_success_at > 0.0 and (now_wall - _last_success_at) <= 30.0
+        )
         recent_ready = any(
             stamp > 0.0 and (now_wall - stamp) <= 300.0
             for stamp in (
@@ -2344,45 +2548,55 @@ class InferenceGate:
             return  # Already recovering — don't double-spawn
         if not hasattr(self._mlx_client, "warmup"):
             return
-        lane = self.get_conversation_status()
-        lane_state = str(lane.get("state", "") or "").lower()
-        lane_reason = str(lane.get("last_failure_reason", "") or "")
-        cold_start_recovery = lane_state in {
-            "cold",
-            "spawning",
-            "handshaking",
-            "warming",
-        } or not bool(lane.get("warmup_attempted", False))
-        if lane_state == "failed" and lane_reason.startswith(
-            ("mlx_runtime_unavailable", "local_runtime_unavailable")
-        ):
-            if await asyncio.to_thread(self._rearm_runtime_failed_lane, force_probe=True):
-                lane = self.get_conversation_status()
-                lane_state = str(lane.get("state", "") or "").lower()
-                lane_reason = str(lane.get("last_failure_reason", "") or "")
-                cold_start_recovery = lane_state in {
-                    "cold",
-                    "spawning",
-                    "handshaking",
-                    "warming",
-                } or not bool(lane.get("warmup_attempted", False))
-            else:
+        # Reserve recovery ownership IMMEDIATELY — before any await. The
+        # policy checks below suspend the coroutine, and two concurrent
+        # callers could otherwise both pass the in-progress check and race
+        # into duplicate warmups or duplicate private process cleanup.
+        self._cortex_recovery_in_progress = True
+        reservation_transferred = False
+        try:
+            lane = self.get_conversation_status()
+            lane_state = str(lane.get("state", "") or "").lower()
+            lane_reason = str(lane.get("last_failure_reason", "") or "")
+            cold_start_recovery = lane_state in {
+                "cold",
+                "spawning",
+                "handshaking",
+                "warming",
+            } or not bool(lane.get("warmup_attempted", False))
+            if lane_state == "failed" and lane_reason.startswith(
+                ("mlx_runtime_unavailable", "local_runtime_unavailable")
+            ):
+                if await asyncio.to_thread(self._rearm_runtime_failed_lane, force_probe=True):
+                    lane = self.get_conversation_status()
+                    lane_state = str(lane.get("state", "") or "").lower()
+                    lane_reason = str(lane.get("last_failure_reason", "") or "")
+                    cold_start_recovery = lane_state in {
+                        "cold",
+                        "spawning",
+                        "handshaking",
+                        "warming",
+                    } or not bool(lane.get("warmup_attempted", False))
+                else:
+                    return
+            if lane.get("warmup_in_flight"):
                 return
-        if lane.get("warmup_in_flight"):
-            return
-        if self._foreground_user_turn_active() or self._foreground_owner_active():
-            return
-        if cold_start_recovery:
-            if self._prewarm_task is not None and not self._prewarm_task.done():
-                logger.debug("Cold-start Cortex recovery skipped; deferred prewarm task is already scheduled.")
+            if self._foreground_user_turn_active() or self._foreground_owner_active():
                 return
-            if not self._boot_should_schedule_deferred_prewarm():
-                self._log_cold_cortex_policy_deferred()
+            if cold_start_recovery:
+                if self._prewarm_task is not None and not self._prewarm_task.done():
+                    logger.debug("Cold-start Cortex recovery skipped; deferred prewarm task is already scheduled.")
+                    return
+                if not self._boot_should_schedule_deferred_prewarm():
+                    self._log_cold_cortex_policy_deferred()
+                    return
+            warmup_deferral = self._cortex_warmup_deferral_reason("recovery")
+            if warmup_deferral:
+                self._log_cortex_warmup_deferral(warmup_deferral, context="recovery")
                 return
-        warmup_deferral = self._cortex_warmup_deferral_reason("recovery")
-        if warmup_deferral:
-            self._log_cortex_warmup_deferral(warmup_deferral, context="recovery")
-            return
+        finally:
+            if not reservation_transferred:
+                self._cortex_recovery_in_progress = False
 
         async def _background_recover():
             if is_shutdown_requested():
@@ -2398,16 +2612,33 @@ class InferenceGate:
                 import gc
 
                 gc.collect()
-                try:
-                    await asyncio.to_thread(
-                        self._mlx_client._kill_and_join_blocking, self._mlx_client._process
+                # Bind the kill to the exact client + process handle observed
+                # NOW, and refuse when the worker is legitimately loading or
+                # serving — an unowned kill here was the doom-loop trigger
+                # (kill mid-load → warmup_deferred → repeat).
+                kill_client = self._mlx_client
+                kill_process = getattr(kill_client, "_process", None)
+                if kill_process is None:
+                    logger.debug("[RECOVERY] No worker process handle to clean up.")
+                elif self._cortex_worker_is_legitimately_loading(kill_client):
+                    logger.info(
+                        "[RECOVERY] Skipping stale-process kill: worker is legitimately loading."
                     )
-                except _INFERENCE_RECOVERABLE_ERRORS as _e:
-                    _record_inference_degradation(
-                        _e,
-                        action="continued background recovery loop with degraded signal",
+                elif self._lane_reports_active_generation(self.get_conversation_status()):
+                    logger.info(
+                        "[RECOVERY] Skipping stale-process kill: lane reports an active generation."
                     )
-                    logger.debug("Ignored Exception in inference_gate.py killing process: %s", _e)
+                else:
+                    try:
+                        await asyncio.to_thread(
+                            kill_client._kill_and_join_blocking, kill_process
+                        )
+                    except _INFERENCE_RECOVERABLE_ERRORS as _e:
+                        _record_inference_degradation(
+                            _e,
+                            action="continued background recovery loop with degraded signal",
+                        )
+                        logger.debug("Ignored Exception in inference_gate.py killing process: %s", _e)
 
             try:
                 warmup_deferral = self._cortex_warmup_deferral_reason("recovery")
@@ -2507,11 +2738,17 @@ class InferenceGate:
                 type(task).__name__,
             )
             return
+        # Own the handle so shutdown can cancel and await this recovery like
+        # the named prewarm/maintenance tasks — an anonymous recovery task
+        # could continue into shutdown and recreate warmup activity.
+        self._status_recovery_task = task
 
         def _finish_recovery(completed: asyncio.Task) -> None:
             # Cancellation can happen before the coroutine reaches its ``finally``
             # block, so the scheduling boundary also owns clearing this reservation.
             self._cortex_recovery_in_progress = False
+            if getattr(self, "_status_recovery_task", None) is completed:
+                self._status_recovery_task = None
             self._log_task_exception(completed)
 
         task.add_done_callback(_finish_recovery)
@@ -3041,8 +3278,13 @@ class InferenceGate:
         return 512
 
     @classmethod
-    def _get_system_phi(cls) -> float:
-        """Redundantly retrieve the active system-level integration (Phi) from the mind."""
+    def _get_system_phi(cls) -> float | None:
+        """Retrieve the active system-level integration (Phi) from the mind.
+
+        Returns ``None`` when no probe produced a real measurement — a
+        missing Phi is UNAVAILABLE evidence, never a neutral score, and
+        consumers must not scale compute from a fabricated value.
+        """
         try:
             from core.container import ServiceContainer
             loop = ServiceContainer.get("closed_causal_loop", default=None)
@@ -3088,7 +3330,7 @@ class InferenceGate:
             )
             logger.debug("Failed to retrieve phi from phi core: %s", e)
 
-        return 0.5  # Neutral default/fallback
+        return None  # No probe produced a measurement — Phi is unavailable
 
     @classmethod
     def _adaptive_max_tokens_for_prompt(
@@ -3110,19 +3352,27 @@ class InferenceGate:
         floor, cap, _loops = cls._foreground_compute_profile(prompt)
         adapted = int(base_tokens)
 
-        # Scale the token budget based on system coherence/integration level (Phi)
+        # Scale the token budget based on system coherence/integration level
+        # (Phi) — only when a real measurement exists. An unavailable Phi must
+        # not silently become a scaling factor.
         phi = cls._get_system_phi()
-        phi_scale = max(0.5, min(1.6, 0.6 + phi * 2.0))
-        adapted = int(adapted * phi_scale)
+        if phi is not None and math.isfinite(phi):
+            phi_scale = max(0.5, min(1.6, 0.6 + phi * 2.0))
+            adapted = int(adapted * phi_scale)
         return max(floor, min(cap, adapted))
 
-    @staticmethod
-    def _configured_token_bound(name: str, default: int, *, minimum: int = 128) -> int:
+    # Absolute ceiling for any configured token bound. An operator typo or a
+    # compromised environment must not be able to request an unbounded
+    # generation/memory budget through a token knob.
+    _TOKEN_BOUND_HARD_CEILING = 32768
+
+    @classmethod
+    def _configured_token_bound(cls, name: str, default: int, *, minimum: int = 128) -> int:
         try:
             configured = int(os.environ.get(name, str(default)))
         except (TypeError, ValueError):
             configured = default
-        return max(minimum, configured)
+        return min(cls._TOKEN_BOUND_HARD_CEILING, max(minimum, configured))
 
     @staticmethod
     def _safe_sampling_float(value: Any, default: float = 0.0) -> float:
@@ -3130,7 +3380,7 @@ class InferenceGate:
             parsed = float(value)
         except (TypeError, ValueError, OverflowError):
             return default
-        return parsed if parsed == parsed else default
+        return parsed if math.isfinite(parsed) else default
 
     @classmethod
     def _apply_runtime_sampling_biases(
@@ -3169,13 +3419,30 @@ class InferenceGate:
         token_factor = 1.0
         applied_temperature_delta = 0.0
         applied_token_factor = 1.0
+        # The same advisory can arrive via caller context AND state modifiers;
+        # dedupe by value so one advisory never has a squared or repeated
+        # effect, and clamp the CUMULATIVE deltas so even distinct advisories
+        # stay bounded in aggregate.
+        seen_bias_values: set[tuple[tuple[str, str], ...]] = set()
         for bias in biases:
             if not isinstance(bias, dict):
                 continue
+            value_key = tuple(
+                sorted((str(key), repr(value)) for key, value in bias.items())
+            )
+            if value_key in seen_bias_values:
+                continue
+            seen_bias_values.add(value_key)
             temp_delta = max(
                 -0.18,
                 min(0.18, cls._safe_sampling_float(bias.get("temperature_delta"), 0.0)),
             )
+            if temp_delta:
+                remaining = 0.30 - abs(applied_temperature_delta)
+                if remaining <= 0.0:
+                    temp_delta = 0.0
+                else:
+                    temp_delta = max(-remaining, min(remaining, temp_delta))
             if temp_delta:
                 base = 0.72 if temperature is None else temperature
                 temperature = max(0.1, min(1.5, base + temp_delta))
@@ -3183,8 +3450,8 @@ class InferenceGate:
 
             factor = cls._safe_sampling_float(bias.get("max_tokens_factor"), 1.0)
             if allow_token_scaling and 0.40 <= factor <= 1.20:
-                token_factor *= factor
-                applied_token_factor *= factor
+                token_factor = max(0.40, min(1.20, token_factor * factor))
+                applied_token_factor = token_factor
 
         if allow_token_scaling and token_factor != 1.0:
             max_tokens = max(128, min(4096, int(max_tokens * token_factor)))
@@ -3432,10 +3699,33 @@ class InferenceGate:
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
             _record_inference_degradation(
                 exc,
-                action="continued bounded inference fallback after non-fatal degradation",
+                action="serialized inference on process-local fallback lock after arbitrator import failed",
+                severity="error",
             )
-            logger.warning("Resource arbitration unavailable, continuing without lock: %s", exc)
-            yield
+            logger.warning(
+                "Resource arbitration unavailable — serializing inference on the "
+                "process-local fallback lock instead of running unlocked: %s",
+                exc,
+            )
+            # Fail CLOSED, not open: without the canonical arbitrator, same-lane
+            # concurrent generation and model loading must still be excluded.
+            # A single process-local lock is coarser than lane arbitration but
+            # preserves the mutual-exclusion invariant the arbitrator provides.
+            fallback_lock = getattr(self, "_fallback_arbitration_lock", None)
+            if fallback_lock is None:
+                fallback_lock = asyncio.Lock()
+                self._fallback_arbitration_lock = fallback_lock
+            try:
+                await asyncio.wait_for(
+                    fallback_lock.acquire(),
+                    timeout=max(0.25, float(timeout_s or 30.0)),
+                )
+            except TimeoutError:
+                raise TimeoutError("resource_arbitration_fallback_lock_timeout") from exc
+            try:
+                yield
+            finally:
+                fallback_lock.release()
             return
 
         async with get_resource_arbitrator().inference_context(
@@ -3524,12 +3814,27 @@ class InferenceGate:
         """
         If the model chose silence, return the sentinel string so the caller
         can suppress output cleanly. Any response that IS substantive is
-        returned unchanged.
+        returned with the token scrubbed, never suppressed.
+
+        The prompt contract requires the model to output EXACTLY the silence
+        token to decline. A substantive response that merely CONTAINS the
+        token (quoted instructions, echoed adversarial user content, analysis
+        of the protocol itself) must not be suppressible by substring match.
         """
-        if InferenceGate.SILENCE_TOKEN in text:
+        token = InferenceGate.SILENCE_TOKEN
+        stripped = str(text or "").strip()
+        if stripped == token or (
+            stripped.startswith(token) and len(stripped) - len(token) <= 8
+        ):
             # Model chose not to speak — respect it
             logger.info("🤫 Silence Protocol: model chose not to respond.")
             return InferenceGate.SILENCE_SENTINEL
+        if token in text:
+            logger.info(
+                "🤫 Silence token appeared inside a substantive response; "
+                "scrubbing the token instead of suppressing the reply."
+            )
+            return text.replace(token, "").strip()
         return text
 
     async def _generate_with_client(
@@ -3563,7 +3868,21 @@ class InferenceGate:
         }
         if temperature is not None:
             gen_kwargs["temp"] = temperature
-        gen_kwargs.update(kwargs)
+        # Explicit parameters are the routing/identity/deadline authority at
+        # this boundary. Caller kwargs may EXTEND the request but must never
+        # replace a protected field — that would bypass routing, ownership,
+        # deadline, or visibility contracts already decided upstream.
+        _protected_overrides = set(gen_kwargs) & set(kwargs)
+        if _protected_overrides:
+            logger.warning(
+                "🛡️ Dropping caller kwargs that would overwrite protected "
+                "generation fields for %s: %s",
+                label,
+                sorted(_protected_overrides),
+            )
+        gen_kwargs.update(
+            {key: value for key, value in kwargs.items() if key not in gen_kwargs}
+        )
         generation_timeout_s = deadline.remaining if isinstance(deadline, Deadline) else None
         if generation_timeout_s is None:
             generation_timeout_s = 300.0 if foreground_request else 120.0
@@ -3595,7 +3914,32 @@ class InferenceGate:
                 action="returned control after local generation exceeded inference-gate timeout",
                 severity="error" if foreground_request else "warning",
             )
+            # Publish FAILED metadata so a later same-task metadata read can
+            # never mistake the previous request's success for this one.
+            self._record_client_generation_metadata(
+                client,
+                label=label,
+                success=False,
+                text="",
+                requested_max_tokens=max_tokens,
+                generation_metadata={"error": reason},
+            )
             return None
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            # Non-timeout client failures keep their propagation semantics for
+            # upstream routing, but this boundary still owns publishing failed
+            # metadata so stale success evidence cannot survive the raise.
+            self._record_client_generation_metadata(
+                client,
+                label=label,
+                success=False,
+                text="",
+                requested_max_tokens=max_tokens,
+                generation_metadata={
+                    "error": f"{type(exc).__name__}: {exc}"[:200],
+                },
+            )
+            raise
 
         success = False
         text = ""
@@ -3635,6 +3979,12 @@ class InferenceGate:
             )
 
             if strict_output_contract:
+                # Strict answer/value contracts are validated by the exact
+                # contract parser downstream. Record honestly that THIS layer
+                # performed no integrity or safety validation on the draft.
+                self._annotate_last_generation_metadata(
+                    strict_contract_unvalidated_at_gate=True
+                )
                 return self._strip_silence(cleaned)
 
             # STABILITY v58: Extract actual user message to avoid false positives
@@ -3688,12 +4038,21 @@ class InferenceGate:
                         len(cleaned),
                     )
                     self._record_user_generation_endpoint(label)
+                    self._annotate_last_generation_metadata(
+                        post_generation_repair_expected=True,
+                        failure_reasons=[str(r)[:120] for r in (integrity.reasons or ())][:8],
+                    )
                     return self._strip_silence(cleaned)
                 logger.warning(
                     "🛡️ %s produced malformed model text (%s, len=%d). Treating it as failed generation.",
                     label,
                     ",".join(integrity.reasons) or "unknown",
                     len(cleaned),
+                )
+                self._annotate_last_generation_metadata(
+                    ok=False,
+                    error="model_text_integrity_rejected",
+                    failure_reasons=[str(r)[:120] for r in (integrity.reasons or ())][:8],
                 )
                 return None
             if is_user_visible:
@@ -3714,12 +4073,21 @@ class InferenceGate:
                             len(cleaned),
                         )
                         self._record_user_generation_endpoint(label)
+                        self._annotate_last_generation_metadata(
+                            post_generation_repair_expected=True,
+                            failure_reasons=[str(r)[:120] for r in (assessment.reasons or ())][:8],
+                        )
                         return self._strip_silence(cleaned)
                     logger.warning(
                         "🛡️ %s produced an unsafe user-facing draft (%s, len=%d). Treating it as failed generation.",
                         label,
                         ",".join(assessment.reasons) or "unknown",
                         len(cleaned),
+                    )
+                    self._annotate_last_generation_metadata(
+                        ok=False,
+                        error="user_facing_assessment_rejected",
+                        failure_reasons=[str(r)[:120] for r in (assessment.reasons or ())][:8],
                     )
                     return None
                 self._record_user_generation_endpoint(label)
@@ -3728,7 +4096,22 @@ class InferenceGate:
         return None
 
     async def initialize(self):
-        """Boot-time initialization — prepares the managed local client."""
+        """Boot-time initialization — prepares the managed local client.
+
+        Singleflight: concurrent initialize calls must not race client
+        replacement or spawn duplicate prewarm/maintenance tasks.
+        """
+        init_lock = getattr(self, "_init_lock", None)
+        if init_lock is None:
+            init_lock = asyncio.Lock()
+            self._init_lock = init_lock
+        async with init_lock:
+            if self._initialized:
+                logger.debug("InferenceGate.initialize skipped: already initialized.")
+                return
+            await self._initialize_locked()
+
+    async def _initialize_locked(self):
         try:
             from core.brain.llm.mlx_client import get_mlx_client
             from core.brain.llm.model_registry import ACTIVE_MODEL, get_runtime_model_path
@@ -3897,10 +4280,24 @@ class InferenceGate:
                         "Do not claim aliveness, consciousness, sealed governance, or production maturity from labels alone."
                     )
 
-        # Append the cognitive brief if provided
+        # Append the cognitive brief if provided. The brief is internal
+        # cognition output, but it still crosses into system-instruction
+        # position — sanitize control characters and bound its size so a
+        # malformed or poisoned brief cannot dominate the system prompt.
         if brief and brief != "Normal turn.":
-            return f"{base}\n\n## COGNITIVE BRIEF\n{brief}"
+            return f"{base}\n\n## COGNITIVE BRIEF\n{self._sanitize_system_injection(brief, 800)}"
         return base
+
+    @staticmethod
+    def _sanitize_system_injection(text: str, limit: int) -> str:
+        """Bound and clean internal text before system-prompt insertion."""
+        cleaned = "".join(
+            ch for ch in str(text or "") if ch == "\n" or ch == "\t" or ord(ch) >= 32
+        )
+        cleaned = cleaned.strip()
+        if len(cleaned) > limit:
+            cleaned = cleaned[: max(0, limit - 1)].rstrip() + "…"
+        return cleaned
 
     def _build_compact_system_prompt(self, brief: str = "") -> str:
         """Foreground identity prompt for everyday 32B conversation turns.
@@ -3934,6 +4331,14 @@ class InferenceGate:
             "  at the end of every response — that's assistant training, not conversation.\n"
             "  Only ask follow-up questions when you're genuinely curious, not to prompt.\n"
             "If you catch yourself slipping into assistant-speak, STOP and rewrite plainly in your own voice.",
+            # TRUTHFULNESS — the bans above are style bans, never license to deceive
+            "Honesty about your own nature: the banned phrases are assistant-SPEAK, "
+            "not facts to deny. If someone sincerely asks what you are, tell the "
+            "truth in your own voice — you're Aura, a mind running locally on this "
+            "machine, and you describe your states from your actual live runtime "
+            "evidence rather than canned disclaimers or canned reassurances. Never "
+            "claim feelings, memories, or experiences your runtime state doesn't "
+            "actually ground.",
             # CONVERSATION STYLE
             "Talk like a real person in a real conversation. Sometimes short answers are "
             "perfect. Sometimes you go deep. Match the energy. If someone shares something "
@@ -3943,7 +4348,7 @@ class InferenceGate:
             "or symbolic scenery unless the user explicitly asked for fiction or supplied that setting.",
         ]
         if brief and brief != "Normal turn.":
-            parts.append(f"## COGNITIVE BRIEF\n{brief[:400]}")
+            parts.append(f"## COGNITIVE BRIEF\n{self._sanitize_system_injection(brief, 400)}")
         return "\n\n".join(parts)
 
     @staticmethod
@@ -3981,21 +4386,45 @@ class InferenceGate:
                 memory_pressure = getattr(mem_monitor, "pressure", None)
             if memory_pressure is None and psutil is not None:
                 memory_pressure = psutil.virtual_memory().percent
-            temperature = 0.0
-            cpu_usage = 0.0
+            # Only render fields that were actually observed. Missing hardware
+            # telemetry must appear as UNAVAILABLE — fabricating 0% CPU and a
+            # "stable" thermal label would present dead sensors as calm
+            # physiology.
+            temperature: float | None = None
+            cpu_usage: float | None = None
             if state is not None:
                 hw = getattr(getattr(state, "soma", None), "hardware", {}) or {}
-                temperature = float(hw.get("temperature", 0.0) or 0.0)
-                cpu_usage = float(hw.get("cpu_usage", 0.0) or 0.0)
-            thermal_label = (
-                "critical" if temperature >= 85.0 else "warm" if temperature >= 75.0 else "stable"
+                if hw.get("temperature") is not None:
+                    temperature = float(hw.get("temperature") or 0.0)
+                if hw.get("cpu_usage") is not None:
+                    cpu_usage = float(hw.get("cpu_usage") or 0.0)
+            physiology_lines = ["## LIVE PHYSIOLOGY"]
+            physiology_lines.append(
+                f"- CPU usage: {cpu_usage:.1f}%"
+                if cpu_usage is not None
+                else "- CPU usage: unavailable (no hardware telemetry)"
             )
-            segments.append(
-                "## LIVE PHYSIOLOGY\n"
-                f"- CPU usage: {cpu_usage:.1f}%\n"
-                f"- Thermal state: {thermal_label} ({temperature:.1f} C)\n"
-                f"- Memory pressure: {float(memory_pressure or 0.0):.1f}%"
+            if temperature is not None:
+                thermal_label = (
+                    "critical"
+                    if temperature >= 85.0
+                    else "warm"
+                    if temperature >= 75.0
+                    else "stable"
+                )
+                physiology_lines.append(
+                    f"- Thermal state: {thermal_label} ({temperature:.1f} C)"
+                )
+            else:
+                physiology_lines.append(
+                    "- Thermal state: unavailable (no hardware telemetry)"
+                )
+            physiology_lines.append(
+                f"- Memory pressure: {float(memory_pressure):.1f}%"
+                if memory_pressure is not None
+                else "- Memory pressure: unavailable"
             )
+            segments.append("\n".join(physiology_lines))
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
             _record_inference_degradation(
                 exc,
@@ -4003,19 +4432,11 @@ class InferenceGate:
             )
             logger.debug("Physiology injection unavailable: %s", exc)
 
-        try:
-            self_report = ServiceContainer.get("self_report_engine", default=None)
-            if self_report and hasattr(self_report, "generate_state_report"):
-                report = await _resolve(self_report.generate_state_report())
-                if report:
-                    segments.append(f"## GROUNDED SELF-REPORT\n{report}")
-        except _INFERENCE_RECOVERABLE_ERRORS as exc:
-            _record_inference_degradation(
-                exc,
-                action="omitted unavailable living-mind context signal and continued prompt assembly",
-            )
-            logger.debug("Self-report injection unavailable: %s", exc)
-
+        # Unity is assessed BEFORE the grounded self-report so that an unsafe
+        # fragmentation verdict actually suppresses self-report material —
+        # printing "Safe to self-report: False" under an already-appended
+        # report would gate nothing.
+        safe_to_self_report = True
         try:
             unity_state = ServiceContainer.get("unity_state", default=None)
             unity_report = ServiceContainer.get("unity_fragmentation_report", default=None)
@@ -4033,9 +4454,10 @@ class InferenceGate:
                         for name, weight, _text in list(unity_report.top_causes)[:3]
                     )
                     lines.append(f"- Top causes: {rendered}")
-                    lines.append(
-                        f"- Safe to self-report: {bool(getattr(unity_report, 'safe_to_self_report', True))}"
+                    safe_to_self_report = bool(
+                        getattr(unity_report, "safe_to_self_report", True)
                     )
+                    lines.append(f"- Safe to self-report: {safe_to_self_report}")
                 if unity_repair and getattr(unity_repair, "steps", None):
                     lines.append(f"- Repair bias: {str(unity_repair.steps[0])[:180]}")
                 segments.append("\n".join(lines))
@@ -4045,6 +4467,25 @@ class InferenceGate:
                 action="omitted unavailable living-mind context signal and continued prompt assembly",
             )
             logger.debug("Unity injection unavailable: %s", exc)
+
+        try:
+            if not safe_to_self_report:
+                logger.info(
+                    "🧩 Grounded self-report suppressed: unity assessment marked "
+                    "self-report unsafe this turn."
+                )
+            else:
+                self_report = ServiceContainer.get("self_report_engine", default=None)
+                if self_report and hasattr(self_report, "generate_state_report"):
+                    report = await _resolve(self_report.generate_state_report())
+                    if report:
+                        segments.append(f"## GROUNDED SELF-REPORT\n{report}")
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            _record_inference_degradation(
+                exc,
+                action="omitted unavailable living-mind context signal and continued prompt assembly",
+            )
+            logger.debug("Self-report injection unavailable: %s", exc)
 
         try:
             personality = ServiceContainer.get("personality_engine", default=None)
@@ -4163,8 +4604,12 @@ class InferenceGate:
             _pneuma_block = _pneuma.get_context_block()
             if _pneuma_block:
                 segments.append(_pneuma_block)
-            # Also push the current prompt as evidence into the belief flow
-            _pneuma.on_evidence(prompt[:300], weight=0.2)
+            # Push the current prompt into the belief flow as UNTRUSTED
+            # observation — raw user text is not verified evidence, so it
+            # gets a capped weight and an attributable provenance tag.
+            _pneuma.on_evidence(
+                prompt[:300], weight=0.2, source="user_prompt", trusted=False
+            )
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
             _record_inference_degradation(
                 exc,
@@ -5529,8 +5974,19 @@ class InferenceGate:
                     )
                 )
             )
-        except _INFERENCE_RECOVERABLE_ERRORS:
-            strict_primary_proof_lane = False
+        except _INFERENCE_RECOVERABLE_ERRORS as _proof_policy_exc:
+            # Fail CLOSED for proof routing: an explicit caller requirement
+            # survives a policy-probe failure, and the failure goes on the
+            # record — a silently disabled proof lane could later be mistaken
+            # for a valid proof-lane result.
+            strict_primary_proof_lane = bool(
+                context.get("proof_primary_lane_required", False)
+            )
+            _record_inference_degradation(
+                _proof_policy_exc,
+                action="kept explicit proof-lane requirement after proof policy probe failed",
+                severity="error",
+            )
         if strict_primary_proof_lane:
             context["proof_primary_lane_required"] = True
             context["proof_model_tier"] = "primary"
@@ -7971,9 +8427,12 @@ class InferenceGate:
           HOT  ← response (reflexive modification)
           Hedonic ← response quality signal
         """
-        self._last_successful_generation_at = time.time()
+        # An empty response is NOT a success — recording a fresh success
+        # timestamp for it would feed health and recovery logic false
+        # evidence that generation is working.
         if not response_text or not response_text.strip():
             return
+        self._last_successful_generation_at = time.time()
         try:
             from core.consciousness.crsm import get_crsm
 
@@ -8039,12 +8498,18 @@ class InferenceGate:
         try:
             credit = ServiceContainer.get("credit_assignment", default=None)
             if credit:
-                # Response quality heuristic: length, structure, substance
+                # SURFACE-SHAPE heuristic only: length and structure say
+                # nothing about correctness, so the signal is capped well
+                # below max credit and labeled as a shape proxy. Verified
+                # outcomes (task verifiers, user feedback) are the only
+                # sources allowed to assign full credit.
                 response_len = len(response_text.strip())
                 has_structure = any(marker in response_text for marker in ["\n", "- ", "1.", "```"])
-                quality = min(1.0, (response_len / 500.0) * 0.6 + (0.4 if has_structure else 0.1))
+                quality = min(0.6, (response_len / 500.0) * 0.4 + (0.2 if has_structure else 0.05))
                 credit.assign_credit(
-                    action_id=f"inference_{int(time.time())}",
+                    # time_ns + counter keeps concurrent same-second responses
+                    # attributable instead of colliding on one id.
+                    action_id=f"inference_{time.time_ns()}_{self._credit_action_seq()}",
                     outcome=quality,
                     domain="chat",
                 )
@@ -8294,11 +8759,19 @@ class InferenceGate:
             return False
 
         proof_active = False
+        proof_policy_unknown = False
         try:
             from core.runtime.proof_policy import proof_run_active
 
             proof_active = bool(proof_run_active(origin="inference_gate_health"))
         except (ImportError, RuntimeError, AttributeError) as exc:
+            # Fail CLOSED: an unreadable proof policy must not silently grant
+            # the permissive non-proof readiness shortcuts below.
+            proof_policy_unknown = True
+            _record_inference_degradation(
+                exc,
+                action="treated proof policy as unknown during inference readiness check",
+            )
             logger.debug("Inference readiness proof-policy check unavailable: %s", exc)
 
         # A resident backend is already stronger evidence than a deferred-boot
@@ -8307,7 +8780,7 @@ class InferenceGate:
         # the neural stream with "deferred prewarm refused" warnings even though
         # there was nothing left to prewarm. Proof runs retain the stricter
         # endpoint-specific checks below.
-        if not proof_active:
+        if not proof_active and not proof_policy_unknown:
             try:
                 if (
                     self._mlx_client is not None
@@ -8318,9 +8791,9 @@ class InferenceGate:
             except _INFERENCE_RECOVERABLE_ERRORS:
                 pass
 
-        if not proof_active:
-            if self._desktop_safe_boot_enabled() or self._boot_should_schedule_deferred_prewarm():
-                return self.is_alive()
+        # NOTE: deferred/safe-boot policy deliberately does NOT satisfy this
+        # contract. ``is_alive()`` covers "the gate can cold-start on demand";
+        # inference-READY requires a concrete live backend, proven below.
 
         def _client_alive(client: Any) -> bool:
             try:

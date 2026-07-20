@@ -53,11 +53,12 @@ def test_inference_gate_get_system_phi_redundancy(monkeypatch):
     phi = InferenceGate._get_system_phi()
     assert phi == 0.25
 
-    # 4. Test neutral fallback
+    # 4. No probe produced a measurement — Phi must be reported unavailable,
+    # never fabricated as a neutral score.
     monkeypatch.setattr("core.container.ServiceContainer.get", staticmethod(lambda name, default=None: None))
     monkeypatch.setattr("core.consciousness.phi_compute.get_phi_computer", lambda: None)
     phi = InferenceGate._get_system_phi()
-    assert phi == 0.5
+    assert phi is None
 
 
 def test_inference_gate_get_system_phi_records_typed_probe_failure(monkeypatch):
@@ -73,7 +74,7 @@ def test_inference_gate_get_system_phi_records_typed_probe_failure(monkeypatch):
     monkeypatch.setattr("core.consciousness.phi_compute.get_phi_computer", lambda: None)
     phi = InferenceGate._get_system_phi()
 
-    assert phi == 0.5
+    assert phi is None
     records = tracker.recent(subsystem="inference_gate", limit=1)
     assert records
     assert records[-1].action == "continued phi lookup after closed causal loop probe failed"

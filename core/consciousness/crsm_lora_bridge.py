@@ -31,6 +31,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -47,6 +48,43 @@ MAX_BUFFER_SIZE     = 500    # rolling capture buffer
 MIN_QUALITY         = 0.30   # discard examples below this quality
 PERSIST_PATH        = Path.home() / ".aura" / "data" / "crsm_lora_buffer.jsonl"
 FLUSH_EVERY         = 20     # write to disk every N captures
+
+# Direct identifiers that must never enter the persisted training corpus.
+# The MetadataScrubber handles hosts/paths/IPs/secrets; these cover the
+# user-content classes it does not.
+_TRAINING_PII_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b"), "[EMAIL_REDACTED]"),
+    (re.compile(r"\b(?:\+?\d{1,3}[ .-]?)?(?:\(\d{2,4}\)[ .-]?)?\d{3,4}[ .-]\d{3,4}(?:[ .-]\d{2,4})?\b"), "[PHONE_REDACTED]"),
+    (re.compile(r"\b(?:\d[ -]?){13,19}\b"), "[CARD_REDACTED]"),
+    (re.compile(r"\b\d{3}-\d{2}-\d{4}\b"), "[SSN_REDACTED]"),
+)
+
+
+def _training_capture_enabled() -> bool:
+    return str(
+        os.environ.get("AURA_SUBSTRATE_TRAINING_CAPTURE", "on")
+    ).strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _redact_for_training(text: str) -> str:
+    """Scrub direct identifiers before text becomes training data.
+
+    Applied at the capture boundary so raw prompts/responses never reach the
+    persisted JSONL corpus with emails, phone numbers, card-like digit runs,
+    SSNs, secrets, or local host identity intact.
+    """
+    if not text:
+        return ""
+    try:
+        from core.utils.privacy_hygiene import get_stealth_mode
+
+        scrubbed = get_stealth_mode().scrubber.scrub_text(text)
+    except (ImportError, AttributeError, RuntimeError) as exc:
+        record_degradation("crsm_lora_bridge", exc)
+        scrubbed = text
+    for pattern, replacement in _TRAINING_PII_PATTERNS:
+        scrubbed = pattern.sub(replacement, scrubbed)
+    return scrubbed
 
 
 @dataclass
@@ -122,15 +160,19 @@ class CRSMLoraBridge:
     ):
         """
         Called BEFORE inference. Records the setup for a potential capture.
-        Only proceeds if surprise is high enough.
+        Only proceeds if surprise is high enough, training capture is enabled,
+        and the context text has been redacted for training eligibility.
         """
+        if not _training_capture_enabled():
+            self._pending = None
+            return
         if surprise_magnitude < CAPTURE_THRESHOLD:
             self._pending = None
             return
 
         self._pending = CapturedMoment(
             timestamp=time.time(),
-            context_summary=context_text[-800:] if context_text else "",
+            context_summary=_redact_for_training(context_text[-800:] if context_text else ""),
             response_summary="",  # filled in post_inference
             surprise_magnitude=surprise_magnitude,
             hedonic_before=hedonic_score,
@@ -154,7 +196,9 @@ class CRSMLoraBridge:
         moment = self._pending
         self._pending = None
 
-        moment.response_summary = response_text[:600] if response_text else ""
+        moment.response_summary = _redact_for_training(
+            response_text[:600] if response_text else ""
+        )
         moment.hedonic_after = hedonic_after
 
         # Compute quality score

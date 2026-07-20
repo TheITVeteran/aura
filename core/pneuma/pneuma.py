@@ -121,14 +121,36 @@ class PNEUMA:
 
     # ── Public API ────────────────────────────────────────────────────────────
 
-    def on_evidence(self, text: str, weight: float = 0.25):
+    def on_evidence(
+        self,
+        text: str,
+        weight: float = 0.25,
+        *,
+        source: str = "evidence",
+        trusted: bool = True,
+    ):
         """Inject new textual evidence into the belief flow.
 
         Text is encoded as a simple bag-of-words hash embedding.
+
+        ``trusted=False`` marks unverified external text (e.g. a raw user
+        prompt). Untrusted evidence may only nudge the belief flow: its
+        injection weight is capped and its source tag is prefixed so belief
+        drift can be attributed to prompt-driven updates instead of silently
+        becoming grounded belief.
         """
         embedding = self._text_to_embedding(text)
-        self.ode_flow.inject_evidence(embedding, weight=weight, source="evidence")
-        self.ig_tracker.update(self.ode_flow.current_belief.vector, source="evidence")
+        resolved_source = str(source or "evidence")
+        resolved_weight = float(weight)
+        if not trusted:
+            resolved_weight = min(resolved_weight, 0.05)
+            resolved_source = f"untrusted_{resolved_source}"
+        self.ode_flow.inject_evidence(
+            embedding, weight=resolved_weight, source=resolved_source
+        )
+        self.ig_tracker.update(
+            self.ode_flow.current_belief.vector, source=resolved_source
+        )
         self._cached_context_at = 0.0
 
     def on_affect_change(self, valence: float, arousal: float):

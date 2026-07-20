@@ -41,10 +41,24 @@ class EpistemicState:
             last_verified=time.time()
         )
 
-    def update_belief(self, subject: str, predicate: str, obj: str, confidence: float):
+    def update_belief(
+        self,
+        subject: str,
+        predicate: str,
+        obj: str,
+        confidence: float,
+        *,
+        source: str = "unspecified",
+    ):
         """Updates the internal model.
         Crucially: If a new belief contradicts an old one, it triggers Dissonance.
+
+        ``source`` records provenance on the edge. Self-generated beliefs
+        (source="self_generated") are capped at low confidence so an
+        unverified model response can never become high-confidence grounding.
         """
+        if source == "self_generated":
+            confidence = min(float(confidence), 0.35)
         try:
             belief_authority = get_runtime_service("belief_authority", default=None)
             if belief_authority is not None:
@@ -52,7 +66,7 @@ class EpistemicState:
                     "consciousness_world_model",
                     f"{subject}:{predicate}",
                     obj,
-                    note=f"confidence={confidence:.3f}",
+                    note=f"confidence={confidence:.3f} source={source}",
                 )
         except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('world_model', exc)
@@ -64,7 +78,9 @@ class EpistemicState:
             # CONTRADICTION FOUND - Trigger Coherence Audit
             return self._resolve_cognitive_dissonance(subject, predicate, obj, confidence)
 
-        self.world_graph.add_edge(subject, obj, predicate=predicate, confidence=confidence)
+        self.world_graph.add_edge(
+            subject, obj, predicate=predicate, confidence=confidence, source=source
+        )
 
     def _resolve_cognitive_dissonance(self, s: str, p: str, o: str, new_conf: float):
         """Cognitive Dissonance Resolution (v5.1 — Complete Implementation).
@@ -214,7 +230,12 @@ class EpistemicState:
             if key in seen:
                 continue
             seen.add(key)
-            # Extracted beliefs get moderate confidence — they come from generated text
-            self.update_belief(subject, predicate, obj, confidence=0.6)
+            # These assertions came from Aura's OWN generated text with no
+            # citation, tool receipt, or external verification — mark the
+            # provenance and keep confidence low so hallucinations cannot
+            # become future grounding.
+            self.update_belief(
+                subject, predicate, obj, confidence=0.3, source="self_generated"
+            )
             count += 1
-            logger.debug("Extracted belief: %s %s %s", subject, predicate, obj)
+            logger.debug("Extracted self-generated belief: %s %s %s", subject, predicate, obj)

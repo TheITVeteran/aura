@@ -3724,7 +3724,10 @@ def test_foreground_headroom_probe_failure_requires_explicit_override(monkeypatc
     snapshot = InferenceGate._headroom_snapshot("secondary")
 
     assert snapshot["can_admit"] is True
-    assert snapshot["reason"] == ""
+    # The forced admission must stay on the record as an unmeasured override,
+    # never disguised as a clean measured admission.
+    assert snapshot["reason"] == "memory_probe_failed_forced_override"
+    assert snapshot["measured"] is False
     assert memory_probe.calls
 
 
