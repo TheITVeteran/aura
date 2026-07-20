@@ -142,6 +142,98 @@ def _score(task, text: str) -> str:
     return "correct" if produced == expected else "incorrect"
 
 
+
+CALIBRATION_SCHEMA = "aura.rlc_accuracy_calibration.v1"
+
+
+def calibrate_scoring() -> dict[str, Any]:
+    """Run known-truth fixtures through the REAL scoring and aggregation.
+
+    An instrument that has never been checked against known answers is not
+    evidence-grade. Both 0%-at-every-depth results this tool produced were
+    harness faults that a single calibration pass would have caught in
+    seconds: once because scoring raised AttributeError inside a bare
+    ``except`` and reported every task wrong, once because the token budget
+    could not reach a FINAL_ANSWER at all.
+
+    Fixtures assert the four outcomes the tool can report, and -- most
+    importantly -- that a PERFECT answer aggregates to exactly 100% and a
+    silent model aggregates to 0% with the unparseable count carrying the
+    explanation. Raises CalibrationError on any disagreement; callers must
+    refuse to publish numbers from an uncalibrated instrument.
+    """
+    from types import SimpleNamespace
+
+    gold = 'FINAL_ANSWER: {"node":6}'
+    task = SimpleNamespace(answer=gold, family="khop")
+    checks: list[dict[str, Any]] = []
+
+    def record(name: str, observed: Any, expected: Any) -> None:
+        checks.append(
+            {
+                "check": name,
+                "observed": observed,
+                "expected": expected,
+                "passed": observed == expected,
+            }
+        )
+
+    record("perfect_answer", _score(task, gold), "correct")
+    record(
+        "reasoning_then_answer",
+        _score(task, "step one\nstep two\n" + gold),
+        "correct",
+    )
+    record(
+        "wrong_value", _score(task, 'FINAL_ANSWER: {"node":9}'), "incorrect"
+    )
+    record(
+        "prose_without_answer",
+        _score(task, "To solve this we follow the edges from node 1..."),
+        "unparseable",
+    )
+    record("empty_output", _score(task, ""), "unparseable")
+
+    # Aggregation must turn those outcomes into the right rates.
+    perfect = _tally(["correct"] * 5)
+    record("perfect_accuracy", perfect["accuracy"], 1.0)
+    record("perfect_compliance", perfect["contract_compliance"], 1.0)
+    silent = _tally(["unparseable"] * 5)
+    record("silent_accuracy", silent["accuracy"], 0.0)
+    record("silent_compliance", silent["contract_compliance"], 0.0)
+    record("silent_unparseable_count", silent["unparseable"], 5)
+    wrong = _tally(["incorrect"] * 4 + ["correct"])
+    record("mixed_accuracy", wrong["accuracy"], 0.2)
+    record(
+        "mixed_compliance_is_total", wrong["contract_compliance"], 1.0
+    )
+
+    # A harness fault must RAISE, never score as a wrong answer.
+    fault_raised = False
+    try:
+        _score(SimpleNamespace(answer="not a contract", family="x"), gold)
+    except HarnessError:
+        fault_raised = True
+    record("harness_fault_raises", fault_raised, True)
+
+    failures = [row["check"] for row in checks if not row["passed"]]
+    receipt = {
+        "schema": CALIBRATION_SCHEMA,
+        "checks": checks,
+        "failures": failures,
+        "passed": not failures,
+    }
+    if failures:
+        raise CalibrationError(
+            f"accuracy harness failed calibration: {failures}"
+        )
+    return receipt
+
+
+class CalibrationError(RuntimeError):
+    """The instrument disagreed with known truth; results are void."""
+
+
 def run_arm(
     model,
     tokenizer,
@@ -252,6 +344,11 @@ def main() -> int:
     parser.add_argument("--n-slots", type=int, default=4)
     parser.add_argument("--max-tokens", type=int, default=48)
     parser.add_argument("--memory-fraction", type=float, default=0.35)
+    parser.add_argument(
+        "--self-test",
+        action="store_true",
+        help="run calibration only; load no model and publish no numbers",
+    )
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
 
@@ -262,6 +359,15 @@ def main() -> int:
     depths = [int(v) for v in args.depths.split(",") if v.strip()]
     families = [v.strip() for v in args.families.split(",") if v.strip()]
     started = time.time()
+    calibration = calibrate_scoring()
+    print(
+        f"calibration passed: {len(calibration['checks'])} known-truth checks",
+        flush=True,
+    )
+    if args.self_test:
+        print(json.dumps(calibration, indent=2))
+        return 0
+
     with mlx_memory_envelope(fraction=args.memory_fraction) as envelope:
         print(f"memory envelope: {envelope.to_receipt()}", flush=True)
         print(f"loading {args.model}", flush=True)
@@ -316,6 +422,7 @@ def main() -> int:
         "elapsed_s": round(time.time() - started, 3),
         "metric": "exact_match_correctness",
         "memory_envelope": envelope_receipt,
+        "calibration": calibration,
         "claims_awarded": [],
         "results": result,
     }
