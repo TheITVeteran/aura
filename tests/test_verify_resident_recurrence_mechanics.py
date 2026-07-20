@@ -97,6 +97,34 @@ def _evidence(tmp_path: Path) -> tuple[dict[str, object], dict[str, object], Cam
     return promotion, freeze, plan
 
 
+def _admission(freeze: dict[str, object]) -> dict[str, object]:
+    identity = dict(freeze["identity_receipt"])
+    identity.update(
+        complete=True,
+        load_eligible=True,
+        training_scope="complete_training",
+    )
+    freeze["identity_receipt"] = identity
+    material: dict[str, object] = {
+        "schema": verifier.ADMISSION_SCHEMA,
+        "decision": "admit_to_freeze_and_mechanics",
+        "claim_scope": "resident_v3_training_mechanics_admission_only",
+        "training_state": {"scope": "complete_training", "complete": True},
+        "identity_receipt": identity,
+        "claim_flags": {
+            "training_admitted": True,
+            "adapter_freeze_eligible": True,
+            "mechanics_proven": False,
+            "reasoning_gain": False,
+            "same_checkpoint_interaction": False,
+            "frontier_level": False,
+            "frontier_plus": False,
+            "installed_desktop_gain": False,
+        },
+    }
+    return {**material, "admission_sha256": _sha(material)}
+
+
 def test_bindings_accept_exact_resident_generation(tmp_path: Path) -> None:
     promotion, freeze, plan = _evidence(tmp_path)
 
@@ -109,6 +137,28 @@ def test_bindings_accept_exact_resident_generation(tmp_path: Path) -> None:
 
     assert identity["logical_parameter_count"] == 32_763_876_352
     assert identity["adapter_sha256"] == "a" * 64
+
+
+def test_bindings_accept_complete_v3_training_admission(tmp_path: Path) -> None:
+    _promotion, freeze, plan = _evidence(tmp_path)
+    admission = _admission(freeze)
+    plan_metadata = plan.to_dict()["metadata"]
+    plan_metadata["adapter_identity"]["identity_receipt"] = freeze["identity_receipt"]
+    plan = CampaignPlan.build(
+        "resident-mechanics",
+        [{"domain": "mathematics", "seed": 7, "task_sha256": "7" * 64}],
+        metadata=plan_metadata,
+    )
+
+    identity = verifier._verify_bindings(
+        promotion=admission,
+        freeze=freeze,
+        plan=plan,
+        frozen_adapter=tmp_path.resolve(),
+    )
+
+    assert identity["training_gate_schema"] == verifier.ADMISSION_SCHEMA
+    assert identity["training_gate_sha256"] == admission["admission_sha256"]
 
 
 @pytest.mark.parametrize(
@@ -173,6 +223,28 @@ def test_promotion_rejects_rehashed_capability_claim(tmp_path: Path) -> None:
         match="training_promotion_invalid",
     ):
         verifier._verified_promotion(path)
+
+
+def test_admission_rejects_bounded_partial_before_mechanics(tmp_path: Path) -> None:
+    _, freeze, _ = _evidence(tmp_path)
+    admission = _admission(freeze)
+    admission["training_state"] = {
+        "scope": "bounded_partial_training",
+        "complete": False,
+    }
+    material = dict(admission)
+    material.pop("admission_sha256")
+    admission["admission_sha256"] = _sha(material)
+    path = tmp_path / "admission.json"
+    from core.brain.llm.latent_cortex.campaign_journal import canonical_json_bytes
+
+    path.write_bytes(canonical_json_bytes(admission) + b"\n")
+
+    with pytest.raises(
+        verifier.ResidentMechanicsVerificationError,
+        match="training_admission_invalid",
+    ):
+        verifier._verified_admission(path)
 
 
 def test_verify_composes_mechanics_without_gain_claim(

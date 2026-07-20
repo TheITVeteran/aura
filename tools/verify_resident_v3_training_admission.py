@@ -527,7 +527,9 @@ def _verify_resume_command(
     amendment: Mapping[str, Any],
     *,
     phase: str = "resume",
+    source_root: Path | None = None,
 ) -> dict[str, Any]:
+    source_root = source_root or REPO_ROOT
     if phase not in {"partial", "resume"}:
         _fail("training_phase_invalid")
     command = plan.get("command")
@@ -561,8 +563,8 @@ def _verify_resume_command(
     except (TypeError, ValueError, OverflowError) as exc:
         raise ResidentV3TrainingAdmissionError("resume_command_contract_mismatch") from exc
     if (
-        command[1] != str(REPO_ROOT / envelope.get("wrapper", ""))
-        or wrapper_options.get("--trainer") != str(REPO_ROOT / envelope.get("trainer", ""))
+        command[1] != str(source_root / envelope.get("wrapper", ""))
+        or wrapper_options.get("--trainer") != str(source_root / envelope.get("trainer", ""))
         or memory_limit != 40.0
         or cache_limit != 2.0
         or wired_limit != 48.0
@@ -586,13 +588,19 @@ def _verify_resume_command(
     }
 
 
-def _verify_resource_envelope(path: Path, amendment: Mapping[str, Any]) -> dict[str, Any]:
+def _verify_resource_envelope(
+    path: Path,
+    amendment: Mapping[str, Any],
+    *,
+    source_root: Path | None = None,
+) -> dict[str, Any]:
+    source_root = source_root or REPO_ROOT
     raw, resource = _read_json(path, role="resource_envelope")
     expected = amendment.get("resource_envelope")
     if not isinstance(expected, Mapping):
         _fail("resource_envelope_contract_invalid")
-    wrapper = REPO_ROOT / str(expected.get("wrapper", ""))
-    trainer = REPO_ROOT / str(expected.get("trainer", ""))
+    wrapper = source_root / str(expected.get("wrapper", ""))
+    trainer = source_root / str(expected.get("trainer", ""))
     limits = {
         "memory_limit_bytes": 40 * _GIB,
         "cache_limit_bytes": 2 * _GIB,
@@ -1002,6 +1010,11 @@ def verify(args: argparse.Namespace) -> dict[str, Any]:
     if not isinstance(parent, Mapping) or not _binding_matches(protocol_raw, parent):
         _fail("parent_protocol_binding_mismatch")
 
+    source_root = Path(
+        getattr(args, "training_source_root", None) or REPO_ROOT
+    ).expanduser().resolve(strict=True)
+    if not source_root.is_dir():
+        _fail("training_source_root_invalid")
     partial_plan, partial_receipt = _detached_terminal(
         Path(protocol["detached_execution"]["partial_run_dir"]),
         role="forced_partial",
@@ -1021,15 +1034,21 @@ def verify(args: argparse.Namespace) -> dict[str, Any]:
         protocol,
         amendment,
         phase="partial",
+        source_root=source_root,
     )
     command_evidence = _verify_resume_command(
         resume_plan,
         protocol,
         amendment,
         phase="resume",
+        source_root=source_root,
     )
     resource_path = Path(amendment["resource_envelope"]["envelope_out"])
-    resource_evidence = _verify_resource_envelope(resource_path, amendment)
+    resource_evidence = _verify_resource_envelope(
+        resource_path,
+        amendment,
+        source_root=source_root,
+    )
 
     adapter_dir = Path(protocol["training"]["output_dir"]).resolve(strict=True)
     receipt_preview = strict_json_loads(
@@ -1096,9 +1115,14 @@ def verify(args: argparse.Namespace) -> dict[str, Any]:
         stage_path=Path(amendment["sentinel"]["resume_stage_path"]),
         expected_trainer_sha256=str(amendment["resource_envelope"]["trainer_sha256"]),
     )
+    freeze_eligible = state["scope"] == "complete_training"
     payload = {
         "schema": SCHEMA,
-        "decision": "admit_to_freeze_and_mechanics",
+        "decision": (
+            "admit_to_freeze_and_mechanics"
+            if freeze_eligible
+            else "retain_bounded_partial_training_evidence"
+        ),
         "claim_scope": "resident_v3_training_mechanics_admission_only",
         "protocol": {"sha256": _sha256(protocol_raw), "path": str(args.protocol)},
         "amendment": {"sha256": _sha256(amendment_raw), "path": str(args.amendment)},
@@ -1122,7 +1146,7 @@ def verify(args: argparse.Namespace) -> dict[str, Any]:
         "identity_receipt": identity,
         "claim_flags": {
             "training_admitted": True,
-            "adapter_freeze_eligible": True,
+            "adapter_freeze_eligible": freeze_eligible,
             "mechanics_proven": False,
             "reasoning_gain": False,
             "same_checkpoint_interaction": False,
@@ -1143,6 +1167,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--resume-sentinel-run-dir", type=Path, required=True)
     parser.add_argument("--resume-footprint-ring", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--training-source-root", type=Path, default=REPO_ROOT)
     args = parser.parse_args(argv)
     try:
         result = verify(args)

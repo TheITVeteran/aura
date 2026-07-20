@@ -21704,3 +21704,69 @@ stage the detached admission/freeze/mechanics/pilot continuation. Fusion or
 runtime activation remains conditional on positive causal and non-regression
 evidence; it must not contaminate the preregistered baseline arms. Final long
 soaks remain deferred.
+
+## Checkpoint 2026-07-20-190: Certified Rematerialized Recovery Boundary
+
+CP189 executed after publication. Its forced partial returned 75 cleanly after
+one resident-32B optimizer step and one held-out evaluation. Exact checkpoint
+v3 preserved the pending loss/cosine window, empty durable trails, holdout
+counter, adapter, optimizer, cursor, and deterministic order. Exact resume then
+advanced durably through step 10: mean training loss fell from 2.473221 at step
+5 to 1.386608 at step 10, and held-out mean CE fell from 1.611917 to 0.389076.
+During step 11, however, physical managed footprint reached 74,846.3 MB under
+the 73,728-MB compute ceiling. The independent sentinel killed the process tree
+and wrote a compute-stage tombstone. Trainer return code -9, sentinel return
+code 0, restart count zero, verified containment, and empty process group and
+lineage establish a resource-envelope abort rather than a training-quality or
+checkpoint-integrity failure. No training-completion or capability credit is
+awarded.
+
+- `core/learning/recurrence_checkpoint_migration.py` defines a create-once,
+  self-hashed CP189-to-CP191 migration. It binds the failed trainer and sentinel
+  receipts, lethal tombstone, old protocol/amendment, new trainer bytes,
+  training config, dataset manifest, execution spec, latest pointer, completion
+  record, and exact adapter/optimizer tensors. It copies the step-10 checkpoint
+  byte-for-byte into a fresh output root and rejects source, destination,
+  scientific-input, trainer, or certificate drift.
+- The trainer now supports exact full-depth activation rematerialization. The
+  trainable parameter tree is an explicit `mx.checkpoint` input, preventing the
+  captured-model zero-gradient failure mode. Small-checkpoint tests prove the
+  checkpointed and ordinary v3 objectives have equal values, nonzero equal
+  gradients for every trainable tensor, and equal objective telemetry.
+- A migrated invocation verifies the certificate before checkpoint tensor
+  acceptance, loads the source generation against its original config hash,
+  preserves adapter, optimizer, sample cursor, and every evidence accumulator,
+  then writes all later generations under the new rematerialized config. The
+  migration identity and full certificate are bound into training config,
+  receipt, adapter manifest, composite identity, and final identity receipt.
+  Subsequent invocations keep that identity while loading only a strictly
+  advanced CP191 generation.
+- `tools/launch_resident_v3_recovery.py` derives every scientific variable from
+  the certified source documents. Its one-step calibration changes only memory
+  execution and fresh runtime paths. The long resume is prohibited until an
+  immutable calibration verdict proves one exact checkpoint advance, all four
+  external memory stages, a contiguous acquire/release acknowledgement chain,
+  exact trainer/sentinel PID bindings, no tombstone, and compute footprint below
+  the lethal ceiling.
+- The post-training continuation now has a self-hashed, restart-observable
+  controller for strict admission, immutable adapter freeze, a sealed activation
+  candidate without physical weight fusion, resident mechanics, a preregistered
+  56-cell directional pilot, and a durable verdict with explicit failure points.
+  A positive pilot still grants no frontier claim: powered externally rooted
+  tasks, custody, contamination, equal-compute, and independent-verifier gates
+  remain mandatory.
+
+Validation is green: 43/43 focused migration, recovery-launch, adapter-identity,
+exact-resume, and rematerialized-gradient tests pass; the broader 56-test
+admission/mechanics/pipeline surface previously passed; focused Ruff, bytecode
+compilation, and diff-integrity checks pass. The real CP191 migration and
+one-step resident calibration have not launched at this source checkpoint.
+
+Evidence-weighted completion remains 27%. This is checkpoint 190 of the
+faithful 292-399 total-checkpoint forecast, leaving approximately 102-209
+checkpoints. No training-completion, mechanics, reasoning-gain, same-checkpoint
+interaction, frontier, external-custody, installed-app, release, or soak credit
+is awarded. Next: publish CP190, create and verify the real step-10 migration,
+run the rematerialized resident calibration, repair further if its empirical
+memory evidence fails, then launch exact detached training and the automatic
+post-training proof continuation. Final long soaks remain deferred.

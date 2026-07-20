@@ -41,6 +41,24 @@ ACCEPTED_OBJECTIVE_SCHEMAS = frozenset({OBJECTIVE_SCHEMA_V2, OBJECTIVE_SCHEMA_V3
 RECEIPT_V3_EXTRA_KEYS = frozenset({"objective_options", "holdout_trail"})
 CONFIG_V3_EXTRA_KEYS = frozenset({"objective_options", "bridge", "holdout"})
 DATASET_V3_EXTRA_KEYS = frozenset({"holdout_per_cell", "holdout_indices"})
+RESUME_MIGRATION_SCHEMA_V1 = "aura.recurrence_checkpoint_migration.v1"
+RESUME_MIGRATION_KEYS = frozenset(
+    {
+        "schema",
+        "migration_sha256",
+        "source_checkpoint",
+        "source_step",
+        "source_config_sha256",
+        "dataset_sha256",
+        "execution_spec_sha256",
+        "checkpoint_complete_sha256",
+        "adapter_sha256",
+        "optimizer_sha256",
+        "failure_tombstone_sha256",
+        "activation_rematerialization",
+        "new_trainer_sha256",
+    }
+)
 IDENTITY_RECEIPT_SCHEMA_V2 = "aura.recurrence_adapter_identity_receipt.v2"
 
 SOURCE_ROLES = frozenset(
@@ -184,6 +202,94 @@ def _artifact_binding(
             maximum=MAX_ARTIFACT_BYTES,
         ),
     }
+
+
+def _resume_migration_identity(value: Any) -> dict[str, Any]:
+    value = _exact(value, set(RESUME_MIGRATION_KEYS), role="resume_migration")
+    if value.get("schema") != RESUME_MIGRATION_SCHEMA_V1:
+        _fail("resume_migration_schema_invalid")
+    source_checkpoint = _relative_path(
+        value.get("source_checkpoint"),
+        role="resume_migration_source_checkpoint",
+    )
+    if not source_checkpoint.startswith("checkpoints/remote-") and not source_checkpoint.startswith(
+        "checkpoints/step-"
+    ):
+        _fail("resume_migration_source_checkpoint_invalid")
+    normalized = {
+        "schema": RESUME_MIGRATION_SCHEMA_V1,
+        "migration_sha256": _sha(value.get("migration_sha256"), role="resume_migration"),
+        "source_checkpoint": source_checkpoint,
+        "source_step": _integer(
+            value.get("source_step"),
+            role="resume_migration_source_step",
+            minimum=1,
+            maximum=100_000_000,
+        ),
+    }
+    for key in (
+        "source_config_sha256",
+        "dataset_sha256",
+        "execution_spec_sha256",
+        "checkpoint_complete_sha256",
+        "adapter_sha256",
+        "optimizer_sha256",
+        "failure_tombstone_sha256",
+        "new_trainer_sha256",
+    ):
+        normalized[key] = _sha(value.get(key), role=f"resume_migration_{key}")
+    if value.get("activation_rematerialization") != "full_depth_graph_checkpoint":
+        _fail("resume_migration_rematerialization_invalid")
+    normalized["activation_rematerialization"] = "full_depth_graph_checkpoint"
+    return normalized
+
+
+def _migration_certificate_summary(value: Any) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        _fail("checkpoint_migration_schema_invalid")
+    material = dict(value)
+    claimed = material.pop("migration_sha256", None)
+    if (
+        value.get("schema") != RESUME_MIGRATION_SCHEMA_V1
+        or claimed != sha256_bytes(canonical_json_bytes(material))
+    ):
+        _fail("checkpoint_migration_digest_invalid")
+    source = value.get("source")
+    destination = value.get("destination")
+    failure = value.get("failure")
+    change = value.get("required_execution_change")
+    trainer = value.get("new_trainer")
+    if not all(
+        isinstance(item, Mapping)
+        for item in (source, destination, failure, change, trainer)
+    ):
+        _fail("checkpoint_migration_schema_invalid")
+    complete = destination.get("complete")
+    adapter = destination.get("adapter")
+    optimizer = destination.get("optimizer")
+    tombstone = failure.get("tombstone")
+    if not all(
+        isinstance(item, Mapping)
+        for item in (complete, adapter, optimizer, tombstone)
+    ):
+        _fail("checkpoint_migration_schema_invalid")
+    return _resume_migration_identity(
+        {
+            "schema": value.get("schema"),
+            "migration_sha256": claimed,
+            "source_checkpoint": source.get("checkpoint"),
+            "source_step": source.get("step"),
+            "source_config_sha256": source.get("config_sha256"),
+            "dataset_sha256": source.get("dataset_sha256"),
+            "execution_spec_sha256": source.get("execution_spec_sha256"),
+            "checkpoint_complete_sha256": complete.get("sha256"),
+            "adapter_sha256": adapter.get("sha256"),
+            "optimizer_sha256": optimizer.get("sha256"),
+            "failure_tombstone_sha256": tombstone.get("sha256"),
+            "activation_rematerialization": change.get("activation_rematerialization"),
+            "new_trainer_sha256": trainer.get("sha256"),
+        }
+    )
 
 
 def _checkpoint_identity(value: Any, *, role: str) -> dict[str, Any]:
@@ -632,6 +738,9 @@ def validate_v2_adapter_identity(
         "lora",
         "tensors",
     }
+    migration_manifest_present = "checkpoint_migration" in parsed
+    if migration_manifest_present:
+        expected_manifest_keys.add("checkpoint_migration")
     parsed = dict(_exact(parsed, expected_manifest_keys, role="manifest"))
     if parsed["schema"] != MANIFEST_SCHEMA_V2:
         _fail("manifest_schema_unsupported")
@@ -654,17 +763,20 @@ def validate_v2_adapter_identity(
     if training_runtime != _runtime_identity(actual_runtime_environment):
         _fail("training_runtime_mismatch")
 
+    artifact_roles = [
+        "adapter",
+        "adapter_alias",
+        "loader_config",
+        "training_receipt",
+        "training_config",
+        "dataset_manifest",
+        "execution_spec",
+    ]
+    if migration_manifest_present:
+        artifact_roles.append("checkpoint_migration")
     bindings = {
         role: _artifact_binding(parsed[role], role=role)
-        for role in (
-            "adapter",
-            "adapter_alias",
-            "loader_config",
-            "training_receipt",
-            "training_config",
-            "dataset_manifest",
-            "execution_spec",
-        )
+        for role in artifact_roles
     }
     payloads = {
         role: _verify_artifact(binding, artifacts, role=role)
@@ -677,6 +789,16 @@ def validate_v2_adapter_identity(
     loader_config = strict_json_loads(payloads["loader_config"], role="loader_config")
     declared_objective = receipt.get("objective_schema") if isinstance(receipt, Mapping) else None
     objective_is_v3 = declared_objective == OBJECTIVE_SCHEMA_V3
+    migration_receipt_present = "resume_migration" in receipt
+    migration_config_present = "resume_migration" in config
+    if not (
+        migration_manifest_present
+        == migration_receipt_present
+        == migration_config_present
+    ):
+        _fail("resume_migration_cross_binding_mismatch")
+    if migration_manifest_present and not objective_is_v3:
+        _fail("resume_migration_requires_v3")
     receipt_keys = {
         "schema",
         "objective_schema",
@@ -737,6 +859,9 @@ def validate_v2_adapter_identity(
         receipt_keys |= RECEIPT_V3_EXTRA_KEYS
         config_keys |= CONFIG_V3_EXTRA_KEYS
         dataset_keys |= DATASET_V3_EXTRA_KEYS
+    if migration_manifest_present:
+        receipt_keys.add("resume_migration")
+        config_keys.add("resume_migration")
     _exact(receipt, receipt_keys, role="training_receipt")
     _exact(config, config_keys, role="training_config")
     _exact(dataset, dataset_keys, role="dataset_manifest")
@@ -823,31 +948,56 @@ def validate_v2_adapter_identity(
     )
     if receipt.get("optimizer") != optimizer or optimizer.get("name") != "AdamW":
         _fail("optimizer_cross_binding_mismatch")
+    raw_gradient_execution = config.get("gradient_execution")
+    if not isinstance(raw_gradient_execution, Mapping):
+        _fail("gradient_execution_invalid")
+    schema = raw_gradient_execution.get("schema")
+    expected_gradient_execution: dict[str, Any] = {
+        "schema": schema,
+        "mode": "depth_serial_exact_sum",
+        "concurrent_depth_graphs": 1,
+        "optimizer_updates_per_sample": 1,
+        "finite_loss_and_gradient_required_before_update": True,
+    }
+    if schema == "aura.recurrence_streamed_depth_gradient.v2":
+        expected_gradient_execution["activation_rematerialization"] = (
+            "full_depth_graph_checkpoint"
+        )
+    elif schema != "aura.recurrence_streamed_depth_gradient.v1":
+        _fail("gradient_execution_cross_binding_mismatch")
     gradient_execution = dict(
         _exact(
-            config.get("gradient_execution"),
-            {
-                "schema",
-                "mode",
-                "concurrent_depth_graphs",
-                "optimizer_updates_per_sample",
-                "finite_loss_and_gradient_required_before_update",
-            },
+            raw_gradient_execution,
+            set(expected_gradient_execution),
             role="gradient_execution",
         )
     )
     if (
-        gradient_execution
-        != {
-            "schema": "aura.recurrence_streamed_depth_gradient.v1",
-            "mode": "depth_serial_exact_sum",
-            "concurrent_depth_graphs": 1,
-            "optimizer_updates_per_sample": 1,
-            "finite_loss_and_gradient_required_before_update": True,
-        }
+        gradient_execution != expected_gradient_execution
         or receipt.get("gradient_execution") != gradient_execution
     ):
         _fail("gradient_execution_cross_binding_mismatch")
+    resume_migration: dict[str, Any] | None = None
+    if migration_manifest_present:
+        if schema != "aura.recurrence_streamed_depth_gradient.v2":
+            _fail("resume_migration_rematerialization_invalid")
+        resume_migration = _resume_migration_identity(config.get("resume_migration"))
+        if receipt.get("resume_migration") != resume_migration:
+            _fail("resume_migration_cross_binding_mismatch")
+        migration_certificate = strict_json_loads(
+            payloads["checkpoint_migration"],
+            role="checkpoint_migration",
+        )
+        if _migration_certificate_summary(migration_certificate) != resume_migration:
+            _fail("resume_migration_certificate_mismatch")
+        if (
+            resume_migration["dataset_sha256"] != config.get("dataset_sha256")
+            or resume_migration["execution_spec_sha256"]
+            != config.get("execution_spec_sha256")
+            or resume_migration["new_trainer_sha256"]
+            != receipt.get("trainer_source_sha256")
+        ):
+            _fail("resume_migration_training_identity_mismatch")
     if (
         dataset.get("train_seed") != config.get("train_seed")
         or not isinstance(dataset.get("examples"), list)
@@ -996,6 +1146,9 @@ def validate_v2_adapter_identity(
         "gradient_execution": gradient_execution,
         "tensors": tensors,
     }
+    if resume_migration is not None:
+        identity_material["checkpoint_migration"] = bindings["checkpoint_migration"]
+        identity_material["resume_migration"] = resume_migration
     if training_scope == "bounded_partial_training":
         identity_material["training_state"] = {
             "scope": training_scope,
@@ -1030,6 +1183,9 @@ def validate_v2_adapter_identity(
         "tensor_metadata_sha256": sha256_bytes(canonical_json_bytes(tensors)),
         "complete": True,
     }
+    if resume_migration is not None:
+        result["resume_migration"] = resume_migration
+        result["checkpoint_migration_sha256"] = bindings["checkpoint_migration"]["sha256"]
     if training_scope == "bounded_partial_training":
         result.update(
             {

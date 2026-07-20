@@ -315,6 +315,54 @@ def test_streamed_v3_matches_monolithic_v3_objective():
     assert all(len(cosines) == 1 for cosines in telemetry["pairwise_cos"].values())
 
 
+def test_activation_checkpointing_preserves_v3_value_and_gradients():
+    baseline, _baseline_optimizer, _ = _prepared(seed=1019)
+    checkpointed, _checkpointed_optimizer, _ = _prepared(seed=1019)
+    prompt = [5, 9, 17]
+    answer = [7, 11]
+    spec = RLCExecutionSpec(
+        n_slots=2,
+        branch_roles=("constructive_solution", "counterexample_search"),
+        recurrent_steps=2,
+        exchange_interval=1,
+    )
+    options = {
+        "spec": spec,
+        "depths": (1, 2),
+        "monotonicity_weight": 0.5,
+        "depth_margin": 0.05,
+        "diversity_weight": 0.25,
+        "diversity_target_cos": 0.5,
+    }
+
+    expected_value, expected_gradients, expected_telemetry = (
+        _streamed_depth_value_and_grad(
+            baseline,
+            prompt,
+            answer,
+            **options,
+        )
+    )
+    actual_value, actual_gradients, actual_telemetry = (
+        _streamed_depth_value_and_grad(
+            checkpointed,
+            prompt,
+            answer,
+            activation_checkpointing=True,
+            **options,
+        )
+    )
+    mx.eval(expected_gradients, actual_gradients)
+    assert actual_value == pytest.approx(expected_value, rel=1e-5, abs=1e-5)
+    expected = dict(tree_flatten(expected_gradients))
+    actual = dict(tree_flatten(actual_gradients))
+    assert set(actual) == set(expected)
+    assert any(float(mx.sum(mx.abs(value))) > 0.0 for value in actual.values())
+    for key in expected:
+        assert bool(mx.allclose(actual[key], expected[key], rtol=1e-4, atol=1e-5)), key
+    assert actual_telemetry == expected_telemetry
+
+
 def test_run_requires_model_lane_before_any_load():
     with pytest.raises(RuntimeError, match="model-lane lease"):
         _run(Namespace(), model_lane_lease=object())

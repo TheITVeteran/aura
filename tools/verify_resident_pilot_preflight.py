@@ -21,8 +21,12 @@ from core.brain.llm.latent_cortex.campaign_journal import (  # noqa: E402
 from core.brain.llm.latent_cortex.campaign_launch_bundle import (  # noqa: E402
     read_canonical_json,
 )
+from core.brain.llm.latent_cortex.frontier_tasks import (  # noqa: E402
+    CURRENT_REGISTRY_VERSION,
+)
 
 SCHEMA = "aura.latent_cortex.resident_pilot_contract.v1"
+SCHEMA_V2 = "aura.latent_cortex.resident_pilot_contract.v2"
 PREFLIGHT_SCHEMA = "aura.latent_cortex.resident_pilot_preflight.v1"
 DOMAINS = [
     "novel_algorithms",
@@ -114,7 +118,7 @@ def _verified_contract(path: Path) -> dict[str, Any]:
     seeds = campaign.get("seeds")
     required_rules = decision.get("advance_only_if")
     if (
-        contract.get("schema") != SCHEMA
+        contract.get("schema") not in {SCHEMA, SCHEMA_V2}
         or claimed != _sha(material)
         or contract.get("claim_scope") != "internal_directional_falsification_only"
         or contract.get("preregistered_before_model_output") is not True
@@ -140,6 +144,16 @@ def _verified_contract(path: Path) -> dict[str, Any]:
         or decision.get("advance_target") != "powered_external_frontier_campaign"
     ):
         _fail("pilot_contract_invalid")
+    if contract.get("schema") == SCHEMA_V2 and (
+        campaign.get("task_registry_version") != CURRENT_REGISTRY_VERSION
+        or campaign.get("n_slots") != 4
+        or campaign.get("branches") != 2
+        or campaign.get("rlc_steps") != 4
+        or campaign.get("rlc_profile") != "recurrence_attribution"
+        or campaign.get("decode_max_tokens") != 768
+        or campaign.get("max_infra_attempts") != 3
+    ):
+        _fail("pilot_v2_execution_contract_invalid")
     return contract
 
 
@@ -176,6 +190,7 @@ def _verify_plan(contract: Mapping[str, Any], plan_path: Path) -> CampaignPlan:
         "n_slots": campaign.get("n_slots"),
         "branches": campaign.get("branches"),
         "rlc_steps": campaign.get("rlc_steps"),
+        "rlc_profile": campaign.get("rlc_profile"),
         "decode_max_tokens": campaign.get("decode_max_tokens"),
         "episode_timeout_s": campaign.get("episode_timeout_s"),
         "load_timeout_s": campaign.get("load_timeout_s"),
@@ -183,6 +198,7 @@ def _verify_plan(contract: Mapping[str, Any], plan_path: Path) -> CampaignPlan:
         "arm_timeout_s": campaign.get("arm_timeout_s"),
         "campaign_timeout_s": campaign.get("campaign_timeout_s"),
         "equal_compute_max_samples": campaign.get("equal_compute_max_samples"),
+        "max_infra_attempts": campaign.get("max_infra_attempts"),
         "generation_seed_count": 2,
         "generation_seed_min_entropy_bits": 63,
     }

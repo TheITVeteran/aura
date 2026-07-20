@@ -29,6 +29,7 @@ from tools.verify_recurrence_v2_smoke import (  # noqa: E402
 
 SCHEMA = "aura.latent_cortex.resident_recurrence_mechanics.v1"
 PROMOTION_SCHEMA = "aura.latent_cortex.recurrence_training_promotion.v1"
+ADMISSION_SCHEMA = "aura.resident_v3_training_admission.v1"
 EXPECTED_ARMS = ["base_vanilla", "base_rlc", "adapter_vanilla", "adapter_rlc"]
 
 
@@ -92,6 +93,56 @@ def _verified_promotion(path: Path) -> dict[str, Any]:
     return promotion
 
 
+def _verified_admission(path: Path) -> dict[str, Any]:
+    admission = read_canonical_json(path, role="training_admission")
+    claimed = admission.get("admission_sha256")
+    material = dict(admission)
+    material.pop("admission_sha256", None)
+    state = admission.get("training_state")
+    flags = admission.get("claim_flags")
+    identity = admission.get("identity_receipt")
+    if (
+        admission.get("schema") != ADMISSION_SCHEMA
+        or claimed != _sha256(material)
+        or admission.get("decision") != "admit_to_freeze_and_mechanics"
+        or admission.get("claim_scope")
+        != "resident_v3_training_mechanics_admission_only"
+        or not isinstance(state, Mapping)
+        or state.get("scope") != "complete_training"
+        or state.get("complete") is not True
+        or not isinstance(flags, Mapping)
+        or flags.get("training_admitted") is not True
+        or flags.get("adapter_freeze_eligible") is not True
+        or any(
+            flags.get(name) is not False
+            for name in (
+                "mechanics_proven",
+                "reasoning_gain",
+                "same_checkpoint_interaction",
+                "frontier_level",
+                "frontier_plus",
+                "installed_desktop_gain",
+            )
+        )
+        or not isinstance(identity, Mapping)
+        or identity.get("complete") is not True
+        or identity.get("load_eligible") is not True
+        or identity.get("training_scope") != "complete_training"
+    ):
+        _fail("training_admission_invalid")
+    return admission
+
+
+def _verified_training_gate(path: Path) -> dict[str, Any]:
+    document = read_canonical_json(path, role="training_gate")
+    schema = document.get("schema")
+    if schema == PROMOTION_SCHEMA:
+        return _verified_promotion(path)
+    if schema == ADMISSION_SCHEMA:
+        return _verified_admission(path)
+    _fail("training_gate_schema_invalid")
+
+
 def _model_identity_from_plan(model: Mapping[str, Any]) -> dict[str, Any]:
     behavior = model.get("model_behavior_bundle")
     runtime = model.get("runtime_bundle")
@@ -120,7 +171,8 @@ def _verify_bindings(
     plan: CampaignPlan,
     frozen_adapter: Path,
 ) -> dict[str, Any]:
-    training = promotion.get("training")
+    is_admission = promotion.get("schema") == ADMISSION_SCHEMA
+    training = promotion.get("identity_receipt") if is_admission else promotion.get("training")
     freeze_receipt = freeze.get("identity_receipt")
     freeze_model = freeze.get("model_identity")
     metadata = plan.to_dict().get("metadata")
@@ -142,18 +194,26 @@ def _verify_bindings(
     plan_arms = metadata.get("arms")
     effective = execution.get("effective_rlc_config")
     adapter_spec = execution.get("adapter_execution_spec")
-    if (
+    legacy_binding_invalid = not is_admission and (
         promotion.get("freeze_certificate_sha256")
         != freeze.get("certificate_sha256")
         or training.get("content_root_sha256") != freeze.get("content_root_sha256")
-        or training.get("adapter_id") != freeze.get("adapter_id")
-        or training.get("adapter_sha256") != freeze_receipt.get("adapter_sha256")
-        or training.get("base_checkpoint_sha256")
-        != freeze_model.get("fingerprint")
+        or training.get("base_checkpoint_sha256") != freeze_model.get("fingerprint")
         or Path(str(training.get("frozen_adapter") or "")).expanduser().resolve(
             strict=False
         )
         != frozen_adapter
+    )
+    admission_binding_invalid = is_admission and (
+        training != freeze_receipt
+        or training.get("base_checkpoint_fingerprint")
+        != freeze_model.get("fingerprint")
+    )
+    if (
+        legacy_binding_invalid
+        or admission_binding_invalid
+        or training.get("adapter_id") != freeze.get("adapter_id")
+        or training.get("adapter_sha256") != freeze_receipt.get("adapter_sha256")
         or plan_adapter_dir != str(frozen_adapter)
         or plan_receipt != freeze_receipt
         or _model_identity_from_plan(model_identity) != dict(freeze_model)
@@ -182,7 +242,9 @@ def _verify_bindings(
         "base_checkpoint_sha256": freeze_model["fingerprint"],
         "content_root_sha256": freeze["content_root_sha256"],
         "logical_parameter_count": runtime["logical_parameter_count"],
-        "promotion_sha256": promotion["promotion_sha256"],
+        "training_gate_schema": promotion["schema"],
+        "training_gate_sha256": promotion.get("admission_sha256")
+        or promotion.get("promotion_sha256"),
     }
 
 
@@ -195,7 +257,7 @@ def verify(
     promotion_path = promotion_path.expanduser().resolve(strict=True)
     frozen_adapter = frozen_adapter.expanduser().resolve(strict=True)
     campaign_dir = campaign_dir.expanduser().resolve(strict=True)
-    promotion = _verified_promotion(promotion_path)
+    promotion = _verified_training_gate(promotion_path)
     freeze = verify_adapter_freeze(frozen_adapter)
     validators = _validator_identity()
     frozen_validators = freeze.get("validator_identity")

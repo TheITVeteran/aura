@@ -367,6 +367,7 @@ def _streamed_depth_value_and_grad(
     diversity_weight: float = 0.0,
     diversity_target_cos: float = 0.98,
     bridge_tokens: Sequence[int] = (),
+    activation_checkpointing: bool = False,
 ) -> tuple[float, Any, dict[str, Any]]:
     """Evaluate one depth graph at a time while preserving the exact gradient.
 
@@ -463,11 +464,23 @@ def _streamed_depth_value_and_grad(
                 bridge_tokens=tuple(bridge_tokens),
             )
 
-        value, gradients = nn.value_and_grad(model, depth_loss)(
-            model,
-            prompt_tokens,
-            answer_tokens,
-        )
+        if activation_checkpointing:
+            # The parameter tree must be an explicit checkpoint input.
+            # Capturing ``model`` alone makes MLX treat its trainable arrays as
+            # constants and silently returns zero gradients.
+            def checkpointed_depth_loss(parameters: Any) -> Any:
+                model.update(parameters)
+                return depth_loss(model, prompt_tokens, answer_tokens)
+
+            value, gradients = mx.value_and_grad(
+                mx.checkpoint(checkpointed_depth_loss)
+            )(model.trainable_parameters())
+        else:
+            value, gradients = nn.value_and_grad(model, depth_loss)(
+                model,
+                prompt_tokens,
+                answer_tokens,
+            )
         finite_flags = [
             mx.all(mx.isfinite(gradient)) for _path, gradient in tree_flatten(gradients)
         ]
@@ -605,7 +618,20 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--resource-stage-path", type=Path)
     parser.add_argument("--resource-startup-lethal-mb", type=float)
     parser.add_argument("--resource-steady-lethal-mb", type=float)
+    parser.add_argument(
+        "--activation-checkpointing",
+        action="store_true",
+        help="rematerialize each depth graph during backward to bound resident memory",
+    )
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument(
+        "--resume-migration-evidence",
+        type=Path,
+        help=(
+            "one-time certified checkpoint migration; requires --resume and "
+            "--activation-checkpointing"
+        ),
+    )
     return parser
 
 
@@ -725,6 +751,13 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
     if not math.isfinite(args.monotonicity_weight) or not 0.0 <= args.monotonicity_weight <= 10.0:
         raise ValueError("monotonicity-weight must be inside [0, 10]")
     objective_is_v3 = args.objective == "v3"
+    resume_migration_path = getattr(args, "resume_migration_evidence", None)
+    if resume_migration_path is not None and (
+        not args.resume or not args.activation_checkpointing or not objective_is_v3
+    ):
+        raise ValueError(
+            "resume migration requires --resume, --activation-checkpointing, and --objective v3"
+        )
     if not objective_is_v3 and (args.bridge_policy != "none" or args.holdout_per_cell):
         raise ValueError("bridge-policy and holdout options require --objective v3")
     if not 0 <= args.holdout_per_cell < args.per_cell:
@@ -774,6 +807,22 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
         ensure_private_directory,
     )
 
+    out_dir = ensure_private_directory(Path(args.out_dir).expanduser())
+    resume_migration: dict[str, Any] | None = None
+    migration_bytes: bytes | None = None
+    if resume_migration_path is not None:
+        from core.learning.recurrence_checkpoint_migration import verify_migration
+
+        resolved_migration = resume_migration_path.expanduser().resolve(strict=True)
+        if resolved_migration != (out_dir / "checkpoint_migration.json").resolve(strict=True):
+            raise ValueError("resume migration must be stored in the destination output root")
+        resume_migration = verify_migration(
+            resolved_migration,
+            expected_destination_root=out_dir,
+            expected_trainer_sha256=_sha256_file(Path(__file__).resolve(strict=True)),
+        )
+        migration_bytes = resolved_migration.read_bytes()
+
     families = tuple(args.families)
     unknown_families = sorted(set(families) - set(curriculum.families))
     if unknown_families:
@@ -794,7 +843,6 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
     if problems:
         raise ValueError(f"invalid execution spec: {problems}")
 
-    out_dir = ensure_private_directory(Path(args.out_dir).expanduser())
     model_path = str(Path(args.model).expanduser().resolve(strict=True))
     personality_adapter = _resolve_personality_adapter(args.personality_adapter, model_path)
     load_kwargs = {"adapter_path": personality_adapter} if personality_adapter else {}
@@ -871,6 +919,11 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
         dataset_payload["holdout_indices"] = sorted(holdout_set)
     dataset_bytes = canonical_json_bytes(dataset_payload)
     dataset_sha256 = sha256_bytes(dataset_bytes)
+    if resume_migration is not None and (
+        resume_migration["dataset_sha256"] != dataset_sha256
+        or resume_migration["execution_spec_sha256"] != spec.sha256
+    ):
+        raise RuntimeError("migration dataset or execution spec differs from the source checkpoint")
     sources = {
         "trainer": _source_binding(Path(__file__)),
         # v3 binds the v3 objective source; its v2 live-path dependency stays
@@ -941,11 +994,20 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
             "weight_decay": 0.01,
         },
         "gradient_execution": {
-            "schema": GRADIENT_EXECUTION_SCHEMA,
+            "schema": (
+                "aura.recurrence_streamed_depth_gradient.v2"
+                if args.activation_checkpointing
+                else GRADIENT_EXECUTION_SCHEMA
+            ),
             "mode": "depth_serial_exact_sum",
             "concurrent_depth_graphs": 1,
             "optimizer_updates_per_sample": 1,
             "finite_loss_and_gradient_required_before_update": True,
+            **(
+                {"activation_rematerialization": "full_depth_graph_checkpoint"}
+                if args.activation_checkpointing
+                else {}
+            ),
         },
         "train_seed": args.train_seed,
         "max_steps": args.max_steps,
@@ -968,6 +1030,8 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
             "eval_samples": args.holdout_eval_samples,
             "indices_sha256": sha256_bytes(canonical_json_bytes(sorted(holdout_set))),
         }
+    if resume_migration is not None:
+        config_payload["resume_migration"] = resume_migration
     config_bytes = canonical_json_bytes(config_payload)
     config_sha256 = sha256_bytes(config_bytes)
     execution_spec_bytes = canonical_json_bytes(spec.to_dict())
@@ -991,12 +1055,36 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
     last_checkpoint_step = -1
     last_checkpoint_path: Path | None = None
     if args.resume:
+        migration_source_load = False
+        if resume_migration is not None:
+            try:
+                current_pointer = json.loads((out_dir / "latest.json").read_text(encoding="ascii"))
+            except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+                raise RuntimeError("migration destination latest pointer is unreadable") from exc
+            migration_source_load = (
+                current_pointer.get("checkpoint") == resume_migration["source_checkpoint"]
+            )
         loaded = load_recurrence_checkpoint(
             out_dir,
-            expected_config_sha256=config_sha256,
+            expected_config_sha256=(
+                resume_migration["source_config_sha256"]
+                if migration_source_load
+                else config_sha256
+            ),
             expected_dataset_sha256=dataset_sha256,
             expected_execution_spec_sha256=spec.sha256,
         )
+        if resume_migration is not None:
+            if migration_source_load and (
+                loaded.checkpoint_dir.name
+                != Path(str(resume_migration["source_checkpoint"])).name
+                or loaded.state.get("step") != resume_migration["source_step"]
+            ):
+                raise RuntimeError("loaded checkpoint differs from certified migration source")
+            if not migration_source_load and loaded.state.get("step", 0) <= resume_migration[
+                "source_step"
+            ]:
+                raise RuntimeError("post-migration checkpoint did not advance source state")
         model.load_weights(list(loaded.adapter_tensors.items()), strict=False)
         optimizer.state = loaded.optimizer_state
         optimizer.init(model.trainable_parameters())
@@ -1164,6 +1252,7 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
                     diversity_weight=diversity_weight,
                     diversity_target_cos=float(args.diversity_target_cos),
                     bridge_tokens=bridge_tokens,
+                    activation_checkpointing=args.activation_checkpointing,
                 )
             except FloatingPointError:
                 mx.clear_cache()
@@ -1314,6 +1403,8 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
     if objective_is_v3:
         receipt["objective_options"] = config_payload["objective_options"]
         receipt["holdout_trail"] = receipt_holdout_trail
+    if resume_migration is not None:
+        receipt["resume_migration"] = resume_migration
     receipt_bytes = canonical_json_bytes(receipt)
     atomic_write_bytes(out_dir / "receipt.json", receipt_bytes)
     from core.brain.llm.latent_cortex.adapter_identity import (
@@ -1352,6 +1443,13 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
         "lora": receipt["lora"],
         "tensors": tensor_metadata,
     }
+    if resume_migration is not None:
+        if migration_bytes is None:
+            raise RuntimeError("verified migration bytes are unavailable")
+        manifest["checkpoint_migration"] = artifact_binding(
+            "checkpoint_migration.json",
+            migration_bytes,
+        )
     manifest_bytes = canonical_json_bytes(manifest)
     atomic_write_bytes(out_dir / "recurrence_adapter_manifest.json", manifest_bytes)
     completion = {

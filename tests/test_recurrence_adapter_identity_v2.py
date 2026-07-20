@@ -622,3 +622,137 @@ def test_receipt_config_objective_schemas_must_agree():
                 training_runtime,
             )
         )
+
+
+def _upgrade_bundle_to_migrated_v3():
+    (
+        manifest_bytes,
+        artifacts,
+        tensors,
+        base,
+        model_behavior,
+        personality,
+        training_runtime,
+    ) = _upgrade_bundle_to_v3()
+    artifacts = dict(artifacts)
+    manifest = json.loads(manifest_bytes)
+    config = json.loads(artifacts["training_config.json"])
+    receipt = json.loads(artifacts["receipt.json"])
+    gradient = {
+        "schema": "aura.recurrence_streamed_depth_gradient.v2",
+        "mode": "depth_serial_exact_sum",
+        "concurrent_depth_graphs": 1,
+        "optimizer_updates_per_sample": 1,
+        "finite_loss_and_gradient_required_before_update": True,
+        "activation_rematerialization": "full_depth_graph_checkpoint",
+    }
+    config["gradient_execution"] = gradient
+    receipt["gradient_execution"] = gradient
+    migration_material = {
+        "schema": "aura.recurrence_checkpoint_migration.v1",
+        "source": {
+            "checkpoint": "checkpoints/step-00000007-source",
+            "step": 7,
+            "config_sha256": "1" * 64,
+            "dataset_sha256": config["dataset_sha256"],
+            "execution_spec_sha256": config["execution_spec_sha256"],
+        },
+        "destination": {
+            "complete": {"sha256": "2" * 64},
+            "adapter": {"sha256": "3" * 64},
+            "optimizer": {"sha256": "4" * 64},
+        },
+        "failure": {"tombstone": {"sha256": "5" * 64}},
+        "required_execution_change": {
+            "activation_rematerialization": "full_depth_graph_checkpoint"
+        },
+        "new_trainer": {"sha256": receipt["trainer_source_sha256"]},
+    }
+    migration = {
+        **migration_material,
+        "migration_sha256": hashlib.sha256(
+            canonical_json_bytes(migration_material)
+        ).hexdigest(),
+    }
+    resume_migration = {
+        "schema": migration["schema"],
+        "migration_sha256": migration["migration_sha256"],
+        "source_checkpoint": migration["source"]["checkpoint"],
+        "source_step": migration["source"]["step"],
+        "source_config_sha256": migration["source"]["config_sha256"],
+        "dataset_sha256": migration["source"]["dataset_sha256"],
+        "execution_spec_sha256": migration["source"]["execution_spec_sha256"],
+        "checkpoint_complete_sha256": migration["destination"]["complete"]["sha256"],
+        "adapter_sha256": migration["destination"]["adapter"]["sha256"],
+        "optimizer_sha256": migration["destination"]["optimizer"]["sha256"],
+        "failure_tombstone_sha256": migration["failure"]["tombstone"]["sha256"],
+        "activation_rematerialization": "full_depth_graph_checkpoint",
+        "new_trainer_sha256": migration["new_trainer"]["sha256"],
+    }
+    config["resume_migration"] = resume_migration
+    config_bytes = _encoded(config)
+    config_sha = hashlib.sha256(config_bytes).hexdigest()
+    receipt["resume_migration"] = resume_migration
+    receipt["config_sha256"] = config_sha
+    receipt_bytes = _encoded(receipt)
+    migration_bytes = _encoded(migration)
+    artifacts["training_config.json"] = config_bytes
+    artifacts["receipt.json"] = receipt_bytes
+    artifacts["checkpoint_migration.json"] = migration_bytes
+    manifest["training_config"] = _binding("training_config.json", config_bytes)
+    manifest["training_receipt"] = _binding("receipt.json", receipt_bytes)
+    manifest["checkpoint_migration"] = _binding(
+        "checkpoint_migration.json", migration_bytes
+    )
+    manifest["config_sha256"] = config_sha
+    manifest_bytes = _encoded(manifest)
+    completion = json.loads(artifacts["training_completion.json"])
+    completion["receipt_sha256"] = manifest["training_receipt"]["sha256"]
+    completion["manifest_sha256"] = hashlib.sha256(manifest_bytes).hexdigest()
+    artifacts["training_completion.json"] = _encoded(completion)
+    return (
+        manifest_bytes,
+        artifacts,
+        tensors,
+        base,
+        model_behavior,
+        personality,
+        training_runtime,
+    )
+
+
+def test_migrated_v3_bundle_binds_checkpoint_provenance():
+    receipt = _validate(_upgrade_bundle_to_migrated_v3())
+
+    assert receipt["complete"] is True
+    assert receipt["resume_migration"]["source_step"] == 7
+    assert receipt["resume_migration"]["activation_rematerialization"] == (
+        "full_depth_graph_checkpoint"
+    )
+    assert receipt["checkpoint_migration_sha256"]
+
+
+def test_migrated_v3_bundle_rejects_certificate_tamper():
+    bundle = _upgrade_bundle_to_migrated_v3()
+    certificate = json.loads(bundle[1]["checkpoint_migration.json"])
+    certificate["source"]["step"] = 6
+    bundle[1]["checkpoint_migration.json"] = _encoded(certificate)
+
+    with pytest.raises(
+        RecurrenceAdapterIdentityV2Error,
+        match="checkpoint_migration_size_mismatch|checkpoint_migration_sha256_mismatch",
+    ):
+        _validate(bundle)
+
+
+def test_migrated_v3_bundle_requires_all_three_binding_surfaces():
+    bundle = _upgrade_bundle_to_migrated_v3()
+    manifest = json.loads(bundle[0])
+    manifest.pop("checkpoint_migration")
+    bundle = (_encoded(manifest), *bundle[1:])
+
+    with pytest.raises(
+        RecurrenceAdapterIdentityV2Error,
+        match="resume_migration_cross_binding_mismatch",
+    ):
+        _validate(bundle)
