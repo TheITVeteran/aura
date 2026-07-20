@@ -21310,3 +21310,44 @@ Evidence-weighted completion remains 27%. This is checkpoint 179 of the faithful
 292-399 forecast, leaving approximately 113-220 checkpoints. No reasoning-gain,
 frontier, external-custody, installed-app, release, or soak credit is awarded.
 Final long soaks remain deferred.
+
+## Checkpoint 2026-07-19-182: CP180-182 — Contract Surface, V3 Objective, Resident V3 Launch
+
+Answers all four CP179 diagnoses with landed, tested machinery, then launches
+the corrected training under a frozen protocol.
+
+- CP180 (measurement): incremental FINAL_ANSWER completion detection
+  (`answer_contract.py`, string/escape-aware, parser-exact semantics);
+  contract-aware decode termination in the engine (config-gated
+  `decode_contract`, termination `contract_complete` counted as a COMPLETE
+  answer by engine and service contracts) and in the campaign's streamed
+  vanilla path (uniform stop rule, actual-token compute accounting, all three
+  RLC config branches enabled); per-branch public-contract verdicts in the
+  episode receipt beside the scalar scores. The 256-token truncation that
+  strangled every CP179 arm is closed at both decode surfaces.
+- CP181 (objective): v3 demands a positive depth advantage — the streamed
+  hinge coefficient engages while deep > shallow − margin on PURE answer CE
+  (diversity pressure cannot fake or hide a depth advantage), with the
+  gradient-detached shallow side still buying nothing. Differentiable
+  branch-diversity penalty over final latent states with per-step
+  post-exchange cosine telemetry in the loss trail; assistant-answer-v3
+  bridge-token parity between training and live; last-N-per-cell held-out
+  split with rotating gradient-free checkpoint evals in the receipt.
+  Streamed-vs-monolithic gradient parity is pinned for BOTH objectives. The
+  v2 identity contract validates v3 bundles exactly: v3 evidence keys
+  required with the v3 schema, forbidden with v2, schemas must agree, and
+  the identity receipt names the objective that actually trained the
+  adapter.
+- CP182 (proof + launch): real 1.5B proof run exercised every v3 surface —
+  loss 1.44→1.15, live cosine telemetry, 22 bridge tokens hash-bound,
+  12-sample holdout with rotating evals, and the strict identity contract
+  VALIDATED the produced bundle naming objective v3. The resident v3
+  protocol is frozen and committed BEFORE launch (runtime-aligned 4-slot
+  shape, fresh seed 2026071901, forced-partial → bounded 720-minute resume,
+  overfitting guard in mechanical admission, contract-aware four-arm pilot
+  whose advance rules include virtual-width-alive, conditional confirmatory
+  campaign requiring the signed contamination audit and independent
+  evidence verification). The forced partial is running detached.
+- No reasoning-gain, resident-32B, frontier, external-custody,
+  installed-app, release, or soak credit. The pilot and confirmatory
+  campaign remain the only doors to those claims.
