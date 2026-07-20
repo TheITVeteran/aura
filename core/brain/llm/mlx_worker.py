@@ -151,19 +151,26 @@ def _safe_int(value: Any, default: int) -> int:
 
 
 def _surface_generation_contract_enabled(job: dict[str, Any]) -> bool:
-    return bool(
-        job.get("clean_user_surface_contract", False)
-        or job.get("health_probe", False)
-        or job.get("operator_evidence_contract", False)
-        # Strict/structured proof contracts need CORRECT symbolic tokens, not
-        # affective voice. Running them at full steering (alpha 5.0) corrupts the
-        # constrained first-token logits → zero-token generation that hangs to
-        # the 90s first-token timeout (DNU R011/R040/R022 wedges). Clamp steering
-        # for these the same way user-visible prose is clamped.
-        or job.get("strict_answer_contract", False)
-        or job.get("strict_value_contract", False)
-        or job.get("proof_evaluation_contract", False)
-    )
+    """Decide whether this job's decode runs with the steering clamp.
+
+    FAIL-SAFE INVERSION (July 2026 coherence incident): the clamp used to
+    apply only to jobs that explicitly carried a surface/strict contract, so
+    any route that dropped the flag decoded at full governor steering (up to
+    alpha 3.0 — or the install-time 5.0 when the substrate sync was stale).
+    Live symptom: fluent spliced-dialog nonsense served to the user. Every
+    job is now clamped UNLESS it explicitly opts into full steering
+    (latent-cortex episodes, steering experiments) — a dropped flag degrades
+    to safe, never to hot.
+
+    Strict/structured proof contracts still matter for the alpha TIER (see
+    _surface_control_alpha): they need CORRECT symbolic tokens, not affective
+    voice. Running them at full steering (alpha 5.0) corrupts the constrained
+    first-token logits → zero-token generation that hangs to the 90s
+    first-token timeout (DNU R011/R040/R022 wedges).
+    """
+    if bool(job.get("allow_full_affective_steering", False)):
+        return False
+    return True
 
 
 def _job_requires_prompt_cache_bypass(job: dict[str, Any]) -> bool:
@@ -394,6 +401,26 @@ def _surface_generation_control_receipt(
     receipt["surface_alpha_applied_ok"] = (
         "surface_alpha_applied" in state or state.get("engine") is None
     )
+    # Attribution evidence: what the hooks ACTUALLY injected at (ceiling and
+    # staleness derating happen inside the hook, so the requested/applied
+    # values alone cannot explain an incident) plus how fresh the substrate
+    # sync was. steering_sync_age_s = -1.0 means the sync never ran.
+    receipt_engine = state.get("engine")
+    receipt_hooks = list(getattr(receipt_engine, "_hooks", []) or []) if receipt_engine is not None else []
+    if receipt_hooks:
+        effective_alphas = [
+            _safe_float(getattr(hook, "_last_effective_alpha", 0.0), 0.0)
+            for hook in receipt_hooks
+        ]
+        receipt["steering_effective_alpha_max"] = round(max(effective_alphas), 4)
+        sync_stamps = [
+            _safe_float(getattr(hook, "_last_substrate_sync_monotonic", 0.0), 0.0)
+            for hook in receipt_hooks
+        ]
+        newest_sync = max(sync_stamps)
+        receipt["steering_sync_age_s"] = (
+            round(max(0.0, time.monotonic() - newest_sync), 3) if newest_sync > 0 else -1.0
+        )
 
     if job.get("clean_user_surface_recurrent_loops") is not None:
         receipt["recurrent_runtime_loops_requested"] = _safe_int(

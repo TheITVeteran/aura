@@ -1022,11 +1022,14 @@ class AffectiveSteeringHook:
         self._vectors = vectors
         self._alpha = alpha
         self._installed = False
-        
+
         # Shared substrate state (updated by SubstrateSyncThread)
         self._substrate_x: np.ndarray | None = None
         self._latest_moods: dict[str, float] = {}
         self._substrate_lock = threading.Lock()
+        # Freshness stamp: 0.0 = never synced. The injection path derates
+        # alpha when the sync thread stops feeding us (see _effective_alpha).
+        self._last_substrate_sync_monotonic = 0.0
         
         # Active flag
         self._active = True
@@ -1038,12 +1041,39 @@ class AffectiveSteeringHook:
         except (TypeError, ValueError):
             self._phi_sample_every = 32
         self._last_injection_norm = 0.0
+        self._last_effective_alpha = 0.0
         self._last_mask_mode = "none"
         
         # [OPTIMIZATION] Cached composite vector to avoid redundant MLX uploads
         self._cached_composite_mx: Any = None
         self._last_composite_np: np.ndarray | None = None
         self._cached_substrate_hash: int = 0
+
+    # Hard ceiling on runtime injection strength. The governor already clips
+    # its computed alpha to 3.0; this enforces the same bound AT THE POINT OF
+    # INJECTION so no configuration path (install-time DEFAULT_ALPHA=5.0, a
+    # stalled sync thread, a bad env override) can steer hotter than the
+    # governor is ever allowed to ask for.
+    _INJECTION_ALPHA_CEILING = 3.0
+    # If the substrate sync stops feeding this hook (thread died, mood lookups
+    # failing), steering must derate instead of freezing at its last-hot
+    # value: stale affect is noise, and hot noise is exactly the spliced
+    # off-distribution decode observed live.
+    _SYNC_STALE_AFTER_S = 2.0
+    _STALE_SAFE_ALPHA = 0.35
+
+    def _effective_alpha(self) -> float:
+        try:
+            alpha = float(self._alpha)
+        except (TypeError, ValueError):
+            return 0.0
+        if not math.isfinite(alpha) or alpha <= 0.0:
+            return 0.0
+        alpha = min(alpha, self._INJECTION_ALPHA_CEILING)
+        last_sync = self._last_substrate_sync_monotonic
+        if last_sync <= 0.0 or (time.monotonic() - last_sync) > self._SYNC_STALE_AFTER_S:
+            alpha = min(alpha, self._STALE_SAFE_ALPHA)
+        return alpha
 
     @staticmethod
     def _vector_from_moods(moods: dict[str, float]) -> np.ndarray:
@@ -1077,6 +1107,7 @@ class AffectiveSteeringHook:
         if len(state) == 0 or not np.isfinite(state).all():
             state = np.zeros(64, dtype=np.float32)
         with self._substrate_lock:
+            self._last_substrate_sync_monotonic = time.monotonic()
             self._latest_moods = {str(key): float(value) for key, value in dict(moods or {}).items()}
             self._latest_moods["_source"] = source
             self._substrate_x = state.copy()
@@ -1217,19 +1248,24 @@ class AffectiveSteeringHook:
                 composite = hook.compute_composite_vector_mx(dtype=h.dtype)
 
                 if composite is not None:
-                    mask = hook._completion_position_mask(h)
-                    if mask is not None:
-                        h = h + (mask * hook._alpha * composite)
-                    else:
-                        h = h + hook._alpha * composite
+                    # Ceiling + staleness derating happen HERE, at injection,
+                    # not just in the sync thread that may have died.
+                    effective_alpha = hook._effective_alpha()
+                    if effective_alpha > 0.0:
+                        mask = hook._completion_position_mask(h)
+                        if mask is not None:
+                            h = h + (mask * effective_alpha * composite)
+                        else:
+                            h = h + effective_alpha * composite
 
                     # Diagnostic
                     hook._inject_count += 1
+                    hook._last_effective_alpha = effective_alpha
                     hook._maybe_record_phi_residual(h)
                     # Note: norm is expensive, only do it occasionally
                     if hook._inject_count % 50 == 0:
                         import mlx.core as mx
-                        hook._last_injection_norm = float(mx.norm(composite)) * hook._alpha
+                        hook._last_injection_norm = float(mx.norm(composite)) * effective_alpha
 
                 if rest is not None:
                     return (h,) + rest

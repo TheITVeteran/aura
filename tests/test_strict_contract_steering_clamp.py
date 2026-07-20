@@ -45,9 +45,20 @@ def test_existing_contracts_still_clamped():
     assert _surface_generation_contract_enabled({"operator_evidence_contract": True})
 
 
-def test_ordinary_turn_not_clamped():
-    assert _surface_generation_contract_enabled({}) is False
-    assert _surface_generation_contract_enabled({"foo": True}) is False
+def test_unmarked_jobs_are_clamped_fail_safe():
+    # FAIL-SAFE INVERSION (July 2026 coherence incident): an unmarked job used
+    # to decode at full governor steering — any route that dropped the contract
+    # flag served hot, off-distribution text. Unmarked now means clamped.
+    assert _surface_generation_contract_enabled({}) is True
+    assert _surface_generation_contract_enabled({"foo": True}) is True
+
+
+def test_explicit_opt_out_keeps_full_steering():
+    # Latent-cortex episodes (the experiment lane) opt out explicitly.
+    assert (
+        _surface_generation_contract_enabled({"allow_full_affective_steering": True})
+        is False
+    )
 
 
 def test_strict_contract_steering_is_near_off():

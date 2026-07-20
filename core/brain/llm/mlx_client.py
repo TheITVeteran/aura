@@ -4127,6 +4127,13 @@ class MLXLocalClient:
                 job["clean_user_surface_contract"] = True
                 job["live_mind_controls_bound"] = True
                 job.update(wire_runtime_controls)
+            else:
+                # Latent episodes without explicit surface-parity controls are
+                # the experiment lane: they keep historical full governor
+                # steering. Every OTHER worker job now defaults to the surface
+                # clamp (fail-safe inversion after the July 2026 coherence
+                # incident) — this opt-out is deliberately scoped to episodes.
+                job["allow_full_affective_steering"] = True
             if wire_cognitive_context is not None:
                 job["cognitive_context"] = wire_cognitive_context
             if response_contract is not None:
