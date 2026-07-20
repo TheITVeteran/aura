@@ -55,59 +55,71 @@ def _render(tokenizer, task):
 def _decode_answer(
     model, tokenizer, prepared, state, max_tokens: int, envelope=None
 ):
-    """Greedy-decode an answer conditioned on the persisted slot state."""
+    """KV-cached incremental decode conditioned on [prompt; slots; bridge].
+
+    The first implementation re-ran the FULL stack for every generated
+    token over a growing sequence -- O(n^2) work and O(n^2) retained graph.
+    That is tolerable on a 1.5B and ruinous on a 32B (a 24-task x 4-depth
+    ladder would be hours of pure overhead), and it is what drove the host
+    to 103 GB. Here the prompt, slots and bridge are pushed through the
+    cache ONCE, then each new token costs a single-position forward.
+    """
     import mlx.core as mx
+    from mlx_lm.models.base import create_attention_mask
+    from mlx_lm.models.cache import KVCache
 
     from core.brain.llm.latent_cortex.answer_contract import (
         is_contract_complete,
     )
-    from core.learning.recurrence_native_objective_v2 import _persist_and_score
 
-    # Teacher-forcing the produced tokens back through the SAME persisted
-    # context is what makes this a real decode. An earlier version re-ran
-    # the model on the generated tokens alone, dropping prompt and slot
-    # context entirely, which produced 0% at every depth -- a broken
-    # harness, not a model result.
+    inner = model.model
+    cache = [KVCache() for _ in inner.layers]
+
+    def push(hidden):
+        """Run one span through every layer, populating the cache."""
+        mask = create_attention_mask(hidden, cache)
+        for index, layer in enumerate(inner.layers):
+            hidden = layer(hidden, mask, cache[index])
+        return hidden
+
+    # Prefill: prompt, then the committed slot state, then the bridge cue.
+    push(prepared.prompt_embeddings)
+    tail = push(state)
+    if prepared.bridge_count:
+        tail = push(
+            prepared.tail_embeddings[:, : prepared.bridge_count, :]
+        )
+    logits = _head_logits(model, inner.norm(tail[:, -1:, :]))[0, -1]
+
     produced: list[int] = []
     text = ""
+    eos = tokenizer.eos_token_id
     for index in range(max_tokens):
-        logits = _persist_and_score(
-            model,
-            prepared.prompt_embeddings,
-            prepared.seeds[0],
-            state,
-            _extend_tail(model, prepared, produced),
-            bridge_count=prepared.bridge_count,
-            answer_count=max(1, len(produced) + 1),
-            prelude_end=prepared.prelude_end,
-            coda_start=prepared.coda_start,
-        )
-        token = int(mx.argmax(logits[0, -1]))
-        # Materialize and release before the next full forward. Each step
-        # re-runs the whole stack over a GROWING sequence, so without this
-        # the retained graphs are O(n^2) -- an unguarded version of this
-        # loop drove the host to 103 GB and forced a shutdown.
-        del logits
-        if envelope is not None:
-            envelope.reclaim(index)
+        token = int(mx.argmax(logits))
+        if eos is not None and token == eos:
+            break
         produced.append(token)
         text = tokenizer.decode(produced)
         if is_contract_complete(text):
             break
-        if tokenizer.eos_token_id is not None and token == tokenizer.eos_token_id:
-            break
+        hidden = push(inner.embed_tokens(mx.array([[token]])))
+        logits = _head_logits(model, inner.norm(hidden))[0, -1]
+        mx.eval(logits)
+        if envelope is not None:
+            envelope.reclaim(index)
+    del cache
+    if envelope is not None:
+        envelope.reclaim(force=True)
     return text
 
 
-def _extend_tail(model, prepared, produced: list[int]):
-    """Tail embeddings = bridge + tokens generated so far."""
-    import mlx.core as mx
-
-    if not produced:
-        return prepared.tail_embeddings
-    generated = model.model.embed_tokens(mx.array([produced]))
-    bridge = prepared.tail_embeddings[:, : prepared.bridge_count, :]
-    return mx.concatenate([bridge, generated], axis=1)
+def _head_logits(model, hidden):
+    """Project hidden states with the model's output head."""
+    head = getattr(model, "lm_head", None)
+    inner = model.model
+    if head is not None and not isinstance(head, type(inner.embed_tokens)):
+        return head(hidden)
+    return inner.embed_tokens.as_linear(hidden)
 
 
 class HarnessError(RuntimeError):
