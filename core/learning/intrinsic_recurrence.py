@@ -1,0 +1,278 @@
+"""Make the checkpoint itself recurrent (CP226).
+
+The RLC as built was a model that TALKS to a recurrent workspace. Read
+``_persist_and_score``: the answer tokens traverse ``layers[prelude:coda]``
+exactly ONCE, at every depth setting. Only the four slot positions were
+ever recurred. So the computation that produces the answer always received
+the base checkpoint's 64 layers -- identical to vanilla -- and "depth"
+changed nothing except what got written into a scratchpad the answer
+attends to.
+
+The measurement follows from the architecture and should have been
+predicted from it:
+
+    RLC depth 1 / 2 / 4 / 8 : 25 / 29 / 25 / 25 %   (8x compute, flat)
+    vanilla greedy          : 21 %
+
+Slots are causal and worth a few points as a prior. Depth is worth nothing
+because no depth was ever applied to the answer's own computation.
+
+This module applies it. The real token stream re-enters the middle block
+``T`` times:
+
+    h = layers[:prelude](h)                     # prelude, once
+    for t in range(T):  h = layers[prelude:coda](h)
+    h = layers[coda:](h)                        # coda, once
+
+Effective depth becomes ``prelude + T*(coda-prelude) + (L-coda)``: a 64
+layer checkpoint runs 160 layers deep at T=4, with the SAME weights. This
+is the Ouro/LoopLM architecture, retrofitted onto a checkpoint that was not
+pretrained for it -- which is the only reason the stabilizers below exist.
+
+The load-bearing safety property: at ``T=1`` this is bit-identical to the
+base forward pass. Recurrence is added by increasing T from a known-good
+starting point, never by a cutover.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+INTRINSIC_RECURRENCE_SCHEMA = "aura.intrinsic_recurrence.v1"
+
+
+@dataclass(frozen=True)
+class RecurrentDepthPlan:
+    """Which layers loop, how many times, and how the loop is stabilized.
+
+    A checkpoint pretrained without recurrence has no reason for its middle
+    block to be a stable map. Iterating it can drift in norm until the coda
+    receives activations outside anything it was trained on -- the retrofit
+    failure mode. ``anchor_injection`` and ``renormalize`` exist for that,
+    and both default to OFF so the plain loop is what gets measured first.
+    """
+
+    prelude_end: int
+    coda_start: int
+    iterations: int = 1
+    # Re-inject the prelude output at each RE-entry (never the first), the
+    # retrofitted-recurrence stabilizer. Keeps deep loops anchored to the
+    # problem instead of drifting into a self-referential fixed point.
+    anchor_injection: float = 0.0
+    # Rescale to the anchor's RMS before re-entry. Controls norm blowup
+    # without changing direction.
+    renormalize: bool = False
+
+    def __post_init__(self) -> None:
+        for name in ("prelude_end", "coda_start", "iterations"):
+            value = getattr(self, name)
+            if type(value) is not int or value < 0:
+                raise ValueError(f"{name} must be a non-negative integer")
+        if self.iterations < 1:
+            raise ValueError("iterations must be at least 1")
+        if self.prelude_end >= self.coda_start:
+            raise ValueError(
+                "recurrent window is empty: prelude_end must precede coda_start"
+            )
+        if (
+            isinstance(self.anchor_injection, bool)
+            or not isinstance(self.anchor_injection, (int, float))
+            or not 0.0 <= float(self.anchor_injection) <= 1.0
+        ):
+            raise ValueError("anchor_injection must be inside [0, 1]")
+        if type(self.renormalize) is not bool:
+            raise ValueError("renormalize must be a bool")
+
+    def window_size(self) -> int:
+        return self.coda_start - self.prelude_end
+
+    def effective_depth(self, total_layers: int) -> int:
+        """Layer applications per token -- the honest 'how deep is this'."""
+        if type(total_layers) is not int or total_layers < self.coda_start:
+            raise ValueError("total_layers is smaller than the plan's window")
+        return (
+            self.prelude_end
+            + self.iterations * self.window_size()
+            + (total_layers - self.coda_start)
+        )
+
+    def is_base_equivalent(self) -> bool:
+        """True when this plan reduces to the unmodified forward pass."""
+        return self.iterations == 1
+
+    def to_receipt(self, total_layers: int) -> dict[str, Any]:
+        return {
+            "schema": INTRINSIC_RECURRENCE_SCHEMA,
+            "prelude_end": self.prelude_end,
+            "coda_start": self.coda_start,
+            "window_size": self.window_size(),
+            "iterations": self.iterations,
+            "anchor_injection": float(self.anchor_injection),
+            "renormalize": self.renormalize,
+            "total_layers": total_layers,
+            "effective_depth": self.effective_depth(total_layers),
+            "base_equivalent": self.is_base_equivalent(),
+        }
+
+
+def _rms(tensor: Any) -> Any:
+    import mlx.core as mx
+
+    return mx.sqrt(mx.mean(mx.square(tensor), axis=-1, keepdims=True) + 1e-6)
+
+
+def _run(layers: Any, hidden: Any) -> Any:
+    from mlx_lm.models.base import create_attention_mask
+
+    for layer in layers:
+        hidden = layer(hidden, create_attention_mask(hidden, None), None)
+    return hidden
+
+
+def recurrent_hidden_states(
+    model: Any,
+    tokens: Any,
+    plan: RecurrentDepthPlan,
+) -> tuple[Any, list[Any]]:
+    """Run the intrinsically-recurrent forward pass.
+
+    Returns ``(final_hidden, per_iteration_states)``. The trajectory is
+    returned rather than discarded because every honest question about
+    recurrence -- is it converging, oscillating, or improving -- is a
+    question about the intermediate states, and outcome-only scoring is
+    exactly how a period-2 limit cycle went unnoticed before.
+    """
+    import mlx.core as mx
+
+    inner = getattr(model, "model", None)
+    layers = getattr(inner, "layers", None)
+    if not layers:
+        raise ValueError("model has no transformer layers")
+    if plan.coda_start > len(layers):
+        raise ValueError("plan's coda_start exceeds the model's layer count")
+
+    hidden = inner.embed_tokens(tokens)
+    hidden = _run(layers[: plan.prelude_end], hidden)
+    anchor = hidden
+    anchor_rms = _rms(anchor) if plan.renormalize else None
+
+    trajectory: list[Any] = []
+    window = layers[plan.prelude_end : plan.coda_start]
+    for iteration in range(plan.iterations):
+        if iteration > 0:
+            # Re-entry only. The first pass must be untouched, which is
+            # what keeps T=1 bit-identical to the base model.
+            if plan.anchor_injection > 0.0:
+                hidden = hidden + plan.anchor_injection * anchor
+            if plan.renormalize:
+                hidden = hidden * (anchor_rms / _rms(hidden))
+        with recurrent_iteration(iteration):
+            hidden = _run(window, hidden)
+        trajectory.append(hidden)
+
+    hidden = _run(layers[plan.coda_start :], hidden)
+    hidden = inner.norm(hidden)
+    return hidden, trajectory
+
+
+def recurrent_logits(model: Any, tokens: Any, plan: RecurrentDepthPlan) -> Any:
+    """Logits from the intrinsically-recurrent pass."""
+    hidden, _ = recurrent_hidden_states(model, tokens, plan)
+    if getattr(model, "lm_head", None) is not None:
+        return model.lm_head(hidden)
+    return model.model.embed_tokens.as_linear(hidden)
+
+
+# ── Per-iteration identity, so the loop can know where it is ────────────
+
+from contextlib import contextmanager  # noqa: E402
+from contextvars import ContextVar  # noqa: E402
+
+_ITERATION: ContextVar[int] = ContextVar("intrinsic_recurrence_iteration", default=0)
+
+
+def current_iteration() -> int:
+    """Which pass through the window is executing.
+
+    Published so depth-conditioned adapters can specialize per iteration:
+    the same weights doing genuinely different work at pass 1 and pass 4 is
+    the difference between deepening and repeating.
+    """
+    return _ITERATION.get()
+
+
+@contextmanager
+def recurrent_iteration(index: int):
+    if type(index) is not int or index < 0:
+        raise ValueError("iteration index must be a non-negative integer")
+    token = _ITERATION.set(index)
+    try:
+        yield index
+    finally:
+        _ITERATION.reset(token)
+
+
+# ── Does the extra depth actually compute anything? ─────────────────────
+
+
+def trajectory_dynamics(trajectory: list[Any]) -> dict[str, Any]:
+    """Is the loop converging, spinning, or still moving?
+
+    Measured because "the state changed" is not evidence of thinking. A
+    contracting loop reaches a fixed point and every further iteration is
+    wasted compute; an oscillating one alternates between two states
+    forever. Both look like activity and neither is progress.
+    """
+    import mlx.core as mx
+
+    if len(trajectory) < 2:
+        return {
+            "schema": INTRINSIC_RECURRENCE_SCHEMA,
+            "iterations": len(trajectory),
+            "measurable": False,
+            "reason": "need at least two iterations to measure motion",
+        }
+    deltas = []
+    for previous, current in zip(trajectory, trajectory[1:]):
+        deltas.append(
+            float(mx.mean(mx.abs(current - previous)))
+            / max(float(mx.mean(mx.abs(previous))), 1e-9)
+        )
+    contracting = all(
+        later <= earlier * 1.05 for earlier, later in zip(deltas, deltas[1:])
+    )
+    oscillating = False
+    if len(trajectory) >= 3:
+        flat = [mx.reshape(state, (-1,)) for state in trajectory]
+        steps = [b - a for a, b in zip(flat, flat[1:])]
+        cosines = [
+            float(
+                mx.sum(a * b)
+                / (mx.linalg.norm(a) * mx.linalg.norm(b) + 1e-9)
+            )
+            for a, b in zip(steps, steps[1:])
+        ]
+        oscillating = bool(cosines) and all(c < -0.5 for c in cosines)
+    return {
+        "schema": INTRINSIC_RECURRENCE_SCHEMA,
+        "iterations": len(trajectory),
+        "measurable": True,
+        "relative_deltas": [round(d, 6) for d in deltas],
+        "final_delta": round(deltas[-1], 6),
+        "contracting": bool(contracting),
+        # A loop that has stopped moving has stopped computing, whatever
+        # the compute budget says.
+        "at_fixed_point": bool(deltas[-1] < 0.01),
+        "oscillating": oscillating,
+    }
+
+
+__all__ = [
+    "INTRINSIC_RECURRENCE_SCHEMA",
+    "RecurrentDepthPlan",
+    "current_iteration",
+    "recurrent_hidden_states",
+    "recurrent_iteration",
+    "recurrent_logits",
+    "trajectory_dynamics",
+]
