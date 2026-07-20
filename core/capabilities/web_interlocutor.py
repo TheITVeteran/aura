@@ -1761,6 +1761,31 @@ class WebInterlocutorSession:
                 after = before
                 observed = ""
                 for send_attempt in (1, 2):
+                    # DOUBLE-SEND GUARD: before a retry, prove the previous
+                    # send did NOT land. Re-sending the same text after a
+                    # committed-but-unobserved send delivered the message to
+                    # the external interlocutor twice. A fresh snapshot that
+                    # already shows the sent text means it landed — wait
+                    # longer instead of sending again.
+                    if send_attempt == 2:
+                        try:
+                            recheck = await self.browser.snapshot()
+                        except (RuntimeError, AttributeError, TypeError, ValueError, OSError):
+                            recheck = after
+                        if _rough_text_contains(recheck.text, next_message):
+                            after, observed = await self._wait_for_new_reply(
+                                recheck,
+                                sent_text=next_message,
+                                timeout_s=wait_timeout_s,
+                                progress_source=f"web_interlocutor.turn.{index}.wait_recheck",
+                            )
+                            record_degradation(
+                                "web_interlocutor.visible_send_landed_late",
+                                RuntimeError("prior send landed but reply was slow; did not re-send"),
+                                severity="info",
+                                action="extended the reply wait instead of re-sending to avoid a duplicate external message",
+                            )
+                            break
                     send_receipt = await self.browser.send_message(next_message)
                     send_receipt["attempt"] = send_attempt
                     send_receipts.append(send_receipt)
@@ -1791,7 +1816,7 @@ class WebInterlocutorSession:
                             "web_interlocutor.visible_send_not_observed",
                             RuntimeError("sent message was not visible after send attempt"),
                             severity="warning",
-                            action="retried the same visible browser send once before failing the turn",
+                            action="re-checked page state before any retry to avoid a duplicate external send",
                         )
                 turn = WebInterlocutorTurn(
                     index=index,
@@ -2143,7 +2168,10 @@ class WebInterlocutorSession:
         turns: list[WebInterlocutorTurn],
         context: dict[str, Any],
     ) -> str:
-        transcript = _render_transcript(turns)
+        # The final learning summary is a single call (not per-turn
+        # re-injection), so it sees the whole conversation — but still with
+        # per-message char bounds to cap total size.
+        transcript = _render_transcript(turns, window=len(turns) or 1)
         prompt = (
             "Summarize only what the web interlocutor's observed replies taught Aura. "
             "Use evidence language, not persona narration. Do not write as Aura talking to Bryan. "
@@ -2591,6 +2619,7 @@ def _extract_reply_from_segments(
     if sent_index < 0:
         return ""
     reply_parts: list[str] = []
+    assistant_started = False
     for segment in segments[sent_index + 1 :]:
         role = _normalize_line(segment.get("role") or "")
         text = str(segment.get("text") or "").strip()
@@ -2598,8 +2627,21 @@ def _extract_reply_from_segments(
             continue
         if role in {"user", "human"}:
             break
-        if role in {"assistant", "model", "ai", "bot", "interlocutor", ""}:
+        if role in {"assistant", "model", "ai", "bot", "interlocutor"}:
+            assistant_started = True
             reply_parts.append(text)
+        elif role == "":
+            # An empty/unknown role is NOT assumed to be assistant output —
+            # it is accepted only as a continuation of an already-identified
+            # assistant turn (wrapped/soft-broken lines), never to start one.
+            # Treating bare unlabeled segments as the reply let page chrome
+            # or the user's own echoed text be reported as the interlocutor.
+            if assistant_started:
+                reply_parts.append(text)
+        else:
+            # A recognized non-assistant role (system, tool, etc.) ends the
+            # assistant span.
+            break
     return _meaningful_reply_or_empty(_trim_reply_text("\n\n".join(reply_parts), sent_text), sent_text)
 
 
@@ -3182,11 +3224,30 @@ def _trim_reply_text(text: str, sent_text: str) -> str:
     return cleaned
 
 
-def _render_transcript(turns: list[WebInterlocutorTurn]) -> str:
+# Follow-up composition only needs recent conversational context; feeding
+# the entire multi-turn history back into each prompt grows unbounded over a
+# 20-turn proof, crowds the model's window, and re-exposes stale early
+# content. Keep the most recent turns and per-turn text bounded.
+_TRANSCRIPT_WINDOW_TURNS = max(
+    2, int(os.getenv("AURA_WEB_INTERLOCUTOR_TRANSCRIPT_TURNS", "6") or "6")
+)
+_TRANSCRIPT_PER_MESSAGE_CHARS = 1200
+
+
+def _render_transcript(
+    turns: list[WebInterlocutorTurn],
+    *,
+    window: int = _TRANSCRIPT_WINDOW_TURNS,
+) -> str:
+    recent = list(turns)[-max(1, window):]
     chunks = []
-    for turn in turns:
-        chunks.append(f"Aura {turn.index}: {turn.sent}")
-        chunks.append(f"Interlocutor {turn.index}: {turn.observed_reply}")
+    if len(turns) > len(recent):
+        chunks.append(f"[...{len(turns) - len(recent)} earlier turns elided...]")
+    for turn in recent:
+        sent = str(turn.sent or "")[:_TRANSCRIPT_PER_MESSAGE_CHARS]
+        reply = str(turn.observed_reply or "")[:_TRANSCRIPT_PER_MESSAGE_CHARS]
+        chunks.append(f"Aura {turn.index}: {sent}")
+        chunks.append(f"Interlocutor {turn.index}: {reply}")
     return "\n\n".join(chunks)
 
 
@@ -3399,20 +3460,31 @@ def _learning_summary_is_grounded(summary: str, turns: list[WebInterlocutorTurn]
     if re.match(r"^\s*you(?:'re| are| can| carry| have| seem| do| don't| cannot| can't)\b", cleaned, re.IGNORECASE):
         return False
     observed = " ".join(str(turn.observed_reply or "") for turn in turns)
+    observed_norm = _normalize_line(observed)
+    summary_norm = _normalize_line(cleaned)
     observed_words = {
         word
-        for word in re.findall(r"[a-zA-Z][a-zA-Z']{4,}", _normalize_line(observed))
+        for word in re.findall(r"[a-zA-Z][a-zA-Z']{4,}", observed_norm)
         if word not in _NON_REPLY_WORDS
     }
     summary_words = {
         word
-        for word in re.findall(r"[a-zA-Z][a-zA-Z']{4,}", _normalize_line(cleaned))
+        for word in re.findall(r"[a-zA-Z][a-zA-Z']{4,}", summary_norm)
         if word not in _NON_REPLY_WORDS
     }
     if not observed_words or not summary_words:
         return False
     overlap = observed_words & summary_words
-    return len(overlap) >= min(8, max(4, len(observed_words) // 8))
+    if len(overlap) < min(8, max(4, len(observed_words) // 8)):
+        return False
+    # Absolute overlap alone let a mostly-fabricated summary pass by
+    # sprinkling in a few observed words. A faithful paraphrase draws MOST
+    # of its content vocabulary from what was seen; a fabrication is mostly
+    # novel words. Require the summary's own content to be substantially
+    # covered by the observed reply (coverage ratio) in addition to the
+    # absolute floor — paraphrase-compatible, but fabrication-resistant.
+    coverage = len(overlap) / max(1, len(summary_words))
+    return coverage >= 0.3
 
 
 __all__ = [
