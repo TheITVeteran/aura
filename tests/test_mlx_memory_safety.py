@@ -539,7 +539,10 @@ def test_mlx_worker_accepts_zeroed_shared_substrate_for_affective_sync():
 def test_mlx_client_records_worker_steering_liveness_receipt():
     source = open("core/brain/llm/mlx_client.py", encoding="utf-8").read()
 
-    assert 'if "steering_active" in res:' in source
+    assert 'raw_steering = res.get("steering_active")' in source
+    # Strict receipt typing: only an actual bool may activate the shared
+    # steering channels (bool("false") is True — CP126 finding).
+    assert "if isinstance(raw_steering, bool):" in source
     assert "self._steering_active.value = steering_active" in source
     assert "self._substrate_mem[-1] = 1.0 if steering_active else 0.0" in source
     assert "self._steering_liveness_observed = True" in source

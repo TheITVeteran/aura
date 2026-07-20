@@ -2406,11 +2406,19 @@ class MLXLocalClient:
             self._model_lane_fencing_token = 0
             self._model_lane_terminal_receipt_id = ""
             if not released:
-                logger.info(
-                    "Model-lane owner %s token=%d was already absent during %s.",
-                    owner_id,
-                    fencing_token,
-                    reason,
+                # The controller also returns False for a FENCING-TOKEN
+                # MISMATCH (a newer durable owner exists) — that is not
+                # "already absent". Local claim state is cleared either way,
+                # but the outcome must be visible, not narrated as settled.
+                _record_mlx_degradation(
+                    RuntimeError(
+                        f"durable_owner_release_not_confirmed:{owner_id}:token={fencing_token}"
+                    ),
+                    action=(
+                        "cleared local lane claim without controller-confirmed release "
+                        f"during {reason}"
+                    ),
+                    severity="warning",
                 )
             return True
 
@@ -2428,6 +2436,15 @@ class MLXLocalClient:
 
         request_id = str(response.get("id") or "")
         if not request_id:
+            return
+        # Only track ids that belong to a PENDING or current request — a
+        # broken or compromised child streaming unique ids must not grow
+        # parent-side state without bound.
+        if (
+            request_id not in self._pending_generations
+            and request_id != self._current_request_id
+            and request_id not in self._latent_progress_by_request
+        ):
             return
         allowed = {
             "stage",
@@ -2459,6 +2476,15 @@ class MLXLocalClient:
             }
         )
         self._latent_progress_by_request[request_id] = snapshot
+        # Bounded: evict the oldest entries beyond a small window.
+        if len(self._latent_progress_by_request) > 64:
+            for stale_id in sorted(
+                self._latent_progress_by_request,
+                key=lambda rid: float(
+                    self._latent_progress_by_request[rid].get("received_at_unix", 0.0)
+                ),
+            )[: len(self._latent_progress_by_request) - 64]:
+                self._latent_progress_by_request.pop(stale_id, None)
 
     def _rebase_after_system_sleep(self) -> float:
         """Rebase active wall-clock anchors after host sleep/wake.
@@ -2571,14 +2597,18 @@ class MLXLocalClient:
             # right trace with the right response even under concurrent lanes.
             stored = dict(payload)
             stored["_text_fingerprint"] = text_fingerprint(str(response.get("text") or ""))
-            self._last_interoception = stored
 
+            # Ingest FIRST: the engine is the validator. Storing beforehand
+            # exposed malformed/unbounded worker data through the public
+            # getter as the "most recent measurement" even when the engine
+            # rejected it.
             get_thought_interoception().ingest(
                 payload,
                 origin=owner_label or "mlx",
                 foreground=bool(foreground_request),
                 response_text=str(response.get("text") or ""),
             )
+            self._last_interoception = stored
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, KeyError) as exc:
             record_degradation(
                 "mlx_client_interoception", exc, severity="warning",
@@ -5493,6 +5523,7 @@ class MLXLocalClient:
         init_timeout: float | None = None,
         soft_timeout: bool = False,
         skip_swap_cooldown: bool = False,
+        _init_retry: bool = False,
     ) -> bool:
         """Inner implementation — called while holding the global spawn gate."""
         if _shutdown_blocks_model_work(self.model_path, action="worker spawn"):
@@ -5669,7 +5700,7 @@ class MLXLocalClient:
                         self._process_started_at = time.time()
                         self._consecutive_spawn_failures = 0
                         self._spawn_backoff_until = 0.0
-                    except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                    except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
                         detail = str(exc)
                         if self._handle_optional_deep_solver_memory_refusal(detail):
                             return False
@@ -5739,7 +5770,10 @@ class MLXLocalClient:
                     self._process_started_at = time.time()
                     self._consecutive_spawn_failures = 0  # Reset on success
                     self._spawn_backoff_until = 0.0
-                except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
+                    # OSError included: queue creation, lock files, and
+                    # multiprocessing start raise it — it previously escaped
+                    # with the lane stuck in "spawning" and a pending init.
                     detail = str(exc)
                     if self._handle_optional_deep_solver_memory_refusal(detail):
                         return False
@@ -5801,17 +5835,40 @@ class MLXLocalClient:
                         self._mark_progress()
                         self._set_lane_state("ready")
                         recurrent_status = res.get("recurrent_depth")
-                        if isinstance(recurrent_status, dict):
-                            self._recurrent_depth_status = recurrent_status
+                        # Always REPLACE: preserving the previous worker's
+                        # status when the new receipt is absent/malformed let
+                        # an old active=true certify a new worker that never
+                        # reported recurrence.
+                        self._recurrent_depth_status = (
+                            recurrent_status if isinstance(recurrent_status, dict) else {}
+                        )
+                        if not isinstance(recurrent_status, dict):
+                            _record_mlx_degradation(
+                                ValueError("missing_recurrent_depth_receipt"),
+                                action="cleared stale recurrence status after init receipt omitted it",
+                            )
                         worker_identity = res.get("worker_identity")
                         self._worker_identity = (
                             dict(worker_identity)
                             if isinstance(worker_identity, dict)
                             else {}
                         )
-                        if "steering_active" in res:
+                        raw_steering = res.get("steering_active")
+                        if raw_steering is not None:
                             try:
-                                steering_active = bool(res.get("steering_active"))
+                                if isinstance(raw_steering, bool):
+                                    steering_active = raw_steering
+                                else:
+                                    # A malformed string "false" is truthy —
+                                    # never bool() an untyped IPC value into
+                                    # the shared steering channels.
+                                    _record_mlx_degradation(
+                                        TypeError(
+                                            f"non-bool steering receipt: {raw_steering!r}"
+                                        ),
+                                        action="treated malformed steering receipt as inactive",
+                                    )
+                                    steering_active = False
                                 self._steering_active.value = steering_active
                                 self._substrate_mem[-1] = 1.0 if steering_active else 0.0
                                 self._steering_liveness_observed = True
@@ -5837,6 +5894,20 @@ class MLXLocalClient:
                             # Update fut for the new spawn
                             fut = self._init_future
                             if not fut:
+                                # Reboot tears the lifecycle down WITHOUT
+                                # spawning a replacement, so the falsy check
+                                # silently skipped the advertised one-shot
+                                # retry. Re-enter the spawn path once (the
+                                # spawn gate is already held by our caller).
+                                if not _init_retry:
+                                    return await self._ensure_worker_alive_inner(
+                                        request_is_background=request_is_background,
+                                        foreground_request=foreground_request,
+                                        init_timeout=init_timeout,
+                                        soft_timeout=soft_timeout,
+                                        skip_swap_cooldown=True,
+                                        _init_retry=True,
+                                    )
                                 break
                             continue
                         self._set_lane_state("failed", msg)
@@ -6844,7 +6915,16 @@ class MLXLocalClient:
                     foreground_request=foreground_request,
                     owner_label=owner_label,
                 )
-                text = res.get("text", "").strip()
+                raw_text = res.get("text", "")
+                if not isinstance(raw_text, str):
+                    # A malformed cross-process payload must fail through the
+                    # typed empty-response path, not raise AttributeError.
+                    _record_mlx_degradation(
+                        TypeError(f"worker text payload was {type(raw_text).__name__}"),
+                        action="treated non-string worker text as empty response",
+                    )
+                    raw_text = ""
+                text = raw_text.strip()
                 self._mark_progress()
                 if not text and not res.get("soft_cancelled"):
                     quality_rejection_reasons = _surface_quality_rejection_reasons(
