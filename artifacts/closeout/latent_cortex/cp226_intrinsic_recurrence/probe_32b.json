@@ -1,0 +1,253 @@
+{
+  "schema": "aura.intrinsic_recurrence_probe.v1",
+  "model": "training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118",
+  "families": [
+    "khop",
+    "modular",
+    "register_trace"
+  ],
+  "per_cell": 8,
+  "calibration": {
+    "schema": "aura.rlc_accuracy_calibration.v1",
+    "checks": [
+      {
+        "check": "perfect_answer",
+        "observed": "correct",
+        "expected": "correct",
+        "passed": true
+      },
+      {
+        "check": "reasoning_then_answer",
+        "observed": "correct",
+        "expected": "correct",
+        "passed": true
+      },
+      {
+        "check": "wrong_value",
+        "observed": "incorrect",
+        "expected": "incorrect",
+        "passed": true
+      },
+      {
+        "check": "prose_without_answer",
+        "observed": "unparseable",
+        "expected": "unparseable",
+        "passed": true
+      },
+      {
+        "check": "empty_output",
+        "observed": "unparseable",
+        "expected": "unparseable",
+        "passed": true
+      },
+      {
+        "check": "perfect_accuracy",
+        "observed": 1.0,
+        "expected": 1.0,
+        "passed": true
+      },
+      {
+        "check": "perfect_compliance",
+        "observed": 1.0,
+        "expected": 1.0,
+        "passed": true
+      },
+      {
+        "check": "silent_accuracy",
+        "observed": 0.0,
+        "expected": 0.0,
+        "passed": true
+      },
+      {
+        "check": "silent_compliance",
+        "observed": 0.0,
+        "expected": 0.0,
+        "passed": true
+      },
+      {
+        "check": "silent_unparseable_count",
+        "observed": 5,
+        "expected": 5,
+        "passed": true
+      },
+      {
+        "check": "mixed_accuracy",
+        "observed": 0.2,
+        "expected": 0.2,
+        "passed": true
+      },
+      {
+        "check": "mixed_compliance_is_total",
+        "observed": 1.0,
+        "expected": 1.0,
+        "passed": true
+      },
+      {
+        "check": "harness_fault_raises",
+        "observed": true,
+        "expected": true,
+        "passed": true
+      }
+    ],
+    "failures": [],
+    "passed": true
+  },
+  "cells": [
+    {
+      "plan": {
+        "schema": "aura.intrinsic_recurrence.v1",
+        "prelude_end": 16,
+        "coda_start": 48,
+        "window_size": 32,
+        "iterations": 1,
+        "anchor_injection": 0.0,
+        "renormalize": true,
+        "total_layers": 64,
+        "effective_depth": 64,
+        "base_equivalent": true
+      },
+      "tally": {
+        "correct": 0,
+        "incorrect": 0,
+        "correct_lenient": 3,
+        "incorrect_lenient": 16,
+        "unparseable": 5,
+        "n": 24,
+        "accuracy": 0.0,
+        "reasoning_accuracy": 0.125,
+        "contract_compliance": 0.0,
+        "answered_at_all": 0.7916666666666666
+      },
+      "mean_final_delta": null,
+      "at_fixed_point": 0,
+      "diverged": 0,
+      "trustworthy": true,
+      "seconds": 163.0
+    },
+    {
+      "plan": {
+        "schema": "aura.intrinsic_recurrence.v1",
+        "prelude_end": 16,
+        "coda_start": 48,
+        "window_size": 32,
+        "iterations": 2,
+        "anchor_injection": 0.0,
+        "renormalize": true,
+        "total_layers": 64,
+        "effective_depth": 96,
+        "base_equivalent": false
+      },
+      "tally": {
+        "correct": 0,
+        "incorrect": 0,
+        "correct_lenient": 2,
+        "incorrect_lenient": 15,
+        "unparseable": 7,
+        "n": 24,
+        "accuracy": 0.0,
+        "reasoning_accuracy": 0.08333333333333333,
+        "contract_compliance": 0.0,
+        "answered_at_all": 0.7083333333333334
+      },
+      "mean_final_delta": 0.550868,
+      "at_fixed_point": 0,
+      "diverged": 0,
+      "trustworthy": true,
+      "seconds": 207.7
+    },
+    {
+      "plan": {
+        "schema": "aura.intrinsic_recurrence.v1",
+        "prelude_end": 16,
+        "coda_start": 48,
+        "window_size": 32,
+        "iterations": 4,
+        "anchor_injection": 0.0,
+        "renormalize": true,
+        "total_layers": 64,
+        "effective_depth": 160,
+        "base_equivalent": false
+      },
+      "tally": {
+        "correct": 0,
+        "incorrect": 0,
+        "correct_lenient": 0,
+        "incorrect_lenient": 1,
+        "unparseable": 23,
+        "n": 24,
+        "accuracy": 0.0,
+        "reasoning_accuracy": 0.0,
+        "contract_compliance": 0.0,
+        "answered_at_all": 0.041666666666666664
+      },
+      "mean_final_delta": 0.498868,
+      "at_fixed_point": 0,
+      "diverged": 0,
+      "trustworthy": true,
+      "seconds": 491.8
+    },
+    {
+      "plan": {
+        "schema": "aura.intrinsic_recurrence.v1",
+        "prelude_end": 16,
+        "coda_start": 48,
+        "window_size": 32,
+        "iterations": 8,
+        "anchor_injection": 0.0,
+        "renormalize": true,
+        "total_layers": 64,
+        "effective_depth": 288,
+        "base_equivalent": false
+      },
+      "tally": {
+        "correct": 0,
+        "incorrect": 0,
+        "correct_lenient": 0,
+        "incorrect_lenient": 0,
+        "unparseable": 24,
+        "n": 24,
+        "accuracy": 0.0,
+        "reasoning_accuracy": 0.0,
+        "contract_compliance": 0.0,
+        "answered_at_all": 0.0
+      },
+      "mean_final_delta": 0.320513,
+      "at_fixed_point": 0,
+      "diverged": 0,
+      "trustworthy": true,
+      "seconds": 80.8
+    }
+  ],
+  "vanilla_control": {
+    "greedy": {
+      "correct": 0,
+      "incorrect": 0,
+      "correct_lenient": 3,
+      "incorrect_lenient": 16,
+      "unparseable": 5,
+      "n": 24,
+      "accuracy": 0.0,
+      "reasoning_accuracy": 0.125,
+      "contract_compliance": 0.0,
+      "answered_at_all": 0.7916666666666666
+    },
+    "self_consistency": {
+      "correct": 0,
+      "incorrect": 0,
+      "correct_lenient": 3,
+      "incorrect_lenient": 16,
+      "unparseable": 5,
+      "n": 24,
+      "accuracy": 0.0,
+      "reasoning_accuracy": 0.125,
+      "contract_compliance": 0.0,
+      "answered_at_all": 0.7916666666666666
+    },
+    "samples": 1
+  },
+  "identity_check": {
+    "t1_vs_vanilla_gap": 0.0,
+    "trustworthy": true
+  },
+  "elapsed_seconds": 1110.0
+}
