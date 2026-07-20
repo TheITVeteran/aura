@@ -1,6 +1,7 @@
 import copy
 import json
 import logging
+import math
 import multiprocessing as mp
 import os
 import queue
@@ -137,16 +138,20 @@ def _semantic_count_contract_retry_instruction(job: dict[str, Any]) -> str:
 
 
 def _safe_float(value: Any, default: float) -> float:
+    """Finite-only float coercion — these helpers feed steering, sampling,
+    retry, receipt, and token-budget paths, where NaN/inf silently poison
+    comparisons and sampler construction."""
     try:
-        return float(value)
-    except (TypeError, ValueError):
+        result = float(value)
+    except (TypeError, ValueError, OverflowError):
         return default
+    return result if math.isfinite(result) else default
 
 
 def _safe_int(value: Any, default: int) -> int:
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return default
 
 
@@ -1187,9 +1192,19 @@ def _merge_stop_sequences(job_stops: Any = None) -> list[str]:
     normalize human-readable role labels to line-boundary stops.
     """
     merged = list(_BASE_STOP_SEQUENCES)
-    for raw in job_stops or []:
+    # Typed and bounded: iterating an arbitrary truthy object treated a bare
+    # STRING as a sequence of one-character stops (truncating output on
+    # common characters) and let mappings/oversized lists create unbounded
+    # per-token scan work.
+    if isinstance(job_stops, str):
+        job_stops = [job_stops]
+    elif not isinstance(job_stops, (list, tuple)):
+        job_stops = []
+    for raw in job_stops:
+        if len(merged) >= 32:
+            break
         stop = str(raw or "")
-        if not stop:
+        if not stop or len(stop) > 64:
             continue
         if stop in _SPEAKER_LABEL_STOPS:
             continue
@@ -2456,9 +2471,9 @@ def _run_nonparametric_ingest_job(
         8,
         min(512, int(job.get("max_sequence_tokens") or 192)),
     )
-    deadline_s = max(1.0, min(30.0, float(job.get("deadline_s") or 20.0)))
+    deadline_s = max(1.0, min(30.0, _safe_float(job.get("deadline_s"), 20.0)))
     deadline_at = float(clock()) + deadline_s
-    job_seq = max(0, int(job.get("seq") or 0))
+    job_seq = max(0, _safe_int(job.get("seq"), 0))
     stop_reason = ""
 
     def _should_continue() -> bool:
@@ -2673,6 +2688,16 @@ def _mlx_worker_loop(
     except (OSError, ValueError) as exc:
         logger.debug("MLX worker SIGINT ignore hook unavailable: %s", exc)
 
+    # Reset the shared steering flag FIRST: a respawn inheriting a prior
+    # true value that then fails during imports/model load/steering attach
+    # would exit through init failure with the stale "steering active"
+    # still published to every parent-side reader.
+    if steering_active_flag is not None:
+        try:
+            steering_active_flag.value = False
+        except (AttributeError, OSError, TypeError, ValueError) as exc:
+            logger.debug("Steering flag pre-init reset failed: %s", exc)
+
     # Configure worker-specific environment (Metal, SDK, thread limits).
     # This MUST run inside the subprocess, not at module import time,
     # because the parent process should not inherit these settings.
@@ -2732,9 +2757,30 @@ def _mlx_worker_loop(
                 severity="degraded",
             )
             try:
-                mx.metal.set_cache_limit(1024 * 1024 * 1024 * 24)
+                # The fallback must not assume a large host: fixed 24GB/40GB
+                # limits authorized more memory than smaller or pressured
+                # machines could give. Derive conservatively from total RAM
+                # when observable; use small-safe limits when it is not.
+                try:
+                    import psutil as _fallback_psutil
+
+                    _total_gb = float(_fallback_psutil.virtual_memory().total) / float(
+                        1024**3
+                    )
+                except (ImportError, OSError, RuntimeError, AttributeError, ValueError):
+                    _total_gb = 0.0
+                if _total_gb >= 96.0:
+                    _cache_gb, _active_gb = 24, 40
+                elif _total_gb >= 48.0:
+                    _cache_gb, _active_gb = 12, 28
+                elif _total_gb > 0.0:
+                    _cache_gb, _active_gb = 4, 12
+                else:
+                    # Unobservable capacity: smallest useful limits.
+                    _cache_gb, _active_gb = 4, 12
+                mx.metal.set_cache_limit(1024 * 1024 * 1024 * _cache_gb)
                 if hasattr(mx, "set_memory_limit"):
-                    mx.set_memory_limit(1024 * 1024 * 1024 * 40)
+                    mx.set_memory_limit(1024 * 1024 * 1024 * _active_gb)
             except (AttributeError, RuntimeError, ValueError) as fallback_exc:
                 _record_mlx_degradation(
                     fallback_exc,
@@ -2880,6 +2926,16 @@ def _mlx_worker_loop(
                 logger.info("🧠 Recurrent Depth ACTIVE — model now thinks before answering.")
             else:
                 recurrent_depth_status["reason"] = "patch_not_applied"
+                # REQUIRED depth that failed to apply is a degradation, not a
+                # silent status field — readiness checks and the parent's
+                # supervision must be able to see it.
+                _record_mlx_degradation(
+                    RuntimeError(
+                        f"required_recurrent_depth_inactive:loops={expected_loops}"
+                    ),
+                    action="initialized worker with required recurrent depth NOT applied",
+                    severity="warning",
+                )
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as rd_exc:
             explicit_disable = str(os.environ.get("AURA_RECURRENT_LOOPS", "")).strip() == "0"
             size_disable = str(os.environ.get("AURA_RECURRENT_LOOPS_32B", "")).strip() == "0"
@@ -4156,7 +4212,14 @@ def _mlx_worker_loop(
                         severity="degraded",
                     )
                     logger.error("Generation failed: %s", e)
-                    ipc_writer.put({"status": "error", "action": "generate", "message": str(e)})
+                    # The id is REQUIRED: an id-less error cannot resolve the
+                    # parent's pending future, which then waits to deadline.
+                    ipc_writer.put({
+                        "id": job.get("id"),
+                        "status": "error",
+                        "action": "generate",
+                        "message": str(e),
+                    })
                 finally:
                     # [STABILITY v52] Guarantee VRAM gets purged after standard generation
                     # completes or fails, ensuring pure state for next request.
@@ -4349,21 +4412,34 @@ def _mlx_worker_loop(
                                     clean_kwargs["draft_model"] = draft_model
 
                                 watchdog.activity()
+                                sentinel_aborted = False
+                                abort_reason = ""
                                 for response in stream_generate(model, tokenizer, prompt=prompt, **clean_kwargs):
                                     watchdog.activity()
                                     token_count += 1
                                     token_text = response.text
+                                    visible_len = len(full_text)
                                     full_text += token_text
                                     full_text, role_continuation_hit = _truncate_role_continuation(full_text)
 
                                     # ── Sentinel: mid-stream intervention ─────
                                     if stream_sentinel is not None:
                                         sentinel_signal = stream_sentinel.feed(token_text)
-                                        if sentinel_signal.type == InterventionType.ABORT_LOOP:
+                                        if sentinel_signal.type in (
+                                            InterventionType.ABORT_LOOP,
+                                            InterventionType.ABORT_ONTOLOGY_VIOLATION,
+                                        ):
+                                            # ABORT_ONTOLOGY_VIOLATION previously
+                                            # fell through to token emission —
+                                            # the ontology hard stop had no
+                                            # effect on this live path.
                                             logger.warning(
-                                                "🚨 [SENTINEL-STREAM] Aborting loop at token %d: %s",
+                                                "🚨 [SENTINEL-STREAM] Aborting (%s) at token %d: %s",
+                                                sentinel_signal.type,
                                                 token_count, sentinel_signal.reason,
                                             )
+                                            sentinel_aborted = True
+                                            abort_reason = str(sentinel_signal.reason or sentinel_signal.type)
                                             ipc_writer.put({
                                                 "id": job.get("id"),
                                                 "action": "stream",
@@ -4379,6 +4455,8 @@ def _mlx_worker_loop(
                                                 "🚨 [SENTINEL-STREAM] Aborting at token %d: %s",
                                                 token_count, sentinel_signal.reason,
                                             )
+                                            sentinel_aborted = True
+                                            abort_reason = str(sentinel_signal.reason or sentinel_signal.type)
                                             # Send the refusal as the final token
                                             ipc_writer.put({
                                                 "id": job.get("id"),
@@ -4390,29 +4468,42 @@ def _mlx_worker_loop(
                                             })
                                             break
 
-                                    ipc_writer.put(
-                                        {
-                                            "id": job.get("id"),
-                                            "action": "stream",
-                                            "status": "token",
-                                            "text": token_text,
-                                            "tokens_generated": token_count,
-                                            "timestamp": time.time(),
-                                        }
-                                    )
+                                    # Truncation runs BEFORE emission: raw tokens
+                                    # were previously sent first, so stop content
+                                    # and role markers leaked to the consumer and
+                                    # could never be retracted; a stop at index
+                                    # zero was explicitly missed by the old > 0.
+                                    stop_hit = role_continuation_hit
+                                    for stop in stop_sequences:
+                                        stop_index = full_text.find(stop)
+                                        if stop_index >= 0:
+                                            full_text = full_text[:stop_index]
+                                            stop_hit = True
+                                            break
 
-                                    # [FRONTIER UPGRADE] Absolute safety cap natively expanded to frontier levels
+                                    # Absolute cap check precedes emission so the
+                                    # 8193rd token is never visible.
                                     if token_count > 8192:
                                         logger.warning("🏁 [WORKER] Hard token limit (8192) reached. Truncating.")
                                         break
 
-                                    stop_hit = role_continuation_hit
-                                    for stop in stop_sequences:
-                                        stop_index = full_text.find(stop)
-                                        if stop_index > 0:
-                                            full_text = full_text[:stop_index]
-                                            stop_hit = True
-                                            break
+                                    emit_text = (
+                                        full_text[visible_len:]
+                                        if len(full_text) > visible_len
+                                        else ""
+                                    )
+                                    if emit_text:
+                                        ipc_writer.put(
+                                            {
+                                                "id": job.get("id"),
+                                                "action": "stream",
+                                                "status": "token",
+                                                "text": emit_text,
+                                                "tokens_generated": token_count,
+                                                "timestamp": time.time(),
+                                            }
+                                        )
+
                                     if stop_hit:
                                         break
                             finally:
@@ -4420,7 +4511,17 @@ def _mlx_worker_loop(
                     finally:
                         _restore_surface_generation_controls(surface_control_state)
 
-                    ipc_writer.put({"status": "ok", "action": "stream_done"})
+                    # One authoritative terminal frame, correlated to the
+                    # request: consumers previously saw an id-less ok done
+                    # even after a safety abort.
+                    ipc_writer.put({
+                        "id": job.get("id"),
+                        "status": "ok",
+                        "action": "stream_done",
+                        "aborted": bool(locals().get("sentinel_aborted", False)),
+                        "abort_reason": str(locals().get("abort_reason", "") or "")[:200],
+                        "tokens_generated": int(locals().get("token_count", 0) or 0),
+                    })
                 except (ImportError, AttributeError, RuntimeError) as e:
                     _record_mlx_degradation(
                         e,
@@ -4428,7 +4529,12 @@ def _mlx_worker_loop(
                         severity="degraded",
                     )
                     logger.error("Streaming failed: %s", e)
-                    ipc_writer.put({"status": "error", "action": "stream", "message": str(e)})
+                    ipc_writer.put({
+                        "id": job.get("id"),
+                        "status": "error",
+                        "action": "stream",
+                        "message": str(e),
+                    })
                 finally:
                     # [STABILITY v52] Guarantee VRAM gets purged after streaming
                     # completes or fails, ensuring pure state for next request.
@@ -4437,7 +4543,10 @@ def _mlx_worker_loop(
 
             elif action == "nonparametric_ingest":
                 request_id = str(job.get("id") or "")
-                job_seq = max(0, int(job.get("seq") or 0))
+                # _safe_int: a malformed seq previously raised BEFORE the
+                # handler's error boundary, producing an id-less outer error
+                # instead of a correlated ingest failure.
+                job_seq = max(0, _safe_int(job.get("seq"), 0))
                 response: dict[str, Any] = {
                     "id": request_id,
                     "action": "nonparametric_ingest",
@@ -4460,12 +4569,14 @@ def _mlx_worker_loop(
                             _request_id: str = request_id,
                         ) -> None:
                             watchdog.activity()
+                            # Envelope fields LAST so handler payload cannot
+                            # overwrite id/action/status correlation.
                             ipc_writer.put(
                                 {
+                                    **payload,
                                     "id": _request_id,
                                     "action": "nonparametric_ingest",
                                     "status": "progress",
-                                    **payload,
                                 }
                             )
 
@@ -4519,7 +4630,17 @@ def _mlx_worker_loop(
             elif action == "ping":
                 if mx and device != "cpu":
                     _clear_mlx_cache(mx)
-                ipc_writer.put({"status": "pong"})
+                # Pong carries identity/steering evidence so the parent can
+                # verify WHAT answered, not merely that something did.
+                ipc_writer.put(
+                    {
+                        "id": job.get("id") if isinstance(job, dict) else None,
+                        "status": "pong",
+                        "model": os.path.basename(str(model_path or "")),
+                        "steering_active": bool(_steering_active),
+                        "expert_adapter": expert_adapter_state.get("path") or None,
+                    }
+                )
 
             elif action == "clear_cache":
                 # Clear both Metal GPU cache AND the CPU-side prompt-KV cache.
@@ -4531,17 +4652,27 @@ def _mlx_worker_loop(
                 # case we pay one prompt-encoding re-run.
                 if mx and device != "cpu":
                     _clear_mlx_cache(mx)
+                prompt_cache_cleared = True
                 try:
                     if prompt_cache_lru is not None:
                         prompt_cache_lru.clear()
                 except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                    prompt_cache_cleared = False
                     _record_mlx_degradation(
                         exc,
                         action="continued clear_cache response after prompt cache clear failed",
                         severity="warning",
                     )
                     logger.debug("Prompt cache clear failed during worker clear_cache action: %s", exc)
-                ipc_writer.put({"status": "ok"})
+                # The parent must be able to distinguish complete cache
+                # invalidation from a partially stale state.
+                ipc_writer.put(
+                    {
+                        "id": job.get("id") if isinstance(job, dict) else None,
+                        "status": "ok",
+                        "prompt_cache_cleared": prompt_cache_cleared,
+                    }
+                )
 
             elif action == "set_expert_adapter":
                 # Swap a domain-specialist LoRA onto the RESIDENT model —
@@ -4624,7 +4755,7 @@ def _mlx_worker_loop(
                 # episode fast weights), all under checkpoint invariants.
                 # See docs/RECURSIVE_LATENT_CORTEX.md.
                 request_id = str(job.get("id") or "")
-                job_seq = max(0, int(job.get("seq") or 0))
+                job_seq = max(0, _safe_int(job.get("seq"), 0))
                 response = {"id": request_id, "action": "latent_reason"}
                 recycle_after_response = False
                 clear_stale_soft_cancel(cancel_seq, job_seq)
@@ -4632,12 +4763,15 @@ def _mlx_worker_loop(
 
                 def _latent_progress(payload: dict[str, Any]) -> None:
                     watchdog.activity()
+                    # Envelope fields LAST: handler payload spread after them
+                    # could overwrite the correlation id, action, and status
+                    # in the emitted IPC frame.
                     ipc_writer.put(
                         {
+                            **dict(payload),
                             "id": request_id,
                             "action": "latent_reason",
                             "status": "progress",
-                            **dict(payload),
                         }
                     )
 
@@ -4729,6 +4863,19 @@ def _mlx_worker_loop(
                     )
                     break
 
+            else:
+                # Unknown or version-skewed actions previously vanished
+                # silently, leaving the parent future unresolved until its
+                # deadline. Every consumed job gets a typed terminal answer.
+                ipc_writer.put(
+                    {
+                        "id": job.get("id") if isinstance(job, dict) else None,
+                        "status": "error",
+                        "action": str(action or "unknown")[:64],
+                        "message": f"unknown_worker_action:{str(action or '')[:64]}",
+                    }
+                )
+
         except KeyboardInterrupt:
             logger.info("🛑 [WORKER] Shutdown signal received; exiting quietly.")
             break
@@ -4745,12 +4892,24 @@ def _mlx_worker_loop(
                 "❌ [WORKER] Unhandled error during '%s': %s\n%s",
                 resolved_action, e, tb,
             )
+            # Correlate the failure (the parent cannot resolve an id-less
+            # error) and keep the full traceback in worker logs only — raw
+            # internal paths do not belong in the IPC payload the parent may
+            # surface into telemetry or metadata.
+            resolved_job = locals().get("job")
+            resolved_id = (
+                str(resolved_job.get("id") or "")
+                if isinstance(resolved_job, dict)
+                else ""
+            )
             ipc_writer.put(
                 {
+                    "id": resolved_id,
                     "status": "error",
                     "action": resolved_action,
-                    "message": f"{resolved_action} failed: {e}",
-                    "detail": tb,
+                    "message": (
+                        f"{resolved_action} failed: {type(e).__name__}: {str(e)[:240]}"
+                    ),
                 }
             )
 
