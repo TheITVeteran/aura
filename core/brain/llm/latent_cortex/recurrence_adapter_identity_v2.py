@@ -31,6 +31,16 @@ TRAINING_CONFIG_SCHEMA_V2 = "aura.recurrence_native_training_config.v2"
 DATASET_SCHEMA_V2 = "aura.recurrence_native_dataset.v2"
 COMPLETION_SCHEMA_V1 = "aura.recurrence_native_training_completion.v1"
 OBJECTIVE_SCHEMA_V2 = "aura.recurrence_native_objective.v2"
+# CP181: the v3 objective (margin hinge + branch diversity + bridge parity
+# + held-out validation) ships inside the SAME v2 bundle format. A v3
+# bundle declares objective_schema v3 in receipt AND config, and carries
+# exactly the additional v3 evidence keys — nothing optional, nothing
+# extra. v2 bundles validate byte-for-byte as before.
+OBJECTIVE_SCHEMA_V3 = "aura.recurrence_native_objective.v3"
+ACCEPTED_OBJECTIVE_SCHEMAS = frozenset({OBJECTIVE_SCHEMA_V2, OBJECTIVE_SCHEMA_V3})
+RECEIPT_V3_EXTRA_KEYS = frozenset({"objective_options", "holdout_trail"})
+CONFIG_V3_EXTRA_KEYS = frozenset({"objective_options", "bridge", "holdout"})
+DATASET_V3_EXTRA_KEYS = frozenset({"holdout_per_cell", "holdout_indices"})
 IDENTITY_RECEIPT_SCHEMA_V2 = "aura.recurrence_adapter_identity_receipt.v2"
 
 SOURCE_ROLES = frozenset(
@@ -654,80 +664,81 @@ def validate_v2_adapter_identity(
     dataset = strict_json_loads(payloads["dataset_manifest"], role="dataset_manifest")
     spec_payload = strict_json_loads(payloads["execution_spec"], role="execution_spec")
     loader_config = strict_json_loads(payloads["loader_config"], role="loader_config")
-    _exact(
-        receipt,
-        {
-            "schema",
-            "objective_schema",
-            "objective_source_sha256",
-            "trainer_source_sha256",
-            "config_sha256",
-            "dataset_sha256",
-            "execution_spec_sha256",
-            "base_checkpoint",
-            "model_behavior_bundle",
-            "personality_adapter",
-            "training_runtime",
-            "lora",
-            "optimizer",
-            "gradient_execution",
-            "steps",
-            "epoch",
-            "cursor",
-            "elapsed_training_s",
-            "invocation_count",
-            "halt_reason",
-            "complete",
-            "final_checkpoint",
-            "loss_trail",
-        },
-        role="training_receipt",
-    )
-    _exact(
-        config,
-        {
-            "schema",
-            "model_path",
-            "base_checkpoint",
-            "model_behavior_bundle",
-            "personality_adapter_path",
-            "personality_adapter",
-            "training_runtime",
-            "execution_spec",
-            "execution_spec_sha256",
-            "dataset_sha256",
-            "objective_schema",
-            "curriculum_depths",
-            "monotonicity_weight",
-            "lora",
-            "optimizer",
-            "gradient_execution",
-            "train_seed",
-            "max_steps",
-            "sources",
-        },
-        role="training_config",
-    )
-    _exact(
-        dataset,
-        {
-            "schema",
-            "generator",
-            "train_seed",
-            "families",
-            "task_depths",
-            "per_cell",
-            "examples",
-        },
-        role="dataset_manifest",
-    )
-    if receipt.get("schema") != TRAINING_SCHEMA_V2 or receipt.get("objective_schema") != OBJECTIVE_SCHEMA_V2:
+    declared_objective = receipt.get("objective_schema") if isinstance(receipt, Mapping) else None
+    objective_is_v3 = declared_objective == OBJECTIVE_SCHEMA_V3
+    receipt_keys = {
+        "schema",
+        "objective_schema",
+        "objective_source_sha256",
+        "trainer_source_sha256",
+        "config_sha256",
+        "dataset_sha256",
+        "execution_spec_sha256",
+        "base_checkpoint",
+        "model_behavior_bundle",
+        "personality_adapter",
+        "training_runtime",
+        "lora",
+        "optimizer",
+        "gradient_execution",
+        "steps",
+        "epoch",
+        "cursor",
+        "elapsed_training_s",
+        "invocation_count",
+        "halt_reason",
+        "complete",
+        "final_checkpoint",
+        "loss_trail",
+    }
+    config_keys = {
+        "schema",
+        "model_path",
+        "base_checkpoint",
+        "model_behavior_bundle",
+        "personality_adapter_path",
+        "personality_adapter",
+        "training_runtime",
+        "execution_spec",
+        "execution_spec_sha256",
+        "dataset_sha256",
+        "objective_schema",
+        "curriculum_depths",
+        "monotonicity_weight",
+        "lora",
+        "optimizer",
+        "gradient_execution",
+        "train_seed",
+        "max_steps",
+        "sources",
+    }
+    dataset_keys = {
+        "schema",
+        "generator",
+        "train_seed",
+        "families",
+        "task_depths",
+        "per_cell",
+        "examples",
+    }
+    if objective_is_v3:
+        # v3 evidence is REQUIRED with v3, forbidden with v2 — never optional.
+        receipt_keys |= RECEIPT_V3_EXTRA_KEYS
+        config_keys |= CONFIG_V3_EXTRA_KEYS
+        dataset_keys |= DATASET_V3_EXTRA_KEYS
+    _exact(receipt, receipt_keys, role="training_receipt")
+    _exact(config, config_keys, role="training_config")
+    _exact(dataset, dataset_keys, role="dataset_manifest")
+    if (
+        receipt.get("schema") != TRAINING_SCHEMA_V2
+        or declared_objective not in ACCEPTED_OBJECTIVE_SCHEMAS
+    ):
         _fail("training_receipt_schema_invalid")
     if config.get("schema") != TRAINING_CONFIG_SCHEMA_V2:
         _fail("training_config_schema_invalid")
     if dataset.get("schema") != DATASET_SCHEMA_V2:
         _fail("dataset_schema_invalid")
-    if config.get("objective_schema") != OBJECTIVE_SCHEMA_V2:
+    if config.get("objective_schema") != declared_objective:
         _fail("training_config_objective_invalid")
     try:
         spec = RLCExecutionSpec.from_dict(spec_payload)
@@ -975,7 +986,7 @@ def validate_v2_adapter_identity(
         "dataset_sha256": bindings["dataset_manifest"]["sha256"],
         "execution_spec_sha256": bindings["execution_spec"]["sha256"],
         "training_completion_sha256": sha256_bytes(completion_raw),
-        "objective_name": OBJECTIVE_SCHEMA_V2,
+        "objective_name": declared_objective,
         "objective_source_sha256": normalized_sources["objective"]["sha256"],
         "objective_source_provenance": "training_time_archived_source",
         "rank": lora["rank"],
@@ -993,7 +1004,9 @@ __all__ = [
     "DATASET_SCHEMA_V2",
     "IDENTITY_RECEIPT_SCHEMA_V2",
     "MANIFEST_SCHEMA_V2",
+    "ACCEPTED_OBJECTIVE_SCHEMAS",
     "OBJECTIVE_SCHEMA_V2",
+    "OBJECTIVE_SCHEMA_V3",
     "SOURCE_ROLES",
     "TRAINING_CONFIG_SCHEMA_V2",
     "TRAINING_SCHEMA_V2",

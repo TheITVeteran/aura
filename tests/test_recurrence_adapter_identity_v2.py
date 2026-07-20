@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import json
 
 import pytest
 
@@ -367,4 +368,178 @@ def test_tensor_topology_and_effective_personality_are_identity_material():
             actual_runtime_environment=training_runtime,
             artifacts=artifacts,
             tensor_metadata=tensors,
+        )
+
+
+# ── CP181: v3 objective bundles inside the v2 bundle format ─────────────
+
+
+def _upgrade_bundle_to_v3(*, strip_v3_evidence: bool = False):
+    """Rebuild the frozen v2 bundle as a v3-objective bundle, re-hashing
+    every dependent binding (dataset → config → receipt → manifest →
+    completion) exactly as the trainer would."""
+    (
+        manifest_bytes,
+        artifacts,
+        tensors,
+        base,
+        model_behavior,
+        personality,
+        training_runtime,
+    ) = _bundle()
+    artifacts = dict(artifacts)
+    manifest = json.loads(manifest_bytes)
+    dataset = json.loads(artifacts["dataset_manifest.json"])
+    config = json.loads(artifacts["training_config.json"])
+    receipt = json.loads(artifacts["receipt.json"])
+
+    dataset["holdout_per_cell"] = 0
+    dataset["holdout_indices"] = []
+    dataset_bytes = _encoded(dataset)
+    dataset_sha = hashlib.sha256(dataset_bytes).hexdigest()
+
+    v3_options = {
+        "depth_margin": 0.05,
+        "diversity_weight": 0.25,
+        "diversity_target_cos": 0.98,
+    }
+    config["objective_schema"] = "aura.recurrence_native_objective.v3"
+    config["dataset_sha256"] = dataset_sha
+    config["objective_options"] = v3_options
+    config["bridge"] = {
+        "policy": "assistant_answer",
+        "token_count": 3,
+        "tokens_sha256": "b" * 64,
+    }
+    config["holdout"] = {
+        "per_cell": 0,
+        "count": 0,
+        "eval_samples": 8,
+        "indices_sha256": "c" * 64,
+    }
+    config_bytes = _encoded(config)
+    config_sha = hashlib.sha256(config_bytes).hexdigest()
+
+    receipt["objective_schema"] = "aura.recurrence_native_objective.v3"
+    receipt["config_sha256"] = config_sha
+    receipt["dataset_sha256"] = dataset_sha
+    receipt["objective_options"] = v3_options
+    receipt["holdout_trail"] = []
+    if strip_v3_evidence:
+        receipt.pop("objective_options")
+        receipt.pop("holdout_trail")
+    receipt_bytes = _encoded(receipt)
+
+    artifacts["dataset_manifest.json"] = dataset_bytes
+    artifacts["training_config.json"] = config_bytes
+    artifacts["receipt.json"] = receipt_bytes
+    manifest["dataset_manifest"] = _binding(
+        "dataset_manifest.json", dataset_bytes
+    )
+    manifest["training_config"] = _binding("training_config.json", config_bytes)
+    manifest["training_receipt"] = _binding("receipt.json", receipt_bytes)
+    manifest["config_sha256"] = config_sha
+    manifest["dataset_sha256"] = dataset_sha
+    manifest_bytes = _encoded(manifest)
+    completion = json.loads(artifacts["training_completion.json"])
+    completion["receipt_sha256"] = manifest["training_receipt"]["sha256"]
+    completion["manifest_sha256"] = hashlib.sha256(manifest_bytes).hexdigest()
+    artifacts["training_completion.json"] = _encoded(completion)
+    return (
+        manifest_bytes,
+        artifacts,
+        tensors,
+        base,
+        model_behavior,
+        personality,
+        training_runtime,
+    )
+
+
+def test_v3_objective_bundle_validates_and_names_v3():
+    receipt = _validate(_upgrade_bundle_to_v3())
+    assert receipt["complete"] is True
+    assert receipt["objective_name"] == "aura.recurrence_native_objective.v3"
+
+
+def test_v3_schema_without_v3_evidence_is_rejected():
+    with pytest.raises(RecurrenceAdapterIdentityV2Error):
+        _validate(_upgrade_bundle_to_v3(strip_v3_evidence=True))
+
+
+def test_v2_bundle_with_v3_evidence_keys_is_rejected():
+    (
+        manifest_bytes,
+        artifacts,
+        tensors,
+        base,
+        model_behavior,
+        personality,
+        training_runtime,
+    ) = _bundle()
+    artifacts = dict(artifacts)
+    manifest = json.loads(manifest_bytes)
+    receipt = json.loads(artifacts["receipt.json"])
+    receipt["objective_options"] = {"depth_margin": 0.05}  # v3 key, v2 schema
+    receipt_bytes = _encoded(receipt)
+    artifacts["receipt.json"] = receipt_bytes
+    manifest["training_receipt"] = _binding("receipt.json", receipt_bytes)
+    manifest_bytes = _encoded(manifest)
+    completion = json.loads(artifacts["training_completion.json"])
+    completion["receipt_sha256"] = manifest["training_receipt"]["sha256"]
+    completion["manifest_sha256"] = hashlib.sha256(manifest_bytes).hexdigest()
+    artifacts["training_completion.json"] = _encoded(completion)
+    with pytest.raises(RecurrenceAdapterIdentityV2Error):
+        _validate(
+            (
+                manifest_bytes,
+                artifacts,
+                tensors,
+                base,
+                model_behavior,
+                personality,
+                training_runtime,
+            )
+        )
+
+
+def test_receipt_config_objective_schemas_must_agree():
+    (
+        manifest_bytes,
+        artifacts,
+        tensors,
+        base,
+        model_behavior,
+        personality,
+        training_runtime,
+    ) = _upgrade_bundle_to_v3()
+    artifacts = dict(artifacts)
+    manifest = json.loads(manifest_bytes)
+    config = json.loads(artifacts["training_config.json"])
+    config["objective_schema"] = "aura.recurrence_native_objective.v2"
+    config_bytes = _encoded(config)
+    artifacts["training_config.json"] = config_bytes
+    manifest["training_config"] = _binding("training_config.json", config_bytes)
+    manifest["config_sha256"] = hashlib.sha256(config_bytes).hexdigest()
+    receipt = json.loads(artifacts["receipt.json"])
+    receipt["config_sha256"] = manifest["config_sha256"]
+    receipt_bytes = _encoded(receipt)
+    artifacts["receipt.json"] = receipt_bytes
+    manifest["training_receipt"] = _binding("receipt.json", receipt_bytes)
+    manifest_bytes = _encoded(manifest)
+    completion = json.loads(artifacts["training_completion.json"])
+    completion["receipt_sha256"] = manifest["training_receipt"]["sha256"]
+    completion["manifest_sha256"] = hashlib.sha256(manifest_bytes).hexdigest()
+    artifacts["training_completion.json"] = _encoded(completion)
+    with pytest.raises(RecurrenceAdapterIdentityV2Error):
+        _validate(
+            (
+                manifest_bytes,
+                artifacts,
+                tensors,
+                base,
+                model_behavior,
+                personality,
+                training_runtime,
+            )
         )

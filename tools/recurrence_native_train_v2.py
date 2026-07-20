@@ -215,14 +215,22 @@ def _streamed_depth_value_and_grad(
     spec: Any,
     depths: tuple[int, ...],
     monotonicity_weight: float,
-) -> tuple[float, Any]:
-    """Evaluate one depth graph at a time while preserving the v2 gradient.
+    depth_margin: float = 0.0,
+    diversity_weight: float = 0.0,
+    diversity_target_cos: float = 0.98,
+    bridge_tokens: Sequence[int] = (),
+) -> tuple[float, Any, dict[str, Any]]:
+    """Evaluate one depth graph at a time while preserving the exact gradient.
 
-    The monotonic hinge is ``relu(deep - stop_gradient(shallow))``. Its
-    derivative therefore changes only the coefficient of the deeper loss; no
-    cross-depth activation graph is required. Materializing each depth's LoRA
-    gradient before advancing bounds peak memory without changing the single
-    optimizer update or the mathematical objective.
+    v2 hinge: ``relu(deep - stop_gradient(shallow))`` — its derivative only
+    changes the coefficient of the deeper loss, so no cross-depth activation
+    graph is required. v3 (CP181) generalizes the hinge with a positive
+    margin — the coefficient engages while ``deep > shallow - margin`` — and
+    adds a differentiable branch-diversity penalty INSIDE each depth's graph
+    (the hinge comparison stays on the pure answer CE so diversity pressure
+    cannot fake a depth advantage). Defaults reproduce v2 bit-for-bit.
+    Returns ``(objective_value, gradients, telemetry)`` where telemetry
+    carries per-depth answer CE and post-exchange pairwise cosines.
     """
 
     if (
@@ -239,29 +247,72 @@ def _streamed_depth_value_and_grad(
     ):
         raise ValueError("monotonicity_weight must be inside [0, 10]")
 
+    if (
+        isinstance(depth_margin, bool)
+        or not isinstance(depth_margin, (int, float))
+        or not math.isfinite(float(depth_margin))
+        or not 0.0 <= float(depth_margin) <= 2.0
+    ):
+        raise ValueError("depth_margin must be inside [0, 2]")
+    if (
+        isinstance(diversity_weight, bool)
+        or not isinstance(diversity_weight, (int, float))
+        or not math.isfinite(float(diversity_weight))
+        or not 0.0 <= float(diversity_weight) <= 10.0
+    ):
+        raise ValueError("diversity_weight must be inside [0, 10]")
+
     import mlx.core as mx
     import mlx.nn as nn
     from mlx.utils import tree_flatten, tree_map
 
-    from core.learning.recurrence_native_objective_v2 import live_path_loss
+    from core.learning.recurrence_native_objective_v2 import (
+        branch_mean_answer_loss,
+        live_path_forward,
+        live_path_loss,
+    )
 
     accumulated: Any | None = None
     loss_values: list[float] = []
+    base_values: list[float] = []
+    pairwise_cosines: dict[str, list[float]] = {}
     base_coefficient = 1.0 / len(depths)
     for depth in depths:
         depth_spec = spec.with_depth(depth)
+        captured: dict[str, Any] = {}
 
         def depth_loss(
             mdl: Any,
             prompt: Sequence[int],
             answer: Sequence[int],
             _depth_spec: Any = depth_spec,
+            _captured: dict[str, Any] = captured,
         ) -> Any:
+            if float(diversity_weight) > 0.0:
+                from core.learning.recurrence_native_objective_v3 import (
+                    branch_diversity_penalty,
+                )
+
+                forward = live_path_forward(
+                    mdl,
+                    prompt,
+                    answer,
+                    spec=_depth_spec,
+                    bridge_tokens=tuple(bridge_tokens),
+                )
+                base = branch_mean_answer_loss(forward, answer)
+                penalty, cosines = branch_diversity_penalty(
+                    forward, target_cos=float(diversity_target_cos)
+                )
+                _captured["base"] = base
+                _captured["cosines"] = cosines
+                return base + float(diversity_weight) * penalty
             return live_path_loss(
                 mdl,
                 prompt,
                 answer,
                 spec=_depth_spec,
+                bridge_tokens=tuple(bridge_tokens),
             )
 
         value, gradients = nn.value_and_grad(model, depth_loss)(
@@ -279,8 +330,18 @@ def _streamed_depth_value_and_grad(
             bool(flag) for flag in finite_flags
         ):
             raise FloatingPointError("non_finite_streamed_depth_gradient")
+        # The hinge compares pure answer CE across depths — diversity
+        # pressure must never be able to fake (or hide) a depth advantage.
+        base_value = (
+            float(captured["base"]) if "base" in captured else loss_value
+        )
+        if not math.isfinite(base_value):
+            raise FloatingPointError("non_finite_streamed_depth_gradient")
+        pairwise_cosines[str(depth)] = [
+            round(float(value_), 6) for value_ in captured.get("cosines", [])
+        ]
         coefficient = base_coefficient
-        if loss_values and loss_value > loss_values[-1]:
+        if base_values and base_value > base_values[-1] - float(depth_margin):
             coefficient += float(monotonicity_weight)
         scaled = tree_map(
             lambda gradient, factor=coefficient: factor * gradient,
@@ -297,6 +358,7 @@ def _streamed_depth_value_and_grad(
         )
         mx.eval(accumulated)
         loss_values.append(loss_value)
+        base_values.append(base_value)
         del gradients, scaled, finite_flags
         mx.clear_cache()
 
@@ -305,10 +367,14 @@ def _streamed_depth_value_and_grad(
     objective_value = sum(loss_values) / len(loss_values) + float(
         monotonicity_weight
     ) * sum(
-        max(deep - shallow, 0.0)
-        for shallow, deep in zip(loss_values, loss_values[1:], strict=False)
+        max(deep - shallow + float(depth_margin), 0.0)
+        for shallow, deep in zip(base_values, base_values[1:], strict=False)
     )
-    return objective_value, accumulated
+    telemetry = {
+        "depth_base_losses": [round(value_, 6) for value_ in base_values],
+        "pairwise_cos": pairwise_cosines,
+    }
+    return objective_value, accumulated, telemetry
 
 
 def _render_example(tokenizer: Any, task: Any) -> dict[str, Any]:
@@ -378,6 +444,25 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--learning-rate", type=float, default=1e-4)
     parser.add_argument("--monotonicity-weight", type=float, default=0.5)
+    # CP181 v3 objective surface. Defaults keep v2 behavior bit-for-bit;
+    # --objective v3 engages the margin hinge, branch-diversity pressure,
+    # live-bridge parity, and held-out validation.
+    parser.add_argument("--objective", choices=("v2", "v3"), default="v2")
+    parser.add_argument("--depth-margin", type=float, default=0.05)
+    parser.add_argument("--diversity-weight", type=float, default=0.25)
+    parser.add_argument("--diversity-target-cos", type=float, default=0.98)
+    parser.add_argument(
+        "--bridge-policy",
+        choices=("none", "assistant_answer"),
+        default="none",
+        help=(
+            "assistant_answer trains through the SAME decode bridge tokens "
+            "the live engine prepends (assistant_answer_v3), closing the "
+            "training/live bridge-parity gap CP179 diagnosed"
+        ),
+    )
+    parser.add_argument("--holdout-per-cell", type=int, default=0)
+    parser.add_argument("--holdout-eval-samples", type=_positive_int, default=8)
     parser.add_argument("--max-minutes", type=float, default=180.0)
     parser.add_argument("--max-steps", type=_positive_int, default=100_000)
     parser.add_argument("--checkpoint-every", type=_positive_int, default=25)
@@ -456,6 +541,23 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
         or not 0.0 <= args.monotonicity_weight <= 10.0
     ):
         raise ValueError("monotonicity-weight must be inside [0, 10]")
+    objective_is_v3 = args.objective == "v3"
+    if not objective_is_v3 and (
+        args.bridge_policy != "none" or args.holdout_per_cell
+    ):
+        raise ValueError(
+            "bridge-policy and holdout options require --objective v3"
+        )
+    if not 0 <= args.holdout_per_cell < args.per_cell:
+        raise ValueError("holdout-per-cell must be inside [0, per-cell)")
+    depth_margin = float(args.depth_margin) if objective_is_v3 else 0.0
+    diversity_weight = float(args.diversity_weight) if objective_is_v3 else 0.0
+    if objective_is_v3 and not 0.0 <= depth_margin <= 2.0:
+        raise ValueError("depth-margin must be inside [0, 2]")
+    if objective_is_v3 and not 0.0 <= diversity_weight <= 10.0:
+        raise ValueError("diversity-weight must be inside [0, 10]")
+    if objective_is_v3 and not 0.0 <= float(args.diversity_target_cos) <= 1.0:
+        raise ValueError("diversity-target-cos must be inside [0, 1]")
     curriculum = _capture_frozen_curriculum()
 
     import mlx.core as mx
@@ -473,6 +575,15 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
     )
     from core.learning.recurrence_native_objective_v2 import (
         RECURRENCE_NATIVE_SCHEMA_V2,
+    )
+    from core.learning.recurrence_native_objective_v3 import (
+        RECURRENCE_NATIVE_SCHEMA_V3,
+    )
+
+    objective_schema = (
+        RECURRENCE_NATIVE_SCHEMA_V3
+        if args.objective == "v3"
+        else RECURRENCE_NATIVE_SCHEMA_V2
     )
     from core.learning.recurrence_training_state import (
         canonical_json_bytes,
@@ -500,6 +611,7 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
         recurrent_steps=max(ladder),
         alpha=args.alpha,
         alpha_schedule=args.alpha_schedule,
+        decode_bridge_policy=args.bridge_policy,
     )
     problems = spec.validate()
     if problems:
@@ -515,6 +627,24 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
         f"loading {model_path} personality={personality_adapter or 'none'}", flush=True
     )
     model, tokenizer = load(model_path, **load_kwargs)
+    # Bridge parity (CP181): train through the SAME decode-bridge tokens the
+    # live engine prepends before answers, so the trained operator meets the
+    # exact conditioning it will run under.
+    bridge_tokens: tuple[int, ...] = ()
+    if args.bridge_policy == "assistant_answer":
+        from core.brain.llm.latent_cortex.engine import (
+            _ASSISTANT_ANSWER_BRIDGE_V3,
+        )
+
+        try:
+            encoded_bridge = tokenizer.encode(
+                _ASSISTANT_ANSWER_BRIDGE_V3, add_special_tokens=False
+            )
+        except TypeError:
+            encoded_bridge = tokenizer.encode(_ASSISTANT_ANSWER_BRIDGE_V3)
+        bridge_tokens = tuple(int(token) for token in encoded_bridge)
+        if not bridge_tokens or any(token < 0 for token in bridge_tokens):
+            raise RuntimeError("bridge policy produced invalid tokens")
     base_identity = full_weight_checkpoint_identity(model_path)
     model_behavior_identity = model_behavior_bundle_identity(model_path)
     personality_identity = personality_bundle_identity(personality_adapter)
@@ -539,6 +669,27 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
         list(families), list(args.task_depths), args.per_cell, seed=args.train_seed
     )
     examples = [_render_example(tokenizer, task) for task in tasks]
+    # Held-out validation split (CP181): the LAST holdout-per-cell samples
+    # of every (family, depth) cell never receive a gradient; they are
+    # evaluated at checkpoints so overfitting is visible in the receipt.
+    holdout_indices: list[int] = []
+    if args.holdout_per_cell:
+        cell_members: dict[tuple[str, int], list[int]] = {}
+        for index, example in enumerate(examples):
+            cell_members.setdefault(
+                (str(example["family"]), int(example["depth"])), []
+            ).append(index)
+        for members in cell_members.values():
+            holdout_indices.extend(members[-args.holdout_per_cell :])
+    holdout_set = frozenset(holdout_indices)
+    holdout_examples = [examples[index] for index in sorted(holdout_set)]
+    train_examples = [
+        example
+        for index, example in enumerate(examples)
+        if index not in holdout_set
+    ]
+    if not train_examples:
+        raise RuntimeError("holdout split left no training examples")
     dataset_payload = {
         "schema": "aura.recurrence_native_dataset.v2",
         "generator": curriculum.binding,
@@ -548,12 +699,22 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
         "per_cell": args.per_cell,
         "examples": examples,
     }
+    if objective_is_v3:
+        dataset_payload["holdout_per_cell"] = args.holdout_per_cell
+        dataset_payload["holdout_indices"] = sorted(holdout_set)
     dataset_bytes = canonical_json_bytes(dataset_payload)
     dataset_sha256 = sha256_bytes(dataset_bytes)
     sources = {
         "trainer": _source_binding(Path(__file__)),
+        # v3 binds the v3 objective source; its v2 live-path dependency stays
+        # bound through the detached supervisor's git-tree execution manifest.
         "objective": _source_binding(
-            REPO_ROOT / "core/learning/recurrence_native_objective_v2.py"
+            REPO_ROOT
+            / (
+                "core/learning/recurrence_native_objective_v3.py"
+                if objective_is_v3
+                else "core/learning/recurrence_native_objective_v2.py"
+            )
         ),
         "execution_spec": _source_binding(
             REPO_ROOT / "core/brain/llm/latent_cortex/execution_spec.py"
@@ -609,7 +770,7 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
         "execution_spec": spec.to_dict(),
         "execution_spec_sha256": spec.sha256,
         "dataset_sha256": dataset_sha256,
-        "objective_schema": RECURRENCE_NATIVE_SCHEMA_V2,
+        "objective_schema": objective_schema,
         "curriculum_depths": list(ladder),
         "monotonicity_weight": args.monotonicity_weight,
         "lora": {
@@ -633,6 +794,27 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
         "max_steps": args.max_steps,
         "sources": sources,
     }
+    if objective_is_v3:
+        config_payload["objective_options"] = {
+            "depth_margin": depth_margin,
+            "diversity_weight": diversity_weight,
+            "diversity_target_cos": float(args.diversity_target_cos),
+        }
+        config_payload["bridge"] = {
+            "policy": args.bridge_policy,
+            "token_count": len(bridge_tokens),
+            "tokens_sha256": sha256_bytes(
+                canonical_json_bytes(list(bridge_tokens))
+            ),
+        }
+        config_payload["holdout"] = {
+            "per_cell": args.holdout_per_cell,
+            "count": len(holdout_examples),
+            "eval_samples": args.holdout_eval_samples,
+            "indices_sha256": sha256_bytes(
+                canonical_json_bytes(sorted(holdout_set))
+            ),
+        }
     config_bytes = canonical_json_bytes(config_payload)
     config_sha256 = sha256_bytes(config_bytes)
     execution_spec_bytes = canonical_json_bytes(spec.to_dict())
@@ -645,7 +827,7 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
     step = 0
     epoch = 0
     cursor = 0
-    order = _deterministic_order(len(examples), args.train_seed, epoch)
+    order = _deterministic_order(len(train_examples), args.train_seed, epoch)
     prior_elapsed_s = 0.0
     invocation_count = 1
     loss_trail: list[dict[str, Any]] = []
@@ -666,7 +848,7 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
         epoch = int(state["epoch"])
         cursor = int(state["cursor"])
         order = [int(value) for value in state["order"]]
-        if order != _deterministic_order(len(examples), args.train_seed, epoch):
+        if order != _deterministic_order(len(train_examples), args.train_seed, epoch):
             raise RuntimeError(
                 "checkpoint sample order differs from deterministic epoch"
             )
@@ -719,23 +901,73 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
         last_checkpoint_step = step
         return last_checkpoint_path
 
+    holdout_trail: list[dict[str, Any]] = []
+    holdout_eval_count = 0
+
+    def holdout_eval() -> None:
+        """Gradient-free held-out CE at max depth over a rotating window."""
+        nonlocal holdout_eval_count
+        if not holdout_examples:
+            return
+        from core.learning.recurrence_native_objective_v2 import (
+            live_path_loss,
+        )
+
+        count = min(int(args.holdout_eval_samples), len(holdout_examples))
+        start = (holdout_eval_count * count) % len(holdout_examples)
+        holdout_eval_count += 1
+        losses: list[float] = []
+        for offset in range(count):
+            example = holdout_examples[(start + offset) % len(holdout_examples)]
+            value = live_path_loss(
+                model,
+                example["prompt_tokens"],
+                example["answer_tokens"],
+                spec=spec.with_depth(max(ladder)),
+                bridge_tokens=bridge_tokens,
+            )
+            mx.eval(value)
+            loss = float(value)
+            if not math.isfinite(loss):
+                raise FloatingPointError("non_finite_holdout_loss")
+            losses.append(loss)
+        entry = {
+            "step": step,
+            "mean_loss": round(sum(losses) / len(losses), 6),
+            "examples": count,
+            "depth": max(ladder),
+        }
+        holdout_trail.append(entry)
+        print(
+            f"holdout step={step} mean_loss={entry['mean_loss']:.5f} "
+            f"n={count}",
+            flush=True,
+        )
+
     halt_reason = "wall_clock"
     interrupted = False
+    window_cosines: list[float] = []
     try:
         while step < args.max_steps and time.monotonic() < deadline:
             if cursor >= len(order):
                 epoch += 1
                 cursor = 0
-                order = _deterministic_order(len(examples), args.train_seed, epoch)
-            example = examples[order[cursor]]
+                order = _deterministic_order(len(train_examples), args.train_seed, epoch)
+            example = train_examples[order[cursor]]
             try:
-                loss_value, gradients = _streamed_depth_value_and_grad(
-                    model,
-                    example["prompt_tokens"],
-                    example["answer_tokens"],
-                    spec=spec,
-                    depths=ladder,
-                    monotonicity_weight=args.monotonicity_weight,
+                loss_value, gradients, step_telemetry = (
+                    _streamed_depth_value_and_grad(
+                        model,
+                        example["prompt_tokens"],
+                        example["answer_tokens"],
+                        spec=spec,
+                        depths=ladder,
+                        monotonicity_weight=args.monotonicity_weight,
+                        depth_margin=depth_margin,
+                        diversity_weight=diversity_weight,
+                        diversity_target_cos=float(args.diversity_target_cos),
+                        bridge_tokens=bridge_tokens,
+                    )
                 )
             except FloatingPointError:
                 halt_reason = "non_finite_loss"
@@ -745,16 +977,38 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
             step += 1
             cursor += 1
             window_losses.append(loss_value)
+            step_cosines = [
+                cosine
+                for cosines in step_telemetry.get("pairwise_cos", {}).values()
+                for cosine in cosines
+            ]
+            if step_cosines:
+                window_cosines.append(sum(step_cosines) / len(step_cosines))
             if step % args.log_every == 0:
                 mean_loss = sum(window_losses) / len(window_losses)
-                loss_trail.append({"step": step, "mean_loss": round(mean_loss, 6)})
+                trail_entry: dict[str, Any] = {
+                    "step": step,
+                    "mean_loss": round(mean_loss, 6),
+                }
+                if window_cosines:
+                    trail_entry["pairwise_cos_mean"] = round(
+                        sum(window_cosines) / len(window_cosines), 6
+                    )
+                    window_cosines.clear()
+                loss_trail.append(trail_entry)
                 window_losses.clear()
                 print(
                     f"step={step} epoch={epoch} cursor={cursor}/{len(order)} "
-                    f"mean_loss={mean_loss:.5f}",
+                    f"mean_loss={mean_loss:.5f}"
+                    + (
+                        f" cos={trail_entry['pairwise_cos_mean']:.4f}"
+                        if "pairwise_cos_mean" in trail_entry
+                        else ""
+                    ),
                     flush=True,
                 )
             if step % args.checkpoint_every == 0:
+                holdout_eval()
                 published = checkpoint()
                 print(f"checkpoint={published.name}", flush=True)
         if step >= args.max_steps:
@@ -774,6 +1028,12 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
         )
         window_losses.clear()
         last_checkpoint_step = -1
+    try:
+        holdout_eval()
+    except FloatingPointError:
+        # A non-finite held-out loss at shutdown must not cost the receipt;
+        # the trail's absence for this step is itself honest evidence.
+        print("holdout eval non-finite at shutdown; omitted", flush=True)
     final_checkpoint = checkpoint()
     adapter_bytes = (final_checkpoint / "adapter.safetensors").read_bytes()
     atomic_write_bytes(out_dir / "adapters.safetensors", adapter_bytes)
@@ -798,7 +1058,7 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
     adapter_config_bytes = adapter_config_text.encode("utf-8")
     receipt = {
         "schema": TRAIN_SCHEMA_V2,
-        "objective_schema": RECURRENCE_NATIVE_SCHEMA_V2,
+        "objective_schema": objective_schema,
         "objective_source_sha256": sources["objective"]["sha256"],
         "trainer_source_sha256": sources["trainer"]["sha256"],
         "config_sha256": config_sha256,
@@ -829,6 +1089,9 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
         "final_checkpoint": final_checkpoint.name,
         "loss_trail": loss_trail,
     }
+    if objective_is_v3:
+        receipt["objective_options"] = config_payload["objective_options"]
+        receipt["holdout_trail"] = holdout_trail
     receipt_bytes = canonical_json_bytes(receipt)
     atomic_write_bytes(out_dir / "receipt.json", receipt_bytes)
     from core.brain.llm.latent_cortex.adapter_identity import (

@@ -229,7 +229,7 @@ def test_streamed_depth_gradient_matches_monolithic_objective():
     expected_value, expected_gradients = nn.value_and_grad(
         monolithic, loss_fn
     )(monolithic)
-    actual_value, actual_gradients = _streamed_depth_value_and_grad(
+    actual_value, actual_gradients, telemetry = _streamed_depth_value_and_grad(
         streamed,
         prompt,
         answer,
@@ -246,6 +246,77 @@ def test_streamed_depth_gradient_matches_monolithic_objective():
         assert bool(
             mx.allclose(actual[key], expected[key], rtol=1e-4, atol=1e-5)
         ), key
+    # v3 defaults are inert: base losses equal composite losses, no cosines.
+    assert len(telemetry["depth_base_losses"]) == len(depths)
+    assert all(not cosines for cosines in telemetry["pairwise_cos"].values())
+
+
+def test_streamed_v3_matches_monolithic_v3_objective():
+    """The streamed v3 gradient (margin coefficient + in-graph diversity)
+    must equal the monolithic depth_curriculum_loss_v3 gradient."""
+    from core.learning.recurrence_native_objective_v3 import (
+        depth_curriculum_loss_v3,
+    )
+
+    monolithic, _mono_opt, _ = _prepared(seed=917)
+    streamed, _stream_opt, _ = _prepared(seed=917)
+    prompt = [5, 9, 17]
+    answer = [7, 11]
+    spec = RLCExecutionSpec(
+        n_slots=2,
+        branch_roles=("constructive_solution", "counterexample_search"),
+        recurrent_steps=2,
+        exchange_interval=1,
+    )
+    depths = (1, 2)
+    weight = 0.5
+    margin = 0.05
+    diversity_weight = 0.25
+    target_cos = 0.5  # low target so the penalty is ACTIVE in this test
+
+    def loss_fn(model):
+        loss, _telemetry = depth_curriculum_loss_v3(
+            model,
+            prompt,
+            answer,
+            spec=spec,
+            depths=depths,
+            monotonicity_weight=weight,
+            depth_margin=margin,
+            diversity_weight=diversity_weight,
+            diversity_target_cos=target_cos,
+        )
+        return loss
+
+    expected_value, expected_gradients = nn.value_and_grad(
+        monolithic, loss_fn
+    )(monolithic)
+    actual_value, actual_gradients, telemetry = _streamed_depth_value_and_grad(
+        streamed,
+        prompt,
+        answer,
+        spec=spec,
+        depths=depths,
+        monotonicity_weight=weight,
+        depth_margin=margin,
+        diversity_weight=diversity_weight,
+        diversity_target_cos=target_cos,
+    )
+    mx.eval(expected_value, expected_gradients, actual_gradients)
+    assert actual_value == pytest.approx(
+        float(expected_value), rel=1e-4, abs=1e-4
+    )
+    expected = dict(tree_flatten(expected_gradients))
+    actual = dict(tree_flatten(actual_gradients))
+    assert set(actual) == set(expected)
+    for key in expected:
+        assert bool(
+            mx.allclose(actual[key], expected[key], rtol=1e-3, atol=1e-4)
+        ), key
+    # Diversity telemetry is live: one cosine pair per depth for 2 branches.
+    assert all(
+        len(cosines) == 1 for cosines in telemetry["pairwise_cos"].values()
+    )
 
 
 def test_run_requires_model_lane_before_any_load():
