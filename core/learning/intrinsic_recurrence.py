@@ -116,9 +116,18 @@ class RecurrentDepthPlan:
 
 
 def _rms(tensor: Any) -> Any:
+    """RMS in float32.
+
+    Transformer residual streams carry famously large outlier activations;
+    squaring them in fp16 overflows to inf and the renormalizer then hands
+    the model NaN. Measured: every renormalize=True setting produced a
+    non-finite state at iteration 1, which looked like the checkpoint being
+    unstable and was actually this.
+    """
     import mlx.core as mx
 
-    return mx.sqrt(mx.mean(mx.square(tensor), axis=-1, keepdims=True) + 1e-6)
+    wide = tensor.astype(mx.float32)
+    return mx.sqrt(mx.mean(mx.square(wide), axis=-1, keepdims=True) + 1e-6)
 
 
 def _run(layers: Any, hidden: Any, caches: Any = None) -> Any:
@@ -213,7 +222,8 @@ def recurrent_hidden_states(
             if plan.anchor_injection > 0.0:
                 hidden = hidden + plan.anchor_injection * anchor
             if plan.renormalize:
-                hidden = hidden * (anchor_rms / _rms(hidden))
+                scale = (anchor_rms / _rms(hidden)).astype(hidden.dtype)
+                hidden = hidden * scale
         with recurrent_iteration(iteration):
             hidden = _run(
                 window, hidden, caches["window"][iteration] if caches else None
@@ -288,10 +298,33 @@ def trajectory_dynamics(trajectory: list[Any]) -> dict[str, Any]:
             "schema": INTRINSIC_RECURRENCE_SCHEMA,
             "iterations": len(trajectory),
             "measurable": False,
+            "diverged": False,
             "reason": "need at least two iterations to measure motion",
         }
+    # A retrofitted loop can overflow: the middle block of a checkpoint
+    # never pretrained to iterate is not a stable map, and in fp16 the
+    # norm can run away inside a few passes. Detect it FIRST -- every
+    # statistic below is meaningless once the state is non-finite, and an
+    # accuracy scored from NaN logits is noise wearing a number's clothes.
+    finite = all(
+        bool(mx.all(mx.isfinite(state.astype(mx.float32))))
+        for state in trajectory
+    )
+    if not finite:
+        return {
+            "schema": INTRINSIC_RECURRENCE_SCHEMA,
+            "iterations": len(trajectory),
+            "measurable": False,
+            "diverged": True,
+            "reason": "non-finite hidden state: the loop overflowed",
+        }
+
+    # float32 throughout: an fp16 mean over a long sequence overflows, and
+    # the resulting 0.0/nan reads as "the loop is not moving" when it is
+    # actually the measurement that broke.
+    wide = [state.astype(mx.float32) for state in trajectory]
     deltas = []
-    for previous, current in zip(trajectory, trajectory[1:]):
+    for previous, current in zip(wide, wide[1:]):
         deltas.append(
             float(mx.mean(mx.abs(current - previous)))
             / max(float(mx.mean(mx.abs(previous))), 1e-9)
@@ -301,7 +334,7 @@ def trajectory_dynamics(trajectory: list[Any]) -> dict[str, Any]:
     )
     oscillating = False
     if len(trajectory) >= 3:
-        flat = [mx.reshape(state, (-1,)) for state in trajectory]
+        flat = [mx.reshape(state, (-1,)) for state in wide]
         steps = [b - a for a, b in zip(flat, flat[1:])]
         cosines = [
             float(
@@ -315,6 +348,7 @@ def trajectory_dynamics(trajectory: list[Any]) -> dict[str, Any]:
         "schema": INTRINSIC_RECURRENCE_SCHEMA,
         "iterations": len(trajectory),
         "measurable": True,
+        "diverged": False,
         "relative_deltas": [round(d, 6) for d in deltas],
         "final_delta": round(deltas[-1], 6),
         "contracting": bool(contracting),
