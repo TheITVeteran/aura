@@ -22292,3 +22292,34 @@ installed-app, release, and soak gates remain open. Next: publish CP203, create
 the immutable live config from that source commit, launch its detached waiting
 controller, and verify the controller journal reaches the four-party terminal
 wait without model contention. Final long soaks remain deferred.
+
+## Checkpoint 2026-07-20-204: Live Four-Party Proof Continuation
+
+The CP203 continuation is now instantiated from pushed source commit
+`1079893d53400fcb92b47c92f695512d1a41f623`. Its immutable configuration has
+digest `4bbb8a629659f522f96087a6a9493f0a62438e18757c90883a09c89846d06602`
+and fresh preregistered 63-bit pilot seeds that are withheld from this tracker.
+The configuration binds the CP195 migration and calibration files, destination
+adapter, old scientific protocol/amendment bytes, all downstream verifier
+sources, and the exact resumed trainer, sentinel, recovery-controller, and
+archivist run directories.
+
+Controller PID 73723 is detached in a new session with an independent
+`caffeinate` assertion. Its hash-chained journal and self-hashed state are live
+at `wait_for_training_terminal`; all four required roles report advancing
+heartbeat sequences. It has not loaded a second model and therefore does not
+contend with training. Once all four terminal receipts are present, it will run
+recovery admission, immutable freeze, resident mechanics, fresh pilot
+preregistration, pilot execution, and a fail-honest directional verdict without
+human intervention. Training has also advanced through a durable step-25
+checkpoint and held-out evaluation with 17 complete leases and no tombstone.
+
+Evidence-weighted completion remains 27%. This is checkpoint 204 of the
+faithful 292-399 total-checkpoint forecast, leaving approximately 88-195
+checkpoints. No completion or capability credit is awarded merely for launching
+the continuation. Training-completion, freeze, mechanics, directional and
+powered reasoning-gain, same-checkpoint interaction, frontier, external-custody,
+installed-app, release, and soak gates remain open. Next: publish CP204 and
+build a separately source-bound confirmatory watcher that can consume only a
+positive CP203 directional verdict and otherwise terminates with the exact
+repair diagnoses. Final long soaks remain deferred.
