@@ -27,6 +27,7 @@ import json
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
@@ -100,11 +101,36 @@ def _extend_tail(model, prepared, produced: list[int]):
     return mx.concatenate([bridge, generated], axis=1)
 
 
-def _score(task, text: str) -> bool:
+class HarnessError(RuntimeError):
+    """The harness could not evaluate — never a model result."""
+
+
+def _score(task, text: str) -> str:
+    """Four-way outcome. Harness faults RAISE; they are never 'incorrect'.
+
+    An earlier version wrapped scoring in ``except Exception: return
+    False``. RecurrenceTrainingTask has no ``.score()`` method, so every
+    task raised AttributeError and was recorded as a wrong answer: the
+    harness manufactured 0% accuracy at every depth and it looked like a
+    devastating capability result. Silent conversion of harness faults into
+    model failures is the one error class an evidence tool must never have.
+    """
+    from core.brain.llm.latent_cortex.frontier_tasks import (
+        FrontierTaskError,
+        parse_final_answer,
+    )
+
     try:
-        return bool(task.score(text).correct)
-    except Exception:  # noqa: BLE001 - malformed output is simply incorrect
-        return False
+        expected = parse_final_answer(task.answer)
+    except FrontierTaskError as exc:  # gold must always parse
+        raise HarnessError(
+            f"gold answer for {task.family} is unparseable: {exc}"
+        ) from exc
+    try:
+        produced = parse_final_answer(text)
+    except FrontierTaskError:
+        return "unparseable"  # the model did not emit a valid contract
+    return "correct" if produced == expected else "incorrect"
 
 
 def run_arm(
@@ -161,32 +187,43 @@ def run_arm(
             text = _decode_answer(
                 model, tokenizer, prepared, states[0], max_tokens
             )
-            correct = _score(task, text)
-            by_depth[depth].append(correct)
+            outcome = _score(task, text)
+            by_depth[depth].append(outcome)
             by_family.setdefault(task.family, {}).setdefault(depth, []).append(
-                correct
+                outcome
             )
         mx.clear_cache()
     return {
         "by_depth": {
-            str(depth): {
-                "correct": sum(values),
-                "n": len(values),
-                "accuracy": (sum(values) / len(values)) if values else 0.0,
-            }
-            for depth, values in by_depth.items()
+            str(depth): _tally(values) for depth, values in by_depth.items()
         },
         "by_family": {
             family: {
-                str(depth): {
-                    "correct": sum(values),
-                    "n": len(values),
-                    "accuracy": (sum(values) / len(values)) if values else 0.0,
-                }
-                for depth, values in per_depth.items()
+                str(depth): _tally(values) for depth, values in per_depth.items()
             }
             for family, per_depth in by_family.items()
         },
+    }
+
+
+def _tally(outcomes: list[str]) -> dict[str, Any]:
+    """Accuracy PLUS the contract-compliance breakdown.
+
+    Reporting only accuracy makes 0% ambiguous between 'reasons badly' and
+    'never emitted a parseable answer'. Those demand opposite responses, so
+    both numbers are always published.
+    """
+    total = len(outcomes)
+    correct = sum(1 for value in outcomes if value == "correct")
+    incorrect = sum(1 for value in outcomes if value == "incorrect")
+    unparseable = sum(1 for value in outcomes if value == "unparseable")
+    return {
+        "correct": correct,
+        "incorrect": incorrect,
+        "unparseable": unparseable,
+        "n": total,
+        "accuracy": (correct / total) if total else 0.0,
+        "contract_compliance": ((correct + incorrect) / total) if total else 0.0,
     }
 
 
@@ -225,7 +262,9 @@ def main() -> int:
         row = result["by_depth"][str(depth)]
         print(
             f"  depth {depth:2d}: {row['correct']:3d}/{row['n']:3d}"
-            f" = {100*row['accuracy']:5.1f}%"
+            f" = {100*row['accuracy']:5.1f}%   "
+            f"(incorrect {row['incorrect']}, unparseable {row['unparseable']},"
+            f" contract {100*row['contract_compliance']:.0f}%)"
         )
     print("\n=== by family ===")
     for family, per_depth in sorted(result["by_family"].items()):
