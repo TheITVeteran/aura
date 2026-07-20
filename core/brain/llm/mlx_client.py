@@ -1765,8 +1765,21 @@ async def _foreground_owner_context(
             finally:
                 _FOREGROUND_OWNER_LOCK.release()
         else:
+            # Leaving our finished ownership registered blocks every later
+            # foreground turn until a stale-clear heuristic happens to fire.
+            # Self-clear WITHOUT the lock as a last resort: we only remove
+            # our own entry, so the worst race (another waiter observing the
+            # cleared slot a moment early) is strictly better than a leak.
+            if _FOREGROUND_OWNER_NAME == owner_name:
+                _FOREGROUND_OWNER_NAME = None
+                _FOREGROUND_OWNER_ACQUIRED_AT = 0.0
+            _record_mlx_degradation(
+                TimeoutError("foreground owner release lock timeout"),
+                action="self-cleared finished foreground ownership without the owner lock",
+                severity="error",
+            )
             logger.warning(
-                "⚠️ [MLX] Timed out releasing foreground owner lock for %s.",
+                "⚠️ [MLX] Timed out releasing foreground owner lock for %s — self-cleared.",
                 owner_name,
             )
 
@@ -3497,11 +3510,23 @@ class MLXLocalClient:
     async def _ensure_listener_task(self) -> None:
         task = self._listener_task
         if task is not None and not task.done():
+            # Reusable only if its loop is genuinely serving AND the task is
+            # not already being cancelled. Respawn paths cancel the old
+            # listener and immediately call this method — treating the
+            # still-cancelling task as reusable left the fresh worker with
+            # NO response consumer. A stopped-but-unclosed foreign loop is
+            # equally dead for our purposes.
+            cancelling = task.cancelled() or bool(
+                getattr(task, "cancelling", lambda: 0)()
+            )
+            loop_serving = False
             try:
-                if not task.get_loop().is_closed():
-                    return
+                task_loop = task.get_loop()
+                loop_serving = (not task_loop.is_closed()) and task_loop.is_running()
             except (RuntimeError, AttributeError) as exc:
                 logger.debug("MLX listener task loop unavailable during reuse check: %s", exc)
+            if loop_serving and not cancelling:
+                return
             _cancel_task_threadsafe(task)
 
         self._listener_task = get_task_tracker().create_task(self._response_listener_loop())
@@ -3539,7 +3564,17 @@ class MLXLocalClient:
             return
         now = time.time()
         stuck_duration = now - self._lane_transition_at
-        if stuck_duration < 120.0:
+        # State-aware budget: a heavy-lane spawn/handshake legitimately runs
+        # for minutes while 20-40GB of weights load. The old flat 120s reset
+        # cancelled LIVE handshakes from a mere status poll, well inside the
+        # 300s the handshake itself was granted.
+        if self._lane_state in {"spawning", "handshaking"}:
+            allowed = max(120.0, float(self._handshake_timeout()) + 30.0)
+        elif self._lane_state == "warming":
+            allowed = max(120.0, float(self._warmup_timeout()) + 30.0)
+        else:
+            allowed = 120.0
+        if stuck_duration < allowed:
             return
         last_activity = max(
             self._last_heartbeat,
@@ -3555,21 +3590,58 @@ class MLXLocalClient:
             self._lane_state,
             stuck_duration,
         )
+        # The reset must not orphan a live worker: declaring the lane cold
+        # while the old process survives lets the next spawn stack a second
+        # multi-GB worker beside it.
+        process = self._process
+        if process is not None and process.is_alive():
+            _record_mlx_degradation(
+                RuntimeError(f"stale_lane_reset_killed_live_worker:{self._lane_state}"),
+                action="killed unresponsive worker during stale lane-state reset",
+                severity="error",
+            )
+            _note_lane_worker_death(self, "lane_state_stale_reset")
+            self._process = None
+            self._kill_and_join_blocking(process)
         self._warmup_in_flight = False
         self._set_lane_state("cold")
 
-    def _kill_and_join_blocking(self, p: mp.Process):
-        if p and p.is_alive():
-            try:
+    def _kill_and_join_blocking(self, p: mp.Process) -> bool:
+        """Kill and join a worker, PROVING termination. Returns True when dead.
+
+        The old helper swallowed failures and never re-checked ``is_alive``,
+        so callers replaced queues and respawned while the accelerator-owning
+        child could still be running.
+        """
+        if not p:
+            return True
+        if not p.is_alive():
+            return True
+        try:
+            p.kill()
+            p.join(timeout=2.0)
+            if p.is_alive():
+                # One more attempt before reporting a survivor.
                 p.kill()
                 p.join(timeout=2.0)
-            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
-                _record_mlx_degradation(
-                    e,
-                    action="continued process cleanup after worker kill/join failed",
-                    severity="error",
-                )
-                logger.warning("Error killing process: %s", e)
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
+            _record_mlx_degradation(
+                e,
+                action="continued process cleanup after worker kill/join failed",
+                severity="error",
+            )
+            logger.warning("Error killing process: %s", e)
+        try:
+            still_alive = bool(p.is_alive())
+        except (RuntimeError, AttributeError, ValueError):
+            still_alive = False
+        if still_alive:
+            _record_mlx_degradation(
+                RuntimeError(f"worker_survived_kill:pid={getattr(p, 'pid', '?')}"),
+                action="worker process survived kill+join; caller state may briefly double-count it",
+                severity="critical",
+            )
+        return not still_alive
 
     def _replace_ipc_queues(self, *, maxsize: int = 10) -> None:
         """Replace IPC queues after closing the old semaphores and feeder threads."""
@@ -3604,6 +3676,25 @@ class MLXLocalClient:
         """Return one task-local batched worker response without global state."""
         if self._req_q is None or self._closed:
             return {}
+        # Memory-pressure admission: a 16-candidate 2048-token resident batch
+        # is heavy generation. The serial and latent paths refuse under
+        # critical pressure — the batch path previously dispatched anyway.
+        try:
+            snapshot = get_memory_pressure_snapshot()
+            if snapshot.refuse_heavy_local_generation:
+                _record_mlx_degradation(
+                    RuntimeError(snapshot.reason or "critical_memory_pressure"),
+                    action="refused batched generation under critical memory pressure",
+                    severity="warning",
+                )
+                return {}
+        except (OSError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            _record_mlx_degradation(
+                exc,
+                action="refused batched generation while the memory probe was unavailable",
+                severity="warning",
+            )
+            return {}
         alive = await self._ensure_worker_alive(request_is_background=True)
         if not alive:
             return {}
@@ -3625,9 +3716,13 @@ class MLXLocalClient:
             admitted_temperature = 0.8
         admitted_temperature = max(0.0, min(2.0, admitted_temperature))
         try:
-            admitted_timeout = max(10.0, float(timeout_s))
+            admitted_timeout = float(timeout_s)
         except (TypeError, ValueError, OverflowError):
             admitted_timeout = 180.0
+        if not math.isfinite(admitted_timeout):
+            # Infinity previously created an UNBOUNDED wait on the future.
+            admitted_timeout = 180.0
+        admitted_timeout = min(600.0, max(10.0, admitted_timeout))
         req_id = uuid.uuid4().hex
         req = {
             "id": req_id,
@@ -3639,20 +3734,44 @@ class MLXLocalClient:
         }
         fut = _new_shared_future()
         self._pending_generations[req_id] = fut
+        timed_out = False
         try:
             await run_io_bound(self._req_q.put, req, True, 2.0)
             res = await _await_shared_future(fut, timeout_s=admitted_timeout)
-        except (TimeoutError, BrokenPipeError, OSError) as exc:
-            self._pending_generations.pop(req_id, None)
+        except (TimeoutError, BrokenPipeError, OSError, queue.Full) as exc:
+            # queue.Full included: queue saturation is expected load
+            # contention and belongs inside the documented empty-response
+            # fallback envelope, not raised to the caller.
+            timed_out = isinstance(exc, TimeoutError)
             _record_mlx_degradation(
                 exc,
                 action="returned empty batch after batched generation failed; caller falls back to serial",
                 severity="warning",
             )
             return {}
+        finally:
+            # ALWAYS unregister — caller cancellation previously left the
+            # worker command live and the future registered indefinitely.
+            self._pending_generations.pop(req_id, None)
+            if timed_out:
+                # The queued decode continues invisibly after a timeout;
+                # ask the worker to yield instead of burning the lane.
+                with contextlib.suppress(Exception):
+                    self.soft_cancel_active_generation(
+                        reason=f"batch_timeout:{req_id[:12]}"
+                    )
         if not res or res.get("status") != "ok":
             return {}
-        raw_texts = [str(t or "") for t in (res.get("texts") or [])]
+        raw_texts_value = res.get("texts")
+        # A malformed worker payload (a plain string iterates as characters)
+        # must not fabricate hundreds of one-character candidates.
+        if not isinstance(raw_texts_value, (list, tuple)):
+            _record_mlx_degradation(
+                TypeError(f"batch texts payload was {type(raw_texts_value).__name__}"),
+                action="dropped malformed batch response payload",
+            )
+            return {}
+        raw_texts = [str(t or "") for t in raw_texts_value][:admitted_n]
         raw_candidate_tokens = list(res.get("tokens_used_by_candidate") or [])
         texts: list[str] = []
         tokens_used_by_candidate: list[int] = []
@@ -6011,6 +6130,29 @@ class MLXLocalClient:
         messages = kwargs.pop("messages", None)
         system_prompt = kwargs.pop("system_prompt", None)
         tools = kwargs.pop("tools", None)
+        if isinstance(messages, list) and messages:
+            # Harden the public boundary: a malformed (non-mapping) element
+            # previously raised AttributeError below, outside the normal
+            # generation failure contract.
+            well_formed = [m for m in messages if isinstance(m, dict)]
+            if len(well_formed) != len(messages):
+                _record_mlx_degradation(
+                    TypeError("non-mapping chat message dropped"),
+                    action="dropped malformed message entries before flattening",
+                )
+            messages = well_formed or None
+        if messages and system_prompt:
+            # A separate system prompt alongside conversation history was
+            # silently DISCARDED (the messages branch below skips it) —
+            # callers lost policy/schema/safety instructions. Merge it.
+            merged = [dict(m) for m in messages]
+            if merged[0].get("role") == "system":
+                existing = str(merged[0].get("content", "") or "")
+                if str(system_prompt) not in existing:
+                    merged[0]["content"] = f"{system_prompt}\n\n{existing}".strip()
+            else:
+                merged.insert(0, {"role": "system", "content": str(system_prompt)})
+            messages = merged
         foreground_request = bool(kwargs.get("foreground_request", False))
         strict_answer_contract = bool(kwargs.get("strict_answer_contract", False))
         proof_evaluation_contract = bool(kwargs.get("proof_evaluation_contract", False))
@@ -6308,18 +6450,27 @@ class MLXLocalClient:
                 )
                 return None
 
-        acquired = await self._acquire_request_lock(
-            owner_label=owner_label,
-            deadline=deadline,
-            foreground_request=foreground_request,
-        )
+        try:
+            acquired = await self._acquire_request_lock(
+                owner_label=owner_label,
+                deadline=deadline,
+                foreground_request=foreground_request,
+            )
+        except BaseException:
+            # Cancellation or an unexpected acquisition failure must not
+            # leave the global foreground owner entered — that blocked every
+            # background lane until a stale-clear heuristic fired.
+            if foreground_owner_cm is not None:
+                with contextlib.suppress(Exception):
+                    await asyncio.shield(foreground_owner_cm.__aexit__(*sys.exc_info()))
+            raise
         if not acquired:
-            _deferred_reboot = self._deferred_reboot_reason
-            self._deferred_reboot_reason = None
+            # A request that did NOT acquire the lane must not consume the
+            # shared deferred-reboot verdict — that stole reboots requested
+            # by the actual lane owner (the owning request's cleanup below
+            # resolves it).
             if foreground_owner_cm is not None:
                 await foreground_owner_cm.__aexit__(None, None, None)
-            if _deferred_reboot:
-                await self._resolve_deferred_reboot(str(_deferred_reboot))
             return None
         try:
             # Check steering liveness
@@ -6359,11 +6510,28 @@ class MLXLocalClient:
             _deferred_reboot = self._deferred_reboot_reason
             self._deferred_reboot_reason = None
             self._release_request_lock()
+            # Each cleanup step is independently protected: an owner-exit
+            # failure previously REPLACED the generation's own exception with
+            # lifecycle noise and skipped deferred-reboot resolution.
             if foreground_owner_cm is not None:
-                await foreground_owner_cm.__aexit__(None, None, None)
+                try:
+                    await foreground_owner_cm.__aexit__(None, None, None)
+                except Exception as _owner_exit_exc:  # noqa: BLE001
+                    _record_mlx_degradation(
+                        _owner_exit_exc,
+                        action="continued generation cleanup after foreground owner exit failed",
+                        severity="error",
+                    )
             # Resolve AFTER releasing _request_lock to avoid lock-ordering deadlock
             if _deferred_reboot:
-                await self._resolve_deferred_reboot(str(_deferred_reboot))
+                try:
+                    await self._resolve_deferred_reboot(str(_deferred_reboot))
+                except Exception as _reboot_exc:  # noqa: BLE001
+                    _record_mlx_degradation(
+                        _reboot_exc,
+                        action="failed to resolve deferred reboot during generation cleanup",
+                        severity="error",
+                    )
 
     async def _generate_inner(
         self,
@@ -6591,9 +6759,11 @@ class MLXLocalClient:
         if _bridge is not None and getattr(_bridge, "layer_offsets", None):
             req["layer_offsets"] = _bridge.layer_offsets
         if _bridge is not None and getattr(_bridge, "extra_stop_sequences", None):
-            existing_stops = list(kwargs.get("stop_sequences") or [])
-            existing_stops.extend(_bridge.extra_stop_sequences)
-            req["stop_sequences"] = existing_stops
+            # EXTEND the request's stop list — rebuilding it from the caller
+            # kwargs erased every mandatory anti-bleed default appended above.
+            for stop in _bridge.extra_stop_sequences:
+                if stop not in req["stop_sequences"]:
+                    req["stop_sequences"].append(stop)
 
         if self._active_generations <= 0 and not await self._set_durable_lane_preemptible(
             False
