@@ -303,6 +303,56 @@ def _mark_generation_gate_acquired(
         return lease_id
 
 
+async def _acquire_generation_gate_slot(wait_s: float) -> bool:
+    """Acquire one generation-gate permit with a cancellation-safe handoff.
+
+    ``asyncio.to_thread(_GENERATION_GATE.acquire, ...)`` leaked permits: when
+    the awaiting coroutine was cancelled (upstream ``wait_for`` timeout), the
+    worker thread kept waiting, could acquire the permit AFTER the caller was
+    gone, and nothing ever released it — the two-slot gate then served the
+    rest of the process lifetime on one slot (or zero). The handoff below
+    makes acquisition atomic with respect to cancellation: an abandoned
+    waiter's permit is handed straight back to the semaphore.
+    """
+    try:
+        wait_s = float(wait_s)
+    except (TypeError, ValueError):
+        wait_s = 0.0
+    if not math.isfinite(wait_s) or wait_s < 0.0:
+        wait_s = 0.0
+    handoff_lock = _threading.Lock()
+    state = {"abandoned": False, "delivered": False}
+
+    def _worker() -> bool:
+        got = _GENERATION_GATE.acquire(True, wait_s)
+        if not got:
+            return False
+        with handoff_lock:
+            if state["abandoned"]:
+                try:
+                    _GENERATION_GATE.release()
+                except ValueError:
+                    pass
+                return False
+            state["delivered"] = True
+            return True
+
+    try:
+        return await asyncio.to_thread(_worker)
+    except asyncio.CancelledError:
+        with handoff_lock:
+            if state["delivered"]:
+                # The thread transferred the permit but the await was
+                # cancelled before the result reached us — hand it back.
+                try:
+                    _GENERATION_GATE.release()
+                except ValueError:
+                    pass
+            else:
+                state["abandoned"] = True
+        raise
+
+
 async def acquire_external_generation_gate_lease(
     *,
     owner: str,
@@ -330,11 +380,7 @@ async def acquire_external_generation_gate_lease(
         or bounded_wait < 0.0
     ):
         return None
-    acquired = await asyncio.to_thread(
-        _GENERATION_GATE.acquire,
-        True,
-        min(bounded_timeout, bounded_wait),
-    )
+    acquired = await _acquire_generation_gate_slot(min(bounded_timeout, bounded_wait))
     if not acquired:
         return None
     return _mark_generation_gate_acquired(
@@ -1318,10 +1364,38 @@ class HealthAwareLLMRouter:
                 "xai",
                 "grok",
             )
-            # Unknown compatibility endpoints are local until concrete remote
-            # provider evidence says otherwise. This keeps deterministic reflex
-            # clients out of cloud-only recovery and cloud provenance receipts.
-            is_local = not any(marker in fingerprint for marker in cloud_markers)
+            if any(marker in fingerprint for marker in cloud_markers):
+                is_local = False
+            else:
+                # A non-loopback HTTP endpoint is remote regardless of naming:
+                # the marker allowlist alone silently classified any new,
+                # proxied, or generically named remote provider as local,
+                # changing cloud-only filtering and provenance receipts.
+                endpoint_url = str(getattr(ep_obj, "endpoint_url", "") or "")
+                remote_by_url = False
+                if endpoint_url.lower().startswith(("http://", "https://")):
+                    from urllib.parse import urlparse
+
+                    host = str(urlparse(endpoint_url).hostname or "").lower()
+                    remote_by_url = host not in {
+                        "localhost",
+                        "127.0.0.1",
+                        "::1",
+                        "0.0.0.0",
+                        "host.docker.internal",
+                    } and not host.startswith(("127.", "192.168.", "10."))
+                if remote_by_url:
+                    is_local = False
+                    logger.info(
+                        "Endpoint %s classified as REMOTE from its non-loopback URL %s.",
+                        name,
+                        endpoint_url[:120],
+                    )
+                else:
+                    # Unknown compatibility endpoints stay local until concrete
+                    # remote evidence appears. This keeps deterministic reflex
+                    # clients out of cloud-only recovery and cloud receipts.
+                    is_local = True
         
         # Normalize both enum-style tiers and legacy string aliases into the router's
         # concrete routing labels: local, local_deep, local_fast, api_fast, api_deep.
@@ -1384,6 +1458,11 @@ class HealthAwareLLMRouter:
         res = await self.generate_with_metadata(
             prompt, system_prompt, timeout, prefer_tier=prefer_tier, schema=schema, **kwargs
         )
+        # String-surface consumers lose the structured ok flag; publish the
+        # full result so they can consult get_last_generation_metadata()
+        # instead of persisting a diagnostic string as model output.
+        if isinstance(res, dict):
+            self._publish_generation_metadata(res)
         text = res.get("text", "")
         origin = str(kwargs.get("origin", "") or "").lower()
         purpose = str(kwargs.get("purpose", "") or "").lower()
@@ -1419,6 +1498,10 @@ class HealthAwareLLMRouter:
                 "⚠️ [LLM ROUTER] All endpoints exhausted. Last error: %s (endpoint: %s)",
                 error, endpoint
             )
+            # Receipt for string consumers: this text is a surface fallback,
+            # not model output — get_last_generation_metadata() carries the flag.
+            res["string_surface_fallback"] = True
+            self._publish_generation_metadata(res)
             if str(error or "").strip() == "client_returned_no_text":
                 return "I lost the reply lane for a moment. Ask that again and I'll answer cleanly."
             # v10.5 HARDENING: Return a diagnostic label so StructuredLLM can report it accurately
@@ -1441,6 +1524,20 @@ class HealthAwareLLMRouter:
         Falls back to local if all remote endpoints fail.
         Always returns a dict: {"ok": bool, "text": str, "endpoint": str, "tokens": int}
         """
+        admission_started = time.monotonic()
+        # Set by think_and_act's fallback when this coroutine is already
+        # running INSIDE a held generation-gate lease (its own or the gated
+        # caller's). Acquiring again would self-deadlock the process gate.
+        gate_already_held = bool(kwargs.pop("_gate_already_held", False))
+        if gate_already_held:
+            return await self._generate_with_metadata_gated(
+                prompt,
+                system_prompt=system_prompt,
+                timeout=timeout,
+                prefer_tier=prefer_tier,
+                schema=schema,
+                **kwargs,
+            )
         origin = str(kwargs.get("origin", "") or "").lower()
         purpose = str(kwargs.get("purpose", "") or "").lower()
         explicit_background = bool(kwargs.get("is_background", False))
@@ -1450,6 +1547,20 @@ class HealthAwareLLMRouter:
             or kwargs.get("protected_foreground_lane", False)
             or kwargs.get("proof_primary_lane_required", False)
         )
+        # Default-purpose normalization must happen BEFORE classification:
+        # the gated implementation stamps unlabelled chat calls with
+        # purpose="expression" (user-facing), but classification here ran
+        # first — so a bare generate_with_metadata() call with no origin,
+        # purpose, or flags was admitted, suppressed, and budgeted as
+        # BACKGROUND and only later treated as a user-facing turn.
+        if (
+            not origin
+            and not purpose
+            and not explicit_background
+            and not bool(kwargs.get("_non_chat_inference", False))
+        ):
+            purpose = "expression"
+            kwargs["purpose"] = purpose
         request_is_background = self._is_background_request(
             origin=origin,
             purpose=purpose,
@@ -1471,15 +1582,8 @@ class HealthAwareLLMRouter:
             return early_deferral
 
         if request_is_background:
-            # Domain-specialist weights for background reasoning lanes: if the
-            # expert-LoRA library has a match for this task, swap it onto the
-            # resident primary model before dispatch. Bounded, refusal-safe,
-            # and never on foreground turns (a user turn never pays a swap).
-            await self._maybe_route_expert_adapter(prompt, kwargs)
-            acquired = await asyncio.to_thread(
-                _GENERATION_GATE.acquire,
-                True,
-                min(_GENERATION_GATE_WAIT_S, _BACKGROUND_GENERATION_GATE_WAIT_S),
+            acquired = await _acquire_generation_gate_slot(
+                min(_GENERATION_GATE_WAIT_S, _BACKGROUND_GENERATION_GATE_WAIT_S)
             )
         else:
             # Foreground preemption ladder. A user turn must not sit the full
@@ -1490,9 +1594,7 @@ class HealthAwareLLMRouter:
             # yields between tokens and stays warm, freeing the gate in
             # about one decode step. Rung 3: the remaining wait and the
             # existing force-abort escalation below, unchanged.
-            acquired = await asyncio.to_thread(
-                _GENERATION_GATE.acquire, True, _FOREGROUND_GATE_GRACE_S
-            )
+            acquired = await _acquire_generation_gate_slot(_FOREGROUND_GATE_GRACE_S)
             if not acquired:
                 holder = _oldest_generation_gate_lease()
                 holder_owner = holder[2] if holder is not None else ""
@@ -1510,16 +1612,14 @@ class HealthAwareLLMRouter:
                     if self._soft_cancel_local_generations(
                         reason=f"foreground_preempts_background:{holder_owner[:80]}"
                     ):
-                        acquired = await asyncio.to_thread(
-                            _GENERATION_GATE.acquire, True, _FOREGROUND_SOFT_CANCEL_WAIT_S
+                        acquired = await _acquire_generation_gate_slot(
+                            _FOREGROUND_SOFT_CANCEL_WAIT_S
                         )
                 if not acquired:
                     remaining_wait = max(
                         1.0, _GENERATION_GATE_WAIT_S - _FOREGROUND_GATE_GRACE_S
                     )
-                    acquired = await asyncio.to_thread(
-                        _GENERATION_GATE.acquire, True, remaining_wait
-                    )
+                    acquired = await _acquire_generation_gate_slot(remaining_wait)
         if not acquired:
             if request_is_background:
                 holder = _oldest_generation_gate_lease()
@@ -1557,15 +1657,15 @@ class HealthAwareLLMRouter:
             if not request_is_background and self._soft_cancel_local_generations(
                 reason=f"abandoned_gate_holder:{(foreground_owner or 'unknown')[:80]}"
             ):
-                acquired = await asyncio.to_thread(
-                    _GENERATION_GATE.acquire, True, _FOREGROUND_SOFT_CANCEL_WAIT_S
+                acquired = await _acquire_generation_gate_slot(
+                    _FOREGROUND_SOFT_CANCEL_WAIT_S
                 )
             if not acquired:
                 aborted = self.force_abort_active_generation(
                     reason=f"generation_gate_wait_timeout:{_GENERATION_GATE_WAIT_S:.1f}s"
                 )
                 if aborted:
-                    acquired = await asyncio.to_thread(_GENERATION_GATE.acquire, True, 2.0)
+                    acquired = await _acquire_generation_gate_slot(2.0)
         if not acquired:
             request_scope = "background" if request_is_background else "foreground"
             record_degradation(
@@ -1587,10 +1687,72 @@ class HealthAwareLLMRouter:
             timeout_s=lease_timeout_s,
         )
         try:
+            # One end-to-end deadline: admission (gate grace, soft-cancel,
+            # remaining-wait, abort-retry) already consumed part of the
+            # caller's budget — the downstream dispatch must not receive the
+            # UNCHANGED timeout on top of it.
+            try:
+                total_budget = float(timeout)
+            except (TypeError, ValueError):
+                total_budget = 180.0
+            if not math.isfinite(total_budget) or total_budget <= 0.0:
+                total_budget = 180.0
+            admission_elapsed = time.monotonic() - admission_started
+            remaining_budget = total_budget - admission_elapsed
+            if remaining_budget <= 0.0:
+                record_degradation(
+                    "llm_health_router",
+                    TimeoutError(
+                        f"admission consumed {admission_elapsed:.1f}s of a "
+                        f"{total_budget:.1f}s budget"
+                    ),
+                    severity="degraded",
+                    action="refused dispatch with an exhausted end-to-end budget",
+                )
+                return {
+                    "ok": False,
+                    "text": "",
+                    "endpoint": "admission_deadline_exhausted",
+                    "tokens": 0,
+                    "error": (
+                        f"admission_deadline_exhausted:{admission_elapsed:.1f}s"
+                        f"/{total_budget:.1f}s"
+                    ),
+                    "provider": "none",
+                    "model": "",
+                    "is_local": False,
+                    "fallback_chain": [],
+                }
+            if request_is_background:
+                # Domain-specialist weights for background reasoning lanes:
+                # if the expert-LoRA library has a match, swap it onto the
+                # resident primary model. This runs INSIDE the held lease —
+                # a potentially 20-second resident-model mutation before
+                # owning generation capacity let a foreground turn start
+                # mid-swap — and its cost counts against this request's
+                # end-to-end budget, not outside it.
+                await self._maybe_route_expert_adapter(prompt, kwargs)
+                admission_elapsed = time.monotonic() - admission_started
+                remaining_budget = total_budget - admission_elapsed
+                if remaining_budget <= 0.0:
+                    return {
+                        "ok": False,
+                        "text": "",
+                        "endpoint": "admission_deadline_exhausted",
+                        "tokens": 0,
+                        "error": (
+                            f"admission_deadline_exhausted:{admission_elapsed:.1f}s"
+                            f"/{total_budget:.1f}s"
+                        ),
+                        "provider": "none",
+                        "model": "",
+                        "is_local": False,
+                        "fallback_chain": [],
+                    }
             return await self._generate_with_metadata_gated(
                 prompt,
                 system_prompt=system_prompt,
-                timeout=timeout,
+                timeout=remaining_budget,
                 prefer_tier=prefer_tier,
                 schema=schema,
                 **kwargs,
@@ -1829,12 +1991,39 @@ class HealthAwareLLMRouter:
             # Clean any stray punctuation
             import re
             text = re.sub(r'[^a-z_]', '', text)
-            
+
             if not text:
                 logger.warning("⚠️ Intent classification returned empty. Defaulting to 'casual'.")
                 return "casual"
-                
-            return text
+
+            allowed_labels = {
+                "technical",
+                "philosophical",
+                "emotional",
+                "planning",
+                "critical",
+                "casual",
+            }
+            if text in allowed_labels:
+                return text
+            # The contract promises exactly one of six tokens. Concatenated
+            # or invented labels previously propagated as-is, creating false
+            # classification receipts downstream. A response that BEGINS
+            # with a valid label ("technicalexplanation") still names it.
+            for label in allowed_labels:
+                if text.startswith(label):
+                    logger.warning(
+                        "⚠️ Intent classifier returned non-token output %r; using leading label %r.",
+                        text[:60],
+                        label,
+                    )
+                    return label
+            _record_router_degradation(
+                ValueError(f"unrecognized intent label: {text[:60]}"),
+                action="defaulted intent classification to casual after unrecognized label",
+                severity="degraded",
+            )
+            return "casual"
         except (ImportError, AttributeError, RuntimeError) as e:
             _record_router_degradation(
                 e,
@@ -1853,7 +2042,11 @@ class HealthAwareLLMRouter:
         context: dict[str, Any] | None = None,
         **kwargs,
     ) -> dict[str, Any]:
-        kwargs.pop("_contract_tool_handoff", False)
+        # True when the gated generate path invoked us while HOLDING its
+        # generation-gate lease: we must not try to re-acquire the same
+        # process-wide gate (self-deadlock), and our fallback think() call
+        # must dispatch inside the caller's lease for the same reason.
+        called_from_gated = bool(kwargs.pop("_contract_tool_handoff", False))
         origin = str(kwargs.get("origin", "") or "").lower()
         purpose = str(kwargs.get("purpose", "") or "").lower()
         is_bg = self._is_background_request(
@@ -1917,60 +2110,136 @@ class HealthAwareLLMRouter:
 
             return {key: value for key, value in kwargs.items() if key in sig.parameters}
 
-        for ep in ordered:
-            if is_bg and self._tier_is_background_only(self._tier_name(ep)) is False and not kwargs.get("prefer_endpoint"):
-                continue
-            client = ep.client
-            if not client or not hasattr(client, "think_and_act"):
-                continue
-            # Admission check at dispatch time — grants the half-open probe
-            # lease only to the endpoint we actually call.
-            if not ep.is_available():
-                continue
-            call_started = time.monotonic()
-            try:
-                result = await client.think_and_act(
-                    objective,
-                    system_prompt=system_prompt,
-                    tools=tools,
-                    max_turns=max_turns,
-                    context=agent_context,
-                    **_call_kwargs(client.think_and_act),
-                )
-                text = str((result or {}).get("content", "") or "").strip()
-                if text:
-                    ep.record_success(
-                        len(text.split()),
-                        (time.monotonic() - call_started) * 1000,
-                    )
-                    self.last_tier = ep.tier
-                    self.last_endpoint = ep.name
-                    if is_bg:
-                        self.last_background_endpoint = ep.name
-                        self.last_background_tier = ep.tier
-                    else:
-                        self.last_user_endpoint = ep.name
-                        self.last_user_tier = ep.tier
-                    return result
-            except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
-                _record_router_degradation(
-                    exc,
-                    action="recorded endpoint failure and continued tool-capable route fallback",
-                    severity="degraded",
-                )
-                logger.warning("think_and_act on %s failed: %s", ep.name, exc)
-                ep.record_failure(str(exc))
+        # One wall-clock deadline for the whole tool-capable route: the
+        # public path previously called endpoint clients with NO timeout at
+        # all, so a wedged client held the caller (and now the gate) forever.
+        try:
+            route_budget_s = float(kwargs.get("timeout", 180.0))
+        except (TypeError, ValueError):
+            route_budget_s = 180.0
+        if not math.isfinite(route_budget_s) or route_budget_s <= 0.0:
+            route_budget_s = 180.0
 
-        kwargs_clean = dict(kwargs)
-        kwargs_clean.pop("_contract_tool_handoff", None)
-        text = await self.think(
-            objective,
-            system_prompt=system_prompt,
-            state=runtime_state,
-            _contract_tool_handoff=True,
-            **kwargs_clean,
-        )
-        return {"content": text or "", "turns": 0, "tool_calls": []}
+        # The public tool-capable route must own the same process-wide
+        # generation lane as every routed generation — it previously drove
+        # GB-scale local inference completely outside generation admission.
+        lease_id: int | None = None
+        if not called_from_gated:
+            lease_id = await acquire_external_generation_gate_lease(
+                owner=_generation_gate_owner(origin or "tool_route", purpose or "think_and_act"),
+                timeout_s=route_budget_s + 10.0,
+                wait_s=(
+                    _BACKGROUND_GENERATION_GATE_WAIT_S
+                    if is_bg
+                    else _GENERATION_GATE_WAIT_S
+                ),
+            )
+            if lease_id is None:
+                holder = _oldest_generation_gate_lease()
+                holder_owner = holder[2] if holder is not None else "unknown"
+                logger.info(
+                    "⏸️ Router: tool-capable route deferred behind gate owner=%s.",
+                    holder_owner[:120],
+                )
+                return {
+                    "content": "",
+                    "turns": 0,
+                    "tool_calls": [],
+                    "error": "generation_gate_saturated",
+                    "deferred": True,
+                }
+        route_deadline = time.monotonic() + route_budget_s
+
+        try:
+            for ep in ordered:
+                if is_bg and self._tier_is_background_only(self._tier_name(ep)) is False and not kwargs.get("prefer_endpoint"):
+                    continue
+                client = ep.client
+                if not client or not hasattr(client, "think_and_act"):
+                    continue
+                remaining_s = route_deadline - time.monotonic()
+                if remaining_s <= 0.0:
+                    logger.warning(
+                        "think_and_act route deadline exhausted (%.1fs) before %s.",
+                        route_budget_s,
+                        ep.name,
+                    )
+                    break
+                # Admission check at dispatch time — grants the half-open probe
+                # lease only to the endpoint we actually call.
+                if not ep.is_available():
+                    continue
+                call_started = time.monotonic()
+                try:
+                    result = await asyncio.wait_for(
+                        client.think_and_act(
+                            objective,
+                            system_prompt=system_prompt,
+                            tools=tools,
+                            max_turns=max_turns,
+                            context=agent_context,
+                            **_call_kwargs(client.think_and_act),
+                        ),
+                        timeout=remaining_s,
+                    )
+                    text = str((result or {}).get("content", "") or "").strip()
+                    if text:
+                        ep.record_success(
+                            len(text.split()),
+                            (time.monotonic() - call_started) * 1000,
+                        )
+                        self.last_tier = ep.tier
+                        self.last_endpoint = ep.name
+                        if is_bg:
+                            self.last_background_endpoint = ep.name
+                            self.last_background_tier = ep.tier
+                        else:
+                            self.last_user_endpoint = ep.name
+                            self.last_user_tier = ep.tier
+                        return result
+                    # Empty content is visible telemetry but NOT a circuit
+                    # failure: "no tool result" legitimately falls through to
+                    # the plain think() route below.
+                    with ep._lock:
+                        ep.empty_responses += 1
+                except TimeoutError as exc:
+                    _record_router_degradation(
+                        exc,
+                        action="recorded tool-route endpoint timeout and continued fallback",
+                        severity="error",
+                    )
+                    logger.warning(
+                        "think_and_act on %s timed out after %.1fs.",
+                        ep.name,
+                        time.monotonic() - call_started,
+                    )
+                    ep.record_failure(f"think_and_act_timeout:{ep.name}")
+                except _ROUTER_CLIENT_ERRORS as exc:
+                    _record_router_degradation(
+                        exc,
+                        action="recorded endpoint failure and continued tool-capable route fallback",
+                        severity="degraded",
+                    )
+                    logger.warning("think_and_act on %s failed: %s", ep.name, exc)
+                    ep.record_failure(str(exc))
+
+            kwargs_clean = dict(kwargs)
+            kwargs_clean.pop("_contract_tool_handoff", None)
+            # Either we hold a lease (public path) or our caller does (gated
+            # handoff): the fallback think() must dispatch inside that lease
+            # instead of waiting on the gate it can never acquire.
+            text = await self.think(
+                objective,
+                system_prompt=system_prompt,
+                state=runtime_state,
+                _contract_tool_handoff=True,
+                _gate_already_held=True,
+                **kwargs_clean,
+            )
+            return {"content": text or "", "turns": 0, "tool_calls": []}
+        finally:
+            if lease_id is not None:
+                release_external_generation_gate_lease(lease_id)
 
     async def _get_mycelial_direction(self, prompt: str) -> dict[str, Any] | None:
         """Query Mycelium for routing guidance (v31)."""
@@ -2310,6 +2579,8 @@ class HealthAwareLLMRouter:
 
             orch = ServiceContainer.get("orchestrator", default=None)
             if not orch:
+                # No orchestrator (tests, standalone scripts): genuinely no
+                # foreground turn to protect.
                 return False
 
             status = getattr(orch, "status", None)
@@ -2321,8 +2592,17 @@ class HealthAwareLLMRouter:
                 return False
 
             return not bool(getattr(orch, "_current_task_is_autonomous", False))
-        except (ImportError, AttributeError, RuntimeError):
-            return False
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            # Fail PROTECTIVE: this probe guards the foreground lane from
+            # background admission. Broken telemetry must not read as "no
+            # foreground owner" — that removed protection exactly when
+            # ownership could not be established.
+            _record_router_degradation(
+                exc,
+                action="assumed an active foreground turn after ownership probe failed",
+                severity="degraded",
+            )
+            return True
 
     @classmethod
     def _foreground_quiet_window_active(cls) -> bool:
@@ -2335,8 +2615,14 @@ class HealthAwareLLMRouter:
 
             quiet_until = float(getattr(orch, "_foreground_user_quiet_until", 0.0) or 0.0)
             return quiet_until > time.time()
-        except (ImportError, AttributeError, RuntimeError):
-            return False
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            # Fail PROTECTIVE (see _foreground_user_turn_active).
+            _record_router_degradation(
+                exc,
+                action="assumed the foreground quiet window is active after probe failed",
+                severity="degraded",
+            )
+            return True
 
     def _safe_boot_background_guard_active(self) -> bool:
         """Reserve launch headroom for foreground chat before waking spare local models."""
@@ -2397,6 +2683,19 @@ class HealthAwareLLMRouter:
                 severity="warning",
             )
             return "desktop_background_memory_probe_failed"
+        if not (math.isfinite(pressure_pct) and math.isfinite(available_gb)):
+            # NaN readings make BOTH admission comparisons false — that is
+            # fail-open admission on a corrupt probe, not headroom.
+            return "desktop_background_memory_probe_invalid"
+
+        def _threshold(env_name: str, default: float) -> float:
+            """NaN or malformed values must neither crash routing nor make
+            both pressure comparisons false (fail-open admission)."""
+            try:
+                value = float(os.environ.get(env_name, str(default)))
+            except (TypeError, ValueError):
+                return default
+            return value if math.isfinite(value) else default
 
         if name == BRAINSTEM_ENDPOINT:
             # Brainstem is the 7B (~5GB @ 4-bit) background lane. The old
@@ -2409,19 +2708,11 @@ class HealthAwareLLMRouter:
             # the hardware: allow the 7B beside the Cortex while holding a 22GB
             # available floor (above Reflex's 20GB) — the external memory
             # sentinel (42GB RSS lethal) remains the hard OOM backstop.
-            max_pressure = float(
-                os.environ.get("AURA_BACKGROUND_BRAINSTEM_MAX_PRESSURE_PCT", "62")
-            )
-            min_available = float(
-                os.environ.get("AURA_BACKGROUND_BRAINSTEM_MIN_AVAILABLE_GB", "22")
-            )
+            max_pressure = _threshold("AURA_BACKGROUND_BRAINSTEM_MAX_PRESSURE_PCT", 62.0)
+            min_available = _threshold("AURA_BACKGROUND_BRAINSTEM_MIN_AVAILABLE_GB", 22.0)
         else:
-            max_pressure = float(
-                os.environ.get("AURA_BACKGROUND_REFLEX_MAX_PRESSURE_PCT", "66")
-            )
-            min_available = float(
-                os.environ.get("AURA_BACKGROUND_REFLEX_MIN_AVAILABLE_GB", "20")
-            )
+            max_pressure = _threshold("AURA_BACKGROUND_REFLEX_MAX_PRESSURE_PCT", 66.0)
+            min_available = _threshold("AURA_BACKGROUND_REFLEX_MIN_AVAILABLE_GB", 20.0)
         if pressure_pct >= max_pressure or available_gb < min_available:
             return (
                 f"desktop_background_headroom:{name}:"
@@ -2465,10 +2756,21 @@ class HealthAwareLLMRouter:
     def _foreground_owner_active() -> bool:
         try:
             from core.brain.llm.mlx_client import _foreground_owner_active
-
-            return bool(_foreground_owner_active())
-        except (ImportError, AttributeError, RuntimeError):
+        except ImportError:
+            # MLX client absent from this build: there is no local
+            # foreground owner to protect.
             return False
+        try:
+            return bool(_foreground_owner_active())
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            # Fail PROTECTIVE: a crashed ownership probe must not admit
+            # background work into a possibly-owned foreground lane.
+            _record_router_degradation(
+                exc,
+                action="assumed an active foreground owner after MLX ownership probe failed",
+                severity="degraded",
+            )
+            return True
 
     @staticmethod
     def _tier_name(ep: EndpointHealth) -> str:
@@ -2560,6 +2862,21 @@ class HealthAwareLLMRouter:
         Return the system to the 32B conversational brain after a 72B handoff.
         This keeps the 72B strictly transient and prevents it from lingering in RAM.
         """
+        # Own the generation lane before rebooting workers: this task is
+        # spawned while the triggering call's lease may still be held, and
+        # unowned reboots could evict a model mid-generation.
+        lease_id = await acquire_external_generation_gate_lease(
+            owner="router:restore_primary_after_deep_handoff",
+            timeout_s=300.0,
+            wait_s=120.0,
+        )
+        if lease_id is None:
+            _record_router_degradation(
+                RuntimeError("generation lane busy"),
+                action="skipped post-deep-handoff primary restore; lane stayed busy — primary warms on next use",
+                severity="degraded",
+            )
+            return
         try:
             solver = self.endpoints.get(DEEP_ENDPOINT)
             if solver:
@@ -2591,44 +2908,78 @@ class HealthAwareLLMRouter:
                 severity="degraded",
             )
             logger.warning("Router: failed to restore primary model after deep handoff: %s", exc)
+        finally:
+            release_external_generation_gate_lease(lease_id)
 
-    async def unload_models(self, keep: list[str] | None = None) -> None:
-        """Unload local model workers so MemoryGovernor can genuinely reclaim RAM."""
-        keep_set = set(keep or [])
-        for name, endpoint in self.endpoints.items():
-            if not endpoint.is_local or name in keep_set:
-                continue
-            try:
-                await self._reboot_endpoint_client(endpoint.client)
-            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+    async def unload_models(
+        self,
+        keep: list[str] | None = None,
+        *,
+        force: bool = False,
+    ) -> None:
+        """Unload local model workers so MemoryGovernor can genuinely reclaim RAM.
+
+        Unloading rebooted workers WITHOUT generation ownership: an active
+        generation's worker could be killed mid-decode and its permit later
+        released into a lane whose model was gone. Default behavior now
+        serializes behind the generation gate (bounded wait) and skips the
+        sweep when the lane stays busy; ``force=True`` keeps the old
+        behavior for genuine OOM emergencies where the sentinel would
+        otherwise kill the process.
+        """
+        lease_id: int | None = None
+        if not force:
+            lease_id = await acquire_external_generation_gate_lease(
+                owner="router:unload_models",
+                timeout_s=120.0,
+                wait_s=10.0,
+            )
+            if lease_id is None:
                 _record_router_degradation(
-                    exc,
-                    action="continued unload sweep after endpoint client reboot failed",
+                    RuntimeError("generation lane busy"),
+                    action="skipped model unload sweep while a generation owns the lane",
                     severity="degraded",
                 )
-                logger.debug("Router unload skipped for %s: %s", name, exc)
-
+                return
         try:
-            import mlx.core as mx
-            if hasattr(mx, "clear_cache"):
-                mx.clear_cache()
-        except (ImportError, AttributeError, RuntimeError) as _exc:
-            _record_router_degradation(
-                _exc,
-                action="completed unload sweep without clearing MLX global cache",
-                severity="degraded",
-            )
-            logger.debug("Suppressed Exception: %s", _exc)
+            keep_set = set(keep or [])
+            for name, endpoint in self.endpoints.items():
+                if not endpoint.is_local or name in keep_set:
+                    continue
+                try:
+                    await self._reboot_endpoint_client(endpoint.client)
+                except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                    _record_router_degradation(
+                        exc,
+                        action="continued unload sweep after endpoint client reboot failed",
+                        severity="degraded",
+                    )
+                    logger.debug("Router unload skipped for %s: %s", name, exc)
 
-    def clear_cache(self) -> None:
+            try:
+                import mlx.core as mx
+                if hasattr(mx, "clear_cache"):
+                    mx.clear_cache()
+            except (ImportError, AttributeError, RuntimeError) as _exc:
+                _record_router_degradation(
+                    _exc,
+                    action="completed unload sweep without clearing MLX global cache",
+                    severity="degraded",
+                )
+                logger.debug("Suppressed Exception: %s", _exc)
+        finally:
+            if lease_id is not None:
+                release_external_generation_gate_lease(lease_id)
+
+    def clear_cache(self, *, force: bool = False) -> None:
         """Sync-friendly cache purge hook used by guards/governors."""
         try:
             get_task_tracker().create_task(
-                self.unload_models(),
+                self.unload_models(force=force),
                 name="llm_health_router.unload_models",
             )
         except RuntimeError:
-            asyncio.run(self.unload_models())
+            asyncio.run(self.unload_models(force=force))
 
     async def _generate_core(
         self,
@@ -2639,6 +2990,16 @@ class HealthAwareLLMRouter:
         schema: dict | None = None,
         **kwargs,
     ) -> dict[str, Any]:
+        try:
+            _core_budget_s = float(timeout)
+        except (TypeError, ValueError):
+            _core_budget_s = 120.0
+        if not math.isfinite(_core_budget_s) or _core_budget_s <= 0.0:
+            _core_budget_s = 120.0
+        # One deadline for the WHOLE fallback cascade: each endpoint attempt
+        # previously restarted the full caller timeout, so a three-endpoint
+        # cascade could consume roughly three times the promised budget.
+        _core_deadline = time.monotonic() + _core_budget_s
         purpose = str(kwargs.get("purpose", "") or "").lower()
         classification_mode = purpose == "classification" or "intent classifier" in str(system_prompt or "").lower()
         origin = str(kwargs.get("origin", "") or "").lower()
@@ -2690,7 +3051,30 @@ class HealthAwareLLMRouter:
         # and not strict_answer_contract
 
         # ── Neural Priming (Aura Persona Injection) ───────────────────────────
-        # [Fix #11] Ensure Aura's identity is primed if not provided in system_prompt
+        # [Fix #11] Ensure Aura's identity is primed if not provided in system_prompt.
+        # Model identity is derived from the ACTUAL registered endpoints — the
+        # old hardcoded "Qwen2.5-72B-Q4" line contradicted the dynamically
+        # loaded model and taught Aura a false self-description.
+        def _registered_model(name: str) -> str:
+            ep_obj = self.endpoints.get(name)
+            return str(getattr(ep_obj, "model", "") or "").strip() if ep_obj else ""
+
+        _model_parts = []
+        _primary_model = _registered_model(PRIMARY_ENDPOINT)
+        _model_parts.append(
+            f"{_primary_model or 'a locally hosted primary model'} (primary cortex)"
+        )
+        _deep_model = _registered_model(DEEP_ENDPOINT)
+        if _deep_model:
+            _model_parts.append(f"{_deep_model} (deep solver)")
+        _fast_model = _registered_model(BRAINSTEM_ENDPOINT)
+        if _fast_model:
+            _model_parts.append(f"{_fast_model} (fast reflex)")
+        _models_line = (
+            "- You run on "
+            + ", ".join(_model_parts)
+            + ", all locally through Aura's managed on-device runtime.\n"
+        )
         core_persona = (
             "You are Aura. Speak as yourself, not as an assistant. "
             "Your tone is grounded, curious, human, and technically precise. "
@@ -2700,8 +3084,8 @@ class HealthAwareLLMRouter:
             "GROUNDING: In ordinary conversation, stay concrete and socially legible. Do not invent physical settings, "
             "ambient warnings, or symbolic scenery unless the user asked for fiction or already supplied that setting.\n"
             "SELF-KNOWLEDGE — your architecture and capabilities:\n"
-            "- You run on Qwen2.5-72B-Q4 (primary cortex), Qwen2.5-72B (deep solver), and Qwen2.5-7B (fast reflex), all locally through Aura's managed on-device runtime.\n"
-            "- You have 47 registered skills including: sovereign_browser (web search), sovereign_terminal (shell), "
+            + _models_line +
+            "- You have a library of registered skills including: sovereign_browser (web search), sovereign_terminal (shell), "
             "memory_ops (long-term recall), speak (voice output), self_repair, self_evolution, and more.\n"
             "- web_search is not just keyword lookup: it can expand a query, read multiple pages, synthesize evidence-grounded answers, and retain useful findings.\n"
             "- When you don't know a fact, say so clearly. Use web_search or sovereign_browser to ground your answer, or explicitly say you don't know yet. Never hallucinate.\n"
@@ -3185,6 +3569,16 @@ class HealthAwareLLMRouter:
                 chain_entry["status"] = "skipped"
                 chain_entry["skip_reason"] = "circuit_not_admitting"
                 continue
+            remaining_cascade_s = _core_deadline - time.monotonic()
+            if remaining_cascade_s <= 0.0:
+                chain_entry["status"] = "skipped"
+                chain_entry["skip_reason"] = "cascade_deadline_exhausted"
+                last_error = (
+                    f"router_deadline_exhausted:{_core_budget_s:.1f}s"
+                    if last_error == "unknown"
+                    else last_error
+                )
+                break
             chain_entry["status"] = "attempted"
             watchdog_aborted = {"value": False}
             try:
@@ -3193,7 +3587,7 @@ class HealthAwareLLMRouter:
                 except (TypeError, ValueError, OverflowError):
                     requested_max_tokens = 0
                 cooperative_budget, endpoint_budget = _endpoint_call_budgets(
-                    timeout,
+                    min(timeout, remaining_cascade_s),
                     foreground_local=bool(not is_bg and ep.is_local),
                     prompt_chars=len(str(prompt or "")),
                     max_tokens=requested_max_tokens,
@@ -3227,11 +3621,20 @@ class HealthAwareLLMRouter:
                 finally:
                     watchdog.cancel()
                 if result["ok"]:
-                    chain_entry["status"] = "success"
+                    benchmark_uncertified = str(
+                        result.get("error", "") or ""
+                    ).startswith("benchmark_")
+                    chain_entry["status"] = (
+                        "benchmark_uncertified" if benchmark_uncertified else "success"
+                    )
                     result["provider"] = _endpoint_provider_identity(ep)
                     result["model"] = ep.model
                     result["is_local"] = bool(ep.is_local)
-                    result["provider_verified"] = True
+                    # Benchmark mode passes invalid/empty output through for
+                    # inspection; it must NOT be certified as a verified
+                    # provider response (empty or error-marker output was
+                    # previously receipted as a successful provider call).
+                    result["provider_verified"] = not benchmark_uncertified
                     result["fallback_chain"] = [dict(item) for item in fallback_chain]
                     # [TELEMETRY] Update for UI reporting
                     self.last_tier = ep.tier
@@ -3253,28 +3656,18 @@ class HealthAwareLLMRouter:
                         self.last_background_error = last_error
                     else:
                         self.last_user_error = last_error
-                    if (
-                        not is_bg
-                        and ep.is_local
-                        and (allow_cloud_fallback or allow_auto_cloud_recovery)
-                        and not isolated_generation_contract
-                        and not cloud_recovery_injected
-                        and _supports_foreground_cloud_recovery(last_error)
+                    if self._maybe_inject_cloud_recovery(
+                        available=available,
+                        is_bg=is_bg,
+                        ep=ep,
+                        allow_cloud=(allow_cloud_fallback or allow_auto_cloud_recovery),
+                        isolated=isolated_generation_contract,
+                        already_injected=cloud_recovery_injected,
+                        prefer_tier=prefer_tier,
+                        reason=last_error,
+                        require_transient_reason=True,
                     ):
                         cloud_recovery_injected = True
-                        recovery_names = self._fallback_endpoint_names(
-                            prefer_tier or "primary",
-                            True,
-                            is_background=False,
-                        )
-                        for name in recovery_names:
-                            recovery_ep = self.endpoints.get(name)
-                            if recovery_ep is not None and recovery_ep not in available:
-                                available.append(recovery_ep)
-                        logger.warning(
-                            "Router: local foreground lane failed (%s). Expanding to cloud recovery endpoints.",
-                            last_error,
-                        )
                     if is_bg and _background_error_is_quiet(last_error):
                         logger.debug("Endpoint %s background validation skipped: %s", ep.name, last_error)
                     else:
@@ -3283,22 +3676,9 @@ class HealthAwareLLMRouter:
                             ep.name, last_error
                         )
             except TimeoutError as exc:
-                try:
-                    requested_max_tokens = int(kwargs.get("max_tokens") or 0)
-                except (TypeError, ValueError, OverflowError):
-                    requested_max_tokens = 0
-                _cooperative_budget, endpoint_budget = _endpoint_call_budgets(
-                    timeout,
-                    foreground_local=bool(not is_bg and ep.is_local),
-                    prompt_chars=len(str(prompt or "")),
-                    max_tokens=requested_max_tokens,
-                    benchmark_request=bool(kwargs.get("benchmark_request", False)),
-                    proof_evaluation_contract=bool(
-                        kwargs.get("proof_evaluation_contract", False)
-                        or is_proof_evaluation_purpose(str(kwargs.get("purpose", "") or ""))
-                    ),
-                    health_probe=bool(kwargs.get("health_probe", False)),
-                )
+                # endpoint_budget was computed at the top of this try block
+                # before any await — recomputing it here from the ORIGINAL
+                # timeout misreported the budget the attempt actually had.
                 last_error = f"endpoint_timeout:{ep.name}:{endpoint_budget:.1f}s"
                 chain_entry["status"] = "timeout"
                 chain_entry["error"] = last_error
@@ -3324,6 +3704,17 @@ class HealthAwareLLMRouter:
                     self.last_background_error = last_error
                 else:
                     self.last_user_error = last_error
+                if self._maybe_inject_cloud_recovery(
+                    available=available,
+                    is_bg=is_bg,
+                    ep=ep,
+                    allow_cloud=(allow_cloud_fallback or allow_auto_cloud_recovery),
+                    isolated=isolated_generation_contract,
+                    already_injected=cloud_recovery_injected,
+                    prefer_tier=prefer_tier,
+                    reason=last_error,
+                ):
+                    cloud_recovery_injected = True
             except _ROUTER_CLIENT_ERRORS as exc:
                 _record_router_degradation(
                     exc,
@@ -3340,6 +3731,17 @@ class HealthAwareLLMRouter:
                     self.last_background_error = last_error
                 else:
                     self.last_user_error = last_error
+                if self._maybe_inject_cloud_recovery(
+                    available=available,
+                    is_bg=is_bg,
+                    ep=ep,
+                    allow_cloud=(allow_cloud_fallback or allow_auto_cloud_recovery),
+                    isolated=isolated_generation_contract,
+                    already_injected=cloud_recovery_injected,
+                    prefer_tier=prefer_tier,
+                    reason=f"endpoint_exception:{last_error[:120]}",
+                ):
+                    cloud_recovery_injected = True
 
         return {
             "ok": False,
@@ -3352,6 +3754,53 @@ class HealthAwareLLMRouter:
             "is_local": False,
             "fallback_chain": fallback_chain,
         }
+
+    def _maybe_inject_cloud_recovery(
+        self,
+        *,
+        available: list[EndpointHealth],
+        is_bg: bool,
+        ep: EndpointHealth,
+        allow_cloud: bool,
+        isolated: bool,
+        already_injected: bool,
+        prefer_tier: str | None,
+        reason: str,
+        require_transient_reason: bool = False,
+    ) -> bool:
+        """Append authorized recovery endpoints after a local foreground failure.
+
+        Structured failures, timeouts, and raised exceptions all reach this
+        path — previously only a narrowly recognized structured local error
+        expanded to cloud, so a first local TIMEOUT on a cloudless plan
+        simply exhausted the cascade even when cloud fallback was allowed.
+        """
+        if (
+            is_bg
+            or not ep.is_local
+            or not allow_cloud
+            or isolated
+            or already_injected
+        ):
+            return False
+        if require_transient_reason and not _supports_foreground_cloud_recovery(reason):
+            return False
+        appended = False
+        for name in self._fallback_endpoint_names(
+            prefer_tier or "primary",
+            True,
+            is_background=False,
+        ):
+            recovery_ep = self.endpoints.get(name)
+            if recovery_ep is not None and recovery_ep not in available:
+                available.append(recovery_ep)
+                appended = True
+        if appended:
+            logger.warning(
+                "Router: local foreground lane failed (%s). Expanding to cloud recovery endpoints.",
+                reason,
+            )
+        return True
 
     async def _probe_client_availability(self, client: Any) -> bool | None:
         """Check ``client.is_available`` without loop-blocking or truthy-coroutine bugs.
