@@ -6173,7 +6173,7 @@ class InferenceGate:
             if requested_tier == "primary" and not protected_foreground_lane:
                 try:
                     primary_headroom = self._headroom_snapshot("primary")
-                    if not primary_headroom.get("can_admit", True):
+                    if not primary_headroom.get("can_admit", False):
                         logger.warning(
                             "InferenceGate: primary lane outside safe memory envelope "
                             "(pressure=%.1f%% available=%.1fGB). Downgrading to brainstem.",
@@ -6391,7 +6391,7 @@ class InferenceGate:
                 protected_foreground=protected_foreground_lane,
             )
             if (
-                not admission_snapshot.get("can_admit", True)
+                not admission_snapshot.get("can_admit", False)
                 and requested_tier == "secondary"
             ):
                 logger.warning(
@@ -6437,7 +6437,7 @@ class InferenceGate:
                 )
             if (
                 admission_snapshot is not None
-                and not admission_snapshot.get("can_admit", True)
+                and not admission_snapshot.get("can_admit", False)
                 and requested_tier == "primary"
             ):
                 pressure = float(admission_snapshot.get("pressure_pct", 0.0) or 0.0)
@@ -6574,7 +6574,14 @@ class InferenceGate:
         caller_temperature = context.get("temperature", context.get("temp"))
         if caller_temperature is not None:
             try:
-                somatic_temperature = max(0.0, min(2.0, float(caller_temperature)))
+                _caller_temp = float(caller_temperature)
+                # NaN slides through min/max to the 2.0 ceiling — reject
+                # non-finite values instead of maxing out sampling entropy.
+                somatic_temperature = (
+                    max(0.0, min(2.0, _caller_temp))
+                    if math.isfinite(_caller_temp)
+                    else None
+                )
             except (TypeError, ValueError):
                 somatic_temperature = None
         for _gen_key in (
@@ -7072,10 +7079,19 @@ class InferenceGate:
             # prompts has been a major source of clipped or stale Cortex
             # drafts. Keep cache acceleration for background/proof lanes, but
             # make live primary conversation start from the exact prompt.
-            morpho_kwargs.setdefault("disable_prompt_cache", True)
+            # Force-set (not setdefault): a caller-supplied False must not
+            # re-enable approximate cache reuse on the live primary path.
+            morpho_kwargs["disable_prompt_cache"] = True
 
         if deep_probe_request and not is_background:
-            probe_token_cap = int(os.environ.get("AURA_DEEP_PROBE_MAX_TOKENS", "384"))
+            try:
+                probe_token_cap = int(os.environ.get("AURA_DEEP_PROBE_MAX_TOKENS", "384"))
+            except (TypeError, ValueError) as _probe_cap_exc:
+                _record_inference_degradation(
+                    _probe_cap_exc,
+                    action="used default deep-probe token cap after malformed environment value",
+                )
+                probe_token_cap = 384
             max_tokens = min(max_tokens, max(128, probe_token_cap))
             context["max_tokens"] = max_tokens
             context["allow_tools"] = False
@@ -7206,7 +7222,11 @@ class InferenceGate:
             )
             strict_user_prompt = str(prompt or "")
             if provided_messages is not None:
-                for msg in reversed(provided_messages):
+                # Collect EVERY system message in original order — a reverse
+                # scan that stops at the latest user turn silently drops the
+                # normal leading system message, losing safety policy, tool
+                # receipts, and caller-required constraints on strict routes.
+                for msg in provided_messages:
                     if not isinstance(msg, dict):
                         continue
                     if str(msg.get("role", "") or "").strip().lower() == "system":
@@ -7214,12 +7234,14 @@ class InferenceGate:
                             provided_system_parts,
                             msg.get("content", ""),
                         )
+                for msg in reversed(provided_messages):
+                    if not isinstance(msg, dict):
                         continue
                     if str(msg.get("role", "") or "").strip().lower() == "user":
                         strict_user_prompt = str(msg.get("content", "") or strict_user_prompt)
                         break
             if provided_system_parts:
-                preserved_system = "\n\n".join(reversed(provided_system_parts)).strip()
+                preserved_system = "\n\n".join(provided_system_parts).strip()
                 if preserved_system:
                     strict_system_prompt = f"{strict_system_prompt}\n\n{preserved_system}"
             strict_system_prompt += self._strict_contract_procedure_hints(strict_user_prompt)
@@ -7237,7 +7259,9 @@ class InferenceGate:
             )
             strict_value_user_prompt = str(prompt or "")
             if provided_messages is not None:
-                for msg in reversed(provided_messages):
+                # Same ordering contract as the strict-answer branch: keep
+                # every system message, then take the latest user turn.
+                for msg in provided_messages:
                     if not isinstance(msg, dict):
                         continue
                     if str(msg.get("role", "") or "").strip().lower() == "system":
@@ -7245,12 +7269,14 @@ class InferenceGate:
                             provided_system_parts,
                             msg.get("content", ""),
                         )
+                for msg in reversed(provided_messages):
+                    if not isinstance(msg, dict):
                         continue
                     if str(msg.get("role", "") or "").strip().lower() == "user":
                         strict_value_user_prompt = str(msg.get("content", "") or strict_value_user_prompt)
                         break
             if provided_system_parts:
-                preserved_system = "\n\n".join(reversed(provided_system_parts)).strip()
+                preserved_system = "\n\n".join(provided_system_parts).strip()
                 if preserved_system:
                     strict_value_system_prompt = f"{strict_value_system_prompt}\n\n{preserved_system}"
             strict_value_system_prompt += self._strict_contract_procedure_hints(
@@ -8000,6 +8026,13 @@ class InferenceGate:
             and not protected_deep_fallback
             and not proof_evaluation_contract
             and not desktop_cognitive_engine_contract
+            # Strict/operator/proof contracts refuse lower-lane fallback
+            # everywhere else — the emergency reflex must not become the one
+            # route where an unproven 1.5B model answers a strict contract.
+            and not strict_answer_contract
+            and not strict_value_contract
+            and not operator_evidence_contract
+            and not strict_primary_proof_lane
         ):
             try:
                 from core.brain.llm.mlx_client import get_mlx_client
@@ -8063,59 +8096,23 @@ class InferenceGate:
                 # the WebSocket connection. The recovery task below will respawn cleanly.
                 if self._mlx_client and hasattr(self._mlx_client, "_process"):
                     try:
-                        proc = self._mlx_client._process
-                        is_running = _worker_process_is_running(proc)
-                        # A worker actively LOADING the 20GB model is running but
-                        # NOT stuck — killing it here is the doom loop that
-                        # starved the cortex for a full hour (2026-07-15 soak:
-                        # spawn → load → killed mid-warmup by this block on the
-                        # next turn → warmup_deferred → repeat, 216s/turn, 0
-                        # real cortex answers). Only genuinely wedged workers get
-                        # killed: warmup NOT in flight (idle-but-running = a
-                        # hung generation, the original nwait bug) OR warmup
-                        # in flight but past a generous load deadline.
-                        legitimately_loading = self._cortex_worker_is_legitimately_loading(
-                            self._mlx_client
-                        )
-                        if legitimately_loading:
-                            logger.info(
-                                "⏳ [CASCADE CLEANUP] Cortex worker pid=%s is warming; "
-                                "NOT killing a loading model.",
-                                getattr(proc, "pid", "unknown"),
+                        # Own the foreground lane while mutating private
+                        # process/queue/init state — a concurrent warmup or
+                        # generation could otherwise change state after the
+                        # legitimacy check and be killed by this request.
+                        async with _thread_lock_context(
+                            self._foreground_ready_lock,
+                            timeout_s=5.0,
+                            label="cascade_cleanup",
+                        ):
+                            await asyncio.to_thread(
+                                self._cascade_cleanup_stuck_worker_locked
                             )
-                        if not legitimately_loading:
-                            if proc and is_running:
-                                # A worker that was still warming/recovering when it
-                                # overran the load deadline is a stuck LOAD (thermal /
-                                # GPU-starved), not the idle-but-wedged nwait case —
-                                # only stuck loads feed the warmup-backoff so the
-                                # cortex stops thrashing the GPU the fallback needs.
-                                was_stuck_load = bool(
-                                    getattr(self._mlx_client, "_warmup_in_flight", False)
-                                ) or str(getattr(self._mlx_client, "_lane_state", "")) in {
-                                    "warming",
-                                    "recovering",
-                                }
-                                logger.warning(
-                                    "🧹 [CASCADE CLEANUP] Force-killing stuck cortex worker pid=%s",
-                                    getattr(proc, "pid", "unknown"),
-                                )
-                                proc.kill()
-                                if hasattr(proc, "join"):
-                                    proc.join(timeout=2.0)
-                                elif hasattr(proc, "wait"):
-                                    proc.wait(timeout=2.0)
-                                if was_stuck_load:
-                                    self._note_cortex_stuck_kill()
-                            if hasattr(self._mlx_client, "_drain_queue"):
-                                self._mlx_client._drain_queue()
-                            # Replace queues to sever any stuck feeder threads.
-                            replace_queues = getattr(self._mlx_client, "_replace_ipc_queues", None)
-                            if callable(replace_queues):
-                                replace_queues()
-                            self._mlx_client._process = None
-                            self._mlx_client._init_done = False
-                            logger.info("🧹 [CASCADE CLEANUP] Stuck worker killed, queues replaced.")
+                    except TimeoutError:
+                        logger.info(
+                            "⏳ [CASCADE CLEANUP] Foreground lane is owned elsewhere; "
+                            "skipping stuck-worker cleanup this turn."
+                        )
                     except _INFERENCE_RECOVERABLE_ERRORS as cleanup_exc:
                         record_degradation(
                             "inference_gate",
@@ -8175,10 +8172,23 @@ class InferenceGate:
         # can catch it directly — provider SDK error types vary by
         # installation, but that is a reason to build the tuple dynamically,
         # not to catch Exception (the causal-gating ratchet forbids raw broad
-        # catches in this file, and it is right).
-        from core.brain.llm.cloud_errors import cloud_call_error_types
+        # catches in this file, and it is right). The resolution itself must
+        # not be able to abort generation: a broken provider-SDK discovery
+        # falls back to the base recoverable tuple instead of escaping the
+        # governed exhausted-inference path.
+        try:
+            from core.brain.llm.cloud_errors import cloud_call_error_types
 
-        recoverable_cloud_errors = (*_INFERENCE_RECOVERABLE_ERRORS, *cloud_call_error_types())
+            recoverable_cloud_errors = (
+                *_INFERENCE_RECOVERABLE_ERRORS,
+                *cloud_call_error_types(),
+            )
+        except _INFERENCE_RECOVERABLE_ERRORS as _cloud_types_exc:
+            _record_inference_degradation(
+                _cloud_types_exc,
+                action="used base recoverable error tuple after cloud error-type discovery failed",
+            )
+            recoverable_cloud_errors = _INFERENCE_RECOVERABLE_ERRORS
         try:
             from core.container import ServiceContainer
 
@@ -8418,6 +8428,77 @@ class InferenceGate:
                 output_contract=output_contract_payload,
             )
         return None
+
+    def _cascade_cleanup_stuck_worker_locked(self) -> None:
+        """Kill a genuinely wedged cortex worker and sever its IPC queues.
+
+        MUST be called while holding the foreground-ready lock: it reads and
+        mutates the client's private process, queue, and init state, and the
+        legitimacy check is only valid while no concurrent warmup/generation
+        can change that state underneath it.
+
+        A worker actively LOADING the 20GB model is running but NOT stuck —
+        killing it there was the doom loop that starved the cortex for a full
+        hour (2026-07-15 soak: spawn → load → killed mid-warmup on the next
+        turn → warmup_deferred → repeat, 216s/turn, zero real cortex answers).
+        Only genuinely wedged workers get killed: warmup NOT in flight
+        (idle-but-running = a hung generation, the original nwait bug) OR
+        warmup in flight but past a generous load deadline.
+        """
+        client = self._mlx_client
+        if client is None or not hasattr(client, "_process"):
+            return
+        proc = client._process
+        is_running = _worker_process_is_running(proc)
+        if self._cortex_worker_is_legitimately_loading(client):
+            logger.info(
+                "⏳ [CASCADE CLEANUP] Cortex worker pid=%s is warming; "
+                "NOT killing a loading model.",
+                getattr(proc, "pid", "unknown"),
+            )
+            return
+        if proc and is_running:
+            # A worker that was still warming/recovering when it overran the
+            # load deadline is a stuck LOAD (thermal / GPU-starved), not the
+            # idle-but-wedged nwait case — only stuck loads feed the
+            # warmup-backoff so the cortex stops thrashing the GPU the
+            # fallback needs.
+            was_stuck_load = bool(
+                getattr(client, "_warmup_in_flight", False)
+            ) or str(getattr(client, "_lane_state", "")) in {
+                "warming",
+                "recovering",
+            }
+            logger.warning(
+                "🧹 [CASCADE CLEANUP] Force-killing stuck cortex worker pid=%s",
+                getattr(proc, "pid", "unknown"),
+            )
+            proc.kill()
+            if hasattr(proc, "join"):
+                proc.join(timeout=2.0)
+            elif hasattr(proc, "wait"):
+                proc.wait(timeout=2.0)
+            # Re-check exit before clearing ownership — a process that
+            # ignored the kill must not become an untracked orphan while a
+            # replacement is scheduled.
+            if _worker_process_is_running(proc):
+                logger.error(
+                    "🧟 [CASCADE CLEANUP] Worker pid=%s survived kill+join; "
+                    "keeping ownership so it cannot orphan.",
+                    getattr(proc, "pid", "unknown"),
+                )
+                return
+            if was_stuck_load:
+                self._note_cortex_stuck_kill()
+        if hasattr(client, "_drain_queue"):
+            client._drain_queue()
+        # Replace queues to sever any stuck feeder threads.
+        replace_queues = getattr(client, "_replace_ipc_queues", None)
+        if callable(replace_queues):
+            replace_queues()
+        client._process = None
+        client._init_done = False
+        logger.info("🧹 [CASCADE CLEANUP] Stuck worker killed, queues replaced.")
 
     def _post_inference_update(self, response_text: str):
         """Update downstream systems after each inference completes.
