@@ -591,8 +591,19 @@ def validate_v2_adapter_identity(
     actual_runtime_environment: Mapping[str, Any],
     artifacts: Mapping[str, bytes],
     tensor_metadata: Iterable[TensorIdentity | Mapping[str, Any]],
+    allow_bounded_partial: bool = False,
 ) -> dict[str, Any]:
-    """Validate a complete, successful v2 training bundle."""
+    """Validate a v2 training bundle.
+
+    Complete ``max_steps`` bundles retain the historical identity material and
+    receipt shape exactly.  A protocol verifier may explicitly admit a
+    durable ``wall_clock`` bundle for *mechanical evaluation only* by setting
+    ``allow_bounded_partial``.  That scope is identity-bound and is never a
+    load-eligibility or training-completion claim.
+    """
+
+    if type(allow_bounded_partial) is not bool:
+        _fail("bounded_partial_policy_invalid")
 
     manifest_bytes = (
         manifest
@@ -881,10 +892,24 @@ def validate_v2_adapter_identity(
     ):
         if record.get(role) != expected:
             _fail(f"{role}_cross_binding_mismatch")
-    if receipt.get("complete") is not True or receipt.get("halt_reason") != "max_steps":
+    max_steps = config.get("max_steps")
+    steps = receipt.get("steps")
+    if type(max_steps) is not int or max_steps < 1:
+        _fail("training_max_steps_invalid")
+    if receipt.get("complete") is True:
+        if receipt.get("halt_reason") != "max_steps":
+            _fail("training_completion_state_invalid")
+        if type(steps) is not int or steps != max_steps:
+            _fail("training_step_completion_mismatch")
+        training_scope = "complete_training"
+    elif allow_bounded_partial and receipt.get("complete") is False:
+        if receipt.get("halt_reason") != "wall_clock":
+            _fail("bounded_partial_halt_reason_invalid")
+        if type(steps) is not int or not 1 <= steps < max_steps:
+            _fail("bounded_partial_step_invalid")
+        training_scope = "bounded_partial_training"
+    else:
         _fail("training_incomplete")
-    if type(receipt.get("steps")) is not int or receipt["steps"] != config.get("max_steps"):
-        _fail("training_step_completion_mismatch")
 
     raw_sources = _exact(parsed["sources"], set(SOURCE_ROLES), role="sources")
     config_sources = _exact(config.get("sources"), set(SOURCE_ROLES), role="config_sources")
@@ -942,9 +967,9 @@ def validate_v2_adapter_identity(
     )
     if (
         completion["schema"] != COMPLETION_SCHEMA_V1
-        or completion["complete"] is not True
-        or completion["halt_reason"] != "max_steps"
-        or completion["step"] != receipt["steps"]
+        or completion["complete"] is not receipt["complete"]
+        or completion["halt_reason"] != receipt["halt_reason"]
+        or completion["step"] != steps
         or completion["adapter_sha256"] != bindings["adapter"]["sha256"]
         or completion["receipt_sha256"] != bindings["training_receipt"]["sha256"]
         or completion["manifest_sha256"] != manifest_sha256
@@ -971,7 +996,15 @@ def validate_v2_adapter_identity(
         "gradient_execution": gradient_execution,
         "tensors": tensors,
     }
-    return {
+    if training_scope == "bounded_partial_training":
+        identity_material["training_state"] = {
+            "scope": training_scope,
+            "complete": False,
+            "halt_reason": "wall_clock",
+            "steps": steps,
+            "max_steps": max_steps,
+        }
+    result = {
         "schema": IDENTITY_RECEIPT_SCHEMA_V2,
         "manifest_sha256": manifest_sha256,
         "composite_identity_sha256": sha256_bytes(canonical_json_bytes(identity_material)),
@@ -997,6 +1030,18 @@ def validate_v2_adapter_identity(
         "tensor_metadata_sha256": sha256_bytes(canonical_json_bytes(tensors)),
         "complete": True,
     }
+    if training_scope == "bounded_partial_training":
+        result.update(
+            {
+                "complete": False,
+                "training_scope": training_scope,
+                "training_halt_reason": "wall_clock",
+                "training_steps": steps,
+                "training_max_steps": max_steps,
+                "load_eligible": False,
+            }
+        )
+    return result
 
 
 __all__ = [

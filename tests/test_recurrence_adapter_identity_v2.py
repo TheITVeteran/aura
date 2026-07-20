@@ -243,7 +243,7 @@ def _bundle():
     )
 
 
-def _validate(bundle=None):
+def _validate(bundle=None, *, allow_bounded_partial: bool = False):
     (
         manifest,
         artifacts,
@@ -262,6 +262,49 @@ def _validate(bundle=None):
         actual_runtime_environment=training_runtime,
         artifacts=artifacts,
         tensor_metadata=tensors,
+        allow_bounded_partial=allow_bounded_partial,
+    )
+
+
+def _partialize_bundle(
+    bundle=None,
+    *,
+    halt_reason: str = "wall_clock",
+    steps: int = 7,
+):
+    (
+        manifest_bytes,
+        artifacts,
+        tensors,
+        base,
+        model_behavior,
+        personality,
+        training_runtime,
+    ) = copy.deepcopy(bundle or _bundle())
+    manifest = json.loads(manifest_bytes)
+    receipt = json.loads(artifacts["receipt.json"])
+    receipt.update(complete=False, halt_reason=halt_reason, steps=steps)
+    receipt_bytes = _encoded(receipt)
+    artifacts["receipt.json"] = receipt_bytes
+    manifest["training_receipt"] = _binding("receipt.json", receipt_bytes)
+    manifest_bytes = _encoded(manifest)
+    completion = json.loads(artifacts["training_completion.json"])
+    completion.update(
+        complete=False,
+        halt_reason=halt_reason,
+        step=steps,
+        receipt_sha256=manifest["training_receipt"]["sha256"],
+        manifest_sha256=hashlib.sha256(manifest_bytes).hexdigest(),
+    )
+    artifacts["training_completion.json"] = _encoded(completion)
+    return (
+        manifest_bytes,
+        artifacts,
+        tensors,
+        base,
+        model_behavior,
+        personality,
+        training_runtime,
     )
 
 
@@ -273,6 +316,8 @@ def test_complete_training_bundle_validates_with_training_time_provenance():
     assert receipt["objective_source_provenance"] == "training_time_archived_source"
     assert receipt["wrapped_projection_count"] == 1
     assert receipt["gradient_execution"]["mode"] == "depth_serial_exact_sum"
+    assert "training_scope" not in receipt
+    assert "load_eligible" not in receipt
 
 
 def test_gradient_execution_must_match_exact_trainer_contract():
@@ -304,23 +349,57 @@ def test_gradient_execution_must_match_exact_trainer_contract():
 
 
 def test_partial_training_bundle_is_never_load_eligible():
-    manifest, artifacts, tensors, base, model_behavior, personality, training_runtime = _bundle()
-    receipt = __import__("json").loads(artifacts["receipt.json"])
-    receipt.update(complete=False, halt_reason="wall_clock", steps=7)
-    artifacts["receipt.json"] = _encoded(receipt)
+    with pytest.raises(RecurrenceAdapterIdentityV2Error, match="training_incomplete"):
+        _validate(_partialize_bundle())
 
-    with pytest.raises(RecurrenceAdapterIdentityV2Error):
+
+def test_bounded_partial_scope_is_explicit_and_never_load_eligible():
+    receipt = _validate(
+        _partialize_bundle(),
+        allow_bounded_partial=True,
+    )
+
+    assert receipt["complete"] is False
+    assert receipt["training_scope"] == "bounded_partial_training"
+    assert receipt["training_halt_reason"] == "wall_clock"
+    assert receipt["training_steps"] == 7
+    assert receipt["training_max_steps"] == 8
+    assert receipt["load_eligible"] is False
+
+
+@pytest.mark.parametrize(
+    ("halt_reason", "steps", "error"),
+    [
+        ("interrupted", 7, "bounded_partial_halt_reason_invalid"),
+        ("non_finite_loss", 7, "bounded_partial_halt_reason_invalid"),
+        ("wall_clock", 0, "bounded_partial_step_invalid"),
+        ("wall_clock", 8, "bounded_partial_step_invalid"),
+        ("wall_clock", 9, "bounded_partial_step_invalid"),
+    ],
+)
+def test_bounded_partial_scope_rejects_nonadmissible_terminal_states(
+    halt_reason,
+    steps,
+    error,
+):
+    with pytest.raises(RecurrenceAdapterIdentityV2Error, match=error):
         _validate(
-            (
-                manifest,
-                artifacts,
-                tensors,
-                base,
-                model_behavior,
-                personality,
-                training_runtime,
-            )
+            _partialize_bundle(halt_reason=halt_reason, steps=steps),
+            allow_bounded_partial=True,
         )
+
+
+def test_bounded_partial_completion_record_must_match_receipt():
+    bundle = _partialize_bundle()
+    completion = json.loads(bundle[1]["training_completion.json"])
+    completion["step"] = 6
+    bundle[1]["training_completion.json"] = _encoded(completion)
+
+    with pytest.raises(
+        RecurrenceAdapterIdentityV2Error,
+        match="training_completion_mismatch",
+    ):
+        _validate(bundle, allow_bounded_partial=True)
 
 
 def test_source_snapshot_tamper_fails_even_when_manifest_is_unchanged():

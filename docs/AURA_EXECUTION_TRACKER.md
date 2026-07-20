@@ -21402,3 +21402,46 @@ frontier, external-custody, installed-app, release, or soak credit is awarded.
 Next: monitor and certify resident-v3 training, freeze the adapter, run mechanics
 and a fresh directional pilot, and advance only a positive result to the powered
 externally rooted campaign. Final long soaks remain deferred.
+
+## Checkpoint 2026-07-20-184: Resident V3 Resource Recovery and Partial Identity Scope
+
+The CP182 resident-v3 resume is a failed run, not an admissible partial. macOS
+kernel evidence records PID 32278 as the largest compressed process at 83,805
+MB and Jetsam-killed it. The detached receipt independently records return code
+`-9`, no timeout, no restart, verified containment, and empty process group and
+lineage. The command invoked the trainer directly and bypassed the proven MLX
+resource envelope; the failure earns no training, mechanics, gain, or frontier
+credit.
+
+- `resource_failure_cp184.json` binds the terminal detached receipt and exact
+  kernel memorystatus event. `resource_amendment_cp184.json` freezes the only
+  allowed recovery before relaunch: the same resident model, dataset, sample
+  order, objective, bridge, branch topology, optimizer, and step-one durable
+  checkpoint under the already validated 40-GiB active, 2-GiB cache, and
+  48-GiB wired MLX envelope. Operational checkpoint cadence moves from 25 to 5
+  steps so a host-level termination cannot discard another long compute window.
+- `tools/launch_resident_recurrence_training.py` compiles the detached command
+  from the frozen protocol and amendment. It rejects changed source digests,
+  non-preregistered memory limits, reused run/envelope paths, an invalid durable
+  resume receipt, or a competing Aura/model/trainer process. The trainer cannot
+  be launched directly through this path: the MLX envelope wrapper is the
+  mandatory target and clears cache before model load.
+- The v2 adapter identity validator remains byte-for-byte compatible for every
+  complete `max_steps` bundle. A caller must now explicitly request the separate
+  `bounded_partial_training` scope to validate a durable `wall_clock` artifact.
+  Only `0 < steps < max_steps` is identity-valid; interrupted, non-finite,
+  zero-step, complete-step, mismatched completion-record, and all default-load
+  paths fail closed. A partial receipt is identity-bound as incomplete and
+  `load_eligible=false`; the parent protocol's >=200-step and holdout guards
+  remain a separate mandatory admission decision.
+
+Validation is green: 20/20 focused identity and launch-contract tests pass;
+focused Ruff, bytecode compilation, and the actual resident dry-run preflight
+pass. The enveloped resume must be launched only from this clean pushed tree.
+
+Evidence-weighted completion remains 27%. This is checkpoint 184 of the faithful
+292-399 forecast, leaving approximately 108-215 checkpoints. No reasoning-gain,
+frontier, external-custody, installed-app, release, or soak credit is awarded.
+Next: publish CP184, launch the enveloped exact resume, build the independent
+resident-v3 admission certificate, and monitor memory/checkpoint evidence while
+continuing model-free closeout work. Final long soaks remain deferred.

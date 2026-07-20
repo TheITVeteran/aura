@@ -1,0 +1,45 @@
+{
+  "schema": "aura.recurrence_resident_resource_failure.v1",
+  "observed_at": "2026-07-19T23:04:48.933-07:00",
+  "claim_scope": "resident_v3_training_resource_failure_only",
+  "process": {
+    "pid": 32278,
+    "name": "Python",
+    "detached_returncode": -9,
+    "detached_status": "failed",
+    "timed_out": false,
+    "restart_count": 0,
+    "containment_verified": true,
+    "process_group_empty": true,
+    "lineage_empty": true
+  },
+  "detached_receipt": {
+    "path": "detached-resume/detached_receipt.json",
+    "sha256": "d703d83abc56155c53cd06d766c1d676d7c1717a5dbf9654057775e7b95129c8",
+    "size_bytes": 3650
+  },
+  "kernel_evidence": {
+    "source": "macOS unified log, kernel memorystatus",
+    "query_window": "2026-07-19T23:04:30-07:00/2026-07-19T23:05:05-07:00",
+    "event": "memorystatus: killing largest compressed process Python [32278] 83805 MB",
+    "compressed_process_mb": 83805,
+    "termination_classification": "jetsam_largest_compressed_process"
+  },
+  "diagnosis": {
+    "root_cause": "The CP182 resume command invoked the trainer directly and therefore bypassed the previously proven MLX active/cache/wired resource envelope.",
+    "not_root_causes": [
+      "detached timeout",
+      "supervisor restart",
+      "containment cleanup",
+      "trainer-declared wall-clock halt"
+    ],
+    "disposition": "failed_run_retained_no_training_or_gain_credit"
+  },
+  "claim_flags": {
+    "training_complete": false,
+    "training_admitted": false,
+    "mechanics_proven": false,
+    "reasoning_gain": false,
+    "frontier_level": false
+  }
+}

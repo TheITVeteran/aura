@@ -1,0 +1,70 @@
+{
+  "schema": "aura.recurrence_native_resident_protocol_amendment.v1",
+  "created_at": "2026-07-20T00:20:00-07:00",
+  "checkpoint": "CP184-resident-v3-resource-recovery",
+  "parent_protocol": {
+    "path": "protocol.json",
+    "sha256": "a2eae5d60cc07c28a7d7daae22ca651e9360c78ff34420e4f9aff36b0132339d",
+    "size_bytes": 5814
+  },
+  "triggering_failure": {
+    "path": "resource_failure_cp184.json",
+    "required_classification": "jetsam_largest_compressed_process",
+    "required_compressed_process_mb": 83805
+  },
+  "change_scope": {
+    "allowed": [
+      "enforce previously validated MLX resource limits before model load",
+      "shorten operational checkpoint cadence from 25 to 5 steps",
+      "write the resource envelope beside the adapter artifacts",
+      "resume the exact durable step-one optimizer checkpoint",
+      "admit an identity-bound wall-clock partial only after the parent protocol minimum-step and holdout guards pass"
+    ],
+    "forbidden": [
+      "change model weights before resume",
+      "change training examples or deterministic sample order",
+      "change objective, bridge, depth, branch, optimizer, or LoRA topology",
+      "change pilot tasks or scoring after observing capability outputs",
+      "treat a bounded partial identity as load-eligible or complete training"
+    ]
+  },
+  "resource_envelope": {
+    "schema": "aura.recurrence_training_resource_envelope.v1",
+    "wrapper": "tools/run_recurrence_training_envelope.py",
+    "wrapper_sha256": "53d22ae64012823313bdf81a21eccada52f6289eccf4ffb85c1b6051a2d7996a",
+    "trainer": "tools/recurrence_native_train_v2.py",
+    "trainer_sha256": "18ae40b427400341cc21049ba84ea894518b57b49d89ebd36e5e90a8532c4184",
+    "memory_limit_gb": 40,
+    "cache_limit_gb": 2,
+    "wired_limit_gb": 48,
+    "cache_cleared_before_model_load": true,
+    "envelope_out": "/Users/bryan/.aura/live-source/artifacts/closeout/latent_cortex/resident_32b_v3_cp182/adapter/launch_resource_envelope_cp184.json"
+  },
+  "resume": {
+    "run_dir": "/Users/bryan/.aura/live-source/artifacts/closeout/latent_cortex/resident_32b_v3_cp182/detached-resume-envelope-cp184",
+    "name": "cp184-resident-32b-v3-enveloped-resume",
+    "timeout_seconds": 46800,
+    "trainer_resume_flag": true,
+    "expected_resume_step": 1,
+    "checkpoint_every_steps": 5,
+    "log_every_steps": 5,
+    "terminal_complete_returncode": 0,
+    "terminal_bounded_partial_returncode": 75,
+    "restart_policy": "never"
+  },
+  "mechanical_admission": {
+    "complete_path": "complete=true, halt_reason=max_steps, steps=540",
+    "bounded_partial_path": "complete=false, halt_reason=wall_clock, 200<=steps<540, explicit bounded-partial identity scope, never load-eligible before an admission certificate",
+    "required_holdout_guard": "finite nonempty holdout trail and final mean_loss <= 1.5 * minimum mean_loss",
+    "on_failure": "REFUTED-mechanics; do not freeze or evaluate the adapter"
+  },
+  "claim_flags": {
+    "training_complete": false,
+    "training_admitted": false,
+    "mechanics_proven": false,
+    "reasoning_gain": false,
+    "same_checkpoint_interaction": false,
+    "frontier_level": false,
+    "frontier_plus": false
+  }
+}
