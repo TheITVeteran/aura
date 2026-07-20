@@ -1242,6 +1242,8 @@ class LatentCortexEngine:
             and self.tokenizer is not None
             and branch_probe_cost + safety_reserve <= budget.remaining_layer_apps
         ):
+            branch_probe_texts: dict[int, str] = {}
+
             def branch_score(branch: BranchState) -> float:
                 probe = self._decode_probe(
                     branch,
@@ -1250,11 +1252,34 @@ class LatentCortexEngine:
                     budget,
                     bridge_tokens=bridge_tokens,
                 )
-                return float(verifier(self.tokenizer.decode(probe)))
+                text = self.tokenizer.decode(probe)
+                branch_probe_texts[branch.index] = text
+                return float(verifier(text))
 
             winner = ensemble.select(score_fn=branch_score)
             if math.isfinite(float(winner.score)):
                 branch_verifier_score = float(winner.score)
+            # CP180: selection is auditable against the PUBLIC contract —
+            # each probe's contract verdict (complete/valid/why-not) lands
+            # in the receipt beside the scalar scores.
+            if branch_probe_texts:
+                from core.brain.llm.latent_cortex.answer_contract import (
+                    contract_answer_state,
+                )
+
+                receipt.branch_contract = [
+                    {
+                        "branch": index,
+                        "marker_count": state["marker_count"],
+                        "complete": state["complete"],
+                        "valid": state["valid"],
+                        "reason": str(state["reason"])[:120],
+                    }
+                    for index, state in (
+                        (index, contract_answer_state(text))
+                        for index, text in sorted(branch_probe_texts.items())
+                    )
+                ]
         else:
             if verifier is not None and self.tokenizer is not None:
                 receipt.flag("branch_verifier_skipped_budget")

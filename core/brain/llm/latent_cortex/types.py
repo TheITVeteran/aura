@@ -574,6 +574,11 @@ class EpisodeReceipt:
     best_step: int = -1
     reverted_to_best: bool = False
     branch_scores: list[float] = field(default_factory=list)
+    # Per-branch public-contract verdicts on the selection probes (CP180):
+    # which branches' probe texts reached a complete/valid FINAL_ANSWER and
+    # why the others did not — selection is auditable against the contract,
+    # not just a scalar score. Empty when no verifier probes ran.
+    branch_contract: list[dict[str, Any]] = field(default_factory=list)
     selected_branch: int = 0
     exchanges: int = 0
     # Scoped durable-adapter activation. Zero calls means no recurrence-native
@@ -706,6 +711,7 @@ class EpisodeReceipt:
             "best_step": self.best_step,
             "reverted_to_best": self.reverted_to_best,
             "branch_scores": [round(s, 6) for s in self.branch_scores],
+            "branch_contract": [dict(row) for row in self.branch_contract],
             "selected_branch": self.selected_branch,
             "exchanges": self.exchanges,
             "recurrence_adapter": dict(self.recurrence_adapter),

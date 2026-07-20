@@ -178,3 +178,38 @@ def test_campaign_vanilla_without_contract_consumes_whole_stream(monkeypatch):
     )
     assert text == "no marker here just prose"
     assert layer_apps == (4 + 6) * 8
+
+
+def test_branch_selection_receipts_contract_verdicts():
+    """Every scored branch's probe leaves an auditable contract verdict."""
+    engine = LatentCortexEngine(
+        _tiny_model(),
+        _ContractAtFive(),
+        config=CortexConfig(
+            workspace=WorkspaceConfig(n_slots=4, seed=3),
+            recurrence=RecurrenceConfig(max_steps=2, min_steps=1),
+            branches=BranchConfig(n_branches=2, exchange_interval=2),
+            decode_max_tokens=48,
+            decode_contract="final_answer_v1",
+        ),
+    )
+    result = engine.reason(
+        token_ids=PROMPT_TOKENS,
+        budget=ComputeBudget(),
+        verifier=lambda text: 1.0,
+    )
+    rows = result.receipt.branch_contract
+    assert [row["branch"] for row in rows] == [0, 1]
+    for row in rows:
+        assert set(row) == {"branch", "marker_count", "complete", "valid", "reason"}
+        # _ContractAtFive probes decode to the complete contract text.
+        assert row["complete"] is True and row["valid"] is True
+    assert "branch_contract" in result.receipt.to_dict()
+
+
+def test_branch_contract_empty_without_verifier():
+    engine = LatentCortexEngine(
+        _tiny_model(), _ContractAtFive(), config=_config("final_answer_v1")
+    )
+    result = engine.reason(token_ids=PROMPT_TOKENS, budget=ComputeBudget())
+    assert result.receipt.branch_contract == []
