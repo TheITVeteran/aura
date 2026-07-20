@@ -22177,3 +22177,34 @@ installed-app, release, and soak gates remain open. Next: publish CP200, attach
 the durable controller to this exact live run, measure initial step cadence,
 and build the recovery-aware strict admission and post-training continuation
 while the model lane remains occupied. Final long soaks remain deferred.
+
+## Checkpoint 2026-07-20-201: Long-Run Sentinel Proof Archive
+
+Measured exact-adjoint cadence places this run near the operational sentinel
+ring's compaction boundary. At a 0.5-second sampling interval, its configured
+46,800-second window compacts after roughly 26 hours; a 22-28-hour training run
+could therefore discard startup and first-stage evidence shortly before strict
+admission. The guard itself would remain active, but the proof would become
+incomplete.
+
+`tools/archive_memory_sentinel_ring.py` provides a detached append-only evidence
+stream without participating in or weakening the sentinel's kill and lease
+protocol. It snapshots only complete bytes up to the open source inode's
+observed size, tracks inode and offset, copies each source sample exactly once,
+and accepts source compaction only when the replacement ring overlaps the last
+archived timestamp. A rotation gap, non-monotonic timestamp, malformed or
+partial record, PID reuse, or sustained target-identity blindness fails closed.
+State is atomic and self-hashed; clean target termination produces a bound
+archive digest and self-hashed receipt. The operational ring can rotate while
+the complete proof stream remains append-only.
+
+Validation is green: 7/7 focused tests prove monotonic suffixing, overlap-safe
+compaction, gap rejection, malformed/partial/order rejection, and an end-to-end
+self-hashed terminal receipt. Focused Ruff and bytecode compilation pass.
+
+Evidence-weighted completion remains 27%. This is checkpoint 201 of the
+faithful 292-399 total-checkpoint forecast, leaving approximately 91-198
+checkpoints. Training remains live and no completion or capability credit is
+awarded. Next: publish CP201, launch the archivist against the active CP195
+resume and bind its receipt into recovery-aware strict admission. Final long
+soaks remain deferred.
