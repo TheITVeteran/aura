@@ -448,7 +448,7 @@ def verify_migration(
     *,
     expected_destination_root: Path,
     expected_trainer_sha256: str,
-    allow_destination_pointer_advance: bool = False,
+    allow_destination_pointer_advance: bool = True,
 ) -> dict[str, Any]:
     _raw, document = _read_json(path, role="checkpoint_migration")
     claimed = document.get("migration_sha256")
@@ -523,6 +523,11 @@ def verify_migration(
         (failure.get("sentinel_receipt"), _MAX_JSON_BYTES),
         (failure.get("tombstone"), _MAX_JSON_BYTES),
     ]
+    destination_latest = destination.get("latest")
+    destination_latest_matches = isinstance(
+        destination_latest,
+        Mapping,
+    ) and _binding_matches(destination_latest, max_bytes=_MAX_JSON_BYTES)
     if not allow_destination_pointer_advance:
         bindings.append((destination.get("latest"), _MAX_JSON_BYTES))
     previous_started_at = failure.get("trainer_started_at")
@@ -566,8 +571,8 @@ def verify_migration(
         for binding, max_bytes in bindings
     ):
         _fail("migration_artifact_binding_changed")
-    if allow_destination_pointer_advance:
-        latest_binding = destination.get("latest")
+    if allow_destination_pointer_advance and not destination_latest_matches:
+        latest_binding = destination_latest
         if not isinstance(latest_binding, Mapping):
             _fail("migration_evidence_invalid")
         latest_path = Path(str(latest_binding.get("path")))

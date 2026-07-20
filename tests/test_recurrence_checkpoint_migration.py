@@ -338,6 +338,7 @@ def test_migration_allows_verified_destination_pointer_advance(tmp_path: Path):
             migration,
             expected_destination_root=destination,
             expected_trainer_sha256=str(paths["trainer_sha256"]),
+            allow_destination_pointer_advance=False,
         )
 
     result = verify_migration(

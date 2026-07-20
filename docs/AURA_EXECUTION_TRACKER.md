@@ -22110,3 +22110,36 @@ external-custody, installed-app, release, and soak credit remain open. Next:
 publish CP198 and launch exact detached resident training from the admitted
 step-11 state under the same external sentinel. Final long soaks remain
 deferred.
+
+## Checkpoint 2026-07-20-199: Resume-Side Migration Verification
+
+The first long-resume launch was contained and failed before model load or any
+training step. Its detached trainer ran for 21.7 seconds and rejected the
+already admitted step-11 destination pointer because the trainer's internal
+migration verification used the strict pre-run default. The sentinel exited
+cleanly when that process ended. Step 11 and the positive calibration verdict
+remain unchanged; this attempt earns no training credit.
+
+Migration verification now defaults to exact-or-verified-descendant semantics
+for the bound trainer's internal resume check. An unchanged destination pointer
+must still match its migration binding. A changed pointer must pass the complete
+contained descendant proof introduced at CP198. The recovery launcher continues
+to pass `allow_destination_pointer_advance=False` explicitly before a
+calibration launch, so external pre-run admission remains byte-exact; resume and
+post-run paths explicitly or implicitly accept only a verified advancement.
+This repairs the phase mismatch without changing the migration-bound trainer
+bytes or the scientific objective.
+
+Validation is green: 15/15 migration, recovery-launch, and controller tests
+pass. The suite proves strict pre-run rejection, exact-pointer acceptance,
+verified-descendant acceptance, and advanced tensor-tamper rejection. Focused
+Ruff passes.
+
+Evidence-weighted completion remains 27%. This is checkpoint 199 of the
+faithful 292-399 total-checkpoint forecast, leaving approximately 93-200
+checkpoints. Calibration and memory-feasibility credit remain earned; training-
+completion and every downstream intelligence, trust, release, and soak gate
+remain open. Next: publish CP199, preserve the failed startup attempt, relaunch
+the detached resume from step 11, and confirm model load plus the first active
+training lease before estimating completion from measured step cadence. Final
+long soaks remain deferred.
