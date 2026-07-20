@@ -418,20 +418,33 @@ class _ModelCommandDescriptor:
     purpose: str
 
 
-def _is_import_only_python_probe(argv: tuple[str, ...]) -> bool:
-    """Return true when ``python -c`` only imports modules and prints a marker.
+_PROBE_BUILTIN_CALLS = {"print", "float", "abs"}
+_PROBE_ATTRIBUTE_CALLS = {"ones", "zeros", "eval", "sum", "item"}
+_PROBE_FORBIDDEN_NAMES = {"exec", "eval", "open", "__import__", "compile", "getattr", "setattr"}
 
-    Import health probes mention accelerator libraries but do not load model
-    weights.  Treating the library name alone as a model process forced those
-    probes through an async child lifecycle and made the synchronous readiness
-    check impossible.  Parse the inline program instead of trusting a source
-    label or matching an ad-hoc command string.
+
+def _is_import_only_python_probe(argv: tuple[str, ...]) -> bool:
+    """Return true when ``python -c`` is a bounded runtime health probe.
+
+    Import/compute health probes mention accelerator libraries but do not
+    load model weights.  Treating the library name alone as a model process
+    forced those probes through an async child lifecycle and made the
+    synchronous readiness check impossible.  Parse the inline program
+    instead of trusting a source label or matching an ad-hoc command string.
+
+    Accepted shape (fail-closed — anything else is treated as a model
+    command): imports, single-name assignments, asserts, and calls limited
+    to constant ``print``/``float``/``abs`` plus tiny-tensor attribute calls
+    (``mx.ones``/``.sum``/``mx.eval``).  No string may look like a path, so
+    a checkpoint can never be smuggled through the probe exemption.
     """
 
     try:
         inline_index = argv.index("-c")
         source = argv[inline_index + 1]
     except (ValueError, IndexError):
+        return False
+    if len(source) > 600:
         return False
     try:
         module = ast.parse(source, mode="exec")
@@ -440,15 +453,31 @@ def _is_import_only_python_probe(argv: tuple[str, ...]) -> bool:
     if not module.body:
         return False
     for statement in module.body:
-        if isinstance(statement, (ast.Import, ast.ImportFrom, ast.Pass)):
+        if isinstance(statement, (ast.Import, ast.ImportFrom, ast.Pass, ast.Assert)):
             continue
-        if not isinstance(statement, ast.Expr) or not isinstance(statement.value, ast.Call):
+        if isinstance(statement, ast.Assign):
+            if len(statement.targets) != 1 or not isinstance(statement.targets[0], ast.Name):
+                return False
+            continue
+        if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Call):
+            continue
+        return False
+    for node in ast.walk(module):
+        if isinstance(node, ast.Call):
+            func = node.func
+            if isinstance(func, ast.Name):
+                if func.id not in _PROBE_BUILTIN_CALLS:
+                    return False
+            elif isinstance(func, ast.Attribute):
+                if func.attr not in _PROBE_ATTRIBUTE_CALLS:
+                    return False
+            else:
+                return False
+        elif isinstance(node, ast.Name) and node.id in _PROBE_FORBIDDEN_NAMES:
             return False
-        call = statement.value
-        if not isinstance(call.func, ast.Name) or call.func.id != "print":
-            return False
-        if call.keywords or any(not isinstance(argument, ast.Constant) for argument in call.args):
-            return False
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if len(node.value) > 64 or "/" in node.value or "\\" in node.value:
+                return False
     return True
 
 

@@ -171,12 +171,23 @@ def _expected_recurrent_loops_from_model_path(model_path: str) -> int:
     return _read_recurrent_loop_env("AURA_RECURRENT_LOOPS_SMALL", 1)
 
 
+def _finite_env_float(name: str, default: float, *, minimum: float | None = None) -> float:
+    """Env float with a fail-safe contract: malformed, NaN, or infinite
+    values fall back to the default instead of poisoning admission math."""
+    try:
+        value = float(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+    if not math.isfinite(value):
+        return default
+    if minimum is not None and value < minimum:
+        return default
+    return value
+
+
 def _model_load_min_available_gb(model_path: str) -> float:
     def _env_float(name: str, default: float) -> float:
-        try:
-            return float(os.environ.get(name, str(default)))
-        except (TypeError, ValueError):
-            return default
+        return _finite_env_float(name, default, minimum=0.0)
 
     lowered = str(model_path or "").lower()
     try:
@@ -200,9 +211,17 @@ def _env_projected_footprint_gb(name: str) -> float | None:
     if text in {"", "auto", "detect", "detected"}:
         return None
     try:
-        return max(0.0, float(text))
+        value = float(text)
     except (TypeError, ValueError):
         return None
+    # A zero/negative override makes a real multi-GB worker appear free and
+    # NaN/inf poisons every downstream admission sum — ignore such overrides.
+    if not math.isfinite(value) or value <= 0.0:
+        logger.warning(
+            "Ignoring invalid projected-footprint override %s=%r.", name, raw
+        )
+        return None
+    return value
 
 
 def _path_size_gb(model_path: str) -> float:
@@ -248,10 +267,7 @@ def _projected_footprint_from_artifact_gb(model_path: str, *, fallback_gb: float
 
 def _projected_model_footprint_gb(model_path: str) -> float:
     def _env_float(name: str, default: float) -> float:
-        try:
-            return float(os.environ.get(name, str(default)))
-        except (TypeError, ValueError):
-            return default
+        return _finite_env_float(name, default, minimum=0.0)
 
     lowered = str(model_path or "").lower()
     if any(token in lowered for token in ("72b", "solver")):
@@ -274,10 +290,7 @@ def _projected_model_footprint_gb(model_path: str) -> float:
 
 def _model_process_reserve_gb(model_path: str) -> float:
     def _env_float(name: str, default: float) -> float:
-        try:
-            return max(0.0, float(os.environ.get(name, str(default))))
-        except (TypeError, ValueError):
-            return default
+        return _finite_env_float(name, default, minimum=0.0)
 
     lowered = str(model_path or "").lower()
     if any(token in lowered for token in ("72b", "solver")):
@@ -321,12 +334,27 @@ def _memory_pressure_blocks_worker_spawn(model_path: str) -> str | None:
         "yes",
         "on",
     }:
+        # The operator bypass stays available for recovery scenarios, but it
+        # must be VISIBLE: silently skipping every spawn admission check is
+        # how a stale deployment flag becomes an OOM.
+        _record_mlx_degradation(
+            RuntimeError("AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE active"),
+            action="bypassed memory-pressure spawn admission via operator override",
+            severity="warning",
+        )
         return None
     try:
         snapshot = get_memory_pressure_snapshot()
     except (OSError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
-        logger.debug("MLX worker-spawn memory probe unavailable: %s", exc)
-        return None
+        # Fail CLOSED: spawning a 20-40GB worker with NO capacity observation
+        # is exactly the moment conservative admission matters. The caller
+        # treats this like any other transient spawn blocker and retries.
+        _record_mlx_degradation(
+            exc,
+            action="refused worker spawn while the memory probe was unavailable",
+            severity="error",
+        )
+        return "memory_probe_unavailable"
 
     min_available_gb = _model_load_min_available_gb(model_path)
     if snapshot.refuse_heavy_local_generation:
@@ -653,12 +681,25 @@ def _crash_loop_blocks_worker_spawn(client: Any) -> str | None:
     """Consult the K4 crash-loop breaker before a (re)spawn. Never throws."""
     try:
         from core.runtime.lane_reconciler import get_crash_loop_breaker
-
+    except ImportError as exc:
+        # Breaker module absent from this build: proceed, but visibly.
+        _record_mlx_degradation(
+            exc,
+            action="spawned without crash-loop breaker (module unavailable)",
+        )
+        return None
+    try:
         blocked = get_crash_loop_breaker().blocked(_real_model_path(client.model_path))
         return str(blocked) if blocked else None
-    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
-        logger.debug("Crash-loop consult unavailable (spawn proceeds): %s", exc)
-        return None
+    except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        # Fail CLOSED: the breaker exists but is broken — during an active
+        # crash storm this is precisely when unchecked respawns do damage.
+        _record_mlx_degradation(
+            exc,
+            action="refused worker spawn while the crash-loop breaker was unavailable",
+            severity="error",
+        )
+        return "crash_loop_breaker_unavailable"
 
 
 class _ModelLoadAdmissionDeniedError(RuntimeError):
@@ -1331,15 +1372,28 @@ def _surface_quality_rejection_reasons(value: Any) -> tuple[str, ...]:
 
 
 def _coerce_timeout_seconds(value: Any) -> float | None:
-    """Normalize public timeout kwargs into positive request deadlines."""
+    """Normalize public timeout kwargs into positive request deadlines.
+
+    None means "caller supplied no timeout" (defaults apply downstream).
+    A MALFORMED value must not silently erase the caller's intent to be
+    bounded — it becomes a conservative bounded default instead.
+    """
     if value is None or isinstance(value, Deadline):
         return None
     try:
         timeout_s = float(value)
     except (TypeError, ValueError, OverflowError):
-        return None
-    if timeout_s <= 0.0:
-        return None
+        _record_mlx_degradation(
+            ValueError(f"malformed generation timeout: {value!r}"),
+            action="replaced malformed timeout with a bounded 120s deadline",
+        )
+        return 120.0
+    if not math.isfinite(timeout_s) or timeout_s <= 0.0:
+        _record_mlx_degradation(
+            ValueError(f"non-finite or non-positive generation timeout: {timeout_s!r}"),
+            action="replaced invalid timeout with a bounded 120s deadline",
+        )
+        return 120.0
     return max(0.1, timeout_s)
 
 
@@ -1727,13 +1781,21 @@ def _bridge_asyncio_future_to_concurrent(future: asyncio.Future) -> cfutures.Fut
         if done_future.cancelled():
             proxy.cancel()
             return
+        # ANY failure type must be relayed: the old narrow tuple let e.g.
+        # OSError/TimeoutError escape the callback, leaving cross-loop
+        # waiters on the proxy unresolved forever.
         try:
-            proxy.set_result(done_future.result())
-        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            result = done_future.result()
+        except BaseException as exc:  # noqa: BLE001 - relay every failure to the waiter
             try:
                 proxy.set_exception(exc)
             except (cfutures.InvalidStateError, asyncio.InvalidStateError):
-                return
+                pass
+            return
+        try:
+            proxy.set_result(result)
+        except (cfutures.InvalidStateError, asyncio.InvalidStateError):
+            return
 
     if future.done():
         _relay(future)
@@ -1777,7 +1839,12 @@ def _set_shared_future_result(future: SharedFuture | None, result: Any) -> bool:
         return False
 
     if isinstance(future, cfutures.Future):
-        future.set_result(result)
+        try:
+            future.set_result(result)
+        except cfutures.InvalidStateError:
+            # Another thread completed/cancelled it between the done() check
+            # and here — response delivery must not break on that race.
+            return False
         return True
 
     if not isinstance(future, asyncio.Future):
@@ -1863,10 +1930,19 @@ def _notify_closed_loop_output(text: str) -> None:
 
 
 def _mlx_runtime_probe_command() -> list[str]:
+    # The probe must prove USABLE inference plumbing, not just importability:
+    # allocate on the default device, run a small matmul, force evaluation,
+    # and check the numeric result. Import-only probes passed on hosts whose
+    # Metal device could not actually evaluate a tensor.
     return [
         sys.executable,
         "-c",
-        "import mlx.core as mx; import mlx_lm; print('mlx_runtime_ok')",
+        (
+            "import mlx.core as mx; import mlx_lm; "
+            "a = mx.ones((8, 8)); s = (a @ a).sum(); mx.eval(s); "
+            "assert abs(float(s) - 512.0) < 1e-3, float(s); "
+            "print('mlx_runtime_ok')"
+        ),
     ]
 
 
@@ -1875,12 +1951,25 @@ def _load_probe_cache_from_disk() -> tuple[bool | None, str, float]:
         payload = json.loads(_MLX_RUNTIME_PROBE_CACHE_PATH.read_text())
     except (json.JSONDecodeError, OSError, ValueError):
         return None, "", 0.0
+    if not isinstance(payload, dict):
+        return None, "", 0.0
 
+    # STRICT boolean: json.loads never produces the string "false" for a
+    # well-formed writer, so any non-bool here is a malformed or tampered
+    # cache — treat it as absent, not as bool("false") == True.
     ok = payload.get("ok")
-    if ok is not None:
-        ok = bool(ok)
+    if not isinstance(ok, bool):
+        return None, "", 0.0
     detail = str(payload.get("detail", "") or "")
-    checked_at = float(payload.get("checked_at", 0.0) or 0.0)
+    try:
+        checked_at = float(payload.get("checked_at", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return None, "", 0.0
+    now = time.time()
+    # A future-dated timestamp would stay "fresh" until wall time caught up;
+    # allow only small clock skew.
+    if not math.isfinite(checked_at) or checked_at <= 0.0 or checked_at > now + 60.0:
+        return None, "", 0.0
     return ok, detail, checked_at
 
 
@@ -1897,7 +1986,9 @@ def _store_probe_cache_to_disk(ok: bool, detail: str) -> None:
                 }
             ),
         )
-    except (json.JSONDecodeError, TypeError, ValueError) as exc:
+    except (json.JSONDecodeError, TypeError, ValueError, OSError) as exc:
+        # OSError included: a completed health probe must never raise out of
+        # cache persistence (disk-full/permissions) and disrupt its caller.
         _record_mlx_degradation(
             exc,
             action="kept in-memory MLX runtime probe status after disk cache write failed",
@@ -1966,7 +2057,9 @@ def _probe_mlx_runtime(force: bool = False) -> tuple[bool, str]:
                 read_only=True,
                 source="runtime_probe:mlx_runtime_probe",
             )
-            ok = completed.returncode == 0
+            ok = completed.returncode == 0 and "mlx_runtime_ok" in (
+                completed.stdout or ""
+            )
             detail = _normalize_probe_detail(
                 completed.stdout or "",
                 completed.stderr or "",
@@ -2368,7 +2461,7 @@ class MLXLocalClient:
         self._clock_sample_wall = now_wall
         self._clock_sample_monotonic = now_monotonic
         sleep_gap = wall_delta - monotonic_delta
-        threshold = float(os.environ.get("AURA_SYSTEM_SLEEP_GAP_THRESHOLD_S", "5"))
+        threshold = _finite_env_float("AURA_SYSTEM_SLEEP_GAP_THRESHOLD_S", 5.0, minimum=1.0)
         if sleep_gap <= max(1.0, threshold):
             return 0.0
 
@@ -2548,6 +2641,12 @@ class MLXLocalClient:
             and self._current_request_id
             and normalized_req_id != self._current_request_id
         ):
+            return
+        if not normalized_req_id and self._current_request_id:
+            # Id-less progress cannot be ATTRIBUTED to the active request:
+            # crediting it set first-token timestamps from unrelated or
+            # malformed messages. It still proves the worker is alive.
+            self._mark_progress()
             return
         self._last_token_progress_at = now
         if self._current_first_token_at <= 0.0:
@@ -2823,22 +2922,21 @@ class MLXLocalClient:
             default = 30.0 if foreground_request else 20.0
         stretch, _ = self._pressure_adaptive_stretch()
         default *= stretch
-        configured = os.environ.get("AURA_FIRST_TOKEN_ABSOLUTE_CEILING_S")
-        try:
-            return max(10.0, float(configured)) if configured is not None else default
-        except (TypeError, ValueError):
-            return default
+        if os.environ.get("AURA_FIRST_TOKEN_ABSOLUTE_CEILING_S") is not None:
+            configured = _finite_env_float(
+                "AURA_FIRST_TOKEN_ABSOLUTE_CEILING_S", default, minimum=10.0
+            )
+            # Bounded above too: an absurd ceiling disables the watchdog.
+            return min(3600.0, max(10.0, configured))
+        return default
 
     def _first_token_hard_ceiling(self, *, foreground_request: bool = False) -> float:
         first_token_sla = self._first_token_sla(foreground_request=foreground_request)
-        try:
-            hard_mult = float(os.environ.get("AURA_FIRST_TOKEN_HARD_MULT", "1.8") or 1.8)
-        except (TypeError, ValueError):
-            hard_mult = 1.8
-        try:
-            hard_pad = float(os.environ.get("AURA_FIRST_TOKEN_HARD_PAD_S", "20") or 20)
-        except (TypeError, ValueError):
-            hard_pad = 20.0
+        # Finite-range validation: negative or non-finite multipliers/padding
+        # previously produced premature aborts, an unbounded watchdog, or a
+        # non-finite timer value.
+        hard_mult = min(10.0, _finite_env_float("AURA_FIRST_TOKEN_HARD_MULT", 1.8, minimum=1.0))
+        hard_pad = min(600.0, _finite_env_float("AURA_FIRST_TOKEN_HARD_PAD_S", 20.0, minimum=0.0))
         # The hard ceiling exists to kill LIVELOCKED generations (heartbeats,
         # zero tokens). Under live memory pressure a starved-but-healthy heavy
         # lane looks exactly like that livelock from outside — stretch the
@@ -4444,14 +4542,18 @@ class MLXLocalClient:
         model can be preserved instead of paying a ~60-90s reload.
         """
         if timeout_s is None:
-            try:
-                timeout_s = float(os.environ.get("AURA_MLX_SOFT_CANCEL_ACK_WAIT_S", "12"))
-            except ValueError:
-                timeout_s = 12.0
+            timeout_s = _finite_env_float("AURA_MLX_SOFT_CANCEL_ACK_WAIT_S", 12.0, minimum=0.5)
+        try:
+            timeout_s = float(timeout_s)
+        except (TypeError, ValueError):
+            timeout_s = 12.0
+        if not math.isfinite(timeout_s):
+            # An infinite ack wait would wedge cleanup forever.
+            timeout_s = 12.0
         cancel_seq = getattr(self, "_cancel_seq", None)
         if cancel_seq is None:
             return False
-        deadline = time.monotonic() + max(0.5, float(timeout_s))
+        deadline = time.monotonic() + min(120.0, max(0.5, timeout_s))
         while time.monotonic() < deadline:
             process = self._process
             if process is None or not process.is_alive():
@@ -4514,13 +4616,15 @@ class MLXLocalClient:
         on an MLX future that failed to observe its deadline.
         """
         reason = str(reason or "hard_generation_deadline")
-        pending_futures = {
-            id(future): future
-            for future in list(self._pending_generations.values()) + [self._current_gen_future]
+        pending_by_request = {
+            str(req_id): future
+            for req_id, future in list(self._pending_generations.items())
             if future is not None and not future.done()
         }
+        current_future = self._current_gen_future
         had_active_request = bool(
-            pending_futures
+            pending_by_request
+            or (current_future is not None and not current_future.done())
             or self._active_generations > 0
             or self._current_request_started_at > 0.0
         )
@@ -4528,6 +4632,14 @@ class MLXLocalClient:
         had_process = bool(process is not None and process.is_alive())
         if not had_active_request and not had_process:
             return False
+        if not had_active_request:
+            # An idle-but-alive worker is being killed on an arbitrary reason
+            # string — legitimate for emergencies, but it must be visible.
+            _record_mlx_degradation(
+                RuntimeError(f"force_abort_without_active_request:{reason}"),
+                action="force-aborted an idle worker with no pending request",
+                severity="warning",
+            )
 
         logger.error(
             "🛑 [MLX] Force-aborting active generation for %s (%s).",
@@ -4536,15 +4648,37 @@ class MLXLocalClient:
         )
         self._set_lane_state("recovering", reason)
 
-        abort_payload = {
-            "status": "error",
-            "action": "generate",
-            "id": self._current_request_id,
-            "message": reason,
-            "force_aborted": True,
-        }
-        for future in pending_futures.values():
-            _set_shared_future_result(future, abort_payload)
+        # Each future receives ITS OWN request identity: completing every
+        # pending future with the current request id let callers receive an
+        # abort receipt for another request.
+        seen_future_ids: set[int] = set()
+        for req_id, future in pending_by_request.items():
+            seen_future_ids.add(id(future))
+            _set_shared_future_result(
+                future,
+                {
+                    "status": "error",
+                    "action": "generate",
+                    "id": req_id,
+                    "message": reason,
+                    "force_aborted": True,
+                },
+            )
+        if (
+            current_future is not None
+            and not current_future.done()
+            and id(current_future) not in seen_future_ids
+        ):
+            _set_shared_future_result(
+                current_future,
+                {
+                    "status": "error",
+                    "action": "generate",
+                    "id": self._current_request_id,
+                    "message": reason,
+                    "force_aborted": True,
+                },
+            )
 
         killed_process_before_lock = False
         if process is not None and process.is_alive():
@@ -4560,6 +4694,16 @@ class MLXLocalClient:
             killed_process_before_lock = True
 
         acquired = self._lock.acquire(timeout=0.25)
+        if not acquired:
+            # Emergency semantics: proceed anyway (the wedge may BE the lock
+            # holder), but leave a visible receipt that lifecycle state was
+            # mutated without ownership so a racing spawn/reboot can be
+            # diagnosed instead of silently corrupted.
+            _record_mlx_degradation(
+                RuntimeError("force_abort_without_lifecycle_lock"),
+                action="force-abort mutated lifecycle state without the lifecycle lock",
+                severity="error",
+            )
         try:
             self._pending_generations.clear()
             self._current_gen_future = None
@@ -4917,6 +5061,35 @@ class MLXLocalClient:
                                 if self._model_lane_fencing_token == fencing_token:
                                     self._model_lane_fencing_token = 0
                                     self._model_lane_terminal_receipt_id = ""
+                            # Fail every waiter BEFORE exiting the listener:
+                            # killing the worker and returning stranded all
+                            # pending generation/init futures until their own
+                            # timeouts fired (the waiter fast-path only trips
+                            # while _process is non-None).
+                            for req_id, pending in list(self._pending_generations.items()):
+                                if pending is not None and not pending.done():
+                                    _set_shared_future_result(
+                                        pending,
+                                        {
+                                            "status": "error",
+                                            "action": "generate",
+                                            "id": str(req_id),
+                                            "message": "model_lane_fence_lost",
+                                        },
+                                    )
+                            current_fut = self._current_gen_future
+                            if current_fut is not None and not current_fut.done():
+                                _set_shared_future_result(
+                                    current_fut,
+                                    {
+                                        "status": "error",
+                                        "action": "generate",
+                                        "id": self._current_request_id,
+                                        "message": "model_lane_fence_lost",
+                                    },
+                                )
+                            if self._init_future is not None and not self._init_future.done():
+                                _cancel_shared_future(self._init_future)
                             self._set_lane_state("cold", "model_lane_fence_lost")
                             return
                     audit = ServiceContainer.get("subsystem_audit", default=None)
@@ -4998,17 +5171,31 @@ class MLXLocalClient:
                     if (
                         self._current_gen_future
                         and not self._current_gen_future.done()
-                        and (not req_id or req_id == self._current_request_id)
+                        and req_id
+                        and req_id == self._current_request_id
                     ):
                         self._mark_progress()
                         _set_shared_future_result(self._current_gen_future, res)
+                        continue
+                    if not req_id and status in {"ok", "error"}:
+                        # The worker stamps every response with its job id —
+                        # an id-less terminal message is stale or malformed
+                        # and must NOT complete the current request with
+                        # someone else's content or error state.
+                        _record_mlx_degradation(
+                            RuntimeError("id_less_worker_response_dropped"),
+                            action="dropped id-less terminal worker message instead of completing current request",
+                        )
                         continue
 
                 # 3. Log errors if no future is waiting
                 if status == "error":
                     logger.error("🛑 [MLX] Async worker error: %s", res.get("message"))
 
-            except (ImportError, AttributeError, RuntimeError) as e:
+            except Exception as e:  # noqa: BLE001 - the listener is the sole response
+                # consumer: ANY escaping processing error (TypeError, ValueError,
+                # OSError, future completion races, callback failures) would leave
+                # a live worker with no one draining its queue.
                 _record_mlx_degradation(
                     e,
                     action="kept response listener alive after malformed worker message",
@@ -5603,9 +5790,11 @@ class MLXLocalClient:
         first_token_sla = self._first_token_sla(foreground_request=foreground_request)
         token_stall_after = self._token_stall_after(foreground_request=foreground_request)
         wait_started = time.monotonic()
+        # Finite-bounded: a malformed value previously RAISED through the
+        # generation wait path, and infinity disabled the hard cap entirely.
         hard_cap = max(
             30.0,
-            float(os.environ.get("AURA_MLX_GENERATION_HARD_CAP_SECONDS", "240")),
+            _finite_env_float("AURA_MLX_GENERATION_HARD_CAP_SECONDS", 240.0, minimum=30.0),
         )
         while (time.monotonic() - wait_started) <= hard_cap:
             remaining = deadline.remaining
@@ -7293,6 +7482,20 @@ class MLXLocalClient:
         ``_ensure_worker_alive``. This is a normal lifecycle event, not a
         failure, so it records no degradation. Returns a telemetry dict.
         """
+        # Programmatic thresholds get the same fail-safe normalization as
+        # env values: NaN bypasses every age comparison and a negative value
+        # tears down a lane that idled for one tick.
+        def _safe_threshold(value: float, default: float) -> float:
+            try:
+                value = float(value)
+            except (TypeError, ValueError):
+                return default
+            if not math.isfinite(value) or value < 0.0:
+                return default
+            return value
+
+        pressure_idle_s = _safe_threshold(pressure_idle_s, 90.0)
+        hard_idle_s = _safe_threshold(hard_idle_s, 900.0)
         blocker = self._unload_safety_blocker()
         if blocker:
             return {"unloaded": False, "reason": blocker}
@@ -7486,7 +7689,8 @@ def _scavenge_env_float(name: str, default: float) -> float:
         value = float(os.environ.get(name, "").strip())
     except (TypeError, ValueError):
         return default
-    return value if value > 0.0 else default
+    # Infinity would silently disable the citizenship unload forever.
+    return value if math.isfinite(value) and value > 0.0 else default
 
 
 async def scavenge_idle_model_vram(
@@ -7513,7 +7717,8 @@ async def scavenge_idle_model_vram(
 
     results: list[dict[str, Any]] = []
     unloaded = 0
-    for client in list(_CLIENTS.values()):
+    for path, client in list(_CLIENTS.items()):
+        lane_label = os.path.basename(str(path or "")) or "unknown"
         unload = getattr(client, "maybe_unload_idle", None)
         if unload is None:
             continue
@@ -7521,8 +7726,19 @@ async def scavenge_idle_model_vram(
             outcome = await unload(pressure_idle_s=pressure_idle_s, hard_idle_s=hard_idle_s)
         except (RuntimeError, OSError, ValueError, AttributeError) as exc:
             logger.debug("Idle VRAM scavenge skipped a lane: %s", exc)
+            # Failed lanes must be visible in the report — hiding them made
+            # repeated reclaim failures undiagnosable from telemetry.
+            results.append(
+                {
+                    "lane": lane_label,
+                    "unloaded": False,
+                    "reason": f"scavenge_error:{type(exc).__name__}",
+                }
+            )
             continue
-        if outcome.get("unloaded"):
+        entry = dict(outcome) if isinstance(outcome, dict) else {"unloaded": bool(outcome)}
+        entry.setdefault("lane", lane_label)
+        if entry.get("unloaded"):
             unloaded += 1
-            results.append(outcome)
+        results.append(entry)
     return {"enabled": True, "unloaded": unloaded, "lanes": results}
