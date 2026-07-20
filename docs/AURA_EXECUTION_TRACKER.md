@@ -22036,3 +22036,35 @@ is awarded. Next: publish CP196, preserve the failed control-plane attempt,
 rerun the exact one-step calibration with the repaired sentinel, verify the
 complete acquire/release/rearm chain, and launch detached training immediately
 only after that immutable verdict passes. Final long soaks remain deferred.
+
+## Checkpoint 2026-07-20-197: Detached Recovery Promotion Controller
+
+Resident recovery no longer depends on an interactive task remaining connected
+between calibration and training. `tools/run_resident_v3_recovery_controller.py`
+attaches to the create-once trainer and sentinel run directories, waits for both
+terminal receipts, invokes the strict calibration verifier, and launches the
+long resume only after that verifier accepts the checkpoint advance, memory
+stages, lease chain, containment, and tombstone-free result. It then remains
+detached through the long run and records a self-hashed terminal verdict for
+the subsequent strict-admission pipeline.
+
+The controller is single-instance under a filesystem lock, writes atomic
+self-hashed progress state, refuses malformed or tampered terminal verdicts,
+and converts every verification, launch, timeout, or terminal-evidence defect
+into an explicit `recovery_failed_closed` verdict. Its 60-hour supervision
+budget exceeds the trainer's 48-hour bounded wall-clock limit without weakening
+the trainer or sentinel's own timeouts. It does not freeze, fuse, activate, or
+claim capability gains; those remain separate post-training gates.
+
+Validation is green: 4/4 focused controller tests prove verified promotion,
+terminal waiting, failure closure, idempotent verdict recovery, and tamper
+rejection. The broader 36-test controller, recovery-launcher, sentinel, and
+resource-stage surface passes with focused Ruff and bytecode compilation.
+
+Evidence-weighted completion remains 27%. This is checkpoint 197 of the
+faithful 292-399 total-checkpoint forecast, leaving approximately 95-202
+checkpoints. No training-completion, mechanics, reasoning-gain, same-checkpoint
+interaction, frontier, external-custody, installed-app, release, or soak credit
+is awarded. Next: publish CP197, launch the controller against the active CP195
+calibration, and let a positive immutable calibration verdict promote directly
+to detached training. Final long soaks remain deferred.
