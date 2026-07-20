@@ -21229,3 +21229,84 @@ faithful 292-399 forecast, leaving approximately 114-221 checkpoints. Next:
 publish this preregistration, execute the exact 56-cell pilot under detached
 containment, independently replay and score every raw output, and apply the
 fixed advance-or-diagnose rule. Final long soaks remain deferred.
+
+## Checkpoint 2026-07-20-179: Resident Directional Pilot Negative Certificate
+
+CP179 executes the exact CP178 resident-32B directional pilot, independently
+replays every artifact, and applies the nine preregistered advance rules. The
+evidence is valid; the trained recurrence-v2 adapter does not pass the
+directional gain gate. This checkpoint records a scientifically useful negative
+result and its repair targets. It does not award reasoning or frontier credit.
+
+- All 56 cells reached `ARM_RESULT`, `VERIFIED`, and `COMMITTED`. The detached
+  supervisor ran for 2,588.68 seconds with no restart or timeout, kernel-denied
+  process forking, verified empty process group and lineage, and containment
+  intact. Return code 2 is the campaign's expected non-gain result, not an
+  infrastructure failure. Its receipt is
+  `8550b8263019f4a126b5b680ca89d3583d2e6b083d91a6f6a75980bc12c8c355`.
+- The production grader and separately implemented scoring kernel regenerated
+  all 14 answer-committed tasks after output sealing and agreed byte-for-byte at
+  semantic grade root
+  `253fa84e3a35da7bf406c843aaf45b9d8c4629e3098c8a1fd74c168147ff2605`.
+  The independent evidence verifier reports no failures. The campaign journal
+  and grade bind manifest
+  `761b66e51abff71da528c4c0bd3d97f97b76ace35edc2c804301d96f17e361eb`
+  and grade
+  `b08706e8e27b7da6b6e2ed92804649bf9762b1be862a2924a24034400e7c08cd`.
+- Mechanics remain real and isolated. Base RLC records zero recurrence-adapter
+  activity; adapter RLC records 9,856 scoped calls over 157,696 observed and
+  adapted slot positions. All 14 first-logit digests change. Base and adapter
+  vanilla outputs are byte-identical for every task.
+- Exact correctness is base vanilla `1/14`, base RLC `2/14`, adapter vanilla
+  `1/14`, and adapter RLC `1/14`. The adapter therefore fails both fixed gain
+  inequalities: it ties adapter vanilla and loses to base RLC. The powered
+  externally rooted campaign is not admitted.
+- Output-contract failure is pervasive. Base and adapter vanilla each omit the
+  required final marker on 13/14 tasks. Base RLC omits it on 12/14 and ends 11
+  episodes at the token limit or sentence-grace limit. Adapter RLC reaches EOS
+  quickly but produces five invalid JSON answers, two missing-marker answers,
+  and six validly shaped but incorrect answers. A shared 256-token generation
+  contract is truncating ordinary reasoning, while recurrence training learned
+  a brittle short-answer behavior rather than reliable public schema emission.
+- The trained adapter functionally collapses virtual width. All 14 adapter-RLC
+  branch scores tie, every selection chooses branch zero, disagreement spread
+  is exactly zero, and exchange mean cosine stays in `[0.99979, 1.0]`. Base RLC
+  preserves some score diversity and selects branch one on four tasks, so the
+  collapse is specifically associated with the trained adapter and its current
+  mean-answer objective.
+- `tools/verify_resident_pilot_result.py` now composes the immutable CP177
+  mechanics verdict, CP178 contract and plan, detached receipt, complete journal
+  replay, independent raw-output rescoring, task regeneration, ordinary-path
+  isolation, adapter activation, first-logit causality, and all nine advance
+  rules into one create-once result. It fixes reasoning, frontier, and external
+  attestation flags to false regardless of pilot direction. Rehashed mechanics
+  claims, scorer disagreement, incomplete cells, isolation failures, missing
+  activation, absent causal effect, and every individual decision-rule failure
+  are covered by adversarial tests.
+- The accepted result verdict is
+  `35d422aba040438607fe269d879b1a6e72e3f8b3ab47ade6ac2ebdf154b02ceb`.
+  Its decision is `diagnose_and_preregister_revision`, with diagnoses
+  `decode_response_contract_failure`,
+  `adapter_virtual_width_functionally_collapsed`,
+  `recurrence_training_failed_directional_gain_gate`, and
+  `shared_vanilla_decode_budget_truncates_contract_answers`.
+
+Validation is green: independent evidence replay and recurrence mechanics
+replay both pass; the new postflight verifier passes on the real 56-cell
+campaign; 29/29 result, preflight, and resident-mechanics tests pass; focused
+Ruff and bytecode compilation pass.
+
+CP180+ must first make the public answer contract a deterministic verifier
+surface, reserve enough bounded decode capacity to complete it, and receipt
+contract-aware branch selection. Recurrence-native v3 must then add a positive
+depth-advantage margin rather than merely permitting equality, a differentiable
+branch-diversity objective and post-jitter telemetry, assistant-answer-v3 bridge
+parity between training and live execution, and isolated held-out validation.
+After source and tiny-checkpoint proofs, train and freeze a new resident adapter,
+run a newly seeded preregistered directional pilot, and only advance a positive
+result to the powered externally rooted six-arm and frontier comparisons.
+
+Evidence-weighted completion remains 27%. This is checkpoint 179 of the faithful
+292-399 forecast, leaving approximately 113-220 checkpoints. No reasoning-gain,
+frontier, external-custody, installed-app, release, or soak credit is awarded.
+Final long soaks remain deferred.
