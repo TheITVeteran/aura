@@ -1,0 +1,197 @@
+{
+  "schema": "aura.rlc_accuracy_ladder.v1",
+  "model": "models/Qwen2.5-1.5B-Instruct-4bit",
+  "adapter": "",
+  "families": [
+    "khop",
+    "register_trace"
+  ],
+  "task_depth": 8,
+  "per_cell": 2,
+  "eval_seed": 20260722,
+  "depths": [
+    1,
+    4
+  ],
+  "n_slots": 4,
+  "max_tokens": 200,
+  "elapsed_s": 52.016,
+  "metric": "exact_match_correctness",
+  "memory_envelope": {
+    "schema": "aura.mlx_memory_guard.v1",
+    "memory_limit_gb": 19.2,
+    "cache_limit_gb": 2.0,
+    "wired_limit_gb": 28.8,
+    "reclaim_every": 16,
+    "host_memory_gb": 64.0
+  },
+  "bridge": "assistant_answer",
+  "calibration": {
+    "schema": "aura.rlc_accuracy_calibration.v1",
+    "checks": [
+      {
+        "check": "perfect_answer",
+        "observed": "correct",
+        "expected": "correct",
+        "passed": true
+      },
+      {
+        "check": "reasoning_then_answer",
+        "observed": "correct",
+        "expected": "correct",
+        "passed": true
+      },
+      {
+        "check": "wrong_value",
+        "observed": "incorrect",
+        "expected": "incorrect",
+        "passed": true
+      },
+      {
+        "check": "prose_without_answer",
+        "observed": "unparseable",
+        "expected": "unparseable",
+        "passed": true
+      },
+      {
+        "check": "empty_output",
+        "observed": "unparseable",
+        "expected": "unparseable",
+        "passed": true
+      },
+      {
+        "check": "perfect_accuracy",
+        "observed": 1.0,
+        "expected": 1.0,
+        "passed": true
+      },
+      {
+        "check": "perfect_compliance",
+        "observed": 1.0,
+        "expected": 1.0,
+        "passed": true
+      },
+      {
+        "check": "silent_accuracy",
+        "observed": 0.0,
+        "expected": 0.0,
+        "passed": true
+      },
+      {
+        "check": "silent_compliance",
+        "observed": 0.0,
+        "expected": 0.0,
+        "passed": true
+      },
+      {
+        "check": "silent_unparseable_count",
+        "observed": 5,
+        "expected": 5,
+        "passed": true
+      },
+      {
+        "check": "mixed_accuracy",
+        "observed": 0.2,
+        "expected": 0.2,
+        "passed": true
+      },
+      {
+        "check": "mixed_compliance_is_total",
+        "observed": 1.0,
+        "expected": 1.0,
+        "passed": true
+      },
+      {
+        "check": "harness_fault_raises",
+        "observed": true,
+        "expected": true,
+        "passed": true
+      }
+    ],
+    "failures": [],
+    "passed": true
+  },
+  "claims_awarded": [],
+  "results": {
+    "by_depth": {
+      "1": {
+        "correct": 0,
+        "incorrect": 0,
+        "correct_lenient": 0,
+        "incorrect_lenient": 2,
+        "unparseable": 2,
+        "n": 4,
+        "accuracy": 0.0,
+        "reasoning_accuracy": 0.0,
+        "contract_compliance": 0.0,
+        "answered_at_all": 0.5
+      },
+      "4": {
+        "correct": 0,
+        "incorrect": 0,
+        "correct_lenient": 0,
+        "incorrect_lenient": 3,
+        "unparseable": 1,
+        "n": 4,
+        "accuracy": 0.0,
+        "reasoning_accuracy": 0.0,
+        "contract_compliance": 0.0,
+        "answered_at_all": 0.75
+      }
+    },
+    "by_family": {
+      "khop": {
+        "1": {
+          "correct": 0,
+          "incorrect": 0,
+          "correct_lenient": 0,
+          "incorrect_lenient": 0,
+          "unparseable": 2,
+          "n": 2,
+          "accuracy": 0.0,
+          "reasoning_accuracy": 0.0,
+          "contract_compliance": 0.0,
+          "answered_at_all": 0.0
+        },
+        "4": {
+          "correct": 0,
+          "incorrect": 0,
+          "correct_lenient": 0,
+          "incorrect_lenient": 1,
+          "unparseable": 1,
+          "n": 2,
+          "accuracy": 0.0,
+          "reasoning_accuracy": 0.0,
+          "contract_compliance": 0.0,
+          "answered_at_all": 0.5
+        }
+      },
+      "register_trace": {
+        "1": {
+          "correct": 0,
+          "incorrect": 0,
+          "correct_lenient": 0,
+          "incorrect_lenient": 2,
+          "unparseable": 0,
+          "n": 2,
+          "accuracy": 0.0,
+          "reasoning_accuracy": 0.0,
+          "contract_compliance": 0.0,
+          "answered_at_all": 1.0
+        },
+        "4": {
+          "correct": 0,
+          "incorrect": 0,
+          "correct_lenient": 0,
+          "incorrect_lenient": 2,
+          "unparseable": 0,
+          "n": 2,
+          "accuracy": 0.0,
+          "reasoning_accuracy": 0.0,
+          "contract_compliance": 0.0,
+          "answered_at_all": 1.0
+        }
+      }
+    }
+  }
+}

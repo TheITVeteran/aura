@@ -133,3 +133,43 @@ def test_calibration_fails_closed_when_harness_faults_stop_raising(monkeypatch):
     )  # never raises, even on unparseable gold
     with pytest.raises(CalibrationError, match="failed calibration"):
         ladder.calibrate_scoring()
+
+
+# ── Reasoning must be separable from instruction-following ──────────────
+
+
+def test_correct_answer_in_the_wrong_format_is_not_a_reasoning_failure():
+    """Observed on a real 1.5B: it traces all 8 hops correctly, then writes
+    'JSON key node: {...}' instead of the literal FINAL_ANSWER marker.
+    Scoring that as a reasoning failure conflates instruction-following
+    with reasoning and reports the sum as reasoning."""
+    prose = (
+        "1. Start at node 11.\n2. Follow 11->2.\n3. From 2 -> 9.\n"
+        'The final answer is: 6\nJSON key node: {"node": 6}'
+    )
+    assert _score(_task(), prose) == "correct_lenient"
+
+
+def test_wrong_answer_in_the_wrong_format_is_still_wrong():
+    prose = 'reasoning...\nJSON key node: {"node": 99}'
+    assert _score(_task(), prose) == "incorrect_lenient"
+
+
+def test_lenient_extraction_cannot_invent_an_answer():
+    """It matches only objects carrying the EXPECTED keys, so unrelated
+    JSON in the output can never be promoted into an answer."""
+    assert _score(_task(), 'here is config {"unrelated": 6}') == "unparseable"
+    assert _score(_task(), "no json at all here") == "unparseable"
+
+
+def test_strict_and_reasoning_rates_are_reported_separately():
+    tally = _tally(["correct", "correct_lenient", "incorrect_lenient", "unparseable"])
+    assert tally["accuracy"] == 0.25            # strict: contract satisfied
+    assert tally["reasoning_accuracy"] == 0.5   # right answer in any shape
+    assert tally["contract_compliance"] == 0.25
+    assert tally["answered_at_all"] == 0.75
+
+
+def test_perfect_contract_run_scores_identically_on_both_metrics():
+    tally = _tally(["correct"] * 4)
+    assert tally["accuracy"] == tally["reasoning_accuracy"] == 1.0

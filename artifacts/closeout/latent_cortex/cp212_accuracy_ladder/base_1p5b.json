@@ -1,0 +1,116 @@
+{
+  "schema": "aura.rlc_accuracy_ladder.v1",
+  "model": "/Users/bryan/.aura/live-source/models/Qwen2.5-1.5B-Instruct-4bit",
+  "adapter": "",
+  "families": [
+    "khop",
+    "modular",
+    "register_trace"
+  ],
+  "task_depth": 8,
+  "per_cell": 6,
+  "eval_seed": 20260721,
+  "depths": [
+    1,
+    2,
+    4,
+    8
+  ],
+  "n_slots": 4,
+  "max_tokens": 40,
+  "elapsed_s": 91.935,
+  "metric": "exact_match_correctness",
+  "claims_awarded": [],
+  "results": {
+    "by_depth": {
+      "1": {
+        "correct": 0,
+        "n": 18,
+        "accuracy": 0.0
+      },
+      "2": {
+        "correct": 0,
+        "n": 18,
+        "accuracy": 0.0
+      },
+      "4": {
+        "correct": 0,
+        "n": 18,
+        "accuracy": 0.0
+      },
+      "8": {
+        "correct": 0,
+        "n": 18,
+        "accuracy": 0.0
+      }
+    },
+    "by_family": {
+      "khop": {
+        "1": {
+          "correct": 0,
+          "n": 6,
+          "accuracy": 0.0
+        },
+        "2": {
+          "correct": 0,
+          "n": 6,
+          "accuracy": 0.0
+        },
+        "4": {
+          "correct": 0,
+          "n": 6,
+          "accuracy": 0.0
+        },
+        "8": {
+          "correct": 0,
+          "n": 6,
+          "accuracy": 0.0
+        }
+      },
+      "modular": {
+        "1": {
+          "correct": 0,
+          "n": 6,
+          "accuracy": 0.0
+        },
+        "2": {
+          "correct": 0,
+          "n": 6,
+          "accuracy": 0.0
+        },
+        "4": {
+          "correct": 0,
+          "n": 6,
+          "accuracy": 0.0
+        },
+        "8": {
+          "correct": 0,
+          "n": 6,
+          "accuracy": 0.0
+        }
+      },
+      "register_trace": {
+        "1": {
+          "correct": 0,
+          "n": 6,
+          "accuracy": 0.0
+        },
+        "2": {
+          "correct": 0,
+          "n": 6,
+          "accuracy": 0.0
+        },
+        "4": {
+          "correct": 0,
+          "n": 6,
+          "accuracy": 0.0
+        },
+        "8": {
+          "correct": 0,
+          "n": 6,
+          "accuracy": 0.0
+        }
+      }
+    }
+  }
+}

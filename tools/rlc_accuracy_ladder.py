@@ -138,8 +138,40 @@ def _score(task, text: str) -> str:
     try:
         produced = parse_final_answer(text)
     except FrontierTaskError:
-        return "unparseable"  # the model did not emit a valid contract
+        # Strict contract not met. Before calling this a failure, check
+        # whether the ANSWER is present in another shape: a 1.5B reasons
+        # correctly through 8-hop traversal and then writes "The final
+        # answer is:" / "JSON key node: {...}" instead of the literal
+        # marker. Scoring that as a reasoning failure conflates
+        # instruction-following with reasoning and reports the sum as
+        # reasoning, which is the error this whole pass exists to remove.
+        lenient = _lenient_extract(text, expected)
+        if lenient is None:
+            return "unparseable"
+        return "correct_lenient" if lenient == expected else "incorrect_lenient"
     return "correct" if produced == expected else "incorrect"
+
+
+def _lenient_extract(text: str, expected: dict) -> dict | None:
+    """Find the answer object anywhere in the text, contract or not.
+
+    Deliberately narrow: it looks only for a JSON object carrying the
+    EXPECTED keys, so it cannot invent an answer the model did not give.
+    Reported under separate 'lenient' outcomes and never merged into the
+    strict accuracy number.
+    """
+    import json as _json
+    import re as _re
+
+    wanted = set(expected)
+    for match in _re.finditer(r"\{[^{}]*\}", text):
+        try:
+            candidate = _json.loads(match.group(0))
+        except (ValueError, TypeError):
+            continue
+        if isinstance(candidate, dict) and set(candidate) == wanted:
+            return candidate
+    return None
 
 
 
@@ -242,6 +274,7 @@ def run_arm(
     n_slots: int,
     max_tokens: int,
     envelope=None,
+    bridge_tokens: tuple = (),
 ) -> dict:
     import mlx.core as mx
 
@@ -256,6 +289,7 @@ def run_arm(
         branch_roles=("constructive_solution",),
         recurrent_steps=max(depths),
         exchange_interval=1,
+        decode_bridge_policy="assistant_answer" if bridge_tokens else "none",
     )
     by_depth: dict[int, list[bool]] = {depth: [] for depth in depths}
     by_family: dict[str, dict[int, list[bool]]] = {}
@@ -269,7 +303,7 @@ def run_arm(
             prompt,
             answer_probe,
             spec=spec.with_depth(max(depths)),
-            bridge_tokens=(),
+            bridge_tokens=bridge_tokens,
         )
         states = list(prepared.states)
         for step in range(max(depths)):
@@ -321,14 +355,29 @@ def _tally(outcomes: list[str]) -> dict[str, Any]:
     total = len(outcomes)
     correct = sum(1 for value in outcomes if value == "correct")
     incorrect = sum(1 for value in outcomes if value == "incorrect")
+    correct_lenient = sum(1 for value in outcomes if value == "correct_lenient")
+    incorrect_lenient = sum(
+        1 for value in outcomes if value == "incorrect_lenient"
+    )
     unparseable = sum(1 for value in outcomes if value == "unparseable")
     return {
         "correct": correct,
         "incorrect": incorrect,
+        "correct_lenient": correct_lenient,
+        "incorrect_lenient": incorrect_lenient,
         "unparseable": unparseable,
         "n": total,
+        # Strict: reasoning AND contract compliance together.
         "accuracy": (correct / total) if total else 0.0,
+        # Reasoning isolated from format: did the model reach the right
+        # answer in ANY shape? This is the capability number.
+        "reasoning_accuracy": (
+            ((correct + correct_lenient) / total) if total else 0.0
+        ),
         "contract_compliance": ((correct + incorrect) / total) if total else 0.0,
+        "answered_at_all": (
+            ((total - unparseable) / total) if total else 0.0
+        ),
     }
 
 
@@ -344,6 +393,17 @@ def main() -> int:
     parser.add_argument("--n-slots", type=int, default=4)
     parser.add_argument("--max-tokens", type=int, default=48)
     parser.add_argument("--memory-fraction", type=float, default=0.35)
+    parser.add_argument(
+        "--bridge",
+        choices=("none", "assistant_answer"),
+        default="none",
+        help=(
+            "prepend the live assistant-answer cue before the answer span. "
+            "Without it the model narrates instead of answering and every "
+            "task scores unparseable -- a COMPLIANCE failure, not a "
+            "reasoning one."
+        ),
+    )
     parser.add_argument(
         "--self-test",
         action="store_true",
@@ -380,6 +440,20 @@ def main() -> int:
             f"{len(tasks)} eval tasks (seed {args.eval_seed}), depths {depths}",
             flush=True,
         )
+        bridge_tokens: tuple = ()
+        if args.bridge == "assistant_answer":
+            from core.brain.llm.latent_cortex.engine import (
+                _ASSISTANT_ANSWER_BRIDGE_V3,
+            )
+
+            try:
+                encoded = tokenizer.encode(
+                    _ASSISTANT_ANSWER_BRIDGE_V3, add_special_tokens=False
+                )
+            except TypeError:
+                encoded = tokenizer.encode(_ASSISTANT_ANSWER_BRIDGE_V3)
+            bridge_tokens = tuple(int(token) for token in encoded)
+            print(f"decode bridge: {len(bridge_tokens)} tokens", flush=True)
         result = run_arm(
             model,
             tokenizer,
@@ -388,16 +462,18 @@ def main() -> int:
             args.n_slots,
             args.max_tokens,
             envelope,
+            bridge_tokens,
         )
         envelope_receipt = envelope.to_receipt()
     print("\n=== exact-match accuracy by depth ===")
     for depth in depths:
         row = result["by_depth"][str(depth)]
         print(
-            f"  depth {depth:2d}: {row['correct']:3d}/{row['n']:3d}"
-            f" = {100*row['accuracy']:5.1f}%   "
-            f"(incorrect {row['incorrect']}, unparseable {row['unparseable']},"
-            f" contract {100*row['contract_compliance']:.0f}%)"
+            f"  depth {depth:2d}: strict {row['correct']:3d}/{row['n']:3d}"
+            f" = {100*row['accuracy']:5.1f}%"
+            f" | REASONING {100*row['reasoning_accuracy']:5.1f}%"
+            f" | contract {100*row['contract_compliance']:3.0f}%"
+            f" | answered {100*row['answered_at_all']:3.0f}%"
         )
     print("\n=== by family ===")
     for family, per_depth in sorted(result["by_family"].items()):
@@ -422,6 +498,7 @@ def main() -> int:
         "elapsed_s": round(time.time() - started, 3),
         "metric": "exact_match_correctness",
         "memory_envelope": envelope_receipt,
+        "bridge": args.bridge,
         "calibration": calibration,
         "claims_awarded": [],
         "results": result,
