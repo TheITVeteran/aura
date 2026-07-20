@@ -115,6 +115,10 @@ class RecurrentDepthPlan:
         }
 
 
+from contextlib import contextmanager  # noqa: E402
+from contextvars import ContextVar  # noqa: E402
+
+
 def _rms(tensor: Any) -> Any:
     """RMS in float32.
 
@@ -130,15 +134,100 @@ def _rms(tensor: Any) -> Any:
     return mx.sqrt(mx.mean(mx.square(wide), axis=-1, keepdims=True) + 1e-6)
 
 
+class _CheckpointState:
+    """Gradient checkpointing over the recurrent window.
+
+    Not an optimization. Backprop through T passes retains T*window layer
+    activations; at T=4 over a 32-layer window on a 32B that is 128 layers
+    of retained activation, which is the road back to the 103 GB incident.
+    """
+
+    def __init__(self, model: Any, group_size: int) -> None:
+        self.model = model
+        self.group_size = group_size
+        self.wrappers: dict[Any, Any] = {}
+
+    def traced_parameters(self) -> Any:
+        """The TRAINABLE parameters, read at forward time.
+
+        Two constraints meet here:
+
+        * Read at forward time, never at scope entry. mx.checkpoint
+          recomputes its group from the arrays handed to it, so those must
+          be the ones value_and_grad is tracing. A snapshot taken when the
+          scope opened is disconnected from the trace and the gradient
+          comes back all zeros -- silently, because a zero gradient looks
+          like a converged step rather than a broken one.
+        * Trainable only. mx.checkpoint differentiates with respect to its
+          inputs, so handing it the full tree makes it try to differentiate
+          the frozen 4-bit base weights: "[QuantizedMatmul::vjp] no
+          gradient wrt the quantized weights."
+        """
+        return self.model.trainable_parameters()
+
+
+_CHECKPOINTS: ContextVar[Any] = ContextVar(
+    "intrinsic_recurrence_checkpoints", default=None
+)
+
+
+@contextmanager
+def checkpointed_window(model: Any, *, group_size: int = 4):
+    """Trade recompute for memory inside the recurrent forward."""
+    if type(group_size) is not int or group_size < 1:
+        raise ValueError("group_size must be a positive integer")
+    token = _CHECKPOINTS.set(_CheckpointState(model, group_size))
+    try:
+        yield
+    finally:
+        _CHECKPOINTS.reset(token)
+
+
 def _run(layers: Any, hidden: Any, caches: Any = None) -> Any:
+    import mlx.core as mx
     from mlx_lm.models.base import create_attention_mask
 
     layer_list = list(layers)
+    if not layer_list:
+        return hidden
+    state = _CHECKPOINTS.get()
+    if caches is None and state is not None:
+        # Checkpointing and KV caches are mutually exclusive: a cache is
+        # mutated in place, so recomputing a checkpointed group would append
+        # its keys a second time and silently corrupt the attention history.
+        # Training has no cache; decode has no checkpointing.
+        for offset in range(0, len(layer_list), state.group_size):
+            group = tuple(layer_list[offset : offset + state.group_size])
+            key = tuple(id(layer) for layer in group)
+            call = state.wrappers.get(key)
+            if call is None:
+
+                def group_call(
+                    all_parameters: Any,
+                    value: Any,
+                    _group: tuple[Any, ...] = group,
+                ) -> Any:
+                    state.model.update(all_parameters)
+                    for member in _group:
+                        value = member(
+                            value, create_attention_mask(value, None), None
+                        )
+                    return value
+
+                call = mx.checkpoint(group_call)
+                state.wrappers[key] = call
+            hidden = call(state.traced_parameters(), hidden)
+        return hidden
     if caches is None:
         mask = create_attention_mask(hidden, None)
         for layer in layer_list:
             hidden = layer(hidden, mask, None)
         return hidden
+    if state is not None:
+        raise ValueError(
+            "gradient checkpointing cannot be combined with KV caches: "
+            "recomputing a checkpointed group would append its keys twice"
+        )
     if len(caches) != len(layer_list):
         raise ValueError("cache count does not match the layer count")
     mask = create_attention_mask(hidden, caches)
@@ -252,9 +341,6 @@ def recurrent_logits(
 
 
 # ── Per-iteration identity, so the loop can know where it is ────────────
-
-from contextlib import contextmanager  # noqa: E402
-from contextvars import ContextVar  # noqa: E402
 
 _ITERATION: ContextVar[int] = ContextVar("intrinsic_recurrence_iteration", default=0)
 
@@ -380,6 +466,7 @@ def trajectory_dynamics(trajectory: list[Any]) -> dict[str, Any]:
 __all__ = [
     "INTRINSIC_RECURRENCE_SCHEMA",
     "RecurrentDepthPlan",
+    "checkpointed_window",
     "current_iteration",
     "make_recurrent_caches",
     "recurrent_hidden_states",
