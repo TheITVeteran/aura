@@ -6,6 +6,7 @@ control plane is sound and whether release is permitted. Two modes:
 
 * ``--mode structural`` (checkpoint gate, wired into release preflight):
   - the registry must parse strictly and match the current tracker extraction;
+  - the separately hashed evidence ledger must bind the exact registry;
   - the closure graph must be a DAG with no orphans or duplicates;
   - recorded evidence must verify (existing file, matching hash, known commit);
   - every corpus passage must be mapped (zero-unmapped, always);
@@ -43,6 +44,12 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from tools.reqproof.coverage import check_coverage  # noqa: E402
+from tools.reqproof.evidence import (  # noqa: E402
+    DEFAULT_EVIDENCE_LEDGER_PATH,
+    EvidenceLedgerError,
+    load_evidence_ledger,
+    verify_ledger_binding,
+)
 from tools.reqproof.migrate import (  # noqa: E402
     DEFAULT_ALLOWLIST_PATH,
     DEFAULT_REGISTRY_PATH,
@@ -107,6 +114,7 @@ def run_gate(
     registry_path: Path,
     tracker_path: Path,
     allowlist_path: Path,
+    evidence_ledger_path: Path,
     baseline_path: Path,
     report_path: Path,
     refresh_baseline: bool = False,
@@ -116,16 +124,28 @@ def run_gate(
     counts: dict[str, int] = {}
     coverage_report: dict = {}
     registry = None
+    evidence_ledger = None
 
     try:
         registry = load_registry(registry_path)
     except RegistrySchemaError as exc:
         failures.append(f"registry: {exc}")
     try:
+        evidence_ledger = load_evidence_ledger(evidence_ledger_path)
+    except EvidenceLedgerError as exc:
+        failures.append(f"evidence ledger: {exc}")
+    try:
         extraction = parse_tracker(tracker_path)
     except TrackerParseError as exc:
         failures.append(f"tracker: {exc}")
         extraction = None
+
+    if registry is not None and evidence_ledger is not None:
+        try:
+            verify_ledger_binding(evidence_ledger, registry)
+        except EvidenceLedgerError as exc:
+            failures.append(f"evidence ledger: {exc}")
+            evidence_ledger = None
 
     if registry is not None and extraction is not None:
         allowlist = load_prose_allowlist(allowlist_path)
@@ -135,6 +155,11 @@ def run_gate(
                 root=root,
                 extraction=extraction,
                 prose_allowlist=allowlist,
+                evidence_by_requirement=(
+                    evidence_ledger.by_requirement()
+                    if evidence_ledger is not None
+                    else {}
+                ),
             )
         )
         coverage_defects, coverage_report = check_coverage(
@@ -213,6 +238,14 @@ def run_gate(
             "tracker_extraction_sha256": (
                 registry.generated_from.tracker_extraction_sha256
             ),
+            "evidence_ledger_entries": (
+                len(evidence_ledger.entries) if evidence_ledger is not None else 0
+            ),
+            "evidence_ledger_sha256": (
+                evidence_ledger.compute_content_sha256()
+                if evidence_ledger is not None
+                else ""
+            ),
         }
         if mode == "release":
             if mandatory_open:
@@ -259,6 +292,7 @@ def main() -> int:
     parser.add_argument("--registry", default=str(DEFAULT_REGISTRY_PATH))
     parser.add_argument("--tracker", default=str(ROOT / TRACKER_RELPATH))
     parser.add_argument("--allowlist", default=str(DEFAULT_ALLOWLIST_PATH))
+    parser.add_argument("--evidence-ledger", default=str(DEFAULT_EVIDENCE_LEDGER_PATH))
     parser.add_argument("--baseline", default=str(DEFAULT_BASELINE_PATH))
     parser.add_argument("--report", default=str(DEFAULT_REPORT_PATH))
     parser.add_argument(
@@ -273,6 +307,7 @@ def main() -> int:
         registry_path=Path(args.registry),
         tracker_path=Path(args.tracker),
         allowlist_path=Path(args.allowlist),
+        evidence_ledger_path=Path(args.evidence_ledger),
         baseline_path=Path(args.baseline),
         report_path=Path(args.report),
         refresh_baseline=bool(args.refresh_baseline),

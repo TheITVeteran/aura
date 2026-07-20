@@ -11,9 +11,16 @@ import json
 from pathlib import Path
 
 from reqproof_testkit import mini_tracker
+
 from tools.reqproof.coverage import _sha256_text, range_text
+from tools.reqproof.evidence import (
+    EvidenceLedger,
+    load_evidence_ledger,
+    write_evidence_ledger_atomic,
+)
 from tools.reqproof.gate import run_gate
 from tools.reqproof.migrate import migrate
+from tools.reqproof.schema import load_registry
 
 MINI_CORPUS = """Build alpha end to end.
 Prove beta with evidence.
@@ -26,6 +33,7 @@ def build_mini_repo(root: Path, **tracker_kwargs) -> dict[str, Path]:
         "tracker": root / "docs" / "AURA_EXECUTION_TRACKER.md",
         "registry": root / "config" / "requirement_registry.json",
         "allowlist": root / "config" / "reqproof_prose_token_allowlist.json",
+        "evidence_ledger": root / "config" / "requirement_evidence_ledger.json",
         "baseline": root / "config" / "reqproof_defect_baseline.json",
         "report": root / "artifacts" / "reqproof" / "GATE_REPORT.json",
         "corpus": root / "config" / "requirement_sources" / "MINI.txt",
@@ -83,6 +91,10 @@ def build_mini_repo(root: Path, **tracker_kwargs) -> dict[str, Path]:
         allowlist_path=paths["allowlist"],
         write=True,
     )
+    write_evidence_ledger_atomic(
+        EvidenceLedger.empty_for(load_registry(paths["registry"])),
+        paths["evidence_ledger"],
+    )
     return paths
 
 
@@ -93,9 +105,23 @@ def gate(root: Path, paths: dict[str, Path], **kwargs):
         registry_path=paths["registry"],
         tracker_path=paths["tracker"],
         allowlist_path=paths["allowlist"],
+        evidence_ledger_path=paths["evidence_ledger"],
         baseline_path=paths["baseline"],
         report_path=paths["report"],
         **kwargs,
+    )
+
+
+def rebind_ledger(paths: dict[str, Path]) -> None:
+    current = load_evidence_ledger(paths["evidence_ledger"])
+    registry = load_registry(paths["registry"])
+    write_evidence_ledger_atomic(
+        EvidenceLedger(
+            schema_version=current.schema_version,
+            registry_content_sha256=registry.compute_content_sha256(),
+            entries=current.entries,
+        ),
+        paths["evidence_ledger"],
     )
 
 
@@ -114,6 +140,23 @@ class TestBaselinePass:
         first = paths["report"].read_bytes()
         gate(tmp_path, paths)
         assert paths["report"].read_bytes() == first
+
+    def test_missing_evidence_ledger_fails_structurally(self, tmp_path):
+        paths = build_mini_repo(tmp_path)
+        paths["evidence_ledger"].unlink()
+        code, report = gate(tmp_path, paths)
+        assert code == 1
+        assert any("evidence ledger not found" in failure for failure in report["failures"])
+
+    def test_ledger_bound_to_old_registry_fails_structurally(self, tmp_path):
+        paths = build_mini_repo(tmp_path)
+        data = json.loads(paths["evidence_ledger"].read_text(encoding="utf-8"))
+        data["registry_content_sha256"] = "f" * 64
+        unhashed = EvidenceLedger.from_dict(data, verify_hash=False)
+        write_evidence_ledger_atomic(unhashed, paths["evidence_ledger"])
+        code, report = gate(tmp_path, paths)
+        assert code == 1
+        assert any("different registry" in failure for failure in report["failures"])
 
 
 class TestGamingAttempts:
@@ -151,6 +194,7 @@ class TestGamingAttempts:
             allowlist_path=paths["allowlist"],
             write=True,
         )
+        rebind_ledger(paths)
         code, report = gate(tmp_path, paths)
         assert code == 1
         assert any("unproven-closure" in failure for failure in report["failures"])
@@ -218,6 +262,7 @@ class TestGamingAttempts:
             allowlist_path=paths["allowlist"],
             write=True,
         )
+        rebind_ledger(paths)
         code_after, report_after = gate(tmp_path, paths, refresh_baseline=True)
         assert code_after == 0, report_after["failures"]
         assert "OMEGA-777" in {
@@ -250,6 +295,7 @@ class TestRatchet:
             allowlist_path=paths["allowlist"],
             write=True,
         )
+        rebind_ledger(paths)
         code, report = gate(tmp_path, paths)
         assert code == 1
         assert any("NEW ratcheted defect" in failure for failure in report["failures"])
@@ -270,6 +316,7 @@ class TestRatchet:
             allowlist_path=paths["allowlist"],
             write=True,
         )
+        rebind_ledger(paths)
         code, report = gate(tmp_path, paths, refresh_baseline=True)
         assert code == 1
         assert any("shrink-only" in failure for failure in report["failures"])
@@ -286,6 +333,7 @@ class TestRatchet:
             allowlist_path=paths["allowlist"],
             write=True,
         )
+        rebind_ledger(paths)
         code, report = gate(tmp_path, paths)
         assert code == 1
         assert any("STALE" in failure for failure in report["failures"])
@@ -390,6 +438,9 @@ class TestRealRepositoryGate:
             allowlist_path=self.ROOT
             / "config"
             / "reqproof_prose_token_allowlist.json",
+            evidence_ledger_path=self.ROOT
+            / "config"
+            / "requirement_evidence_ledger.json",
             baseline_path=self.ROOT / "config" / "reqproof_defect_baseline.json",
             report_path=tmp_path / "GATE_REPORT.json",
         )

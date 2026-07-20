@@ -1,0 +1,389 @@
+#!/usr/bin/env python3
+"""Strict evidence ledger for the Aura requirement-to-proof control plane.
+
+The requirement registry is generated from tracker scope and must remain free
+of hand-maintained proof claims. This module owns the separate, reviewable
+overlay that binds a requirement and evidence class to exact artifact bytes
+and the source commit those bytes evaluate.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import sys
+from dataclasses import dataclass, field
+from datetime import date
+from pathlib import Path, PurePosixPath
+from typing import Any
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from tools.reqproof.schema import (  # noqa: E402
+    REQUIREMENT_ID_RE,
+    SHA256_RE,
+    EvidenceRef,
+    Registry,
+    RegistrySchemaError,
+    load_registry,
+)
+
+LEDGER_SCHEMA_VERSION = 1
+DEFAULT_REGISTRY_PATH = ROOT / "config" / "requirement_registry.json"
+DEFAULT_EVIDENCE_LEDGER_PATH = ROOT / "config" / "requirement_evidence_ledger.json"
+
+
+class EvidenceLedgerError(ValueError):
+    """The evidence ledger or one of its references violated its contract."""
+
+
+def _require(condition: bool, message: str) -> None:
+    if not condition:
+        raise EvidenceLedgerError(message)
+
+
+def _check_string(value: Any, name: str) -> str:
+    _require(isinstance(value, str) and bool(value), f"{name} must be a non-empty string")
+    return value
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def resolve_evidence_target(root: Path, ref: str) -> Path:
+    """Resolve one canonical repo-relative regular file without symlink escape."""
+    posix = PurePosixPath(ref)
+    _require("\\" not in ref, f"evidence ref must use POSIX separators: {ref!r}")
+    _require(not posix.is_absolute(), f"evidence ref must be repo-relative: {ref!r}")
+    _require(
+        bool(posix.parts) and all(part not in ("", ".", "..") for part in posix.parts),
+        f"evidence ref contains an unsafe path component: {ref!r}",
+    )
+    _require(posix.as_posix() == ref, f"evidence ref is not canonical: {ref!r}")
+
+    root_resolved = root.resolve()
+    target = root.joinpath(*posix.parts)
+    current = root
+    for part in posix.parts:
+        current = current / part
+        _require(not current.is_symlink(), f"evidence ref traverses a symlink: {ref!r}")
+    _require(target.is_file(), f"evidence ref does not name a regular file: {ref!r}")
+    resolved = target.resolve()
+    _require(
+        resolved.is_relative_to(root_resolved),
+        f"evidence ref escapes repository root: {ref!r}",
+    )
+    return resolved
+
+
+@dataclass(frozen=True)
+class EvidenceLedgerEntry:
+    requirement_id: str
+    evidence: EvidenceRef
+
+    ALLOWED_KEYS = frozenset(
+        {"requirement_id", "evidence_class", "ref", "sha256", "commit", "recorded_at"}
+    )
+
+    @classmethod
+    def from_dict(cls, data: Any, name: str) -> EvidenceLedgerEntry:
+        _require(isinstance(data, dict), f"{name} must be an object")
+        unknown = set(data) - cls.ALLOWED_KEYS
+        _require(not unknown, f"{name} has unknown fields: {sorted(unknown)}")
+        requirement_id = _check_string(data.get("requirement_id"), f"{name}.requirement_id")
+        _require(
+            bool(REQUIREMENT_ID_RE.match(requirement_id)),
+            f"{name}.requirement_id does not match the requirement ID pattern",
+        )
+        try:
+            evidence = EvidenceRef.from_dict(
+                {key: data.get(key) for key in EvidenceRef.ALLOWED_KEYS}, name
+            )
+        except RegistrySchemaError as exc:
+            raise EvidenceLedgerError(str(exc)) from exc
+        return cls(requirement_id=requirement_id, evidence=evidence)
+
+    @property
+    def sort_key(self) -> tuple[str, ...]:
+        evidence = self.evidence
+        return (
+            self.requirement_id,
+            evidence.evidence_class,
+            evidence.ref,
+            evidence.sha256,
+            evidence.commit,
+            evidence.recorded_at,
+        )
+
+    def to_dict(self) -> dict[str, str]:
+        return {"requirement_id": self.requirement_id, **self.evidence.to_dict()}
+
+
+@dataclass(frozen=True)
+class EvidenceLedger:
+    schema_version: int
+    registry_content_sha256: str
+    entries: tuple[EvidenceLedgerEntry, ...]
+    content_sha256: str = field(default="", compare=False)
+
+    ALLOWED_KEYS = frozenset(
+        {"schema_version", "registry_content_sha256", "entries", "content_sha256"}
+    )
+
+    @classmethod
+    def empty_for(cls, registry: Registry) -> EvidenceLedger:
+        return cls(
+            schema_version=LEDGER_SCHEMA_VERSION,
+            registry_content_sha256=registry.compute_content_sha256(),
+            entries=(),
+        )
+
+    @classmethod
+    def from_dict(cls, data: Any, *, verify_hash: bool = True) -> EvidenceLedger:
+        _require(isinstance(data, dict), "evidence ledger must be an object")
+        unknown = set(data) - cls.ALLOWED_KEYS
+        _require(not unknown, f"evidence ledger has unknown fields: {sorted(unknown)}")
+        missing = cls.ALLOWED_KEYS - set(data)
+        _require(not missing, f"evidence ledger is missing fields: {sorted(missing)}")
+        _require(
+            data.get("schema_version") == LEDGER_SCHEMA_VERSION,
+            f"evidence ledger schema_version must be {LEDGER_SCHEMA_VERSION}",
+        )
+        registry_hash = _check_string(
+            data.get("registry_content_sha256"), "registry_content_sha256"
+        )
+        _require(bool(SHA256_RE.match(registry_hash)), "registry_content_sha256 is not sha256")
+        raw_entries = data.get("entries")
+        _require(isinstance(raw_entries, list), "evidence ledger entries must be a list")
+        entries = tuple(
+            EvidenceLedgerEntry.from_dict(item, f"entries[{index}]")
+            for index, item in enumerate(raw_entries)
+        )
+        keys = [entry.sort_key for entry in entries]
+        _require(keys == sorted(keys), "evidence ledger entries must be canonically sorted")
+        _require(len(keys) == len(set(keys)), "evidence ledger contains duplicate entries")
+        ledger = cls(
+            schema_version=LEDGER_SCHEMA_VERSION,
+            registry_content_sha256=registry_hash,
+            entries=entries,
+            content_sha256=str(data.get("content_sha256", "")),
+        )
+        if verify_hash:
+            recorded = data.get("content_sha256")
+            _require(
+                isinstance(recorded, str) and bool(SHA256_RE.match(recorded)),
+                "evidence ledger content_sha256 missing or malformed",
+            )
+            actual = ledger.compute_content_sha256()
+            _require(
+                recorded == actual,
+                "evidence ledger content_sha256 does not match content: "
+                f"recorded {recorded[:12]}..., actual {actual[:12]}...",
+            )
+        return ledger
+
+    def body_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "registry_content_sha256": self.registry_content_sha256,
+            "entries": [entry.to_dict() for entry in self.entries],
+        }
+
+    def compute_content_sha256(self) -> str:
+        canonical = json.dumps(self.body_dict(), sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    def to_dict(self) -> dict[str, Any]:
+        body = self.body_dict()
+        body["content_sha256"] = self.compute_content_sha256()
+        return body
+
+    def to_canonical_json(self) -> str:
+        return json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n"
+
+    def by_requirement(self) -> dict[str, tuple[EvidenceRef, ...]]:
+        grouped: dict[str, list[EvidenceRef]] = {}
+        for entry in self.entries:
+            grouped.setdefault(entry.requirement_id, []).append(entry.evidence)
+        return {key: tuple(value) for key, value in grouped.items()}
+
+
+def load_evidence_ledger(path: Path) -> EvidenceLedger:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise EvidenceLedgerError(f"evidence ledger not found: {path}") from exc
+    except json.JSONDecodeError as exc:
+        raise EvidenceLedgerError(f"evidence ledger is not valid JSON: {path}: {exc}") from exc
+    return EvidenceLedger.from_dict(data)
+
+
+def write_evidence_ledger_atomic(ledger: EvidenceLedger, path: Path) -> str:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = ledger.to_canonical_json()
+    tmp_path = path.with_name(path.name + ".tmp")
+    try:
+        with tmp_path.open("w", encoding="utf-8") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        tmp_path.replace(path)
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink()
+    return ledger.compute_content_sha256()
+
+
+def verify_ledger_binding(ledger: EvidenceLedger, registry: Registry) -> None:
+    expected = registry.compute_content_sha256()
+    _require(
+        ledger.registry_content_sha256 == expected,
+        "evidence ledger is bound to a different registry: "
+        f"recorded {ledger.registry_content_sha256[:12]}..., expected {expected[:12]}...",
+    )
+    known = registry.by_id()
+    for entry in ledger.entries:
+        _require(
+            entry.requirement_id in known,
+            f"evidence ledger references unknown requirement {entry.requirement_id}",
+        )
+        requirement = known[entry.requirement_id]
+        _require(
+            entry.evidence.evidence_class in requirement.evidence_required,
+            f"{entry.requirement_id} does not require evidence class "
+            f"{entry.evidence.evidence_class}",
+        )
+
+
+def add_entry(
+    ledger: EvidenceLedger,
+    registry: Registry,
+    *,
+    requirement_id: str,
+    evidence_class: str,
+    ref: str,
+    commit: str,
+    recorded_at: str,
+    root: Path,
+) -> EvidenceLedger:
+    verify_ledger_binding(ledger, registry)
+    known = registry.by_id()
+    _require(requirement_id in known, f"unknown requirement {requirement_id}")
+    _require(
+        evidence_class in known[requirement_id].evidence_required,
+        f"{requirement_id} does not require evidence class {evidence_class}",
+    )
+    target = resolve_evidence_target(root, ref)
+    try:
+        evidence = EvidenceRef.from_dict(
+            {
+                "evidence_class": evidence_class,
+                "ref": ref,
+                "sha256": sha256_file(target),
+                "commit": commit,
+                "recorded_at": recorded_at,
+            },
+            "evidence",
+        )
+    except RegistrySchemaError as exc:
+        raise EvidenceLedgerError(str(exc)) from exc
+    entry = EvidenceLedgerEntry(requirement_id=requirement_id, evidence=evidence)
+    entries = tuple(sorted((*ledger.entries, entry), key=lambda item: item.sort_key))
+    _require(
+        len({item.sort_key for item in entries}) == len(entries),
+        "evidence entry already exists",
+    )
+    return EvidenceLedger(
+        schema_version=LEDGER_SCHEMA_VERSION,
+        registry_content_sha256=registry.compute_content_sha256(),
+        entries=entries,
+    )
+
+
+def _resolve_commit(root: Path, revision: str) -> str:
+    from core.runtime.subprocess_gateway import get_subprocess_gateway
+
+    result = get_subprocess_gateway().run(
+        ["git", "rev-parse", "--verify", f"{revision}^{{commit}}"],
+        cwd=root,
+        timeout=30,
+        read_only=True,
+        source="reqproof_evidence_resolve_commit",
+    )
+    _require(result.returncode == 0, f"unknown git commit {revision!r}")
+    commit = result.stdout.strip()
+    _require(bool(commit) and len(commit) == 40, f"git returned invalid commit for {revision!r}")
+    return commit
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--registry", default=str(DEFAULT_REGISTRY_PATH))
+    parser.add_argument("--ledger", default=str(DEFAULT_EVIDENCE_LEDGER_PATH))
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers.add_parser("init", help="create an empty ledger for the current registry")
+    subparsers.add_parser("rebind", help="bind existing valid entries to the current registry")
+    record = subparsers.add_parser("record", help="record one exact evidence artifact")
+    record.add_argument("--requirement", required=True)
+    record.add_argument("--class", dest="evidence_class", required=True)
+    record.add_argument("--ref", required=True)
+    record.add_argument("--commit", default="HEAD")
+    record.add_argument("--recorded-at", default=date.today().isoformat())
+    args = parser.parse_args()
+
+    registry = load_registry(Path(args.registry))
+    ledger_path = Path(args.ledger)
+    if args.command == "init":
+        _require(not ledger_path.exists(), f"refusing to overwrite existing ledger {ledger_path}")
+        ledger = EvidenceLedger.empty_for(registry)
+    else:
+        ledger = load_evidence_ledger(ledger_path)
+        if args.command == "rebind":
+            known = registry.by_id()
+            for entry in ledger.entries:
+                _require(
+                    entry.requirement_id in known,
+                    f"cannot rebind unknown requirement {entry.requirement_id}",
+                )
+                _require(
+                    entry.evidence.evidence_class
+                    in known[entry.requirement_id].evidence_required,
+                    f"cannot rebind obsolete evidence class for {entry.requirement_id}",
+                )
+            ledger = EvidenceLedger(
+                schema_version=LEDGER_SCHEMA_VERSION,
+                registry_content_sha256=registry.compute_content_sha256(),
+                entries=ledger.entries,
+            )
+        else:
+            ledger = add_entry(
+                ledger,
+                registry,
+                requirement_id=args.requirement,
+                evidence_class=args.evidence_class,
+                ref=args.ref,
+                commit=_resolve_commit(ROOT, args.commit),
+                recorded_at=args.recorded_at,
+                root=ROOT,
+            )
+    digest = write_evidence_ledger_atomic(ledger, ledger_path)
+    print(
+        json.dumps(
+            {"ledger": str(ledger_path), "entries": len(ledger.entries), "sha256": digest},
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -353,7 +353,7 @@ Status rules:
 
 | Master ID | Status | Mandatory workstream and closure burden | Detailed scope |
 |---|---|---|---|
-| `SCOPE-001` | `IN PROGRESS (MACHINE REGISTRY + ZERO-UNMAPPED COVERAGE + STRUCTURAL GATE LANDED; EVIDENCE LEDGER, PROGRESS ENGINE, TRACKER-VIEW CONVERGENCE OPEN) 2026-07-18` | Build the machine-readable requirement-to-proof control plane, assign every prompt/context obligation a stable ID, enforce evidence-backed transitions, and generate zero-unmapped coverage. The registry (`config/requirement_registry.json`, 301 requirements) is now generated deterministically from this tracker's normative extraction by `tools/reqproof/migrate.py`; `tools/reqproof/gate.py --mode structural` enforces registry/tracker coherence, a sound closure DAG, verifiable evidence refs, zero-unmapped coverage of all four source corpora, and a shrink-only defect-fingerprint ratchet (58 pinned pre-existing defects: 23 dependency cycles, 19 unproven closures, 11 prose-minted requirements, 3 contradictory statuses, 2 false closures). Wired into `release_preflight` as `reqproof_structural`; `--mode release` blocks while any mandatory requirement or defect remains. Prose edits, shallow tests, stale artifacts, and omitted children cannot close a requirement: closure requires verifiable evidence per class plus closed children. Still open: per-requirement evidence ledger population, the evidence-weighted progress/forecast engine (`PROGRESS-CONTROL-001`), and converging this tracker into a generated view of the registry. | Matrix 1; Pass F 12-13; checkpoint hygiene |
+| `SCOPE-001` | `IN PROGRESS (MACHINE REGISTRY + ZERO-UNMAPPED COVERAGE + STRUCTURAL GATE + HASHED EVIDENCE LEDGER LANDED; EVIDENCE POPULATION, PROGRESS ENGINE, TRACKER-VIEW CONVERGENCE OPEN) 2026-07-20` | Build the machine-readable requirement-to-proof control plane, assign every prompt/context obligation a stable ID, enforce evidence-backed transitions, and generate zero-unmapped coverage. The registry (`config/requirement_registry.json`, 301 requirements) is generated deterministically from this tracker's normative extraction by `tools/reqproof/migrate.py`. The separate `config/requirement_evidence_ledger.json` is canonically hashed and bound to the exact registry; its writer computes artifact hashes and the structural gate rejects tampering, registry drift, unknown requirement/class references, unsafe or symlinked paths, missing/mutated files, unknown commits, duplicates, and incomplete evidence-class closure. `tools/reqproof/gate.py --mode structural` also enforces registry/tracker coherence, a sound closure DAG, zero-unmapped coverage of all four source corpora, and a shrink-only defect-fingerprint ratchet (58 pinned pre-existing defects: 23 dependency cycles, 19 unproven closures, 11 prose-minted requirements, 3 contradictory statuses, 2 false closures). Wired into `release_preflight` as `reqproof_structural`; `--mode release` blocks while any mandatory requirement or defect remains. Prose edits, shallow tests, stale artifacts, and omitted children cannot close a requirement. Still open: per-requirement evidence population and source-change freshness policy, the evidence-weighted progress/forecast engine (`PROGRESS-CONTROL-001`), and converging this tracker into a generated view of the registry. | Matrix 1; Pass F 12-13; checkpoint hygiene |
 | `PROGRESS-CONTROL-001` | `IN PROGRESS 2026-07-13` | Generate an evidence-weighted Aura 1.0 burn-up and total-checkpoint forecast from the requirement-to-proof graph. Track per-workstream acceptance units, dependencies, risk/proof weights, source/test/live/release state, every completed pushed checkpoint, estimate range, newly discovered scope, reopened regressions, and confidence. Count implementation, cleanup, repair, integration, verification, live, portability, release, and soak checkpoints rather than only headline milestones. Never award progress for prose, code presence, mocked-only evidence, an unpushed commit, or a source-green live obligation; release blocks unless the denominator is complete and zero mandatory units remain. | `SCOPE-001`, `RELEASE-CONTRACT-001`, `CHECKPOINT-001`, `VALIDATE-001`; running progress request 2026-07-13 |
 | `FOUNDATION-100-001` | `OPEN 2026-07-13` | Close the complete Aura implementation foundation from smallest source detail through largest capability expansion using the ten-layer foundation ladder below. Inventory every executable and persistent surface, eliminate hygiene/debt and placeholder behavior, impose typed/effect/lifecycle/data contracts, unify ownership and integration, deepen/generalize every capability, then certify resilience, performance, security, live behavior, and expansion with a machine-counted zero-open report. | `REPO-001`, `ARCH-001`, `CAPABILITY-CERT-001`, `SCOPE-001`; foundation-to-100% request 2026-07-13 |
 | `RLC-SCOPE-001` | `IN PROGRESS 2026-07-15` | Map every requirement, caveat, mechanism, failure mode, experiment, expansion, and learning claim in `Anima Rationis.txt` to executable owners, dependencies, tests, live artifacts, independent verdicts, and explicit non-claims. Zero unmapped statements and zero closure from prose/code presence are mandatory. | Recursive Latent Cortex request; `SCOPE-001`, `PROGRESS-CONTROL-001`; CP95 |
@@ -22387,3 +22387,37 @@ interaction, frontier, external-custody, installed-app, release, or soak credit.
 Next: publish CP206 and continue bounded non-model closeout work outside every
 source file bound by the live CP203 and CP205 configurations. Final long soaks
 remain deferred.
+
+## Checkpoint 2026-07-20-207: Requirement Evidence Ledger
+
+`tools/reqproof/evidence.py` separates proof claims from the generated scope
+registry. Its strict canonical schema binds the complete ledger to the exact
+registry hash and each entry to one known requirement, one required evidence
+class, exact artifact bytes, one source commit, and an ISO record date. The
+atomic CLI initializes, rebinds, and records evidence without making tracker
+prose or generated registry edits into proof authority.
+
+The structural and release gates now require this ledger and reject malformed
+or hand-rehashed content, registry drift, unknown requirement or evidence-class
+references, duplicate entries, absolute/traversal/non-canonical paths, symlink
+escape, non-files, changed hashes, and unknown commits. Closure verification
+consumes the checked ledger overlay while retaining compatibility with the
+registry's generated empty evidence field. The gate report publishes exact
+ledger entry and content-hash counts. The checked-in ledger intentionally has
+zero entries: this milestone builds and proves the recording authority but does
+not retroactively promote narrative checkpoints into evidence.
+
+Validation is green: 111 evidence-ledger, strict-schema, validator, structural
+gate, migration, and corpus-coverage tests pass; focused Ruff and bytecode
+compilation pass; and the real 301-requirement structural gate passes with zero
+failures. The test battery covers content tampering, wrong-registry binding,
+missing ledger, unsafe paths and symlinks, duplicates, unrequired classes,
+overlay closure, and crash-before-replace preservation. This work also repairs
+the stale registry extraction exposed after CP206 instead of suppressing it.
+
+Evidence-weighted completion remains 27%. This is checkpoint 207 of the
+faithful 292-399 total-checkpoint forecast, leaving approximately 85-192
+checkpoints. No requirement receives completion credit from the empty ledger.
+Next: build the deterministic burn-up/forecast engine, then populate evidence
+from reviewed immutable artifacts under an explicit source-change freshness
+policy. Final long soaks remain deferred.
