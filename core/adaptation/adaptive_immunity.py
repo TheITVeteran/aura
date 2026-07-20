@@ -74,7 +74,9 @@ def _record_adaptive_immunity_degradation(
         severity=severity,
         action=action,
         classification=FallbackClassification.SAFE_FALLBACK,
-        receipt_required=False,
+        # This subsystem mutates live state and can trigger repairs — its
+        # failures need forensic receipts, not waived ones.
+        receipt_required=True,
         extra=extra,
     )
 
@@ -99,7 +101,14 @@ def _maintenance_background_deferral_reason() -> str:
         )
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
         logger.debug("Adaptive immune background policy unavailable: %s", exc)
-        return ""
+        # Fail CLOSED: an unreadable maintenance policy means runtime pressure
+        # is UNKNOWN, and heavy immune work (dream consolidation, coevolution)
+        # must defer rather than assume the runtime is idle.
+        _record_adaptive_immunity_degradation(
+            exc,
+            action="deferred heavy immune work after background policy probe failed",
+        )
+        return "background_policy_unavailable"
 
 
 def _json_safe(value: Any) -> Any:
@@ -240,6 +249,10 @@ class Antigen:
             temporal_pressure=float(data.get("temporal_pressure", 0.0)),
             recurrence_pressure=float(data.get("recurrence_pressure", 0.0)),
             protected=bool(data.get("protected", False)),
+            # Restore the origin domain — dropping it reclassified every
+            # persisted environmental antigen as substrate, letting
+            # environment-caused failures qualify for substrate repair.
+            source_domain=str(data.get("source_domain", "substrate")),
             source=str(data.get("source", "unknown")),
             error_signature=str(data.get("error_signature", "")),
             stack_trace=str(data.get("stack_trace", "")),
@@ -901,7 +914,13 @@ class AdaptiveImmuneSystem:
         self._recent_responses: deque[dict[str, Any]] = deque(
             maxlen=self.cfg.recent_response_buffer
         )
-        self._recent_subsystem_counts: Counter[str] = Counter()
+        # Time-windowed event timestamps per subsystem. A cumulative counter
+        # never decayed, so temporal pressure permanently saturated after six
+        # lifetime events and stopped representing recurrence RECENCY.
+        self._recent_subsystem_events: dict[str, deque[float]] = defaultdict(
+            lambda: deque(maxlen=64)
+        )
+        self._subsystem_event_window_s: float = 900.0
         self._recurrence_tracker: dict[str, dict[str, Any]] = defaultdict(
             lambda: {
                 "occurrences": 0,
@@ -1120,6 +1139,16 @@ class AdaptiveImmuneSystem:
         self._record_response_summary(response)
         return response
 
+    def _recent_subsystem_count(self, subsystem: str) -> int:
+        """Count subsystem events inside the recency window, pruning old ones."""
+        events = self._recent_subsystem_events.get(subsystem)
+        if not events:
+            return 0
+        cutoff = time.time() - self._subsystem_event_window_s
+        while events and events[0] < cutoff:
+            events.popleft()
+        return len(events)
+
     def present_antigen(
         self,
         event: dict[str, Any],
@@ -1171,7 +1200,7 @@ class AdaptiveImmuneSystem:
             health_pressure = self._component_health_pressure(subsystem, state_snapshot)
             temporal_pressure = min(
                 1.0,
-                float(self._recent_subsystem_counts.get(subsystem, 0)) / 6.0,
+                float(self._recent_subsystem_count(subsystem)) / 6.0,
             )
             recurrence_pressure = self._estimate_recurrence_pressure(subsystem, error_signature)
             tissue_need_prior = self._tissue.get_need(subsystem)
@@ -1232,6 +1261,10 @@ class AdaptiveImmuneSystem:
                 temporal_pressure=max(0.0, min(1.0, temporal_pressure)),
                 recurrence_pressure=max(0.0, min(1.0, recurrence_pressure)),
                 protected=protected,
+                # Carry the event's origin domain — omitting it classified
+                # every live event as substrate, defeating the environmental
+                # repair guard.
+                source_domain=str(event.get("source_domain") or "substrate"),
                 source=str(event.get("source") or event.get("type") or "unknown"),
                 error_signature=error_signature,
                 stack_trace=stack_trace,
@@ -1395,7 +1428,7 @@ class AdaptiveImmuneSystem:
     def _observe_core(self, antigen: Antigen) -> tuple[ImmuneResponse, ImmuneCell | None]:
         with self._lock:
             self._observation_count += 1
-            self._recent_subsystem_counts[antigen.subsystem] += 1
+            self._recent_subsystem_events[antigen.subsystem].append(time.time())
             self._recent_antigens.append(antigen)
             self._record_recurrence_observation(antigen)
             self._tissue.ingest_antigen(antigen)
@@ -1827,19 +1860,22 @@ class AdaptiveImmuneSystem:
             if artifact.success:
                 self._tissue.mark_repair(artifact.component, 0.40)
 
+            # An actuator success boolean is a CLAIM, not verification: no
+            # component health was sampled and no durability was tested, so
+            # verified_success stays False and no health gain is fabricated.
             return {
-                "status": "verified_success" if artifact.success else "failed",
+                "status": "actuated_unverified" if artifact.success else "failed",
                 "raw_success": artifact.success,
-                "verified_success": artifact.success,
+                "verified_success": False,
                 "health_before": None,
                 "health_after": None,
-                "health_delta": 0.25 if artifact.success else 0.0,
+                "health_delta": 0.0,
                 "health_samples": [],
                 "coverage_ratio": coverage_ratio,
                 "recurrence_risk": round(
                     max(
                         0.0,
-                        min(1.0, antigen.recurrence_pressure * (0.55 if artifact.success else 1.0)),
+                        min(1.0, antigen.recurrence_pressure * (0.80 if artifact.success else 1.0)),
                     ),
                     4,
                 ),
@@ -1895,10 +1931,13 @@ class AdaptiveImmuneSystem:
                     artifact.notes = str(patch_result["notes"])
                 if applied:
                     self._tissue.mark_repair(artifact.component, 0.32)
+                # "applied" means the patch pipeline ran — this layer has no
+                # post-apply health, regression, or recurrence evidence, so
+                # an applied patch is NOT a verified recovery.
                 return {
                     "status": str(patch_result.get("status", "patch_attempted")),
                     "raw_success": applied,
-                    "verified_success": applied,
+                    "verified_success": False,
                     "health_before": None,
                     "health_after": None,
                     "health_delta": 0.0,
@@ -1906,13 +1945,21 @@ class AdaptiveImmuneSystem:
                     "coverage_ratio": round(coverage_ratio, 4),
                     "recurrence_risk": round(
                         max(
-                            0.0, min(1.0, antigen.recurrence_pressure * (0.45 if applied else 1.0))
+                            0.0, min(1.0, antigen.recurrence_pressure * (0.80 if applied else 1.0))
                         ),
                         4,
                     ),
                     "notes": artifact.notes or "",
                 }
-            except (OSError, ConnectionError, TimeoutError) as exc:
+            except (
+                OSError,
+                ConnectionError,
+                TimeoutError,
+                RuntimeError,
+                AttributeError,
+                TypeError,
+                ValueError,
+            ) as exc:
                 _record_adaptive_immunity_degradation(
                     exc,
                     action="Marked patch artifact execution failed and returned an execution_error verification report",
@@ -2051,12 +2098,20 @@ class AdaptiveImmuneSystem:
         if not raw_success:
             return False
         threshold = float(self.cfg.min_verified_health_delta)
-        if health_before is not None and health_after is not None:
-            if (health_after - health_before) >= threshold:
-                return True
-            if health_samples and (max(health_samples) - health_before) >= threshold:
-                return True
-        return False
+        if health_before is None or health_after is None:
+            return False
+        # A single transient uptick is not verification. Require the FINAL
+        # observation to clear the threshold, and when multiple samples
+        # exist, require the recovery to have held across the tail of the
+        # window (min of the last half must also clear it) — a spike that
+        # decays back is a failed repair, not a verified one.
+        if (health_after - health_before) < threshold:
+            return False
+        if len(health_samples) >= 3:
+            tail = health_samples[len(health_samples) // 2 :]
+            if (min(tail) - health_before) < threshold:
+                return False
+        return True
 
     @staticmethod
     def _artifact_strategy_name(kind: EffectorKind) -> str:
@@ -2100,7 +2155,10 @@ class AdaptiveImmuneSystem:
             "health_delta": 0.0,
             "health_samples": [],
             "coverage_ratio": round(float(coverage_ratio), 4),
-            "recurrence_risk": 0.0,
+            # Nothing ran, so the underlying risk is UNRESOLVED — reporting
+            # zero here understated recurrence risk for suppressed,
+            # unavailable, and advisory outcomes.
+            "recurrence_risk": 0.5,
             "notes": notes,
         }
 
@@ -2163,7 +2221,7 @@ class AdaptiveImmuneSystem:
             ),
             "state_snapshot": bool(state_snapshot),
             "temporal_history": antigen.recurrence_pressure > 0.0
-            or self._recent_subsystem_counts.get(antigen.subsystem, 0) > 0,
+            or self._recent_subsystem_count(antigen.subsystem) > 0,
         }
         coverage_ratio = sum(1.0 for present in channels.values() if present) / max(
             len(channels), 1
@@ -2218,10 +2276,18 @@ class AdaptiveImmuneSystem:
             if (
                 coverage_ratio < self.cfg.low_coverage_floor
                 and artifact.kind in risky_kinds
-                and antigen.danger < 0.88
             ):
-                artifact.suppressed = True
-                artifact.notes = artifact.notes or "suppressed under low observability"
+                # Danger alone must not buy a bypass: with health and causal
+                # visibility missing, a high danger score is itself
+                # low-confidence evidence. Risky actions under low
+                # observability require at least SOME coverage even at
+                # extreme danger.
+                extreme_danger_with_minimum_visibility = (
+                    antigen.danger >= 0.88 and coverage_ratio >= 0.25
+                )
+                if not extreme_danger_with_minimum_visibility:
+                    artifact.suppressed = True
+                    artifact.notes = artifact.notes or "suppressed under low observability"
 
     def _execution_candidates(self, response: ImmuneResponse) -> list[EffectorArtifact]:
         candidates = [
@@ -2249,6 +2315,9 @@ class AdaptiveImmuneSystem:
         coverage_ratio = float(coverage_report.get("coverage_ratio", 0.0) or 0.0)
         verification_status = str(verification_report.get("status", "not_executed"))
         verified_success = bool(verification_report.get("verified_success", False))
+        # Only INPUT signals count as evidence. The immune model's own cell
+        # activation is an output of this same model — counting it alongside
+        # the inputs double-counted one inference as corroboration.
         evidence_count = sum(
             1
             for present in (
@@ -2257,7 +2326,6 @@ class AdaptiveImmuneSystem:
                 antigen.resource_pressure > 0.45,
                 antigen.recurrence_pressure > 0.3,
                 bool(antigen.stack_trace),
-                bool(response.activated_cells),
             )
             if present
         )
@@ -2281,7 +2349,11 @@ class AdaptiveImmuneSystem:
         elif antigen.danger >= 0.48 or antigen.recurrence_pressure >= 0.4:
             status = "suspected_issue"
             all_clear = False
-        elif coverage_ratio >= 0.75:
+        elif coverage_ratio >= 0.75 and "health_probe" in set(
+            coverage_report.get("observed_channels") or []
+        ):
+            # All-clear requires a DIRECT component probe — channel presence
+            # alone (telemetry existing) is not evidence the component is well.
             status = "no_confirmed_issue_under_current_visibility"
             all_clear = True
         else:
@@ -2359,25 +2431,36 @@ class AdaptiveImmuneSystem:
             self._save_state()
 
     def _component_monitor_matches(self, subsystem: str) -> list[str]:
+        """Match a subsystem to registered health monitors — exact-first.
+
+        Loose substring / shared-prefix matching bound the WRONG health probe
+        (e.g. "memory" matched "memory_guard"), producing false coverage and
+        verification against another subsystem. Exact identity wins outright;
+        containment is accepted only for full underscore-token prefixes
+        ("llm_router" ↔ "llm_router_gate"), never bare first-token overlap.
+        """
         if not subsystem:
             return []
         autopoiesis = self._get_service("autopoiesis")
         health_fns = getattr(autopoiesis, "_health_fns", {}) if autopoiesis is not None else {}
         lowered = subsystem.lower()
-        matches: list[str] = []
+        exact: list[str] = []
+        token_prefix: list[str] = []
         for component in health_fns:
             candidate = str(component).lower()
-            if candidate == lowered or candidate in lowered or lowered in candidate:
-                matches.append(str(component))
+            if candidate == lowered:
+                exact.append(str(component))
                 continue
-            if candidate.split("_", 1)[0] == lowered.split("_", 1)[0]:
-                matches.append(str(component))
-        return sorted(set(matches))
+            if candidate.startswith(lowered + "_") or lowered.startswith(candidate + "_"):
+                token_prefix.append(str(component))
+        if exact:
+            return sorted(set(exact))
+        return sorted(set(token_prefix))
 
     def _system_coverage_summary(self) -> dict[str, Any]:
         active_subsystems = {
             subsystem
-            for subsystem in set(self._recent_subsystem_counts) | set(self._tissue._edges)
+            for subsystem in set(self._recent_subsystem_events) | set(self._tissue._edges)
             if subsystem and subsystem != "unknown"
         }
         monitored = set()
@@ -2674,8 +2757,23 @@ class AdaptiveImmuneSystem:
             "expansion_engine": self.expansion_engine.to_dict(),
         }
         try:
-            atomic_write_text(self._state_path, json.dumps(payload, indent=2), encoding="utf-8")
-        except (json.JSONDecodeError, TypeError, ValueError) as exc:
+            # Route through the governed file-write gateway: a repair-capable,
+            # behavior-evolving state file is a consequential write and must
+            # be authorized and receipt-bound like every other one.
+            from core.governance_context import local_internal_governed_scope
+            from core.runtime.file_write_gateway import get_file_write_gateway
+
+            with local_internal_governed_scope(
+                "adaptation.adaptive_immunity.state",
+                domain="file_write",
+                receipt_prefix="adaptive-immunity-state",
+            ):
+                get_file_write_gateway().write_text(
+                    self._state_path,
+                    json.dumps(payload, indent=2),
+                    source="adaptation.adaptive_immunity.state",
+                )
+        except (ImportError, OSError, RuntimeError, json.JSONDecodeError, TypeError, ValueError) as exc:
             _record_adaptive_immunity_degradation(
                 exc,
                 action="Skipped adaptive immune persistence write and kept in-memory immune state active",
@@ -2761,7 +2859,18 @@ class AdaptiveImmuneSystem:
                 }
             self._assign_species()
             return bool(self._cells)
-        except (OSError, ConnectionError, TimeoutError) as exc:
+        except (
+            OSError,
+            ConnectionError,
+            TimeoutError,
+            # Corrupt or hostile persisted state must quarantine to a reseed,
+            # never abort immune construction: JSON, schema, enum, and
+            # numeric failures were previously uncaught here.
+            json.JSONDecodeError,
+            KeyError,
+            TypeError,
+            ValueError,
+        ) as exc:
             _record_adaptive_immunity_degradation(
                 exc,
                 action="Rejected persisted adaptive immune state and reseeded immune population",
@@ -2961,7 +3070,14 @@ class AdaptiveImmuneSystem:
             from core.container import ServiceContainer
 
             return ServiceContainer.get(name, default=None)
-        except (ImportError, AttributeError, RuntimeError):
+        except (ImportError, AttributeError, RuntimeError) as exc:
+            # A broken lookup is a repair-infrastructure fault, not merely
+            # absent evidence — record it so the immune system's own
+            # dependencies show up in forensics.
+            _record_adaptive_immunity_degradation(
+                exc,
+                action=f"treated service '{name}' as unavailable after lookup failure",
+            )
             return None
 
     @staticmethod
