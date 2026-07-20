@@ -2253,6 +2253,7 @@ class MLXLocalClient:
         self._active_generations = 0
         self._warmup_attempted = False
         self._warmup_in_flight = False
+        self._warmup_started_at = 0.0
         self._model_load_admission_state_lock = _threading.Lock()
         self._model_load_admission_backoff_until = 0.0
         self._model_load_admission_backoff_until_unix = 0.0
@@ -6597,6 +6598,18 @@ class MLXLocalClient:
             or purpose_label.strip().lower().endswith("_baseline")
             or "_baseline" in purpose_label.strip().lower()
         )
+        if benchmark_request and not os.environ.get("AURA_BENCHMARK_RUN_ID", "").strip():
+            # The benchmark label buys resource-refusal exemptions and
+            # cancellation-trust downgrades, yet it is self-declared via
+            # origin/purpose strings. Until benchmark runs carry a signed
+            # context, an un-anchored claim at least leaves a receipt.
+            _record_mlx_degradation(
+                RuntimeError(
+                    f"unanchored_benchmark_label:origin={origin_label[:40]}:"
+                    f"purpose={purpose_label[:40]}"
+                ),
+                action="honored self-declared benchmark label without AURA_BENCHMARK_RUN_ID",
+            )
         if benchmark_request:
             request_is_background = False
         if (
@@ -6642,12 +6655,30 @@ class MLXLocalClient:
             )
             if memory_snapshot.should_gc:
                 gc.collect()
+            _critical_bypass_active = str(
+                os.environ.get("AURA_MLX_ALLOW_CRITICAL_MEMORY_GENERATION", "")
+            ).strip().lower() in {"1", "true", "yes", "on"}
             if (
                 memory_snapshot.refuse_heavy_local_generation
                 and self._is_primary_or_deep_lane()
                 and not benchmark_request
-                and str(os.environ.get("AURA_MLX_ALLOW_CRITICAL_MEMORY_GENERATION", "")).strip().lower()
-                not in {"1", "true", "yes", "on"}
+                and _critical_bypass_active
+            ):
+                # The operator bypass stays available, but overriding a
+                # POSITIVELY OBSERVED critical-pressure refusal must be
+                # visible — a stale deployment flag here is an OOM.
+                _record_mlx_degradation(
+                    RuntimeError(
+                        f"critical_memory_refusal_bypassed:{memory_snapshot.reason}"
+                    ),
+                    action="proceeded with heavy generation under critical pressure via operator override",
+                    severity="warning",
+                )
+            if (
+                memory_snapshot.refuse_heavy_local_generation
+                and self._is_primary_or_deep_lane()
+                and not benchmark_request
+                and not _critical_bypass_active
             ):
                 if self.is_alive() and int(getattr(self, "_active_generations", 0) or 0) <= 0:
                     await self.reboot_worker(reason="memory_pressure_guard", mark_failed=False)
@@ -6664,6 +6695,24 @@ class MLXLocalClient:
                 )
                 return None
         except (OSError, AttributeError) as exc:
+            # Fail CLOSED for the heavy lanes: the comment above is explicit
+            # that critical pressure can swap/jetsam the host before one
+            # token — unknown pressure is not a safe assumption for a
+            # 20-40GB decode. Light lanes proceed (their footprint cannot
+            # jetsam the host and refusing them would silence every reply).
+            if self._is_primary_or_deep_lane() and not benchmark_request:
+                _record_mlx_degradation(
+                    exc,
+                    action="refused heavy generation while the memory probe was unavailable",
+                    severity="critical",
+                )
+                self._record_degraded_event(
+                    "memory_probe_unavailable_refused_generation",
+                    detail=f"{os.path.basename(self.model_path)}:{exc}",
+                    severity="critical",
+                    foreground_request=foreground_request,
+                )
+                return None
             logger.debug("MLX memory pressure probe unavailable: %s", exc)
 
         # ── SOMATIC COUPLING: Metabolic hardware throttle ────────────
@@ -7508,6 +7557,23 @@ class MLXLocalClient:
                     if not readiness_text or not str(readiness_text).strip():
                         self._set_lane_state("recovering", "warmup_readiness_no_text")
                         raise RuntimeError("warmup_readiness_no_text")
+                    # Verify the probe actually followed "Reply exactly:
+                    # ready" — any nonblank text (hallucination, prompt echo,
+                    # garble) previously stamped visible readiness. A
+                    # coherent-but-different reply still proves a live
+                    # decode path, so it degrades visibly instead of
+                    # recycling a healthy worker.
+                    if "ready" not in str(readiness_text).strip().lower():
+                        _record_mlx_degradation(
+                            RuntimeError(
+                                "warmup_readiness_answer_mismatch:"
+                                f"{str(readiness_text).strip()[:80]!r}"
+                            ),
+                            action=(
+                                "accepted live decode as readiness despite probe "
+                                "answer mismatch"
+                            ),
+                        )
                     self._last_visible_readiness_at = time.time()
                 self._set_lane_state("ready")
                 self._last_ready_at = time.time()
@@ -7562,19 +7628,28 @@ class MLXLocalClient:
         owner_name = f"warmup:{os.path.basename(self.model_path)}"
         warmup_timeout = self._warmup_timeout()
         self._warmup_attempted = True
-        # [STABILITY v51] Stale-warmup circuit breaker: if _warmup_in_flight
-        # has been True for >300s, the previous warmup task leaked without
-        # clearing the flag. Force-clear before proceeding.
+        # Singleflight: concurrent warmup callers previously EACH set the
+        # flag and proceeded (double precompile / double spawn pressure), and
+        # the stale check keyed on _lane_transition_at — a field every state
+        # change touches — rather than the warmup's own start time.
         if self._warmup_in_flight:
-            elapsed_since_transition = time.time() - self._lane_transition_at
-            if elapsed_since_transition > 300.0:
-                logger.warning(
-                    "🔧 [STABILITY] _warmup_in_flight was stuck True for %.0fs. "
-                    "Force-clearing stale warmup flag.",
-                    elapsed_since_transition,
+            warmup_started_at = float(getattr(self, "_warmup_started_at", 0.0) or 0.0)
+            stale_after_s = max(300.0, warmup_timeout + 60.0)
+            if warmup_started_at > 0.0 and (time.time() - warmup_started_at) <= stale_after_s:
+                logger.info(
+                    "🔥 [MLX] Warmup already in flight for %s (%.0fs); not stacking a second.",
+                    os.path.basename(self.model_path),
+                    time.time() - warmup_started_at,
                 )
-                self._warmup_in_flight = False
+                return False
+            logger.warning(
+                "🔧 [STABILITY] _warmup_in_flight was stuck True (started %.0fs ago). "
+                "Force-clearing stale warmup flag.",
+                (time.time() - warmup_started_at) if warmup_started_at > 0.0 else -1.0,
+            )
+            self._warmup_in_flight = False
         self._warmup_in_flight = True
+        self._warmup_started_at = time.time()
         self._set_lane_state("warming")
         try:
             if foreground_request:
