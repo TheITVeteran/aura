@@ -197,7 +197,17 @@ def _chat(base: str, session: str, message: str, timeout: float) -> tuple[str, s
     to tell WHO answered without grepping server logs (2026-07-10)."""
     body = json.dumps({"message": message, "session_id": session}).encode()
     req = urllib.request.Request(
-        base + "/api/chat", data=body, headers={"Content-Type": "application/json"}
+        base + "/api/chat",
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            # The probe exercises the REAL conversation lane on purpose, but
+            # its turns must never persist into long-term memory — stored
+            # probe questions resurfacing in live chats caused visible
+            # thread-jumping drift. The memory facade also refuses
+            # endurance-/probe-prefixed session ids as a backstop.
+            "X-Aura-Ephemeral-Memory": "true",
+        },
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         payload = json.load(resp)

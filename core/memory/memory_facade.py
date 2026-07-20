@@ -19,6 +19,30 @@ from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.Memory")
 
+# ── Probe-harness memory hygiene ─────────────────────────────────────────────
+# Endurance/soak probes drive the REAL /api/chat lane on purpose (that is the
+# claim they test), so their turns look exactly like lived conversation. They
+# must never persist into long-term memory or resurface in recall: probe turns
+# like "(turn 169) In a few sentences, how does a refrigerator move heat?"
+# re-emerging mid-chat produced visible thread-jumping drift for the user.
+_PROBE_HARNESS_TURN_RE = re.compile(r"\(turn\s+\d+\)\s")
+_PROBE_SESSION_ID_RE = re.compile(r"^(endurance|soak|probe|bench)[-_]", re.IGNORECASE)
+
+
+def _probe_harness_reason(text: Any, metadata: Any) -> str:
+    """Return why this content is probe-harness material, or '' if it is not."""
+    payload = metadata if isinstance(metadata, dict) else {}
+    if bool(payload.get("ephemeral_probe_session")):
+        return "ephemeral_probe_session"
+    session_id = str(
+        payload.get("session_id") or payload.get("chat_session_id") or ""
+    ).strip()
+    if session_id and _PROBE_SESSION_ID_RE.match(session_id):
+        return "probe_session_id"
+    if _PROBE_HARNESS_TURN_RE.search(str(text or "")[:400]):
+        return "harness_turn_pattern"
+    return ""
+
 class MemoryFacade:
     """
     Unified entry point for episodic, semantic, and vector memories.
@@ -1113,6 +1137,11 @@ class MemoryFacade:
             key = f"{normalized.get('id', '')}::{normalized['content']}".lower()
             if not normalized["content"] or key in seen:
                 return
+            # Recall hygiene: stored probe-harness turns (from soaks that ran
+            # before write-side hygiene existed) must not resurface into live
+            # conversation context.
+            if _probe_harness_reason(normalized["content"], normalized.get("metadata")):
+                return
             seen.add(key)
             results.append(normalized)
         
@@ -1289,6 +1318,15 @@ class MemoryFacade:
         if welfare_block:
             self._last_add_memory_status = {"ok": False, "reason": f"welfare_block:{welfare_block}"}
             logger.info("MemoryFacade: welfare blocked add_memory: %s", welfare_block)
+            return False
+
+        probe_reason = _probe_harness_reason(text, payload)
+        if probe_reason:
+            self._last_add_memory_status = {"ok": False, "reason": f"probe_hygiene:{probe_reason}"}
+            logger.info(
+                "MemoryFacade: refused probe-harness content for long-term memory (%s).",
+                probe_reason,
+            )
             return False
         
         # Extract and track entity mentions for specificity in later recall

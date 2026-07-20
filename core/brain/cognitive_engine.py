@@ -96,6 +96,46 @@ def _compact_text(value: Any, *, limit: int = 480) -> str:
     return text[: limit - 3].rstrip() + "..."
 
 
+def _combine_advisory_token_factors(factors: list[float]) -> float:
+    """Combine advisory max_tokens factors without compounding them.
+
+    Multiple advisory frames (spiking inference, imagination, bicameral,
+    cognitive situation) each suggest a budget factor. Multiplying them all
+    let four mild 0.75-0.85 reductions compound into a ~35% budget
+    (768 → ~250 tokens) that cut live user replies off mid-sentence. Only
+    the single strongest reduction applies; boosts apply only when nothing
+    asks for a reduction.
+    """
+    if not factors:
+        return 1.0
+    reductions = [factor for factor in factors if factor < 1.0]
+    return min(reductions) if reductions else max(factors)
+
+
+_REPLY_TERMINATOR_CHARS = ".!?…\"'”’)]}`"
+
+
+def _trim_midsentence_cutoff(text: str) -> tuple[str, bool]:
+    """Backstop for replies that stop mid-clause at the token budget.
+
+    A user-facing turn must never end on a dangling fragment like
+    "Weighted against" — if the tail is clearly unfinished and a sentence
+    boundary exists in the final 40% of the text, cut there. Returns the
+    (possibly trimmed) text and whether a trim happened. Keeps the text
+    untouched when no safe boundary exists: a partial answer still beats
+    an empty one.
+    """
+    stripped = str(text or "").rstrip()
+    if not stripped:
+        return stripped, False
+    if stripped[-1] in _REPLY_TERMINATOR_CHARS or stripped.endswith("```"):
+        return stripped, False
+    last_boundary = max(stripped.rfind(ch) for ch in ".!?…")
+    if last_boundary >= int(len(stripped) * 0.6):
+        return stripped[: last_boundary + 1], True
+    return stripped, False
+
+
 def _compact_json(value: Any, *, limit: int = 2400) -> str:
     try:
         text = json.dumps(value, sort_keys=True, default=str, ensure_ascii=True)
@@ -2140,6 +2180,7 @@ class CognitiveEngine:
         canonical_self_condition_context = str(
             context.get("canonical_self_condition_context") or ""
         ).strip()
+        advisory_factors: list[float] = []
         for sampling in sampling_sources:
             if isinstance(sampling, dict):
                 try:
@@ -2149,7 +2190,12 @@ class CognitiveEngine:
                 if 0.25 <= factor_value <= 1.25:
                     if capability_inventory_contract and factor_value < 1.0:
                         continue
-                    max_tokens = max(128, int(max_tokens * factor_value))
+                    advisory_factors.append(factor_value)
+        if advisory_factors:
+            max_tokens = max(
+                128,
+                int(max_tokens * _combine_advisory_token_factors(advisory_factors)),
+            )
         if memory_state_contract or runtime_fact_status_contract or self_condition_contract:
             max_tokens = max(128, min(max_tokens, 256))
         elif capability_inventory_contract:
@@ -2157,7 +2203,9 @@ class CognitiveEngine:
         elif extended_full_mind_reply:
             max_tokens = max(1024, min(max_tokens, 2048))
         else:
-            max_tokens = max(256, min(max_tokens, 1024))
+            # 512-token floor: a live conversational reply must have room to
+            # finish its sentences even after advisory reductions.
+            max_tokens = max(512, min(max_tokens, 1024))
         request_timeout = max(12.0, min(max(12.0, float(timeout_s or 32.0) - 5.0), 180.0))
         if memory_state_contract or runtime_fact_status_contract or self_condition_contract:
             request_timeout = min(request_timeout, 90.0)
@@ -2751,6 +2799,17 @@ class CognitiveEngine:
                     generation_metadata=router_generation_metadata,
                 )
             return None
+        text, trimmed_cutoff = _trim_midsentence_cutoff(text)
+        if trimmed_cutoff:
+            record_degradation(
+                "cognitive_engine",
+                RuntimeError("desktop_quick_reply_midsentence_cutoff"),
+                severity="info",
+                action=(
+                    "trimmed a token-budget mid-sentence cutoff back to the last "
+                    "complete sentence before surfacing the desktop reply"
+                ),
+            )
         imagination_feedback = self._learn_imagination_workspace_outcome(
             context,
             outcome="desktop_quick_reply",
