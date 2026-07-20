@@ -117,7 +117,20 @@ class ScopedLoRALinear(LoRALinear):  # type: ignore[misc]
         sequence_length = int(x.shape[-2])
         activation.calls += 1
         activation.observed_positions += sequence_length
-        z = (self.dropout(x) @ self.lora_a) @ self.lora_b
+        # Depth conditioning (CP219): when a per-depth bank is attached, the
+        # EFFECTIVE operator varies with the recurrent step, so step t and
+        # step t+1 compute different functions. A phase code injected into
+        # the input is re-absorbed by alpha-interpolation; changing the
+        # operator is what actually differentiates the steps. Absent a
+        # bank this is bit-identical to the shared adapter.
+        bank = getattr(self, "depth_bank", None)
+        if bank is None:
+            lora_a, lora_b = self.lora_a, self.lora_b
+        else:
+            from core.learning.depth_conditioned_lora import current_depth_index
+
+            lora_a, lora_b = bank.factors_for(current_depth_index())
+        z = (self.dropout(x) @ lora_a) @ lora_b
         if activation.start is None or activation.stop is None:
             activation.adapted_positions += sequence_length
             return y + (self.scale * z).astype(x.dtype)

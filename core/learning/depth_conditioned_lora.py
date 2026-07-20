@@ -191,9 +191,15 @@ def wrap_depth_conditioned(
                 projection = getattr(parent, target, None)
                 if isinstance(projection, ScopedLoRALinear):
                     key = f"model.layers.{layer_index}.{parent_name}.{target}"
-                    wrapped[key] = DepthConditionedLoRA(
+                    bank = DepthConditionedLoRA(
                         projection, depths=depths, delta_scale=delta_scale
                     )
+                    # Attach so the projection's forward consults the bank.
+                    # Without this the bank exists but nothing reads it --
+                    # a mechanism that is present in name only, which is
+                    # exactly the defect CP211 had to repair in v4.
+                    projection.depth_bank = bank
+                    wrapped[key] = bank
     if not wrapped:
         raise RuntimeError(
             "no ScopedLoRALinear projections found; wrap the recurrent "

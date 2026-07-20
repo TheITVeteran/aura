@@ -387,14 +387,20 @@ def _advance_recurrent_states(
         anchors,
         strict=True,
     ):
-        candidate = _window_pass(
-            model,
-            prompt_at_window,
-            state,
-            prelude_end,
-            coda_start,
-            phase_step=step,
-        )
+        # Publish the recurrent step so any attached depth-conditioned
+        # operator bank selects this step's effective transform. A no-op
+        # when no bank is attached.
+        from core.learning.depth_conditioned_lora import recurrent_depth_index
+
+        with recurrent_depth_index(step):
+            candidate = _window_pass(
+                model,
+                prompt_at_window,
+                state,
+                prelude_end,
+                coda_start,
+                phase_step=step,
+            )
         updated.append(
             (1.0 - alpha) * state
             + alpha * rms_match(candidate, anchor, spec.rms_clip_ratio)

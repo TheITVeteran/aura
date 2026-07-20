@@ -165,3 +165,51 @@ def test_a_half_trained_delta_is_still_exactly_identity():
     a, b = conditioned.factors_for(1)
     delta = (mx.ones((1, 4, a.shape[0])) @ a) @ b
     assert float(mx.max(mx.abs(delta))) == 0.0
+
+
+# ── Wired end-to-end, not present in name only ──────────────────────────
+
+
+def test_forward_actually_consults_the_bank_at_each_depth():
+    """CP211's lesson: a mechanism nothing reads is decoration. The
+    projection's OUTPUT must change with the recurrent step."""
+    from core.brain.llm.latent_cortex.recurrence_adapter import (
+        recurrence_adapter_scope,
+    )
+
+    model = _model()
+    banks = wrap_depth_conditioned(model, depths=3)
+    bank = banks["model.layers.1.self_attn.o_proj"]
+    projection = model.model.layers[1].self_attn.o_proj
+    # Give depth 2 a live delta (BOTH factors, or dW = A@B is zero).
+    bank.depth_a[2] = mx.ones_like(projection.lora_a) * 0.4
+    bank.depth_b[2] = mx.ones_like(projection.lora_b) * 0.4
+
+    x = mx.ones((1, 4, projection.lora_a.shape[0]))
+    with recurrence_adapter_scope(start=0, stop=4):
+        with recurrent_depth_index(0):
+            at_zero = projection(x)
+        with recurrent_depth_index(2):
+            at_two = projection(x)
+    assert not bool(mx.allclose(at_zero, at_two)), (
+        "the effective operator must differ by depth, or depth "
+        "conditioning is present in name only"
+    )
+
+
+def test_untrained_bank_leaves_the_forward_bit_identical():
+    """Zero-initialized deltas must not perturb a working adapter."""
+    from core.brain.llm.latent_cortex.recurrence_adapter import (
+        recurrence_adapter_scope,
+    )
+
+    model = _model()
+    projection = model.model.layers[1].self_attn.o_proj
+    x = mx.ones((1, 4, projection.lora_a.shape[0]))
+    with recurrence_adapter_scope(start=0, stop=4):
+        before = projection(x)
+    wrap_depth_conditioned(model, depths=4)
+    with recurrence_adapter_scope(start=0, stop=4):
+        with recurrent_depth_index(3):
+            after = projection(x)
+    assert bool(mx.allclose(before, after))
