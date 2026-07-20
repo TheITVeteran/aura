@@ -93,11 +93,17 @@ def test_worker_detach_restores_wrapped_module():
 def test_worker_dispatch_handles_set_expert_adapter():
     source = open("core/brain/llm/mlx_worker.py", encoding="utf-8").read()
     assert 'elif action == "set_expert_adapter":' in source
-    # KV caches must be invalidated on weight change
-    handler = source.split('elif action == "set_expert_adapter":', 1)[1][:4000]
+    # KV caches must be invalidated on weight change (CP126: invalidation is
+    # now proven-or-fatal, validation precedes mutation, and a failed attach
+    # rolls back to the previous identity instead of silently going bare).
+    handler = source.split('elif action == "set_expert_adapter":', 1)[1][:8000]
     assert "prompt_cache_lru.clear()" in handler
     assert "_clear_mlx_cache" in handler
     assert "metal_semaphore" in handler
+    assert "_validate_expert_adapter_dir" in handler
+    assert "_unrestorable_wrapped" in handler
+    assert "restored_previous" in handler
+    assert "cache_invalidated" in handler
 
 
 # ── client guards ─────────────────────────────────────────────────────────────

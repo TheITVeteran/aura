@@ -2586,6 +2586,78 @@ def _named_lora_module_ids(model: Any) -> set[int]:
     }
 
 
+def _expert_adapter_approved_roots() -> list[Path]:
+    """Directories an IPC-supplied adapter path may resolve under."""
+    roots = [
+        Path(os.path.expanduser("~/.aura/data/adapters")),
+        Path(os.path.expanduser("~/.aura/models")),
+    ]
+    try:
+        # Repo artifacts: training pipelines publish adapters here.
+        roots.append(Path(__file__).resolve().parents[3] / "artifacts")
+    except (OSError, IndexError):
+        logger.debug("Repo artifacts root unavailable for adapter policy.")
+    configured = os.environ.get("AURA_EXPERT_ADAPTER_ROOTS", "")
+    for extra in configured.split(os.pathsep):
+        extra = extra.strip()
+        if extra:
+            roots.append(Path(os.path.expanduser(extra)))
+    return roots
+
+
+def _validate_expert_adapter_dir(adapter_dir: str) -> Path:
+    """Structural + policy validation BEFORE any resident-weight mutation.
+
+    set_expert_adapter previously accepted any path from any IPC caller and
+    mutated resident weights first, validating nothing: no approved-root
+    policy, no adapter structure check. Validation failures here leave the
+    resident model completely untouched.
+    """
+    path = Path(str(adapter_dir or "")).expanduser()
+    try:
+        path = path.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise FileNotFoundError(f"expert_adapter_dir_unresolvable:{adapter_dir}") from exc
+    if not path.is_dir():
+        raise NotADirectoryError(f"expert_adapter_not_a_directory:{path}")
+    config_path = path / "adapter_config.json"
+    if not config_path.is_file():
+        raise ValueError(f"expert_adapter_missing_config:{path}")
+    try:
+        json.loads(config_path.read_text())
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"expert_adapter_config_unparseable:{path}") from exc
+    has_weights = any(path.glob("*.safetensors")) or (path / "adapters.npz").is_file()
+    if not has_weights:
+        raise ValueError(f"expert_adapter_missing_weights:{path}")
+    for root in _expert_adapter_approved_roots():
+        try:
+            resolved_root = root.expanduser().resolve()
+        except (OSError, RuntimeError):
+            continue
+        try:
+            path.relative_to(resolved_root)
+            return path
+        except ValueError:
+            continue
+    raise PermissionError(f"expert_adapter_path_not_approved:{path}")
+
+
+def _unrestorable_wrapped(wrapped: list[tuple[str, Any]]) -> list[str]:
+    """Names of wrapped modules detach cannot restore to their base form.
+
+    Detach restores ``.linear`` and ``.embedding`` wrappers. Anything else
+    (in-place or full-weight mutation) is irreversible on the resident
+    model — a swap over it would stack identities, so callers must treat a
+    non-empty result as swap-blocking.
+    """
+    return [
+        name
+        for name, module in wrapped
+        if not (hasattr(module, "linear") or hasattr(module, "embedding"))
+    ]
+
+
 def _attach_expert_adapter(model: Any, adapter_dir: str) -> list[tuple[str, Any]]:
     """Attach adapter weights onto the resident model; return the wrapped modules."""
     from mlx_lm.tuner.utils import load_adapters
@@ -2610,14 +2682,22 @@ def _attach_expert_adapter(model: Any, adapter_dir: str) -> list[tuple[str, Any]
 
 
 def _detach_expert_adapter(model: Any, wrapped: list[tuple[str, Any]]) -> int:
-    """Restore exactly the modules a previous attach wrapped."""
+    """Restore exactly the modules a previous attach wrapped.
+
+    Restores both linear-class wrappers (.linear) and LoRAEmbedding
+    (.embedding) — the tracked class set always included LoRAEmbedding but
+    the old restore path silently skipped it, leaving expert embedding
+    weights resident after a "successful" detach. Callers detect
+    irreversible wraps up front via _unrestorable_wrapped.
+    """
     from mlx.utils import tree_unflatten
 
-    restorable = [
-        (name, module.linear)
-        for name, module in wrapped
-        if hasattr(module, "linear")
-    ]
+    restorable = []
+    for name, module in wrapped:
+        if hasattr(module, "linear"):
+            restorable.append((name, module.linear))
+        elif hasattr(module, "embedding"):
+            restorable.append((name, module.embedding))
     if restorable:
         model.update_modules(tree_unflatten(restorable))
     return len(restorable)
@@ -2673,14 +2753,20 @@ def _load_effective_context_window(model_path: str) -> int:
     except (json.JSONDecodeError, OSError, KeyError, TypeError, ValueError):
         tokenizer_model_max = 0
 
+    def _bounded(window: int) -> int:
+        # Sane bounds on discovered metadata: tokenizer sentinel values
+        # (e.g. 1e30) previously authorized enormous prompts and memory
+        # allocation, and a malformed tiny value would break every request.
+        return max(2048, min(int(window), 262144))
+
     if max_position_embeddings > 0:
         if use_sliding_window and sliding_window > max_position_embeddings:
-            return max(sliding_window, max_position_embeddings)
-        return max_position_embeddings
+            return _bounded(max(sliding_window, max_position_embeddings))
+        return _bounded(max_position_embeddings)
     if use_sliding_window and sliding_window > 0:
-        return sliding_window
+        return _bounded(sliding_window)
     if tokenizer_model_max > 0:
-        return tokenizer_model_max
+        return _bounded(tokenizer_model_max)
     return 32768
 
 
@@ -3309,16 +3395,32 @@ def _mlx_worker_loop(
     try:
         adapter_path = resolve_personality_adapter(model_path, backend="mlx")
         logger.info("Loading model: %s", model_path)
+        # Truthful adapter identity for the init receipt: production must be
+        # able to SEE a silent personality loss (base-model fallback), not
+        # discover it from drifted behavior. severity escalates because a
+        # worker that lost its trained personality/RLC state while reporting
+        # a plain ok init is a identity-integrity failure, not a nicety.
+        personality_adapter_status: dict[str, Any] = {
+            "requested": str(adapter_path or ""),
+            "applied": "",
+            "fallback_base_model": False,
+            "error": "",
+        }
         if adapter_path and os.path.isdir(adapter_path):
             try:
                 logger.info("Loading with LoRA adapter: %s", adapter_path)
                 model, tokenizer = load(model_path, adapter_path=adapter_path)
+                personality_adapter_status["applied"] = str(adapter_path)
                 logger.info("Model loaded with Aura personality LoRA fused.")
             except (RuntimeError, AttributeError, TypeError, ValueError) as adapter_exc:
+                personality_adapter_status["fallback_base_model"] = True
+                personality_adapter_status["error"] = (
+                    f"{type(adapter_exc).__name__}: {adapter_exc}"
+                )
                 _record_mlx_degradation(
                     adapter_exc,
-                    action="loaded base model after LoRA adapter load failed",
-                    severity="degraded",
+                    action="loaded base model after personality LoRA load failed — trained identity NOT resident",
+                    severity="critical",
                 )
                 logger.warning(
                     "⚠️ [WORKER] LoRA adapter failed to load for %s: %s. Using base model + prompt hardening.",
@@ -3328,6 +3430,14 @@ def _mlx_worker_loop(
                 model, tokenizer = load(model_path)
                 logger.info("Model loaded without LoRA (prompt hardening active).")
         else:
+            if adapter_path:
+                personality_adapter_status["fallback_base_model"] = True
+                personality_adapter_status["error"] = "resolved_adapter_dir_missing"
+                _record_mlx_degradation(
+                    RuntimeError(f"personality_adapter_dir_missing:{adapter_path}"),
+                    action="loaded base model because resolved personality adapter dir is missing",
+                    severity="critical",
+                )
             model, tokenizer = load(model_path)
             logger.info("Model loaded (no compatible LoRA adapter).")
 
@@ -3469,6 +3579,7 @@ def _mlx_worker_loop(
                 "device": device,
                 "steering_active": bool(_steering_active),
                 "recurrent_depth": recurrent_depth_status,
+                "personality_adapter": dict(personality_adapter_status),
                 "worker_identity": dict(worker_identity),
             }
         )
@@ -3491,6 +3602,11 @@ def _mlx_worker_loop(
         )
         return
     # ZENITH: Prompt Cache LRU for massive speedup in multi-turn
+    # Discovered once at init; enforced at every tokenization boundary so a
+    # prompt can never overrun the model into Metal work that fails late.
+    effective_context_window = _load_effective_context_window(model_path)
+    logger.info("Effective context window: %d tokens.", effective_context_window)
+
     prompt_cache_budget = _prompt_cache_entry_budget_for_model(model_path)
     prompt_cache_lru = (
         _PromptCacheLRU(max_size=prompt_cache_budget)
@@ -3954,6 +4070,24 @@ def _mlx_worker_loop(
                                     surface_control_state["text_mutations"] = []
                                     current_response = ""
                                     token_count = 0
+                                    final_prompt_cache = None
+                                    deadline_hit = False
+                                    # Caller production deadline (absolute unix
+                                    # seconds). Without it the worker had no
+                                    # request deadline at all and could decode
+                                    # long past the caller's timeout until the
+                                    # 360s watchdog hard-killed the process.
+                                    job_deadline_unix = _safe_float(
+                                        job.get("deadline_unix"), 0.0
+                                    )
+                                    if (
+                                        job_deadline_unix > 0.0
+                                        and time.time() >= job_deadline_unix
+                                    ):
+                                        raise RuntimeError(
+                                            "deadline_exceeded_before_decode:"
+                                            f"deadline_unix={job_deadline_unix:.3f}"
+                                        )
                                     last_progress_emit_at = time.time()
                                     sentinel_aborted = False
                                     sentinel_loop_aborted = False
@@ -4018,6 +4152,21 @@ def _mlx_worker_loop(
 
                                     # [FRONTIER UPGRADE] KV Prompt Caching Injection
                                     tokens = tokenizer.encode(prompt)
+                                    # Context-window admission BEFORE any Metal
+                                    # work: reject with a typed, correlated error
+                                    # instead of overrunning the model. Headroom
+                                    # for at least a minimal answer is reserved.
+                                    _output_reserve = min(
+                                        max(64, _safe_int(kwargs.get("max_tokens"), 512)),
+                                        2048,
+                                    )
+                                    if len(tokens) + _output_reserve > effective_context_window:
+                                        raise RuntimeError(
+                                            "context_window_exceeded:"
+                                            f"prompt_tokens={len(tokens)}:"
+                                            f"output_reserve={_output_reserve}:"
+                                            f"window={effective_context_window}"
+                                        )
                                     import mlx_lm.utils as u
 
                                     def _can_trim(pc):
@@ -4121,18 +4270,34 @@ def _mlx_worker_loop(
 
                                         token_count += 1
                                         progress_now = time.time()
+                                        if (
+                                            job_deadline_unix > 0.0
+                                            and progress_now >= job_deadline_unix
+                                        ):
+                                            logger.warning(
+                                                "⏱️ [WORKER] Request deadline reached at token %d; "
+                                                "stopping decode cooperatively.",
+                                                token_count,
+                                            )
+                                            deadline_hit = True
+                                            break
                                         if use_speculative and getattr(response, "from_draft", False):
                                             draft_accepted_tokens += 1
 
                                         tokens.append(response.token)
-                                        # Snag the prompt cache from the response if supported to save for next turn
+                                        # Track the live cache object; insertion happens
+                                        # ONCE after the loop. Per-token insertion stored
+                                        # the same mutable cache under every growing
+                                        # prefix (mlx_lm mutates it across yields), so
+                                        # older trie keys aliased later-prefix KV state —
+                                        # and each insert churned the small LRU.
                                         if (
                                             prompt_cache_lru is not None
                                             and not disable_prompt_cache
                                             and hasattr(response, "prompt_cache")
                                             and response.prompt_cache is not None
                                         ):
-                                            prompt_cache_lru.insert_cache(model_key, list(tokens), response.prompt_cache)
+                                            final_prompt_cache = response.prompt_cache
 
                                         if intero_tap is not None:
                                             intero_tap.feed(
@@ -4231,6 +4396,19 @@ def _mlx_worker_loop(
                                         if stop_hit:
                                             break
 
+                                    # Single post-generation cache insert: the final
+                                    # cache object exactly matches the final token
+                                    # list, and generation has stopped mutating it.
+                                    if (
+                                        prompt_cache_lru is not None
+                                        and not disable_prompt_cache
+                                        and final_prompt_cache is not None
+                                        and tokens
+                                    ):
+                                        prompt_cache_lru.insert_cache(
+                                            model_key, list(tokens), final_prompt_cache
+                                        )
+
                                     # Interoception: distil this attempt's measurements.
                                     # Later attempts overwrite, so the shipped payload always
                                     # describes the response the caller actually receives.
@@ -4279,9 +4457,9 @@ def _mlx_worker_loop(
                                             response_text = trimmed_response
                                     total_generated_tokens = token_count
 
-                                    if soft_cancelled:
-                                        # Preempted turn: retries would defeat the
-                                        # point of cancelling, but the PURE terminal
+                                    if soft_cancelled or deadline_hit:
+                                        # Preempted or deadline-stopped turn: retries
+                                        # would defeat the point, but the PURE terminal
                                         # transforms still run — a cancelled partial
                                         # must not ship internal leakage or an
                                         # unnormalized strict fragment.
@@ -4889,6 +5067,7 @@ def _mlx_worker_loop(
                         "text": response_text.strip(),
                         "tokens_used": total_generated_tokens,
                         "soft_cancelled": bool(soft_cancelled),
+                        "deadline_exceeded": bool(deadline_hit),
                         "speculative": {
                             "enabled": bool(use_speculative),
                             "draft_tokens_accepted": int(draft_accepted_tokens),
@@ -4981,6 +5160,13 @@ def _mlx_worker_loop(
                             max(_safe_float(job.get("temperature"), 0.8), 0.0), 2.0
                         )
                         token_ids = tokenizer.encode(batch_prompt)
+                        if len(token_ids) + batch_max_tokens > effective_context_window:
+                            raise ValueError(
+                                "context_window_exceeded:"
+                                f"prompt_tokens={len(token_ids)}:"
+                                f"output_reserve={batch_max_tokens}:"
+                                f"window={effective_context_window}"
+                            )
                         watchdog.activity()
                         batch_result = batch_generate(
                             model,
@@ -5172,6 +5358,17 @@ def _mlx_worker_loop(
                                 clean_kwargs = {k: v for k, v in kwargs.items() if k not in clean_keys}
                                 if _speculative_eligible(draft_model, clean_kwargs, job):
                                     clean_kwargs["draft_model"] = draft_model
+
+                                # Context-window admission before streamed Metal work.
+                                _stream_prompt_tokens = len(tokenizer.encode(str(prompt or "")))
+                                _stream_reserve = min(max(64, max_tokens), 2048)
+                                if _stream_prompt_tokens + _stream_reserve > effective_context_window:
+                                    raise RuntimeError(
+                                        "context_window_exceeded:"
+                                        f"prompt_tokens={_stream_prompt_tokens}:"
+                                        f"output_reserve={_stream_reserve}:"
+                                        f"window={effective_context_window}"
+                                    )
 
                                 watchdog.activity()
                                 sentinel_aborted = False
@@ -5457,7 +5654,20 @@ def _mlx_worker_loop(
                     "id": job.get("id"),
                     "action": "set_expert_adapter",
                 }
+                previous_adapter_path = str(expert_adapter_state["path"] or "")
                 try:
+                    # 1) Validate the NEW adapter before touching resident
+                    #    weights — the old order destroyed the current
+                    #    identity first and validated nothing, so any attach
+                    #    failure silently changed model identity to bare.
+                    if requested_path:
+                        _validate_expert_adapter_dir(requested_path)
+                    blocked = _unrestorable_wrapped(expert_adapter_state["wrapped"])
+                    if blocked:
+                        raise RuntimeError(
+                            "expert_adapter_swap_blocked_unrestorable:"
+                            + ",".join(blocked[:4])
+                        )
                     with metal_semaphore:
                         detached = 0
                         if expert_adapter_state["wrapped"]:
@@ -5466,33 +5676,108 @@ def _mlx_worker_loop(
                             )
                             expert_adapter_state.update({"path": "", "wrapped": []})
                         if requested_path:
-                            wrapped = _attach_expert_adapter(model, requested_path)
-                            expert_adapter_state.update(
-                                {"path": requested_path, "wrapped": wrapped}
-                            )
+                            try:
+                                wrapped = _attach_expert_adapter(model, requested_path)
+                                expert_adapter_state.update(
+                                    {"path": requested_path, "wrapped": wrapped}
+                                )
+                            except (
+                                FileNotFoundError,
+                                RuntimeError,
+                                AttributeError,
+                                TypeError,
+                                ValueError,
+                                KeyError,
+                                OSError,
+                            ) as attach_exc:
+                                # 2) Roll back to the PREVIOUS identity
+                                #    instead of silently going bare.
+                                rollback = "bare_model"
+                                if previous_adapter_path:
+                                    try:
+                                        previous_wrapped = _attach_expert_adapter(
+                                            model, previous_adapter_path
+                                        )
+                                        expert_adapter_state.update(
+                                            {
+                                                "path": previous_adapter_path,
+                                                "wrapped": previous_wrapped,
+                                            }
+                                        )
+                                        rollback = "restored_previous"
+                                    except (
+                                        FileNotFoundError,
+                                        RuntimeError,
+                                        AttributeError,
+                                        TypeError,
+                                        ValueError,
+                                        KeyError,
+                                        OSError,
+                                    ) as rollback_exc:
+                                        _record_mlx_degradation(
+                                            rollback_exc,
+                                            action="fell back to bare model after adapter rollback also failed",
+                                            severity="critical",
+                                        )
+                                response["rollback"] = rollback
+                                raise attach_exc
+                        # 3) Cache invalidation is PROVEN, not best-effort:
+                        #    cached KV states computed under the previous
+                        #    weights must not survive an identity change.
+                        cache_invalidated = True
                         try:
                             if prompt_cache_lru is not None:
                                 prompt_cache_lru.clear()
-                        except (RuntimeError, AttributeError, TypeError, ValueError):
-                            logger.debug("Prompt cache clear skipped during adapter swap.")
+                        except (RuntimeError, AttributeError, TypeError, ValueError) as clear_exc:
+                            logger.warning(
+                                "Prompt cache clear failed during adapter swap; rebuilding: %s",
+                                clear_exc,
+                            )
+                            try:
+                                prompt_cache_lru = _PromptCacheLRU(
+                                    max_size=prompt_cache_budget
+                                )
+                            except (RuntimeError, TypeError, ValueError):
+                                cache_invalidated = False
                         if mx and device != "cpu":
                             _clear_mlx_cache(mx)
-                    response.update(
-                        {
-                            "status": "ok",
-                            "resident": expert_adapter_state["path"] or None,
-                            "wrapped_layers": len(expert_adapter_state["wrapped"]),
-                            "detached_layers": detached,
-                        }
-                    )
-                    logger.info(
-                        "🧩 [WORKER] Expert adapter %s (%d layers wrapped, %d restored).",
-                        expert_adapter_state["path"] or "DETACHED",
-                        len(expert_adapter_state["wrapped"]),
-                        detached,
-                    )
+                    if not cache_invalidated:
+                        # Unverifiable weight/cache consistency: refuse the
+                        # swap result and exit for a clean respawn rather
+                        # than serving cross-identity KV states.
+                        _record_mlx_degradation(
+                            RuntimeError("adapter_swap_cache_invalidation_unproven"),
+                            action="recycling worker because adapter-swap cache invalidation could not be proven",
+                            severity="critical",
+                        )
+                        worker_active = False
+                        response.update(
+                            {
+                                "status": "error",
+                                "message": "adapter_swap_cache_invalidation_unproven; worker recycling",
+                                "resident": expert_adapter_state["path"] or None,
+                            }
+                        )
+                    else:
+                        response.update(
+                            {
+                                "status": "ok",
+                                "resident": expert_adapter_state["path"] or None,
+                                "wrapped_layers": len(expert_adapter_state["wrapped"]),
+                                "detached_layers": detached,
+                                "cache_invalidated": True,
+                            }
+                        )
+                        logger.info(
+                            "🧩 [WORKER] Expert adapter %s (%d layers wrapped, %d restored).",
+                            expert_adapter_state["path"] or "DETACHED",
+                            len(expert_adapter_state["wrapped"]),
+                            detached,
+                        )
                 except (
                     FileNotFoundError,
+                    NotADirectoryError,
+                    PermissionError,
                     RuntimeError,
                     AttributeError,
                     TypeError,
@@ -5500,24 +5785,25 @@ def _mlx_worker_loop(
                     KeyError,
                     OSError,
                 ) as adapter_exc:
-                    # Unwind anything a partial attach recorded; freshly
-                    # wrapped-but-unloaded LoRA layers are identity (B=0),
-                    # so the model is behaviorally unchanged either way.
-                    try:
-                        if expert_adapter_state["wrapped"]:
-                            _detach_expert_adapter(model, expert_adapter_state["wrapped"])
-                    finally:
-                        expert_adapter_state.update({"path": "", "wrapped": []})
+                    if expert_adapter_state["path"] != previous_adapter_path:
+                        # Unwind anything a partial attach recorded; freshly
+                        # wrapped-but-unloaded LoRA layers are identity (B=0),
+                        # so the model is behaviorally unchanged either way.
+                        try:
+                            if expert_adapter_state["wrapped"]:
+                                _detach_expert_adapter(model, expert_adapter_state["wrapped"])
+                        finally:
+                            expert_adapter_state.update({"path": "", "wrapped": []})
                     _record_mlx_degradation(
                         adapter_exc,
-                        action="restored bare resident model after expert adapter swap failed",
+                        action="reported expert adapter swap failure with truthful resident identity",
                         severity="warning",
                     )
                     response.update(
                         {
                             "status": "error",
                             "message": f"expert_adapter_swap_failed: {adapter_exc}",
-                            "resident": None,
+                            "resident": expert_adapter_state["path"] or None,
                         }
                     )
                 ipc_writer.put(response)

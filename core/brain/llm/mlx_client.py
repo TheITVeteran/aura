@@ -6961,6 +6961,16 @@ class MLXLocalClient:
             foreground_request=foreground_request,
             hard_ceiling_s=first_token_hard_ceiling,
         )
+        # Ship the caller's production deadline to the worker so its decode
+        # loop can stop cooperatively instead of burning GPU past the point
+        # anyone is waiting (the worker previously had NO request deadline —
+        # only the 360s hard watchdog).
+        try:
+            _remaining_s = float(deadline.remaining or 0.0)
+            if _remaining_s > 0.0:
+                req["deadline_unix"] = time.time() + _remaining_s
+        except (AttributeError, TypeError, ValueError):
+            logger.debug("Request deadline unavailable; worker decodes unbounded.")
         enqueue_timeout = max(0.5, min(2.0, deadline.remaining or 2.0))
         try:
             if self._req_q is None:
