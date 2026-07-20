@@ -150,6 +150,11 @@ def _score(task, text: str) -> str:
     try:
         produced = parse_final_answer(text)
     except FrontierTaskError:
+        try:
+            produced = parse_final_answer(_normalize_markup(text))
+            return "correct" if produced == expected else "incorrect"
+        except FrontierTaskError:
+            pass
         # Strict contract not met. Before calling this a failure, check
         # whether the ANSWER is present in another shape: a 1.5B reasons
         # correctly through 8-hop traversal and then writes "The final
@@ -164,6 +169,45 @@ def _score(task, text: str) -> str:
     return "correct" if produced == expected else "incorrect"
 
 
+def _normalize_markup(text: str) -> str:
+    """Strip presentation markup that hides an otherwise-valid contract.
+
+    Observed on real output: the model emits ``**FINAL_ANSWER**: 13`` and
+    ``**JSON key node**: 13``. The answer is RIGHT THERE, but markdown
+    emphasis defeats a parser that requires a line beginning with the bare
+    marker, and the key/value form defeats a brace-based extractor. Counting
+    that as a reasoning failure measures formatting, not reasoning.
+    """
+    import re as _re
+
+    cleaned = _re.sub(r"\*{1,3}", "", text)
+    cleaned = _re.sub(r"^#{1,6}\s*", "", cleaned, flags=_re.M)
+    cleaned = _re.sub(r"`{1,3}", "", cleaned)
+    return cleaned
+
+
+def _keyed_extract(text: str, expected: dict) -> dict | None:
+    """Recover ``key: value`` answers written without JSON braces.
+
+    ``JSON key node: 13`` carries exactly the same answer as
+    ``{"node": 13}``. Requires EVERY expected key to be present with a
+    parseable value, so it cannot assemble an answer the model never gave.
+    """
+    import re as _re
+
+    recovered: dict = {}
+    for key in expected:
+        pattern = _re.compile(
+            rf"\b{_re.escape(key)}\b\s*[:=]\s*(-?\d+(?:\.\d+)?)"
+        )
+        match = pattern.search(text)
+        if match is None:
+            return None
+        raw = match.group(1)
+        recovered[key] = float(raw) if "." in raw else int(raw)
+    return recovered or None
+
+
 def _lenient_extract(text: str, expected: dict) -> dict | None:
     """Find the answer object anywhere in the text, contract or not.
 
@@ -176,14 +220,16 @@ def _lenient_extract(text: str, expected: dict) -> dict | None:
     import re as _re
 
     wanted = set(expected)
-    for match in _re.finditer(r"\{[^{}]*\}", text):
-        try:
-            candidate = _json.loads(match.group(0))
-        except (ValueError, TypeError):
-            continue
-        if isinstance(candidate, dict) and set(candidate) == wanted:
-            return candidate
-    return None
+    cleaned = _normalize_markup(text)
+    for source in (text, cleaned):
+        for match in _re.finditer(r"\{[^{}]*\}", source):
+            try:
+                candidate = _json.loads(match.group(0))
+            except (ValueError, TypeError):
+                continue
+            if isinstance(candidate, dict) and set(candidate) == wanted:
+                return candidate
+    return _keyed_extract(cleaned, expected)
 
 
 
