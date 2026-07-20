@@ -19,9 +19,11 @@ already exhausted. Nothing here fakes an answer.
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 import math
 import os
+import threading
 import time
 from typing import Any
 
@@ -33,7 +35,16 @@ logger = logging.getLogger("Aura.LatentCortexService")
 
 
 def _cortex_enabled() -> bool:
-    return str(os.environ.get("AURA_LATENT_CORTEX", "1")).strip() != "0"
+    raw = str(os.environ.get("AURA_LATENT_CORTEX", "1")).strip().lower()
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    if raw in {"", "1", "true", "yes", "on"}:
+        return True
+    # Malformed values previously enabled the cortex silently (`!= "0"`).
+    logger.warning(
+        "Unrecognized AURA_LATENT_CORTEX value %r; defaulting to enabled.", raw
+    )
+    return True
 
 
 class LatentCortexService:
@@ -65,14 +76,28 @@ class LatentCortexService:
         return min(1.0, max(0.0, number))
 
     def _body_pressure(self) -> float:
-        """Total real+anticipatory body pressure in [0, 1]; 0 when unknown."""
+        """Total real+anticipatory body pressure in [0, 1].
+
+        No orchestrator (tests, standalone) means no body to read: 0.0 is
+        honest. A FAILED probe with a body present is different — treating
+        it as zero pressure granted maximum compute headroom exactly when
+        the body's state could not be established. Ration conservatively.
+        """
+        if self.orchestrator is None:
+            return 0.0
         try:
             from core.being.aura_now import BodyState
 
             state = getattr(self.orchestrator, "state", None)
             return float(BodyState.from_aura_state(state).total_pressure())
-        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
-            return 0.0
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "latent_cortex",
+                exc,
+                severity="warning",
+                action="assumed conservative mid body pressure after probe failed",
+            )
+            return 0.5
 
     def allocate(
         self,
@@ -1320,7 +1345,9 @@ class LatentCortexService:
         self._last_progress = (
             dict(raw_progress) if isinstance(raw_progress, dict) else {}
         )
-        if result.get("ok"):
+        if result.get("ok") is True:
+            # Strict boolean: a truthy non-bool (e.g. the string "false"
+            # from a malformed IPC payload) must not enter the success path.
             contract_errors = self._receipt_contract_errors(
                 raw_receipt,
                 config,
@@ -1490,14 +1517,25 @@ class LatentCortexService:
         return result
 
     # ── Health ──────────────────────────────────────────────────────────
+    # One success must not certify the lane operational forever: after this
+    # window without a fresh success, status decays to a stale state that
+    # is visibly different from proven-recent health.
+    _OPERATIONAL_SUCCESS_TTL_S = 6 * 3600.0
+
     def get_status(self) -> dict[str, Any]:
         enabled = _cortex_enabled()
+        success_recent = (
+            self._last_success_at > 0.0
+            and (time.time() - self._last_success_at) <= self._OPERATIONAL_SUCCESS_TTL_S
+        )
         state = (
             "disabled"
             if not enabled
             else "degraded"
             if self._failure_streak >= 3
             else "operational"
+            if success_recent
+            else "idle_stale_success"
             if self._last_success_at > 0.0
             else "idle_unproven"
         )
@@ -1511,10 +1549,13 @@ class LatentCortexService:
             "last_attempt_at": self._last_attempt_at,
             "last_success_at": self._last_success_at,
             "last_latency_s": round(self._last_latency_s, 3),
-            "last_allocation": dict(self._last_allocation),
-            "last_progress": dict(self._last_progress),
+            # Deep copies: shallow dict() shared nested receipt objects with
+            # the service's authoritative state — a status consumer could
+            # mutate identity evidence in place.
+            "last_allocation": copy.deepcopy(self._last_allocation),
+            "last_progress": copy.deepcopy(self._last_progress),
             "last_failure_receipt": {
-                key: self._last_failure_receipt.get(key)
+                key: copy.deepcopy(self._last_failure_receipt.get(key))
                 for key in (
                     "episode_id",
                     "input_token_count",
@@ -1535,7 +1576,11 @@ class LatentCortexService:
                 if key in self._last_failure_receipt
             },
             "last_receipt": {
-                k: self._last_receipt.get(k)
+                k: (
+                    os.path.basename(str(self._last_receipt.get(k) or ""))
+                    if k == "worker_model_path"
+                    else copy.deepcopy(self._last_receipt.get(k))
+                )
                 for k in (
                     "episode_id",
                     "steps_taken",
@@ -1589,22 +1634,39 @@ class LatentCortexService:
 
 
 _INSTANCE: LatentCortexService | None = None
+_INSTANCE_LOCK = threading.Lock()
 
 
 def get_latent_cortex_service(orchestrator: Any = None) -> LatentCortexService:
     global _INSTANCE
-    if _INSTANCE is None:
-        _INSTANCE = LatentCortexService(orchestrator=orchestrator)
-    return _INSTANCE
+    with _INSTANCE_LOCK:
+        if _INSTANCE is None:
+            _INSTANCE = LatentCortexService(orchestrator=orchestrator)
+        elif orchestrator is not None and _INSTANCE.orchestrator is None:
+            # The first (often early-boot) access previously captured a None
+            # orchestrator PERMANENTLY — body pressure and Will attribution
+            # then ran without a body for the process lifetime.
+            _INSTANCE.orchestrator = orchestrator
+        return _INSTANCE
 
 
 def register_latent_cortex(orchestrator: Any = None) -> LatentCortexService:
     from core.runtime.service_registry import get_runtime_service, register_runtime_service
     from core.service_names import ServiceNames
 
-    inst = get_runtime_service(ServiceNames.LATENT_CORTEX, default=None) or get_latent_cortex_service(
-        orchestrator
-    )
+    global _INSTANCE
+    registry_inst = get_runtime_service(ServiceNames.LATENT_CORTEX, default=None)
+    if registry_inst is not None:
+        # Keep the registry and module singleton UNIFIED — they previously
+        # could split into two services with divergent health/receipt state.
+        with _INSTANCE_LOCK:
+            if _INSTANCE is None:
+                _INSTANCE = registry_inst
+            if orchestrator is not None and getattr(registry_inst, "orchestrator", None) is None:
+                registry_inst.orchestrator = orchestrator
+        inst = registry_inst
+    else:
+        inst = get_latent_cortex_service(orchestrator)
     register_runtime_service(
         ServiceNames.LATENT_CORTEX,
         inst,
