@@ -30,6 +30,11 @@ from tools.verify_recurrence_v2_smoke import (  # noqa: E402
 SCHEMA = "aura.latent_cortex.resident_recurrence_mechanics.v1"
 PROMOTION_SCHEMA = "aura.latent_cortex.recurrence_training_promotion.v1"
 ADMISSION_SCHEMA = "aura.resident_v3_training_admission.v1"
+RECOVERY_ADMISSION_SCHEMA = "aura.resident_v3_recovery_training_admission.v1"
+ADMISSION_SCOPES = {
+    ADMISSION_SCHEMA: "resident_v3_training_mechanics_admission_only",
+    RECOVERY_ADMISSION_SCHEMA: "resident_v3_recovery_training_mechanics_admission_only",
+}
 EXPECTED_ARMS = ["base_vanilla", "base_rlc", "adapter_vanilla", "adapter_rlc"]
 
 
@@ -102,11 +107,10 @@ def _verified_admission(path: Path) -> dict[str, Any]:
     flags = admission.get("claim_flags")
     identity = admission.get("identity_receipt")
     if (
-        admission.get("schema") != ADMISSION_SCHEMA
+        admission.get("schema") not in ADMISSION_SCOPES
         or claimed != _sha256(material)
         or admission.get("decision") != "admit_to_freeze_and_mechanics"
-        or admission.get("claim_scope")
-        != "resident_v3_training_mechanics_admission_only"
+        or admission.get("claim_scope") != ADMISSION_SCOPES.get(admission.get("schema"))
         or not isinstance(state, Mapping)
         or state.get("scope") != "complete_training"
         or state.get("complete") is not True
@@ -138,7 +142,7 @@ def _verified_training_gate(path: Path) -> dict[str, Any]:
     schema = document.get("schema")
     if schema == PROMOTION_SCHEMA:
         return _verified_promotion(path)
-    if schema == ADMISSION_SCHEMA:
+    if schema in ADMISSION_SCOPES:
         return _verified_admission(path)
     _fail("training_gate_schema_invalid")
 
@@ -171,7 +175,7 @@ def _verify_bindings(
     plan: CampaignPlan,
     frozen_adapter: Path,
 ) -> dict[str, Any]:
-    is_admission = promotion.get("schema") == ADMISSION_SCHEMA
+    is_admission = promotion.get("schema") in ADMISSION_SCOPES
     training = promotion.get("identity_receipt") if is_admission else promotion.get("training")
     freeze_receipt = freeze.get("identity_receipt")
     freeze_model = freeze.get("model_identity")

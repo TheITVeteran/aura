@@ -32,9 +32,10 @@ from tools import run_detached_step as detached  # noqa: E402
 from tools import verify_resident_pilot_preflight as pilot_preflight  # noqa: E402
 from tools import verify_resident_pilot_result as pilot_result  # noqa: E402
 from tools import verify_resident_recurrence_mechanics as mechanics  # noqa: E402
+from tools import verify_resident_v3_recovery_training_admission as recovery_admission  # noqa: E402
 from tools import verify_resident_v3_training_admission as admission  # noqa: E402
 
-CONFIG_SCHEMA = "aura.resident_v3_post_training_pipeline_config.v1"
+CONFIG_SCHEMA = "aura.resident_v3_post_training_pipeline_config.v2"
 STATE_SCHEMA = "aura.resident_v3_post_training_pipeline_state.v1"
 EVENT_SCHEMA = "aura.resident_v3_post_training_pipeline_event.v1"
 VERDICT_SCHEMA = "aura.resident_v3_post_training_pipeline_verdict.v1"
@@ -43,6 +44,7 @@ _MAX_JSON_BYTES = 256 * 1024 * 1024
 _PIPELINE_SOURCES = {
     "pipeline": "tools/run_resident_v3_post_training_pipeline.py",
     "training_admission": "tools/verify_resident_v3_training_admission.py",
+    "recovery_training_admission": "tools/verify_resident_v3_recovery_training_admission.py",
     "campaign_preparation": "tools/prepare_latent_cortex_campaign.py",
     "mechanics_verifier": "tools/verify_resident_recurrence_mechanics.py",
     "pilot_contract_builder": "tools/build_resident_v3_pilot_contract.py",
@@ -230,6 +232,97 @@ def build_config(
             "runtime_activation_before_directional_gain_allowed": False,
             "frontier_claim_without_external_custody_allowed": False,
         },
+    }
+    return {**material, "config_sha256": _document_sha(material)}
+
+
+def build_recovery_config(
+    *,
+    migration_path: Path,
+    output_root: Path,
+    training_source_root: Path,
+    source_commit: str,
+    seeds: Sequence[int] | None = None,
+) -> dict[str, Any]:
+    migration_binding = _binding(migration_path)
+    migration = json.loads(
+        read_stable_bytes(Path(migration_binding["path"]), max_bytes=_MAX_JSON_BYTES)
+    )
+    if not isinstance(migration, Mapping):
+        _fail("recovery_migration_invalid")
+    try:
+        _verified, migration_summary = recovery_admission.recovery._migration(  # noqa: SLF001
+            Path(migration_binding["path"]),
+            allow_destination_pointer_advance=True,
+        )
+    except Exception as exc:
+        raise ResidentV3PostTrainingPipelineError("recovery_migration_invalid") from exc
+    protocol_binding = migration.get("protocol")
+    amendment_binding = migration.get("amendment")
+    destination = migration.get("destination")
+    if not all(
+        isinstance(value, Mapping)
+        for value in (protocol_binding, amendment_binding, destination)
+    ):
+        _fail("recovery_migration_invalid")
+    protocol_path = Path(str(protocol_binding.get("path", ""))).resolve(strict=True)
+    amendment_path = Path(str(amendment_binding.get("path", ""))).resolve(strict=True)
+    if (
+        _binding(protocol_path) != dict(protocol_binding)
+        or _binding(amendment_path) != dict(amendment_binding)
+    ):
+        _fail("recovery_scientific_contract_changed")
+    adapter_root = Path(str(destination.get("root", ""))).resolve(strict=True)
+    root = adapter_root.parent
+    if not root.name.startswith("resident_32b_v3_cp"):
+        _fail("recovery_destination_invalid")
+    calibration_path = root / "calibration_verdict.json"
+    base = build_config(
+        protocol_path=protocol_path,
+        amendment_path=amendment_path,
+        output_root=output_root,
+        training_source_root=training_source_root,
+        source_commit=source_commit,
+        seeds=seeds,
+    )
+    material = dict(base)
+    material.pop("config_sha256", None)
+    campaign_suffix = root.name.replace("resident_32b_v3_", "")
+    material["training_runs"] = {
+        "resume": str(root / "detached-resume"),
+        "resume_sentinel": str(root / "sentinel-resume"),
+        "recovery_controller": str(root / "detached-recovery-controller"),
+        "sentinel_archive": str(root / "detached-sentinel-proof-archive"),
+    }
+    material["wait"] = {
+        "poll_seconds": 15.0,
+        "terminal_timeout_seconds": 216000.0,
+    }
+    material["mechanics"] = {
+        **dict(material["mechanics"]),
+        "campaign_name": f"{campaign_suffix}-resident-32b-v3-mechanics",
+    }
+    material["pilot"] = {
+        **dict(material["pilot"]),
+        "campaign_name": f"{campaign_suffix}-resident-32b-v3-directional-pilot",
+    }
+    material["recovery"] = {
+        "mode": "migration_recovery",
+        "migration": migration_binding,
+        "migration_sha256": migration_summary["migration_sha256"],
+        "calibration_verdict": _binding(calibration_path),
+        "controller_verdict_path": str(root / "recovery_controller_verdict.json"),
+        "operational_ring_path": str(
+            adapter_root / f"physical_footprint_resume_{root.name}.jsonl"
+        ),
+        "archive_run_dir": str(root / "detached-sentinel-proof-archive"),
+        "archive_ring_path": str(
+            root / "sentinel-proof-archive/physical_footprint_resume_complete.jsonl"
+        ),
+        "archive_receipt_path": str(
+            root / "sentinel-proof-archive/archive_receipt.json"
+        ),
+        "adapter_root": str(adapter_root),
     }
     return {**material, "config_sha256": _document_sha(material)}
 
@@ -535,6 +628,108 @@ class PipelineRun:
         _write_once(self.verdict_path, verdict)
         return verdict
 
+    def recovery_config(self) -> Mapping[str, Any] | None:
+        recovery = self.config.get("recovery")
+        if recovery is None:
+            return None
+        if not isinstance(recovery, Mapping) or recovery.get("mode") != "migration_recovery":
+            _fail("recovery_config_invalid")
+        return recovery
+
+    def effective_protocol(
+        self,
+        protocol: Mapping[str, Any],
+        recovery: Mapping[str, Any] | None,
+    ) -> dict[str, Any]:
+        if recovery is None:
+            return dict(protocol)
+        migration_binding = recovery.get("migration")
+        if not isinstance(migration_binding, Mapping):
+            _fail("recovery_config_invalid")
+        migration_path = Path(str(migration_binding.get("path", "")))
+        if _binding(migration_path) != dict(migration_binding):
+            _fail("recovery_migration_binding_changed")
+        migration = json.loads(read_stable_bytes(migration_path, max_bytes=_MAX_JSON_BYTES))
+        if not isinstance(migration, Mapping):
+            _fail("recovery_migration_invalid")
+        adapter_root = Path(str(recovery.get("adapter_root", ""))).resolve(strict=True)
+        derived = recovery_admission._protocol(migration, adapter_root)  # noqa: SLF001
+        model = protocol.get("model")
+        training = protocol.get("training")
+        if not isinstance(model, Mapping) or not isinstance(training, Mapping):
+            _fail("training_protocol_invalid")
+        return {
+            **dict(protocol),
+            "model": {**dict(model), **dict(derived["model"])},
+            "training": {**dict(training), **dict(derived["training"])},
+        }
+
+    def training_run_dirs(
+        self,
+        recovery: Mapping[str, Any] | None,
+    ) -> dict[str, Path]:
+        runs = self.config.get("training_runs")
+        if not isinstance(runs, Mapping):
+            _fail("training_runs_invalid")
+        roles = ["resume", "resume_sentinel"]
+        if recovery is not None:
+            roles.extend(("recovery_controller", "sentinel_archive"))
+        result: dict[str, Path] = {}
+        for role in roles:
+            value = runs.get(role)
+            if not isinstance(value, str) or not value:
+                _fail("training_runs_invalid")
+            result[role] = Path(value)
+        return result
+
+    def verify_training_admission(
+        self,
+        *,
+        protocol_path: Path,
+        amendment_path: Path,
+        amendment: Mapping[str, Any],
+        recovery: Mapping[str, Any] | None,
+        output: Path,
+    ) -> dict[str, Any]:
+        runs = self.config["training_runs"]
+        if recovery is None:
+            return admission.verify(
+                SimpleNamespace(
+                    protocol=protocol_path,
+                    amendment=amendment_path,
+                    partial_sentinel_run_dir=Path(runs["partial_sentinel"]),
+                    partial_footprint_ring=Path(amendment["sentinel"]["partial_ring"]),
+                    resume_sentinel_run_dir=Path(runs["resume_sentinel"]),
+                    resume_footprint_ring=Path(amendment["sentinel"]["resume_ring"]),
+                    output=output,
+                    training_source_root=Path(str(self.config["training_source_root"])),
+                )
+            )
+        calibration_binding = recovery.get("calibration_verdict")
+        migration_binding = recovery.get("migration")
+        if not isinstance(calibration_binding, Mapping) or not isinstance(
+            migration_binding,
+            Mapping,
+        ):
+            _fail("recovery_config_invalid")
+        calibration_path = Path(str(calibration_binding.get("path", "")))
+        if _binding(calibration_path) != dict(calibration_binding):
+            _fail("recovery_calibration_binding_changed")
+        return recovery_admission.verify(
+            SimpleNamespace(
+                migration=Path(str(migration_binding["path"])),
+                calibration_verdict=calibration_path,
+                controller_verdict=Path(str(recovery["controller_verdict_path"])),
+                resume_run_dir=Path(runs["resume"]),
+                sentinel_run_dir=Path(runs["resume_sentinel"]),
+                operational_ring=Path(str(recovery["operational_ring_path"])),
+                archive_run_dir=Path(str(recovery["archive_run_dir"])),
+                archive_ring=Path(str(recovery["archive_ring_path"])),
+                archive_receipt=Path(str(recovery["archive_receipt_path"])),
+                output=output,
+            )
+        )
+
     def run(self) -> dict[str, Any]:
         protocol_path = Path(str(self.config["protocol"]["path"]))
         amendment_path = Path(str(self.config["amendment"]["path"]))
@@ -542,14 +737,17 @@ class PipelineRun:
             amendment_path
         ) != self.config["amendment"]:
             _fail("training_protocol_binding_changed")
-        protocol = json.loads(read_stable_bytes(protocol_path, max_bytes=_MAX_JSON_BYTES))
+        protocol_document = json.loads(
+            read_stable_bytes(protocol_path, max_bytes=_MAX_JSON_BYTES)
+        )
         amendment = json.loads(read_stable_bytes(amendment_path, max_bytes=_MAX_JSON_BYTES))
+        if not isinstance(protocol_document, Mapping) or not isinstance(amendment, Mapping):
+            _fail("training_contract_invalid")
+        recovery = self.recovery_config()
+        protocol = self.effective_protocol(protocol_document, recovery)
         self.set_stage("wait_for_training_terminal")
         terminal = self.wait_detached(
-            {
-                "resume": Path(self.config["training_runs"]["resume"]),
-                "resume_sentinel": Path(self.config["training_runs"]["resume_sentinel"]),
-            },
+            self.training_run_dirs(recovery),
             timeout_s=float(self.config["wait"]["terminal_timeout_seconds"]),
         )
         self.event(
@@ -562,21 +760,12 @@ class PipelineRun:
 
         self.set_stage("training_admission")
         admission_path = self.root / "training_admission.json"
-        admitted = admission.verify(
-            SimpleNamespace(
-                protocol=protocol_path,
-                amendment=amendment_path,
-                partial_sentinel_run_dir=Path(
-                    self.config["training_runs"]["partial_sentinel"]
-                ),
-                partial_footprint_ring=Path(amendment["sentinel"]["partial_ring"]),
-                resume_sentinel_run_dir=Path(
-                    self.config["training_runs"]["resume_sentinel"]
-                ),
-                resume_footprint_ring=Path(amendment["sentinel"]["resume_ring"]),
-                output=admission_path,
-                training_source_root=Path(str(self.config["training_source_root"])),
-            )
+        admitted = self.verify_training_admission(
+            protocol_path=protocol_path,
+            amendment_path=amendment_path,
+            amendment=amendment,
+            recovery=recovery,
+            output=admission_path,
         )
         if admitted.get("claim_flags", {}).get("adapter_freeze_eligible") is not True:
             _fail("training_incomplete_not_freeze_eligible")
@@ -659,7 +848,7 @@ class PipelineRun:
             mechanics_path=self.root / "mechanics_verdict.json",
             campaign_dir=pilot_dir,
             seeds=self.config["pilot"]["seeds"],
-            contract_id="cp190-resident-32b-v3-directional-pilot",
+            contract_id=str(self.config["pilot"]["campaign_name"]),
             created_at=str(self.config["created_at"]),
             source_commit=str(self.config["source_commit"]),
             personality_adapter="none",
@@ -751,6 +940,8 @@ def launch_pipeline(config_path: Path, source_root: Path) -> dict[str, Any]:
         return json.loads(read_stable_bytes(launch_path, max_bytes=_MAX_JSON_BYTES))
     source = source_root.expanduser().resolve(strict=True)
     command = [
+        "/usr/bin/caffeinate",
+        "-i",
         str(source / ".venv/bin/python"),
         str(source / "tools/run_resident_v3_post_training_pipeline.py"),
         "run",
@@ -800,6 +991,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     create.add_argument("--source-commit", required=True)
     create.add_argument("--seeds", default="")
     create.add_argument("--output", type=Path, required=True)
+    create_recovery = commands.add_parser("create-recovery-config")
+    create_recovery.add_argument("--migration", type=Path, required=True)
+    create_recovery.add_argument("--output-root", type=Path, required=True)
+    create_recovery.add_argument("--training-source-root", type=Path, required=True)
+    create_recovery.add_argument("--source-commit", required=True)
+    create_recovery.add_argument("--seeds", default="")
+    create_recovery.add_argument("--output", type=Path, required=True)
     run = commands.add_parser("run")
     run.add_argument("--config", type=Path, required=True)
     launch = commands.add_parser("launch")
@@ -812,6 +1010,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             config = build_config(
                 protocol_path=args.protocol,
                 amendment_path=args.amendment,
+                output_root=args.output_root,
+                training_source_root=args.training_source_root,
+                source_commit=args.source_commit,
+                seeds=seeds,
+            )
+            _write_once(args.output.expanduser().resolve(strict=False), config)
+            print(json.dumps(config, indent=2, sort_keys=True))
+            return 0
+        if args.command == "create-recovery-config":
+            seeds = [int(value) for value in args.seeds.split(",") if value] or None
+            config = build_recovery_config(
+                migration_path=args.migration,
                 output_root=args.output_root,
                 training_source_root=args.training_source_root,
                 source_commit=args.source_commit,

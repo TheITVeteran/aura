@@ -22252,3 +22252,43 @@ launch a recovery-aware detached post-training controller that waits for the
 trainer, sentinel, recovery-controller, and archivist receipts before invoking
 this admission boundary and the immutable downstream proof chain. Final long
 soaks remain deferred.
+
+## Checkpoint 2026-07-20-203: Recovery-Aware Post-Training Continuation
+
+The existing post-training pipeline was bound to the abandoned CP189 topology:
+it waited only for trainer and sentinel, invoked the pre-migration admission
+schema, and would have frozen the old adapter root. Recovery mode now derives
+its scientific protocol and destination identity from the verified migration,
+binds the already positive calibration verdict, and waits for four independent
+terminal participants: resumed trainer, operational sentinel, recovery
+controller, and append-only proof archivist. It invokes CP202 recovery admission
+with those exact paths, then freezes the CP195 adapter rather than CP189.
+
+The mechanics gate accepts the recovery admission as a second explicitly scoped
+schema while preserving every original negative claim flag and exact frozen
+adapter/model binding. It does not treat recovery, mechanics, or a directional
+pilot as intelligence evidence. Recovery pipeline configuration uses fresh
+63-bit hidden-task seeds, CP195-specific campaign names, a 60-hour terminal
+wait, and source/config hashes. The controller carries its own independent
+`caffeinate` assertion, so completion of the trainer's sleep assertion cannot
+strand freeze, mechanics, or pilot execution. A positive directional verdict
+advances only to the separate powered external-custody campaign; a negative
+verdict records exact failed rules and diagnoses for repair.
+
+Validation is green: 92 distinct recovery-pipeline, admission, freeze,
+mechanics, pilot-contract, preflight, result, launch-bundle, and promotion tests
+pass; focused Ruff and bytecode compilation pass. The actual CP195 configuration
+builder also resolves the live migration digest
+`6ce170d05e1b836e9f07cacaf264b3bcb3ff5d3b94355b34ae5967c39c44b7ea`,
+destination adapter, and all four run directories without launching model
+work. Training has completed steps 21-24 cleanly and is computing step 25; the
+proof archive remains live and monotonic.
+
+Evidence-weighted completion remains 27%. This is checkpoint 203 of the
+faithful 292-399 total-checkpoint forecast, leaving approximately 89-196
+checkpoints. Training-completion, immutable freeze, mechanics, directional and
+powered reasoning-gain, same-checkpoint interaction, frontier, external-custody,
+installed-app, release, and soak gates remain open. Next: publish CP203, create
+the immutable live config from that source commit, launch its detached waiting
+controller, and verify the controller journal reaches the four-party terminal
+wait without model contention. Final long soaks remain deferred.

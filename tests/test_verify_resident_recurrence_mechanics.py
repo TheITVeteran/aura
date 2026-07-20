@@ -97,7 +97,11 @@ def _evidence(tmp_path: Path) -> tuple[dict[str, object], dict[str, object], Cam
     return promotion, freeze, plan
 
 
-def _admission(freeze: dict[str, object]) -> dict[str, object]:
+def _admission(
+    freeze: dict[str, object],
+    *,
+    schema: str = verifier.ADMISSION_SCHEMA,
+) -> dict[str, object]:
     identity = dict(freeze["identity_receipt"])
     identity.update(
         complete=True,
@@ -106,9 +110,9 @@ def _admission(freeze: dict[str, object]) -> dict[str, object]:
     )
     freeze["identity_receipt"] = identity
     material: dict[str, object] = {
-        "schema": verifier.ADMISSION_SCHEMA,
+        "schema": schema,
         "decision": "admit_to_freeze_and_mechanics",
-        "claim_scope": "resident_v3_training_mechanics_admission_only",
+        "claim_scope": verifier.ADMISSION_SCOPES[schema],
         "training_state": {"scope": "complete_training", "complete": True},
         "identity_receipt": identity,
         "claim_flags": {
@@ -158,6 +162,28 @@ def test_bindings_accept_complete_v3_training_admission(tmp_path: Path) -> None:
     )
 
     assert identity["training_gate_schema"] == verifier.ADMISSION_SCHEMA
+    assert identity["training_gate_sha256"] == admission["admission_sha256"]
+
+
+def test_bindings_accept_recovery_training_admission(tmp_path: Path) -> None:
+    _promotion, freeze, plan = _evidence(tmp_path)
+    admission = _admission(freeze, schema=verifier.RECOVERY_ADMISSION_SCHEMA)
+    metadata = plan.to_dict()["metadata"]
+    metadata["adapter_identity"]["identity_receipt"] = freeze["identity_receipt"]
+    rebound = CampaignPlan.build(
+        "resident-mechanics",
+        [{"domain": "mathematics", "seed": 7, "task_sha256": "7" * 64}],
+        metadata=metadata,
+    )
+
+    identity = verifier._verify_bindings(
+        promotion=admission,
+        freeze=freeze,
+        plan=rebound,
+        frozen_adapter=tmp_path.resolve(),
+    )
+
+    assert identity["training_gate_schema"] == verifier.RECOVERY_ADMISSION_SCHEMA
     assert identity["training_gate_sha256"] == admission["admission_sha256"]
 
 
