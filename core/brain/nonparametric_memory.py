@@ -143,7 +143,13 @@ class NonParametricMemory:
             self._key_norms[self._size] = float(np.dot(k, k))
             self._token_ids.append(int(token_id))
             self._tokens.append(str(token))
-            self._weights.append(max(0.0, float(weight)))
+            # Reject non-finite/negative weights: a NaN weight would poison the
+            # kNN probability mass it later contributes to.
+            try:
+                w = float(weight)
+            except (TypeError, ValueError):
+                w = 1.0
+            self._weights.append(w if math.isfinite(w) and w >= 0.0 else 0.0)
             self._ts.append(time.time())
             self._size += 1
             self._stats["added"] += 1
@@ -156,20 +162,24 @@ class NonParametricMemory:
     # ── retrieval ─────────────────────────────────────────────────────────────
     def query(self, key: np.ndarray, k: int = 8) -> list[Neighbor]:
         q = np.asarray(key, dtype=np.float32).reshape(-1)
+        # Reject a non-finite query outright: searching with NaN/inf produces
+        # NaN distances and garbage neighbor selection, and must never poison
+        # the persisted running mean below.
+        if q.shape[0] != self._dim or not np.all(np.isfinite(q)):
+            return []
         with self._lock:
             n = self._size
-            if n == 0 or q.shape[0] != self._dim:
+            if n == 0:
                 return []
             self._stats["queried"] += 1
             # Every query is a sample of the hidden space: feed the running
             # mean that powers the anisotropy correction (cumulative mean up
             # to 256 samples, then a slow EMA that tracks drift).
-            if np.all(np.isfinite(q)):
-                if self._query_mu_n < 256:
-                    self._query_mu_n += 1
-                    self._query_mu += (q - self._query_mu) / float(self._query_mu_n)
-                else:
-                    self._query_mu += 0.005 * (q - self._query_mu)
+            if self._query_mu_n < 256:
+                self._query_mu_n += 1
+                self._query_mu += (q - self._query_mu) / float(self._query_mu_n)
+            else:
+                self._query_mu += 0.005 * (q - self._query_mu)
             # ||x-q||^2 = ||x||^2 + ||q||^2 - 2x.q avoids allocating an
             # n-by-hidden-dimension difference matrix on every decode step.
             dists_sq = self._key_norms[:n] + float(np.dot(q, q))
@@ -280,36 +290,47 @@ class NonParametricMemory:
         """Blend the model's next-token probs with kNN recall: p = λ·p_kNN + (1-λ)·p_LM.
 
         Fail-open: returns ``lm_probs`` unchanged when there are no neighbors or λ≈0, so
-        generation never degrades below the raw model.
+        generation never degrades below the raw model. An error anywhere in the
+        recall/blend path also fails open to the raw model probabilities — the
+        documented contract now has a real exception boundary behind it.
         """
-        neighbors = self.query(query_key, k=k)
-        # Per-neighbor confidence filter: entries below the gate must not
-        # leak probability mass into the kNN distribution. Measured failure
-        # (July proof): with the soft filter, digits from OTHER facts at raw
-        # cos ~0.93 outvoted the exact-match entry and corrupted recall.
-        min_sim = self.min_similarity()
-        neighbors = [nb for nb in neighbors if nb.similarity >= min_sim]
-        if not neighbors:
+        try:
+            neighbors = self.query(query_key, k=k)
+            # Per-neighbor confidence filter: entries below the gate must not
+            # leak probability mass into the kNN distribution. Measured failure
+            # (July proof): with the soft filter, digits from OTHER facts at raw
+            # cos ~0.93 outvoted the exact-match entry and corrupted recall.
+            min_sim = self.min_similarity()
+            neighbors = [nb for nb in neighbors if nb.similarity >= min_sim]
+            if not neighbors:
+                with self._lock:
+                    self._stats["fallthrough"] += 1
+                return dict(lm_probs)
+            lam = lam_override if lam_override is not None else self.adaptive_lambda(
+                neighbors, phi=phi, free_energy=free_energy
+            )
+            if not math.isfinite(lam) or lam <= 1e-6:
+                with self._lock:
+                    self._stats["fallthrough"] += 1
+                return dict(lm_probs)
+            lam = min(1.0, max(0.0, float(lam)))
+            knn = self.knn_probs(neighbors, temperature=temperature)
+            blended: dict[int, float] = {}
+            for tok in set(lm_probs) | set(knn):
+                blended[tok] = (1.0 - lam) * float(lm_probs.get(tok, 0.0)) + lam * float(knn.get(tok, 0.0))
+            s = sum(blended.values())
+            if s > 0:
+                blended = {t: p / s for t, p in blended.items()}
             with self._lock:
-                self._stats["fallthrough"] += 1
-            return dict(lm_probs)
-        lam = lam_override if lam_override is not None else self.adaptive_lambda(
-            neighbors, phi=phi, free_energy=free_energy
-        )
-        if lam <= 1e-6:
+                self._stats["interpolated"] += 1
+            return blended
+        except (TypeError, ValueError, KeyError, AttributeError, ZeroDivisionError, FloatingPointError) as exc:
+            # Honor the fail-open contract: any recall/blend error returns the
+            # raw model distribution rather than breaking generation.
             with self._lock:
-                self._stats["fallthrough"] += 1
+                self._stats["fallthrough"] = self._stats.get("fallthrough", 0) + 1
+            logger.debug("Nonparametric interpolate failed open: %s", exc)
             return dict(lm_probs)
-        knn = self.knn_probs(neighbors, temperature=temperature)
-        blended: dict[int, float] = {}
-        for tok in set(lm_probs) | set(knn):
-            blended[tok] = (1.0 - lam) * float(lm_probs.get(tok, 0.0)) + lam * float(knn.get(tok, 0.0))
-        s = sum(blended.values())
-        if s > 0:
-            blended = {t: p / s for t, p in blended.items()}
-        with self._lock:
-            self._stats["interpolated"] += 1
-        return blended
 
     def apply_to_logits(
         self, logits: np.ndarray, query_key: np.ndarray, **kw: Any
@@ -422,24 +443,45 @@ class NonParametricMemory:
             if count <= 0 or len({len(keys), len(token_ids), len(tokens), len(weights), len(timestamps)}) != 1:
                 raise ValueError("non-parametric memory persistence metadata is inconsistent")
             count = min(count, self._max)
+            # Build EVERY new array/list into local temporaries first. If any
+            # conversion (a non-numeric weight, malformed timestamp, etc.)
+            # raises, the live object is left untouched — a partial swap
+            # previously desynchronized the parallel keys/tokens/weights arrays
+            # and stranded a stale _size behind a swallowed exception.
+            capacity = min(max(64, count), self._max)
+            new_keys = np.empty((capacity, self._dim), dtype=np.float32)
+            new_norms = np.empty(capacity, dtype=np.float32)
+            new_keys[:count] = keys[-count:].astype(np.float32)
+            if not np.all(np.isfinite(new_keys[:count])):
+                raise ValueError("non-parametric memory persisted keys are non-finite")
+            new_norms[:count] = np.einsum("ij,ij->i", new_keys[:count], new_keys[:count])
+            new_token_ids = [int(value) for value in token_ids[-count:]]
+            new_tokens = [str(value) for value in tokens[-count:]]
+            new_weights = [max(0.0, float(value)) for value in weights[-count:]]
+            if not all(math.isfinite(w) for w in new_weights):
+                raise ValueError("non-parametric memory persisted weights are non-finite")
+            new_ts = [float(value) for value in timestamps[-count:]]
+            saved_mu = meta.get("query_mu")
+            new_mu = None
+            new_mu_n = 0
+            if isinstance(saved_mu, list) and len(saved_mu) == self._dim:
+                candidate_mu = np.asarray(saved_mu, dtype=np.float32)
+                if np.all(np.isfinite(candidate_mu)):
+                    new_mu = candidate_mu
+                    new_mu_n = max(0, int(meta.get("query_mu_n", 0) or 0))
+            # All conversions succeeded — commit atomically under the lock.
             with self._lock:
-                self._capacity = max(64, count)
-                self._capacity = min(self._capacity, self._max)
-                self._keys = np.empty((self._capacity, self._dim), dtype=np.float32)
-                self._key_norms = np.empty(self._capacity, dtype=np.float32)
-                self._keys[:count] = keys[-count:].astype(np.float32)
-                self._key_norms[:count] = np.einsum(
-                    "ij,ij->i", self._keys[:count], self._keys[:count]
-                )
-                self._token_ids = [int(value) for value in token_ids[-count:]]
-                self._tokens = [str(value) for value in tokens[-count:]]
-                self._weights = [max(0.0, float(value)) for value in weights[-count:]]
-                self._ts = [float(value) for value in timestamps[-count:]]
+                self._capacity = capacity
+                self._keys = new_keys
+                self._key_norms = new_norms
+                self._token_ids = new_token_ids
+                self._tokens = new_tokens
+                self._weights = new_weights
+                self._ts = new_ts
                 self._size = count
-                saved_mu = meta.get("query_mu")
-                if isinstance(saved_mu, list) and len(saved_mu) == self._dim:
-                    self._query_mu = np.asarray(saved_mu, dtype=np.float32)
-                    self._query_mu_n = max(0, int(meta.get("query_mu_n", 0) or 0))
+                if new_mu is not None:
+                    self._query_mu = new_mu
+                    self._query_mu_n = new_mu_n
         except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
             record_degradation("nonparametric_memory_load", exc)
 
