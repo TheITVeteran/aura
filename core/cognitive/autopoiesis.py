@@ -955,20 +955,28 @@ class AutopoiesisEngine:
         positive Will decision.
         """
         try:
+            from core.governance.recovery_authority import (
+                build_internal_recovery_context,
+            )
             from core.will import ActionDomain, get_will
 
             will = get_will()
-            decision = will.decide(
-                content=f"Autopoiesis repair: {strategy.value} on {component}",
-                source="autopoiesis_engine",
-                domain=ActionDomain.STATE_MUTATION,
-                priority=0.7,
-                context={
+            recovery_context = build_internal_recovery_context(
+                "autopoiesis_engine",
+                strategy.value,
+                evidence={
                     "component": component,
                     "strategy": strategy.value,
                     "health": self.get_component_health(component),
                     "repair_attempts": self._repair_attempts.get(component, 0),
                 },
+            )
+            decision = will.decide(
+                content=f"Autopoiesis repair: {strategy.value} on {component}",
+                source="autopoiesis_engine",
+                domain=ActionDomain.STATE_MUTATION,
+                priority=0.7,
+                context=recovery_context,
             )
             return decision.is_approved()
         except (ImportError, AttributeError, RuntimeError) as exc:

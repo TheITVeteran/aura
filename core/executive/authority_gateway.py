@@ -529,7 +529,7 @@ class AuthorityGateway:
         proof_isolation = origin_l == "dnu_agi_proof_battery" and cause_l == "task_isolation_reset"
         response_checkpoint = origin_l == "unitaryresponsephase" and cause_l == "unitary_response"
         shutdown_checkpoint = origin_l == "system" and cause_l == "shutdown"
-        return {
+        context = {
             "state_origin": origin_l,
             "state_cause": cause_l,
             "user_facing_state_mutation": user_facing,
@@ -544,6 +544,23 @@ class AuthorityGateway:
                 or shutdown_checkpoint
             ),
         }
+        try:
+            from core.governance.recovery_authority import (
+                build_internal_recovery_context,
+            )
+
+            context.update(
+                build_internal_recovery_context(
+                    origin_l,
+                    cause_l,
+                    evidence=context,
+                )
+            )
+        except ValueError:
+            # Most state mutations are not recovery operations. Their ordinary
+            # governance context remains unchanged and receives no repair lane.
+            pass
+        return context
 
     def _social_governance_gate(
         self, tool_name: str, args: dict[str, Any], source: str

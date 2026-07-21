@@ -5,6 +5,7 @@ import time
 from dataclasses import asdict
 from typing import Any
 
+from core.governance.recovery_authority import is_internal_recovery_context
 from core.runtime.errors import record_degradation
 
 from .affective_valence import AffectiveValenceEngine
@@ -373,7 +374,7 @@ class BeingRuntime:
             "cloud_fallback",
         }
         repair_lane = domain_name in {"stabilization", "reflection"} or (
-            domain_name == "state_mutation" and priority >= 0.85
+            is_internal_recovery_context(domain_name, context)
         )
         constraints: list[str] = []
         blocks: list[str] = []
@@ -407,12 +408,17 @@ class BeingRuntime:
             if welfare.should_verify_before_claiming() and domain_name == "response":
                 constraints.append(f"welfare_verify_before_claim: self_report_conf={welfare.self_report_confidence:.3f}")
 
-        # Every consequential action must pay a body cost. If accounting fails,
-        # the action is constrained/deferred instead of silently proceeding.
-        body_cost: dict[str, float] = {}
+        # Policy evaluation only quotes cost. Charging before the outcome was
+        # known made every defer increase fatigue, which raised recovery drive
+        # and generated a self-reinforcing defer storm. UnifiedWill commits the
+        # quote exactly once after approval using its signed receipt.
+        body_cost_estimate: dict[str, float] = {}
         if consequential:
             try:
-                body_cost = self.body_service.spend(domain_name, cost_multiplier=priority)
+                body_cost_estimate = self.body_service.estimate_cost(
+                    domain_name,
+                    cost_multiplier=priority,
+                )
             except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation(
                     "being_runtime",
@@ -570,7 +576,11 @@ class BeingRuntime:
                 "controllability": round(controllability, 4),
                 "distress": round(distress, 4),
                 "body_pressure": round(body_pressure, 4),
-                "body_cost_applied": {key: round(float(value), 4) for key, value in body_cost.items()},
+                "body_cost_applied": {},
+                "body_cost_estimate": {
+                    key: round(float(value), 4)
+                    for key, value in body_cost_estimate.items()
+                },
                 "welfare_score": round(welfare.welfare_score, 4) if welfare else 0.5,
                 "welfare_distress": round(welfare.distress, 4) if welfare else 0.0,
                 "welfare_integrity_guard": round(welfare.integrity_guard, 4) if welfare else 0.5,

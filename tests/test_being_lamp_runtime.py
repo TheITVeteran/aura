@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from core.being.body_state_service import BodyStateService
 from core.being.continuous_substrate import ContinuousSelfField
 from core.being.functional_soul import FunctionalSoul
 from core.being.introspection_renderer import IntrospectionRenderer, IntrospectionVerifier
@@ -139,7 +140,7 @@ def test_body_cost_failure_defers_consequential_policy(monkeypatch: pytest.Monke
         spend_attempts.append((_domain, cost_multiplier))
         raise RuntimeError("body cost ledger unavailable")
 
-    monkeypatch.setattr(runtime.body_service, "spend", fail_spend)
+    monkeypatch.setattr(runtime.body_service, "estimate_cost", fail_spend)
 
     policy = runtime.action_policy(now, domain="tool_execution", priority=0.8)
 
@@ -263,6 +264,70 @@ def test_will_decision_publishes_pre_action_consequence_event() -> None:
     assert event.actual_outcome == "authorized"
     assert event.predicted_welfare_delta["welfare_score"] == pytest.approx(decision.welfare_score)
     assert event.actual_body_cost == {}
+
+
+def test_approved_will_decision_commits_quoted_body_cost_once() -> None:
+    will = UnifiedWill()
+    will.ensure_started()
+    body = BodyStateService.get()
+    charges_before = body.metabolic.tool_calls_total
+
+    decision = will.decide(
+        "open a browser tab",
+        source="desktop_task",
+        domain=ActionDomain.TOOL_EXECUTION,
+        priority=0.8,
+        context={
+            "aura_state": AuraState.default(),
+            "user_requested_action": True,
+            "foreground_request": True,
+        },
+    )
+    event = ConsequenceBus.get().recent_events(1)[-1]
+
+    assert decision.is_approved()
+    assert event.predicted_body_cost
+    assert event.actual_body_cost == event.predicted_body_cost
+    assert body.metabolic.tool_calls_total == charges_before + 1
+    assert body.commit_cost(
+        event.predicted_body_cost,
+        receipt_id=decision.receipt_id,
+    ) == {}
+    assert body.metabolic.tool_calls_total == charges_before + 1
+
+
+def test_deferred_will_decision_does_not_charge_body_cost(monkeypatch) -> None:
+    will = UnifiedWill()
+    will.ensure_started()
+    body = BodyStateService.get()
+    charges_before = body.metabolic.tool_calls_total
+    monkeypatch.setattr(
+        will,
+        "_sample_aura_now_evidence",
+        lambda **_kwargs: {
+            "outcome": "defer",
+            "constraints": ["welfare_recovery_drive=0.800"],
+            "defers": ["welfare_recovery_required_before_action"],
+            "evidence": {
+                "state_hash": "deferred-action",
+                "tick": 91,
+                "body_cost_estimate": {"compute": 0.04, "fatigue": 0.02},
+            },
+        },
+    )
+
+    decision = will.decide(
+        "background exploration",
+        source="autonomous_initiative_loop",
+        domain=ActionDomain.EXPLORATION,
+        priority=0.8,
+    )
+    event = ConsequenceBus.get().recent_events(1)[-1]
+
+    assert decision.outcome == WillOutcome.DEFER
+    assert event.predicted_body_cost
+    assert event.actual_body_cost == {}
+    assert body.metabolic.tool_calls_total == charges_before
 
 
 def test_stopped_will_refuses_before_aura_now_sampling() -> None:

@@ -18,10 +18,10 @@ from __future__ import annotations
 
 import logging
 import math
+import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any
 
 from core.being.aura_now import BodyState
 from core.runtime.consequence_bus import ConsequenceBus, ConsequenceEvent
@@ -150,6 +150,9 @@ class BodyStateService:
         self._last_snapshot: BodyHealthSnapshot | None = None
         self._lesioned = False
         self._consequence_subscribed = False
+        self._metabolic_lock = threading.RLock()
+        self._spend_receipts: deque[str] = deque(maxlen=2048)
+        self._spend_receipt_set: set[str] = set()
 
         # Decay constants
         self._fatigue_decay_rate = 0.002    # per second when idle
@@ -184,46 +187,103 @@ class BodyStateService:
 
     def _on_consequence(self, event: ConsequenceEvent) -> None:
         """React to action outcomes from the consequence bus."""
-        if event.actual_outcome == "failure":
-            self._error_window.append(True)
-            self._metabolic.tool_calls_failed += 1
-            self._metabolic.recovery_debt = _clip(
-                self._metabolic.recovery_debt + event.recovery_required * 0.5
-            )
-            self._metabolic.fatigue = _clip(
-                self._metabolic.fatigue + 0.02
-            )
-        else:
-            self._error_window.append(False)
-            if event.recovery_required < 0:
-                # Negative recovery = this action was healing
-                self._metabolic.relief_accumulated += abs(event.recovery_required)
+        with self._metabolic_lock:
+            if event.actual_outcome == "failure":
+                self._error_window.append(True)
+                self._metabolic.tool_calls_failed += 1
+                self._metabolic.recovery_debt = _clip(
+                    self._metabolic.recovery_debt + event.recovery_required * 0.5
+                )
+                self._metabolic.fatigue = _clip(
+                    self._metabolic.fatigue + 0.02
+                )
+            else:
+                self._error_window.append(False)
+                if event.recovery_required < 0:
+                    self._metabolic.relief_accumulated += abs(event.recovery_required)
 
-        # Apply actual body costs from the event
-        for dim, cost in event.actual_body_cost.items():
-            if dim == "compute":
-                self._metabolic.compute_spent += cost
-            elif dim == "memory":
-                self._metabolic.memory_spent += cost
+            # A Will receipt may already have committed the authorization cost.
+            # Reusing it here makes later execution/consequence publication
+            # idempotent instead of charging the same action twice.
+            if event.actual_body_cost:
+                self._commit_cost_locked(
+                    event.actual_body_cost,
+                    receipt_id=event.will_receipt_id or event.event_id,
+                )
 
     def update_body(self, body: BodyState) -> None:
         """Feed fresh BodyState from BeingRuntime.sample()."""
         self._last_body_state = body
         self._subscribe_consequences()
 
-    def spend(self, domain: str, *, cost_multiplier: float = 1.0) -> dict[str, float]:
+    def estimate_cost(
+        self,
+        domain: str,
+        *,
+        cost_multiplier: float = 1.0,
+    ) -> dict[str, float]:
+        """Return a bounded body-cost quote without mutating body state."""
+
+        if self._lesioned:
+            return {}
+        multiplier = float(cost_multiplier)
+        if not math.isfinite(multiplier) or multiplier < 0.0 or multiplier > 10.0:
+            raise ValueError("body cost multiplier must be finite and within [0, 10]")
+        costs = ACTION_COSTS.get(domain, {"compute": 0.02, "fatigue": 0.01})
+        return {dim: float(base_cost) * multiplier for dim, base_cost in costs.items()}
+
+    def spend(
+        self,
+        domain: str,
+        *,
+        cost_multiplier: float = 1.0,
+        receipt_id: str = "",
+    ) -> dict[str, float]:
         """Pay the metabolic cost for an action in the given domain.
 
-        Returns the actual costs applied.
+        A receipt-bound spend is idempotent so retries and nested closure paths
+        cannot charge the same authorized action twice.
         """
         if self._lesioned:
             return {}
+        costs = self.estimate_cost(domain, cost_multiplier=cost_multiplier)
+        receipt = str(receipt_id or "").strip() or (
+            f"direct:{time.time_ns()}:{threading.get_ident()}"
+        )
+        return self.commit_cost(costs, receipt_id=receipt)
 
-        costs = dict(ACTION_COSTS.get(domain, {"compute": 0.02, "fatigue": 0.01}))
+    def commit_cost(
+        self,
+        costs: dict[str, float],
+        *,
+        receipt_id: str,
+    ) -> dict[str, float]:
+        """Commit a quoted cost once for a stable action receipt."""
+
+        if self._lesioned:
+            return {}
+        receipt = str(receipt_id or "").strip()
+        if not receipt:
+            raise ValueError("body cost commit requires a stable receipt_id")
+        normalized: dict[str, float] = {}
+        for dim, raw_cost in dict(costs or {}).items():
+            cost = float(raw_cost)
+            if not math.isfinite(cost) or abs(cost) > 10.0:
+                raise ValueError(f"invalid body cost for {dim}")
+            normalized[str(dim)] = cost
+        with self._metabolic_lock:
+            return self._commit_cost_locked(normalized, receipt_id=receipt)
+
+    def _commit_cost_locked(
+        self,
+        costs: dict[str, float],
+        *,
+        receipt_id: str,
+    ) -> dict[str, float]:
+        if receipt_id in self._spend_receipt_set:
+            return {}
         applied: dict[str, float] = {}
-
-        for dim, base_cost in costs.items():
-            actual = base_cost * cost_multiplier
+        for dim, actual in costs.items():
             if dim == "compute":
                 self._metabolic.compute_spent += actual
                 applied["compute"] = actual
@@ -242,39 +302,47 @@ class BodyStateService:
                 self._metabolic.recovery_debt = _clip(
                     self._metabolic.recovery_debt - actual
                 )
-                self._metabolic.fatigue = _clip(
-                    self._metabolic.fatigue - actual
-                )
+                self._metabolic.fatigue = _clip(self._metabolic.fatigue - actual)
                 applied["recovery"] = actual
 
         self._metabolic.tool_calls_total += 1
         self._metabolic.last_spend_time = time.time()
+        if len(self._spend_receipts) == self._spend_receipts.maxlen:
+            oldest = self._spend_receipts.popleft()
+            self._spend_receipt_set.discard(oldest)
+        self._spend_receipts.append(receipt_id)
+        self._spend_receipt_set.add(receipt_id)
         return applied
 
     def relieve(self, amount: float = 0.05) -> None:
         """Reduce recovery debt and fatigue after successful repair."""
-        self._metabolic.recovery_debt = _clip(
-            self._metabolic.recovery_debt - amount
-        )
-        self._metabolic.fatigue = _clip(
-            self._metabolic.fatigue - amount * 0.5
-        )
-        self._metabolic.relief_accumulated += amount
-        self._metabolic.last_relief_time = time.time()
+        relief = float(amount)
+        if not math.isfinite(relief) or relief < 0.0 or relief > 1.0:
+            raise ValueError("body relief must be finite and within [0, 1]")
+        with self._metabolic_lock:
+            self._metabolic.recovery_debt = _clip(
+                self._metabolic.recovery_debt - relief
+            )
+            self._metabolic.fatigue = _clip(
+                self._metabolic.fatigue - relief * 0.5
+            )
+            self._metabolic.relief_accumulated += relief
+            self._metabolic.last_relief_time = time.time()
 
     def _apply_natural_decay(self) -> None:
         """Fatigue and recovery debt decay over time."""
-        now = time.monotonic()
-        elapsed = now - self._last_decay_time
-        self._last_decay_time = now
+        with self._metabolic_lock:
+            now = time.monotonic()
+            elapsed = now - self._last_decay_time
+            self._last_decay_time = now
 
-        if elapsed > 0 and elapsed < 3600:  # sanity bound
-            self._metabolic.fatigue = _clip(
-                self._metabolic.fatigue - self._fatigue_decay_rate * elapsed
-            )
-            self._metabolic.recovery_debt = _clip(
-                self._metabolic.recovery_debt - self._recovery_decay_rate * elapsed
-            )
+            if elapsed > 0 and elapsed < 3600:  # sanity bound
+                self._metabolic.fatigue = _clip(
+                    self._metabolic.fatigue - self._fatigue_decay_rate * elapsed
+                )
+                self._metabolic.recovery_debt = _clip(
+                    self._metabolic.recovery_debt - self._recovery_decay_rate * elapsed
+                )
 
     def snapshot(self) -> BodyHealthSnapshot:
         """Produce a complete body health snapshot."""

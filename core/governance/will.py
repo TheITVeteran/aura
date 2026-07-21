@@ -1565,6 +1565,31 @@ class UnifiedWill:
         if (
             policy_outcome == "defer"
             and domain == ActionDomain.STATE_MUTATION
+        ):
+            try:
+                from core.governance.recovery_authority import (
+                    is_internal_recovery_context,
+                )
+
+                internal_recovery = is_internal_recovery_context(
+                    domain,
+                    dict(context or {}),
+                )
+            except (ImportError, AttributeError, TypeError, ValueError):
+                internal_recovery = False
+            if internal_recovery:
+                constraints.append("aura_now_internal_recovery_lane")
+                if outcome == WillOutcome.PROCEED:
+                    return (
+                        WillOutcome.CONSTRAIN,
+                        "aura_now_internal_recovery_lane",
+                        constraints,
+                    )
+                return outcome, reason, constraints
+
+        if (
+            policy_outcome == "defer"
+            and domain == ActionDomain.STATE_MUTATION
             and self._is_internal_state_hygiene_context(dict(context or {}))
         ):
             constraints.append("aura_now_state_hygiene_lane")
@@ -2071,7 +2096,23 @@ class UnifiedWill:
             from core.runtime.consequence_bus import ConsequenceBus
 
             evidence = dict(decision.aura_now_evidence or {})
-            predicted_body_cost = dict(evidence.get("body_cost_applied") or {})
+            predicted_body_cost = dict(
+                evidence.get("body_cost_estimate")
+                or evidence.get("body_cost_applied")
+                or {}
+            )
+            actual_body_cost: dict[str, float] = {}
+            if decision.is_approved() and predicted_body_cost:
+                runtime = ServiceContainer.get("being_runtime", default=None)
+                body_service = getattr(runtime, "body_service", None)
+                if body_service is None:
+                    from core.being.body_state_service import BodyStateService
+
+                    body_service = BodyStateService.get()
+                actual_body_cost = body_service.commit_cost(
+                    predicted_body_cost,
+                    receipt_id=decision.receipt_id,
+                )
             actual_outcome = "authorized" if decision.is_approved() else "blocked"
             recovery_required = (
                 max(0.0, min(1.0, float(decision.welfare_recovery_drive)))
@@ -2092,6 +2133,7 @@ class UnifiedWill:
                 predicted_memory_risk=0.0,
                 predicted_integrity_risk=round(float(decision.welfare_integrity_guard), 4),
                 actual_outcome=actual_outcome,
+                actual_body_cost=actual_body_cost,
                 recovery_required=recovery_required,
                 will_receipt_id=decision.receipt_id,
                 error=decision.reason if not decision.is_approved() else "",

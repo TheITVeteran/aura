@@ -1457,7 +1457,9 @@ def test_aura_now_allows_verified_foreground_desktop_action_under_soft_workspace
     runtime = BeingRuntime.__new__(BeingRuntime)
     runtime._last_welfare = None
     runtime._last_body_snapshot = SimpleNamespace(fatigue=0.0)
-    runtime.body_service = SimpleNamespace(spend=lambda *_args, **_kwargs: {"compute": 0.01})
+    runtime.body_service = SimpleNamespace(
+        estimate_cost=lambda *_args, **_kwargs: {"compute": 0.01}
+    )
     now = SimpleNamespace(
         body=SimpleNamespace(total_pressure=0.2),
         affect=SimpleNamespace(distress=0.1, dominant_drive="complete_user_requested_action"),
@@ -13754,12 +13756,10 @@ def test_aura_now_welfare_recovery_yields_to_explicit_owner_desktop_action():
     THIS click indefinitely. Welfare's graded brakes convert to receipted
     constraints for an explicit owner action carrying the full desktop
     execution contract; strain still shapes budgets via the economy."""
-    from types import SimpleNamespace as _NS
-
     from core.being.runtime import BeingRuntime
 
     runtime = BeingRuntime.__new__(BeingRuntime)
-    runtime._last_welfare = _NS(
+    runtime._last_welfare = SimpleNamespace(
         action_inhibition=0.7,
         recovery_drive=0.84,
         integrity_guard=0.2,
@@ -13770,18 +13770,20 @@ def test_aura_now_welfare_recovery_yields_to_explicit_owner_desktop_action():
         should_protect_integrity=lambda: False,
         should_verify_before_claiming=lambda: False,
     )
-    runtime._last_body_snapshot = _NS(fatigue=0.4)
-    runtime.body_service = _NS(spend=lambda *_a, **_k: {"compute": 0.01})
-    now = _NS(
-        body=_NS(total_pressure=0.5),
-        affect=_NS(distress=0.2, dominant_drive="coherence"),
-        prediction=_NS(controllability=0.7, free_energy=1.0),
-        workspace=_NS(
+    runtime._last_body_snapshot = SimpleNamespace(fatigue=0.4)
+    runtime.body_service = SimpleNamespace(
+        estimate_cost=lambda *_a, **_k: {"compute": 0.01}
+    )
+    now = SimpleNamespace(
+        body=SimpleNamespace(total_pressure=0.5),
+        affect=SimpleNamespace(distress=0.2, dominant_drive="coherence"),
+        prediction=SimpleNamespace(controllability=0.7, free_energy=1.0),
+        workspace=SimpleNamespace(
             ignition_strength=0.7,
             broadcast_targets=("executive",),
             winner="body_pressure",
         ),
-        ownership=_NS(agency_confidence=0.82),
+        ownership=SimpleNamespace(agency_confidence=0.82),
         state_hash="state-welfare-test",
         tick=55711,
     )
@@ -13807,3 +13809,29 @@ def test_aura_now_welfare_recovery_yields_to_explicit_owner_desktop_action():
         now, domain="tool_execution", priority=0.9, context={}
     )
     assert "welfare_recovery_required_before_action" in autonomous["defers"]
+
+    # Priority alone is not a recovery bypass. Only an allow-listed internal
+    # operation carrying the complete no-external-effects contract gets the
+    # homeostatic lane.
+    generic_mutation = runtime.action_policy(
+        now,
+        domain="state_mutation",
+        priority=0.99,
+        context={"source": "unknown", "operation": "repair"},
+    )
+    assert "welfare_recovery_required_before_action" in generic_mutation["defers"]
+
+    from core.governance.recovery_authority import build_internal_recovery_context
+
+    recovery = runtime.action_policy(
+        now,
+        domain="state_mutation",
+        priority=0.7,
+        context=build_internal_recovery_context(
+            "autopoiesis_engine",
+            "heal",
+            evidence={"component": "curiosity_explorer"},
+        ),
+    )
+    assert recovery["defers"] == []
+    assert recovery["outcome"] in {"proceed", "constrain"}

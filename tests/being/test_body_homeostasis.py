@@ -10,15 +10,14 @@ Tests that Aura has a body-like homeostatic loop:
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from core.being.body_state_service import BodyStateService, ACTION_COSTS
 from core.being.aura_now import BodyState
+from core.being.body_state_service import ACTION_COSTS, BodyStateService
 from core.runtime.consequence_bus import ConsequenceBus
 
 
@@ -54,6 +53,40 @@ class TestMetabolicCosts:
         assert snap_after.fatigue > snap_before.fatigue, (
             f"Fatigue should increase: {snap_before.fatigue} → {snap_after.fatigue}"
         )
+
+    def test_cost_quote_does_not_mutate_body(self):
+        body = BodyStateService.get()
+        before = (
+            body.metabolic.compute_spent,
+            body.metabolic.memory_spent,
+            body.metabolic.fatigue,
+            body.metabolic.recovery_debt,
+            body.metabolic.tool_calls_total,
+        )
+
+        quote = body.estimate_cost("tool_execution", cost_multiplier=0.9)
+
+        assert quote["compute"] > 0.0
+        assert before == (
+            body.metabolic.compute_spent,
+            body.metabolic.memory_spent,
+            body.metabolic.fatigue,
+            body.metabolic.recovery_debt,
+            body.metabolic.tool_calls_total,
+        )
+
+    def test_receipt_bound_cost_commit_is_idempotent(self):
+        body = BodyStateService.get()
+        quote = body.estimate_cost("tool_execution", cost_multiplier=0.9)
+
+        first = body.commit_cost(quote, receipt_id="will-test-receipt")
+        after_first = body.metabolic.compute_spent
+        second = body.commit_cost(quote, receipt_id="will-test-receipt")
+
+        assert first == quote
+        assert second == {}
+        assert body.metabolic.compute_spent == after_first
+        assert body.metabolic.tool_calls_total == 1
 
     def test_heavy_spending_strains_body(self):
         """Heavy spending should cause strained state."""
