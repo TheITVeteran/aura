@@ -1,0 +1,188 @@
+{
+  "schema": "aura.intrinsic_recurrence_training.v1",
+  "model": "training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118",
+  "spec": {
+    "schema": "aura.intrinsic_recurrence_objective.v1",
+    "prelude_end": 16,
+    "coda_start": 48,
+    "depths": [
+      1,
+      2,
+      4
+    ],
+    "anchor_injection": 0.0,
+    "renormalize": true,
+    "compute_price": 0.01,
+    "depth_temperature": 0.15,
+    "anchor_weight": 1.0
+  },
+  "wiring": {
+    "adapted_layers": 48,
+    "adapted_projections": 96,
+    "depth_banks": 96,
+    "window": [
+      16,
+      48
+    ],
+    "coda": [
+      48,
+      64
+    ]
+  },
+  "bridge": "assistant_answer",
+  "steps": 387,
+  "train_tasks": 192,
+  "holdout_tasks": 24,
+  "history": [
+    {
+      "schema": "aura.intrinsic_recurrence_objective.v1",
+      "depths": [
+        "T1",
+        "T2",
+        "T4"
+      ],
+      "ce": [
+        0.49792,
+        0.5022,
+        0.55758
+      ],
+      "anchor_ce": 0.49792,
+      "worst_relative_ce": 1.1198,
+      "collapse_repaired": true,
+      "depth_helps": false,
+      "step": 50
+    },
+    {
+      "schema": "aura.intrinsic_recurrence_objective.v1",
+      "depths": [
+        "T1",
+        "T2",
+        "T4"
+      ],
+      "ce": [
+        0.46157,
+        0.46384,
+        0.47048
+      ],
+      "anchor_ce": 0.46157,
+      "worst_relative_ce": 1.0193,
+      "collapse_repaired": true,
+      "depth_helps": false,
+      "step": 100
+    },
+    {
+      "schema": "aura.intrinsic_recurrence_objective.v1",
+      "depths": [
+        "T1",
+        "T2",
+        "T4"
+      ],
+      "ce": [
+        0.4557,
+        0.44811,
+        0.45674
+      ],
+      "anchor_ce": 0.4557,
+      "worst_relative_ce": 1.0023,
+      "collapse_repaired": true,
+      "depth_helps": true,
+      "step": 150
+    },
+    {
+      "schema": "aura.intrinsic_recurrence_objective.v1",
+      "depths": [
+        "T1",
+        "T2",
+        "T4"
+      ],
+      "ce": [
+        0.49873,
+        0.50436,
+        0.50041
+      ],
+      "anchor_ce": 0.49873,
+      "worst_relative_ce": 1.0113,
+      "collapse_repaired": true,
+      "depth_helps": false,
+      "step": 200
+    },
+    {
+      "schema": "aura.intrinsic_recurrence_objective.v1",
+      "depths": [
+        "T1",
+        "T2",
+        "T4"
+      ],
+      "ce": [
+        0.47765,
+        0.4737,
+        0.47753
+      ],
+      "anchor_ce": 0.47765,
+      "worst_relative_ce": 1.0,
+      "collapse_repaired": true,
+      "depth_helps": true,
+      "step": 250
+    },
+    {
+      "schema": "aura.intrinsic_recurrence_objective.v1",
+      "depths": [
+        "T1",
+        "T2",
+        "T4"
+      ],
+      "ce": [
+        0.43595,
+        0.435,
+        0.43095
+      ],
+      "anchor_ce": 0.43595,
+      "worst_relative_ce": 1.0,
+      "collapse_repaired": true,
+      "depth_helps": true,
+      "step": 300
+    },
+    {
+      "schema": "aura.intrinsic_recurrence_objective.v1",
+      "depths": [
+        "T1",
+        "T2",
+        "T4"
+      ],
+      "ce": [
+        0.44945,
+        0.44524,
+        0.44712
+      ],
+      "anchor_ce": 0.44945,
+      "worst_relative_ce": 1.0,
+      "collapse_repaired": true,
+      "depth_helps": true,
+      "step": 350
+    }
+  ],
+  "final": {
+    "schema": "aura.intrinsic_recurrence_objective.v1",
+    "depths": [
+      "T1",
+      "T2",
+      "T4"
+    ],
+    "ce": [
+      0.44945,
+      0.44524,
+      0.44712
+    ],
+    "anchor_ce": 0.44945,
+    "worst_relative_ce": 1.0,
+    "collapse_repaired": true,
+    "depth_helps": true,
+    "step": 350
+  },
+  "verdict": {
+    "collapse_repaired": true,
+    "depth_helps_heldout": true,
+    "claimable": "depth improves held-out reasoning"
+  },
+  "elapsed_minutes": 180.18
+}
