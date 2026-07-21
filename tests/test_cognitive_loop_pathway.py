@@ -50,12 +50,20 @@ class _Agency:
 # ── Gated OFF by default -- the live instance is unchanged ───────────────
 
 
-def test_disabled_by_default_registers_nothing(monkeypatch):
+def test_on_by_default_registers_the_pathways(monkeypatch):
+    """Owner's decision: on unless explicitly disabled."""
     monkeypatch.delenv(clp.ENABLE_FLAG, raising=False)
     agency = _Agency()
     receipt = clp.register_if_enabled(agency)
+    assert receipt["enabled"] is True
+    assert set(agency.registered) == set(clp.TARGET_PATHWAYS)
+
+
+def test_explicit_disable_registers_nothing(monkeypatch):
+    monkeypatch.setenv(clp.ENABLE_FLAG, "0")
+    agency = _Agency()
+    receipt = clp.register_if_enabled(agency)
     assert receipt["enabled"] is False
-    assert receipt["registered"] == []
     assert agency.registered == []
 
 
@@ -106,6 +114,7 @@ def test_router_deliberator_bridges_async_generation():
 
 def test_provider_proposes_from_the_monologue(monkeypatch):
     monkeypatch.setenv(clp.ENABLE_FLAG, "1")
+    monkeypatch.setattr(clp, "COOLDOWN_SECONDS", 0.0)
     container = _Container({"llm_router": _Router("42"), "memory_facade": _Memory()})
     loop = clp.build_live_loop(container)
     monkeypatch.setattr(clp, "build_live_loop", lambda *a, **k: loop)
@@ -125,6 +134,7 @@ def test_provider_proposes_nothing_without_a_query(monkeypatch):
     container = _Container({"llm_router": _Router()})
     loop = clp.build_live_loop(container)
     monkeypatch.setattr(clp, "build_live_loop", lambda *a, **k: loop)
+    monkeypatch.setattr(clp, "COOLDOWN_SECONDS", 0.0)
     agency = _Agency(monologue="")  # nothing on her mind
     proposal = asyncio.run(clp.cognitive_loop_provider(
         pathway="autonomous_research", now=0.0, idle_seconds=0.0, agency=agency,
@@ -134,8 +144,30 @@ def test_provider_proposes_nothing_without_a_query(monkeypatch):
 
 def test_provider_proposes_nothing_when_organs_missing(monkeypatch):
     monkeypatch.setattr(clp, "build_live_loop", lambda: None)
+    monkeypatch.setattr(clp, "COOLDOWN_SECONDS", 0.0)
     proposal = asyncio.run(clp.cognitive_loop_provider(
         pathway="autonomous_research", now=0.0, idle_seconds=0.0,
         agency=_Agency(monologue="a real question here"),
     ))
     assert proposal is None
+
+
+def test_cooldown_prevents_firing_the_loop_every_pulse(monkeypatch):
+    """On-by-default must not hammer the live 32B: one run, then a cooldown."""
+    monkeypatch.setattr(clp, "COOLDOWN_SECONDS", 180.0)
+    container = _Container({"llm_router": _Router("42"), "memory_facade": _Memory()})
+    loop = clp.build_live_loop(container)
+    monkeypatch.setattr(clp, "build_live_loop", lambda *a, **k: loop)
+    agency = _Agency(monologue="a real question to reason about")
+
+    first = asyncio.run(clp.cognitive_loop_provider(
+        pathway="curiosity_drive", now=1000.0, idle_seconds=0.0, agency=agency))
+    assert first is not None
+    # a pulse 5s later is inside the cooldown -> no re-fire
+    second = asyncio.run(clp.cognitive_loop_provider(
+        pathway="curiosity_drive", now=1005.0, idle_seconds=0.0, agency=agency))
+    assert second is None
+    # well past the cooldown -> fires again
+    third = asyncio.run(clp.cognitive_loop_provider(
+        pathway="curiosity_drive", now=1200.0, idle_seconds=0.0, agency=agency))
+    assert third is not None

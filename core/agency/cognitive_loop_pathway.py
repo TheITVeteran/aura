@@ -36,10 +36,18 @@ ENABLE_FLAG = "AURA_COGNITIVE_LOOP_PATHWAY"
 # The pathways where running the full loop is a natural act of Will:
 # researching something, or resolving a curiosity.
 TARGET_PATHWAYS = ("autonomous_research", "curiosity_drive")
+# The loop runs real 32B inference. A cooldown keeps it from firing on every
+# agency pulse and loading a latency-sensitive live instance -- the same
+# rate-limit discipline the other autonomous pathways already use.
+COOLDOWN_SECONDS = float(os.environ.get("AURA_COGNITIVE_LOOP_COOLDOWN", "180"))
 
 
 def is_enabled() -> bool:
-    return os.environ.get(ENABLE_FLAG, "0") == "1"
+    # ON by default now (owner's decision). Set AURA_COGNITIVE_LOOP_PATHWAY=0
+    # to disable. Safe-by-construction: degrades honestly, cannot break the
+    # pulse, and never retains unverified output -- so on-by-default cannot
+    # corrupt learning, only spend some inference the cooldown bounds.
+    return os.environ.get(ENABLE_FLAG, "1") != "0"
 
 
 class _RouterDeliberator:
@@ -130,12 +138,25 @@ async def cognitive_loop_provider(
     *, pathway: str, now: float, idle_seconds: float, agency: Any
 ) -> dict[str, Any] | None:
     """The agency hook: run the loop and propose an action, or nothing."""
+    # Cooldown: the loop is real 32B inference, so it must not fire on every
+    # pulse. Mark BEFORE running so a slow loop cannot be re-entered by the
+    # next pulse while it is still working.
+    marks = getattr(agency, "_cognitive_loop_last_run", None)
+    if marks is None:
+        marks = {}
+        try:
+            setattr(agency, "_cognitive_loop_last_run", marks)
+        except (AttributeError, TypeError):
+            pass
+    if now - float(marks.get(pathway, 0.0)) < COOLDOWN_SECONDS:
+        return None
     loop = build_live_loop()
     if loop is None:
         return None
     query = _derive_query(agency)
     if not query:
         return None
+    marks[pathway] = now
     result = await loop.arun(query)
     if result.answer is None or not str(result.answer).strip():
         return None
