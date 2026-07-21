@@ -647,6 +647,8 @@ def exact_adjoint_live_path_value_and_grad(
     bridge_tokens: Sequence[int] = (),
     diversity_weight: float = 0.0,
     diversity_target_cos: float = 0.98,
+    token_loss_weights: Sequence[float] | None = None,
+    branch_index: int | None = None,
 ) -> tuple[float, Any, float, list[float]]:
     """Compute the exact live-path gradient with bounded graph residency.
 
@@ -671,6 +673,14 @@ def exact_adjoint_live_path_value_and_grad(
         or not 0.0 <= float(diversity_weight) <= 10.0
     ):
         raise ValueError("diversity_weight must be inside [0, 10]")
+    if token_loss_weights is None:
+        normalized_token_weights = (1.0,) * len(answer_tokens)
+    else:
+        normalized_token_weights = tuple(float(value) for value in token_loss_weights)
+        if len(normalized_token_weights) != len(answer_tokens) or any(
+            not math.isfinite(value) for value in normalized_token_weights
+        ):
+            raise ValueError("token_loss_weights must align and be finite")
     parameters = model.trainable_parameters()
     prepared = _prepare_live_path(
         model,
@@ -686,6 +696,11 @@ def exact_adjoint_live_path_value_and_grad(
             prepared.prelude_end <= int(match.group(1)) < prepared.coda_start
         ):
             raise RuntimeError("exact_adjoint_requires_window_only_trainables")
+    if branch_index is not None and (
+        type(branch_index) is not int
+        or not 0 <= branch_index < len(prepared.states)
+    ):
+        raise ValueError("branch_index is outside the live-path branch set")
 
     def detached(values: Sequence[Any]) -> tuple[Any, ...]:
         result = tuple(mx.stop_gradient(value) for value in values)
@@ -729,10 +744,16 @@ def exact_adjoint_live_path_value_and_grad(
         mx.eval(accumulated)
 
     targets = mx.array(list(answer_tokens))[None, :]
-    branch_scale = 1.0 / len(current)
+    token_weights = mx.array(normalized_token_weights, dtype=mx.float32)[None, :]
+    selected_indices = (
+        tuple(range(len(current))) if branch_index is None else (branch_index,)
+    )
+    branch_scale = 1.0 / len(selected_indices)
     branch_values: list[float] = []
-    state_cotangents: list[Any] = []
-    for seed, state in zip(seeds, current, strict=True):
+    state_cotangents: list[Any] = [mx.zeros_like(state) for state in current]
+    for selected_index in selected_indices:
+        seed = seeds[selected_index]
+        state = current[selected_index]
 
         def terminal_loss(
             parameter_tree: Any,
@@ -751,7 +772,10 @@ def exact_adjoint_live_path_value_and_grad(
                 prelude_end=prepared.prelude_end,
                 coda_start=prepared.coda_start,
             )
-            return nn.losses.cross_entropy(logits, targets, reduction="mean")
+            token_losses = nn.losses.cross_entropy(
+                logits.astype(mx.float32), targets, reduction="none"
+            )
+            return mx.mean(token_losses * token_weights)
 
         value, (parameter_gradient, state_gradient) = mx.value_and_grad(
             terminal_loss,
@@ -760,7 +784,9 @@ def exact_adjoint_live_path_value_and_grad(
         mx.eval(value, parameter_gradient, state_gradient)
         branch_values.append(float(value))
         add_parameter_gradient(parameter_gradient, branch_scale)
-        state_cotangents.append(mx.stop_gradient(branch_scale * state_gradient))
+        state_cotangents[selected_index] = mx.stop_gradient(
+            branch_scale * state_gradient
+        )
         del value, parameter_gradient, state_gradient
         mx.clear_cache()
 

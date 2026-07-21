@@ -275,7 +275,14 @@ def recurrence_step(
     """
     import mlx.core as mx
 
-    z_raw = runner.run(z, cache, start, end, persist=False)
+    # The functional training graph publishes the current recurrent depth so
+    # depth-conditioned operator banks select the same transform as the live
+    # cached engine.  Without this scope, a trained bank could pass offline
+    # objectives while live inference silently used its default depth.
+    from core.learning.depth_conditioned_lora import recurrent_depth_index
+
+    with recurrent_depth_index(step):
+        z_raw = runner.run(z, cache, start, end, persist=False)
     alpha = alpha_override if alpha_override is not None else alpha_at(config, step)
     reference = anchor if anchor is not None else z
     z_next = (1.0 - alpha) * z + alpha * rms_match(z_raw, reference, config.rms_clip_ratio)

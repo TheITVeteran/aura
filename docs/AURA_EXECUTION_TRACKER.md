@@ -22597,3 +22597,52 @@ gates remain open. Machine-certified completion remains unchanged until the
 evidence ledger is populated. Next: publish CP255, then connect verifier-driven
 optimization to the true recurrent execution graph and preregister its bounded
 32B factorial proof campaign. Final long soaks remain deferred.
+
+## Checkpoint 2026-07-21-256: Verifier Credit Through the Recurrent Graph
+
+Verifier reward can now train the computation that the Recursive Latent Cortex
+actually performs. The recurrent GRPO objective scores exact emitted tokens
+through latent-slot seeding, fixed-depth middle-layer recurrence, tied-weight
+branches, consensus exchange, anti-collapse, winner persistence, and answer
+decode. Its bounded exact adjoint propagates one parity-admitted group update
+backward through that graph one completion at a time, so the resident model does
+not need to retain every 32B activation graph concurrently. Selected-branch terminal
+loss still sends causal credit across the other branches through their exchange
+edges. The k3 KL reference is the same recurrent graph with only the durable
+adapter delta disabled, not an architecturally different standard decoder.
+
+The live cached engine and differentiable graph now share the recurrent-depth
+scope used by depth-conditioned operator banks. A frozen execution spec maps to
+a fixed live sampling configuration with the same workspace, branch roles,
+recurrence depth, alpha schedule, norm bound, exchange, and anti-collapse
+parameters. Adaptive halting, latent optimization, fast weights, fallback,
+decode penalties, temperature scaling, and nucleus truncation are excluded from
+this proof surface. Decode probability capture is explicit and opt-in; ordinary
+Aura responses remain unchanged. Every sampled completion is re-scored by the
+differentiable graph, and training admission fails when maximum or mean
+per-token log-probability drift exceeds the bound. The receipt binds the prompt,
+seed, execution spec, sampling controls, emitted tokens, cached behavior
+probabilities, differentiable probabilities, selected branch, adapter activity,
+exact trainable tensor tree, and checkpoint invariant by digest. The sampled
+group update refuses mixed or changed policies, wrong prompts/specs, and any
+sample that did not pass parity before exposing gradients.
+
+Validation is green: 105 latent-engine, branch-schedule, recurrence-adapter,
+recurrence-native objective/training, and recurrent-GRPO tests pass; focused
+Ruff and bytecode compilation pass. An additional 172 live-wiring,
+output-quality, task-verifier, experiment, and paired-campaign tests pass. A
+two-branch sample passes cached-to-adjoint
+probability parity with active recurrence adapters and unchanged model
+parameters. A complete contract test samples a verifier-ranked recurrent group,
+applies one exact-adjoint update, proves the rewarded completion's relative
+log-likelihood rises, and proves both the adapter-disabled RLC reference and
+ordinary decoder remain unchanged.
+
+This is total checkpoint record 317. It closes the missing causal learning-path
+implementation, but awards no resident-32B reasoning-gain, positive-interaction,
+frontier, external-custody, release, or soak credit. Machine-certified completion
+remains unchanged until reviewed artifacts populate the evidence ledger. Next:
+publish CP256, integrate this admitted sampler and exact update into CP255's
+crash-consistent detached trainer, then preregister and run a fresh powered
+base/adapter x standard/RLC factorial campaign after the presentation window.
+Final long soaks remain deferred.

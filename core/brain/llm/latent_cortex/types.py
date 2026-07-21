@@ -834,6 +834,9 @@ class LatentReasoningResult:
     # Raw output token ids — substrate-level callers (the experiments harness
     # driving random-weight models with synthetic vocabularies) verify these.
     tokens: list[int] = field(default_factory=list)
+    # Opt-in behavior-policy trace for recurrence-native training. Empty for
+    # every ordinary live request; callers must explicitly request capture.
+    decode_token_logprobs: list[float] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -841,6 +844,7 @@ class LatentReasoningResult:
             "text": self.text,
             "reason": self.reason,
             "tokens": list(self.tokens),
+            "decode_token_logprobs": list(self.decode_token_logprobs),
             "receipt": self.receipt.to_dict(),
         }
 

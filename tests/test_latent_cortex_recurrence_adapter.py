@@ -12,6 +12,7 @@ from core.brain.llm.latent_cortex.recurrence import WindowRunner  # noqa: E402
 from core.brain.llm.latent_cortex.recurrence_adapter import (  # noqa: E402
     ScopedLoRALinear,
     current_recurrence_adapter_scope,
+    recurrence_adapter_disabled,
     recurrence_adapter_scope,
 )
 from core.brain.llm.latent_cortex.types import ComputeBudget, EpisodeReceipt  # noqa: E402
@@ -90,6 +91,38 @@ def test_nested_scope_restores_parent_activation():
             assert current_recurrence_adapter_scope() is inner
         assert current_recurrence_adapter_scope() is outer
     assert current_recurrence_adapter_scope() is None
+
+
+def test_disabled_reference_runs_the_same_scope_without_adapter_delta():
+    base, wrapped = _projection()
+    x = mx.ones((1, 3, 4))
+    expected = base(x)
+
+    with recurrence_adapter_disabled():
+        with recurrence_adapter_scope() as activation:
+            actual = wrapped(x)
+
+    mx.eval(expected, actual)
+    assert bool(mx.array_equal(actual, expected))
+    assert activation.calls == 0
+    assert current_recurrence_adapter_scope() is None
+
+
+def test_nested_disable_boundaries_do_not_reenable_early():
+    base, wrapped = _projection()
+    x = mx.ones((1, 2, 4))
+    expected = base(x)
+
+    with recurrence_adapter_disabled():
+        with recurrence_adapter_disabled():
+            with recurrence_adapter_scope():
+                nested = wrapped(x)
+        with recurrence_adapter_scope():
+            outer = wrapped(x)
+
+    mx.eval(expected, nested, outer)
+    assert bool(mx.array_equal(nested, expected))
+    assert bool(mx.array_equal(outer, expected))
 
 
 def test_window_runner_is_the_only_automatic_activation_boundary():

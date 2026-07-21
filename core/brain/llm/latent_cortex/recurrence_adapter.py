@@ -12,10 +12,11 @@ Live RLC calls contain slots only and use the full-span scope.
 """
 from __future__ import annotations
 
+from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any, Iterator
+from typing import Any
 
 from mlx_lm.tuner.lora import LoRALinear
 
@@ -44,12 +45,33 @@ _ACTIVE_SCOPE: ContextVar[RecurrenceAdapterActivation | None] = ContextVar(
     "aura_recurrence_adapter_scope",
     default=None,
 )
+_DISABLE_DEPTH: ContextVar[int] = ContextVar(
+    "aura_recurrence_adapter_disable_depth",
+    default=0,
+)
 
 
 def current_recurrence_adapter_scope() -> RecurrenceAdapterActivation | None:
     """Return the current task-local activation, if one is open."""
 
     return _ACTIVE_SCOPE.get()
+
+
+@contextmanager
+def recurrence_adapter_disabled() -> Iterator[None]:
+    """Run the same recurrent graph against the frozen base projection.
+
+    Inner recurrence scopes still open and preserve graph structure, but their
+    LoRA deltas remain disabled. Nesting is counted so independent callers can
+    compose reference-policy work without accidentally re-enabling an outer
+    boundary.
+    """
+
+    token = _DISABLE_DEPTH.set(_DISABLE_DEPTH.get() + 1)
+    try:
+        yield
+    finally:
+        _DISABLE_DEPTH.reset(token)
 
 
 @contextmanager
@@ -111,7 +133,7 @@ class ScopedLoRALinear(LoRALinear):  # type: ignore[misc]
     def __call__(self, x: Any) -> Any:
         activation = _ACTIVE_SCOPE.get()
         y = self.linear(x)
-        if activation is None:
+        if activation is None or _DISABLE_DEPTH.get() > 0:
             return y
 
         sequence_length = int(x.shape[-2])
@@ -155,5 +177,6 @@ __all__ = [
     "RecurrenceAdapterActivation",
     "ScopedLoRALinear",
     "current_recurrence_adapter_scope",
+    "recurrence_adapter_disabled",
     "recurrence_adapter_scope",
 ]

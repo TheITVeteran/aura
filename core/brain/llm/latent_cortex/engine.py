@@ -436,6 +436,7 @@ class LatentCortexEngine:
         wall_reserve_s: float = 0.0,
         sentence_grace_tokens: int | None = None,
         contract_grace_tokens: int | None = None,
+        token_logprobs_out: list[float] | None = None,
     ) -> tuple[list[int], str]:
         """Minimal sampler: first token from ``initial_logits`` (the logits of
         the last persisted position — prompt tail or final thought slot), then
@@ -507,6 +508,30 @@ class LatentCortexEngine:
             adjusted = mx.where(gathered > 0, gathered / penalty, gathered * penalty)
             return logits.at[ids].add(adjusted - gathered)
 
+        def sample_logprob(logits, token: int) -> float:
+            if temp <= 0.0:
+                return 0.0
+            scaled = logits / temp
+            if nucleus < 1.0:
+                probabilities = mx.softmax(scaled)
+                sorted_indices = mx.argsort(-probabilities)
+                sorted_probabilities = probabilities[sorted_indices]
+                cumulative = mx.cumsum(sorted_probabilities)
+                keep = (cumulative - sorted_probabilities) < nucleus
+                kept_probabilities = mx.where(
+                    keep, sorted_probabilities, mx.zeros_like(sorted_probabilities)
+                )
+                normalizer = mx.maximum(mx.sum(kept_probabilities), 1e-12)
+                selected = mx.sum(
+                    mx.where(
+                        sorted_indices == int(token),
+                        kept_probabilities,
+                        mx.zeros_like(kept_probabilities),
+                    )
+                )
+                return float(mx.log(mx.maximum(selected / normalizer, 1e-30)))
+            return float(scaled[int(token)] - mx.logsumexp(scaled))
+
         def sample_disciplined(logits):
             """Sample under the newline-run discipline.
 
@@ -531,11 +556,11 @@ class LatentCortexEngine:
                 )
             token = self._sample(logits, temp, nucleus)
             if self.tokenizer is None or newline_run < _MAX_NEWLINE_RUN:
-                return token
+                return token, sample_logprob(logits, token)
             masked = logits
             for _ in range(_NEWLINE_RESAMPLE_ATTEMPTS):
                 if not self._is_pure_newline_token(token):
-                    return token
+                    return token, sample_logprob(masked, token)
                 suppressions += 1
                 masked = mx.where(
                     mx.arange(masked.shape[-1]) == token,
@@ -543,7 +568,7 @@ class LatentCortexEngine:
                     masked,
                 )
                 token = self._sample(masked, temp, nucleus)
-            return token
+            return token, sample_logprob(masked, token)
 
         # Contract-aware termination (CP180): once a single FINAL_ANSWER
         # JSON object completes, more tokens can only break terminality.
@@ -563,7 +588,7 @@ class LatentCortexEngine:
                 return False
             return is_contract_complete(text)
 
-        token = sample_disciplined(initial_logits)
+        token, token_logprob = sample_disciplined(initial_logits)
         termination = "token_limit"
         decode_started = time.monotonic()
         extension = contract_grace if contract_required else grace_tokens
@@ -574,6 +599,8 @@ class LatentCortexEngine:
                 termination = "eos"
                 break
             out.append(token)
+            if token_logprobs_out is not None:
+                token_logprobs_out.append(token_logprob)
             contract_satisfied = contract_complete_now()
             if contract_satisfied:
                 termination = "contract_complete"
@@ -626,7 +653,7 @@ class LatentCortexEngine:
             for i, layer in enumerate(inner.layers):
                 h = layer(h, mask, cache[i])
             logits = self._logits(h)[0, -1]
-            token = sample_disciplined(logits)
+            token, token_logprob = sample_disciplined(logits)
             if (index + 1) % 16 == 0:
                 self._emit_progress(
                     progress,
@@ -783,7 +810,10 @@ class LatentCortexEngine:
         cognitive_context: list | None = None,
         cancel_check: Callable[[], bool] | None = None,
         progress: Callable[[dict], None] | None = None,
+        capture_decode_logprobs: bool = False,
     ) -> LatentReasoningResult:
+        if type(capture_decode_logprobs) is not bool:
+            raise TypeError("capture_decode_logprobs must be boolean")
         receipt = EpisodeReceipt(episode_id=uuid.uuid4().hex[:12])
         episode_started = time.monotonic()
         receipt.n_layers = self.n_layers
@@ -826,6 +856,7 @@ class LatentCortexEngine:
 
         failure_reason = ""
         out_tokens: list[int] = []
+        decode_token_logprobs: list[float] = []
         try:
             try:
                 out_tokens, receipt = self._latent_episode(
@@ -841,6 +872,11 @@ class LatentCortexEngine:
                     cancel_check=cancel_check,
                     progress=progress,
                     episode_started=episode_started,
+                    token_logprobs_out=(
+                        decode_token_logprobs
+                        if capture_decode_logprobs
+                        else None
+                    ),
                 )
             except _FastWeightCleanupError as exc:
                 record_degradation(
@@ -874,6 +910,7 @@ class LatentCortexEngine:
                 else:
                     receipt.flag(f"fallback_vanilla:{type(exc).__name__}")
                     try:
+                        decode_token_logprobs.clear()
                         cache = self._fresh_cache()
                         _, tail_logits = self._prefill(tokens, cache, budget)
                         out_tokens, decode_termination = self._decode(
@@ -883,6 +920,11 @@ class LatentCortexEngine:
                             max_tokens=decode_max_tokens,
                             cancel_check=cancel_check,
                             progress=progress,
+                            token_logprobs_out=(
+                                decode_token_logprobs
+                                if capture_decode_logprobs
+                                else None
+                            ),
                         )
                         receipt.decode_requested_tokens = (
                             decode_max_tokens
@@ -974,6 +1016,7 @@ class LatentCortexEngine:
                 text="",
                 receipt=receipt,
                 reason="checkpoint_invariant_violated",
+                decode_token_logprobs=decode_token_logprobs,
             )
         if failure_reason:
             return LatentReasoningResult(
@@ -981,6 +1024,7 @@ class LatentCortexEngine:
                 text="",
                 receipt=receipt,
                 reason=failure_reason,
+                decode_token_logprobs=decode_token_logprobs,
             )
 
         text = (
@@ -989,7 +1033,11 @@ class LatentCortexEngine:
             else ""
         )
         return LatentReasoningResult(
-            ok=True, text=text, receipt=receipt, tokens=out_tokens
+            ok=True,
+            text=text,
+            receipt=receipt,
+            tokens=out_tokens,
+            decode_token_logprobs=decode_token_logprobs,
         )
 
     # The latent phases, separated so the fallback wrapper stays readable.
@@ -1008,6 +1056,7 @@ class LatentCortexEngine:
         cancel_check: Callable[[], bool] | None = None,
         progress: Callable[[dict], None] | None = None,
         episode_started: float | None = None,
+        token_logprobs_out: list[float] | None = None,
     ) -> tuple[list[int], EpisodeReceipt]:
         import mlx.core as mx
 
@@ -1696,6 +1745,7 @@ class LatentCortexEngine:
                 wall_reserve_s=(
                     6.0 if self.config.fast_weights.enabled else 0.0
                 ),
+                token_logprobs_out=token_logprobs_out,
             )
             receipt.decode_requested_tokens = decode_limit
             receipt.decode_generated_tokens = len(out_tokens)
