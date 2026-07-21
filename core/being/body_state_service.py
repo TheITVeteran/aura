@@ -154,8 +154,16 @@ class BodyStateService:
         self._spend_receipts: deque[str] = deque(maxlen=2048)
         self._spend_receipt_set: set[str] = set()
 
-        # Decay constants
-        self._fatigue_decay_rate = 0.002    # per second when idle
+        # Decay constants.
+        # Fatigue must recover faster than ordinary action costs accrue it,
+        # otherwise it saturates near 1.0 and pins welfare.recovery_drive above
+        # the Will's 0.6 defer threshold — producing a permanent
+        # welfare_recovery_required_before_action storm that never clears
+        # (observed live: fatigue ~0.94 and still climbing, 96k+ defers/boot).
+        # At 0.01/s idle fatigue fully recovers in ~100s, decisively overcoming
+        # the ~0.0025/s gross accrual while still building under genuine
+        # sustained load. The old 0.002/s could not overcome normal drift.
+        self._fatigue_decay_rate = 0.01     # per second when idle
         self._recovery_decay_rate = 0.001   # recovery debt decays slowly
         self._last_decay_time = time.monotonic()
 
