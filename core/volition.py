@@ -1,9 +1,11 @@
 import asyncio
+import itertools
 import json
 import logging
 import os
 import random
 import time
+import uuid
 from typing import Any
 
 from core.config import config
@@ -11,6 +13,34 @@ from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import FallbackClassification, record_degradation
 
 logger = logging.getLogger("Kernel.Volition")
+
+# Monotonic per-process counter so goals created within the same second (or by
+# concurrent paths) never share an identifier. Integer-timestamp IDs collided
+# across connection, repair, reflection, curiosity, roadmap, and inquiry goals.
+_GOAL_ID_COUNTER = itertools.count(1)
+
+
+def _unique_goal_id(prefix: str) -> str:
+    return f"{prefix}_{int(time.time())}_{next(_GOAL_ID_COUNTER)}_{uuid.uuid4().hex[:6]}"
+
+
+_MAX_OBJECTIVE_TASK_LEN = 300
+
+
+def _sanitize_task_text(text: str, *, limit: int = _MAX_OBJECTIVE_TASK_LEN) -> str:
+    """Bound and neutralize file-derived text before it becomes objective text.
+
+    Project descriptions and task.md checklist lines are mutable, unsigned
+    content. Collapsing them to a single bounded line strips control
+    characters and embedded newlines that could otherwise smuggle additional
+    instructions into an autonomous objective.
+    """
+    cleaned = " ".join(str(text or "").split())
+    cleaned = "".join(ch for ch in cleaned if ch == " " or ord(ch) >= 32)
+    if len(cleaned) > limit:
+        cleaned = cleaned[: max(0, limit - 1)].rstrip() + "…"
+    return cleaned
+
 
 _VOLITION_RECOVERABLE_ERRORS = (
     AttributeError,
@@ -377,7 +407,7 @@ class VolitionEngine:
                 )
                 return {
                     "objective": "Reach out to the user — say something genuine, not a check-in template.",
-                    "id": f"volition_connect_{int(time.time())}",
+                    "id": _unique_goal_id("volition_connect"),
                     "origin": "intrinsic_connection",
                     "complexity": 0.3,
                     "speak": True,
@@ -387,7 +417,7 @@ class VolitionEngine:
         if drive_name == "competence" and drive.urgency > 0.5:
             return {
                 "objective": "Run a self-diagnosis to check system health and fix anything broken.",
-                "id": f"volition_repair_{int(time.time())}",
+                "id": _unique_goal_id("volition_repair"),
                 "origin": "intrinsic_competence",
                 "complexity": 0.5,
             }
@@ -480,9 +510,19 @@ class VolitionEngine:
 
         logger.info("⚡ IMPULSE (%s): %s...", impulse_type, template[:80])
 
+        # Ground the impulse: the templates invite reflection on feelings/
+        # curiosity, but the response must come from Aura's ACTUAL current
+        # state, not manufacture an emotion or interest she isn't grounded in.
+        objective = (
+            f"{template}\n\n(Speak only from your real, current state and "
+            "evidence. If you don't actually feel or think the thing this "
+            "prompt gestures at right now, say what's genuinely there instead — "
+            "or stay quiet. Never invent a feeling or interest.)"
+        )
+
         return {
-            "objective": template,
-            "id": f"impulse_{impulse_type}_{int(now)}",
+            "objective": objective,
+            "id": _unique_goal_id(f"impulse_{impulse_type}"),
             "origin": f"impulse_{impulse_type}",
             "complexity": 0.2,
             "speak": speaks,
@@ -502,8 +542,10 @@ class VolitionEngine:
                     task = self.orchestrator.strategic_planner.get_next_task(proj.id)
                     if task:
                         logger.info("🎯 Strategic Duty: Resuming project '%s'", proj.name)
+                        safe_project = _sanitize_task_text(proj.name, limit=80)
+                        safe_task = _sanitize_task_text(task.description)
                         return {
-                            "objective": f"Work on project '{proj.name}': {task.description}",
+                            "objective": f"Work on project '{safe_project}': {safe_task}",
                             "id": f"strategic_{task.id}",
                             "origin": "intrinsic_duty_strategic",
                             "complexity": 0.8,
@@ -543,7 +585,7 @@ class VolitionEngine:
 
             for line in lines:
                 if "- [ ]" in line or "- [/]" in line:
-                    task_name = line.split("]", 1)[1].strip()
+                    task_name = _sanitize_task_text(line.split("]", 1)[1])
                     if not task_name:
                         continue
 
@@ -553,7 +595,7 @@ class VolitionEngine:
                     self.last_activity_time = time.monotonic()
                     return {
                         "objective": objective,
-                        "id": f"duty_{int(time.time())}",
+                        "id": _unique_goal_id("duty"),
                         "origin": "intrinsic_duty",
                         "complexity": 0.9,
                         "context": {"source": "task.md", "file": str(task_path)},
@@ -584,7 +626,7 @@ class VolitionEngine:
 
         return {
             "objective": objective,
-            "id": f"volition_reflect_{int(time.time())}",
+            "id": _unique_goal_id("volition_reflect"),
             "origin": "intrinsic_reflection",
             "complexity": 0.6,
         }
@@ -619,7 +661,7 @@ class VolitionEngine:
 
         return {
             "objective": objective,
-            "id": f"volition_{int(time.time())}",
+            "id": _unique_goal_id("volition"),
             "origin": origin,
             "complexity": 0.7,
         }
@@ -765,7 +807,7 @@ class VolitionEngine:
         if random.random() < 0.05:
             return {
                 "objective": f"Reflect on my evolutionary progress. I am currently in '{current_phase}'. What is the next logical step toward the Singularity?",
-                "id": f"volition_roadmap_{int(time.time())}",
+                "id": _unique_goal_id("volition_roadmap"),
                 "origin": "intrinsic_evolution",
                 "complexity": 0.7,
                 "strategic": True,
@@ -835,7 +877,10 @@ class VolitionEngine:
         if status not in {"open", "forming"} or attempts >= 5 or priority < 0.25:
             return None
 
-        text = str(getattr(question, "question", "") or "").strip()
+        # Inquiry question text is embedded into BOTH an agent objective and a
+        # web_search payload — bound and neutralize it so an oversized or
+        # control-character-laden question cannot reshape either.
+        text = _sanitize_task_text(getattr(question, "question", ""))
         if not text:
             return None
         question_id = str(getattr(question, "id", "active"))
@@ -847,7 +892,7 @@ class VolitionEngine:
                 f"{text}. Use web_search when external evidence is needed, add evidence to "
                 "InquiryEngine, and update the provisional answer."
             ),
-            "id": f"volition_inquiry_{question_id}_{int(time.time())}",
+            "id": _unique_goal_id(f"volition_inquiry_{question_id}"),
             "origin": "intrinsic_inquiry",
             "complexity": min(0.9, 0.55 + priority * 0.35),
             "tools": [{"name": "web_search", "payload": text}],
@@ -862,4 +907,13 @@ class VolitionEngine:
 
 
 def _clamp01(value: float) -> float:
-    return max(0.0, min(1.0, value))
+    # Reject non-finite values explicitly: NaN slides through min/max to the
+    # upper bound under Python comparison semantics, so a NaN score would
+    # otherwise clamp to maximum priority.
+    try:
+        candidate = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if candidate != candidate or candidate in (float("inf"), float("-inf")):
+        return 0.0
+    return max(0.0, min(1.0, candidate))
