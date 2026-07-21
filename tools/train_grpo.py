@@ -170,7 +170,13 @@ def main() -> int:
     parser.add_argument("--checkpoint-every", type=int, default=25)
     parser.add_argument("--calibrate", action="store_true",
                         help="measure pass rates before training to skip dead cells")
-    parser.add_argument("--calibrate-samples", type=int, default=3)
+    parser.add_argument("--calibrate-samples", type=int, default=2)
+    parser.add_argument("--calibrate-group", type=int, default=4,
+                        help="completions per calibration probe (cheaper than the train group)")
+    parser.add_argument("--calibrate-tokens", type=int, default=160,
+                        help="max tokens per calibration completion (shorter than training)")
+    parser.add_argument("--calibrate-minutes", type=float, default=15.0,
+                        help="wall-clock cap on the whole calibration phase")
     parser.add_argument("--cot", action="store_true",
                         help="invite step-by-step reasoning before the answer")
     parser.add_argument("--max-minutes", type=float, default=600.0)
@@ -304,24 +310,43 @@ def main() -> int:
         # the learnable band instead of finding it the expensive way. Opt-in
         # so a resumed run (which already has a learned map) skips it.
         if args.calibrate and resumed is None:
-            print("[calibrate] measuring base pass rates per cell", flush=True)
+            # Cheap, observable, bounded probe. A pass-rate ESTIMATE needs a
+            # handful of short completions, not the full training group at
+            # full length -- the earlier config did 360 x 320-token
+            # generations and took over an hour with no output, which made
+            # "fail fast" not fast at all. Here: a small group, short
+            # completions, per-cell progress, and a wall-clock cap.
+            cal_group = min(config.group_size, args.calibrate_group)
+            cal_tokens = min(args.max_tokens, args.calibrate_tokens)
+            cal_deadline = time.time() + args.calibrate_minutes * 60.0
+            cells_sorted = sorted(by_cell.keys())
+            print(
+                f"[calibrate] {len(cells_sorted)} cells x {cal_group} completions "
+                f"x {cal_tokens} tokens, cap {args.calibrate_minutes}m",
+                flush=True,
+            )
 
             def _measure(family: str, difficulty: int) -> float:
                 pool = by_cell.get((family, difficulty))
-                if not pool:
-                    return 0.0
+                if not pool or time.time() > cal_deadline:
+                    return 0.5  # unmeasured -> optimistic (curriculum explores it)
                 probe = pool[sampler.randrange(len(pool))]
                 with recurrence_adapter_scope(start=None, stop=None):
                     _, comps = sample_group(
-                        model, tokenizer, probe, size=config.group_size,
-                        max_tokens=args.max_tokens, temperature=args.temperature,
+                        model, tokenizer, probe, size=cal_group,
+                        max_tokens=cal_tokens, temperature=args.temperature,
                         seed=args.seed + hash((family, difficulty)) % 9973,
                     )
-                rewards = [
+                rate = sum(
                     reward_from_verdict(probe.grade(c), format_credit=args.format_credit)
                     for c in comps
-                ]
-                return sum(rewards) / len(rewards)
+                ) / len(comps)
+                print(
+                    f"[calibrate] {family}@{difficulty} pass={rate:.2f} "
+                    f"({(time.time()-started)/60:.1f}m)",
+                    flush=True,
+                )
+                return rate
 
             from core.learning.adaptive_curriculum import warm_start_pass_rates
 
