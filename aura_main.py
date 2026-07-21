@@ -1144,6 +1144,17 @@ async def _boot_runtime_orchestrator(
         record_degradation("aura_main", exc)
         logger.debug("online_lora_governor registration skipped: %s", exc)
 
+    if _env_flag("AURA_ENABLE_VERIFIER_CURRICULUM", True):
+        try:
+            from core.brain.verifier_curriculum import boot_verifier_curriculum
+
+            boot_verifier_curriculum()
+            logger.info("📚 Verifier curriculum online — edge-of-competence "
+                        "practice, verifier-gated compounding.")
+        except _AURA_MAIN_BOUNDARY_ERRORS as exc:
+            record_degradation("aura_main", exc)
+            logger.warning("Verifier curriculum boot failed: %s", exc)
+
     if _env_flag("AURA_ENABLE_VERIFIER_FOUNDRY", True):
         try:
             from core.brain.verifiers.foundry import boot_verifier_foundry

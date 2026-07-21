@@ -484,6 +484,43 @@ class AutonomousInitiativeLoop:
                 )
                 logger.debug("Initiative event listener recovered from event error: %s", e)
 
+    async def _curriculum_practice_step(self) -> None:
+        """One bounded curriculum practice cycle per self-development pass
+        (frontier-general P4): propose edge-of-competence tasks, solve with
+        the live inference surface, verify with the truth engines, compound
+        verified wins through the gated pipes. Skips quietly when the
+        curriculum service or inference gate is absent."""
+        try:
+            loop_svc = optional_service("verifier_curriculum", default=None)
+            gate = optional_service("inference_gate", default=None)
+            if loop_svc is None or gate is None or not hasattr(gate, "generate"):
+                return
+
+            async def _solve(prompt: str, task_type: str) -> str:
+                out = await gate.generate(
+                    prompt,
+                    context={"purpose": "curriculum_practice",
+                             "origin": "curriculum_loop",
+                             "is_background": True},
+                    timeout=30.0,
+                )
+                return str(getattr(out, "text", out) or "")
+
+            report = await loop_svc.run_cycle(_solve, k=2)
+            if report.verified:
+                self._emit_feed(
+                    "Curriculum Practice",
+                    f"Practiced {report.proposed} self-set tasks; "
+                    f"{report.verified} verified clean, {report.captured} compounded.",
+                    category="SelfDevelopment",
+                )
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            _record_initiative_degradation(
+                exc,
+                action="continued self-development without curriculum practice",
+                severity="warning",
+            )
+
     def _covenant_obligation_check(self) -> None:
         """Surface due Ulysses-covenant obligations into the awareness feed.
 
@@ -649,6 +686,7 @@ class AutonomousInitiativeLoop:
             await asyncio.sleep(45)
 
     async def _run_self_development_cycle(self):
+        await self._curriculum_practice_step()
         capability_engine = optional_service("capability_engine", default=None)
         if not capability_engine:
             self._emit_feed(
