@@ -99,7 +99,7 @@ def test_the_factorial_shows_both_retrieval_and_depth_are_causal():
 
     verdicts = report["verdicts"]
     assert verdicts["retrieval_is_causal"] is True
-    assert verdicts["recurrence_is_causal"] is True
+    assert verdicts["recurrence_helps"] is True
     assert verdicts["both_required"] is True
     assert "could not produce alone" in verdicts["claim"]
 

@@ -1,0 +1,545 @@
+{
+  "schema": "aura.integrated_reasoning_run.v1",
+  "n_tasks": 48,
+  "depths": [
+    1,
+    2,
+    4
+  ],
+  "accuracy": {
+    "retrieval_on": {
+      "1": 0.5625,
+      "2": 0.4375,
+      "4": 0.0
+    },
+    "retrieval_off": {
+      "1": 0.0,
+      "2": 0.0,
+      "4": 0.0
+    }
+  },
+  "verdicts": {
+    "retrieval_is_causal": false,
+    "recurrence_is_causal": false,
+    "both_required": false,
+    "claim": "the conjunction is not yet demonstrated",
+    "on_shallow": 0.5625,
+    "on_deep": 0.0,
+    "off_deep": 0.0
+  },
+  "criteria_coverage": {
+    "combine_unpresented_facts": 24,
+    "derive_unstored_answer": 48,
+    "maintain_intermediate_variables": 24,
+    "revise_after_evidence": 24,
+    "distinguish_conflicting_evidence": 24,
+    "search_alternatives": 0,
+    "detect_inconsistency": 24,
+    "compute_improves_answer": 24,
+    "transfer_to_unfamiliar": 0
+  },
+  "per_task": [
+    {
+      "task_id": "chain-h2-0",
+      "hops": 2,
+      "on@1": true,
+      "off@1": false,
+      "on@2": true,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    },
+    {
+      "task_id": "chain-h2-1",
+      "hops": 2,
+      "on@1": true,
+      "off@1": false,
+      "on@2": true,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    },
+    {
+      "task_id": "chain-h2-2",
+      "hops": 2,
+      "on@1": true,
+      "off@1": false,
+      "on@2": true,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    },
+    {
+      "task_id": "chain-h2-3",
+      "hops": 2,
+      "on@1": true,
+      "off@1": false,
+      "on@2": true,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    },
+    {
+      "task_id": "chain-h2-4",
+      "hops": 2,
+      "on@1": true,
+      "off@1": false,
+      "on@2": true,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    },
+    {
+      "task_id": "chain-h2-5",
+      "hops": 2,
+      "on@1": true,
+      "off@1": false,
+      "on@2": false,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    },
+    {
+      "task_id": "chain-h2-6",
+      "hops": 2,
+      "on@1": true,
+      "off@1": false,
+      "on@2": true,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    },
+    {
+      "task_id": "chain-h2-7",
+      "hops": 2,
+      "on@1": true,
+      "off@1": false,
+      "on@2": false,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    },
+    {
+      "task_id": "chain-h2-8",
+      "hops": 2,
+      "on@1": true,
+      "off@1": false,
+      "on@2": true,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    },
+    {
+      "task_id": "chain-h2-9",
+      "hops": 2,
+      "on@1": true,
+      "off@1": false,
+      "on@2": true,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    },
+    {
+      "task_id": "chain-h2-10",
+      "hops": 2,
+      "on@1": false,
+      "off@1": false,
+      "on@2": false,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    },
+    {
+      "task_id": "chain-h2-11",
+      "hops": 2,
+      "on@1": false,
+      "off@1": false,
+      "on@2": false,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    },
+    {
+      "task_id": "chain-h4-0",
+      "hops": 4,
+      "on@1": true,
+      "off@1": false,
+      "on@2": false,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    },
+    {
+      "task_id": "chain-h4-1",
+      "hops": 4,
+      "on@1": true,
+      "off@1": false,
+      "on@2": false,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    },
+    {
+      "task_id": "chain-h4-2",
+      "hops": 4,
+      "on@1": true,
+      "off@1": false,
+      "on@2": true,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    },
+    {
+      "task_id": "chain-h4-3",
+      "hops": 4,
+      "on@1": true,
+      "off@1": false,
+      "on@2": false,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    },
+    {
+      "task_id": "chain-h4-4",
+      "hops": 4,
+      "on@1": true,
+      "off@1": false,
+      "on@2": true,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    },
+    {
+      "task_id": "chain-h4-5",
+      "hops": 4,
+      "on@1": false,
+      "off@1": false,
+      "on@2": false,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    },
+    {
+      "task_id": "chain-h4-6",
+      "hops": 4,
+      "on@1": true,
+      "off@1": false,
+      "on@2": false,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    },
+    {
+      "task_id": "chain-h4-7",
+      "hops": 4,
+      "on@1": true,
+      "off@1": false,
+      "on@2": false,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    },
+    {
+      "task_id": "chain-h4-8",
+      "hops": 4,
+      "on@1": true,
+      "off@1": false,
+      "on@2": true,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    },
+    {
+      "task_id": "chain-h4-9",
+      "hops": 4,
+      "on@1": true,
+      "off@1": false,
+      "on@2": false,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    },
+    {
+      "task_id": "chain-h4-10",
+      "hops": 4,
+      "on@1": false,
+      "off@1": false,
+      "on@2": false,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    },
+    {
+      "task_id": "chain-h4-11",
+      "hops": 4,
+      "on@1": false,
+      "off@1": false,
+      "on@2": false,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    },
+    {
+      "task_id": "conflict-h2-0",
+      "hops": 2,
+      "on@1": false,
+      "off@1": false,
+      "on@2": false,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    },
+    {
+      "task_id": "conflict-h2-1",
+      "hops": 2,
+      "on@1": true,
+      "off@1": false,
+      "on@2": true,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    },
+    {
+      "task_id": "conflict-h2-2",
+      "hops": 2,
+      "on@1": false,
+      "off@1": false,
+      "on@2": true,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    },
+    {
+      "task_id": "conflict-h2-3",
+      "hops": 2,
+      "on@1": true,
+      "off@1": false,
+      "on@2": false,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    },
+    {
+      "task_id": "conflict-h2-4",
+      "hops": 2,
+      "on@1": false,
+      "off@1": false,
+      "on@2": false,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    },
+    {
+      "task_id": "conflict-h2-5",
+      "hops": 2,
+      "on@1": false,
+      "off@1": false,
+      "on@2": true,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    },
+    {
+      "task_id": "conflict-h2-6",
+      "hops": 2,
+      "on@1": true,
+      "off@1": false,
+      "on@2": true,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    },
+    {
+      "task_id": "conflict-h2-7",
+      "hops": 2,
+      "on@1": false,
+      "off@1": false,
+      "on@2": false,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    },
+    {
+      "task_id": "conflict-h2-8",
+      "hops": 2,
+      "on@1": true,
+      "off@1": false,
+      "on@2": true,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    },
+    {
+      "task_id": "conflict-h2-9",
+      "hops": 2,
+      "on@1": false,
+      "off@1": false,
+      "on@2": true,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    },
+    {
+      "task_id": "conflict-h2-10",
+      "hops": 2,
+      "on@1": false,
+      "off@1": false,
+      "on@2": false,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    },
+    {
+      "task_id": "conflict-h2-11",
+      "hops": 2,
+      "on@1": false,
+      "off@1": false,
+      "on@2": false,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    },
+    {
+      "task_id": "conflict-h4-0",
+      "hops": 4,
+      "on@1": false,
+      "off@1": false,
+      "on@2": false,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    },
+    {
+      "task_id": "conflict-h4-1",
+      "hops": 4,
+      "on@1": true,
+      "off@1": false,
+      "on@2": false,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    },
+    {
+      "task_id": "conflict-h4-2",
+      "hops": 4,
+      "on@1": false,
+      "off@1": false,
+      "on@2": false,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    },
+    {
+      "task_id": "conflict-h4-3",
+      "hops": 4,
+      "on@1": false,
+      "off@1": false,
+      "on@2": true,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    },
+    {
+      "task_id": "conflict-h4-4",
+      "hops": 4,
+      "on@1": true,
+      "off@1": false,
+      "on@2": true,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    },
+    {
+      "task_id": "conflict-h4-5",
+      "hops": 4,
+      "on@1": true,
+      "off@1": false,
+      "on@2": true,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    },
+    {
+      "task_id": "conflict-h4-6",
+      "hops": 4,
+      "on@1": true,
+      "off@1": false,
+      "on@2": true,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    },
+    {
+      "task_id": "conflict-h4-7",
+      "hops": 4,
+      "on@1": false,
+      "off@1": false,
+      "on@2": false,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    },
+    {
+      "task_id": "conflict-h4-8",
+      "hops": 4,
+      "on@1": false,
+      "off@1": false,
+      "on@2": false,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    },
+    {
+      "task_id": "conflict-h4-9",
+      "hops": 4,
+      "on@1": false,
+      "off@1": false,
+      "on@2": false,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    },
+    {
+      "task_id": "conflict-h4-10",
+      "hops": 4,
+      "on@1": false,
+      "off@1": false,
+      "on@2": false,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    },
+    {
+      "task_id": "conflict-h4-11",
+      "hops": 4,
+      "on@1": false,
+      "off@1": false,
+      "on@2": false,
+      "off@2": false,
+      "on@4": false,
+      "off@4": false
+    }
+  ],
+  "model": "training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118",
+  "adapter": "artifacts/closeout/latent_cortex/cp238_reasoning_campaign/grpo",
+  "base_recall_guard": {
+    "schema": "aura.integrated_reasoning_eval.v1",
+    "tasks": 48,
+    "answered_from_memory": [],
+    "guard_passed": true
+  },
+  "tasks_after_guard": 48,
+  "elapsed_minutes": 11.99,
+  "verdicts_corrected": {
+    "retrieval_is_causal": true,
+    "recurrence_helps": false,
+    "recurrence_hurts": true,
+    "both_required": false,
+    "claim": "RETRIEVAL half CONFIRMED: retrieval turns 0 into a real score; the model uses external knowledge it does not have. DEPTH half REFUTED: recurrence degrades accuracy rather than helping.",
+    "best_depth_for_retrieval": 1,
+    "retrieval_gain_at_best_depth": 0.5625,
+    "on_shallow": 0.5625,
+    "on_deep": 0.0,
+    "off_at_best": 0.0
+  }
+}

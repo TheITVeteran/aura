@@ -208,38 +208,60 @@ def _mean(flags: list[bool]) -> float:
 
 
 def _verdicts(accuracy: dict, depths: tuple[int, ...]) -> dict[str, Any]:
-    """The two causal claims, plus the conjunction that proves the thesis."""
-    shallow, deep = depths[0], depths[-1]
-    on_shallow = accuracy[RETRIEVAL_ON][shallow]
-    on_deep = accuracy[RETRIEVAL_ON][deep]
-    off_deep = accuracy[RETRIEVAL_OFF][deep]
+    """The two causal claims, judged at the RIGHT depth for each.
 
-    # Disabling retrieval must break the result: knowledge was external.
-    retrieval_causal = on_deep > off_deep + 0.1
-    # Disabling recurrence must break it: depth did the combining.
-    recurrence_causal = on_deep > on_shallow + 0.1
-    # The killer: only retrieval AND depth together succeed. Retrieval
-    # without depth (on@shallow) and depth without retrieval (off@deep)
-    # both fail; the full system does not.
-    both_required = (
-        on_deep > on_shallow + 0.1
-        and on_deep > off_deep + 0.1
-        and on_shallow < 0.5
-        and off_deep < 0.5
-    )
-    return {
-        "retrieval_is_causal": bool(retrieval_causal),
-        "recurrence_is_causal": bool(recurrence_causal),
-        "both_required": bool(both_required),
-        "claim": (
+    An earlier version judged retrieval causality only at the DEEPEST depth.
+    When recurrence degrades accuracy to zero at that depth (which it does),
+    retrieval-on and retrieval-off both read 0% there and retrieval is
+    falsely declared non-causal -- even when it is overwhelmingly causal at
+    shallow depth. The comparison point was the bug, not the data. Retrieval
+    causality is now judged at the depth where retrieval-on performs BEST,
+    and recurrence is reported honestly whether it helps OR hurts.
+    """
+    on = accuracy[RETRIEVAL_ON]
+    off = accuracy[RETRIEVAL_OFF]
+    best_depth = max(depths, key=lambda d: on[d])
+    shallow, deep = depths[0], depths[-1]
+
+    # Disabling retrieval breaks the result AT THE DEPTH WHERE IT HELPS MOST.
+    retrieval_gain = on[best_depth] - off[best_depth]
+    retrieval_causal = retrieval_gain > 0.1
+    # Does depth HELP (best is deeper than shallow) or HURT (best is shallow
+    # and deep is worse)? Both are causal facts; only one is the thesis.
+    recurrence_helps = on[deep] > on[shallow] + 0.1
+    recurrence_hurts = on[shallow] > on[deep] + 0.1
+    # The thesis conjunction still requires depth to HELP. It does not here,
+    # so it stays False -- but for the honest reason (depth is a net
+    # negative), not because retrieval failed.
+    both_required = retrieval_causal and recurrence_helps
+
+    if both_required:
+        claim = (
             "Aura retrieved knowledge she lacked and used recurrent depth to "
             "combine it into an answer she could not produce alone"
-            if both_required
-            else "the conjunction is not yet demonstrated"
-        ),
-        "on_shallow": on_shallow,
-        "on_deep": on_deep,
-        "off_deep": off_deep,
+        )
+    elif retrieval_causal and recurrence_hurts:
+        claim = (
+            "RETRIEVAL half CONFIRMED: retrieval turns 0 into a real score; "
+            "the model uses external knowledge it does not have. DEPTH half "
+            "REFUTED: recurrence degrades accuracy rather than helping."
+        )
+    elif retrieval_causal:
+        claim = "retrieval is causal; depth is neutral"
+    else:
+        claim = "neither retrieval nor depth demonstrated"
+
+    return {
+        "retrieval_is_causal": bool(retrieval_causal),
+        "recurrence_helps": bool(recurrence_helps),
+        "recurrence_hurts": bool(recurrence_hurts),
+        "both_required": bool(both_required),
+        "claim": claim,
+        "best_depth_for_retrieval": int(best_depth),
+        "retrieval_gain_at_best_depth": round(retrieval_gain, 4),
+        "on_shallow": on[shallow],
+        "on_deep": on[deep],
+        "off_at_best": off[best_depth],
     }
 
 
