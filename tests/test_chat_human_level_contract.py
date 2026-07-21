@@ -803,6 +803,15 @@ def test_response_generation_repairs_substantive_boilerplate_shape_miss_before_m
 
 
 def test_response_generation_does_not_repair_empty_generic_boilerplate():
+    """Too-thin boilerplate is DECLINED for local repair, not silently blessed.
+
+    The repair path only rewrites text that is already substantive; a bare
+    "How can I help?" has nothing to repair from, so it must come back
+    unchanged. It still reports what the reliability gate DETECTED — the
+    reasons describe the assessment, not a mutation, and the caller only
+    consumes them when a repair actually happened. Returning an empty reason
+    tuple here would hide that the reply is generic boilerplate.
+    """
     from core.phases.response_generation import ResponseGenerationPhase
 
     repaired, changed, reasons = (
@@ -814,7 +823,7 @@ def test_response_generation_does_not_repair_empty_generic_boilerplate():
 
     assert repaired == "How can I help?"
     assert changed is False
-    assert reasons == ()
+    assert "generic_assistant_language" in reasons
 
 
 def test_reliability_contract_rejects_missing_requested_list_items():

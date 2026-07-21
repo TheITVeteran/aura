@@ -57,6 +57,36 @@ _STOPWORDS = {
     "such", "than", "that", "their", "then", "there", "these", "they", "this", "through",
     "under", "using", "verify", "what", "when", "where", "which", "while", "with", "would",
 }
+# "difference between A and B", "compare A and B", "A vs B" — the two things
+# the request actually asks to be held against each other.
+_COMPARED_SUBJECTS_RES = (
+    re.compile(
+        r"\b(?:difference|distinction|contrast)\s+between\s+"
+        r"(?P<a>[^?.;\n]{2,80}?)\s+and\s+(?P<b>[^?.;\n]{2,80}?)\s*[?.;\n]",
+        re.I,
+    ),
+    re.compile(
+        r"\b(?:compare|contrast)\s+(?P<a>[^?.;\n]{2,80}?)\s+(?:and|with|to|against)\s+"
+        r"(?P<b>[^?.;\n]{2,80}?)\s*[?.;\n]",
+        re.I,
+    ),
+    re.compile(
+        r"\b(?P<a>[^?.;\n]{2,60}?)\s+(?:versus|vs\.?)\s+(?P<b>[^?.;\n]{2,60}?)\s*[?.;\n]",
+        re.I,
+    ),
+)
+# An explain-request that is ABOUT the comparison: satisfying the comparison
+# is what explaining the difference means.
+_INSTRUCTION_SIDE_RE = re.compile(
+    r"\b(?:explain|describe|list|enumerate|verify|test|prove|validate|choose|"
+    r"recommend|prefer|tell|show|why|how|what|give|walk)\b",
+    re.I,
+)
+_COMPARATIVE_EXPLAIN_RE = re.compile(
+    r"\b(?:explain|describe|tell\s+me)\b[^?.;\n]{0,40}?"
+    r"\b(?:difference|distinction|contrast)\b",
+    re.I,
+)
 _SUBJECT_TRAIL_RE = re.compile(
     r"\b(?:under|against|across|including)\s+([^?.;\n]{3,180})",
     re.I,
@@ -86,6 +116,46 @@ def request_facets(objective: Any) -> list[str]:
 
 def _tokens(text: str) -> list[str]:
     return [token.lower() for token in _WORD_RE.findall(text)]
+
+
+def _compared_subjects(objective: str) -> tuple[list[str], list[str]] | None:
+    """The two subjects a comparison request names, as content tokens.
+
+    Returns None when the request does not name an explicit pair.
+    """
+    probe = objective if objective.endswith(("?", ".")) else objective + "."
+    for pattern in _COMPARED_SUBJECTS_RES:
+        match = pattern.search(probe)
+        if not match:
+            continue
+        raw_left, raw_right = match.group("a"), match.group("b")
+        # "compare the tradeoffs AND explain why it matters" joins two
+        # INSTRUCTIONS, not two subjects. A side that carries its own request
+        # verb is not a comparison subject.
+        if _INSTRUCTION_SIDE_RE.search(raw_left) or _INSTRUCTION_SIDE_RE.search(raw_right):
+            continue
+        left = [t for t in _tokens(raw_left) if t not in _STOPWORDS and len(t) > 2]
+        right = [t for t in _tokens(raw_right) if t not in _STOPWORDS and len(t) > 2]
+        if left and right and set(left) != set(right):
+            return left, right
+    return None
+
+
+def _covers_both_compared_subjects(analysis_text: str, objective: str) -> bool:
+    """True when the answer substantively addresses BOTH compared subjects.
+
+    A connective keyword ("whereas", "unlike") is neither necessary nor
+    sufficient for a comparison: prose that holds two named things against
+    each other IS a comparison, while filler can contain "while" and compare
+    nothing. Requiring coverage of the two subjects the REQUEST named is the
+    stronger test — filler that addresses neither still fails.
+    """
+    subjects = _compared_subjects(objective)
+    if subjects is None:
+        return False
+    answer_tokens = set(_tokens(analysis_text))
+    left, right = subjects
+    return bool(answer_tokens & set(left)) and bool(answer_tokens & set(right))
 
 
 def _analysis_surface(text: str, objective: str) -> dict[str, Any]:
@@ -175,12 +245,30 @@ def evaluate_facet_coverage(text: Any, objective: Any) -> dict[str, Any]:
                     re.I,
                 )
             )
-        if name == "compare" and not matched:
-            matched = bool(
-                re.search(r"\bearly\b", analysis_text, re.I)
-                and re.search(r"\blate\b", analysis_text, re.I)
-                and re.search(r"\b(?:pros?|cons?|advantage|disadvantage)\w*\b", analysis_text, re.I)
-            )
+        if name == "compare":
+            # When the request NAMES the pair, subject coverage is the test —
+            # in both directions. A connective keyword is neither necessary
+            # (prose that holds two named things against each other is a
+            # comparison) nor sufficient (filler containing a bare "while"
+            # compares nothing). Requests without an explicit pair fall back
+            # to the connective/heuristic match.
+            if _compared_subjects(objective_text) is not None:
+                matched = _covers_both_compared_subjects(analysis_text, objective_text)
+            elif not matched:
+                matched = bool(
+                    re.search(r"\bearly\b", analysis_text, re.I)
+                    and re.search(r"\blate\b", analysis_text, re.I)
+                    and re.search(
+                        r"\b(?:pros?|cons?|advantage|disadvantage)\w*\b",
+                        analysis_text,
+                        re.I,
+                    )
+                )
+        if name == "explain" and not matched and _COMPARATIVE_EXPLAIN_RE.search(objective_text):
+            # "Explain the difference between A and B": explaining the
+            # difference IS the comparison, so a covered comparison answers
+            # the explain request too.
+            matched = _covers_both_compared_subjects(analysis_text, objective_text)
         if name == "enumerate" and list_items >= 2:
             matched = True
         minimum_facet_words = {
