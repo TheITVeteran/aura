@@ -330,7 +330,26 @@ def main() -> int:
                 sorted({p for _, p in by_cell}),
                 _measure, samples_per_cell=args.calibrate_samples,
             )
-            print(f"[calibrate] {curriculum.report()}", flush=True)
+            calib = curriculum.report()
+            print(f"[calibrate] {calib}", flush=True)
+            # Fail fast on a known-bad config. If calibration finds no
+            # learnable cell -- everything already mastered or impossible --
+            # training would burn its whole budget on degenerate groups and
+            # produce no signal, which is exactly how the first two runs were
+            # wasted. Abort with the diagnosis instead of running for hours.
+            if not calib.get("learnable") and not calib.get("unexplored"):
+                verdict = {
+                    "schema": GRPO_TRAIN_SCHEMA,
+                    "aborted": "no_reachable_frontier",
+                    "diagnosis": (
+                        "all cells saturated (too easy) or hopeless (too hard); "
+                        "widen or shift the difficulty band before training"
+                    ),
+                    "calibration": calib,
+                }
+                (out_dir / "grpo_receipt.json").write_text(json.dumps(verdict, indent=2))
+                print(f"[abort] no reachable frontier -> {verdict['diagnosis']}", flush=True)
+                return 0
 
         while step < args.max_steps and time.time() < deadline:
             cell = curriculum.sample(sampler)
