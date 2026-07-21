@@ -1014,7 +1014,10 @@ def test_hardwired_match_returns_detached_pathway(network):
 
     owned = network.pathways["detached_match"]
     assert params == {"value": "value"}
-    assert owned.confidence == 1.0
+    # Newly-registered pathways start at the honest untested default (0.5),
+    # not a fabricated perfect 1.0. The point of this test is isolation: the
+    # owned pathway must be UNCHANGED by mutations to the detached copy.
+    assert owned.confidence == 0.5
     assert "injected" not in owned.param_map
     assert owned.dependencies == []
 

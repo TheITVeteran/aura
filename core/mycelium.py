@@ -54,6 +54,41 @@ logger = logging.getLogger("Aura.Mycelium")
 
 T = TypeVar("T")
 
+# Regex safety bounds for routing patterns (registered or restored from the
+# vault). A catastrophic-backtracking pattern searched against user text on the
+# hot routing path is a ReDoS lever; these caps reject the worst offenders and
+# the match wrapper bounds the input length actually scanned.
+_MAX_PATTERN_LEN = 512
+_MAX_ROUTE_INPUT_LEN = 4096
+# Heuristic markers of catastrophic backtracking: nested/adjacent unbounded
+# quantifiers. Not exhaustive, but blocks the classic (a+)+ / (.*)* shapes.
+_REDOS_MARKERS = (
+    re.compile(r"\([^)]*[+*][^)]*\)[+*]"),   # (…+…)+  /  (…*…)*
+    re.compile(r"[+*]\s*[+*]"),              # ** / *+ / +* / ++
+    re.compile(r"\{\d{4,}"),                 # {1000,} huge repetition
+)
+
+
+def _validate_route_pattern(pattern: str) -> str:
+    """Reject oversized or catastrophic-backtracking routing patterns."""
+    text = str(pattern or "")
+    if len(text) > _MAX_PATTERN_LEN:
+        raise ValueError(f"route pattern exceeds {_MAX_PATTERN_LEN} chars")
+    for marker in _REDOS_MARKERS:
+        if marker.search(text):
+            raise ValueError("route pattern rejected: potential catastrophic backtracking")
+    return text
+
+
+def _compile_route_pattern(pattern: str) -> "re.Pattern[str]":
+    """Compile a routing regex after ReDoS validation."""
+    return re.compile(_validate_route_pattern(pattern), re.IGNORECASE)
+
+
+def _safe_pattern_search(compiled: "re.Pattern[str]", text: str):
+    """Search a routing regex against length-bounded input."""
+    return compiled.search(str(text or "")[:_MAX_ROUTE_INPUT_LEN])
+
 _DEFAULT_INFRASTRUCTURE_SCAN_DIRS = (
     "core",
     "interface",
@@ -104,7 +139,9 @@ class HardwiredPathway(BaseModel):
     priority: float = 1.0
     source_file: Optional[str] = None
     dependencies: List[str] = Field(default_factory=list)
-    confidence: float = 1.0
+    # An untested pathway is not a proven-reliable one. Start below the
+    # reinforce ceiling so confidence reflects earned, not assumed, reliability.
+    confidence: float = 0.5
     activity_label: str = ""
     hit_count: int = 0
     miss_count: int = 0
@@ -139,8 +176,10 @@ class HardwiredPathway(BaseModel):
 
     @property
     def success_rate(self) -> float:
+        # No evidence yet ⇒ unknown, reported as 0.0 rather than a perfect
+        # 1.0. An untested pathway must not appear maximally reliable.
         total = self.hit_count + self.miss_count
-        return self.hit_count / total if total > 0 else 1.0
+        return self.hit_count / total if total > 0 else 0.0
 
     def to_dict(self) -> Dict[str, Any]:
         """Legacy helper. Use .model_dump() instead."""
@@ -577,7 +616,7 @@ class MycelialNetwork:
             direct_response: Legacy emergency response for non-user origins.
                 Production user conversation must remain on CognitiveEngine.
         """
-        compiled = re.compile(pattern, re.IGNORECASE)
+        compiled = _compile_route_pattern(pattern)
         pw = HardwiredPathway(
             pathway_id=pathway_id,
             pattern=compiled,
@@ -658,7 +697,7 @@ class MycelialNetwork:
             if pw.confidence < pw.MIN_CONFIDENCE:
                 continue
 
-            match = pw.pattern.search(text_clean)
+            match = _safe_pattern_search(pw.pattern, text_clean)
             if match:
                 # Extract params from capture groups
                 params: Dict[str, Any] = {}
@@ -1440,12 +1479,18 @@ class MycelialNetwork:
             })
             
         if "response" in activity.lower() and self.ui_callback:
+            # Honest failure: the operation did NOT complete. Do not claim the
+            # block was bypassed when the original action remains failed.
             msg = (
-                "🛡️ [Mycelial Failsafe Active] I encountered a stall while processing "
-                f"your request ({error_msg}). My system unity has bypassed the block."
+                "⚠️ I hit a stall while processing your request and couldn't "
+                f"complete it ({error_msg}). I've logged the failure and will "
+                "recover the affected path — please try again."
             )
             await self.ui_callback(msg)
-        self.set_hypha_strength(hypha.name, None, hypha.strength + 2.0)
+        # A stalled path must NOT be reinforced. Rerouting away from a failed
+        # route is the correct adaptation; strengthening it (previously
+        # +2.0, net-positive even after the -1.0 failure pulse) entrenched a
+        # path that did not complete.
 
     # ======================================================================
     # INFRASTRUCTURE MAPPING — Codebase Unification
@@ -2171,16 +2216,22 @@ class MycelialNetwork:
                     continue
                 await self._pulse_once()
             except asyncio.CancelledError:
-                # Cleanup for MemoryGovernor if it's running
-                if hasattr(self, '_task') and self._task:
-                    self._task.cancel()
+                # Cleanup for MemoryGovernor if it's running. Never cancel-and-
+                # await THIS task from inside its own cancellation handler —
+                # self-await raises/deadlocks the shutdown path.
+                task = getattr(self, "_task", None)
+                current = asyncio.current_task()
+                if task is not None and task is not current:
+                    task.cancel()
                     try:
-                        await self._task
+                        await task
                     except asyncio.CancelledError as _e:
                         logger.debug('Ignored asyncio.CancelledError in mycelium.py: %s', _e)
                     finally:
                         self._task = None
-                
+                elif task is current:
+                    self._task = None
+
                 # v8.1.0: Ensure total cleanup of any leaked worker handles
                 try:
                     if hasattr(self, '_critical_cleanup') and callable(self._critical_cleanup):
@@ -2191,7 +2242,9 @@ class MycelialNetwork:
                     logger.error("Error during Memory Governor shutdown: %s", e)
                 logger.info("🍄 [MYCELIUM] Pulse check loop shutting down.")
                 break
-            except (OSError, ConnectionError, TimeoutError) as e:
+            except (OSError, ConnectionError, TimeoutError, RuntimeError, AttributeError, TypeError, ValueError, KeyError, LookupError) as e:
+                # Broadened: a narrow I/O-only family let ordinary RuntimeError/
+                # TypeError from a probe permanently kill the maintenance loop.
                 record_degradation('mycelium', e)
                 logger.error("🍄 [MYCELIUM] Pulse check error: %s", e, exc_info=True)
                 await asyncio.sleep(10)  # Backoff on error
@@ -2453,8 +2506,11 @@ class MycelialNetwork:
             if not isinstance(pattern, str) or not pattern:
                 raise ValueError(f"vault pathway pattern is missing: {key}")
             try:
-                fields["pattern"] = re.compile(pattern, re.IGNORECASE)
-            except re.error as exc:
+                # Restored patterns pass the same ReDoS validation as freshly
+                # registered ones — a persisted catastrophic regex must not
+                # enter the live routing path at restore.
+                fields["pattern"] = _compile_route_pattern(pattern)
+            except (re.error, ValueError) as exc:
                 raise ValueError(f"vault pathway regex is invalid: {key}") from exc
             skill_name = fields.get("skill_name")
             if not isinstance(skill_name, str) or not skill_name:
