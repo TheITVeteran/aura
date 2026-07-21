@@ -261,6 +261,10 @@ def verify_frontier_evidence_package(
             bundle,
             trusted_verifiers=trust["verifiers"],
             trusted_task_issuers=trust["task_issuers"],
+            # BIND the artifact verification to the certificate. Verifying
+            # both independently and AND-ing the results left the core API
+            # able to certify a bundle whose raw artifacts were never opened.
+            raw_artifact_receipt=artifact_receipt,
         )
     except (FrontierArtifactError, FrontierVerificationError) as exc:
         return _rejection_certificate(exc.code)
@@ -331,6 +335,7 @@ def prepare_independent_attestation_request(
             bundle,
             trusted_verifiers=trust["verifiers"],
             trusted_task_issuers=trust["task_issuers"],
+            raw_artifact_receipt=artifact_receipt,
         )
     except FrontierArtifactError as exc:
         _fail(exc.code)

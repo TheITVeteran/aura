@@ -16,6 +16,9 @@ from core.brain.llm.latent_cortex.frontier_certification import (
     evidence_payload_sha256,
     verify_frontier_gain_bundle,
 )
+from core.brain.llm.latent_cortex.frontier_artifacts import (
+    ARTIFACT_VERIFICATION_SCHEMA,
+)
 from core.brain.llm.latent_cortex.frontier_verifier import (
     TRUST_CONFIG_SCHEMA,
     verifier_implementation_sha256,
@@ -133,11 +136,37 @@ def _refresh_attestation(bundle: dict, *, verified_at: float = 2000.0) -> None:
     }
 
 
-def _certify(bundle: dict) -> dict:
+def _raw_artifact_receipt(bundle: dict) -> dict:
+    """A stand-in for the receipt ``verify_raw_artifact_package`` returns.
+
+    Certification requires a real artifact receipt bound to the bundle; the
+    on-disk artifact package itself is exercised by the frontier_artifacts
+    tests, so this fixture supplies an equivalently-bound receipt.
+    """
+    receipt = {
+        "schema": ARTIFACT_VERIFICATION_SCHEMA,
+        "accepted": True,
+        "manifest_sha256": bundle["raw_artifact_manifest_sha256"],
+        "artifact_store_count": 3,
+        "artifact_bytes": 4096,
+        "trial_count": len(bundle["trials"]),
+        "lineage_sha256": canonical_sha256(["lineage", bundle["producer_id"]]),
+        "store_receipts": {},
+    }
+    receipt["receipt_sha256"] = canonical_sha256(receipt)
+    return receipt
+
+
+def _certify(bundle: dict, *, raw_artifact_receipt: dict | None = None) -> dict:
     return verify_frontier_gain_bundle(
         bundle,
         trusted_verifiers=_TRUSTED_VERIFIERS,
         trusted_task_issuers=_TRUSTED_TASK_ISSUERS,
+        raw_artifact_receipt=(
+            _raw_artifact_receipt(bundle)
+            if raw_artifact_receipt is None
+            else raw_artifact_receipt
+        ),
     )
 
 
@@ -163,6 +192,11 @@ def _bundle(
         "minimum_effect": 0.05,
         "compute_tolerance": 0.05,
         "compute_metric": "estimated_flops",
+        # Scorer, decoding, and the absolute capability floor are frozen with
+        # everything else so they cannot be chosen after outputs are known.
+        "scorer_implementation_sha256": "a" * 64,
+        "decode_policy_sha256": "d" * 64,
+        "min_treatment_success_rate": 0.6,
     }
     if external:
         prereg["control_model_id"] = "frontier-model-x"
@@ -190,10 +224,13 @@ def _bundle(
                     "treatment_output_sha256": canonical_sha256(["treatment", trial_id]),
                     "control_output_sha256": canonical_sha256(["control", trial_id]),
                     "scorer_config_sha256": "f" * 64,
+                    "scorer_implementation_sha256": "a" * 64,
                     "treatment_information_sha256": "1" * 64,
                     "control_information_sha256": "1" * 64,
                     "treatment_tool_policy_sha256": "c" * 64,
                     "control_tool_policy_sha256": "c" * 64,
+                    "treatment_decode_policy_sha256": "d" * 64,
+                    "control_decode_policy_sha256": "d" * 64,
                     "run_order": "treatment_first" if index % 2 == 0 else "control_first",
                     "treatment_success": True,
                     "control_success": cell % 4 == 0,
@@ -267,6 +304,10 @@ def _bundle(
         "preregistration_sha256": canonical_sha256(prereg),
         "resident_model": {
             "parameter_count": 32_000_000_000,
+            # The class claim must be derived from the hashed checkpoint
+            # manifest, not asserted as a bare integer.
+            "parameter_count_source": "checkpoint_manifest",
+            "checkpoint_manifest_sha256": checkpoint,
             "checkpoint_fingerprint": checkpoint,
             "checkpoint_fingerprint_method": "sha256",
             "checkpoint_file_count": 8,
@@ -298,6 +339,7 @@ __all__ = [
     "_VERIFIER_PUBLIC_KEY",
     "_bundle",
     "_certify",
+    "_raw_artifact_receipt",
     "_refresh_attestation",
     "_refresh_task_commitment",
     "_trust_config",

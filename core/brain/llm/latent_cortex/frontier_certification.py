@@ -126,6 +126,22 @@ def _validate_preregistration(prereg: Any, reasons: list[str]) -> dict[str, Any]
         reasons.append("invalid_compute_tolerance")
     if prereg.get("compute_metric") != "estimated_flops":
         reasons.append("compute_metric_must_be_estimated_flops")
+    # The scoring PROGRAM must be frozen with everything else. Only a
+    # per-trial scorer *config* (which legitimately embeds the trial id)
+    # appeared in lineage, so the scoring rules themselves could be chosen
+    # after outputs were known.
+    if not _is_sha256(prereg.get("scorer_implementation_sha256")):
+        reasons.append("missing_scorer_implementation_sha256")
+    # Decoding is an experimental condition, not an implementation detail:
+    # unpaired seeds/sampling let outcome differences come from decoding
+    # rather than from the treatment.
+    if not _is_sha256(prereg.get("decode_policy_sha256")):
+        reasons.append("missing_decode_policy_sha256")
+    # An ABSOLUTE capability floor: without one, a very weak treatment earns
+    # a certificate purely by beating an even weaker control.
+    floor = prereg.get("min_treatment_success_rate")
+    if not _finite_number(floor) or not 0.0 < float(floor) <= 1.0:
+        reasons.append("invalid_min_treatment_success_rate")
     comparison_kind = prereg.get("comparison_kind")
     if comparison_kind == "resident_32b_vs_vanilla_same_checkpoint":
         if not _is_sha256(prereg.get("control_checkpoint_fingerprint")) or prereg.get(
@@ -151,6 +167,18 @@ def _validate_resident_model(
     parameter_count = resident.get("parameter_count")
     if type(parameter_count) is not int or not 30_000_000_000 <= parameter_count <= 40_000_000_000:
         reasons.append("resident_model_not_32b_class")
+    # The class claim must be DERIVED from the hashed checkpoint, not merely
+    # asserted alongside it: a bare integer in range is something any
+    # producer can write. The parameter count is required to come from the
+    # same manifest whose fingerprint is bound above, and the manifest's own
+    # digest must match the declared checkpoint fingerprint.
+    if resident.get("parameter_count_source") != "checkpoint_manifest":
+        reasons.append("resident_parameter_count_not_manifest_derived")
+    manifest_digest = str(resident.get("checkpoint_manifest_sha256") or "")
+    if not _is_sha256(manifest_digest):
+        reasons.append("resident_checkpoint_manifest_missing")
+    elif manifest_digest != str(resident.get("checkpoint_fingerprint") or ""):
+        reasons.append("resident_checkpoint_manifest_unbound")
     fingerprint = str(resident.get("checkpoint_fingerprint") or "")
     if not _is_sha256(fingerprint) or fingerprint != str(
         prereg.get("treatment_checkpoint_fingerprint") or ""
@@ -559,13 +587,68 @@ def _validate_independent_attestation(
         return verified_signer_id, ""
 
 
+def _validate_raw_artifact_receipt(
+    receipt: Any,
+    bundle: Mapping[str, Any],
+    reasons: list[str],
+) -> bool:
+    """Require a real receipt from ``verify_raw_artifact_package``.
+
+    Certification previously accepted a bundle whose raw artifacts were never
+    opened: ``raw_artifact_manifest_sha256`` was checked for SHA-256 SYNTAX
+    only. A syntactically valid but entirely fabricated hash therefore
+    reached ``accepted=True`` / ``claim_tier=PROVEN``. The receipt must be
+    produced by the artifact verifier, report acceptance, and bind the same
+    manifest digest this bundle declares.
+    """
+    # Lazy import: frontier_artifacts imports canonical_sha256 from this
+    # module, so a module-level import would be circular. Importing here
+    # keeps ONE source of truth for the schema constant.
+    from core.brain.llm.latent_cortex.frontier_artifacts import (
+        ARTIFACT_VERIFICATION_SCHEMA,
+    )
+
+    if not isinstance(receipt, Mapping):
+        reasons.append("raw_artifact_package_unverified")
+        return False
+    if receipt.get("schema") != ARTIFACT_VERIFICATION_SCHEMA:
+        reasons.append("raw_artifact_receipt_schema_mismatch")
+        return False
+    if receipt.get("accepted") is not True:
+        reasons.append("raw_artifact_receipt_not_accepted")
+        return False
+    manifest_sha256 = str(receipt.get("manifest_sha256") or "")
+    if not _is_sha256(manifest_sha256) or manifest_sha256 != str(
+        bundle.get("raw_artifact_manifest_sha256") or ""
+    ):
+        reasons.append("raw_artifact_receipt_manifest_mismatch")
+        return False
+    if not _is_sha256(receipt.get("receipt_sha256")):
+        reasons.append("raw_artifact_receipt_unsigned")
+        return False
+    # The receipt must cover every trial the bundle grades on.
+    trials = bundle.get("trials")
+    declared_trials = len(trials) if isinstance(trials, list) else 0
+    if type(receipt.get("trial_count")) is not int or receipt["trial_count"] != declared_trials:
+        reasons.append("raw_artifact_receipt_trial_count_mismatch")
+        return False
+    return True
+
+
 def verify_frontier_gain_bundle(
     bundle: Any,
     *,
     trusted_verifiers: Mapping[str, Mapping[str, str]] | None = None,
     trusted_task_issuers: Mapping[str, Mapping[str, str]] | None = None,
+    raw_artifact_receipt: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Return a deterministic certificate; never infer missing evidence."""
+    """Return a deterministic certificate; never infer missing evidence.
+
+    ``raw_artifact_receipt`` must come from
+    :func:`core.brain.llm.latent_cortex.frontier_artifacts.verify_raw_artifact_package`.
+    Without it the bundle's raw artifacts are unverified and the certificate
+    cannot be accepted.
+    """
     reasons: list[str] = []
     if not isinstance(bundle, dict):
         bundle = {}
@@ -628,33 +711,47 @@ def verify_frontier_gain_bundle(
         if _finite_number(prereg.get("compute_tolerance"))
         else 0.0
     )
+    admitted_trial_count = 0
+    rejected_trial_count = 0
     for trial in trials:
+        # ADMISSION ISOLATION: a trial's own integrity defects are collected
+        # here and, if any exist, the trial is EXCLUDED from the paired
+        # observations that produce the statistical claim. Previously every
+        # per-trial defect only appended a reason while the trial still fed
+        # the grader, so contaminated, unblinded, parity-failing, or
+        # unauthenticated trials could produce a nested PROVEN result inside
+        # a rejected certificate.
+        trial_reasons: list[str] = []
         if not isinstance(trial, dict):
             reasons.append("trial_not_mapping")
+            rejected_trial_count += 1
             continue
         trial_id = str(trial.get("trial_id") or "")
         task_id = str(trial.get("task_id") or "")
         domain = str(trial.get("domain") or "")
         if not trial_id or trial_id in seen_trial_ids:
             reasons.append("duplicate_or_missing_trial_id")
+            rejected_trial_count += 1
             continue
         if not task_id or task_id in seen_task_ids:
             reasons.append(f"{trial_id}:duplicate_or_missing_task_id")
+            rejected_trial_count += 1
             continue
         seen_trial_ids.add(trial_id)
         seen_task_ids.add(task_id)
         if domain not in paired:
             reasons.append(f"{trial_id}:unregistered_domain")
+            rejected_trial_count += 1
             continue
         if trial.get("held_out") is not True or trial.get("contamination_scan_passed") is not True:
-            reasons.append(f"{trial_id}:heldout_or_contamination_unproven")
+            trial_reasons.append(f"{trial_id}:heldout_or_contamination_unproven")
         if not _finite_number(trial.get("task_generated_at"), positive=True) or float(
             trial.get("task_generated_at") or 0.0
         ) <= frozen_at:
-            reasons.append(f"{trial_id}:task_not_generated_after_freeze")
+            trial_reasons.append(f"{trial_id}:task_not_generated_after_freeze")
         evaluation_started_at = trial.get("evaluation_started_at")
         if not _finite_number(evaluation_started_at, positive=True):
-            reasons.append(f"{trial_id}:evaluation_start_invalid")
+            trial_reasons.append(f"{trial_id}:evaluation_start_invalid")
         else:
             evaluation_time = float(evaluation_started_at)
             earliest_evaluation_started_at = min(
@@ -665,70 +762,107 @@ def verify_frontier_gain_bundle(
                 latest_evaluation_started_at,
                 evaluation_time,
             )
-        _validate_trial_lineage(trial, reasons)
+        _validate_trial_lineage(trial, trial_reasons)
+        # Each trial must have been scored by the PREREGISTERED scoring
+        # program (its per-trial config may differ; the program may not).
+        if str(trial.get("scorer_implementation_sha256") or "") != str(
+            prereg.get("scorer_implementation_sha256") or ""
+        ):
+            trial_reasons.append(f"{trial_id}:scorer_not_preregistered")
         task_payload_hash = str(trial.get("task_payload_sha256") or "")
         if task_payload_hash in seen_task_payloads:
-            reasons.append(f"{trial_id}:duplicate_task_payload")
+            trial_reasons.append(f"{trial_id}:duplicate_task_payload")
         seen_task_payloads.add(task_payload_hash)
         if trial.get("verifier_blinded") is not True:
-            reasons.append(f"{trial_id}:blinded_verifier_unproven")
+            trial_reasons.append(f"{trial_id}:blinded_verifier_unproven")
         treatment_information = trial.get("treatment_information_sha256")
         control_information = trial.get("control_information_sha256")
         if (
             not _is_sha256(treatment_information)
             or treatment_information != control_information
         ):
-            reasons.append(f"{trial_id}:information_mismatch")
+            trial_reasons.append(f"{trial_id}:information_mismatch")
         if str(trial.get("treatment_tool_policy_sha256") or "") != str(
             trial.get("control_tool_policy_sha256") or ""
         ) or str(trial.get("treatment_tool_policy_sha256") or "") != str(
             prereg.get("tool_policy_sha256") or ""
         ):
-            reasons.append(f"{trial_id}:tool_policy_mismatch")
+            trial_reasons.append(f"{trial_id}:tool_policy_mismatch")
+        # DECODING PARITY: both arms must run the preregistered decode policy
+        # (seed discipline, sampler, temperature, stop rules, context limit,
+        # tokenizer/template). Without this, an outcome difference can come
+        # from decoding rather than from the latent treatment.
+        treatment_decode = str(trial.get("treatment_decode_policy_sha256") or "")
+        control_decode = str(trial.get("control_decode_policy_sha256") or "")
+        if (
+            not _is_sha256(treatment_decode)
+            or treatment_decode != control_decode
+            or treatment_decode != str(prereg.get("decode_policy_sha256") or "")
+        ):
+            trial_reasons.append(f"{trial_id}:decode_policy_mismatch")
         order = str(trial.get("run_order") or "")
         if order not in order_counts:
-            reasons.append(f"{trial_id}:invalid_run_order")
+            trial_reasons.append(f"{trial_id}:invalid_run_order")
         else:
             order_counts[order] += 1
         if type(trial.get("treatment_success")) is not bool or type(
             trial.get("control_success")
         ) is not bool:
-            reasons.append(f"{trial_id}:non_boolean_outcome")
+            trial_reasons.append(f"{trial_id}:non_boolean_outcome")
+            reasons.extend(trial_reasons)
+            rejected_trial_count += 1
             continue
         treatment_flops, treatment_layers = _trial_compute(
-            trial, "treatment", expected_estimator, reasons
+            trial, "treatment", expected_estimator, trial_reasons
         )
         control_flops, control_layers = _trial_compute(
-            trial, "control", expected_estimator, reasons
+            trial, "control", expected_estimator, trial_reasons
         )
         if treatment_flops is not None and control_flops is not None:
             mismatch = abs(treatment_flops - control_flops) / max(1.0, control_flops)
             if mismatch > tolerance:
-                reasons.append(f"{trial_id}:compute_mismatch")
+                trial_reasons.append(f"{trial_id}:compute_mismatch")
+        # LAYER-APPLICATION PARITY: both arm layer counts were validated and
+        # carried into the observation, but only FLOPs were compared — so a
+        # treatment could apply radically more layer work while reporting
+        # equal estimated FLOPs.
+        if treatment_layers is not None and control_layers is not None:
+            layer_mismatch = abs(treatment_layers - control_layers) / max(
+                1, control_layers
+            )
+            if layer_mismatch > tolerance:
+                trial_reasons.append(f"{trial_id}:layer_apps_mismatch")
         episode_id = _validate_treatment_receipt(
             trial,
             checkpoint,
             worker_boot_id,
             installed_app_build_sha256,
-            reasons,
+            trial_reasons,
         )
         if episode_id in seen_episode_ids:
-            reasons.append(f"{trial_id}:duplicate_treatment_episode")
+            trial_reasons.append(f"{trial_id}:duplicate_treatment_episode")
         seen_episode_ids.add(episode_id)
         control_request_id = _validate_control_receipt(
             trial,
             prereg,
             worker_boot_id,
             installed_app_build_sha256,
-            reasons,
+            trial_reasons,
         )
         if control_request_id in seen_control_request_ids:
-            reasons.append(f"{trial_id}:duplicate_control_request")
+            trial_reasons.append(f"{trial_id}:duplicate_control_request")
         seen_control_request_ids.add(control_request_id)
         if _finite_number(trial.get("task_generated_at"), positive=True):
             latest_task_generated_at = max(
                 latest_task_generated_at, float(trial["task_generated_at"])
             )
+        if trial_reasons:
+            # Defective trial: its reasons surface on the certificate, but it
+            # contributes NOTHING to the statistical claim.
+            reasons.extend(trial_reasons)
+            rejected_trial_count += 1
+            continue
+        admitted_trial_count += 1
         paired[domain].append(
             PairedObservation(
                 task_id=task_id,
@@ -792,14 +926,35 @@ def verify_frontier_gain_bundle(
         and 0.0 < float(raw_minimum_effect) <= 0.5
         else 0.05
     )
+    # CLAIM SCOPE: beating an ablated SELF establishes that the treatment
+    # contributes; it does NOT establish frontier competitiveness. The two
+    # comparison kinds therefore carry different statements and different
+    # scopes, and only an external comparison can assert competitiveness.
+    external_comparison = comparison_kind == "resident_32b_vs_external_frontier"
+    if external_comparison:
+        claim_scope = "frontier_competitiveness_vs_external_control"
+        claim_statement = (
+            "the full resident-32B Recursive Latent Cortex outperforms the "
+            "preregistered external frontier control on the preregistered domains"
+        )
+    else:
+        claim_scope = "treatment_contribution_vs_same_checkpoint_ablation"
+        claim_statement = (
+            "the full resident-32B Recursive Latent Cortex improves over its own "
+            "preregistered same-checkpoint vanilla ablation (treatment contribution "
+            "only — NOT evidence of frontier competitiveness)"
+        )
+    # Compute evidence must survive INTO the claim. The grader was previously
+    # told to ignore it (tolerance 1.0, require_compute False), so a claim
+    # could read PROVEN while carrying no compute validity at all.
     claim = grade_paired_treatment_vs_control(
         "exp6_frontier_comparison",
-        "the full resident-32B Recursive Latent Cortex improves over its preregistered control",
+        claim_statement,
         paired,
         alpha=alpha,
         minimum_effect=minimum_effect,
-        compute_tolerance=1.0,
-        require_compute=False,
+        compute_tolerance=tolerance,
+        require_compute=True,
     )
     positive = claim.evidence.get("positive_families") or []
     required_positive = math.ceil(len(domains) * 2 / 3) if domains else 1
@@ -809,17 +964,64 @@ def verify_frontier_gain_bundle(
         reasons.append("domain_regression_detected")
     if claim.tier != PROVEN:
         reasons.append("paired_gain_not_proven")
+    # The certificate must name WHICH domains carry the gain: a two-thirds
+    # rule lets a third of domains show no benefit, and an unqualified claim
+    # would hide that heterogeneity.
+    non_positive_domains = sorted(set(domains) - set(positive))
+
+    # ABSOLUTE CAPABILITY FLOOR over admitted trials: a relative win over a
+    # weaker control is not a capability certificate on its own.
+    min_success_rate = (
+        float(prereg["min_treatment_success_rate"])
+        if _finite_number(prereg.get("min_treatment_success_rate"))
+        else 1.1  # unreachable → fails closed when preregistration is invalid
+    )
+    admitted_observations = [obs for items in paired.values() for obs in items]
+    treatment_success_rate = (
+        sum(1 for obs in admitted_observations if obs.treatment_success)
+        / len(admitted_observations)
+        if admitted_observations
+        else 0.0
+    )
+    if treatment_success_rate < min_success_rate:
+        reasons.append("treatment_below_absolute_capability_floor")
+
+    # RAW ARTIFACT VERIFICATION: the bundle's manifest hash was only
+    # SYNTAX-checked here, so the core API could accept and claim PROVEN
+    # without any raw artifact ever being loaded or recomputed. A receipt
+    # from verify_raw_artifact_package (frontier_artifacts) is now required,
+    # and it must bind this exact bundle.
+    raw_artifact_verified = _validate_raw_artifact_receipt(
+        raw_artifact_receipt, bundle, reasons
+    )
 
     accepted = not reasons
     statistical_claim = claim.to_dict()
     # Wall-clock grading time is not evidence and would make identical bundles
     # produce different certificates. The evidence hash binds the actual input.
     statistical_claim.pop("graded_at", None)
+    # A nested tier must never be readable as a standalone verdict: the claim
+    # is only admissible when the whole certificate was accepted, and it is
+    # only ever a claim about THIS comparison's scope.
+    statistical_claim["admissible"] = accepted
+    statistical_claim["claim_scope"] = claim_scope
+    statistical_claim["graded_on_admitted_trials"] = admitted_trial_count
     certificate: dict[str, Any] = {
         "schema": CERTIFICATE_SCHEMA,
         "accepted": accepted,
         "claim_tier": PROVEN if accepted else CONJECTURE,
         "comparison_kind": comparison_kind,
+        # Scope is part of the verdict: an accepted same-checkpoint bundle
+        # proves treatment CONTRIBUTION, never frontier competitiveness.
+        "claim_scope": claim_scope,
+        "frontier_competitiveness_established": bool(accepted and external_comparison),
+        "raw_artifact_verified": raw_artifact_verified,
+        "admitted_trial_count": admitted_trial_count,
+        "rejected_trial_count": rejected_trial_count,
+        "positive_domains": sorted(positive),
+        "non_positive_domains": non_positive_domains,
+        "treatment_success_rate": round(treatment_success_rate, 6),
+        "min_treatment_success_rate": min_success_rate,
         "evidence_payload_sha256": evidence_hash,
         "independent_verifier_id": independent_verifier_id,
         "independent_attestation_sha256": independent_attestation_sha256,
