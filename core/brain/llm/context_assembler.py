@@ -14,6 +14,14 @@ from core.synthesis import IDENTITY_LOCK
 
 logger = logging.getLogger("Brain.Context")
 
+# Characters of system-prompt tail that trimming must NEVER surrender. The
+# few-shot voice anchor and the [STRUCTURAL CONSTRAINT] block are appended
+# last so they bind the model; if budget pressure deletes them the prompt
+# silently loses its identity and honesty constraints while still looking
+# well-formed. Sized to hold the constraint block plus the casual/voice
+# addendum with headroom.
+_STRUCTURAL_TAIL_RESERVE_CHARS = 1400
+
 _DELIBERATE_SIGNALS = (
     "feel", "feeling", "felt", "conscious", "consciousness", "sentient",
     "aware", "awareness", "experience", "experiencing", "think", "thinking",
@@ -1152,25 +1160,33 @@ class ContextAssembler:
         if len(base) > cap:
             trim_notice = "\n\n[... mid-prompt trimmed for latency ...]\n\n"
 
-            # Keep the tail: identity anchor + structural constraint are appended
-            # last, so the tail remains essential. But continuity obligations are
-            # also load-bearing and must survive prompt compression if present.
-            reserved_middle = ""
-            essential_middle_blocks: list[str] = []
+            # BUDGET ORDER IS THE CONTRACT. The tail carries the identity
+            # anchor and the [STRUCTURAL CONSTRAINT] block, appended last
+            # precisely so they bind the model and cannot be overwritten or
+            # ignored. It is therefore reserved FIRST and is never surrendered
+            # to optional middle blocks: an oversized reserved_middle used to
+            # starve tail_budget to zero and delete the constraint outright,
+            # while a final base[:cap] clamp cut from the END and removed the
+            # same tail — both inverting the policy this block exists to serve.
+            notice_len = len(trim_notice)
+            guaranteed_tail = min(len(base), _STRUCTURAL_TAIL_RESERVE_CHARS)
 
-            head_budget = max(0, cap // 3)
-            tail_budget = max(0, cap - head_budget - len(trim_notice))
+            head_budget = max(0, min(cap // 3, max(0, cap - guaranteed_tail - notice_len)))
+            tail_budget = max(guaranteed_tail, cap - head_budget - notice_len)
+            if head_budget + tail_budget + notice_len > cap:
+                head_budget = max(0, cap - tail_budget - notice_len)
             head = base[:head_budget]
             tail = base[-tail_budget:] if tail_budget else ""
 
-            priority_middle_blocks = (
-                str(relational_block or "").strip(),
-                str(social_block or "").strip(),
-                str(continuity_block or "").strip(),
-            )
-            essential_middle_blocks.extend(
-                candidate for candidate in priority_middle_blocks if candidate
-            )
+            essential_middle_blocks: list[str] = [
+                candidate
+                for candidate in (
+                    str(relational_block or "").strip(),
+                    str(social_block or "").strip(),
+                    str(continuity_block or "").strip(),
+                )
+                if candidate
+            ]
             for candidate in (
                 str(identity_rag_context or "").strip(),
                 str(cognitive_metrics or "").strip(),
@@ -1181,13 +1197,12 @@ class ContextAssembler:
                 if candidate and candidate not in head and candidate not in tail:
                     essential_middle_blocks.append(candidate)
 
-            if essential_middle_blocks:
-                reserved_middle = "\n\n".join(essential_middle_blocks)
-                reserved_bytes = len(trim_notice) + len(reserved_middle) + 2
-                head_budget = max(0, min(cap // 3, cap - reserved_bytes))
-                tail_budget = max(0, cap - head_budget - reserved_bytes)
-                head = base[:head_budget]
-                tail = base[-tail_budget:] if tail_budget else ""
+            # The middle receives only what head + tail + notice leave behind,
+            # and is truncated (not allowed to overflow) to fit it.
+            reserved_middle = "\n\n".join(essential_middle_blocks)
+            middle_budget = max(0, cap - head_budget - tail_budget - notice_len - 2)
+            if len(reserved_middle) > middle_budget:
+                reserved_middle = reserved_middle[:middle_budget]
 
             pieces = [head]
             if reserved_middle:
@@ -1195,7 +1210,9 @@ class ContextAssembler:
             pieces.extend([trim_notice, tail])
             base = "".join(pieces)
             if len(base) > cap:
-                base = base[:cap]
+                # Last resort: keep the FINAL cap characters so the structural
+                # constraint survives, never the first cap characters.
+                base = base[-cap:]
             logger.debug(
                 "🧠 [BRAIN-PROMPT] System prompt exceeded %d-char budget — "
                 "trimmed to %d chars (casual=%s, depth=%d).",

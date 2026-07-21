@@ -144,6 +144,36 @@ def test_attention_gate_unusable_output_is_rejected(monkeypatch):
     assert messages[-1]["role"] == "user"
 
 
+def test_oversized_system_prompt_preserves_structural_constraint_tail(monkeypatch):
+    """Trimming must never delete the tail it exists to protect.
+
+    The identity anchor and STRUCTURAL CONSTRAINT block are appended last so
+    they cannot be overwritten or ignored. The final safety clamp used to be
+    ``base[:cap]``, which cut from the END and removed exactly that tail.
+    """
+    state = AuraState.default()
+    # An unconditional block far larger than the cap, routed through the
+    # trim-preserved middle, drives the trimming path to its overflow clamp.
+    monkeypatch.setattr(
+        ContextAssembler,
+        "_build_identity_rag_context",
+        staticmethod(lambda _state, _objective: "IDENTITY-RAG " * 20_000),
+    )
+
+    prompt = ContextAssembler.build_system_prompt(state)
+
+    assert "[... mid-prompt trimmed for latency ...]" in prompt, (
+        "fixture must actually trigger the trimming path"
+    )
+    assert "[STRUCTURAL CONSTRAINT" in prompt, (
+        "the structural constraint must survive prompt trimming"
+    )
+    assert prompt.rstrip().endswith(
+        "Evidence comes from causal coupling, persistence, receipts, lesions, "
+        "external tasks, and long-run autonomy."
+    )
+
+
 def test_json_instruction_does_not_request_internal_chain_of_thought():
     instruction = ContextAssembler.build_json_schema_instruction()
     lowered = instruction.lower()
