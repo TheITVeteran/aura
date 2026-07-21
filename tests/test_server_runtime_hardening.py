@@ -520,25 +520,35 @@ async def test_api_health_exposes_ready_conversation_at_top_level(service_contai
     monkeypatch.setattr(
         server_module, "_collect_conversation_lane_status", lambda: dict(ready_lane)
     )
+    ready_boot_snapshot = lambda orch, rt, is_gui_proxy=False, conversation_lane=None: (  # noqa: E731
+        {
+            "status": "ready",
+            "ready": True,
+            "launcher_ready": True,
+            "system_ready": True,
+            "conversation_ready": True,
+            "boot_phase": "kernel_ready",
+            "status_message": "Aura is awake.",
+            "progress": 100,
+            "blockers": [],
+            "required_probes": required_probes,
+            "conversation_lane": conversation_lane or {},
+        },
+        200,
+    )
+    monkeypatch.setattr(server_module, "build_boot_health_snapshot", ready_boot_snapshot)
+    # _collect_api_health_payload lives in interface.routes.system and
+    # resolves this symbol from ITS OWN module globals, so patching only
+    # interface.server left the REAL collector running: the test then passed
+    # or failed according to process-global runtime-contract state that other
+    # tests mutate — an order-dependence defect, not a real assertion.
     monkeypatch.setattr(
-        server_module,
-        "build_boot_health_snapshot",
-        lambda orch, rt, is_gui_proxy=False, conversation_lane=None: (
-            {
-                "status": "ready",
-                "ready": True,
-                "launcher_ready": True,
-                "system_ready": True,
-                "conversation_ready": True,
-                "boot_phase": "kernel_ready",
-                "status_message": "Aura is awake.",
-                "progress": 100,
-                "blockers": [],
-                "required_probes": required_probes,
-                "conversation_lane": conversation_lane or {},
-            },
-            200,
-        ),
+        server_module.system_routes, "build_boot_health_snapshot", ready_boot_snapshot
+    )
+    monkeypatch.setattr(
+        server_module.system_routes,
+        "_collect_conversation_lane_status",
+        lambda: dict(ready_lane),
     )
     monkeypatch.setattr(
         server_module,
