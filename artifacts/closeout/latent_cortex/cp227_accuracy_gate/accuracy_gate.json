@@ -1,0 +1,73 @@
+{
+  "accuracy": {
+    "off@1": {
+      "acc": 0.125,
+      "correct": 6,
+      "n": 48
+    },
+    "off@4": {
+      "acc": 0.0,
+      "correct": 0,
+      "n": 48
+    },
+    "on@1": {
+      "acc": 0.125,
+      "correct": 6,
+      "n": 48
+    },
+    "on@2": {
+      "acc": 0.0417,
+      "correct": 2,
+      "n": 48
+    },
+    "on@4": {
+      "acc": 0.0,
+      "correct": 0,
+      "n": 48
+    }
+  },
+  "adapter": "artifacts/closeout/latent_cortex/cp227_intrinsic_training",
+  "adapter_param_match": {
+    "adapter_params": 192,
+    "matched": 192,
+    "model_trainable": 192
+  },
+  "block_seconds": {
+    "off@1": 889.1,
+    "off@4": 1671.6,
+    "on@1": 919.9,
+    "on@2": 1279.1,
+    "on@4": 1782.2
+  },
+  "bridge": "\n\nFINAL_ANSWER: ",
+  "depths": [
+    1,
+    2,
+    4
+  ],
+  "eval_seed": 424242,
+  "families": [
+    "khop",
+    "modular",
+    "register_trace"
+  ],
+  "model": "training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118",
+  "n_tasks": 48,
+  "partial": true,
+  "schema": "aura.intrinsic_accuracy_gate.v1",
+  "started_at": 1784594154.101214,
+  "task_depth": 8,
+  "verdicts": {
+    "vanilla_baseline_off@1": 0.125,
+    "trained_depth1_on@1": 0.125,
+    "trained_depth2_on@2": 0.0417,
+    "trained_depth4_on@4": 0.0,
+    "untrained_depth4_off@4": 0.0,
+    "off@2": "NOT_MEASURED_eval_died_before_block_6",
+    "trained_depth_beats_vanilla": false,
+    "depth_helps_accuracy": false,
+    "training_helps_at_depth4": false,
+    "ce_crossover_converted_to_accuracy": false
+  },
+  "run_status": "died_after_5_of_6_blocks; status_never_reached_terminal; likely_sleep_or_memory"
+}
