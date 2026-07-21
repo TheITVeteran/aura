@@ -158,6 +158,9 @@ def main() -> int:
     parser.add_argument("--max-steps", type=int, default=300)
     parser.add_argument("--eval-every", type=int, default=50)
     parser.add_argument("--checkpoint-every", type=int, default=25)
+    parser.add_argument("--calibrate", action="store_true",
+                        help="measure pass rates before training to skip dead cells")
+    parser.add_argument("--calibrate-samples", type=int, default=3)
     parser.add_argument("--max-minutes", type=float, default=600.0)
     parser.add_argument("--seed", type=int, default=20260721)
     parser.add_argument("--memory-fraction", type=float, default=0.55)
@@ -247,6 +250,7 @@ def main() -> int:
         )
         sampler = random.Random(args.seed)
 
+
         # Durable resume (CP237): pick up from the last checkpoint after a
         # sleep, jetsam kill, or power loss -- the failure that killed the
         # CP227 gate mid-run.
@@ -272,6 +276,42 @@ def main() -> int:
                 },
             )
             durable.save(step, {"curriculum": curriculum.state(), "adapters": name})
+
+        # Warm-start calibration (CP237/238): the first CP238 run wasted 86%
+        # of its steps on cells that were already mastered or impossible,
+        # because it discovered difficulty online while paying for every
+        # degenerate group. Measuring pass rates FIRST -- a few cheap
+        # rollouts per cell, no backward pass -- lets the curriculum start on
+        # the learnable band instead of finding it the expensive way. Opt-in
+        # so a resumed run (which already has a learned map) skips it.
+        if args.calibrate and resumed is None:
+            print("[calibrate] measuring base pass rates per cell", flush=True)
+
+            def _measure(family: str, difficulty: int) -> float:
+                pool = by_cell.get((family, difficulty))
+                if not pool:
+                    return 0.0
+                probe = pool[sampler.randrange(len(pool))]
+                with recurrence_adapter_scope(start=None, stop=None):
+                    _, comps = sample_group(
+                        model, tokenizer, probe, size=config.group_size,
+                        max_tokens=args.max_tokens, temperature=args.temperature,
+                        seed=args.seed + hash((family, difficulty)) % 9973,
+                    )
+                rewards = [
+                    reward_from_verdict(probe.grade(c), format_credit=args.format_credit)
+                    for c in comps
+                ]
+                return sum(rewards) / len(rewards)
+
+            from core.learning.adaptive_curriculum import warm_start_pass_rates
+
+            curriculum = warm_start_pass_rates(
+                sorted({d for d, _ in by_cell}),
+                sorted({p for _, p in by_cell}),
+                _measure, samples_per_cell=args.calibrate_samples,
+            )
+            print(f"[calibrate] {curriculum.report()}", flush=True)
 
         while step < args.max_steps and time.time() < deadline:
             cell = curriculum.sample(sampler)
