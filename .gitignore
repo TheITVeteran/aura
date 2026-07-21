@@ -138,6 +138,8 @@ artifacts/live_proofs/
 artifacts/learning-demo-*/
 artifacts/front_door/
 aura_codebase_ai_audit*.txt
+/aura_codebase_*.txt
+/aura_clean_source_code_and_tests*.txt
 artifacts/agi/dnu_proof/
 artifacts/agi/live_harness_proof/
 training/data/

@@ -875,6 +875,43 @@ def test_desktop_task_in_your_own_words_does_not_force_self_summary():
     assert "I am Aura" not in body
 
 
+@pytest.mark.parametrize(
+    ("objective", "expected"),
+    [
+        ('Open Notes and write a note saying "Hello :)"', "Hello :)"),
+        ("Open Notes and write a note saying \u201cHello", "Hello"),
+        ('Open Notes and write a note saying \u201cHello"', "Hello"),
+        ("Open Notes and write a message that says I'm here.", "I'm here."),
+        (
+            'Type "Bryan\'s exact words" into Notes and then export it as a PDF.',
+            "Bryan's exact words",
+        ),
+        (
+            "Open Notes and add with the exact text: Alpha and goodbye",
+            "Alpha and goodbye",
+        ),
+    ],
+)
+def test_desktop_task_extracts_literal_user_document_body(objective, expected):
+    assert DesktopTaskSkill._literal_document_body_from_objective(objective) == expected
+    assert DesktopTaskSkill._document_body(
+        objective,
+        {"cognitive_reply": "A model-generated paraphrase."},
+    ) == expected
+
+
+@pytest.mark.parametrize(
+    "objective",
+    [
+        "Open Notes and write a report about quantum mechanics.",
+        "Open Notes and describe who and what you are in your own words.",
+        "Write a note with one sentence about climate change.",
+    ],
+)
+def test_desktop_task_does_not_treat_composition_as_literal_text(objective):
+    assert DesktopTaskSkill._literal_document_body_from_objective(objective) == ""
+
+
 def test_desktop_task_self_summary_prefers_substantive_cognitive_draft():
     body = DesktopTaskSkill._document_body(
         "Write a summary describing who or what you are in your own words.",

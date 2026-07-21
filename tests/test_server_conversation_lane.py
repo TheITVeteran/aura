@@ -6049,7 +6049,20 @@ async def test_api_chat_desktop_capability_no_reply_fails_closed_without_invento
 
 
 @pytest.mark.asyncio
-async def test_api_chat_desktop_no_reply_executes_self_sufficient_objective(monkeypatch):
+@pytest.mark.parametrize(
+    "objective",
+    [
+        (
+            "Please open Calculator, copy the displayed equation, paste it into Notes, "
+            "and report the saved path."
+        ),
+        'Open my Notes app and write a note saying "Hello :)"',
+    ],
+)
+async def test_api_chat_self_sufficient_desktop_objective_skips_cognition(
+    monkeypatch,
+    objective,
+):
     from interface import server as server_module
     from interface.routes import chat as chat_routes
 
@@ -6064,8 +6077,8 @@ async def test_api_chat_desktop_no_reply_executes_self_sufficient_objective(monk
         async def process(self, *_args, **_kwargs):
             pytest.fail("desktop objective must not use kernel fallback")
 
-    async def _no_cognitive_reply(*_args, **_kwargs):
-        return None
+    async def _forbidden_cognitive_reply(*_args, **_kwargs):
+        pytest.fail("self-sufficient desktop objective must execute before cognition")
 
     async def _fake_execute_governed_live_skill(skill_name, params, *, objective, extra_context=None):
         skill_calls.append(
@@ -6101,7 +6114,7 @@ async def test_api_chat_desktop_no_reply_executes_self_sufficient_objective(monk
     monkeypatch.setattr(chat_routes, "_begin_logged_exchange", _fake_begin_exchange)
     monkeypatch.setattr(chat_routes, "_complete_logged_exchange", _fake_complete_exchange)
     monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", _fake_output_receipt)
-    monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _no_cognitive_reply)
+    monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _forbidden_cognitive_reply)
     monkeypatch.setattr(chat_routes, "_execute_governed_live_skill", _fake_execute_governed_live_skill)
     monkeypatch.setattr(
         chat_routes,
@@ -6123,10 +6136,7 @@ async def test_api_chat_desktop_no_reply_executes_self_sufficient_objective(monk
 
     response = await server_module.api_chat(
         server_module.ChatRequest(
-            message=(
-                "Please open Calculator, copy the displayed equation, paste it into Notes, "
-                "and report the saved path."
-            )
+            message=objective
         ),
         SimpleNamespace(
             headers={
@@ -6144,6 +6154,8 @@ async def test_api_chat_desktop_no_reply_executes_self_sufficient_objective(monk
     assert payload["status"] == "desktop_objective_completed"
     assert "Desktop task completed 2/2 governed computer-use steps" in payload["response"]
     assert skill_calls and skill_calls[0]["skill_name"] == "desktop_task"
+    assert skill_calls[0]["params"]["objective"] == objective
+    assert skill_calls[0]["extra_context"]["desktop_task_document_body"] == ""
     assert skill_calls[0]["params"]["allow_heuristic_desktop_plan"] is True
     assert skill_calls[0]["extra_context"]["allow_heuristic_desktop_plan"] is True
     assert completed_exchanges

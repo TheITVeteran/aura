@@ -2783,6 +2783,12 @@ def test_desktop_self_sufficient_classifier_distinguishes_status_report_from_pro
         "who you are and the current timestamp. Use your desktop tools and confirm "
         "exactly what you did."
     )
+    assert _desktop_objective_self_sufficient_without_cognitive_text(
+        'Open my Notes app and write a note saying "Hello :)"'
+    )
+    assert _desktop_objective_self_sufficient_without_cognitive_text(
+        "Open my Notes app and write a note saying \u201cHello"
+    )
     assert not _desktop_objective_self_sufficient_without_cognitive_text(
         "Open Notes and write a report about quantum mechanics."
     )

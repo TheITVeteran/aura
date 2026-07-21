@@ -15429,6 +15429,26 @@ def _desktop_objective_self_sufficient_without_cognitive_text(user_message: str)
     prose_actions = {"set_clipboard", "write_text_file", "render_text_pdf", "type"}
     if not (actions & prose_actions):
         return True
+    literal_body_actions = {
+        "create_folder",
+        "open_app",
+        "open_url",
+        "set_clipboard",
+        "wait",
+        "hotkey",
+        "type",
+        "write_text_file",
+        "render_text_pdf",
+        "move_file",
+    }
+    if (
+        actions <= literal_body_actions
+        and DesktopTaskSkill._objective_supplies_literal_document_body(text)
+    ):
+        # Exact user-supplied text needs transcription, not a model draft.
+        # Execution still traverses CapabilityEngine/Will and must return
+        # effect evidence for every critical desktop step.
+        return True
     local_artifact_actions = {
         "create_folder",
         "write_text_file",

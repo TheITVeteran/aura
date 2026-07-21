@@ -22464,3 +22464,39 @@ the measurement system itself. Next: publish CP208, regenerate the canonical
 progress view from pushed `main`, and start reviewed evidence/weight backfill so
 the certified percentage and forecast can converge from observed facts. Final
 long soaks remain deferred.
+
+## Checkpoint 2026-07-21-253: Exact-Text Desktop Handoff
+
+The live Notes failure is closed at the routing boundary. A foreground request
+that supplies literal text now preserves that operand exactly, derives the
+bounded desktop primitive plan, and reaches `desktop_task` before allocating a
+32B drafting turn. Straight, smart, mixed, and missing closing quotes are
+covered; ordinary composition requests remain on CognitiveEngine. The action
+still traverses CapabilityEngine/Will and cannot report success without
+per-step effect evidence. The regression path proves that the exact live
+request `Open my Notes app and write a note saying "Hello :)"` never invokes
+CognitiveEngine and does invoke the governed desktop capability.
+
+The 482 GB untracked source-root concatenation discovered during reconciliation
+was removed after its Git hash process was stopped, restoring approximately
+482 GB of host capacity. Source-root audit-bundle filename families are now
+ignored so an unsupported local export cannot be accidentally hashed or
+committed. The supported audit exporter already enforces tracked-source input,
+per-file and total-size limits, atomic replacement, and digest verification;
+the origin of the unsupported writer remains outside this checkpoint's proof.
+
+Validation is green: the complete desktop-task, live-surface, and conversation
+lane suite passes with 481 tests, bytecode compilation passes, and `git diff
+--check` is clean. Repository Ruff is clean for the changed implementation and
+focused tests; the whole conversation test module retains one unrelated
+pre-existing naming finding at line 13757.
+
+This is total checkpoint record 314: 53 commits landed between CP209 and CP252,
+and this checkpoint is the next record after the 260 reconstructed at CP208.
+Those 53 commits are implementation history, not automatically certified
+evidence; their system-level semantic review remains open. Machine-certified
+completion remains unchanged until the evidence ledger is populated. RLC
+reasoning gain, frontier capability, external custody, release, and soak gates
+remain open. Next: publish CP253, harden the live cognitive loop's action
+semantics and resource accounting, then repair GRPO checkpoint/replay integrity
+before any resumed resident-32B campaign. Final long soaks remain deferred.

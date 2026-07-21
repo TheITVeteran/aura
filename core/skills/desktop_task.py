@@ -620,6 +620,100 @@ class DesktopTaskSkill(BaseSkill):
         return ""
 
     @staticmethod
+    def _literal_command_tail_boundary(text: str) -> int:
+        """Locate a following desktop command without truncating ordinary prose."""
+        match = re.search(
+            r"(?:\s*,?\s+(?:and\s+then|then|after\s+that|afterwards|next)\s+|"
+            r"\s*,\s+and\s+|\s+and\s+)"
+            r"(?=(?:open|save|export|move|copy|close|print|share|upload|download|"
+            r"create|make|render|convert|rename|delete|remove|send|email)\b)",
+            str(text or ""),
+            flags=re.IGNORECASE,
+        )
+        return match.start() if match else len(str(text or ""))
+
+    @classmethod
+    def _literal_document_body_from_objective(cls, objective: str) -> str:
+        """Extract user-authored text that should be reproduced exactly.
+
+        This only accepts explicit content cues or directly quoted operands.
+        Topic requests such as ``write a note about climate`` deliberately do
+        not qualify because they require composition rather than transcription.
+        """
+        text = str(objective or "").replace("\x00", "").strip()
+        if not text:
+            return ""
+
+        cue_patterns = (
+            r"\b(?:saying|that\s+says?|containing)\b\s*(?::|=|-)?\s*",
+            r"\bwith\s+(?:the\s+)?(?:exact\s+)?(?:text|content|message|words?)\b\s*(?::|=|-)?\s*",
+        )
+        starts = [
+            match.end()
+            for pattern in cue_patterns
+            if (match := re.search(pattern, text, flags=re.IGNORECASE))
+        ]
+
+        # Direct quoted operands are equally explicit: type "Hello" in Notes.
+        direct = re.search(
+            r"\b(?:write|type|paste|insert|add)\b\s+"
+            r"(?:the\s+)?(?:exact\s+)?(?:text\s+|content\s+|message\s+)?"
+            r"(?=[\"'`\u2018\u201c])",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if direct:
+            starts.append(direct.end())
+        if not starts:
+            return ""
+
+        start = min(starts)
+        remainder = text[start:].lstrip()
+        if not remainder:
+            return ""
+
+        quote_pairs = {
+            '"': {'"', "\u201d"},
+            "'": {"'", "\u2019"},
+            "`": {"`"},
+            "\u2018": {"\u2019", "'"},
+            "\u201c": {"\u201d", '"'},
+        }
+        opener = remainder[0]
+        if opener in quote_pairs:
+            closers = quote_pairs[opener]
+            candidate = remainder[1:]
+            close_index = -1
+            for index, char in enumerate(candidate):
+                if char not in closers:
+                    continue
+                # Apostrophes inside words are content, not delimiters.
+                before = candidate[index - 1] if index else ""
+                after = candidate[index + 1] if index + 1 < len(candidate) else ""
+                if char in {"'", "\u2019"} and before.isalnum() and after.isalnum():
+                    continue
+                close_index = index
+                break
+            if close_index >= 0:
+                body = candidate[:close_index]
+            else:
+                body = candidate[: cls._literal_command_tail_boundary(candidate)]
+        else:
+            body = remainder[: cls._literal_command_tail_boundary(remainder)]
+            body = body.rstrip(" \t\r\n")
+            # Sentence punctuation belongs to the literal. A terminal comma
+            # only separates the content from a following command.
+            body = re.sub(r",\s*$", "", body)
+
+        if not body or len(body) > 9000:
+            return ""
+        return body
+
+    @classmethod
+    def _objective_supplies_literal_document_body(cls, objective: str) -> bool:
+        return bool(cls._literal_document_body_from_objective(objective))
+
+    @staticmethod
     def _strip_artifact_action_tail(text: str) -> str:
         """Remove assistant/tool action narration from authored artifact text."""
         body = str(text or "").strip()
@@ -1014,6 +1108,11 @@ class DesktopTaskSkill(BaseSkill):
     @classmethod
     def _document_body(cls, objective: str, context: dict[str, Any] | None) -> str:
         context = context or {}
+        literal_body = cls._literal_document_body_from_objective(objective)
+        if literal_body:
+            # The user's exact operand outranks a model paraphrase or a
+            # fallback composer. This is transcription, not generation.
+            return literal_body
         if cls._objective_requests_self_summary(objective):
             # Prefer an accepted full-mind draft. The old unconditional static
             # template made visible self-description demos look successful
