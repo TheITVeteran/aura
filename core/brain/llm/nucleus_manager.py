@@ -3,10 +3,26 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import math
 import threading
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
+
+# Absolute ceiling for a single generation so a malformed or hostile
+# max_tokens cannot monopolize the in-process GPU lane.
+_MAX_GENERATION_TOKENS = 8192
+
+
+def _bounded_max_tokens(value: Any, default: int) -> int:
+    """Clamp a caller-supplied max_tokens to a sane positive range."""
+    try:
+        tokens = int(value)
+    except (TypeError, ValueError):
+        return default
+    if tokens <= 0:
+        return default
+    return min(_MAX_GENERATION_TOKENS, tokens)
 
 from core.runtime.errors import Severity, record_degradation
 from core.runtime.task_ownership import fire_and_forget
@@ -123,11 +139,22 @@ class NucleusManager(LLMProvider):
         while self._running:
             try:
                 _, _, event = await sub.get()
-                data = event.get("data", {})
-                if data.get("status") == "success":
+                data = event.get("data", {}) if isinstance(event, dict) else {}
+                if isinstance(data, dict) and data.get("status") == "success":
                     logger.info("🧠 [NUCLEUS] Optimization detected. Unloading Cortex for reload.")
                     await self._unload_model_entry("cortex", reason="optimizer_completed")
+            except asyncio.CancelledError:
+                raise
             except (OSError, ConnectionError, TimeoutError):
+                await asyncio.sleep(1)
+            except (AttributeError, TypeError, ValueError, KeyError, RuntimeError, LookupError) as exc:
+                # A malformed event or a transient unload error must NOT kill
+                # the listener permanently — record it and keep handling.
+                _record_nucleus_degradation(
+                    exc,
+                    severity="warning",
+                    action="skipped a malformed optimizer event and kept the nucleus reload listener alive",
+                )
                 await asyncio.sleep(1)
         
     def _select_model_type(self, origin: str) -> str:
@@ -319,15 +346,35 @@ class NucleusManager(LLMProvider):
             logger.error("Failed to load internal model %s: %s", name, e)
             return False
 
+    @staticmethod
+    def _strip_chatml_tokens(text: Any) -> str:
+        """Remove ChatML control tokens from untrusted content.
+
+        System/user/prefill text is interpolated directly between ChatML
+        markers. An embedded ``<|im_end|>`` or ``<|im_start|>`` could
+        prematurely terminate a role or forge a new one (role-token
+        injection), so those control tokens are stripped from the content.
+        """
+        cleaned = str(text or "")
+        for token in ("<|im_start|>", "<|im_end|>", "<|endoftext|>"):
+            cleaned = cleaned.replace(token, "")
+        return cleaned
+
     def _format_prompt(self, prompt: str, system_prompt: str | None = None, prefill: str | None = None) -> str:
         """Formats the prompt using ChatML for Qwen-Instruct models."""
         s_msg = system_prompt if system_prompt else self._anchor_text
-        
+
+        # Strip ChatML control tokens from every interpolated segment so
+        # untrusted content cannot break out of its role.
+        s_msg = self._strip_chatml_tokens(s_msg)
+        safe_prompt = self._strip_chatml_tokens(prompt)
+        safe_prefill = self._strip_chatml_tokens(prefill) if prefill else ""
+
         # Base ChatML structure
         formatted = f"<|im_start|>system\n{s_msg}<|im_end|>\n"
-        formatted += f"<|im_start|>user\n{prompt}<|im_end|>\n"
-        formatted += f"<|im_start|>assistant\n{prefill if prefill else ''}"
-        
+        formatted += f"<|im_start|>user\n{safe_prompt}<|im_end|>\n"
+        formatted += f"<|im_start|>assistant\n{safe_prefill}"
+
         return formatted
 
     def _apply_anchor(self, prompt: str, system_prompt: str | None = None, model_type: str = "cortex") -> tuple[str, str | None]:
@@ -411,7 +458,7 @@ class NucleusManager(LLMProvider):
                             model,
                             tokenizer,
                             prompt=final_prompt,
-                            max_tokens=kwargs.get("max_tokens", 512),
+                            max_tokens=_bounded_max_tokens(kwargs.get("max_tokens"), 512),
                             sampler=sampler,
                             verbose=False,
                         )
@@ -480,7 +527,7 @@ class NucleusManager(LLMProvider):
             yield f"[NUCLEUS ERROR] {e}"
             return
 
-        max_tokens = kwargs.get("max_tokens", 1024)
+        max_tokens = _bounded_max_tokens(kwargs.get("max_tokens"), 1024)
         stop_event = threading.Event()
         
         # Generator for streaming
@@ -634,6 +681,11 @@ class NucleusManager(LLMProvider):
                 extra={"model": model_type, "phase": phase, "temperature": repr(temp)},
             )
             value = 0.7
+        # Reject non-finite temperature: NaN slides through min/max to the
+        # upper bound under Python comparison semantics, silently maxing out
+        # sampling entropy.
+        if not math.isfinite(value):
+            value = 0.7
         return min(2.0, max(0.0, value))
 
     async def generate(self, prompt: str, system_prompt: str = "", **kwargs) -> str:
@@ -711,7 +763,35 @@ class NucleusManager(LLMProvider):
             return asyncio.run(self.generate_text_async(prompt, system_prompt))
 
     def generate_json(self, prompt: str, schema: dict[str, Any], system_prompt: str | None = None, model: str | None = None) -> dict[str, Any]:
-        """Synchronous wrapper for JSON extraction."""
+        """Synchronous wrapper for JSON extraction with schema enforcement.
+
+        The schema is now (a) surfaced to the model so it generates conforming
+        output, and (b) enforced on the result: required keys must be present,
+        otherwise a typed error is returned rather than a silently
+        non-conforming object.
+        """
         from core.utils.json_utils import extract_json
-        text = self.generate_text(prompt, system_prompt)
-        return extract_json(text)
+
+        schema = schema if isinstance(schema, dict) else {}
+        required = schema.get("required")
+        properties = schema.get("properties")
+        schema_hint = ""
+        if isinstance(properties, dict) and properties:
+            schema_hint = (
+                "\n\nRespond with a single JSON object containing exactly these keys: "
+                + ", ".join(str(k) for k in properties)
+                + ". Output only the JSON."
+            )
+        text = self.generate_text(f"{prompt}{schema_hint}", system_prompt)
+        result = extract_json(text)
+        if not isinstance(result, dict):
+            return {"error": "nucleus_json_extraction_failed", "raw": str(text)[:500]}
+        if isinstance(required, list):
+            missing = [str(key) for key in required if key not in result]
+            if missing:
+                return {
+                    "error": "nucleus_json_schema_unsatisfied",
+                    "missing_keys": missing,
+                    "partial": result,
+                }
+        return result
