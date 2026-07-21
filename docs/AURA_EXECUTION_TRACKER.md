@@ -22973,3 +22973,29 @@ Next: publish CP264, launch the immutable CP259 resident-32B training at its
 preregistered 17:00 PDT boundary, verify detached ownership and first durable
 progress, then continue the bounded chat/runtime acceptance gates while the
 trainer runs. Final long soaks remain deferred.
+
+## Checkpoint 2026-07-21-265: Stable Provider-Backed Concept Routing
+
+The ConceptVectorBridge no longer calls an embedding method that does not exist
+in Aura's runtime or seeds NumPy from Python's process-randomized `hash()`.
+That path made an identical internal concept change across launches and exposed
+a pseudo-random fallback warning in the live neural stream. The bridge now uses
+the shared VectorMemoryEngine embedder off the event loop. If the provider is
+not admitted during early boot, it produces a normalized, deterministic
+token-and-character feature projection; a cached fallback is replaced when the
+real provider becomes available. Provider results are rejected if empty or
+non-finite, and one provider failure cannot erase the bounded concept signal.
+
+The module description no longer calls vector routing lossless or
+exponentially faster. Those were unsupported claims, not runtime contracts.
+Thirty-three connected concept-bridge and runtime-service-registry tests pass,
+including cross-instance stability, related-versus-unrelated lexical geometry,
+provider upgrade, and the existing cognitive-client route. Focused Ruff,
+bytecode compilation, and diff checks pass.
+
+This is total checkpoint record 326. It closes one cross-boot semantic
+instability and one false provider contract; it does not certify the larger
+chat or latent-reasoning claims. The low-confidence policy-prior forecast
+remains 394-661 total records, now approximately 68-335 records after this
+checkpoint; no scope was removed. Next: publish CP265 and launch CP259 at the
+frozen boundary. Final long soaks remain deferred.
