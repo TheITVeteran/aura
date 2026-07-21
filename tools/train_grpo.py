@@ -58,9 +58,19 @@ from core.runtime.mlx_memory_guard import mlx_memory_envelope  # noqa: E402
 GRPO_TRAIN_SCHEMA = "aura.grpo_training.v1"
 
 
+# Set by main() from --cot. Reasoning room is the fix the CP238 finding
+# pointed at: the model failed program_trace at 0.05 because the terse
+# FINAL_ANSWER format denied it chain-of-thought. This invites the
+# token-level deliberation that actually makes models reason.
+_COT_PREAMBLE = ""
+
+
 def _render(tokenizer, task) -> str:
+    content = task.prompt
+    if _COT_PREAMBLE:
+        content = _COT_PREAMBLE + "\n\n" + content
     return tokenizer.apply_chat_template(
-        [{"role": "user", "content": task.prompt}],
+        [{"role": "user", "content": content}],
         add_generation_prompt=True,
         tokenize=False,
     )
@@ -161,6 +171,8 @@ def main() -> int:
     parser.add_argument("--calibrate", action="store_true",
                         help="measure pass rates before training to skip dead cells")
     parser.add_argument("--calibrate-samples", type=int, default=3)
+    parser.add_argument("--cot", action="store_true",
+                        help="invite step-by-step reasoning before the answer")
     parser.add_argument("--max-minutes", type=float, default=600.0)
     parser.add_argument("--seed", type=int, default=20260721)
     parser.add_argument("--memory-fraction", type=float, default=0.55)
@@ -169,6 +181,13 @@ def main() -> int:
     import mlx.core as mx
     import mlx.nn as nn
     import mlx.optimizers as optim
+
+    global _COT_PREAMBLE
+    if args.cot:
+        _COT_PREAMBLE = (
+            "Work through this step by step, then end with your answer on "
+            "its own line."
+        )
 
     config = GRPOConfig(
         group_size=args.group_size, kl_coefficient=args.kl_coefficient
