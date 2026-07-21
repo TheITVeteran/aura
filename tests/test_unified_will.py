@@ -814,6 +814,39 @@ class TestActionCoverage:
         assert decision.outcome == WillOutcome.DEFER
         assert decision.reason == "aura_now_defer: present-state policy requires stabilization or observation first"
 
+    def test_aura_now_defer_log_uses_decision_source_when_context_omits_it(
+        self,
+        will,
+        monkeypatch,
+        caplog,
+    ):
+        def defer_policy(**_kwargs):
+            return {
+                "outcome": "defer",
+                "constraints": ["welfare_recovery_drive=0.606"],
+                "defers": ["welfare_recovery_required_before_action"],
+                "evidence": {
+                    "state_hash": "unit_test_source_attribution",
+                    "tick": 14,
+                    "source": "being_runtime",
+                },
+            }
+
+        monkeypatch.setattr(will, "_sample_aura_now_evidence", defer_policy)
+        with caplog.at_level("WARNING", logger="Aura.Will"):
+            decision = will.decide(
+                content="generic state mutation",
+                source="source_attribution_probe",
+                domain=ActionDomain.STATE_MUTATION,
+                context={"component": "runtime_engine"},
+            )
+
+        assert decision.outcome == WillOutcome.DEFER
+        assert any(
+            "source=source_attribution_probe" in record.getMessage()
+            for record in caplog.records
+        )
+
     def test_expression_path(self, will):
         d = will.decide(content="I find this fascinating", source="spontaneous",
                         domain=ActionDomain.EXPRESSION)

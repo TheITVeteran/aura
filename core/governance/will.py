@@ -624,6 +624,7 @@ class UnifiedWill:
             reason=reason,
             constraints=constraints,
             domain=domain,
+            source=source,
             policy=aura_now_packet,
             catatonia_relief=catatonia_relief,
             context=context,
@@ -1517,6 +1518,7 @@ class UnifiedWill:
         reason: str,
         constraints: list[str],
         domain: ActionDomain,
+        source: str,
         policy: dict[str, Any],
         catatonia_relief: bool,
         context: dict[str, Any] | None = None,
@@ -1607,7 +1609,12 @@ class UnifiedWill:
             logger.warning(
                 "Will AuraNow defer: domain=%s source=%s constraints=%s defers=%s evidence=%s context_flags=%s",
                 domain.value,
-                str((context or {}).get("source") or (context or {}).get("origin") or "unknown"),
+                str(
+                    (context or {}).get("source")
+                    or (context or {}).get("origin")
+                    or source
+                    or "unknown"
+                ),
                 policy_constraints,
                 list(policy.get("defers") or []),
                 dict(policy.get("evidence") or {}),

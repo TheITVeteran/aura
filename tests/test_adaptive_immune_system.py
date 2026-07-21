@@ -140,6 +140,34 @@ def _test_artifact(kind=EffectorKind.PATCH_PROPOSAL, component="runtime_engine")
     )
 
 
+def test_artifact_authorization_carries_narrow_recovery_authority(tmp_path, monkeypatch):
+    captured = {}
+
+    class FakeDecision:
+        @staticmethod
+        def is_approved():
+            return True
+
+    class FakeWill:
+        def decide(self, **kwargs):
+            captured.update(kwargs)
+            return FakeDecision()
+
+    monkeypatch.setattr("core.will.get_will", lambda: FakeWill())
+    immune = AdaptiveImmuneSystem(state_dir=tmp_path, rng_seed=31)
+    artifact = _test_artifact(kind=EffectorKind.REDUCE_LOAD)
+
+    assert immune._authorize_protected_action(artifact, _test_antigen()) is True
+
+    context = captured["context"]
+    assert captured["source"] == "adaptive_immune_system"
+    assert context["source"] == "adaptive_immune_system"
+    assert context["recovery_operation"] == "reduce_load"
+    assert context["effect_scope"] == "internal_runtime_recovery"
+    assert context["no_external_effects"] is True
+    assert context["artifact_id"] == artifact.artifact_id
+
+
 def test_tissue_field_diffuses_local_damage():
     field = TissueField(diffusion=0.35, decay=0.0)
     field.register_edge("state_repository", "continuity", 1.0)

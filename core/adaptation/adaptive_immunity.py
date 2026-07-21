@@ -37,7 +37,6 @@ import numpy as np
 
 from core.adaptation.spatial_receptor_code import annotate_antigen_like
 from core.cognitive.anomaly_detector import FeatureExtractor
-from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 
 logger = logging.getLogger("Aura.AdaptiveImmunity")
@@ -2173,20 +2172,30 @@ class AdaptiveImmuneSystem:
         antigen: Antigen,
     ) -> bool:
         try:
+            from core.governance.recovery_authority import (
+                build_internal_recovery_context,
+            )
             from core.will import ActionDomain, get_will
 
+            recovery_context = build_internal_recovery_context(
+                "adaptive_immune_system",
+                artifact.kind.value,
+                evidence={
+                    "component": artifact.component,
+                    "artifact_id": artifact.artifact_id,
+                    "artifact_kind": artifact.kind.value,
+                    "antigen_id": antigen.antigen_id,
+                    "danger": antigen.danger,
+                    "protected": antigen.protected,
+                    "lineage_id": artifact.lineage_id,
+                },
+            )
             decision = get_will().decide(
                 content=f"Adaptive immune effector: {artifact.kind.value} on {artifact.component}",
                 source="adaptive_immune_system",
                 domain=ActionDomain.STATE_MUTATION,
                 priority=min(0.95, 0.45 + 0.35 * antigen.danger),
-                context={
-                    "component": artifact.component,
-                    "artifact_kind": artifact.kind.value,
-                    "danger": antigen.danger,
-                    "protected": antigen.protected,
-                    "lineage_id": artifact.lineage_id,
-                },
+                context=recovery_context,
             )
             return bool(decision.is_approved())
         except (ImportError, AttributeError, RuntimeError) as exc:

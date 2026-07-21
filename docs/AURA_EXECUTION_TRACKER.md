@@ -22848,3 +22848,128 @@ launch the detached resident 32B after the presentation window, train or
 exactly resume to the terminal budget, validate and freeze the first-class
 adapter, and execute the directional then powered externally custodied
 factorials. Final long soaks remain deferred.
+
+## Checkpoint 2026-07-21-260: Live Demo Failure-Path Closure
+
+The live desktop path no longer lets a telemetry-only `phi_fragility` value
+veto an otherwise authorized capability or imagination action. Phi remains
+evidence and can still influence deliberation, but it is not a safety or
+integrity fact and therefore cannot fabricate a self-preservation block. The
+conversation reliability boundary now rejects unsupported deployment-routing
+stories such as invented demo tiers, server slots, named operators, and
+application processes. A bounded greeting repair remains available when the
+user asks for a simple introduction. The MLX watchdog also distinguishes a
+32B request that is making token progress inside its request-aware first-token
+or inter-token budget from a genuinely stalled worker loop instead of applying
+one coarse 30-second alarm to both cases.
+
+Seven focused capability, imagination, conversation-grounding, and MLX
+watchdog tests pass. Checkpoint `f2235436` is published on `main`.
+
+This is total checkpoint record 321. It closes the reported demo blockers but
+does not certify broad live-chat or desktop-task reliability. No reasoning,
+frontier, release, or soak credit is awarded.
+
+## Checkpoint 2026-07-21-261: Transactional Body-Cost And Recovery Authority
+
+BeingRuntime now quotes action cost without mutating body state. Unified Will
+commits the quote exactly once only after approval, keyed by the signed Will
+receipt; retries and later consequence publication are idempotent, while
+deferred or refused actions pay no execution cost. This removes the causal
+feedback defect in which considering an action increased fatigue before the
+same fatigue policy decided whether the action could proceed. A central,
+fail-closed recovery-authority contract now admits only named internal repair
+sources and operations with no external effects. Priority alone cannot turn a
+generic state mutation into a repair bypass.
+
+One hundred fifty-one connected BeingRuntime, Will, body-state, consequence,
+authority, autopoiesis, and server-lane tests pass. Checkpoint `fd52d264` is
+published on `main`.
+
+This is total checkpoint record 322. It establishes transactional action-cost
+accounting and a narrow recovery lane; it does not yet close all live callers
+that fail to carry that lane's context.
+
+## Checkpoint 2026-07-21-262: Semantic Chat Brevity Repair
+
+The user-facing reliability gate no longer rejects an otherwise complete
+reply merely because it is short. Near-empty answers, unsupported claims,
+deflections, contamination, foreign-name intrusions, broken output contracts,
+and low-signal reassurance remain semantic failures. Memory-pin requests now
+have an explicit content contract requiring the pinned value to be echoed;
+that guarantee no longer depends accidentally on a word-count floor.
+
+Focused chat reliability tests pass. Checkpoint `7d11e5d2` is published on
+`main`.
+
+This is total checkpoint record 323. It closes one demonstrated false-positive
+failure mode, not the general-chat reliability program below.
+
+## Checkpoint 2026-07-21-263: Recoverable Metabolic Baseline
+
+The body fatigue decay rate now exceeds observed ordinary idle/runtime drift.
+The previous baseline could never pay down routine accrual, saturated fatigue,
+and kept `welfare_recovery_drive` permanently near the Will's defer threshold.
+The new rate preserves accumulation under sustained real load while allowing
+idle recovery in a bounded interval. Seventeen homeostasis tests remain green.
+Checkpoint `f59b342d` is published on `main` and installed in Aura.app.
+
+This is total checkpoint record 324. A fresh live boot recovered to HEALTHY,
+required probes PASS, conversation PASS, and zero welfare-recovery defers after
+the recovery interval. The same boot exposed a separate authority-context gap
+in adaptive immunity during that interval; CP264 addresses that caller rather
+than hiding the warning.
+
+## Checkpoint 2026-07-21-264: Adaptive-Immune Recovery Closure And Chat Reliability Program
+
+The live 16:33 trace identifies `adaptive_immune_system` as the repeated state
+mutation source. Its artifact-bound Will call omitted the recovery authority
+context already required by policy, so every allow-listed internal effector
+was evaluated as an unrelated generic mutation. Adaptive immunity now builds
+an operation-, artifact-, antigen-, component-, and lineage-bound internal
+recovery context before Will authorization. The existing allowlist and
+no-external-effects checks remain the authority boundary; unknown operations
+still fail closed. Will defer diagnostics now report the actual decision
+source when a caller's context does not duplicate it, eliminating the false
+`source=unknown` attribution without suppressing evidence.
+
+Thirty-eight connected adaptive-immunity, Unified Will, and recovery-authority
+tests pass, including direct proof of the narrow context and diagnostic source.
+Focused Ruff, bytecode compilation, and diff checks pass.
+
+The following general-chat reliability program is explicitly OPEN and remains
+in scope until live resident-32B evidence closes every item:
+
+- Repeated mixed social, factual, self-condition, correction, interruption,
+  memory-reference, and tool-intent turns must complete without false reply
+  rejection, stale-topic bleed, invented names or deployment stories,
+  corrupted/truncated text, repetition loops, or a generic fail-closed floor.
+- Reliability repair must preserve the user's current request and durable
+  conversation state across retries. A retry may not silently become a new
+  turn, lose tool intent, or convert a direct command into a hypothetical
+  capability description.
+- Tool-bearing conversation must reach governed execution, effect
+  verification, and a truthful user receipt. The Notes-write-and-PDF workflow
+  remains a required live desktop acceptance case rather than a mocked tool
+  dispatch.
+- Boot health, neural health polling, foreground ownership, model progress,
+  event-loop latency, and reply delivery must be tested together. Backend
+  health cannot substitute for a usable desktop conversation, and UI text or
+  neural-stream containers may not clip generated content.
+- Reliability-gate precision requires both positive and adversarial replay:
+  valid short answers must pass, while contamination, hallucinated operators,
+  unsupported self/runtime claims, wrong-person references, incomplete
+  instruction coverage, and action-success overclaims must still fail.
+- A bounded live campaign must first achieve zero contract failures with
+  complete per-turn receipts. A longer statistically powered reliability run
+  and the final multi-hour soak remain deferred until all shorter code, test,
+  desktop, and campaign gates are green.
+
+This is total checkpoint record 325. It closes the reported adaptive-immune
+authority mismatch and preserves the larger chat program as unfinished work.
+The low-confidence policy-prior forecast remains 394-661 total records, now
+approximately 69-336 records after this checkpoint; no scope was removed.
+Next: publish CP264, launch the immutable CP259 resident-32B training at its
+preregistered 17:00 PDT boundary, verify detached ownership and first durable
+progress, then continue the bounded chat/runtime acceptance gates while the
+trainer runs. Final long soaks remain deferred.
