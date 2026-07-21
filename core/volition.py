@@ -26,6 +26,12 @@ def _unique_goal_id(prefix: str) -> str:
 
 _MAX_OBJECTIVE_TASK_LEN = 300
 
+# Private key carrying the state changes a candidate goal should apply IF it is
+# actually admitted (selected AND authorized). Generation sites must never
+# mutate volition state directly — see _commit_goal_effects. Stripped from the
+# goal before it is returned so it never reaches downstream consumers.
+_COMMIT_EFFECTS_KEY = "_volition_commit_effects"
+
 
 def _sanitize_task_text(text: str, *, limit: int = _MAX_OBJECTIVE_TASK_LEN) -> str:
     """Bound and neutralize file-derived text before it becomes objective text.
@@ -171,19 +177,21 @@ class VolitionEngine:
         if self._should_skip_tick(current_goal):
             return None
 
-        # ── UNIFIED WILL GATE ────────────────────────────────────────
-        # All volition-driven actions must pass through the Will
+        # ── UNIFIED WILL ADMISSION PROBE ─────────────────────────────
+        # Cheap pre-gate: is autonomous initiative permitted AT ALL right now?
+        # This is NOT the authorization for whatever action gets chosen — it
+        # only avoids doing goal-search work while initiative is deferred.
         try:
             from core.will import ActionDomain, get_will
 
-            _will_decision = get_will().decide(
-                content="volition_tick",
+            _probe_decision = get_will().decide(
+                content="volition_tick_admission_probe",
                 source="volition_engine",
                 domain=ActionDomain.INITIATIVE,
                 priority=0.4,
             )
-            if not _will_decision.is_approved():
-                logger.debug("Unified Will deferred volition tick: %s", _will_decision.reason)
+            if not _probe_decision.is_approved():
+                logger.debug("Unified Will deferred volition tick: %s", _probe_decision.reason)
                 return None
         except _VOLITION_RECOVERABLE_ERRORS as _will_err:
             _record_volition_degradation(
@@ -199,8 +207,73 @@ class VolitionEngine:
         # 1. Search for potential autonomous goals
         potential_goals = await self._search_for_autonomous_goals()
 
-        # 2. Select and parse the best goal
-        return self._select_and_parse_goal(potential_goals)
+        # 2. Select the best goal (no state advancement yet)
+        selected_goal = self._select_and_parse_goal(potential_goals)
+        if not selected_goal:
+            return None
+
+        # 3. AUTHORIZE THE CONCRETE ACTION. The probe above approved an
+        #    abstract "tick" with a fixed priority — it never saw the
+        #    objective, origin, or urgency of what was ultimately chosen, so
+        #    the Will could not refuse a *particular* initiative (an outreach,
+        #    a web search, a self-modifying duty). The binding decision is made
+        #    here, against the real action, and its receipt travels with the
+        #    goal so downstream effectors can prove what was authorized.
+        if not self._authorize_selected_goal(selected_goal):
+            return None
+
+        # 4. Only now does volition state advance.
+        self._commit_goal_effects(selected_goal)
+        selected_goal.pop(_COMMIT_EFFECTS_KEY, None)
+        return selected_goal
+
+    def _authorize_selected_goal(self, goal: dict[str, Any]) -> bool:
+        """Bind a Will decision to the concrete selected action."""
+        objective = str(goal.get("objective", "") or "")
+        origin = str(goal.get("origin", "") or "volition")
+        try:
+            priority = float(goal.get("complexity", 0.4) or 0.4)
+        except (TypeError, ValueError):
+            priority = 0.4
+        if not (priority == priority) or priority in (float("inf"), float("-inf")):
+            priority = 0.4
+        priority = max(0.0, min(1.0, priority))
+
+        try:
+            from core.will import ActionDomain, get_will
+
+            decision = get_will().decide(
+                content=f"volition_action:{origin}:{objective[:400]}",
+                source="volition_engine",
+                domain=ActionDomain.INITIATIVE,
+                priority=priority,
+            )
+            if not decision.is_approved():
+                logger.debug(
+                    "Unified Will refused volition action (%s): %s",
+                    origin,
+                    decision.reason,
+                )
+                self._record_action_log(
+                    "goal",
+                    f"VolitionEngine.{origin}",
+                    "gen1_volition",
+                    "will_refused",
+                    str(decision.reason or "")[:200],
+                )
+                return False
+            receipt_id = getattr(decision, "receipt_id", "")
+            if receipt_id:
+                goal["will_receipt"] = receipt_id
+            return True
+        except _VOLITION_RECOVERABLE_ERRORS as exc:
+            _record_volition_degradation(
+                "volition_action_authorization",
+                exc,
+                action="suppressed the selected volition action because the Will could not authorize it",
+                severity="critical",
+            )
+            return False
 
     def _should_skip_tick(self, current_goal: Any) -> bool:
         """Determine if we should skip the volition check."""
@@ -311,16 +384,41 @@ class VolitionEngine:
         if not isinstance(selected_goal, dict) or "objective" not in selected_goal:
             return None
 
-        # Update timers for selected action
-        self.last_action_time = time.monotonic()
-        if selected_goal.get("origin", "").startswith("impulse"):
-            self.last_impulse_time = time.monotonic()
-
-        # Record cooldown timestamp
-        objective = selected_goal["objective"]
-        self._goal_cooldowns[objective] = now
-
+        # State advancement is deliberately NOT done here. Selection is not
+        # execution: committing timers and cooldowns at selection time made a
+        # persistently failing action look like completed work (activity
+        # advanced) and simultaneously suppressed its own retry (cooldown
+        # recorded), so a broken initiative path went silently dormant. The
+        # caller commits via _commit_goal_effects once the concrete action is
+        # admitted by the Will.
         return selected_goal
+
+    def _commit_goal_effects(self, goal: dict[str, Any]) -> None:
+        """Advance volition state for a goal that has actually been admitted.
+
+        Single mutation owner for the initiative timers, cooldowns, and
+        outreach counters — previously these were written from three
+        different generation sites at three different moments, none of which
+        corresponded to the action actually happening.
+        """
+        now = time.monotonic()
+        self.last_action_time = now
+        if str(goal.get("origin", "") or "").startswith("impulse"):
+            self.last_impulse_time = now
+
+        objective = goal.get("objective")
+        if isinstance(objective, str) and objective:
+            self._goal_cooldowns[objective] = now
+
+        effects = goal.get(_COMMIT_EFFECTS_KEY)
+        if not isinstance(effects, dict):
+            return
+        if effects.get("speech"):
+            self.last_speak_time = now
+            self.unanswered_speak_count += 1
+            self.speak_backoff_multiplier = min(2.0, self.speak_backoff_multiplier * 1.2)
+        if effects.get("inquiry"):
+            self.last_inquiry_goal_time = now
 
     async def _generate_boredom_goal(self) -> dict[str, Any] | None:
         """Determine what kind of boredom goal to generate based on idle state."""
@@ -395,15 +493,16 @@ class VolitionEngine:
                     logger.debug("Connection drive governance/bus check failed closed: %s", exc)
                     return None
 
-                self.last_speak_time = now
-                self.unanswered_speak_count += 1
-                self.speak_backoff_multiplier = min(2.0, self.speak_backoff_multiplier * 1.2)
+                # Outreach counters are committed on admission, not here:
+                # this candidate can still lose selection or be refused, and
+                # counting an un-spoken outreach both suppressed later real
+                # outreach and inflated the unanswered-speech backoff.
                 self._record_action_log(
                     "speak",
                     "VolitionEngine.connection_drive",
                     "gen1_volition",
-                    "approved",
-                    "spontaneous_reach_out",
+                    "candidate",
+                    "spontaneous_reach_out_proposed",
                 )
                 return {
                     "objective": "Reach out to the user — say something genuine, not a check-in template.",
@@ -411,6 +510,8 @@ class VolitionEngine:
                     "origin": "intrinsic_connection",
                     "complexity": 0.3,
                     "speak": True,
+                    "will_receipt": will_decision.receipt_id,
+                    _COMMIT_EFFECTS_KEY: {"speech": True},
                 }
 
         # Competence Drive — lowered from 0.6 to 0.5
@@ -502,11 +603,13 @@ class VolitionEngine:
         if speaks and (now - self.last_speak_time < effective_speak_cooldown):
             speaks = False
             template = f"[Internal thought] {template}"
-        else:
-            if speaks:
-                self.last_speak_time = now
-                self.unanswered_speak_count += 1
-                self.speak_backoff_multiplier = min(2.0, self.speak_backoff_multiplier * 1.2)
+        # NOTE: speech counters are NOT advanced here. Generating a candidate
+        # impulse is not speaking — this impulse may lose selection to a
+        # higher-priority goal, or be refused by the Will. Advancing
+        # last_speak_time / unanswered_speak_count / the backoff multiplier at
+        # generation time silently suppressed FUTURE outreach on the strength
+        # of speech that never occurred. They are committed in
+        # _commit_goal_effects once the concrete action is actually admitted.
 
         logger.info("⚡ IMPULSE (%s): %s...", impulse_type, template[:80])
 
@@ -526,6 +629,8 @@ class VolitionEngine:
             "origin": f"impulse_{impulse_type}",
             "complexity": 0.2,
             "speak": speaks,
+            # Effects to apply only if this candidate is actually admitted.
+            _COMMIT_EFFECTS_KEY: {"speech": bool(speaks)},
         }
 
     async def _generate_duty_goal(self) -> dict[str, Any] | None:
@@ -592,7 +697,11 @@ class VolitionEngine:
                     objective = f"I need to work on the roadmap task: {task_name}. Check the plan and execute."
                     logger.info("🫡 Duty Calls: %s", objective)
 
-                    self.last_activity_time = time.monotonic()
+                    # Activity is recorded on ADMISSION (see
+                    # _commit_goal_effects), not on generation: resetting the
+                    # idle clock here meant merely CONSIDERING a goal looked
+                    # like work and defeated boredom/idle detection even when
+                    # the candidate was never selected or executed.
                     return {
                         "objective": objective,
                         "id": _unique_goal_id("duty"),
@@ -622,7 +731,7 @@ class VolitionEngine:
         ]
 
         objective = random.choice(templates)
-        self.last_activity_time = time.monotonic()
+        # Activity commits on admission, not generation (see _commit_goal_effects).
 
         return {
             "objective": objective,
@@ -657,7 +766,7 @@ class VolitionEngine:
             origin = "intrinsic_curiosity"
 
         objective = template.format(topic=topic)
-        self.last_activity_time = time.monotonic()
+        # Activity commits on admission, not generation (see _commit_goal_effects).
 
         return {
             "objective": objective,
@@ -885,7 +994,10 @@ class VolitionEngine:
             return None
         question_id = str(getattr(question, "id", "active"))
         domain = str(getattr(question, "domain", "general") or "general")
-        self.last_inquiry_goal_time = now
+        # The inquiry cooldown is committed on admission, not here: burning it
+        # at generation time meant a candidate that lost selection (or was
+        # refused) still blocked the next inquiry for a full cooldown, so an
+        # actively-researched question could stall without any research running.
         return {
             "objective": (
                 "Advance active inquiry with grounded research: "
@@ -903,6 +1015,7 @@ class VolitionEngine:
                 "freshness": round(freshness, 4),
                 "research_attempts": attempts,
             },
+            _COMMIT_EFFECTS_KEY: {"inquiry": True},
         }
 
 

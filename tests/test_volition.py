@@ -176,7 +176,16 @@ def test_check_soul_drives_connection(engine):
     assert goal is not None
     assert goal["origin"] == "intrinsic_connection"
     assert goal["speak"] is True
+    # Generating an outreach CANDIDATE is not speaking: the candidate can
+    # still lose selection or be refused by the Will, so the counters must
+    # not advance until the action is actually admitted.
+    assert engine.unanswered_speak_count == 0
+    assert engine.speak_backoff_multiplier == 1.0
+
+    engine._commit_goal_effects(goal)
     assert engine.unanswered_speak_count == 1
+    assert engine.speak_backoff_multiplier > 1.0
+    assert engine.last_speak_time > 0.0
 
 
 def test_check_soul_drives_connection_silenced(engine):
@@ -213,6 +222,10 @@ def test_generate_impulse(monkeypatch, engine):
     assert impulse["origin"] == "impulse_question"
     assert "bio-computing" in impulse["objective"]
     assert impulse["speak"] is True
+    # Counters advance on admission, not on generation.
+    assert engine.unanswered_speak_count == 0
+
+    engine._commit_goal_effects(impulse)
     assert engine.unanswered_speak_count == 1
 
 def test_generate_impulse_silenced(monkeypatch, engine):
