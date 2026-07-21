@@ -48,6 +48,17 @@ class FacadeRetrieval:
     empty_results: int = 0
     passages_returned: int = 0
 
+    def _record(self, exc: BaseException, action: str) -> None:
+        try:
+            from core.runtime.errors import record_degradation
+
+            record_degradation(
+                "facade_retrieval", exc, severity="warning", action=action,
+                enforce_failure_policy=False,
+            )
+        except Exception:
+            pass
+
     def _passage_text(self, item: Any) -> str:
         if isinstance(item, dict):
             text = str(item.get("content") or item.get("text") or "").strip()
@@ -70,9 +81,11 @@ class FacadeRetrieval:
             return []
         try:
             raw = search(query, limit=limit)
-        except Exception:
+        except Exception as exc:
             # A retrieval failure is a degradation, not a reason to invent
-            # context. Record it as empty and let the score reflect reality.
+            # context. Record it (info: expected backpressure) and let the
+            # score reflect reality rather than a fabricated passage.
+            self._record(exc, "memory retrieval failed")
             self.empty_results += 1
             return []
         passages = [self._passage_text(item) for item in (raw or [])]

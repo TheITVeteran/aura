@@ -26,6 +26,7 @@ along -- the same one the halting head follows:
 """
 from __future__ import annotations
 
+import asyncio
 import os
 from typing import Any
 
@@ -40,6 +41,31 @@ TARGET_PATHWAYS = ("autonomous_research", "curiosity_drive")
 # agency pulse and loading a latency-sensitive live instance -- the same
 # rate-limit discipline the other autonomous pathways already use.
 COOLDOWN_SECONDS = float(os.environ.get("AURA_COGNITIVE_LOOP_COOLDOWN", "180"))
+# Every external call is bounded: an unbounded generate() could hang the
+# agency pulse hook. A whole loop (up to max_attempts generations) must also
+# not run away, so the cycle carries its own ceiling.
+GENERATE_TIMEOUT_S = float(os.environ.get("AURA_COGNITIVE_LOOP_GENERATE_TIMEOUT", "45"))
+CYCLE_TIMEOUT_S = float(os.environ.get("AURA_COGNITIVE_LOOP_CYCLE_TIMEOUT", "150"))
+
+
+def _degrade(exc: BaseException, action: str, *, severity: str = "degraded") -> None:
+    """Route a swallowed exception through the canonical degradation channel.
+
+    CLAUDE.md forbids silent catch-alls; every ``except`` here records why it
+    fired, at info-level for expected backpressure (timeouts) and degraded
+    otherwise, so a live failure is visible rather than hidden behind a
+    returned None.
+    """
+    try:
+        from core.runtime.errors import record_degradation
+
+        record_degradation(
+            "cognitive_loop_pathway", exc, severity=severity, action=action,
+            enforce_failure_policy=False,
+        )
+    except Exception:
+        # Degradation recording itself must never raise into the pulse.
+        pass
 
 
 def is_enabled() -> bool:
@@ -64,8 +90,15 @@ class _RouterDeliberator:
         blocks.append("Work through it step by step, then give your answer.")
         prompt = "\n\n".join(blocks)
         try:
-            return await self._router.generate(prompt)
-        except Exception:
+            # Bounded: an unbounded generate() would hang the pulse hook.
+            return await asyncio.wait_for(
+                self._router.generate(prompt), timeout=GENERATE_TIMEOUT_S
+            )
+        except asyncio.TimeoutError as exc:
+            _degrade(exc, "cognitive-loop deliberation timed out", severity="warning")
+            return ""
+        except Exception as exc:
+            _degrade(exc, "cognitive-loop deliberation failed")
             return ""
 
 
@@ -157,7 +190,24 @@ async def cognitive_loop_provider(
     if not query:
         return None
     marks[pathway] = now
-    result = await loop.arun(query)
+
+    # Run inside the governed maintenance scope the rest of agency uses for
+    # internal model work, and under a whole-cycle timeout so a stuck loop
+    # cannot wedge the pulse. A failure degrades to "no proposal", never an
+    # exception into the pulse.
+    try:
+        from core.governance_context import local_internal_governed_scope
+
+        with local_internal_governed_scope(
+            "cognitive_loop_pathway", domain="state_mutation"
+        ):
+            result = await asyncio.wait_for(loop.arun(query), timeout=CYCLE_TIMEOUT_S)
+    except asyncio.TimeoutError as exc:
+        _degrade(exc, f"cognitive-loop cycle timed out on {pathway}", severity="warning")
+        return None
+    except Exception as exc:
+        _degrade(exc, f"cognitive-loop cycle failed on {pathway}")
+        return None
     if result.answer is None or not str(result.answer).strip():
         return None
     # A verified conclusion is offered with more priority than an unverified
