@@ -157,6 +157,7 @@ def main() -> int:
     parser.add_argument("--learning-rate", type=float, default=1e-5)
     parser.add_argument("--max-steps", type=int, default=300)
     parser.add_argument("--eval-every", type=int, default=50)
+    parser.add_argument("--checkpoint-every", type=int, default=25)
     parser.add_argument("--max-minutes", type=float, default=600.0)
     parser.add_argument("--seed", type=int, default=20260721)
     parser.add_argument("--memory-fraction", type=float, default=0.55)
@@ -231,8 +232,51 @@ def main() -> int:
         baseline_eval = None
         step = 0
 
+        # Minimax curriculum (CP237): sample where the model is weakest but
+        # not hopeless, so groups have reward variance instead of being
+        # all-wrong. This is the cold-start fix -- skipping degenerate
+        # groups after sampling them wastes the compute already spent.
+        from core.learning.adaptive_curriculum import AdaptiveCurriculum
+        from core.learning.durable_run import DurableRun
+
+        by_cell: dict[tuple[str, int], list] = {}
+        for task in train_tasks:
+            by_cell.setdefault((task.domain, task.depth), []).append(task)
+        curriculum = AdaptiveCurriculum.over(
+            sorted({d for d, _ in by_cell}), sorted({p for _, p in by_cell})
+        )
+        sampler = random.Random(args.seed)
+
+        # Durable resume (CP237): pick up from the last checkpoint after a
+        # sleep, jetsam kill, or power loss -- the failure that killed the
+        # CP227 gate mid-run.
+        durable = DurableRun(out_dir / "checkpoints")
+        resumed = durable.latest()
+        if resumed is not None:
+            step = resumed.step
+            curriculum = AdaptiveCurriculum.from_state(resumed.payload["curriculum"])
+            adapter_file = out_dir / "checkpoints" / resumed.payload["adapters"]
+            if adapter_file.exists():
+                model.load_weights(str(adapter_file), strict=False)
+            print(f"[resume] continuing from step {step}", flush=True)
+
+        def checkpoint_now() -> None:
+            from mlx.utils import tree_flatten
+
+            name = f"adapters_{step:08d}.safetensors"
+            mx.save_safetensors(
+                str(out_dir / "checkpoints" / name),
+                {
+                    k: v for k, v in tree_flatten(model.trainable_parameters())
+                    if "lora" in k
+                },
+            )
+            durable.save(step, {"curriculum": curriculum.state(), "adapters": name})
+
         while step < args.max_steps and time.time() < deadline:
-            task = train_tasks[step % len(train_tasks)]
+            cell = curriculum.sample(sampler)
+            pool = by_cell.get(cell) or train_tasks
+            task = pool[sampler.randrange(len(pool))]
             with recurrence_adapter_scope(start=None, stop=None):
                 prompt, completions = sample_group(
                     model, tokenizer, task, size=config.group_size,
@@ -249,7 +293,15 @@ def main() -> int:
                 rewards, clip=config.advantage_clip
             )
             telemetry.observe(advantage_report)
+            # Teach the curriculum what it just learned about this cell, so
+            # difficulty tracks competence instead of being fixed.
+            curriculum.observe(
+                task.domain, task.depth, advantage_report["mean_reward"],
+                degenerate=advantage_report["degenerate"],
+            )
             step += 1
+            if step % args.checkpoint_every == 0:
+                checkpoint_now()
 
             def run_eval() -> None:
                 """Evaluation must not depend on the step having trained.
@@ -338,6 +390,9 @@ def main() -> int:
             if "lora" in name
         }
         mx.save_safetensors(str(out_dir / "grpo_adapters.safetensors"), adapters)
+        checkpoint_now()  # a final resumable point at the true end
+        curriculum_report = curriculum.report()
+        print(f"[curriculum] {curriculum_report}", flush=True)
 
     signal = telemetry.verdict(config)
     final = history[-1] if history else None
@@ -351,6 +406,7 @@ def main() -> int:
         "holdout_tasks": len(holdout),
         "steps": step,
         "learning_signal": signal,
+        "curriculum": curriculum_report,
         "history": history,
         "final": final,
         "verdict": {
