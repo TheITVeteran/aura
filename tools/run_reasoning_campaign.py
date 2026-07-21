@@ -12,9 +12,18 @@ resumes at STEP granularity within stage 1 (CP237).
     stage 3  integrated reasoning eval    (organs + recurrence, CP236)
 
 Why stages as subprocesses rather than one process: a crash or OOM in the
-eval must not destroy the training receipt, and a completed stage must not
-re-run on resume. Each stage writes a terminal receipt; the manifest
-records which stages are done. Resuming skips completed stages.
+eval must not destroy the training receipt, subprocess isolation frees the
+32B between stages (in-process would hold two resident models = OOM), and a
+completed stage must not re-run on resume.
+
+INCOMPATIBLE WITH run_detached_step.py's sandbox: the supervisor blocks its
+target from spawning child processes (PermissionError: Operation not
+permitted on fork_exec) as a containment measure. So this campaign must run
+UNSUPERVISED (plain caffeinate/nohup) -- or each stage must be supervised as
+its own separate detached job. The CP238 launch supervises train_grpo
+DIRECTLY (it spawns nothing) and chains the integrated eval as a second
+supervised job on completion. Kept here for the unsupervised path and as
+the stage definition of record.
 
 The campaign never claims a gain. It runs the three measurements and writes
 one combined receipt with every verdict, positive or negative. The point of
