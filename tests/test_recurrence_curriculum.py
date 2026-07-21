@@ -15,6 +15,7 @@ from core.learning.recurrence_curriculum import (
     RECURRENCE_TRAINING_FAMILIES,
     TASK_GENERATORS,
     RecurrenceTrainingTask,
+    disjoint_task_split,
     task_battery,
 )
 
@@ -86,13 +87,51 @@ def test_registry_and_battery_are_deterministic_unique_and_complete():
     )
 
 
+def test_training_task_exposes_exact_grpo_contract():
+    task = TASK_GENERATORS["causal_intervention"](4, 77)
+
+    assert task.task_id == "recurrence-causal_intervention-d4-s77"
+    assert task.domain == "causal_intervention"
+    assert task.knowledge == "parametric"
+    assert task.grader == "exact_json"
+    assert task.metadata == {
+        "source": "recurrence_curriculum",
+        "curriculum_version": "2026.07.18.1",
+        "generation_seed": 77,
+    }
+    assert task.grade(task.answer)["correct"] is True
+    assert task.grade('FINAL_ANSWER: {"wrong":1}')["correct"] is False
+    assert task.grade("the answer is probably one")["reason"] == "unparseable"
+
+
+def test_recurrence_split_is_prompt_and_identity_disjoint():
+    train, holdout = disjoint_task_split(
+        families=("khop", "budget_plan"),
+        depths=(2, 4),
+        train_per_cell=3,
+        holdout_per_cell=2,
+        seed=91,
+    )
+
+    assert len(train) == 12
+    assert len(holdout) == 8
+    assert {task.prompt for task in train}.isdisjoint(
+        {task.prompt for task in holdout}
+    )
+    assert {task.task_id for task in train}.isdisjoint(
+        {task.task_id for task in holdout}
+    )
+
+
 def test_sample_identity_is_invariant_to_family_order_and_subset():
     forward = task_battery(("khop", "boolean", "modular"), (2, 4), 4, seed=99)
     reversed_order = task_battery(("modular", "boolean", "khop"), (2, 4), 4, seed=99)
     subset = task_battery(("boolean",), (2, 4), 4, seed=99)
-    normalized = lambda tasks: sorted(
-        (task.family, task.depth, task.seed, task.prompt, task.answer) for task in tasks
-    )
+    def normalized(tasks):
+        return sorted(
+            (task.family, task.depth, task.seed, task.prompt, task.answer)
+            for task in tasks
+        )
     assert normalized(forward) == normalized(reversed_order)
     assert normalized(subset) == [
         record for record in normalized(forward) if record[0] == "boolean"

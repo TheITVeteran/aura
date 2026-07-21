@@ -17,6 +17,7 @@ from core.learning.grpo_training_state import (
 from tools.train_grpo import (
     GRPO_DATASET_SCHEMA,
     _assert_exact_adapter_keys,
+    _build_task_split,
     _calibration_token_budget,
     _dataset_payload,
     _load_execution_spec,
@@ -56,6 +57,39 @@ def test_dataset_identity_binds_split_order_and_task_bytes():
     swapped = _dataset_payload([second], [first], seed=11)
     assert sha256_bytes(canonical_json_bytes(swapped)) != digest
     assert _dataset_payload([first], [second], seed=11) == payload
+
+
+def test_grpo_can_bind_the_broad_recurrence_training_registry():
+    train, holdout, source = _build_task_split(
+        task_source="recurrence_curriculum",
+        domains=["khop", "code_trace"],
+        depths=[2, 4],
+        train_per_cell=2,
+        holdout_per_cell=1,
+        seed=101,
+    )
+
+    assert len(train) == 8
+    assert len(holdout) == 4
+    assert source.name == "recurrence_curriculum.py"
+    assert {task.metadata["source"] for task in train} == {
+        "recurrence_curriculum"
+    }
+    assert {task.task_id for task in train}.isdisjoint(
+        {task.task_id for task in holdout}
+    )
+
+
+def test_grpo_rejects_an_unbound_task_registry():
+    with pytest.raises(ValueError, match="unsupported task source"):
+        _build_task_split(
+            task_source="frontier_evaluation",
+            domains=["mathematics"],
+            depths=[2],
+            train_per_cell=1,
+            holdout_per_cell=1,
+            seed=1,
+        )
 
 
 def test_adapter_resume_requires_the_exact_trainable_keyset():

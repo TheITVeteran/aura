@@ -42,6 +42,64 @@ class RecurrenceTrainingTask:
         if not self.family or not self.family.replace("_", "").isalnum():
             raise ValueError("training task family is invalid")
 
+    @property
+    def task_id(self) -> str:
+        """Globally stable sample identity, including its generator seed."""
+        return f"recurrence-{self.family}-d{self.depth}-s{self.seed}"
+
+    @property
+    def domain(self) -> str:
+        return self.family
+
+    @property
+    def knowledge(self) -> str:
+        return "parametric"
+
+    @property
+    def grader(self) -> str:
+        return "exact_json"
+
+    @property
+    def expected(self) -> dict[str, Any]:
+        prefix = "FINAL_ANSWER: "
+        if not self.answer.startswith(prefix):
+            raise ValueError("training task answer contract is invalid")
+        value = json.loads(self.answer.removeprefix(prefix))
+        if not isinstance(value, dict):
+            raise ValueError("training task answer must be a JSON object")
+        return value
+
+    @property
+    def metadata(self) -> dict[str, Any]:
+        return {
+            "source": "recurrence_curriculum",
+            "curriculum_version": CURRICULUM_VERSION,
+            "generation_seed": self.seed,
+        }
+
+    def grade(self, response: str) -> dict[str, Any]:
+        """Strictly grade the bounded FINAL_ANSWER JSON contract."""
+        try:
+            from core.brain.llm.latent_cortex.frontier_tasks import (
+                FrontierTaskError,
+                parse_final_answer,
+            )
+
+            produced = parse_final_answer(response)
+        except (FrontierTaskError, TypeError, ValueError):
+            return {
+                "correct": False,
+                "parsed": None,
+                "expected": self.expected,
+                "reason": "unparseable",
+            }
+        expected = self.expected
+        return {
+            "correct": produced == expected,
+            "parsed": produced,
+            "expected": expected,
+        }
+
 
 def _json_answer(value: dict[str, Any]) -> str:
     return "FINAL_ANSWER: " + json.dumps(
@@ -509,6 +567,35 @@ def task_battery(
     return tasks
 
 
+def disjoint_task_split(
+    *,
+    families: Sequence[str],
+    depths: Sequence[int],
+    train_per_cell: int,
+    holdout_per_cell: int,
+    seed: int,
+) -> tuple[list[RecurrenceTrainingTask], list[RecurrenceTrainingTask]]:
+    """Mint a globally disjoint train/holdout split from separate roots."""
+    train = task_battery(families, depths, train_per_cell, seed=seed)
+    holdout = task_battery(
+        families,
+        depths,
+        holdout_per_cell,
+        seed=seed + 7_919,
+    )
+    train_prompts = {task.prompt for task in train}
+    train_ids = {task.task_id for task in train}
+    holdout_prompts = {task.prompt for task in holdout}
+    holdout_ids = {task.task_id for task in holdout}
+    if train_prompts & holdout_prompts:
+        raise RuntimeError("recurrence train and holdout prompts overlap")
+    if train_ids & holdout_ids:
+        raise RuntimeError("recurrence train and holdout identities overlap")
+    if len(train_ids) != len(train) or len(holdout_ids) != len(holdout):
+        raise RuntimeError("recurrence task identity is not globally unique")
+    return train, holdout
+
+
 __all__ = [
     "CURRICULUM_SCHEMA",
     "CURRICULUM_VERSION",
@@ -516,5 +603,6 @@ __all__ = [
     "RECURRENCE_TRAINING_FAMILIES",
     "RecurrenceTrainingTask",
     "TASK_GENERATORS",
+    "disjoint_task_split",
     "task_battery",
 ]

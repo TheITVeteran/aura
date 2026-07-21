@@ -81,6 +81,7 @@ GRPO_DATASET_SCHEMA = "aura.grpo_dataset.v1"
 GRPO_PROTOCOL_SCHEMA = "aura.grpo_protocol.v3"
 RNG_STRATEGY = "stateless_sha256_step_seeded_v1"
 EXECUTION_MODES = ("standard", "recurrent")
+TASK_SOURCES = ("verifiable", "recurrence_curriculum")
 _ADAPTER_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 
 
@@ -167,6 +168,41 @@ def _calibration_token_budget(max_tokens: int, requested: int) -> int:
             "probe truncates reasoning and corrupts learnability"
         )
     return max_tokens
+
+
+def _build_task_split(
+    *,
+    task_source: str,
+    domains: list[str],
+    depths: list[int],
+    train_per_cell: int,
+    holdout_per_cell: int,
+    seed: int,
+) -> tuple[list[Any], list[Any], Path]:
+    """Build one source-bound split without mixing training registries."""
+    if task_source == "verifiable":
+        train, holdout = disjoint_split(
+            domains=domains,
+            depths=depths,
+            train_per_cell=train_per_cell,
+            holdout_per_cell=holdout_per_cell,
+            seed=seed,
+        )
+        source = REPO_ROOT / "core/learning/verifiable_tasks.py"
+    elif task_source == "recurrence_curriculum":
+        from core.learning.recurrence_curriculum import disjoint_task_split
+
+        train, holdout = disjoint_task_split(
+            families=domains,
+            depths=depths,
+            train_per_cell=train_per_cell,
+            holdout_per_cell=holdout_per_cell,
+            seed=seed,
+        )
+        source = REPO_ROOT / "core/learning/recurrence_curriculum.py"
+    else:
+        raise ValueError(f"unsupported task source: {task_source}")
+    return list(train), list(holdout), source
 
 
 def _publish_adapter_snapshot(path: Path, tensors: Mapping[str, Any]) -> None:
@@ -803,6 +839,12 @@ def main() -> int:
         "--execution-spec",
         help="strict RLCExecutionSpec JSON required by recurrent mode",
     )
+    parser.add_argument(
+        "--task-source",
+        choices=TASK_SOURCES,
+        default="verifiable",
+        help="immutable programmatic training registry; frontier tasks stay evaluation-only",
+    )
     parser.add_argument("--domains", default="arithmetic_chain,program_trace,constraint_order")
     parser.add_argument("--depths", default="2,4,8")
     parser.add_argument("--train-per-cell", type=int, default=32)
@@ -905,14 +947,17 @@ def main() -> int:
     depths = [int(d) for d in args.depths.split(",") if d.strip()]
     if not domains or not depths or any(depth <= 0 for depth in depths):
         parser.error("--domains and positive --depths are required")
-    train_tasks, holdout = disjoint_split(
-        domains=domains, depths=depths,
+    train_tasks, holdout, task_source_path = _build_task_split(
+        task_source=args.task_source,
+        domains=domains,
+        depths=depths,
         train_per_cell=args.train_per_cell,
-        holdout_per_cell=args.holdout_per_cell, seed=args.seed,
+        holdout_per_cell=args.holdout_per_cell,
+        seed=args.seed,
     )
     print(
         f"[tasks] {len(train_tasks)} train / {len(holdout)} held-out "
-        f"(disjoint prompts verified)",
+        f"from {args.task_source} (disjoint prompts and identities verified)",
         flush=True,
     )
 
@@ -933,7 +978,7 @@ def main() -> int:
         "trainer": Path(__file__),
         "grpo": REPO_ROOT / "core/learning/grpo.py",
         "curriculum": REPO_ROOT / "core/learning/adaptive_curriculum.py",
-        "tasks": REPO_ROOT / "core/learning/verifiable_tasks.py",
+        "tasks": task_source_path,
         "checkpoint": REPO_ROOT / "core/learning/grpo_training_state.py",
         "adapter": (
             REPO_ROOT

@@ -1,0 +1,86 @@
+{
+  "schema": "aura.closeout.resident_recurrent_grpo_preregistration_proof.v1",
+  "checkpoint": "CP259",
+  "observed_at": "2026-07-21T14:45:00-07:00",
+  "campaign_id": "resident-32b-recurrent-grpo-cp259",
+  "contract_sha256": "1f5cda5d0b5bd2b8587bf739e418b0873d9ba9c14bfd453798c30a976860c1b0",
+  "model": {
+    "path": "training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118",
+    "base_checkpoint_fingerprint": "8eae71e73a14d1228a942d4faf84690d70b62148f25b0f924435535f7c550fad",
+    "model_behavior_bundle_sha256": "7eb54f8b670bba6e5b37ae5f9c6d016e9628034951b3ee702ca0096123c5e674"
+  },
+  "execution_spec": {
+    "semantic_sha256": "15dd73289e21e5da2ecdb94d7d7fb2b0a27b9b5b24cd65683af110d2ee904d49",
+    "n_slots": 16,
+    "branches": 2,
+    "recurrent_steps": 4,
+    "adapter_scope": "latent_slots_only"
+  },
+  "training": {
+    "task_source": "core/learning/recurrence_curriculum.py",
+    "families": 12,
+    "depths": [
+      2,
+      4,
+      8
+    ],
+    "train_tasks": 288,
+    "holdout_tasks": 36,
+    "dataset_sha256": "1812ff8e9ee6bd8a0ad415f44d5c19d745810586c0c1d31bc02d5fb89e35f2ca",
+    "train_holdout_id_overlap": 0,
+    "train_holdout_prompt_overlap": 0,
+    "frontier_registry_excluded": "2026.07.18.2",
+    "max_steps": 288,
+    "max_tokens": 320,
+    "group_size": 4,
+    "lora_rank": 8,
+    "lora_layers": 8,
+    "lora_targets": [
+      "o_proj",
+      "v_proj",
+      "q_proj"
+    ],
+    "checkpoint_every": 1,
+    "exact_resume_required": true
+  },
+  "evaluation": {
+    "arms": 6,
+    "domains": 7,
+    "directional_tasks": 56,
+    "directional_cells": 336,
+    "confirmatory_observations_per_domain": 411,
+    "confirmatory_tasks": 2877,
+    "confirmatory_cells": 17262,
+    "equal_information": true,
+    "equal_tools": true,
+    "equal_compute_controls": true,
+    "broad_regression_required": true,
+    "named_external_frontier_providers_required": 2
+  },
+  "launch_control": {
+    "not_before": "2026-07-21T17:00:00-07:00",
+    "early_launch_rejected": true,
+    "early_launch_failure_code": "presentation_window_still_active",
+    "detached_plan_created_early": false,
+    "detached_timeout_s": 93600,
+    "checkpoint_resume_verifier": "attempt-bound adapter, optimizer, protocol, dataset, graph, and step verification"
+  },
+  "validation": {
+    "connected_tests_passed": 286,
+    "connected_test_duration_s": 172.31,
+    "ruff": "pass",
+    "py_compile": "pass",
+    "json": "pass",
+    "real_model_identity": "pass",
+    "real_contract_replay": "pass"
+  },
+  "claim_state": {
+    "mechanics_proven": true,
+    "resident_training_complete": false,
+    "positive_interaction_proven": false,
+    "broad_reasoning_gain_proven": false,
+    "frontier_level_proven": false,
+    "release_eligible": false
+  },
+  "next_gate": "launch the detached resident-32B recurrent-GRPO run after the presentation window, train or exactly resume to max_steps, validate and freeze its adapter identity, then execute the preregistered directional and powered externally custodied factorials"
+}

@@ -22782,3 +22782,69 @@ scope. Next: publish CP258, freeze the preregistered resident-32B training and
 factorial protocol, launch only after the presentation window, and grade its
 fresh equal-compute, broad-regression, contamination, and external-custody
 evidence. Final long soaks remain deferred.
+
+## Checkpoint 2026-07-21-259: Powered Resident-32B Recurrent-GRPO Preregistration
+
+The resident training and causal-proof target is now frozen before execution.
+The contract binds Aura's active fused 32B checkpoint fingerprint
+`8eae71e73a14d1228a942d4faf84690d70b62148f25b0f924435535f7c550fad`,
+its tokenizer/config behavior bundle, nineteen executable source roles, and a
+fixed recurrent graph with sixteen latent slots, constructive and
+counterexample branches, consensus exchange, four recurrent steps, and
+latent-slot-only scoped adapters. The launch wrapper recomputes those
+identities from real bytes before it may allocate the resident model.
+
+CP258's three-generator curriculum was insufficient for a broad training
+claim. Recurrent GRPO can now consume Aura's independent twelve-family
+recurrence curriculum through the same exact grader interface. Every task has
+a seed-qualified global identity, canonical `FINAL_ANSWER` JSON grader,
+source/version metadata, and a deterministic disjoint split. The committed
+corpus contains 288 training tasks and 36 internal holdouts at depths 2, 4,
+and 8 with zero prompt or identity overlap. Its SHA-256 is
+`1812ff8e9ee6bd8a0ad415f44d5c19d745810586c0c1d31bc02d5fb89e35f2ca`.
+All twelve training families are declared exclusions of frontier registry
+`2026.07.18.2`; the seven-domain evaluation generators remain evaluation-only.
+
+The exact training protocol uses correctness-only recurrent GRPO, four
+samples per group, 320-token generation and calibration budgets, rank-eight
+LoRA over `o_proj`, `v_proj`, and `q_proj` in eight recurrent-window layers,
+per-step crash-consistent adapter plus optimizer checkpoints, a 42% MLX memory
+envelope, and a 288-step terminal target. A supervisor crash may resume only
+after an attempt-bound verifier rechecks the immutable protocol and dataset,
+latest pointer, checkpoint completion digest, committed step, recurrent graph,
+and adapter and optimizer bytes. An indeterminate or incomplete generation is
+not replayed.
+
+The scientific endpoint is also explicit rather than being deferred to a
+small smoke run. The directional six-arm factorial has 56 fresh tasks and 336
+cells and is non-claiming. The powered confirmatory design requires 411
+observations per domain: 2,877 fresh tasks and 17,262 cells over base vanilla,
+base RLC, adapter vanilla, adapter RLC, and both equal-compute controls, with
+Holm familywise correction, broad-regression limits, operation-level compute
+reconstruction, separate latency reporting, and at least two named
+contemporaneous external-frontier providers. The primary interaction remains
+`(adapter RLC - adapter vanilla) > (base RLC - base vanilla)`. Distinct
+externally custodied issuer, runner, revealer, final-attestor, verifier, and
+contamination-auditor roles remain mandatory for a claim.
+
+Contract
+`config/latent_cortex/resident_32b_recurrent_grpo_preregistration.json` is
+machine-accepted at
+`1f5cda5d0b5bd2b8587bf739e418b0873d9ba9c14bfd453798c30a976860c1b0`.
+The 17:00 PDT presentation boundary is enforced in code: a real early launch
+returned `presentation_window_still_active` and created no detached plan.
+Validation is green: 286 connected recurrent-gradient, identity, checkpoint,
+task, campaign, frontier-admission, experiment-integrity, and curriculum tests
+pass in 172.31 seconds; Ruff, bytecode compilation, JSON validation, real model
+identity replay, and contract replay pass. The durable receipt is
+`artifacts/closeout/latent_cortex/cp259_resident_32b_recurrent_grpo/preregistration_receipt.json`.
+
+This is total checkpoint record 320. It freezes the training and evidence
+protocol but awards no resident-training, positive-interaction, broad-gain,
+frontier, external-custody, release, or soak credit. The low-confidence
+policy-prior forecast remains 394-661 total records, now approximately 74-341
+records after this checkpoint; no scope was removed. Next: publish CP259,
+launch the detached resident 32B after the presentation window, train or
+exactly resume to the terminal budget, validate and freeze the first-class
+adapter, and execute the directional then powered externally custodied
+factorials. Final long soaks remain deferred.
