@@ -22711,3 +22711,74 @@ from dropped scope. Next: publish CP257, preregister a fresh powered resident-32
 base/adapter x standard/RLC factorial with equal-compute and broad-regression
 controls, then run it detached and grade the named frontier claim from its
 artifacts. Final long soaks remain deferred.
+
+## Checkpoint 2026-07-21-258: First-Class Recurrent-GRPO Adapter Identity
+
+Recurrent GRPO now emits a campaign-loadable identity that is deliberately
+distinct from the recurrence-native supervised-v2 format. The manifest binds
+the exact base checkpoint, tokenizer/config behavior bundle, empty personality
+stack, training runtime, immutable protocol, disjoint dataset, frozen execution
+spec, archived source snapshots, completed GRPO receipt, scoped-LoRA loader
+configuration, tensor topology, and a completion marker published only after a
+model-free semantic preflight. It requires a completed `max_steps` run with at
+least one optimizer update and one receipt per committed recurrent step. Every
+sample must bind the same policy and graph, pass behavior admission, preserve
+the cached parameter invariant, and prove active latent-slot adapter calls. The
+identity permanently records `causal_gain_proven=false`; it cannot inherit a
+supervised objective or frontier claim by changing a schema label.
+
+The immutable campaign freezer and resident worker now dispatch both strict
+formats without weakening the older one. A GRPO snapshot receives its own
+completion schema and identity receipt, both validators are bound into the
+freeze certificate, runtime load-boundary revalidation repeats the complete
+GRPO contract before and after tensor installation, and the loader always uses
+`ScopedLoRALinear` for either scoped format. `--personality-adapter trained`
+resolves to the actual empty stack recorded during GRPO instead of composing an
+untrained personality adapter. Legacy manifests, supervised-v2 promotion, and
+legacy unscoped loading remain separately tested.
+
+Real integration found and fixed three evidence defects. Train and holdout
+prompts were disjoint but reused display task IDs across their generator seeds;
+task IDs are now seed-qualified and global split uniqueness is enforced. The
+initial identity validator also assumed integer rewards and a boolean adapter
+marker, while real receipts contain finite float rewards and a structured
+activation receipt. It now admits only finite rewards in `[0,1]` and requires
+active latent-slot scope, positive adapter calls and positions, and coherent
+observed-position accounting. Failed admissions remain in the engineering
+history, but their causes are fixed. Semantic publication is preflighted before
+`training_completion.json`, so a rejected bundle can no longer leave a false
+complete marker.
+
+The real `Qwen2.5-1.5B-Instruct-4bit` gate applied one exact recurrent update,
+changed the policy identity from
+`b37451845f1550ca3644ca67343e6a182b590bbe1c7bda628b4a330776c8bbd9` to
+`856e0f6df243568f9d3d4bc234f7513d7fb23afe3e6ac33cfd7d3e878e8280e6`,
+and produced composite adapter identity
+`a22f134bbf217223645099df7c0d64da93a3cba1119d88f91fc24b3feb6499c2`.
+The 20-artifact immutable snapshot verified under certificate
+`e5ba941698978b6c4e3a4126697cc4ef916c59a560993b6a51f2b0cafbd0ff7c`.
+The production planner consumed it into all six factorial arms, and a real
+`adapter_rlc` worker then loaded the checkpoint, revalidated the runtime and
+adapter identities, installed one scoped projection, observed active recurrence
+adapter calls, and sealed all six requested cells. Only one of those six 1.5B
+outputs satisfied the strict terminal response contract; that remains an
+explicit output-quality result rather than being mislabeled as infrastructure
+success or reasoning gain. The durable summary is
+`artifacts/closeout/latent_cortex/cp258_recurrent_grpo_identity/proof_receipt.json`.
+
+Validation is green: 242 connected trainer, identity, task-generation,
+launch-bundle, campaign-runner, supervised-v2 promotion, resident-admission,
+frontier-certification, experiment-integrity, and verifier-curriculum tests pass;
+focused Ruff, bytecode compilation, JSON validation, and diff checks pass.
+
+This is total checkpoint record 319. It closes the truthful train-to-freeze-to-
+runtime bridge needed by the powered campaign. It awards no resident-32B
+positive-interaction, broad reasoning-gain, frontier, external-custody, release,
+or soak credit. Machine-certified completion remains unchanged until reviewed
+artifacts populate the acceptance ledger. The low-confidence policy-prior
+forecast remains 394-661 total records, now approximately 75-342 records after
+this checkpoint; it may narrow only from reviewed evidence, never from dropped
+scope. Next: publish CP258, freeze the preregistered resident-32B training and
+factorial protocol, launch only after the presentation window, and grade its
+fresh equal-compute, broad-regression, contamination, and external-custody
+evidence. Final long soaks remain deferred.

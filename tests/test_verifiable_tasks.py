@@ -22,7 +22,6 @@ from core.learning.verifiable_tasks import (
     scaling_report,
 )
 
-
 # ── Tolerant on form ────────────────────────────────────────────────────
 
 
@@ -164,6 +163,8 @@ def test_heldout_shares_no_prompt_with_train():
     )
     assert holdout
     assert not ({t.prompt for t in train} & {t.prompt for t in holdout})
+    assert not ({t.task_id for t in train} & {t.task_id for t in holdout})
+    assert len({t.task_id for t in (*train, *holdout)}) == len(train) + len(holdout)
 
 
 # ── The scaling curve is the criterion ──────────────────────────────────

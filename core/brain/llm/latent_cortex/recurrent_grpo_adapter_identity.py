@@ -1,0 +1,899 @@
+"""Strict identity contract for adapters trained through recurrent GRPO.
+
+The recurrence-native supervised trainer and recurrent GRPO optimize different
+objects.  They therefore cannot share an adapter manifest merely because both
+produce scoped LoRA tensors.  This module binds the GRPO behavior policy,
+recurrent execution graph, immutable training evidence, and final tensor
+topology without inheriting any supervised-training or causal-gain claim.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import math
+import re
+from collections.abc import Iterable, Mapping
+from pathlib import PurePosixPath
+from typing import Any, Never
+
+from core.brain.llm.latent_cortex.adapter_identity import (
+    TensorIdentity,
+    normalize_tensor_metadata,
+)
+from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec
+
+MANIFEST_FILE = "recurrence_adapter_manifest.json"
+MANIFEST_SCHEMA = "aura.recurrent_grpo_adapter_manifest.v1"
+IDENTITY_RECEIPT_SCHEMA = "aura.recurrent_grpo_adapter_identity_receipt.v1"
+COMPLETION_SCHEMA = "aura.recurrent_grpo_training_completion.v1"
+TRAINING_PROTOCOL_SCHEMA = "aura.grpo_protocol.v3"
+TRAINING_RECEIPT_SCHEMA = "aura.grpo_training.v4"
+DATASET_SCHEMA = "aura.grpo_dataset.v1"
+LOADER_CONFIG_SCHEMA = "aura.recurrent_grpo_scoped_lora_config.v1"
+TRAINING_METHOD = "recurrent_grpo"
+OBJECTIVE_NAME = "aura.recurrent_grpo_behavior_policy.v1"
+
+BINDING_ROLES = (
+    "adapter",
+    "adapter_alias",
+    "loader_config",
+    "training_receipt",
+    "training_protocol",
+    "dataset_manifest",
+    "execution_spec",
+)
+REQUIRED_SOURCE_ROLES = frozenset(
+    {
+        "trainer",
+        "grpo",
+        "curriculum",
+        "tasks",
+        "checkpoint",
+        "adapter",
+        "recurrent_grpo",
+        "recurrent_objective",
+        "execution_spec",
+        "latent_engine",
+        "recurrence",
+    }
+)
+MAX_JSON_BYTES = 256 * 1024 * 1024
+MAX_ARTIFACT_BYTES = 1 << 50
+MAX_TENSORS = 1_000_000
+_SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
+_IDENTIFIER_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
+_PROJECTION_RE = re.compile(
+    r"model\.layers\.(?:0|[1-9][0-9]*)(?:\.[A-Za-z][A-Za-z0-9_]*)+\Z"
+)
+
+
+class RecurrentGRPOAdapterIdentityError(ValueError):
+    """Stable fail-closed identity error."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.code = code
+
+
+def _fail(code: str) -> Never:
+    raise RecurrentGRPOAdapterIdentityError(code)
+
+
+def canonical_json_bytes(value: Any) -> bytes:
+    try:
+        return json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("ascii")
+    except (TypeError, ValueError, UnicodeError, OverflowError, RecursionError):
+        _fail("identity_not_canonical_json")
+
+
+def sha256_bytes(payload: bytes) -> str:
+    return hashlib.sha256(payload).hexdigest()
+
+
+def strict_json_loads(raw: bytes, *, role: str) -> dict[str, Any]:
+    if not isinstance(raw, bytes) or not raw or len(raw) > MAX_JSON_BYTES:
+        _fail(f"{role}_size_invalid")
+    try:
+        text = raw.decode("ascii")
+    except UnicodeDecodeError:
+        _fail(f"{role}_not_ascii")
+
+    def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in items:
+            if key in result:
+                _fail(f"{role}_duplicate_json_key")
+            result[key] = value
+        return result
+
+    def finite_float(raw_value: str) -> float:
+        value = float(raw_value)
+        if not math.isfinite(value):
+            _fail(f"{role}_number_invalid")
+        return value
+
+    try:
+        value = json.loads(
+            text,
+            object_pairs_hook=pairs,
+            parse_float=finite_float,
+            parse_constant=lambda _value: _fail(f"{role}_number_invalid"),
+        )
+    except RecurrentGRPOAdapterIdentityError:
+        raise
+    except (TypeError, ValueError, OverflowError, RecursionError):
+        _fail(f"{role}_json_invalid")
+    if not isinstance(value, dict):
+        _fail(f"{role}_schema_invalid")
+    return value
+
+
+def _exact(value: Any, keys: set[str], *, role: str) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping) or set(value) != keys:
+        _fail(f"{role}_schema_invalid")
+    return value
+
+
+def _sha(value: Any, *, role: str, allow_empty: bool = False) -> str:
+    if allow_empty and value == "":
+        return ""
+    if not isinstance(value, str) or _SHA256_RE.fullmatch(value) is None:
+        _fail(f"{role}_sha256_invalid")
+    return value
+
+
+def _integer(value: Any, *, role: str, minimum: int, maximum: int) -> int:
+    if type(value) is not int or not minimum <= value <= maximum:
+        _fail(f"{role}_invalid")
+    return value
+
+
+def _relative_path(value: Any, *, role: str) -> str:
+    if not isinstance(value, str) or not value or "\\" in value or "\x00" in value:
+        _fail(f"{role}_path_invalid")
+    path = PurePosixPath(value)
+    if (
+        path.is_absolute()
+        or str(path) != value
+        or any(part in {"", ".", ".."} for part in path.parts)
+    ):
+        _fail(f"{role}_path_invalid")
+    return value
+
+
+def artifact_binding(value: Any, *, role: str) -> dict[str, Any]:
+    value = _exact(value, {"path", "sha256", "size_bytes"}, role=role)
+    return {
+        "path": _relative_path(value["path"], role=role),
+        "sha256": _sha(value["sha256"], role=role),
+        "size_bytes": _integer(
+            value["size_bytes"],
+            role=f"{role}_size",
+            minimum=1,
+            maximum=MAX_ARTIFACT_BYTES,
+        ),
+    }
+
+
+def _verify_artifact(
+    binding: Mapping[str, Any], artifacts: Mapping[str, bytes], *, role: str
+) -> bytes:
+    payload = artifacts.get(str(binding["path"]))
+    if not isinstance(payload, bytes):
+        _fail(f"{role}_bytes_missing")
+    if len(payload) != binding["size_bytes"]:
+        _fail(f"{role}_size_mismatch")
+    if sha256_bytes(payload) != binding["sha256"]:
+        _fail(f"{role}_sha256_mismatch")
+    return payload
+
+
+def declared_bindings(manifest: Mapping[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    """Return every content binding named by a GRPO manifest."""
+
+    if manifest.get("schema") != MANIFEST_SCHEMA:
+        _fail("manifest_schema_unsupported")
+    bindings = [
+        (role, artifact_binding(manifest.get(role), role=role))
+        for role in BINDING_ROLES
+    ]
+    sources = manifest.get("sources")
+    if not isinstance(sources, Mapping) or set(sources) != REQUIRED_SOURCE_ROLES:
+        _fail("sources_schema_invalid")
+    for role in sorted(sources):
+        source = _exact(
+            sources[role],
+            {"origin_path", "snapshot_path", "sha256", "size_bytes"},
+            role=f"source_{role}",
+        )
+        bindings.append(
+            (
+                f"source_{role}",
+                artifact_binding(
+                    {
+                        "path": source["snapshot_path"],
+                        "sha256": source["sha256"],
+                        "size_bytes": source["size_bytes"],
+                    },
+                    role=f"source_{role}",
+                ),
+            )
+        )
+    paths = [binding["path"] for _role, binding in bindings]
+    if len(paths) != len(set(paths)):
+        _fail("artifact_path_duplicated")
+    return bindings
+
+
+def _normalize_lora(value: Any) -> dict[str, Any]:
+    value = _exact(
+        value,
+        {"rank", "targets", "wrapped_projections", "projection_paths", "trainable_params"},
+        role="lora",
+    )
+    rank = _integer(value["rank"], role="lora_rank", minimum=1, maximum=1 << 20)
+    targets = value["targets"]
+    projections = value["projection_paths"]
+    if (
+        not isinstance(targets, list)
+        or not targets
+        or len(targets) != len(set(targets))
+        or any(not isinstance(target, str) or not target for target in targets)
+    ):
+        _fail("lora_targets_invalid")
+    if (
+        not isinstance(projections, list)
+        or not projections
+        or len(projections) != len(set(projections))
+        or any(
+            not isinstance(path, str) or _PROJECTION_RE.fullmatch(path) is None
+            for path in projections
+        )
+    ):
+        _fail("lora_projection_paths_invalid")
+    if any(path.rsplit(".", 1)[-1] not in targets for path in projections):
+        _fail("lora_projection_target_mismatch")
+    wrapped = _integer(
+        value["wrapped_projections"],
+        role="lora_wrapped_projections",
+        minimum=1,
+        maximum=MAX_TENSORS // 2,
+    )
+    if wrapped != len(projections):
+        _fail("lora_projection_count_mismatch")
+    trainable_params = _integer(
+        value["trainable_params"],
+        role="lora_trainable_params",
+        minimum=1,
+        maximum=1 << 60,
+    )
+    return {
+        "rank": rank,
+        "targets": list(targets),
+        "wrapped_projections": wrapped,
+        "projection_paths": list(projections),
+        "trainable_params": trainable_params,
+    }
+
+
+def _validate_tensors(
+    expected: Any,
+    actual: Iterable[TensorIdentity | Mapping[str, Any]],
+    *,
+    lora: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    if not isinstance(expected, list) or not expected or len(expected) > MAX_TENSORS:
+        _fail("tensor_inventory_invalid")
+    try:
+        expected_tensors = normalize_tensor_metadata(expected)
+        actual_tensors = normalize_tensor_metadata(actual)
+    except ValueError as exc:
+        raise RecurrentGRPOAdapterIdentityError("tensor_inventory_invalid") from exc
+    if expected_tensors != actual_tensors:
+        _fail("tensor_metadata_mismatch")
+    expected_keys = {
+        f"{projection}.{suffix}"
+        for projection in lora["projection_paths"]
+        for suffix in ("lora_a", "lora_b")
+    }
+    if {tensor.key for tensor in actual_tensors} != expected_keys:
+        _fail("tensor_topology_mismatch")
+    by_key = {tensor.key: tensor for tensor in actual_tensors}
+    trainable_params = 0
+    for projection in lora["projection_paths"]:
+        left = by_key[f"{projection}.lora_a"]
+        right = by_key[f"{projection}.lora_b"]
+        if (
+            len(left.shape) != 2
+            or len(right.shape) != 2
+            or left.shape[1] != lora["rank"]
+            or right.shape[0] != lora["rank"]
+            or left.dtype != right.dtype
+        ):
+            _fail("tensor_lora_shape_invalid")
+        trainable_params += math.prod(left.shape) + math.prod(right.shape)
+    if trainable_params != lora["trainable_params"]:
+        _fail("tensor_trainable_params_mismatch")
+    return [tensor.to_dict() for tensor in actual_tensors]
+
+
+def _validate_step_receipts(
+    value: Any,
+    *,
+    steps: int,
+    optimizer_updates: int,
+    group_size: int,
+    execution_spec_sha256: str,
+) -> dict[str, Any]:
+    if not isinstance(value, list) or len(value) != steps:
+        _fail("step_receipt_count_mismatch")
+    update_count = 0
+    previous_policy_after: str | None = None
+    final_policy_after: str | None = None
+    for index, raw_step in enumerate(value, start=1):
+        step = _exact(
+            raw_step,
+            {
+                "step",
+                "task_id",
+                "sample_seed",
+                "execution_spec_sha256",
+                "rewards",
+                "advantage_report",
+                "samples",
+                "step_kind",
+                "update",
+                "policy_after_sha256",
+            },
+            role="step_receipt",
+        )
+        if (
+            step.get("step") != index
+            or not isinstance(step.get("task_id"), str)
+            or not step["task_id"]
+            or type(step.get("sample_seed")) is not int
+            or step.get("execution_spec_sha256") != execution_spec_sha256
+            or step.get("step_kind") not in {"optimizer_update", "degenerate_group"}
+        ):
+            _fail("step_receipt_identity_invalid")
+        rewards = step.get("rewards")
+        samples = step.get("samples")
+        if (
+            not isinstance(rewards, list)
+            or len(rewards) != group_size
+            or any(
+                isinstance(reward, bool)
+                or not isinstance(reward, (int, float))
+                or not math.isfinite(float(reward))
+                or not 0.0 <= float(reward) <= 1.0
+                for reward in rewards
+            )
+            or not isinstance(samples, list)
+            or len(samples) != group_size
+        ):
+            _fail("step_receipt_group_invalid")
+        policy_at_sampling: str | None = None
+        for sample in samples:
+            if not isinstance(sample, Mapping):
+                _fail("sample_receipt_invalid")
+            activation = sample.get("cached_recurrence_adapter")
+            if not isinstance(activation, Mapping):
+                _fail("sample_behavior_not_admitted")
+            if (
+                sample.get("schema") != "aura.recurrent_sampling_behavior.v2"
+                or sample.get("behavior_admitted") is not True
+                or sample.get("execution_spec_sha256") != execution_spec_sha256
+                or sample.get("cached_params_unchanged") is not True
+                or activation.get("schema")
+                != "aura.recurrence_adapter_activation.v1"
+                or activation.get("active") is not True
+                or activation.get("scope") != "latent_slots_only"
+                or type(activation.get("calls")) is not int
+                or activation["calls"] <= 0
+                or type(activation.get("adapted_positions")) is not int
+                or activation["adapted_positions"] <= 0
+                or type(activation.get("observed_positions")) is not int
+                or activation["observed_positions"] < activation["adapted_positions"]
+            ):
+                _fail("sample_behavior_not_admitted")
+            sample_policy = _sha(sample.get("policy_sha256"), role="sample_policy")
+            if policy_at_sampling is None:
+                policy_at_sampling = sample_policy
+            elif sample_policy != policy_at_sampling:
+                _fail("sample_policy_group_mismatch")
+        if previous_policy_after is not None and policy_at_sampling != previous_policy_after:
+            _fail("step_policy_chain_mismatch")
+        policy_after = _sha(step.get("policy_after_sha256"), role="policy_after")
+        update = step.get("update")
+        if step["step_kind"] == "optimizer_update":
+            if (
+                not isinstance(update, Mapping)
+                or update.get("schema") != "aura.recurrent_grpo.v1"
+                or update.get("has_gradient") is not True
+            ):
+                _fail("optimizer_update_receipt_invalid")
+            update_count += 1
+        elif update is not None:
+            _fail("degenerate_step_has_update")
+        previous_policy_after = policy_after
+        final_policy_after = policy_after
+    if update_count != optimizer_updates:
+        _fail("optimizer_update_count_mismatch")
+    return {
+        "step_receipt_count": len(value),
+        "optimizer_update_count": update_count,
+        "final_policy_sha256": final_policy_after,
+    }
+
+
+def validate_recurrent_grpo_adapter_identity(
+    manifest: Mapping[str, Any] | bytes,
+    *,
+    adapter_id: str,
+    actual_base_checkpoint: Mapping[str, Any],
+    actual_model_behavior_bundle: Mapping[str, Any],
+    actual_personality_adapter: Mapping[str, Any],
+    actual_runtime_environment: Mapping[str, Any],
+    artifacts: Mapping[str, bytes],
+    tensor_metadata: Iterable[TensorIdentity | Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Validate one complete recurrent-GRPO training bundle model-free."""
+
+    manifest_bytes = (
+        manifest
+        if isinstance(manifest, bytes)
+        else canonical_json_bytes(dict(manifest)) + b"\n"
+    )
+    parsed = strict_json_loads(manifest_bytes, role="manifest")
+    parsed = dict(
+        _exact(
+            parsed,
+            {
+                "schema",
+                "adapter_id",
+                "training_method",
+                "base_checkpoint",
+                "model_behavior_bundle",
+                "personality_adapter",
+                "training_runtime",
+                *BINDING_ROLES,
+                "protocol_sha256",
+                "dataset_sha256",
+                "execution_spec_sha256",
+                "sources",
+                "lora",
+                "tensors",
+            },
+            role="manifest",
+        )
+    )
+    if parsed["schema"] != MANIFEST_SCHEMA:
+        _fail("manifest_schema_unsupported")
+    if (
+        not isinstance(parsed["adapter_id"], str)
+        or _IDENTIFIER_RE.fullmatch(parsed["adapter_id"]) is None
+        or parsed["adapter_id"] != adapter_id
+    ):
+        _fail("adapter_id_mismatch")
+    if parsed["training_method"] != TRAINING_METHOD:
+        _fail("training_method_mismatch")
+    for declared, actual, role in (
+        (parsed["base_checkpoint"], actual_base_checkpoint, "base_checkpoint"),
+        (
+            parsed["model_behavior_bundle"],
+            actual_model_behavior_bundle,
+            "model_behavior_bundle",
+        ),
+        (
+            parsed["personality_adapter"],
+            actual_personality_adapter,
+            "personality_adapter",
+        ),
+        (
+            parsed["training_runtime"],
+            actual_runtime_environment,
+            "training_runtime",
+        ),
+    ):
+        if declared != dict(actual):
+            _fail(f"{role}_mismatch")
+
+    binding_items = declared_bindings(parsed)
+    bindings = {role: binding for role, binding in binding_items}
+    payloads = {
+        role: _verify_artifact(binding, artifacts, role=role)
+        for role, binding in binding_items
+    }
+    if payloads["adapter"] != payloads["adapter_alias"]:
+        _fail("adapter_alias_mismatch")
+
+    protocol = strict_json_loads(payloads["training_protocol"], role="training_protocol")
+    receipt = strict_json_loads(payloads["training_receipt"], role="training_receipt")
+    dataset = strict_json_loads(payloads["dataset_manifest"], role="dataset_manifest")
+    loader = strict_json_loads(payloads["loader_config"], role="loader_config")
+    spec_payload = strict_json_loads(payloads["execution_spec"], role="execution_spec")
+    try:
+        spec = RLCExecutionSpec.from_dict(spec_payload)
+    except (TypeError, ValueError) as exc:
+        raise RecurrentGRPOAdapterIdentityError("execution_spec_invalid") from exc
+
+    protocol = dict(
+        _exact(
+            protocol,
+            {
+                "schema",
+                "adapter_id",
+                "model_path",
+                "base_checkpoint",
+                "model_behavior",
+                "personality_adapter",
+                "runtime",
+                "dataset_sha256",
+                "sources",
+                "training",
+            },
+            role="training_protocol",
+        )
+    )
+    training = _exact(
+        protocol["training"],
+        {
+            "execution_mode",
+            "execution_spec",
+            "execution_spec_sha256",
+            "domains",
+            "depths",
+            "train_per_cell",
+            "holdout_per_cell",
+            "group_size",
+            "temperature",
+            "max_tokens",
+            "kl_coefficient",
+            "format_credit",
+            "lora_rank",
+            "lora_targets",
+            "lora_layers",
+            "learning_rate",
+            "max_steps",
+            "eval_every",
+            "checkpoint_every",
+            "calibrate",
+            "calibrate_samples",
+            "calibrate_group",
+            "calibrate_tokens",
+            "calibrate_minutes",
+            "cot",
+            "seed",
+            "memory_fraction",
+            "rng_strategy",
+        },
+        role="training_parameters",
+    )
+    if (
+        protocol.get("schema") != TRAINING_PROTOCOL_SCHEMA
+        or protocol.get("adapter_id") != adapter_id
+        or protocol.get("base_checkpoint") != parsed["base_checkpoint"]
+        or protocol.get("model_behavior") != parsed["model_behavior_bundle"]
+        or protocol.get("personality_adapter") != parsed["personality_adapter"]
+        or protocol.get("runtime") != parsed["training_runtime"]
+        or training.get("execution_mode") != "recurrent"
+        or training.get("temperature") != 1.0
+        or training.get("rng_strategy") != "stateless_sha256_step_seeded_v1"
+        or training.get("execution_spec") != spec.to_dict()
+        or training.get("execution_spec_sha256") != spec.sha256
+    ):
+        _fail("training_protocol_cross_binding_mismatch")
+    protocol_sha256 = sha256_bytes(payloads["training_protocol"])
+    dataset_sha256 = sha256_bytes(payloads["dataset_manifest"])
+    if (
+        parsed.get("protocol_sha256") != protocol_sha256
+        or parsed.get("dataset_sha256") != dataset_sha256
+        or parsed.get("execution_spec_sha256") != spec.sha256
+        or protocol.get("dataset_sha256") != dataset_sha256
+    ):
+        _fail("training_digest_cross_binding_mismatch")
+
+    _exact(dataset, {"schema", "seed", "train", "holdout"}, role="dataset_manifest")
+    train_tasks = dataset.get("train")
+    holdout_tasks = dataset.get("holdout")
+    domains = training.get("domains")
+    depths = training.get("depths")
+    if (
+        dataset.get("schema") != DATASET_SCHEMA
+        or dataset.get("seed") != training.get("seed")
+        or not isinstance(train_tasks, list)
+        or not train_tasks
+        or not isinstance(holdout_tasks, list)
+        or not holdout_tasks
+        or not isinstance(domains, list)
+        or not domains
+        or not isinstance(depths, list)
+        or not depths
+        or len(train_tasks)
+        != len(domains) * len(depths) * training.get("train_per_cell", 0)
+        or len(holdout_tasks)
+        != len(domains) * len(depths) * training.get("holdout_per_cell", 0)
+    ):
+        _fail("dataset_protocol_mismatch")
+    train_ids = {task.get("task_id") for task in train_tasks if isinstance(task, Mapping)}
+    holdout_ids = {
+        task.get("task_id") for task in holdout_tasks if isinstance(task, Mapping)
+    }
+    if (
+        len(train_ids) != len(train_tasks)
+        or len(holdout_ids) != len(holdout_tasks)
+        or None in train_ids
+        or None in holdout_ids
+        or train_ids & holdout_ids
+    ):
+        _fail("dataset_split_identity_invalid")
+
+    receipt_keys = {
+        "schema",
+        "adapter_id",
+        "protocol_sha256",
+        "dataset_sha256",
+        "model",
+        "config",
+        "execution_mode",
+        "execution_spec",
+        "execution_spec_sha256",
+        "domains",
+        "depths",
+        "train_tasks",
+        "holdout_tasks",
+        "steps",
+        "optimizer_updates",
+        "invocation_count",
+        "termination",
+        "learning_signal",
+        "curriculum",
+        "calibration",
+        "baseline",
+        "history",
+        "step_receipts",
+        "final",
+        "adapter_decode_delta",
+        "adapter_standard_decode_delta",
+        "adapter_recurrent_decode_delta",
+        "checkpoint",
+        "verdict",
+        "elapsed_minutes",
+    }
+    _exact(receipt, receipt_keys, role="training_receipt")
+    model = _exact(receipt.get("model"), {"path", "base_checkpoint", "behavior"}, role="receipt_model")
+    termination = _exact(
+        receipt.get("termination"),
+        {"reason", "completed_budget", "signal"},
+        role="termination",
+    )
+    verdict = _exact(
+        receipt.get("verdict"),
+        {
+            "had_signal",
+            "point_estimate_improved",
+            "causal_gain_proven",
+            "causal_gain_blocker",
+            "diagnosis",
+        },
+        role="verdict",
+    )
+    steps = _integer(receipt.get("steps"), role="training_steps", minimum=1, maximum=100_000_000)
+    max_steps = _integer(training.get("max_steps"), role="training_max_steps", minimum=1, maximum=100_000_000)
+    optimizer_updates = _integer(
+        receipt.get("optimizer_updates"),
+        role="optimizer_updates",
+        minimum=1,
+        maximum=steps,
+    )
+    if (
+        receipt.get("schema") != TRAINING_RECEIPT_SCHEMA
+        or receipt.get("adapter_id") != adapter_id
+        or receipt.get("protocol_sha256") != protocol_sha256
+        or receipt.get("dataset_sha256") != dataset_sha256
+        or model.get("base_checkpoint") != parsed["base_checkpoint"]
+        or model.get("behavior") != parsed["model_behavior_bundle"]
+        or receipt.get("execution_mode") != "recurrent"
+        or receipt.get("execution_spec") != spec.to_dict()
+        or receipt.get("execution_spec_sha256") != spec.sha256
+        or receipt.get("domains") != domains
+        or receipt.get("depths") != depths
+        or receipt.get("train_tasks") != len(train_tasks)
+        or receipt.get("holdout_tasks") != len(holdout_tasks)
+        or steps != max_steps
+        or termination.get("reason") != "max_steps"
+        or termination.get("completed_budget") is not True
+        or termination.get("signal") is not None
+        or verdict.get("causal_gain_proven") is not False
+        or verdict.get("causal_gain_blocker")
+        != "requires fresh powered base/adapter x standard/RLC factorial gate"
+    ):
+        _fail("training_receipt_cross_binding_mismatch")
+    step_summary = _validate_step_receipts(
+        receipt.get("step_receipts"),
+        steps=steps,
+        optimizer_updates=optimizer_updates,
+        group_size=_integer(
+            training.get("group_size"), role="group_size", minimum=2, maximum=4096
+        ),
+        execution_spec_sha256=spec.sha256,
+    )
+
+    sources = _exact(parsed["sources"], set(REQUIRED_SOURCE_ROLES), role="sources")
+    protocol_sources = _exact(
+        protocol["sources"], set(REQUIRED_SOURCE_ROLES), role="protocol_sources"
+    )
+    normalized_sources: dict[str, dict[str, Any]] = {}
+    for role in sorted(REQUIRED_SOURCE_ROLES):
+        source = _exact(
+            sources[role],
+            {"origin_path", "snapshot_path", "sha256", "size_bytes"},
+            role=f"source_{role}",
+        )
+        protocol_source = _exact(
+            protocol_sources[role],
+            {"path", "sha256", "size_bytes"},
+            role=f"protocol_source_{role}",
+        )
+        if (
+            _relative_path(source["origin_path"], role=f"source_{role}_origin")
+            != protocol_source["path"]
+            or source["sha256"] != protocol_source["sha256"]
+            or source["size_bytes"] != protocol_source["size_bytes"]
+        ):
+            _fail(f"source_{role}_protocol_mismatch")
+        _verify_artifact(bindings[f"source_{role}"], artifacts, role=f"source_{role}")
+        normalized_sources[role] = dict(source)
+
+    lora = _normalize_lora(parsed["lora"])
+    target_string = training.get("lora_targets")
+    if (
+        lora["rank"] != training.get("lora_rank")
+        or not isinstance(target_string, str)
+        or lora["targets"] != [part.strip() for part in target_string.split(",")]
+    ):
+        _fail("lora_protocol_mismatch")
+    _exact(
+        loader,
+        {
+            "schema",
+            "fine_tune_type",
+            "loader",
+            "model",
+            "num_layers",
+            "wrapped_projection_count",
+            "lora_parameters",
+            "execution_spec_sha256",
+            "training_method",
+        },
+        role="loader_config",
+    )
+    loader_lora = _exact(
+        loader.get("lora_parameters"),
+        {"rank", "scale", "dropout", "keys"},
+        role="loader_lora",
+    )
+    unique_layers = {int(path.split(".")[2]) for path in lora["projection_paths"]}
+    if (
+        loader.get("schema") != LOADER_CONFIG_SCHEMA
+        or loader.get("fine_tune_type") != "recurrent_grpo_scoped_lora"
+        or loader.get("loader") != "aura_custom_loader_required"
+        or loader.get("model") != protocol.get("model_path")
+        or loader.get("num_layers") != len(unique_layers)
+        or loader.get("wrapped_projection_count") != lora["wrapped_projections"]
+        or loader.get("execution_spec_sha256") != spec.sha256
+        or loader.get("training_method") != TRAINING_METHOD
+        or loader_lora
+        != {"rank": lora["rank"], "scale": 20.0, "dropout": 0.0, "keys": lora["targets"]}
+    ):
+        _fail("loader_config_cross_binding_mismatch")
+    tensors = _validate_tensors(parsed["tensors"], tensor_metadata, lora=lora)
+
+    completion_raw = artifacts.get("training_completion.json")
+    if not isinstance(completion_raw, bytes):
+        _fail("training_completion_bytes_missing")
+    completion = strict_json_loads(completion_raw, role="training_completion")
+    _exact(
+        completion,
+        {
+            "schema",
+            "complete",
+            "halt_reason",
+            "step",
+            "optimizer_updates",
+            "adapter_sha256",
+            "receipt_sha256",
+            "protocol_sha256",
+            "execution_spec_sha256",
+            "manifest_sha256",
+        },
+        role="training_completion",
+    )
+    manifest_sha256 = sha256_bytes(manifest_bytes)
+    if (
+        completion.get("schema") != COMPLETION_SCHEMA
+        or completion.get("complete") is not True
+        or completion.get("halt_reason") != "max_steps"
+        or completion.get("step") != steps
+        or completion.get("optimizer_updates") != optimizer_updates
+        or completion.get("adapter_sha256") != bindings["adapter"]["sha256"]
+        or completion.get("receipt_sha256") != bindings["training_receipt"]["sha256"]
+        or completion.get("protocol_sha256") != protocol_sha256
+        or completion.get("execution_spec_sha256") != spec.sha256
+        or completion.get("manifest_sha256") != manifest_sha256
+    ):
+        _fail("training_completion_mismatch")
+
+    identity_material = {
+        "schema": "aura.recurrent_grpo_adapter_identity.v1",
+        "adapter_id": adapter_id,
+        "training_method": TRAINING_METHOD,
+        "base_checkpoint": parsed["base_checkpoint"],
+        "model_behavior_bundle": parsed["model_behavior_bundle"],
+        "personality_adapter": parsed["personality_adapter"],
+        "training_runtime": parsed["training_runtime"],
+        "bindings": {role: bindings[role] for role in BINDING_ROLES},
+        "training_completion_sha256": sha256_bytes(completion_raw),
+        "sources": normalized_sources,
+        "lora": lora,
+        "tensors": tensors,
+        "step_summary": step_summary,
+    }
+    return {
+        "schema": IDENTITY_RECEIPT_SCHEMA,
+        "manifest_sha256": manifest_sha256,
+        "composite_identity_sha256": sha256_bytes(canonical_json_bytes(identity_material)),
+        "adapter_id": adapter_id,
+        "training_method": TRAINING_METHOD,
+        "objective_name": OBJECTIVE_NAME,
+        "base_checkpoint_fingerprint": parsed["base_checkpoint"]["fingerprint"],
+        "model_behavior_bundle_sha256": parsed["model_behavior_bundle"]["bundle_sha256"],
+        "personality_adapter_bundle_sha256": parsed["personality_adapter"]["bundle_sha256"],
+        "training_runtime_identity_sha256": parsed["training_runtime"]["identity_sha256"],
+        "adapter_sha256": bindings["adapter"]["sha256"],
+        "training_receipt_sha256": bindings["training_receipt"]["sha256"],
+        "training_protocol_sha256": protocol_sha256,
+        "dataset_sha256": dataset_sha256,
+        "execution_spec_sha256": spec.sha256,
+        "training_completion_sha256": sha256_bytes(completion_raw),
+        "rank": lora["rank"],
+        "targets": lora["targets"],
+        "wrapped_projection_count": lora["wrapped_projections"],
+        "tensor_count": len(tensors),
+        "tensor_metadata_sha256": sha256_bytes(canonical_json_bytes(tensors)),
+        "steps": steps,
+        "optimizer_updates": optimizer_updates,
+        "final_policy_sha256": step_summary["final_policy_sha256"],
+        "causal_gain_proven": False,
+        "complete": True,
+    }
+
+
+__all__ = [
+    "BINDING_ROLES",
+    "COMPLETION_SCHEMA",
+    "DATASET_SCHEMA",
+    "IDENTITY_RECEIPT_SCHEMA",
+    "LOADER_CONFIG_SCHEMA",
+    "MANIFEST_FILE",
+    "MANIFEST_SCHEMA",
+    "OBJECTIVE_NAME",
+    "REQUIRED_SOURCE_ROLES",
+    "TRAINING_METHOD",
+    "TRAINING_PROTOCOL_SCHEMA",
+    "TRAINING_RECEIPT_SCHEMA",
+    "RecurrentGRPOAdapterIdentityError",
+    "artifact_binding",
+    "canonical_json_bytes",
+    "declared_bindings",
+    "sha256_bytes",
+    "strict_json_loads",
+    "validate_recurrent_grpo_adapter_identity",
+]

@@ -1,10 +1,10 @@
 #!/usr/bin/env python
-"""Freeze a recurrence adapter and prepare an externally signed RLC launch.
+"""Freeze a scoped recurrence adapter and prepare an externally signed launch.
 
 The tool never generates or reads a private signing key.  It snapshots a
-completed recurrence-v2 adapter, persists exact prelaunch signature requests,
-and emits a launch packet only after the separately supplied role signatures
-verify against the frozen campaign bytes.
+completed supervised-v2 or recurrent-GRPO adapter, persists exact prelaunch
+signature requests, and emits a launch packet only after the separately
+supplied role signatures verify against the frozen campaign bytes.
 """
 
 from __future__ import annotations
@@ -48,6 +48,12 @@ from core.brain.llm.latent_cortex.campaign_trust import (  # noqa: E402
     validate_campaign_trust_policy,
     verify_role_attestation,
 )
+from core.brain.llm.latent_cortex.recurrence_adapter_identity_v2 import (  # noqa: E402
+    MANIFEST_SCHEMA_V2,
+)
+from core.brain.llm.latent_cortex.recurrent_grpo_adapter_identity import (  # noqa: E402
+    MANIFEST_SCHEMA as RECURRENT_GRPO_MANIFEST_SCHEMA,
+)
 from core.runtime.file_read_gateway import (  # noqa: E402
     open_stable_readonly_binary,
     read_stable_bytes,
@@ -55,10 +61,18 @@ from core.runtime.file_read_gateway import (  # noqa: E402
 from tools import run_latent_cortex_paired_campaign as campaign_runner  # noqa: E402
 
 RUNNER_PATH = REPO_ROOT / "tools/run_latent_cortex_paired_campaign.py"
-IDENTITY_PATH = (
-    REPO_ROOT
-    / "core/brain/llm/latent_cortex/recurrence_adapter_identity_v2.py"
-)
+IDENTITY_PATHS = {
+    "recurrence_v2_identity_validator_sha256": (
+        REPO_ROOT
+        / "core/brain/llm/latent_cortex/recurrence_adapter_identity_v2.py"
+    ),
+    "recurrent_grpo_identity_validator_sha256": (
+        REPO_ROOT
+        / "core/brain/llm/latent_cortex/recurrent_grpo_adapter_identity.py"
+    ),
+}
+# Backward-compatible name consumed by the supervised-v2 promotion verifier.
+IDENTITY_PATH = IDENTITY_PATHS["recurrence_v2_identity_validator_sha256"]
 TASK_ISSUER_PATH = REPO_ROOT / "core/brain/llm/latent_cortex/frontier_tasks.py"
 FREEZE_PATH = (
     REPO_ROOT / "core/brain/llm/latent_cortex/campaign_launch_bundle.py"
@@ -450,8 +464,11 @@ def freeze_adapter(args: argparse.Namespace) -> dict[str, Any]:
                 personality_adapter=args.personality_adapter,
             )
         )
-        if adapter_identity.get("format") != "aura.recurrence_adapter_manifest.v2":
-            _fail("recurrence_v2_adapter_required")
+        if adapter_identity.get("format") not in {
+            MANIFEST_SCHEMA_V2,
+            RECURRENT_GRPO_MANIFEST_SCHEMA,
+        }:
+            _fail("supported_scoped_adapter_required")
         certificate = build_adapter_freeze_certificate(
             adapter_id=args.adapter_id,
             inventory=inventory,
@@ -460,7 +477,10 @@ def freeze_adapter(args: argparse.Namespace) -> dict[str, Any]:
             validator_identity={
                 "campaign_runner_sha256": _source_sha256(RUNNER_PATH),
                 "freeze_contract_sha256": _source_sha256(FREEZE_PATH),
-                "identity_validator_sha256": _source_sha256(IDENTITY_PATH),
+                **{
+                    role: _source_sha256(path)
+                    for role, path in IDENTITY_PATHS.items()
+                },
             },
         )
         seal_adapter_snapshot(staging, destination, certificate)
@@ -939,7 +959,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
 
-    freeze = commands.add_parser("freeze", help="snapshot one completed v2 adapter")
+    freeze = commands.add_parser(
+        "freeze", help="snapshot one completed scoped recurrence adapter"
+    )
     freeze.add_argument("--source-adapter", type=Path, required=True)
     freeze.add_argument("--destination", type=Path, required=True)
     freeze.add_argument("--model", type=Path, required=True)

@@ -35,7 +35,9 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import math
 import random
+import re
 import signal
 import sys
 import time
@@ -74,11 +76,12 @@ from core.runtime.atomic_writer import (  # noqa: E402
 )
 from core.runtime.mlx_memory_guard import mlx_memory_envelope  # noqa: E402
 
-GRPO_TRAIN_SCHEMA = "aura.grpo_training.v3"
+GRPO_TRAIN_SCHEMA = "aura.grpo_training.v4"
 GRPO_DATASET_SCHEMA = "aura.grpo_dataset.v1"
-GRPO_PROTOCOL_SCHEMA = "aura.grpo_protocol.v2"
+GRPO_PROTOCOL_SCHEMA = "aura.grpo_protocol.v3"
 RNG_STRATEGY = "stateless_sha256_step_seeded_v1"
 EXECUTION_MODES = ("standard", "recurrent")
+_ADAPTER_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 
 
 # Set by main() from --cot. Reasoning room is the fix the CP238 finding
@@ -191,6 +194,287 @@ def _publish_immutable_bytes(path: Path, payload: bytes, *, role: str) -> None:
     if not atomic_write_bytes_if_absent(path, payload, mode=0o600):
         if path.is_symlink() or path.read_bytes() != payload:
             raise GRPOCheckpointError(f"{role} publication raced with different bytes")
+
+
+def _artifact_binding(relative: str, payload: bytes) -> dict[str, Any]:
+    return {
+        "path": relative,
+        "sha256": sha256_bytes(payload),
+        "size_bytes": len(payload),
+    }
+
+
+def _read_recurrent_bundle_artifacts(
+    out_dir: Path, manifest: Mapping[str, Any]
+) -> dict[str, bytes]:
+    from core.brain.llm.latent_cortex.recurrent_grpo_adapter_identity import (
+        declared_bindings,
+    )
+
+    root = out_dir.resolve(strict=True)
+    artifacts: dict[str, bytes] = {}
+    for _role, binding in declared_bindings(manifest):
+        path = (root / binding["path"]).resolve(strict=True)
+        if path.parent != root and root not in path.parents:
+            raise GRPOCheckpointError("recurrent adapter artifact escapes run root")
+        artifacts[binding["path"]] = path.read_bytes()
+    artifacts["training_completion.json"] = (
+        root / "training_completion.json"
+    ).read_bytes()
+    return artifacts
+
+
+def _validate_published_recurrent_bundle(
+    out_dir: Path,
+    *,
+    adapter_id: str,
+    base_identity: Mapping[str, Any],
+    behavior_identity: Mapping[str, Any],
+    personality_identity: Mapping[str, Any],
+    runtime_identity: Mapping[str, Any],
+) -> dict[str, Any]:
+    from core.brain.llm.latent_cortex.adapter_identity import (
+        inspect_mlx_tensor_metadata,
+    )
+    from core.brain.llm.latent_cortex.recurrent_grpo_adapter_identity import (
+        MANIFEST_FILE,
+        strict_json_loads,
+        validate_recurrent_grpo_adapter_identity,
+    )
+
+    manifest_bytes = (out_dir / MANIFEST_FILE).read_bytes()
+    manifest = strict_json_loads(manifest_bytes, role="published_manifest")
+    adapter_path = out_dir / manifest["adapter"]["path"]
+    return validate_recurrent_grpo_adapter_identity(
+        manifest_bytes,
+        adapter_id=adapter_id,
+        actual_base_checkpoint=base_identity,
+        actual_model_behavior_bundle=behavior_identity,
+        actual_personality_adapter=personality_identity,
+        actual_runtime_environment=runtime_identity,
+        artifacts=_read_recurrent_bundle_artifacts(out_dir, manifest),
+        tensor_metadata=inspect_mlx_tensor_metadata(adapter_path),
+    )
+
+
+def _publish_recurrent_adapter_bundle(
+    out_dir: Path,
+    *,
+    adapter_id: str,
+    protocol: Mapping[str, Any],
+    protocol_bytes: bytes,
+    dataset_bytes: bytes,
+    receipt: Mapping[str, Any],
+    receipt_bytes: bytes,
+    execution_spec: Any,
+    source_roles: Mapping[str, Path],
+) -> dict[str, Any]:
+    """Publish and immediately revalidate a campaign-loadable GRPO identity."""
+
+    from core.brain.llm.latent_cortex.adapter_identity import (
+        inspect_mlx_tensor_metadata,
+    )
+    from core.brain.llm.latent_cortex.recurrent_grpo_adapter_identity import (
+        COMPLETION_SCHEMA,
+        LOADER_CONFIG_SCHEMA,
+        MANIFEST_FILE,
+        MANIFEST_SCHEMA,
+        REQUIRED_SOURCE_ROLES,
+        TRAINING_METHOD,
+        declared_bindings,
+        validate_recurrent_grpo_adapter_identity,
+    )
+
+    completion_path = out_dir / "training_completion.json"
+    if completion_path.exists():
+        return _validate_published_recurrent_bundle(
+            out_dir,
+            adapter_id=adapter_id,
+            base_identity=protocol["base_checkpoint"],
+            behavior_identity=protocol["model_behavior"],
+            personality_identity=protocol["personality_adapter"],
+            runtime_identity=protocol["runtime"],
+        )
+    if set(source_roles) != REQUIRED_SOURCE_ROLES:
+        raise GRPOCheckpointError("recurrent GRPO source inventory is incomplete")
+    if receipt.get("execution_mode") != "recurrent":
+        raise GRPOCheckpointError("only recurrent GRPO can publish this identity")
+    termination = receipt.get("termination")
+    if (
+        not isinstance(termination, Mapping)
+        or termination.get("reason") != "max_steps"
+        or termination.get("completed_budget") is not True
+        or termination.get("signal") is not None
+    ):
+        raise GRPOCheckpointError("recurrent GRPO training is not complete")
+
+    campaign_dir = ensure_private_directory(out_dir / "campaign_adapter")
+    source_adapter = out_dir / "grpo_adapters.safetensors"
+    adapter_bytes = source_adapter.read_bytes()
+    documents = {
+        "campaign_adapter/adapters.safetensors": adapter_bytes,
+        "campaign_adapter/adapter_final.safetensors": adapter_bytes,
+        "campaign_adapter/grpo_receipt.json": receipt_bytes,
+        "campaign_adapter/training_protocol.json": protocol_bytes,
+        "campaign_adapter/dataset_manifest.json": dataset_bytes,
+        "campaign_adapter/execution_spec.json": canonical_json_bytes(
+            execution_spec.to_dict()
+        ),
+    }
+    for relative, payload in documents.items():
+        _publish_immutable_bytes(
+            out_dir / relative,
+            payload,
+            role=relative.replace("/", " "),
+        )
+
+    tensor_metadata = inspect_mlx_tensor_metadata(
+        campaign_dir / "adapters.safetensors"
+    )
+    tensor_records = [record.to_dict() for record in tensor_metadata]
+    projection_paths = sorted(
+        {
+            record["key"].removesuffix(".lora_a").removesuffix(".lora_b")
+            for record in tensor_records
+        }
+    )
+    targets = [part.strip() for part in protocol["training"]["lora_targets"].split(",")]
+    trainable_params = sum(
+        math.prod(record["shape"]) for record in tensor_records
+    )
+    unique_layers = {int(path.split(".")[2]) for path in projection_paths}
+    loader_config = {
+        "schema": LOADER_CONFIG_SCHEMA,
+        "fine_tune_type": "recurrent_grpo_scoped_lora",
+        "loader": "aura_custom_loader_required",
+        "model": protocol["model_path"],
+        "num_layers": len(unique_layers),
+        "wrapped_projection_count": len(projection_paths),
+        "lora_parameters": {
+            "rank": protocol["training"]["lora_rank"],
+            "scale": 20.0,
+            "dropout": 0.0,
+            "keys": targets,
+        },
+        "execution_spec_sha256": execution_spec.sha256,
+        "training_method": TRAINING_METHOD,
+    }
+    loader_bytes = canonical_json_bytes(loader_config)
+    _publish_immutable_bytes(
+        campaign_dir / "adapter_config.json",
+        loader_bytes,
+        role="campaign adapter loader config",
+    )
+
+    sources: dict[str, dict[str, Any]] = {}
+    for role in sorted(REQUIRED_SOURCE_ROLES):
+        protocol_binding = protocol["sources"][role]
+        snapshot_relative = f"source_snapshots/{role}.py"
+        snapshot_bytes = (out_dir / snapshot_relative).read_bytes()
+        if (
+            len(snapshot_bytes) != protocol_binding["size_bytes"]
+            or sha256_bytes(snapshot_bytes) != protocol_binding["sha256"]
+        ):
+            raise GRPOCheckpointError(f"frozen recurrent source differs: {role}")
+        sources[role] = {
+            "origin_path": protocol_binding["path"],
+            "snapshot_path": snapshot_relative,
+            "sha256": protocol_binding["sha256"],
+            "size_bytes": protocol_binding["size_bytes"],
+        }
+
+    manifest = {
+        "schema": MANIFEST_SCHEMA,
+        "adapter_id": adapter_id,
+        "training_method": TRAINING_METHOD,
+        "base_checkpoint": protocol["base_checkpoint"],
+        "model_behavior_bundle": protocol["model_behavior"],
+        "personality_adapter": protocol["personality_adapter"],
+        "training_runtime": protocol["runtime"],
+        "adapter": _artifact_binding(
+            "campaign_adapter/adapters.safetensors", adapter_bytes
+        ),
+        "adapter_alias": _artifact_binding(
+            "campaign_adapter/adapter_final.safetensors", adapter_bytes
+        ),
+        "loader_config": _artifact_binding(
+            "campaign_adapter/adapter_config.json", loader_bytes
+        ),
+        "training_receipt": _artifact_binding(
+            "campaign_adapter/grpo_receipt.json", receipt_bytes
+        ),
+        "training_protocol": _artifact_binding(
+            "campaign_adapter/training_protocol.json", protocol_bytes
+        ),
+        "dataset_manifest": _artifact_binding(
+            "campaign_adapter/dataset_manifest.json", dataset_bytes
+        ),
+        "execution_spec": _artifact_binding(
+            "campaign_adapter/execution_spec.json",
+            documents["campaign_adapter/execution_spec.json"],
+        ),
+        "protocol_sha256": sha256_bytes(protocol_bytes),
+        "dataset_sha256": sha256_bytes(dataset_bytes),
+        "execution_spec_sha256": execution_spec.sha256,
+        "sources": sources,
+        "lora": {
+            "rank": protocol["training"]["lora_rank"],
+            "targets": targets,
+            "wrapped_projections": len(projection_paths),
+            "projection_paths": projection_paths,
+            "trainable_params": trainable_params,
+        },
+        "tensors": tensor_records,
+    }
+    manifest_bytes = canonical_json_bytes(manifest)
+    _publish_immutable_bytes(
+        out_dir / MANIFEST_FILE,
+        manifest_bytes,
+        role="recurrent GRPO adapter manifest",
+    )
+    completion = {
+        "schema": COMPLETION_SCHEMA,
+        "complete": True,
+        "halt_reason": "max_steps",
+        "step": receipt["steps"],
+        "optimizer_updates": receipt["optimizer_updates"],
+        "adapter_sha256": manifest["adapter"]["sha256"],
+        "receipt_sha256": manifest["training_receipt"]["sha256"],
+        "protocol_sha256": manifest["protocol_sha256"],
+        "execution_spec_sha256": execution_spec.sha256,
+        "manifest_sha256": sha256_bytes(manifest_bytes),
+    }
+    completion_bytes = canonical_json_bytes(completion)
+    preflight_artifacts: dict[str, bytes] = {}
+    for _role, binding in declared_bindings(manifest):
+        preflight_artifacts[binding["path"]] = (out_dir / binding["path"]).read_bytes()
+    preflight_artifacts["training_completion.json"] = completion_bytes
+    preflight_identity = validate_recurrent_grpo_adapter_identity(
+        manifest_bytes,
+        adapter_id=adapter_id,
+        actual_base_checkpoint=protocol["base_checkpoint"],
+        actual_model_behavior_bundle=protocol["model_behavior"],
+        actual_personality_adapter=protocol["personality_adapter"],
+        actual_runtime_environment=protocol["runtime"],
+        artifacts=preflight_artifacts,
+        tensor_metadata=tensor_metadata,
+    )
+    _publish_immutable_bytes(
+        completion_path,
+        completion_bytes,
+        role="recurrent GRPO training completion",
+    )
+    published_identity = _validate_published_recurrent_bundle(
+        out_dir,
+        adapter_id=adapter_id,
+        base_identity=protocol["base_checkpoint"],
+        behavior_identity=protocol["model_behavior"],
+        personality_identity=protocol["personality_adapter"],
+        runtime_identity=protocol["runtime"],
+    )
+    if published_identity != preflight_identity:
+        raise GRPOCheckpointError("published recurrent identity differs from preflight")
+    return published_identity
 
 
 def _render(tokenizer, task) -> str:
@@ -506,6 +790,11 @@ def main() -> int:
     parser.add_argument("--model", required=True)
     parser.add_argument("--out-dir", required=True)
     parser.add_argument(
+        "--adapter-id",
+        default="recurrent-grpo",
+        help="stable adapter identity recorded in recurrent campaign bundles",
+    )
+    parser.add_argument(
         "--execution-mode",
         choices=EXECUTION_MODES,
         default="standard",
@@ -579,6 +868,8 @@ def main() -> int:
         parser.error("--learning-rate must be inside (0, 1]")
     if not 0.0 <= args.format_credit <= 0.2:
         parser.error("--format-credit must be inside [0, 0.2]")
+    if _ADAPTER_ID_RE.fullmatch(args.adapter_id) is None:
+        parser.error("--adapter-id must be a stable identifier")
     try:
         execution_spec = _load_execution_spec(
             args.execution_mode, args.execution_spec
@@ -633,6 +924,7 @@ def main() -> int:
     from core.brain.llm.latent_cortex.recurrence_adapter_identity_v2 import (
         full_weight_checkpoint_identity,
         model_behavior_bundle_identity,
+        personality_bundle_identity,
         runtime_environment_identity,
     )
 
@@ -670,12 +962,15 @@ def main() -> int:
     sources = {role: _source_binding(path) for role, path in source_files.items()}
     base_identity = full_weight_checkpoint_identity(model_path)
     behavior_identity = model_behavior_bundle_identity(model_path)
+    personality_identity = personality_bundle_identity(None)
     runtime_identity = runtime_environment_identity()
     protocol = {
         "schema": GRPO_PROTOCOL_SCHEMA,
+        "adapter_id": args.adapter_id,
         "model_path": model_path,
         "base_checkpoint": base_identity,
         "model_behavior": behavior_identity,
+        "personality_adapter": personality_identity,
         "runtime": runtime_identity,
         "dataset_sha256": dataset_sha256,
         "sources": sources,
@@ -1384,6 +1679,7 @@ def main() -> int:
     completed = halt_reason in {"max_steps", "wall_clock_budget"}
     receipt = {
         "schema": GRPO_TRAIN_SCHEMA,
+        "adapter_id": args.adapter_id,
         "protocol_sha256": protocol_sha256,
         "dataset_sha256": dataset_sha256,
         "model": {
@@ -1439,6 +1735,24 @@ def main() -> int:
     }
     receipt_bytes = canonical_json_bytes(receipt)
     atomic_write_bytes(out_dir / "grpo_receipt.json", receipt_bytes, mode=0o600)
+    if execution_spec is not None and halt_reason == "max_steps":
+        identity = _publish_recurrent_adapter_bundle(
+            out_dir,
+            adapter_id=args.adapter_id,
+            protocol=protocol,
+            protocol_bytes=protocol_bytes,
+            dataset_bytes=dataset_bytes,
+            receipt=receipt,
+            receipt_bytes=receipt_bytes,
+            execution_spec=execution_spec,
+            source_roles=source_files,
+        )
+        print(
+            "[campaign-adapter] "
+            f"identity={identity['composite_identity_sha256']} "
+            f"adapter={identity['adapter_sha256']}",
+            flush=True,
+        )
     print(f"[verdict] {receipt['verdict']}", flush=True)
     print(f"[receipt] {out_dir / 'grpo_receipt.json'}", flush=True)
     if requested_signal is not None:

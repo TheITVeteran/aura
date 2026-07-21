@@ -1,0 +1,98 @@
+{
+  "schema": "aura.closeout.recurrent_grpo_identity_proof.v1",
+  "checkpoint": "CP258",
+  "observed_at": "2026-07-21T14:05:00-07:00",
+  "scope": "real_checkpoint_training_identity_freeze_plan_and_runtime_load",
+  "model": {
+    "path": "models/Qwen2.5-1.5B-Instruct-4bit",
+    "base_checkpoint_fingerprint": "d6e4ecf7593b78cb88ded2f4e98dd26b16802b38d2421b2af805eaea2f24f37d",
+    "model_behavior_bundle_sha256": "2ce4c948d82390cca053d3cadb0ed2ac52f9f44f764929366608830854fadd1a"
+  },
+  "training": {
+    "adapter_id": "cp258-1p5b-proof",
+    "execution_spec_sha256": "541cb812453a8f08d71f21bf2753024734c9bddf6d1d9891f27ce2226230ebf3",
+    "steps": 1,
+    "optimizer_updates": 1,
+    "group_rewards": [
+      1.0,
+      1.0,
+      0.0,
+      0.0
+    ],
+    "clip_fraction": 0.0,
+    "old_policy_approx_kl": 0.0007668990801903419,
+    "initial_policy_sha256": "b37451845f1550ca3644ca67343e6a182b590bbe1c7bda628b4a330776c8bbd9",
+    "final_policy_sha256": "856e0f6df243568f9d3d4bc234f7513d7fb23afe3e6ac33cfd7d3e878e8280e6"
+  },
+  "adapter_identity": {
+    "schema": "aura.recurrent_grpo_adapter_identity_receipt.v1",
+    "composite_identity_sha256": "a22f134bbf217223645099df7c0d64da93a3cba1119d88f91fc24b3feb6499c2",
+    "manifest_sha256": "09e94dd614143a1ce291ba94c86f367bb502282eb78e93d5a3fb6f9e99a549ee",
+    "adapter_sha256": "f0e18e36541ab6c7ad48f58408ce0c219dc29f346ff3b6bad108dc1a3ec580f4",
+    "training_protocol_sha256": "e5d18961c2a6dfa3c8c77abfd7c31999b8f06f2ba1d1a085e28b2e29e8974dd9",
+    "training_receipt_sha256": "b692b6f2c865fd2e7554064485687a0ec88d16df6444bccbc1dc4dc26ce9fa2e",
+    "dataset_sha256": "4f90072ec77b117099ceedbce1c9a52b20e354a32219904d4acd138184fe0b5d",
+    "training_completion_sha256": "d27a6142037a3b1d69a6c2cc923a2cac4ae2466a3f35221d6ae9198c4d401587",
+    "wrapped_projection_count": 1,
+    "tensor_count": 2,
+    "complete": true,
+    "causal_gain_proven": false
+  },
+  "freeze": {
+    "artifact_count": 20,
+    "certificate_sha256": "e5ba941698978b6c4e3a4126697cc4ef916c59a560993b6a51f2b0cafbd0ff7c",
+    "content_root_sha256": "16157113ac89787b8af90d4e3d229280fe861edd98740c7e6d0d40f1f419a080"
+  },
+  "factorial_plan": {
+    "plan_sha256": "928395f72d313a76f442efbaccec44e2b281998b985396e577f9deebcd3a660a",
+    "task_count": 6,
+    "cell_count": 36,
+    "arms": [
+      "base_vanilla",
+      "base_rlc",
+      "adapter_vanilla",
+      "adapter_rlc",
+      "base_equal_compute",
+      "adapter_equal_compute"
+    ],
+    "claim_eligible": false
+  },
+  "runtime_load": {
+    "arm": "adapter_rlc",
+    "completed_cells": 6,
+    "all_load_boundaries_verified": true,
+    "all_runtime_adapter_identities_matched": true,
+    "all_recurrence_adapter_activations_observed": true,
+    "wrapped_projection_counts": [
+      1
+    ],
+    "total_layer_apps": 148512,
+    "max_cell_latency_s": 5.267442,
+    "strict_decode_contract_satisfied_cells": 1,
+    "strict_decode_contract_total_cells": 6
+  },
+  "corrected_admissions": [
+    {
+      "code": "dataset_split_identity_invalid",
+      "cause": "train and holdout generators reused display task IDs across distinct seeds",
+      "resolution": "seed-qualified task IDs plus an enforced globally unique split identity"
+    },
+    {
+      "code": "step_receipt_group_invalid",
+      "cause": "the first validator revision accepted integer rewards but real bounded rewards are serialized as finite floats",
+      "resolution": "finite numeric rewards are admitted only inside the programmatic reward range [0,1]"
+    },
+    {
+      "code": "sample_behavior_not_admitted",
+      "cause": "the first validator revision expected a boolean recurrence marker while the real receipt carries a structured activation receipt",
+      "resolution": "the validator now requires active latent-slot scope, positive calls and adapted positions, and coherent observed-position counts"
+    }
+  ],
+  "verdict": {
+    "campaign_bundle_usable": true,
+    "real_runtime_load_proven": true,
+    "reasoning_gain_proven": false,
+    "frontier_gain_proven": false,
+    "next_gate": "fresh powered resident-32B base/adapter by standard/RLC factorial with equal-compute, broad-regression, contamination, and external-custody controls"
+  }
+}

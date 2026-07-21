@@ -1,9 +1,9 @@
 """Immutable adapter snapshots and launch-bundle artifact contracts.
 
 Campaign execution must not depend on a mutable training directory.  This
-module copies only the artifacts transitively named by a recurrence-v2
-manifest, seals them behind a content-root certificate, and verifies that
-certificate without loading model weights.
+module copies only the artifacts transitively named by a supported scoped
+adapter manifest, seals them behind a content-root certificate, and verifies
+that certificate without loading model weights.
 """
 
 from __future__ import annotations
@@ -22,6 +22,18 @@ from core.brain.llm.latent_cortex.recurrence_adapter_identity_v2 import (
     COMPLETION_SCHEMA_V1,
     IDENTITY_RECEIPT_SCHEMA_V2,
     MANIFEST_SCHEMA_V2,
+)
+from core.brain.llm.latent_cortex.recurrent_grpo_adapter_identity import (
+    BINDING_ROLES as GRPO_BINDING_ROLES,
+)
+from core.brain.llm.latent_cortex.recurrent_grpo_adapter_identity import (
+    COMPLETION_SCHEMA as GRPO_COMPLETION_SCHEMA,
+)
+from core.brain.llm.latent_cortex.recurrent_grpo_adapter_identity import (
+    IDENTITY_RECEIPT_SCHEMA as GRPO_IDENTITY_RECEIPT_SCHEMA,
+)
+from core.brain.llm.latent_cortex.recurrent_grpo_adapter_identity import (
+    MANIFEST_SCHEMA as GRPO_MANIFEST_SCHEMA,
 )
 from core.runtime.file_read_gateway import open_stable_readonly_binary, read_stable_bytes
 
@@ -200,10 +212,15 @@ def _file_binding(path: Path, *, role: str) -> dict[str, Any]:
 
 
 def _declared_paths(manifest: Mapping[str, Any]) -> list[str]:
-    if manifest.get("schema") != MANIFEST_SCHEMA_V2:
+    schema = manifest.get("schema")
+    if schema == MANIFEST_SCHEMA_V2:
+        binding_roles = _BINDING_ROLES
+    elif schema == GRPO_MANIFEST_SCHEMA:
+        binding_roles = GRPO_BINDING_ROLES
+    else:
         _fail("adapter_manifest_schema_invalid")
     paths = [_MANIFEST_FILE, _COMPLETION_FILE]
-    for role in _BINDING_ROLES:
+    for role in binding_roles:
         binding = manifest.get(role)
         if not isinstance(binding, Mapping):
             _fail(f"adapter_{role}_binding_invalid")
@@ -229,7 +246,7 @@ def adapter_artifact_inventory(
     *,
     reject_unplanned: bool,
 ) -> list[dict[str, Any]]:
-    """Return the exact transitive v2 artifact inventory under ``root``."""
+    """Return the exact transitive scoped-adapter inventory under ``root``."""
 
     supplied_root = root.expanduser()
     if supplied_root.is_symlink():
@@ -249,6 +266,10 @@ def adapter_artifact_inventory(
         resolved_root, _MANIFEST_FILE, role="adapter_manifest"
     )
     manifest = read_canonical_json(manifest_path, role="adapter_manifest")
+    schema = manifest.get("schema")
+    binding_roles = (
+        _BINDING_ROLES if schema == MANIFEST_SCHEMA_V2 else GRPO_BINDING_ROLES
+    )
     paths = _declared_paths(manifest)
     inventory: list[dict[str, Any]] = []
     for index, relative in enumerate(paths):
@@ -259,7 +280,7 @@ def adapter_artifact_inventory(
         inventory.append({"path": relative, **binding})
 
     by_path = {record["path"]: record for record in inventory}
-    for role in _BINDING_ROLES:
+    for role in binding_roles:
         declared = manifest[role]
         actual = by_path[declared["path"]]
         if (
@@ -279,24 +300,59 @@ def adapter_artifact_inventory(
         _contained_file(resolved_root, _COMPLETION_FILE, role="training_completion"),
         role="training_completion",
     )
-    if (
-        set(completion)
-        != {
-            "schema",
-            "complete",
-            "halt_reason",
-            "step",
-            "adapter_sha256",
-            "receipt_sha256",
-            "manifest_sha256",
-        }
-        or completion.get("schema") != COMPLETION_SCHEMA_V1
-        or completion.get("complete") is not True
-        or completion.get("halt_reason") != "max_steps"
-        or completion.get("manifest_sha256") != by_path[_MANIFEST_FILE]["sha256"]
-        or completion.get("adapter_sha256") != manifest["adapter"]["sha256"]
-        or completion.get("receipt_sha256") != manifest["training_receipt"]["sha256"]
-    ):
+    if schema == MANIFEST_SCHEMA_V2:
+        valid_completion = (
+            set(completion)
+            == {
+                "schema",
+                "complete",
+                "halt_reason",
+                "step",
+                "adapter_sha256",
+                "receipt_sha256",
+                "manifest_sha256",
+            }
+            and completion.get("schema") == COMPLETION_SCHEMA_V1
+            and completion.get("complete") is True
+            and completion.get("halt_reason") == "max_steps"
+            and completion.get("manifest_sha256")
+            == by_path[_MANIFEST_FILE]["sha256"]
+            and completion.get("adapter_sha256") == manifest["adapter"]["sha256"]
+            and completion.get("receipt_sha256")
+            == manifest["training_receipt"]["sha256"]
+        )
+    else:
+        valid_completion = (
+            set(completion)
+            == {
+                "schema",
+                "complete",
+                "halt_reason",
+                "step",
+                "optimizer_updates",
+                "adapter_sha256",
+                "receipt_sha256",
+                "protocol_sha256",
+                "execution_spec_sha256",
+                "manifest_sha256",
+            }
+            and completion.get("schema") == GRPO_COMPLETION_SCHEMA
+            and completion.get("complete") is True
+            and completion.get("halt_reason") == "max_steps"
+            and type(completion.get("step")) is int
+            and completion["step"] > 0
+            and type(completion.get("optimizer_updates")) is int
+            and 0 < completion["optimizer_updates"] <= completion["step"]
+            and completion.get("manifest_sha256")
+            == by_path[_MANIFEST_FILE]["sha256"]
+            and completion.get("adapter_sha256") == manifest["adapter"]["sha256"]
+            and completion.get("receipt_sha256")
+            == manifest["training_receipt"]["sha256"]
+            and completion.get("protocol_sha256") == manifest["protocol_sha256"]
+            and completion.get("execution_spec_sha256")
+            == manifest["execution_spec_sha256"]
+        )
+    if not valid_completion:
         _fail("training_completion_binding_invalid")
 
     if reject_unplanned:
@@ -365,12 +421,13 @@ def build_adapter_freeze_certificate(
     model_identity: Mapping[str, Any],
     validator_identity: Mapping[str, str],
 ) -> dict[str, Any]:
-    """Build a content-addressed certificate after full v2 identity validation."""
+    """Build a certificate after full scoped-adapter identity validation."""
 
     if (
         not isinstance(adapter_id, str)
         or not adapter_id
-        or identity_receipt.get("schema") != IDENTITY_RECEIPT_SCHEMA_V2
+        or identity_receipt.get("schema")
+        not in {IDENTITY_RECEIPT_SCHEMA_V2, GRPO_IDENTITY_RECEIPT_SCHEMA}
         or identity_receipt.get("adapter_id") != adapter_id
         or identity_receipt.get("complete") is not True
     ):
@@ -437,7 +494,8 @@ def verify_adapter_freeze(root: Path) -> dict[str, Any]:
     receipt = certificate.get("identity_receipt")
     if (
         not isinstance(receipt, Mapping)
-        or receipt.get("schema") != IDENTITY_RECEIPT_SCHEMA_V2
+        or receipt.get("schema")
+        not in {IDENTITY_RECEIPT_SCHEMA_V2, GRPO_IDENTITY_RECEIPT_SCHEMA}
         or receipt.get("adapter_id") != certificate.get("adapter_id")
         or receipt.get("complete") is not True
     ):

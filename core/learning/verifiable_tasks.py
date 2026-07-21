@@ -46,8 +46,9 @@ import json
 import math
 import random
 import re
-from dataclasses import dataclass
-from typing import Any, Callable
+from collections.abc import Callable
+from dataclasses import dataclass, replace
+from typing import Any
 
 VERIFIABLE_TASK_SCHEMA = "aura.verifiable_tasks.v1"
 
@@ -347,6 +348,10 @@ def build_task_set(
                 candidate = GENERATORS[domain](rng, depth, len(cell))
                 if candidate.prompt in seen:
                     continue
+                candidate = replace(
+                    candidate,
+                    task_id=f"{candidate.task_id}-s{seed}",
+                )
                 seen.add(candidate.prompt)
                 cell.append(candidate)
             if len(cell) < per_cell:
@@ -387,6 +392,9 @@ def disjoint_split(
     holdout = [task for task in holdout if task.prompt not in train_prompts]
     if not holdout:
         raise RuntimeError("held-out split is empty after de-overlap")
+    task_ids = [task.task_id for task in (*train, *holdout)]
+    if len(task_ids) != len(set(task_ids)):
+        raise RuntimeError("train and held-out task identities overlap")
     return train, holdout
 
 

@@ -32,6 +32,7 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
+from core.brain.llm.latent_cortex import recurrent_grpo_adapter_identity  # noqa: E402
 from core.brain.llm.latent_cortex.adapter_identity import (  # noqa: E402
     build_legacy_v1_manifest,
     inspect_mlx_tensor_metadata,
@@ -499,6 +500,22 @@ def _v2_artifacts(adapter_dir: Path, manifest: dict[str, Any]) -> dict[str, byte
     return artifacts
 
 
+def _recurrent_grpo_artifacts(
+    adapter_dir: Path, manifest: dict[str, Any]
+) -> dict[str, bytes]:
+    artifacts: dict[str, bytes] = {}
+    for _role, binding in recurrent_grpo_adapter_identity.declared_bindings(manifest):
+        path = _contained_adapter_artifact(adapter_dir, binding["path"])
+        artifacts[binding["path"]] = _read_stable_bytes(
+            path, max_bytes=int(binding["size_bytes"])
+        )
+    completion = _contained_adapter_artifact(adapter_dir, "training_completion.json")
+    artifacts["training_completion.json"] = _read_stable_bytes(
+        completion, max_bytes=1024 * 1024
+    )
+    return artifacts
+
+
 def _v2_training_config(
     adapter_dir: Path,
     manifest: dict[str, Any],
@@ -516,20 +533,37 @@ def _resolve_campaign_personality(
     *,
     model_path: Path,
     adapter_dir: Path,
-    v2_manifest: dict[str, Any] | None,
+    adapter_manifest: dict[str, Any] | None,
 ) -> str | None:
     requested = str(
         getattr(args, "personality_adapter", "trained") or "trained"
     ).strip()
     lowered = requested.lower()
     if lowered == "trained":
-        if v2_manifest is None:
+        if adapter_manifest is None:
             return None
-        configured = str(
-            _v2_training_config(adapter_dir, v2_manifest).get(
-                "personality_adapter_path", ""
-            )
-        ).strip()
+        if adapter_manifest.get("schema") == MANIFEST_SCHEMA_V2:
+            configured = str(
+                _v2_training_config(adapter_dir, adapter_manifest).get(
+                    "personality_adapter_path", ""
+                )
+            ).strip()
+        elif (
+            adapter_manifest.get("schema")
+            == recurrent_grpo_adapter_identity.MANIFEST_SCHEMA
+        ):
+            personality = adapter_manifest.get("personality_adapter")
+            if not isinstance(personality, Mapping):
+                raise CampaignProducerError(
+                    "recurrent GRPO personality binding is invalid"
+                )
+            if personality.get("present") is True:
+                raise CampaignProducerError(
+                    "recurrent GRPO bundle does not carry a loadable personality path"
+                )
+            configured = "none"
+        else:
+            raise CampaignProducerError("adapter manifest schema is unsupported")
         requested = configured or "none"
         lowered = requested.lower()
     if lowered == "none":
@@ -594,6 +628,37 @@ def _validate_v2_adapter_dir(
     return manifest, receipt
 
 
+def _validate_recurrent_grpo_adapter_dir(
+    adapter_dir: Path,
+    manifest_bytes: bytes,
+    *,
+    adapter_id: str,
+    base_checkpoint: Mapping[str, Any],
+    model_behavior_bundle: Mapping[str, Any],
+    personality_identity: Mapping[str, Any],
+    runtime_environment: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    manifest = strict_json_loads(
+        manifest_bytes, role="campaign_recurrent_grpo_manifest"
+    )
+    artifacts = _recurrent_grpo_artifacts(adapter_dir, manifest)
+    adapter_binding = manifest.get("adapter")
+    if not isinstance(adapter_binding, dict):
+        raise CampaignProducerError("recurrent GRPO adapter binding is invalid")
+    adapter_path = _contained_adapter_artifact(adapter_dir, adapter_binding.get("path"))
+    receipt = recurrent_grpo_adapter_identity.validate_recurrent_grpo_adapter_identity(
+        manifest_bytes,
+        adapter_id=adapter_id,
+        actual_base_checkpoint=base_checkpoint,
+        actual_model_behavior_bundle=model_behavior_bundle,
+        actual_personality_adapter=personality_identity,
+        actual_runtime_environment=runtime_environment,
+        artifacts=artifacts,
+        tensor_metadata=inspect_mlx_tensor_metadata(adapter_path),
+    )
+    return manifest, receipt
+
+
 def _identity_material(
     args: argparse.Namespace,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -606,17 +671,17 @@ def _identity_material(
         model_path,
         weight_identity=weight_identity,
     )
-    v2_manifest_bytes = _v2_manifest_bytes(adapter_dir)
-    v2_manifest = (
-        strict_json_loads(v2_manifest_bytes, role="campaign_v2_manifest")
-        if v2_manifest_bytes is not None
+    adapter_manifest_bytes = _v2_manifest_bytes(adapter_dir)
+    adapter_manifest = (
+        strict_json_loads(adapter_manifest_bytes, role="campaign_adapter_manifest")
+        if adapter_manifest_bytes is not None
         else None
     )
     personality_path = _resolve_campaign_personality(
         args,
         model_path=model_path,
         adapter_dir=adapter_dir,
-        v2_manifest=v2_manifest,
+        adapter_manifest=adapter_manifest,
     )
     personality_identity = personality_bundle_identity(personality_path)
     model_identity = {
@@ -633,16 +698,30 @@ def _identity_material(
             personality_identity=personality_identity,
         ),
     }
-    if v2_manifest_bytes is not None:
-        manifest, receipt = _validate_v2_adapter_dir(
-            adapter_dir,
-            v2_manifest_bytes,
-            adapter_id=args.adapter_id,
-            base_checkpoint=weight_identity,
-            model_behavior_bundle=model_behavior_identity,
-            personality_identity=personality_identity,
-            runtime_environment=runtime_environment,
-        )
+    if adapter_manifest_bytes is not None:
+        schema = adapter_manifest.get("schema") if adapter_manifest is not None else None
+        if schema == MANIFEST_SCHEMA_V2:
+            manifest, receipt = _validate_v2_adapter_dir(
+                adapter_dir,
+                adapter_manifest_bytes,
+                adapter_id=args.adapter_id,
+                base_checkpoint=weight_identity,
+                model_behavior_bundle=model_behavior_identity,
+                personality_identity=personality_identity,
+                runtime_environment=runtime_environment,
+            )
+        elif schema == recurrent_grpo_adapter_identity.MANIFEST_SCHEMA:
+            manifest, receipt = _validate_recurrent_grpo_adapter_dir(
+                adapter_dir,
+                adapter_manifest_bytes,
+                adapter_id=args.adapter_id,
+                base_checkpoint=weight_identity,
+                model_behavior_bundle=model_behavior_identity,
+                personality_identity=personality_identity,
+                runtime_environment=runtime_environment,
+            )
+        else:
+            raise CampaignProducerError("adapter manifest schema is unsupported")
         execution_binding = manifest["execution_spec"]
         execution_payload = _read_stable_bytes(
             _contained_adapter_artifact(adapter_dir, execution_binding["path"]),
@@ -650,7 +729,7 @@ def _identity_material(
         )
         adapter_identity = {
             "adapter_dir": str(adapter_dir),
-            "format": MANIFEST_SCHEMA_V2,
+            "format": schema,
             "manifest": manifest,
             "identity_receipt": receipt,
             "execution_spec": strict_json_loads(
@@ -743,6 +822,25 @@ def _adapter_load_boundary_identity(
         )
         if _parsed != manifest:
             raise CampaignProducerError("v2 adapter manifest differs from frozen plan")
+        return receipt
+    if manifest.get("schema") == recurrent_grpo_adapter_identity.MANIFEST_SCHEMA:
+        manifest_bytes = _read_stable_bytes(
+            adapter_dir / V2_MANIFEST_FILE,
+            max_bytes=16 * 1024 * 1024,
+        )
+        parsed, receipt = _validate_recurrent_grpo_adapter_dir(
+            adapter_dir,
+            manifest_bytes,
+            adapter_id=adapter_id,
+            base_checkpoint=base_checkpoint,
+            model_behavior_bundle=model_behavior_bundle,
+            personality_identity=personality_identity,
+            runtime_environment=runtime_environment,
+        )
+        if parsed != manifest:
+            raise CampaignProducerError(
+                "recurrent GRPO adapter manifest differs from frozen plan"
+            )
         return receipt
     adapter_binding = manifest["adapter"]
     receipt_binding = manifest["training_receipt"]
@@ -1572,26 +1670,26 @@ def _load_adapter(model: Any, adapter_dir: Path, manifest: dict[str, Any]) -> in
 
     rank = int(manifest["lora"]["rank"])
     targets = tuple(manifest["lora"]["targets"])
-    is_v2 = manifest.get("schema") == MANIFEST_SCHEMA_V2
+    is_scoped = manifest.get("schema") in {
+        MANIFEST_SCHEMA_V2,
+        recurrent_grpo_adapter_identity.MANIFEST_SCHEMA,
+    }
     expected = int(
-        manifest["lora"]["wrapped_projections" if is_v2 else "wrapped_projection_count"]
+        manifest["lora"][
+            "wrapped_projections" if is_scoped else "wrapped_projection_count"
+        ]
     )
     tensor_records = {record["key"]: record for record in manifest["tensors"]}
-    objective_name = (
-        "aura.recurrence_native_objective.v2"
-        if is_v2
-        else str(manifest["training_receipt"]["objective"].get("name") or "")
-    )
     wrapper_type = (
         ScopedLoRALinear
-        if objective_name == "aura.recurrence_native_objective.v2"
+        if is_scoped
         else LoRALinear
     )
     projections = sorted(
         {key.removesuffix(".lora_a").removesuffix(".lora_b") for key in tensor_records}
     )
-    if is_v2 and projections != sorted(manifest["lora"]["projection_paths"]):
-        raise CampaignProducerError("v2 adapter projection inventory differs")
+    if is_scoped and projections != sorted(manifest["lora"]["projection_paths"]):
+        raise CampaignProducerError("scoped adapter projection inventory differs")
     if len(projections) != expected:
         raise CampaignProducerError(
             f"adapter topology mismatch: planned {len(projections)}, expected {expected}"
