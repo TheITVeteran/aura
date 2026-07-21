@@ -89,6 +89,29 @@ def _safe_pattern_search(compiled: "re.Pattern[str]", text: str):
     """Search a routing regex against length-bounded input."""
     return compiled.search(str(text or "")[:_MAX_ROUTE_INPUT_LEN])
 
+
+def _redact_source_path(path: Any) -> Optional[str]:
+    """Return a project-relative module path, never an absolute filesystem path.
+
+    Public topology/report read models are API- and UI-facing; leaking
+    absolute paths discloses the host's local filesystem layout (usernames,
+    home dirs, deploy roots). Paths are relativized to the project base and
+    anything outside it collapses to its basename.
+    """
+    if not path:
+        return None
+    try:
+        from core.config import config
+
+        base = config.paths.base_dir
+        candidate = Path(str(path))
+        try:
+            return candidate.resolve().relative_to(Path(base).resolve()).as_posix()
+        except (ValueError, OSError):
+            return candidate.name
+    except (ImportError, RuntimeError, TypeError, ValueError, OSError):
+        return Path(str(path)).name
+
 _DEFAULT_INFRASTRUCTURE_SCAN_DIRS = (
     "core",
     "interface",
@@ -2087,8 +2110,9 @@ class MycelialNetwork:
             name: {
                 "source": hypha.source,
                 "target": hypha.target,
-                "source_file": hypha.source_file,
-                "target_file": hypha.target_file,
+                # Redacted to project-relative paths — never absolute.
+                "source_file": _redact_source_path(hypha.source_file),
+                "target_file": _redact_source_path(hypha.target_file),
                 "strength": float(round(hypha.strength, 2)),
             }
             for name, hypha in self.hyphae.items()
@@ -2120,7 +2144,7 @@ class MycelialNetwork:
                 logical: len(physical_list)
                 for logical, physical_list in self._cross_links.items()
             },
-            "modules": {k: v["path"] for k, v in mapped_files.items()},
+            "modules": {k: _redact_source_path(v.get("path")) for k, v in mapped_files.items()},
             "physical_hyphae_sample": dict(list(physical_hyphae.items())[:20]),
             "vault_sync": {
                 "revision": self._last_vault_sync_revision,
@@ -2261,13 +2285,22 @@ class MycelialNetwork:
                 return owner.get_network_topology()
             return self._network_topology_snapshot_locked()
 
+    @staticmethod
+    def _redact_read_model_paths(data: Dict[str, Any]) -> Dict[str, Any]:
+        """Redact absolute path fields from a public read-model dict."""
+        for field_name in ("source_file", "target_file", "file", "path"):
+            if field_name in data and data[field_name]:
+                data[field_name] = _redact_source_path(data[field_name])
+        return data
+
     def _network_topology_snapshot_locked(self) -> Dict[str, Any]:
+        # Public read models must not leak absolute filesystem paths.
         pathways = {
-            pathway_id: pathway.to_dict()
+            pathway_id: self._redact_read_model_paths(pathway.to_dict())
             for pathway_id, pathway in self.pathways.items()
         }
         hyphae = {
-            name: hypha.model_dump()
+            name: self._redact_read_model_paths(hypha.model_dump())
             for name, hypha in self.hyphae.items()
         }
         cross_layer_linked = len(self._cross_links)
