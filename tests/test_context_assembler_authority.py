@@ -83,6 +83,67 @@ def test_assistant_prefill_accepts_and_bounds_plain_text():
     assert len(bounded) <= 400
 
 
+def test_older_history_stays_contiguous_under_budget_pressure(monkeypatch):
+    """Older history must be a CONTIGUOUS suffix, never a set with holes.
+
+    The fill loop used to skip an oversized message and keep admitting older
+    ones, so the model saw turn N-1 and N-3 with an invisible gap where N-2
+    was — silently corrupting reference resolution.
+    """
+    state = AuraState.default()
+    state.response_modifiers["black_box_steering"] = True
+    # Message 3 (index 3) is huge; everything older is small. Under a tight
+    # budget the huge one cannot fit, so nothing older than it may appear.
+    working = []
+    for index in range(8):
+        content = ("BIG" * 3000) if index == 3 else f"turn-{index} " + ("t" * 100)
+        working.append(
+            {"role": "user" if index % 2 == 0 else "assistant", "content": content}
+        )
+    state.cognition.working_memory = working
+    monkeypatch.setattr(
+        ContextAssembler,
+        "build_system_prompt",
+        staticmethod(lambda _state: "SYS"),
+    )
+
+    messages = ContextAssembler.build_messages(state, "current", max_tokens=2048)
+    body = "\n".join(m["content"] for m in messages)
+
+    # If any message older than the unfittable one leaked in, the transcript
+    # would contain a hole.
+    for older_index in range(0, 3):
+        assert f"turn-{older_index} " not in body, (
+            f"turn-{older_index} appeared without the intervening oversized turn — "
+            "history is non-contiguous"
+        )
+
+
+def test_attention_gate_unusable_output_is_rejected(monkeypatch):
+    """A gate returning nothing must not blank the prompt."""
+    from core.container import ServiceContainer
+
+    class _EmptyGate:
+        def gate_context(self, _messages):
+            return []
+
+    state = AuraState.default()
+    state.response_modifiers["black_box_steering"] = True
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        staticmethod(
+            lambda key, default=None: _EmptyGate() if key == "attention_gate" else default
+        ),
+    )
+
+    messages = ContextAssembler.build_messages(state, "hello", max_tokens=2048)
+
+    assert messages, "an unusable gate result must not blank the context"
+    assert any(m["role"] == "system" for m in messages)
+    assert messages[-1]["role"] == "user"
+
+
 def test_json_instruction_does_not_request_internal_chain_of_thought():
     instruction = ContextAssembler.build_json_schema_instruction()
     lowered = instruction.lower()

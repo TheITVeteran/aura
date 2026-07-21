@@ -1579,15 +1579,23 @@ class ContextAssembler:
         if available_for_old_history > 500 and len(working_memory) > num_recent:
             older_history = working_memory[:-num_recent] if num_recent else working_memory
             old_retained = []
+            # CONTIGUITY: walk backwards from the newest older message and STOP
+            # at the first one that does not fit. Skipping an oversized message
+            # and continuing to older ones produced a non-contiguous transcript
+            # — the model saw turn N-1 and N-3 with an invisible hole where N-2
+            # was, silently corrupting pronoun/reference resolution. Retained
+            # history is now always a contiguous suffix adjoining the recent
+            # block, and everything older is honestly counted as dropped.
             for msg in reversed(older_history):
                 content = msg.get('content', '')
                 msg_len = _estimate_chars(content)
-                if msg_len < available_for_old_history:
-                    old_retained.insert(0, msg)
-                    available_for_old_history -= msg_len
-                    history_chars += msg_len
+                if msg_len >= available_for_old_history:
+                    break
+                old_retained.insert(0, msg)
+                available_for_old_history -= msg_len
+                history_chars += msg_len
             dropped_messages_count = len(older_history) - len(old_retained)
-            
+
             retained_history = old_retained + retained_history
         elif len(working_memory) > num_recent:
             dropped_messages_count = len(working_memory) - num_recent
@@ -1664,13 +1672,42 @@ class ContextAssembler:
             from core.container import ServiceContainer
             _gate = ServiceContainer.get("attention_gate", default=None)
             if _gate is not None:
-                messages = _gate.gate_context(messages)
-                logger.debug(
-                    "🔍 AttentionGate applied: %d messages after gating",
-                    len(messages),
-                )
+                gated = _gate.gate_context(messages)
+                # Validate the gate's output before adopting it. A gate that
+                # returns None/[]/a non-list would otherwise replace the whole
+                # prompt with nothing — an empty or system-less message array
+                # is a broken turn, strictly worse than ungated context.
+                if (
+                    isinstance(gated, list)
+                    and gated
+                    and any(str(m.get("role", "")) == "system" for m in gated if isinstance(m, dict))
+                ):
+                    messages = gated
+                    logger.debug(
+                        "🔍 AttentionGate applied: %d messages after gating",
+                        len(messages),
+                    )
+                else:
+                    record_degradation(
+                        "context_assembler.attention_gate",
+                        RuntimeError(
+                            f"attention gate returned an unusable context "
+                            f"({type(gated).__name__}); kept ungated messages"
+                        ),
+                        severity="warning",
+                        action="kept the ungated message array after the attention gate returned an unusable context",
+                    )
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _gate_exc:
-            record_degradation("context_assembler.attention_gate", _gate_exc)
+            # Fail-OPEN is deliberate here: the gate prunes for relevance, so
+            # the ungated array is a superset, not a leak. It must still be
+            # visible — a silently un-applied gate looked identical to a gate
+            # that decided nothing needed pruning.
+            record_degradation(
+                "context_assembler.attention_gate",
+                _gate_exc,
+                severity="warning",
+                action="served ungated (full) context after the attention gate failed",
+            )
 
         return messages
     @staticmethod
