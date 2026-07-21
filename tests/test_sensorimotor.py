@@ -177,13 +177,14 @@ def test_actuator_registry_finalizes_authority_when_token_verification_fails(mon
     result = registry.execute_action("needs_authority", {"value": 1})
 
     assert result.success is False
-    assert captured == {
-        "executive_intent_id": "intent-test",
-        "capability_token_id": "cap-test",
-        "standing_authority_token": "standing-test",
-        "success": False,
-        "result": {"success": False},
-    }
+    # The authority receipt now carries richer closure evidence than a bare
+    # success boolean (actuator identity, update summary, message, etc.).
+    assert captured["executive_intent_id"] == "intent-test"
+    assert captured["capability_token_id"] == "cap-test"
+    assert captured["standing_authority_token"] == "standing-test"
+    assert captured["success"] is False
+    assert captured["result"]["success"] is False
+    assert captured["result"]["actuator"] == "needs_authority"
 
 
 @pytest.mark.asyncio
@@ -274,6 +275,9 @@ async def test_blocking_actuator_does_not_stall_event_loop():
     release = threading.Event()
 
     class BlockingActuator(BaseActuator):
+        # Execution-mechanics probe: opts out of the governed-by-default policy.
+        requires_authority = False
+
         @property
         def name(self):
             return "event_loop_probe"
@@ -421,6 +425,9 @@ async def test_actuator_admitted_before_shutdown_drains_worker_to_completion():
     release = threading.Event()
 
     class ProbeActuator(BaseActuator):
+        # Execution-mechanics probe: opts out of the governed-by-default policy.
+        requires_authority = False
+
         @property
         def name(self):
             return "shutdown-crossing-probe"

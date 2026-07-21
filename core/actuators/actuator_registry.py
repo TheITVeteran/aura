@@ -11,9 +11,20 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
+
+# Bounds for synthesized world-model mutations. LLM-generated actuator output
+# is untrusted, so both the fan-out (how many entities/fields it can touch)
+# and individual values are capped to protect the live world model.
+_MAX_SYNTH_ENTITIES = 256
+_MAX_SYNTH_ATTRS_PER_ENTITY = 64
+_MAX_SYNTH_STRING_LEN = 512
+_MAX_SAFE_INT = 2**53  # exact-integer ceiling; beyond this floats lose precision
+_SANDBOX_TIMEOUT_MIN_S = 0.5
+_SANDBOX_TIMEOUT_MAX_S = 120.0
 
 from core.runtime.task_ownership import (
     drain_owned_awaitable,
@@ -53,7 +64,10 @@ class BaseActuator(ABC):
 
     synthesized: bool = False
     trust_score: float = 1.0
-    requires_authority: bool = False
+    # Fail SAFE: an actuator that forgets to declare its authority requirement
+    # is governed by default. Low-risk, in-memory-only actuators opt OUT
+    # explicitly with requires_authority = False.
+    requires_authority: bool = True
     generation: int = 0
     source_code: str | None = None
     blocking_execution: bool = True
@@ -90,6 +104,8 @@ class SandboxedSynthesizedActuator(BaseActuator):
     """
 
     synthesized: bool = True
+    # Generated code that mutates the live world model is always governed.
+    requires_authority: bool = True
 
     def __init__(
         self,
@@ -127,6 +143,15 @@ class SandboxedSynthesizedActuator(BaseActuator):
                 return ActuatorResult(False, sandbox_result.error or "Sandbox execution failed", {})
             updates = sandbox_result.details.get("updates", {})
             applied_updates = self._apply_bounded_updates(updates)
+            # Delivery truth: if the sandbox proposed updates but none survived
+            # validation, the world did NOT change — do not report success.
+            requested = bool(isinstance(updates, dict) and updates)
+            if requested and not applied_updates:
+                return ActuatorResult(
+                    False,
+                    "Sandboxed actuator produced no valid updates; no world-model change applied",
+                    {},
+                )
             return ActuatorResult(
                 True,
                 str(sandbox_result.details.get("message") or "Sandboxed actuator executed"),
@@ -134,6 +159,19 @@ class SandboxedSynthesizedActuator(BaseActuator):
             )
         except (ImportError, AttributeError, KeyError, RuntimeError, TypeError, ValueError) as exc:
             return ActuatorResult(False, f"Sandboxed actuator execution failed: {exc}", {})
+
+    @staticmethod
+    def _bounded_primitive(value: Any) -> Any:
+        """Reject non-finite floats, oversized ints, and unbounded strings."""
+        if isinstance(value, bool) or value is None:
+            return value
+        if isinstance(value, float):
+            return value if math.isfinite(value) else None
+        if isinstance(value, int):
+            return value if abs(value) <= _MAX_SAFE_INT else None
+        if isinstance(value, str):
+            return value[:_MAX_SYNTH_STRING_LEN]
+        return None
 
     def _apply_bounded_updates(self, updates: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(updates, dict) or not updates:
@@ -143,41 +181,76 @@ class SandboxedSynthesizedActuator(BaseActuator):
 
         model = get_physics_world_model()
         applied: dict[str, Any] = {}
+        entity_count = 0
         for entity_id, fields in updates.items():
+            if entity_count >= _MAX_SYNTH_ENTITIES:
+                logger.warning(
+                    "Synthesized update fan-out exceeded %d entities; ignoring the rest.",
+                    _MAX_SYNTH_ENTITIES,
+                )
+                break
             entity = model.get_entity(str(entity_id))
             if entity is None or not isinstance(fields, dict):
                 continue
+            entity_count += 1
 
-            entity_updates: dict[str, Any] = {}
-            for field in ("capacity", "load", "flow_rate", "max_flow_rate", "latency"):
-                if field in fields:
-                    value = _finite_float(fields[field], minimum=0.0)
-                    if value is not None:
-                        setattr(entity, field, value)
-                        entity_updates[field] = value
+            # Snapshot the fields this update may touch so a constraint failure
+            # or an invalid later field rolls THIS entity back to its prior
+            # state instead of leaving a half-applied mutation committed.
+            snapshot_fields = ("capacity", "load", "flow_rate", "max_flow_rate", "latency", "coordinates")
+            before = {f: getattr(entity, f, None) for f in snapshot_fields}
+            before_attrs = dict(getattr(entity, "attributes", {}) or {})
 
-            if "coordinates" in fields:
-                coords = fields["coordinates"]
-                if isinstance(coords, (list, tuple)) and len(coords) == 2:
-                    lat = _finite_float(coords[0])
-                    lon = _finite_float(coords[1])
-                    if lat is not None and lon is not None:
-                        entity.coordinates = (lat, lon)
-                        entity_updates["coordinates"] = entity.coordinates
+            try:
+                entity_updates: dict[str, Any] = {}
+                for field in ("capacity", "load", "flow_rate", "max_flow_rate", "latency"):
+                    if field in fields:
+                        value = _finite_float(fields[field], minimum=0.0)
+                        if value is not None:
+                            setattr(entity, field, value)
+                            entity_updates[field] = value
 
-            attrs = fields.get("attributes")
-            if isinstance(attrs, dict):
-                safe_attrs: dict[str, Any] = {}
-                for key, value in attrs.items():
-                    if not isinstance(key, str):
-                        continue
-                    if isinstance(value, (str, bool, int, float)) or value is None:
-                        safe_attrs[key[:64]] = value
-                if safe_attrs:
-                    entity.attributes.update(safe_attrs)
-                    entity_updates["attributes"] = safe_attrs
+                if "coordinates" in fields:
+                    coords = fields["coordinates"]
+                    if isinstance(coords, (list, tuple)) and len(coords) == 2:
+                        lat = _finite_float(coords[0], minimum=-90.0, maximum=90.0)
+                        lon = _finite_float(coords[1], minimum=-180.0, maximum=180.0)
+                        if lat is not None and lon is not None:
+                            entity.coordinates = (lat, lon)
+                            entity_updates["coordinates"] = entity.coordinates
 
-            entity.enforce_constraints()
+                attrs = fields.get("attributes")
+                if isinstance(attrs, dict):
+                    safe_attrs: dict[str, Any] = {}
+                    for key, value in attrs.items():
+                        if len(safe_attrs) >= _MAX_SYNTH_ATTRS_PER_ENTITY:
+                            break
+                        if not isinstance(key, str):
+                            continue
+                        bounded = self._bounded_primitive(value)
+                        if bounded is not None or value is None:
+                            safe_attrs[key[:64]] = bounded
+                    if safe_attrs:
+                        entity.attributes.update(safe_attrs)
+                        entity_updates["attributes"] = safe_attrs
+
+                entity.enforce_constraints()
+            except (AttributeError, TypeError, ValueError, KeyError) as exc:
+                # Roll this entity back — partial mutations must not survive a
+                # constraint or field error.
+                for field, prior in before.items():
+                    if prior is not None or hasattr(entity, field):
+                        setattr(entity, field, prior)
+                if hasattr(entity, "attributes"):
+                    entity.attributes.clear()
+                    entity.attributes.update(before_attrs)
+                logger.warning(
+                    "Synthesized update for entity %s rolled back after error: %s",
+                    entity_id,
+                    exc,
+                )
+                continue
+
             if entity_updates:
                 applied[str(entity_id)] = entity_updates
         return applied
@@ -186,6 +259,9 @@ class SandboxedSynthesizedActuator(BaseActuator):
 class RerouteVesselActuator(BaseActuator):
     """Actuator to adjust headings and speeds of maritime vessel edges."""
 
+    # In-memory simulation only (mutates the physics world model, no external
+    # effect) — explicitly opts out of the governed-by-default policy.
+    requires_authority = False
     blocking_execution = False
 
     @property
@@ -260,6 +336,8 @@ class RerouteVesselActuator(BaseActuator):
 class ReallocateFlowActuator(BaseActuator):
     """Actuator to transfer assets/cargo from one inventory node to another."""
 
+    # In-memory simulation only — explicitly opts out of governed-by-default.
+    requires_authority = False
     blocking_execution = False
 
     @property
@@ -379,8 +457,16 @@ class SandboxActuator(BaseActuator):
             return ActuatorResult(False, "Parameter validation failed: 'code' string parameter is required.", {})
 
         code = params["code"]
-        timeout_s = float(params.get("timeout_s", 10.0))
-        
+        # Bound the sandbox timeout: an unbounded or non-finite value could
+        # hang the sandbox subprocess indefinitely.
+        timeout_s = _finite_float(
+            params.get("timeout_s", 10.0),
+            minimum=_SANDBOX_TIMEOUT_MIN_S,
+            maximum=_SANDBOX_TIMEOUT_MAX_S,
+        )
+        if timeout_s is None:
+            timeout_s = 10.0
+
         res = self.operator.execute_synthesized_tool(code, timeout_s=timeout_s)
         
         msg = f"Execution completed with exit code {res['exit_code']}."
@@ -399,6 +485,11 @@ class ActuatorRegistry:
 
     def __init__(self) -> None:
         self.actuators: dict[str, BaseActuator] = {}
+        # Guards registry mutations/lookups against concurrent registration,
+        # deregistration, and execution-time lookups.
+        self._lock = threading.RLock()
+        # Names of required default actuators that failed to register at boot.
+        self._missing_default_capabilities: list[str] = []
         self._register_default_actuators()
 
     def _register_default_actuators(self) -> None:
@@ -406,44 +497,72 @@ class ActuatorRegistry:
         self.register(ReallocateFlowActuator())
         self.register(SandboxActuator())
 
-        try:
+        # Each required capability that fails to import is recorded as a
+        # capability blocker so boot health can surface a degraded runtime,
+        # instead of the failure only reaching the log.
+        def _register_required(loader, capability: str) -> None:
+            try:
+                loader()
+            except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                self._missing_default_capabilities.append(capability)
+                logger.error("Failed to register required actuator '%s': %s", capability, exc)
+
+        def _code() -> None:
             from core.actuators.code_execution_actuator import CodeExecutionActuator
             self.register(CodeExecutionActuator())
-        except ImportError as e:
-            logger.error("Failed to register CodeExecutionActuator: %s", e)
 
-        try:
+        def _web() -> None:
             from core.actuators.web_actuators import WebFetchActuator, WebSearchActuator
             self.register(WebSearchActuator())
             self.register(WebFetchActuator())
-        except ImportError as e:
-            logger.error("Failed to register web actuators: %s", e)
 
-        try:
+        def _git_pkg() -> None:
             from core.actuators.git_pkg_actuators import GitActuator, PackageInstallActuator
             self.register(GitActuator())
             self.register(PackageInstallActuator())
-        except ImportError as e:
-            logger.error("Failed to register git or package actuators: %s", e)
 
-        try:
+        def _process() -> None:
             from core.actuators.process_supervisor import ProcessSupervisorActuator
             self.register(ProcessSupervisorActuator())
-        except ImportError as e:
-            logger.error("Failed to register ProcessSupervisorActuator: %s", e)
 
-        try:
+        def _doc() -> None:
             from core.actuators.doc_ingest import DocumentIngestActuator
             self.register(DocumentIngestActuator())
-        except ImportError as e:
-            logger.error("Failed to register DocumentIngestActuator: %s", e)
 
-    def register(self, actuator: BaseActuator) -> None:
-        self.actuators[actuator.name] = actuator
+        _register_required(_code, "code_execution")
+        _register_required(_web, "web")
+        _register_required(_git_pkg, "git_package")
+        _register_required(_process, "process_supervisor")
+        _register_required(_doc, "document_ingest")
+
+    def missing_default_capabilities(self) -> list[str]:
+        """Required default actuators that failed to register at boot."""
+        with self._lock:
+            return list(self._missing_default_capabilities)
+
+    def health_blocker(self) -> str | None:
+        """Return a capability-health blocker string, or None when complete."""
+        missing = self.missing_default_capabilities()
+        if not missing:
+            return None
+        return "actuator_capabilities_missing:" + ",".join(sorted(missing))
+
+    def register(self, actuator: BaseActuator, *, allow_replace: bool = False) -> None:
+        with self._lock:
+            existing = self.actuators.get(actuator.name)
+            if existing is not None and existing is not actuator and not allow_replace:
+                # Refuse to silently hijack a canonical actuator name. A
+                # deliberate swap must pass allow_replace=True.
+                raise ValueError(
+                    f"Actuator name '{actuator.name}' is already registered by "
+                    f"{type(existing).__name__}; refusing silent replacement"
+                )
+            self.actuators[actuator.name] = actuator
         logger.info("Registered actuator: %s (%s)", actuator.name, actuator.description)
 
     def get_actuator(self, name: str) -> BaseActuator | None:
-        return self.actuators.get(name)
+        with self._lock:
+            return self.actuators.get(name)
 
     def register_synthesized(
         self, actuator: BaseActuator, source_code: str, trust_score: float = 0.3
@@ -451,19 +570,27 @@ class ActuatorRegistry:
         """Register a runtime-synthesized actuator with low trust and stored source code."""
         actuator.synthesized = True
         actuator.source_code = source_code
-        actuator.trust_score = trust_score
-        self.register(actuator)
-        logger.info("Registered synthesized actuator: %s (trust=%.2f)", actuator.name, trust_score)
+        # Non-finite trust must not slip past the execution-time thresholds
+        # (NaN comparisons are always false), so clamp at registration.
+        bounded_trust = _finite_float(trust_score, minimum=0.0, maximum=1.0)
+        actuator.trust_score = bounded_trust if bounded_trust is not None else 0.0
+        # Synthesized actuators may replace a prior generation of themselves.
+        self.register(actuator, allow_replace=True)
+        logger.info(
+            "Registered synthesized actuator: %s (trust=%.2f)", actuator.name, actuator.trust_score
+        )
 
     def deregister(self, name: str) -> None:
         """Remove an actuator from the registry (retirement)."""
-        if name in self.actuators:
-            del self.actuators[name]
+        with self._lock:
+            removed = self.actuators.pop(name, None)
+        if removed is not None:
             logger.info("Deregistered actuator: %s", name)
 
     def get_synthesized_actuators(self) -> list[BaseActuator]:
         """List all runtime-synthesized actuators."""
-        return [act for act in self.actuators.values() if getattr(act, "synthesized", False)]
+        with self._lock:
+            return [act for act in self.actuators.values() if getattr(act, "synthesized", False)]
 
     @staticmethod
     async def _authorize_actuator(
@@ -505,17 +632,26 @@ class ActuatorRegistry:
     ) -> ActuatorResult | None:
         if not getattr(actuator, "synthesized", False):
             return None
-        if actuator.trust_score < 0.2:
+        # Non-finite trust must fail CLOSED. NaN < 0.2 is False, so a NaN
+        # trust score would otherwise bypass both thresholds and execute.
+        trust = _finite_float(getattr(actuator, "trust_score", None))
+        if trust is None:
             return ActuatorResult(
                 False,
-                f"Actuator '{name}' has trust score too low ({actuator.trust_score:.2f}) to execute",
+                f"Actuator '{name}' has a non-finite trust score; refusing execution",
                 {},
             )
-        if actuator.trust_score < 0.5:
+        if trust < 0.2:
+            return ActuatorResult(
+                False,
+                f"Actuator '{name}' has trust score too low ({trust:.2f}) to execute",
+                {},
+            )
+        if trust < 0.5:
             logger.warning(
                 "Executing low-trust synthesized actuator '%s' (trust=%.2f)",
                 name,
-                actuator.trust_score,
+                trust,
             )
             if not params:
                 return ActuatorResult(
@@ -655,14 +791,29 @@ class ActuatorRegistry:
             TypeError,
             ValueError,
         ) as exc:
+            # Full detail goes to the log; the returned message carries only the
+            # error CLASS. Raw exception text can leak internal paths, provider
+            # details, source snippets, or secrets to the caller surface.
             logger.exception("Actuator '%s' raised during execution", name)
             result = ActuatorResult(
                 False,
-                f"Actuator '{name}' raised {type(exc).__name__}: {exc}",
+                f"Actuator '{name}' failed ({type(exc).__name__}); see logs for detail",
                 {},
             )
         finally:
             if authority_decision is not None:
+                success = bool(result and result.success)
+                update_keys = sorted(result.updates.keys()) if result and isinstance(result.updates, dict) else []
+                receipt = {
+                    "success": success,
+                    "actuator": name,
+                    "actuator_generation": int(getattr(actuator, "generation", 0) or 0),
+                    "synthesized": bool(getattr(actuator, "synthesized", False)),
+                    "update_key_count": len(update_keys),
+                    "update_keys": update_keys[:32],
+                    "message": (result.message[:240] if result else ""),
+                    "cancelled": cancellation is not None,
+                }
                 try:
                     from core.executive.authority_gateway import get_authority_gateway
 
@@ -674,11 +825,20 @@ class ActuatorRegistry:
                         standing_authority_token=getattr(
                             authority_decision, "standing_authority_token", None
                         ),
-                        success=bool(result and result.success),
-                        result={"success": bool(result and result.success)},
+                        success=success,
+                        result=receipt,
                     )
                 except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                    # A successful external effect whose authority closure could
+                    # not be recorded is NOT a clean success — surface the
+                    # uncertain audit state instead of returning bare success.
                     logger.error("Failed to finalize actuator authority receipt for %s: %s", name, exc)
+                    if result is not None and result.success:
+                        result = ActuatorResult(
+                            False,
+                            f"Actuator '{name}' effect applied but authority closure failed; audit incomplete",
+                            result.updates,
+                        )
 
         if cancellation is not None:
             raise cancellation
@@ -711,10 +871,15 @@ class ActuatorRegistry:
 
 # Singleton Pattern
 _instance: ActuatorRegistry | None = None
+_instance_lock = threading.Lock()
 
 
 def get_actuator_registry() -> ActuatorRegistry:
     global _instance
+    # Double-checked locking: concurrent first access must not construct two
+    # registries with divergent synthesized actuators / execution histories.
     if _instance is None:
-        _instance = ActuatorRegistry()
+        with _instance_lock:
+            if _instance is None:
+                _instance = ActuatorRegistry()
     return _instance
