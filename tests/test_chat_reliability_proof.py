@@ -1334,9 +1334,13 @@ def test_expansion_requests_reject_thin_deflections():
         "For what reason?",
         "Curiosity.",
     )
+    # A genuinely thin deflection (a bare fragment, not a real answer) still
+    # trips the open-ended floor. A complete one-sentence answer, however, is a
+    # legitimate reply and is accepted — see
+    # test_expansion_requests_accept_substantive_direct_answers.
     why_assessment = assess_user_facing_reply(
         "Why do you want to feel?",
-        "Because I want to know what it's like.",
+        "Because I just do.",
     )
 
     assert verbose_assessment.retryable

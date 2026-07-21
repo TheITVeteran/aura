@@ -3539,10 +3539,13 @@ def _has_reliability_substance(reply_text: Any) -> bool:
     )
     if any(phrase in reply for phrase in presence_phrases):
         return True
-
-    if _word_count(reply) < 8:
-        return False
-    return any(marker in reply for marker in _SUBSTANTIVE_RELIABILITY_MARKERS)
+    if any(marker in reply for marker in _SUBSTANTIVE_RELIABILITY_MARKERS):
+        return True
+    # A full, non-boilerplate sentence or two that engages the concern is valid
+    # substance even without the specific diagnostic vocabulary — brevity itself
+    # is not a reliability failure. Bare one-word reassurance ("yes"/"fine") is
+    # already caught upstream as low_signal_reliability_reply before this runs.
+    return _word_count(reply) >= 8
 
 
 def _requires_reliability_diagnostic(user_message: Any) -> bool:
@@ -5044,19 +5047,30 @@ def assess_user_facing_reply(
     ):
         words = _word_count(raw)
         explicit_brevity = _explicit_brevity_requested(user_message)
+        # Brevity alone is not a failure: a substantive sentence or two — and
+        # sometimes only a few words — is a legitimate reply. These floors only
+        # catch near-empty non-answers; genuine filler/deflection/reassurance is
+        # caught by the semantic detectors above, not by word count.
         if not explicit_brevity and (_LOW_SIGNAL_REASSURANCE_RE.match(raw) or words < 2):
             reasons.append("too_short_for_user_turn")
-        elif words < 6 and not _is_tiny_direct_turn(user_message) and not explicit_brevity:
+        elif words < 4 and not _is_tiny_direct_turn(user_message) and not explicit_brevity:
             if not (words >= 3 and any(w in raw.lower() for w in ("thinking", "working", "processing", "online"))):
                 reasons.append("too_thin_for_user_turn")
         elif not _is_task_turn(user_message):
             open_ended = any(marker in user_norm for marker in _OPEN_ENDED_MARKERS)
-            if open_ended and words < 12 and not explicit_brevity:
+            if open_ended and words < 6 and not explicit_brevity:
                 reasons.append("too_thin_for_open_ended_turn")
 
     if is_confusion_repair_turn(user_message) and _word_count(raw) < 8:
         if not (_word_count(raw) >= 3 and any(w in raw.lower() for w in ("thinking", "working", "processing", "online"))):
             reasons.append("too_thin_for_confusion_repair")
+
+    # A memory-pin request needs the pinned content echoed back — a generic
+    # "okay, I'll remember it" is not a valid write receipt. This is a content
+    # contract (independent of length), so it must be checked explicitly rather
+    # than left to the brevity floor.
+    if _is_explicit_memory_pin_request(user_message) and not memory_pin_confirmation:
+        reasons.append("generic_memory_pin_acknowledgement")
 
     reasons.extend(_instruction_coverage_reasons(user_message, raw))
     reasons.extend(_semantic_coverage_reasons(user_message, raw))
@@ -5135,6 +5149,7 @@ def assess_user_facing_reply(
         "missing_requested_objective_facets",
         "prompt_echo_contamination",
         "protocol_artifact_leakage",
+        "generic_memory_pin_acknowledgement",
     }
     retryable_reasons = hard_reasons | {
         "low_signal_reliability_reply",
