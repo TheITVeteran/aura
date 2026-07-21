@@ -601,11 +601,18 @@ class ActuatorRegistry:
         from core.executive.authority_gateway import get_authority_gateway
 
         gateway = get_authority_gateway()
+        # Bound caller-supplied priority to [0, 1] and reject non-finite
+        # values — an unvalidated priority could otherwise skew the gateway's
+        # admission ordering. is_critical stays a plain bool cast; the deeper
+        # "authenticated principal" binding is a gateway-side contract change.
+        priority = _finite_float(context.get("priority", 0.7), minimum=0.0, maximum=1.0)
+        if priority is None:
+            priority = 0.7
         return await gateway.authorize_tool_execution(
             name,
             params,
             source=str(context.get("source") or "actuator_registry"),
-            priority=float(context.get("priority", 0.7) or 0.7),
+            priority=priority,
             is_critical=bool(context.get("is_critical", False)),
             context=dict(context or {}),
         )
