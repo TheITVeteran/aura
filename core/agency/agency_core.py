@@ -842,6 +842,26 @@ class AgencyCore:
             self._setup_spatial_empathy_watcher(),
             name="agency.spatial_empathy.watch",
         )
+
+        # Cognitive-loop pathway (CP244): let Aura's Will invoke the full
+        # identify-gap -> acquire -> deliberate -> verify loop during
+        # autonomous pulses. Gated OFF by default (AURA_COGNITIVE_LOOP_PATHWAY);
+        # when off this registers nothing and behaviour is unchanged. Wrapped
+        # so a wiring fault can never break agency startup.
+        try:
+            from core.agency.cognitive_loop_pathway import register_if_enabled
+
+            loop_receipt = register_if_enabled(self)
+            if loop_receipt.get("registered"):
+                logger.info(
+                    "🧠 Cognitive-loop pathway wired: %s",
+                    loop_receipt["registered"],
+                )
+        except _AGENCY_BOUNDARY_ERRORS as exc:
+            _record_agency_degradation(
+                exc, action="cognitive-loop pathway registration skipped"
+            )
+
         logger.info("🧠 AgencyCore background pathways activated.")
 
     async def _setup_spatial_empathy_watcher(self):

@@ -170,6 +170,78 @@ class CognitiveLoop:
         ok = bool(verdict.get("correct"))
         return ok, StageResult("verify", "ok", {"verified": ok})
 
+    async def _adeliberate(self, query: str, material: list[str]) -> tuple[str, StageResult]:
+        import inspect
+
+        try:
+            result = self.deliberator.deliberate(query, material)
+            if inspect.isawaitable(result):
+                result = await result
+        except Exception as exc:
+            return "", StageResult("deliberate", "failed", {"error": type(exc).__name__})
+        return str(result or ""), StageResult("deliberate", "ok", {"answered": bool(result)})
+
+    async def _averify(self, query: str, candidate: str) -> tuple[bool, StageResult]:
+        import inspect
+
+        if self.verifier is None:
+            return False, StageResult("verify", "unavailable", {"verified": False})
+        try:
+            verdict = self.verifier.check(query, candidate)
+            if inspect.isawaitable(verdict):
+                verdict = await verdict
+        except Exception:
+            return False, StageResult("verify", "failed", {"verified": False})
+        ok = bool(verdict.get("correct"))
+        return ok, StageResult("verify", "ok", {"verified": ok})
+
+    async def arun(self, query: str) -> LoopResult:
+        """Async cycle for live organs (the LLM router's generate is async).
+
+        Mirrors ``run`` exactly -- same stages, same self-correction, same
+        honest-degradation and never-retain-unverified rules -- but awaits
+        the deliberator and verifier when they are coroutines. The sync
+        ``run`` stays the tested reference; this is the live path.
+        """
+        if not str(query).strip():
+            raise ValueError("query must be non-empty")
+        stages: list[StageResult] = []
+        gap, gap_stage = self._identify_gap(query)
+        stages.append(gap_stage)
+        answer: str | None = None
+        verified = False
+        attempts = 0
+        for attempt in range(self.max_attempts):
+            attempts = attempt + 1
+            material, acq_stage = self._acquire(query, gap)
+            deliberated, del_stage = await self._adeliberate(query, material)
+            verified, ver_stage = await self._averify(query, deliberated)
+            for stage in (acq_stage, del_stage, ver_stage):
+                stage.detail["attempt"] = attempts
+                stages.append(stage)
+            answer = deliberated or answer
+            if verified:
+                break
+            gap = True
+        learned = False
+        if verified and self.learner is not None and answer is not None:
+            import inspect
+
+            try:
+                outcome = self.learner(query, answer, {"verified": True})
+                if inspect.isawaitable(outcome):
+                    outcome = await outcome
+                learned = bool(outcome)
+            except Exception:
+                learned = False
+            stages.append(StageResult("learn", "ok" if learned else "skipped",
+                                      {"retained": learned}))
+        elif self.learner is not None:
+            stages.append(StageResult("learn", "skipped",
+                                      {"reason": "unverified" if not verified else "no_answer"}))
+        return LoopResult(query=query, answer=answer, verified=verified,
+                          attempts=attempts, stages=stages, learned=learned)
+
     def run(self, query: str) -> LoopResult:
         """Run one cycle, with bounded self-correction on verification failure."""
         if not str(query).strip():
