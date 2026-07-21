@@ -26,6 +26,13 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 PROTOCOL_VERSION = 5
 MAX_CHALLENGE_LIFETIME_S = 3_600.0
 MAX_CHALLENGE_CLOCK_SKEW_S = 30.0
+# Protocol bounds on the trend test. Callers supply these, so they are the
+# knobs an interested party would turn to manufacture eligibility: a zero
+# run floor, a negative effect floor, or an alpha above one all make
+# "significant improvement" trivially reachable from noise.
+_MIN_TREND_RUNS = 5
+_MAX_TREND_RUNS = 1_000
+_MAX_TREND_ALPHA = 0.1
 PROTOCOL_MANIFEST_SCHEMA = "aura.frontier_protocol.v1"
 TASK_SPEC_SCHEMA = "aura.frontier_task_spec.v1"
 CHALLENGE_COMMIT_SCHEMA = "aura.frontier_challenge_commit.v1"
@@ -76,6 +83,60 @@ PROTOCOL_MANIFEST_BODY: dict[str, Any] = {
     ],
     "required_observations": [SUPERVISOR_OBSERVATION_SCHEMA],
 }
+
+
+_MAX_PAYLOAD_DEPTH = 32
+_MAX_PAYLOAD_NODES = 200_000
+
+# Two-sided 95% Student-t critical values by residual degrees of freedom.
+# The trend test admits as few as five runs (df=3), where the normal
+# approximation is far too narrow to be called a 95% interval.
+_T_CRITICAL_95: dict[int, float] = {
+    1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571,
+    6: 2.447, 7: 2.365, 8: 2.306, 9: 2.262, 10: 2.228,
+    11: 2.201, 12: 2.179, 13: 2.160, 14: 2.145, 15: 2.131,
+    16: 2.120, 17: 2.110, 18: 2.101, 19: 2.093, 20: 2.086,
+    25: 2.060, 30: 2.042, 40: 2.021, 60: 2.000, 120: 1.980,
+}
+
+
+def _student_t_critical_95(df: int) -> float:
+    """Two-sided 95% t critical value, conservative between table points."""
+    if df in _T_CRITICAL_95:
+        return _T_CRITICAL_95[df]
+    larger = [key for key in sorted(_T_CRITICAL_95) if key > df]
+    if not larger:
+        return 1.96  # large-sample limit
+    # Use the next SMALLER tabulated df (a wider, more conservative bound).
+    smaller = [key for key in sorted(_T_CRITICAL_95) if key < df]
+    return _T_CRITICAL_95[smaller[-1]] if smaller else _T_CRITICAL_95[larger[0]]
+
+
+def _require_bounded_structure(payload: Any, *, role: str) -> None:
+    """Reject pathological structures before any full-tree serialization.
+
+    Walks iteratively (never recursively — the walk itself must not be the
+    thing that blows the stack) and caps both nesting depth and total node
+    count, so an attacker-supplied envelope cannot burn CPU or memory inside
+    canonicalization before the byte-size limit can apply.
+    """
+    stack: list[tuple[Any, int]] = [(payload, 0)]
+    nodes = 0
+    while stack:
+        node, depth = stack.pop()
+        nodes += 1
+        if nodes > _MAX_PAYLOAD_NODES:
+            raise ValueError(f"{role} signed payload has too many elements")
+        if depth > _MAX_PAYLOAD_DEPTH:
+            raise ValueError(f"{role} signed payload is nested too deeply")
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if not isinstance(key, str):
+                    raise ValueError(f"{role} signed payload has a non-string key")
+                stack.append((value, depth + 1))
+        elif isinstance(node, (list, tuple)):
+            for value in node:
+                stack.append((value, depth + 1))
 
 
 def canonical_json_bytes(value: Any) -> bytes:
@@ -166,6 +227,11 @@ def verify_signed_envelope(
     signer = raw.get("signer")
     if not isinstance(payload, dict) or not isinstance(signer, dict):
         raise ValueError(f"{role} envelope is incomplete")
+    # Bound the payload BEFORE canonicalizing it. The size limit below runs
+    # on the serialized bytes, so a deeply nested or enormous structure could
+    # exhaust CPU/memory — or hit the recursion limit — inside
+    # canonical_json_bytes before the advertised guard was ever reached.
+    _require_bounded_structure(payload, role=role)
     if set(signer) != {
         "algorithm",
         "signer_id",
@@ -564,8 +630,21 @@ def validate_challenge_bundle(
     nonce = _decode_base64(
         reveal_payload.get("nonce_b64"), field_name="challenge nonce"
     )
+    # LENGTH IS NOT ENTROPY. The old check accepted any 32-byte string and
+    # then asserted "256 bits of entropy", so an all-zero, single-repeated-
+    # byte, or otherwise degenerate nonce passed. A byte string cannot prove
+    # how it was drawn, but a structurally degenerate one can be REFUSED —
+    # a real 32-byte random draw has ~32 distinct bytes with overwhelming
+    # probability, and fewer than 16 is a ~2^-100 event.
     if len(nonce) < 32:
-        raise ValueError("challenge nonce lacks 256 bits of entropy")
+        raise ValueError("challenge nonce is shorter than the 32-byte protocol minimum")
+    distinct_bytes = len(set(nonce))
+    if distinct_bytes < 16:
+        raise ValueError(
+            "challenge nonce is structurally degenerate "
+            f"({distinct_bytes} distinct bytes in {len(nonce)}); "
+            "it was not drawn from a cryptographic source"
+        )
     if hashlib.sha256(nonce).hexdigest() != commit_payload.get("nonce_sha256"):
         raise ValueError("challenge reveal does not open its commitment")
     if reveal_payload.get("commit_envelope_sha256") != sha256_json(commit):
@@ -1266,7 +1345,30 @@ def analyze_gap_trend(
     minimum_effect: float = 0.02,
     alpha: float = 0.05,
 ) -> dict[str, Any]:
-    """Return endpoint telemetry separately from a conservative trend claim."""
+    """Return endpoint telemetry separately from a conservative trend claim.
+
+    THRESHOLDS ARE NOT CALLER-TUNABLE INTO ELIGIBILITY. They were accepted
+    without type or range validation and echoed into the result, so
+    ``minimum_runs=0``, a negative ``minimum_effect``, or an ``alpha`` above
+    one trivially manufactured a "significant improving trend" from noise.
+    Each is now range-checked against the protocol bounds.
+    """
+    if isinstance(minimum_runs, bool) or not isinstance(minimum_runs, int):
+        raise ValueError("minimum_runs must be an int")
+    if not _MIN_TREND_RUNS <= minimum_runs <= _MAX_TREND_RUNS:
+        raise ValueError(
+            f"minimum_runs must be in [{_MIN_TREND_RUNS}, {_MAX_TREND_RUNS}]"
+        )
+    if isinstance(minimum_effect, bool) or not isinstance(minimum_effect, (int, float)):
+        raise ValueError("minimum_effect must be a number")
+    minimum_effect = float(minimum_effect)
+    if not math.isfinite(minimum_effect) or not 0.0 < minimum_effect <= 1.0:
+        raise ValueError("minimum_effect must be a finite value in (0, 1]")
+    if isinstance(alpha, bool) or not isinstance(alpha, (int, float)):
+        raise ValueError("alpha must be a number")
+    alpha = float(alpha)
+    if not math.isfinite(alpha) or not 0.0 < alpha <= _MAX_TREND_ALPHA:
+        raise ValueError(f"alpha must be a finite value in (0, {_MAX_TREND_ALPHA}]")
 
     measured = [
         entry
@@ -1323,8 +1425,14 @@ def analyze_gap_trend(
         -math.inf if slope < 0 else math.inf if slope > 0 else 0.0
     )
     p_value = 2.0 * (1.0 - statistics.NormalDist().cdf(abs(z)))
-    ci_low = slope - 1.96 * slope_se
-    ci_high = slope + 1.96 * slope_se
+    # A fixed z=1.96 understates the interval at the 5-run minimum this
+    # protocol allows: with n-2 residual degrees of freedom the correct
+    # critical value is Student-t, which is materially wider for small n
+    # (t≈3.18 at df=3 vs 1.96). Calling that a "95%" interval was a claim
+    # the arithmetic did not support.
+    critical = _student_t_critical_95(max(1, len(gaps) - 2))
+    ci_low = slope - critical * slope_se
+    ci_high = slope + critical * slope_se
 
     def sampled_slope(values: Sequence[float]) -> float | None:
         sample_x_mean = statistics.fmean(range(len(values)))

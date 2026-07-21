@@ -51,7 +51,9 @@ def test_battery_is_challenge_derived_unique_and_seed_sensitive() -> None:
 
 
 def test_graders_discriminate_exact_answers_and_restricted_code() -> None:
-    items = build_battery(seed=5, per_class=3, challenge_nonce=b"c" * 32)
+    items = build_battery(
+        seed=5, per_class=3, challenge_nonce=hashlib.sha256(b"gap-test-nonce").digest()
+    )
     for item in items:
         assert item.grade(_answer_for(item)) is True
         assert item.grade("definitely incorrect") is False

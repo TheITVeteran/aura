@@ -601,7 +601,7 @@ def _reference_artifact(
     *,
     seed: int = 41,
     per_class: int = 2,
-    nonce: bytes = b"r" * 32,
+    nonce: bytes = hashlib.sha256(b"test-challenge-nonce").digest(),
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
     source_identity = _source_identity(trust)
     candidate_model = _model_window("c")
@@ -637,7 +637,7 @@ def _reference_artifact(
         }
     )
     run_id = "1" * 64
-    run_nonce = b"w" * 32
+    run_nonce = hashlib.sha256(b"test-run-nonce-w").digest()
     outputs: list[dict[str, Any]] = []
     workers: list[dict[str, Any]] = []
     supervisors: list[dict[str, Any]] = []
@@ -772,7 +772,7 @@ def _capability_report(
     )
     seen = dict.fromkeys(("math", "reasoning", "coding", "factual"), 0)
     run_id = "3" * 64
-    run_nonce = b"c" * 32
+    run_nonce = hashlib.sha256(b"test-run-nonce-c").digest()
     cursor = 0
 
     async def solver(prompt: str, task_type: str) -> SolverObservation:
@@ -1465,7 +1465,7 @@ def test_trend_requires_repeated_matched_unique_significant_monotonic_runs() -> 
 
 def test_battery_uses_unique_effective_samples_and_commit_reveal_binding() -> None:
     trust = Trust.create()
-    nonce = b"n" * 32
+    nonce = hashlib.sha256(b"test-nonce-n").digest()
     items = build_battery(seed=77, per_class=5, challenge_nonce=nonce)
     assert len(items) == 20
     assert len({item.item_id for item in items}) == 20
