@@ -16,6 +16,7 @@ import logging
 import math
 import random
 import re
+import threading
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
@@ -75,6 +76,10 @@ SUPPORTED_EVIDENCE_CLASSES = frozenset(
     }
 )
 MAX_LEDGER_ENTRIES = 96
+# Upper bound on generated items per task class. The battery is a bounded
+# diagnostic, so an unvalidated per_class is a denial-of-service on the
+# runner rather than a richer measurement.
+MAX_PER_CLASS = 512
 DISQUALIFYING_FALLBACK_MARKERS = (
     "no_candidates",
     "proof_refused_unverified",
@@ -517,8 +522,18 @@ def build_battery(
     per_class: int = 5,
     challenge_nonce: bytes | None = None,
 ) -> list[BatteryItem]:
-    if per_class <= 0:
-        raise ValueError("per_class must be positive")
+    # Complete scalar contract: `per_class <= 0` alone let booleans through
+    # (bool is an int), accepted non-integers that failed later with
+    # incidental errors, never checked the seed type, and enforced no upper
+    # bound until a downstream builder happened to refuse.
+    if isinstance(per_class, bool) or not isinstance(per_class, int):
+        raise ValueError("per_class must be an int")
+    if not 1 <= per_class <= MAX_PER_CLASS:
+        raise ValueError(f"per_class must be in [1, {MAX_PER_CLASS}]")
+    if isinstance(seed, bool) or not isinstance(seed, int):
+        raise ValueError("seed must be an int")
+    if challenge_nonce is not None and not isinstance(challenge_nonce, (bytes, bytearray)):
+        raise ValueError("challenge_nonce must be bytes when supplied")
     nonce, _ = _challenge_bytes(seed, challenge_nonce)
     derived_seed = int.from_bytes(
         hashlib.sha256(str(seed).encode("ascii") + b":" + nonce).digest(),
@@ -907,11 +922,37 @@ class ClassResult:
 
     @property
     def gap(self) -> float | None:
+        """Shortfall against the reference, clamped to [0, 1].
+
+        Clamping means PARITY and SUPERIORITY both read 0.0 — see
+        ``relative_position`` for the signed measure that distinguishes them,
+        and ``reference_uninformative`` for the case where a zero reference
+        score makes "no gap" meaningless rather than good.
+        """
         if self.reference_score is None:
             return None
         if self.reference_score <= 0.0:
+            # The reference solved nothing: there is no baseline to trail, so
+            # a zero gap here is an artifact, not a measurement.
             return 0.0 if self.candidate_score <= 0.0 else None
         return max(0.0, min(1.0, 1.0 - self.candidate_score / self.reference_score))
+
+    @property
+    def reference_uninformative(self) -> bool:
+        """True when the reference score cannot support a gap measurement."""
+        return self.reference_score is not None and self.reference_score <= 0.0
+
+    @property
+    def relative_position(self) -> float | None:
+        """Signed candidate-minus-reference score.
+
+        The clamped ``gap`` erases the difference between merely matching the
+        reference and beating it; a curriculum that targets "weakness" needs
+        to tell those apart.
+        """
+        if self.reference_score is None:
+            return None
+        return self.candidate_score - self.reference_score
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -925,6 +966,12 @@ class ClassResult:
                 else None
             ),
             "gap": round(self.gap, 4) if self.gap is not None else None,
+            "relative_position": (
+                round(self.relative_position, 4)
+                if self.relative_position is not None
+                else None
+            ),
+            "reference_uninformative": self.reference_uninformative,
         }
 
 
@@ -943,8 +990,17 @@ async def run_battery(
     per_class: int = 5,
     reference: ReferenceEvidence | None = None,
     challenge_nonce: bytes | None = None,
-    grade_to_foundry: bool = True,
+    grade_to_foundry: bool = False,
 ) -> dict[str, Any]:
+    """Run the diagnostic battery.
+
+    ``grade_to_foundry`` defaults to FALSE: measurement must not mutate the
+    thing it measures. Writing a verdict per item into the shared verifier
+    foundry during a benchmark contaminates future verifier selection and
+    training with benchmark cases — an unreceipted side effect of merely
+    taking a measurement. Callers that genuinely want the run recorded opt
+    in explicitly.
+    """
     if reference is not None:
         if challenge_nonce is not None and challenge_nonce != reference.challenge_nonce:
             raise ValueError("explicit challenge nonce contradicts reference evidence")
@@ -987,7 +1043,12 @@ async def run_battery(
                 severity="warning",
                 action="battery item errored; retained as an invalid miss",
             )
-            execution_error = f"{type(exc).__name__}: {str(exc)[:240]}"
+            # The exception TYPE is the durable signal. Backend messages can
+            # carry local paths, prompts, model identifiers, or credentials,
+            # and this string is retained in content-addressed evidence blobs
+            # that outlive the run — the full text stays in the degradation
+            # record, which is redacted by the logging sink.
+            execution_error = type(exc).__name__
             observation = SolverObservation(
                 answer="",
                 verified=False,
@@ -1648,7 +1709,21 @@ def validate_capability_report(
         for task_class in _BATTERY_BUILDERS
     }
     observed_classes = normalized.get("classes")
-    if not isinstance(observed_classes, list) or {
+    if not isinstance(observed_classes, list):
+        raise ValueError("capability class scores are not verifier-reproducible")
+    # Cardinality and key uniqueness FIRST: coercing the rows straight into a
+    # dict let a duplicate task_class row overwrite its twin, so extra or
+    # contradictory rows could vanish and the survivor still compare equal.
+    observed_keys = [
+        str(cell.get("task_class")) for cell in observed_classes if isinstance(cell, dict)
+    ]
+    if (
+        len(observed_classes) != len(expected_classes)
+        or len(observed_keys) != len(observed_classes)
+        or len(set(observed_keys)) != len(observed_keys)
+    ):
+        raise ValueError("capability class rows are duplicated or malformed")
+    if {
         str(cell.get("task_class")): cell for cell in observed_classes if isinstance(cell, dict)
     } != expected_classes:
         raise ValueError("capability class scores are not verifier-reproducible")
@@ -1710,6 +1785,11 @@ class GapLedger:
     pruned_through_sha256: str | None = None
 
     def __post_init__(self) -> None:
+        # Serializes the read-previous-head → write-blob → append → prune
+        # sequence. Without it two concurrent adds can both read the same
+        # head, append against it, and BREAK the hash chain the ledger's
+        # integrity rests on.
+        self._lock = threading.RLock()
         if self.evidence_class not in SUPPORTED_EVIDENCE_CLASSES:
             raise ValueError(f"unsupported evidence class: {self.evidence_class}")
         expected = self.evidence_class == CAPABILITY_EVIDENCE_CLASS
@@ -1776,26 +1856,40 @@ class GapLedger:
             if "items" in snapshot and not isinstance(snapshot["items"], list):
                 raise ValueError("non-capability item evidence is malformed")
         evidence_digest = sha256_json(snapshot)
-        evidence_blob_writer(evidence_digest, snapshot)
         indexed_report = dict(snapshot)
         if not self.capability_claim_eligible:
             indexed_report["overall_gap"] = None
-        previous = (
-            self.runs[-1]["entry_sha256"]
-            if self.runs
-            else self.pruned_through_sha256
-        )
-        self.runs.append(
-            make_index_entry(
+        # ATOMIC under the ledger lock: reading the previous head, persisting
+        # the blob, appending the entry, and pruning must not interleave with
+        # another add, and a failure after the append must not leave an index
+        # entry whose evidence is unreadable.
+        with self._lock:
+            previous = (
+                self.runs[-1]["entry_sha256"]
+                if self.runs
+                else self.pruned_through_sha256
+            )
+            # The blob must be durable BEFORE it is indexed: an index entry
+            # pointing at evidence that was never written is an unauditable
+            # claim, and the writer is arbitrary caller-supplied code.
+            evidence_blob_writer(evidence_digest, snapshot)
+            entry = make_index_entry(
                 report=indexed_report,
                 evidence_sha256=evidence_digest,
                 previous_entry_sha256=previous,
             )
-        )
-        while len(self.runs) > self.max_entries:
-            removed = self.runs.pop(0)
-            self.pruned_count += 1
-            self.pruned_through_sha256 = removed["entry_sha256"]
+            self.runs.append(entry)
+            try:
+                while len(self.runs) > self.max_entries:
+                    removed = self.runs.pop(0)
+                    self.pruned_count += 1
+                    self.pruned_through_sha256 = removed["entry_sha256"]
+            except Exception:
+                # Roll the append back so a partial prune cannot leave the
+                # chain inconsistent with its own head.
+                if self.runs and self.runs[-1] is entry:
+                    self.runs.pop()
+                raise
 
     def trend(self) -> dict[str, Any]:
         if not self.capability_claim_eligible:
@@ -1892,6 +1986,16 @@ class GapLedger:
             raise ValueError("gap ledger pruned count is invalid")
         if (pruned_count == 0) != (pruned_through is None):
             raise ValueError("gap ledger prune anchor is inconsistent")
+        # ANTI-ROLLBACK: a ledger that has pruned anything has, by
+        # construction, retained the entries that displaced what it pruned.
+        # Accepting an EMPTY run list beside a positive prune count let an
+        # attacker delete all history and present a syntactically valid
+        # anchor as if it summarized it.
+        stored_runs = d.get("runs")
+        if pruned_count > 0 and (not isinstance(stored_runs, list) or not stored_runs):
+            raise ValueError(
+                "gap ledger claims pruned history but retains no entries"
+            )
         runs = validate_index_chain(
             d.get("runs"),
             max_entries=max_entries,
