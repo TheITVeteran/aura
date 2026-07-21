@@ -46,6 +46,61 @@ REFUTED = "REFUTED"
 
 _MIN_N_FOR_VERDICT = 20  # below this, everything is CONJECTURE
 _BOOTSTRAP_RESAMPLES = 10_000
+# Significance level a slot must clear AFTER correction across every slot
+# tested in the same run.
+_SLOT_FAMILY_ALPHA = 0.05
+# The equal-compute premise for virtual-width claims, defined ONCE so the
+# documented tolerance and the tolerance actually graded cannot diverge.
+_EQUAL_COMPUTE_TOLERANCE = 0.05
+# Workload bounds. Boolean depth expands exponentially and chain families
+# grow linearly in prompt size, so an unvalidated caller dimension is a
+# denial-of-service on the experiment runner.
+_MAX_TASK_DEPTH = 64
+_MAX_PER_CELL = 512
+
+# Reliability weight per verdict tier. A REFUTED or CONJECTURE result must
+# NOT feed a positive reliability signal: the old table scored every
+# non-PROVEN tier 0.6, so a refutation raised a verifier's score almost as
+# much as support did.
+_FOUNDRY_TIER_SCORES = {
+    PROVEN: 0.9,
+    SUPPORTED: 0.7,
+    CONJECTURE: 0.3,
+    REFUTED: 0.0,
+}
+
+
+def _is_answer_shaped(token: str) -> bool:
+    """True for any token that could be a final numeric answer.
+
+    Integers, decimals, signed values, fractions, scientific notation, and
+    thousands-separated numbers all count — anything a model might end on.
+    """
+    body = token.strip().lstrip("+-")
+    if not body:
+        return False
+    if "/" in body:
+        parts = body.split("/")
+        return len(parts) == 2 and all(
+            part.strip().replace(",", "").replace(".", "", 1).isdigit()
+            for part in parts
+            if part.strip()
+        ) and all(part.strip() for part in parts)
+    normalized = body.replace(",", "")
+    if normalized.replace(".", "", 1).isdigit():
+        return True
+    # Scientific notation: 1.5e-3
+    lowered = normalized.lower()
+    if "e" in lowered:
+        mantissa, _, exponent = lowered.partition("e")
+        exponent = exponent.lstrip("+-")
+        return bool(
+            mantissa
+            and exponent
+            and mantissa.replace(".", "", 1).isdigit()
+            and exponent.isdigit()
+        )
+    return False
 
 
 # ── Self-verifying task generators ──────────────────────────────────────
@@ -62,10 +117,22 @@ class Task:
     def verify(self, text: str) -> bool:
         """Exact-answer check on the FINAL claim in the output.
 
-        The last number/token mentioned wins — chain-of-thought before it is
-        fine; hedging two different answers is not."""
-        tokens = [t.strip(".,:;!()[]") for t in str(text or "").split()]
-        candidates = [t for t in tokens if t and (t == self.answer or t.lstrip("-").isdigit())]
+        The last answer-shaped token wins — chain-of-thought before it is
+        fine; hedging two different answers is not.
+
+        "Answer-shaped" must cover EVERY numeric form the model can end on,
+        not just integers. The old filter kept a token only when it equalled
+        the ground truth or was an integer, so a wrong final answer written
+        as a decimal, fraction, or signed value was filtered out and an
+        earlier correct token became the "final" claim — scoring a wrong
+        answer as correct.
+        """
+        tokens = [t.strip(".,:;!?()[]{}") for t in str(text or "").split()]
+        candidates = [
+            token
+            for token in tokens
+            if token and (token == self.answer or _is_answer_shaped(token))
+        ]
         return bool(candidates) and candidates[-1] == self.answer
 
 
@@ -135,6 +202,32 @@ TASK_FAMILIES: dict[str, Callable[[int, int], Task]] = {
 
 
 def task_battery(families: list[str], depths: list[int], per_cell: int, seed: int = 0) -> list[Task]:
+    """Generate the requested battery, with BOUNDED workload dimensions.
+
+    depth and per_cell were used unvalidated: a large boolean depth expands
+    exponentially, a long chain consumes unbounded time, and a zero or
+    negative per_cell silently produced an empty battery that later read as
+    a legitimately-run experiment.
+    """
+    if not isinstance(families, list) or not families:
+        raise ValueError("task_battery requires a non-empty family list")
+    unknown = [family for family in families if family not in TASK_FAMILIES]
+    if unknown:
+        raise ValueError(f"unknown task families: {sorted(unknown)}")
+    if not isinstance(depths, list) or not depths:
+        raise ValueError("task_battery requires a non-empty depth list")
+    for depth in depths:
+        if type(depth) is not int or not 1 <= depth <= _MAX_TASK_DEPTH:
+            raise ValueError(
+                f"task depth must be an int in [1, {_MAX_TASK_DEPTH}]: {depth!r}"
+            )
+    if type(per_cell) is not int or not 1 <= per_cell <= _MAX_PER_CELL:
+        raise ValueError(
+            f"per_cell must be an int in [1, {_MAX_PER_CELL}]: {per_cell!r}"
+        )
+    if type(seed) is not int:
+        raise ValueError("task_battery seed must be an int")
+
     tasks: list[Task] = []
     for family in families:
         gen = TASK_FAMILIES[family]
@@ -412,6 +505,13 @@ def grade_paired_treatment_vs_control(
         "alpha": alpha,
         "minimum_effect": minimum_effect,
         "compute_tolerance": compute_tolerance,
+        # Whether compute parity was actually VALIDATED for this claim.
+        # Several callers legitimately disable it (arms that intentionally
+        # spend different compute), but a claim graded without compute
+        # matching must not read as clean causal attribution — the observed
+        # difference may be bought with extra compute rather than by the
+        # named mechanism.
+        "compute_matched": bool(require_compute),
         "bootstrap_resamples": _BOOTSTRAP_RESAMPLES,
         "families": family_stats,
         "holm_adjusted_p": adjusted,
@@ -479,27 +579,48 @@ def grade_treatment_vs_control(
 ) -> Claim:
     """The conservative comparison grader shared by Experiments 1, 4, 5."""
     wins, losses, small = [], [], []
-    for family, treat in treatment_by_family.items():
+    # Iterate the UNION of families. Walking only the treatment side let a
+    # family that exists in the control but was dropped from the treatment
+    # vanish silently — selective omission that can only improve the claim.
+    for family in sorted(set(treatment_by_family) | set(control_by_family)):
+        treat = treatment_by_family.get(family)
         control = control_by_family.get(family)
-        if control is None or treat.n < _MIN_N_FOR_VERDICT or control.n < _MIN_N_FOR_VERDICT:
+        if (
+            treat is None
+            or control is None
+            or treat.n < _MIN_N_FOR_VERDICT
+            or control.n < _MIN_N_FOR_VERDICT
+        ):
             small.append(family)
             continue
         if treat.lb > control.ub:
             wins.append(family)
         elif treat.accuracy <= control.accuracy:
             losses.append(family)
+    # A family measured for the control but missing from the treatment is
+    # named explicitly so its absence cannot read as absence of evidence.
+    missing_treatment = sorted(set(control_by_family) - set(treatment_by_family))
     evidence = {
         "treatment": {f: a.to_dict() for f, a in treatment_by_family.items()},
         "control": {f: a.to_dict() for f, a in control_by_family.items()},
         "separated_families": wins,
         "not_better_families": losses,
         "underpowered_families": small,
+        "families_missing_from_treatment": missing_treatment,
     }
     evidence["aggregate_only"] = True
     evidence["limitation"] = (
         "aggregate Wilson intervals lack paired task outcomes and cannot earn PROVEN"
     )
-    if wins:
+    if missing_treatment:
+        # Selective omission cannot be rewarded: an incomplete treatment arm
+        # is undecided evidence, whatever the reported families show.
+        tier = CONJECTURE
+        evidence["limitation"] = (
+            "families measured for the control are missing from the treatment; "
+            "the comparison is incomplete"
+        )
+    elif wins:
         tier = SUPPORTED
     elif small and not losses:
         tier = CONJECTURE
@@ -663,15 +784,18 @@ def run_slot_causality(
     intact = ArmResult(name="intact")
     for task in tasks:
         intact.n += 1
-        intact.successes += int(bool(solve_with_ablation(task, None)))
+        # STRICT outcome contract: bool() turned any non-empty string or
+        # object into a success, so a solver returning an error message
+        # scored as a solve.
+        intact.successes += int(_coerce_solver_outcome(solve_with_ablation(task, None))[0])
     per_slot: dict[int, ArmResult] = {}
     paired_claims: dict[int, Claim] = {}
     for slot in slot_indices:
         arm = ArmResult(name=f"ablated_slot_{slot}")
         observations: dict[str, list[PairedObservation]] = {}
         for index, task in enumerate(tasks):
-            ablated_success = bool(solve_with_ablation(task, slot))
-            intact_success = bool(solve_with_ablation(task, None))
+            ablated_success, _ = _coerce_solver_outcome(solve_with_ablation(task, slot))
+            intact_success, _ = _coerce_solver_outcome(solve_with_ablation(task, None))
             arm.n += 1
             arm.successes += int(ablated_success)
             observations.setdefault(task.family, []).append(
@@ -689,10 +813,27 @@ def run_slot_causality(
             observations,
             require_compute=False,
         )
+    # MULTIPLICITY ACROSS SLOTS: each slot was corrected only WITHIN its own
+    # claim, so testing more slots raised the chance that at least one looked
+    # causally necessary — and any single pass promoted the top-level claim.
+    # Correct the per-slot pooled p-values across the slots actually tested.
+    slot_pvalues = {
+        str(slot): float(
+            claim.evidence.get("pooled", {}).get("one_sided_exact_p", 1.0)
+        )
+        for slot, claim in paired_claims.items()
+    }
+    slot_adjusted = _holm_adjust(slot_pvalues) if slot_pvalues else {}
     damaged = [
         slot
         for slot, claim in paired_claims.items()
         if claim.tier in {PROVEN, SUPPORTED}
+        and slot_adjusted.get(str(slot), 1.0) < _SLOT_FAMILY_ALPHA
+    ]
+    uncorrected = [
+        slot
+        for slot, claim in paired_claims.items()
+        if claim.tier in {PROVEN, SUPPORTED} and slot not in damaged
     ]
     tier = CONJECTURE if intact.n < _MIN_N_FOR_VERDICT else (
         SUPPORTED if damaged else REFUTED
@@ -705,7 +846,18 @@ def run_slot_causality(
             experiment="exp3_slot_causality",
             statement="thought slots carry causally necessary intermediate computation",
             tier=tier,
-            evidence={"damaged_slots": damaged, "intact_accuracy": intact.accuracy},
+            evidence={
+                "damaged_slots": damaged,
+                "intact_accuracy": intact.accuracy,
+                "slots_tested": len(paired_claims),
+                "slot_holm_adjusted_p": slot_adjusted,
+                "slots_dropped_by_multiplicity": uncorrected,
+                # The runner ablates a slot and reruns intact separately; it
+                # never restores the SAME episode, so this is necessity
+                # evidence, not proof of restoration.
+                "restoration_tested": False,
+                "compute_matched": False,
+            },
         ).to_dict(),
         "paired_slot_claims": {
             slot: claim.to_dict() for slot, claim in paired_claims.items()
@@ -725,29 +877,36 @@ def run_virtual_width(
     """K latent branches vs K textual samples at (verified-)equal FLOPs.
 
     Both callbacks return (success, layer_apps_spent) so the equal-compute
-    premise is CHECKED, not assumed: a >10% compute mismatch voids the claim."""
+    premise is CHECKED, not assumed: a compute mismatch beyond
+    ``_EQUAL_COMPUTE_TOLERANCE`` voids the claim."""
     treatment: dict[str, ArmResult] = {}
     control: dict[str, ArmResult] = {}
     paired: dict[str, list[PairedObservation]] = {}
     for family, tasks in tasks_by_family.items():
         t_arm, c_arm = ArmResult(name=f"branches_k{k}"), ArmResult(name=f"sampling_k{k}")
         for index, task in enumerate(tasks):
-            ok_b, cost_b = solve_branches(task, k)
-            ok_s, cost_s = solve_sampling(task, k)
+            # STRICT: bool()/int() let non-empty strings become successes and
+            # truncated fractional costs into apparently valid receipts.
+            ok_b, cost_b = _coerce_solver_outcome(solve_branches(task, k))
+            ok_s, cost_s = _coerce_solver_outcome(solve_sampling(task, k))
+            if cost_b is None or cost_s is None:
+                raise ValueError(
+                    "virtual-width arms must report layer-application receipts"
+                )
             t_arm.n += 1
-            t_arm.successes += int(bool(ok_b))
-            t_arm.layer_apps += int(cost_b)
+            t_arm.successes += int(ok_b)
+            t_arm.layer_apps += cost_b
             c_arm.n += 1
-            c_arm.successes += int(bool(ok_s))
-            c_arm.layer_apps += int(cost_s)
+            c_arm.successes += int(ok_s)
+            c_arm.layer_apps += cost_s
             paired.setdefault(family, []).append(
                 PairedObservation(
                     task_id=f"{family}:{task.depth}:{task.seed}:{index}",
                     family=family,
-                    treatment_success=bool(ok_b),
-                    control_success=bool(ok_s),
-                    treatment_layer_apps=int(cost_b),
-                    control_layer_apps=int(cost_s),
+                    treatment_success=ok_b,
+                    control_success=ok_s,
+                    treatment_layer_apps=cost_b,
+                    control_layer_apps=cost_s,
                 )
             )
         treatment[family], control[family] = t_arm, c_arm
@@ -755,6 +914,10 @@ def run_virtual_width(
         "exp4_virtual_width",
         "latent branches beat equal-FLOP self-consistency sampling",
         paired,
+        # ONE source of truth for the equal-compute premise: the docstring
+        # promised 10% while the grader silently applied its 5% default, so
+        # reports and operator expectations disagreed with actual behavior.
+        compute_tolerance=_EQUAL_COMPUTE_TOLERANCE,
     )
     return {
         "treatment": {f: a.to_dict() for f, a in treatment.items()},
@@ -767,14 +930,24 @@ def extract_final_numeric_claim(text: str) -> str:
     """The candidate's final numeric claim, by the SAME rule Task.verify uses.
 
     Self-consistency voting needs answer extraction that cannot peek at the
-    ground truth: the last numeric token wins, hedging loses."""
-    tokens = [t.strip(".,:;!()[]") for t in str(text or "").split()]
-    numeric = [t for t in tokens if t and t.lstrip("-").isdigit()]
+    ground truth: the last answer-shaped token wins, hedging loses. This
+    shares ``_is_answer_shaped`` with ``Task.verify`` so the two cannot
+    drift — an extractor that only saw integers while the verifier accepted
+    decimals would vote on a different answer than the one being graded.
+    """
+    tokens = [t.strip(".,:;!?()[]{}") for t in str(text or "").split()]
+    numeric = [token for token in tokens if token and _is_answer_shaped(token)]
     return numeric[-1] if numeric else ""
 
 
 def majority_answer(answers: list[str]) -> str:
-    """Most common non-empty extracted answer; deterministic tie-break."""
+    """The MAJORITY answer, or "" when the sample set does not have one.
+
+    A tie is the absence of a majority, not a decision. Breaking ties
+    lexicographically manufactured a definite answer from an undecided
+    sample — which could be graded correct by luck of alphabetical order and
+    inflate the self-consistency baseline this helper feeds.
+    """
     filtered = [answer for answer in answers if answer]
     if not filtered:
         return ""
@@ -782,7 +955,8 @@ def majority_answer(answers: list[str]) -> str:
     for answer in filtered:
         counts[answer] = counts.get(answer, 0) + 1
     top = max(counts.values())
-    return sorted(answer for answer, count in counts.items() if count == top)[0]
+    winners = [answer for answer, count in counts.items() if count == top]
+    return winners[0] if len(winners) == 1 else ""
 
 
 # ── Factorial ablations: which mechanism carries any gain ───────────────
@@ -972,20 +1146,66 @@ def frontier_comparison_protocol() -> dict[str, Any]:
 # ── Foundry recording ───────────────────────────────────────────────────
 
 
+def _record_foundry_refusal(reason: str) -> None:
+    """A refused verdict is a visible event, never a silent drop."""
+    from core.runtime.errors import record_degradation
+
+    record_degradation(
+        "latent_cortex",
+        ValueError(f"foundry_claim_refused:{reason}"),
+        severity="warning",
+        action="refused to record an unvalidated claim into the reliability ledger",
+    )
+
+
 def record_claim_to_foundry(claim: Claim | dict[str, Any], domain: str) -> bool:
-    """Log an experiment verdict into the Verifier Foundry reliability ledger."""
-    body = claim.to_dict() if isinstance(claim, Claim) else dict(claim)
+    """Log an experiment verdict into the Verifier Foundry reliability ledger.
+
+    ADMISSION: only a verdict this module actually graded may enter the
+    reliability ledger. The function previously accepted any mapping, trusted
+    a caller-supplied tier string, and submitted ``checked=True``
+    unconditionally — so any caller could inject a SUPPORTED/PROVEN verdict
+    and raise a verifier's measured reliability without running anything.
+    """
+    if isinstance(claim, Claim):
+        body = claim.to_dict()
+    elif isinstance(claim, dict):
+        body = dict(claim)
+    else:
+        _record_foundry_refusal(f"claim_type_invalid:{type(claim).__name__}")
+        return False
+
+    tier = body.get("tier")
+    if tier not in _FOUNDRY_TIER_SCORES:
+        _record_foundry_refusal(f"unknown_tier:{str(tier)[:40]}")
+        return False
+    experiment = str(body.get("experiment") or "").strip()
+    statement = str(body.get("statement") or "").strip()
+    if not experiment or not statement:
+        _record_foundry_refusal("claim_missing_experiment_or_statement")
+        return False
+    # A verdict without graded evidence is not a measurement. ``checked``
+    # reports whether this claim was actually adjudicated against data.
+    evidence = body.get("evidence")
+    checked = isinstance(evidence, dict) and bool(evidence)
+    if not checked:
+        _record_foundry_refusal(f"claim_without_evidence:{experiment[:60]}")
+        return False
+    if not isinstance(domain, str) or not domain.strip():
+        _record_foundry_refusal("domain_invalid")
+        return False
+
     try:
         from core.brain.verifiers.foundry import get_verifier_foundry
 
         foundry = get_verifier_foundry()
         verdict_id = foundry.record_verdict(
-            verifier=f"latent_cortex.{body.get('experiment', 'unknown')}",
+            verifier=f"latent_cortex.{experiment}",
             domain=domain,
-            hard_pass=body.get("tier") in (PROVEN, SUPPORTED),
-            score=0.9 if body.get("tier") == PROVEN else 0.6,
-            checked=True,
-            meta={"statement": body.get("statement"), "tier": body.get("tier")},
+            hard_pass=tier in (PROVEN, SUPPORTED),
+            score=_FOUNDRY_TIER_SCORES[tier],
+            checked=checked,
+            meta={"statement": statement, "tier": tier},
         )
         return bool(verdict_id)
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:

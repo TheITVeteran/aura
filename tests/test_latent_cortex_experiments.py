@@ -402,14 +402,25 @@ def test_extract_final_numeric_claim_uses_last_claim():
     assert extract_final_numeric_claim("no numbers here") == ""
 
 
-def test_majority_answer_votes_and_breaks_ties_deterministically():
+def test_majority_answer_reports_no_majority_instead_of_breaking_ties():
+    """CP126: a tie is the ABSENCE of a majority, not a decision.
+
+    This test previously pinned the defect — it asserted the lexicographic
+    winner. Manufacturing a definite answer from an undecided sample means a
+    tie can be graded correct by luck of alphabetical order, inflating the
+    self-consistency baseline this helper feeds.
+    """
     from core.brain.llm.latent_cortex.experiments import majority_answer
 
     assert majority_answer(["5", "5", "7"]) == "5"
     assert majority_answer(["", "", "9"]) == "9"
     assert majority_answer([]) == ""
-    # Tie: lexicographic winner, stable across runs.
-    assert majority_answer(["3", "7"]) == "3"
+    # Tie ⇒ no majority, regardless of ordering.
+    assert majority_answer(["3", "7"]) == ""
+    assert majority_answer(["7", "3"]) == ""
+    assert majority_answer(["3", "3", "7", "7"]) == ""
+    # A genuine plurality still wins.
+    assert majority_answer(["3", "3", "7"]) == "3"
 
 
 # ── Factorial ablations: mechanism attribution ───────────────────────────
