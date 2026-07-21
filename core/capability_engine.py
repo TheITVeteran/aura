@@ -65,7 +65,6 @@ from core.runtime.service_access import (  # noqa: E402
     resolve_edi,
     resolve_homeostatic_coupling,
     resolve_metabolic_monitor,
-    resolve_state_repository,
 )
 from core.skills.catalog_policy import resolve_skill_policy  # noqa: E402
 from core.utils.intent_normalization import normalize_memory_intent_text  # noqa: E402
@@ -3480,13 +3479,6 @@ class CapabilityEngine(AuraBaseModule):
             return "", False
 
         metabolism = resolve_metabolic_monitor(default=None)
-        repo = resolve_state_repository(default=None)
-        current_state = getattr(repo, "_current", None) if repo is not None else None
-        phi = (
-            float(getattr(current_state, "phi", 0.0) or 0.0)
-            if current_state is not None
-            else 0.0
-        )
         snapshot = metabolism.get_current_metabolism() if metabolism else None
         health_score = (
             float(getattr(snapshot, "health_score", 1.0) or 1.0) if snapshot else 1.0
@@ -3508,8 +3500,6 @@ class CapabilityEngine(AuraBaseModule):
                 f"cpu={cpu_percent:.1f}:ram={ram_percent:.1f}",
                 unbounded,
             )
-        if phi and phi < 0.18 and meta.metabolic_cost >= 2:
-            return f"phi_fragility:{phi:.3f}", unbounded
         return "", unbounded
 
     # Skill name aliases — maps legacy/alternate names to actual registered skill names
@@ -4094,13 +4084,6 @@ class CapabilityEngine(AuraBaseModule):
             # 2a. Metabolic self-preservation guard
             try:
                 metabolism = resolve_metabolic_monitor(default=None)
-                repo = resolve_state_repository(default=None)
-                current_state = getattr(repo, "_current", None) if repo is not None else None
-                phi = (
-                    float(getattr(current_state, "phi", 0.0) or 0.0)
-                    if current_state is not None
-                    else 0.0
-                )
                 snapshot = metabolism.get_current_metabolism() if metabolism else None
                 health_score = (
                     float(getattr(snapshot, "health_score", 1.0) or 1.0) if snapshot else 1.0
@@ -4129,9 +4112,6 @@ class CapabilityEngine(AuraBaseModule):
                             f"substrate_risk:health={health_score:.2f}:"
                             f"cpu={cpu_percent:.1f}:ram={ram_percent:.1f}"
                         )
-                    elif phi and phi < 0.18 and meta.metabolic_cost >= 2:
-                        should_block = True
-                        reason = f"phi_fragility:{phi:.3f}"
                 if should_block:
                     try:
                         from core.health.degraded_events import record_degraded_event

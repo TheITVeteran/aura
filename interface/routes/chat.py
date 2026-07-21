@@ -12847,6 +12847,31 @@ async def _stabilize_user_facing_reply(
         logger.debug("Conversation reliability assessment unavailable in stabilizer: %s", exc)
         live_reply_assessment = None
     assessment_retryable = _reply_assessment_requires_repair(live_reply_assessment)
+    social_grounding_reasons = {
+        "ungrounded_person_address",
+        "ungrounded_person_narrative",
+        "unsupported_deployment_routing_claim",
+    }
+    if set(getattr(live_reply_assessment, "reasons", ()) or ()) & social_grounding_reasons:
+        try:
+            from core.conversation.response_reliability import grounded_social_repair_reply
+
+            social_repair = grounded_social_repair_reply(user_message)
+            if social_repair:
+                social_assessment = assess_user_facing_reply(
+                    user_message,
+                    social_repair,
+                    recent_user_messages=recent_user_messages,
+                )
+                if not _reply_assessment_requires_repair(social_assessment):
+                    logger.info(
+                        "Stabilizer replaced an ungrounded social/deployment draft "
+                        "with a bounded greeting."
+                    )
+                    return social_repair
+        except _CHAT_RECOVERABLE_ERRORS as exc:
+            record_degradation("chat", exc)
+            logger.debug("Grounded social repair skipped: %s", exc)
     self_condition_reasons = {
         "host_telemetry_substituted_for_self_condition",
         "low_signal_self_condition_reply",
@@ -12891,6 +12916,7 @@ async def _stabilize_user_facing_reply(
         "unsupported_operational_status_overclaim",
         "unsupported_runtime_telemetry_inference",
         "unsupported_tool_readiness_claim",
+        "unsupported_deployment_routing_claim",
     }:
         try:
             from core.conversation.response_reliability import grounded_operational_status_reply

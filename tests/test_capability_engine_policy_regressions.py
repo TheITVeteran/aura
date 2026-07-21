@@ -142,6 +142,40 @@ def test_autonomous_web_search_is_safe_read_only_research_with_user_benefit():
     assert review.verdict == "for_user"
 
 
+def test_low_phi_telemetry_does_not_block_bounded_capability(monkeypatch):
+    ServiceContainer.clear()
+    engine = _engine_with_skill("computer_use", metabolic_cost=2)
+    meta = engine.skills["computer_use"]
+    ServiceContainer.register_instance(
+        "state_repository",
+        SimpleNamespace(_current=SimpleNamespace(phi=0.001)),
+        required=False,
+    )
+    monkeypatch.setattr(
+        "core.capability_engine.resolve_metabolic_monitor",
+        lambda default=None: SimpleNamespace(
+            get_current_metabolism=lambda: SimpleNamespace(
+                health_score=0.95,
+                cpu_percent=15.0,
+                ram_percent=40.0,
+            )
+        ),
+    )
+
+    try:
+        reason, unbounded = engine._self_preservation_block_reason(
+            meta,
+            "computer_use",
+            {"task": "Open Notes and type Hello"},
+            {"origin": "desktop_ui", "foreground_request": True},
+        )
+    finally:
+        ServiceContainer.clear()
+
+    assert reason == ""
+    assert unbounded is False
+
+
 def test_autonomous_web_search_rejects_unsafe_research_objectives():
     engine = _engine_with_skill("web_search")
     meta = engine.skills["web_search"]
@@ -1063,10 +1097,6 @@ async def test_high_cost_tool_blocks_when_self_preservation_check_fails(monkeypa
         return (_ for _ in ()).throw(RuntimeError("metabolism offline"))
 
     monkeypatch.setattr("core.capability_engine.resolve_metabolic_monitor", _metabolism_down)
-    monkeypatch.setattr(
-        "core.capability_engine.resolve_state_repository", lambda default=None: None
-    )
-
     try:
         result = await CapabilityEngine.execute(
             engine,

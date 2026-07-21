@@ -1262,6 +1262,40 @@ _TOOL_READINESS_BOUNDARY_RE = re.compile(
     r")\b",
     re.IGNORECASE | re.DOTALL,
 )
+_DEPLOYMENT_ROUTING_CLAIM_MARKERS = (
+    "demo slot",
+    "live path slot",
+    "server tier",
+    "demo priority",
+    "apply for live path",
+    "roll up to",
+    "routed to",
+)
+
+
+def _has_unsupported_deployment_routing_claim(
+    user_message: Any,
+    reply_text: Any,
+) -> bool:
+    """Reject invented deployment tiers unless the user supplied that claim."""
+
+    prompt = _normalize(user_message)
+    reply = _normalize(reply_text)
+    claimed = {
+        marker for marker in _DEPLOYMENT_ROUTING_CLAIM_MARKERS if marker in reply
+    }
+    if not claimed:
+        return False
+    return any(marker not in prompt for marker in claimed)
+
+
+def grounded_social_repair_reply(user_message: Any) -> str:
+    """Return a truthful immediate repair for a corrupted greeting turn."""
+
+    prompt = _normalize(user_message)
+    if re.search(r"\b(?:say|tell\s+(?:me|us)\s+)?hello\b", prompt):
+        return "Hello. I'm Aura. I'm here with you."
+    return ""
 _EXACT_REPLY_COMMAND_RE = re.compile(
     r"\b(?:say|reply|respond|answer|return|print)\s+exactly\s*:?\s*",
     re.IGNORECASE,
@@ -4215,8 +4249,9 @@ _RELATIONAL_FAMILIARITY_RES = (
 )
 # "Aaron, what's the plan?" — vocative address followed by engagement.
 _VOCATIVE_ADDRESS_RE = re.compile(
-    r"(?:^|[.!?]\s+)([A-Z][a-z]{2,}),\s+"
-    r"(?:what|who|where|when|why|how|are|is|do|does|can|could|will|would|let'?s|we|you|it)\b"
+    r"(?:^|[.!?]\s+)@?([A-Z][a-z]{2,}),\s+"
+    r"(?:i(?:['’]m|\s+am)|my|what|who|where|when|why|how|are|is|do|does|can|could|will|would|let'?s|we|you|it)\b",
+    re.IGNORECASE,
 )
 
 
@@ -4788,6 +4823,8 @@ def _model_text_integrity_reasons(
         reasons.append("format_meta_artifact")
     if user_facing and _SEARCH_META_ARTIFACT_RE.search(raw):
         reasons.append("search_meta_artifact")
+    if user_facing and _has_unsupported_deployment_routing_claim(prompt, raw):
+        reasons.append("unsupported_deployment_routing_claim")
     if user_facing:
         reasons.extend(_operational_status_overclaim_reasons(prompt, raw))
     if _CORRUPTED_SOCIAL_FRAGMENT_RE.search(raw) and "lol" not in _normalize(prompt):
@@ -4859,6 +4896,7 @@ def assess_model_text_integrity(
         "unsupported_operational_status_overclaim",
         "unsupported_runtime_telemetry_inference",
         "unsupported_tool_readiness_claim",
+        "unsupported_deployment_routing_claim",
         "generic_assistant_language",
         "incomplete_code_response",
     }
@@ -4912,6 +4950,7 @@ def assess_user_facing_reply(
             "unsupported_operational_status_overclaim",
             "unsupported_runtime_telemetry_inference",
             "unsupported_tool_readiness_claim",
+            "unsupported_deployment_routing_claim",
             "generic_assistant_language",
             "incomplete_code_response",
         }
@@ -5090,6 +5129,7 @@ def assess_user_facing_reply(
         "unsupported_operational_status_overclaim",
         "unsupported_runtime_telemetry_inference",
         "unsupported_tool_readiness_claim",
+        "unsupported_deployment_routing_claim",
         "missing_self_claim_evidence_boundary",
         "missing_requested_exact_reply",
         "missing_requested_objective_facets",

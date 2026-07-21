@@ -1778,6 +1778,34 @@ class TestIPCWriterThread(unittest.TestCase):
 
 
 class TestMLXWorkerProgress(unittest.TestCase):
+    def test_worker_stall_alarm_respects_active_32b_first_token_budget(self):
+        client = MLXLocalClient(model_path=QWEN32_MODEL)
+        client._current_request_id = "demo-request"
+        client._current_first_token_at = 0.0
+        client._current_first_token_hard_ceiling_s = 120.0
+
+        stalled, budget = client._confirm_worker_reported_loop_stall(
+            {
+                "request_id": "demo-request",
+                "job_age_s": 30.461,
+                "loop_stalled": True,
+            }
+        )
+
+        self.assertFalse(stalled)
+        self.assertEqual(budget, 120.0)
+
+        stalled, budget = client._confirm_worker_reported_loop_stall(
+            {
+                "request_id": "demo-request",
+                "job_age_s": 120.1,
+                "loop_stalled": True,
+            }
+        )
+
+        self.assertTrue(stalled)
+        self.assertEqual(budget, 120.0)
+
     def test_prompt_cache_budget_disables_deep_solver_retention(self):
         self.assertEqual(_prompt_cache_entry_budget_for_model("/models/Qwen2.5-72B-Instruct-4bit"), 0)
         self.assertEqual(_prompt_cache_entry_budget_for_model("/models/Qwen2.5-32B-Instruct-8bit"), 2)

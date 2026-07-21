@@ -488,6 +488,36 @@ def test_reliability_contract_rejects_live_operational_overclaim():
     assert "unsupported_runtime_telemetry_inference" in assessment.reasons
 
 
+def test_reliability_contract_rejects_fabricated_demo_identity_and_routing():
+    from core.conversation.response_reliability import (
+        assess_user_facing_reply,
+        grounded_social_repair_reply,
+    )
+
+    assessment = assess_user_facing_reply(
+        "Me. Bryan. Hey! You're in a demo right now. Say hello",
+        (
+            "@James, I'm mentioned in the demo but my responses roll up to James "
+            "because he uses the live path slots. Demo slots are reserved, and "
+            "which Aura you get depends on the server tier you're routed to."
+        ),
+    )
+
+    assert assessment.retryable
+    assert assessment.hard_failure
+    assert "ungrounded_person_address" in assessment.reasons
+    assert "unsupported_deployment_routing_claim" in assessment.reasons
+
+    repaired = grounded_social_repair_reply(
+        "Me. Bryan. Hey! You're in a demo right now. Say hello"
+    )
+    assert repaired == "Hello. I'm Aura. I'm here with you."
+    assert assess_user_facing_reply(
+        "Me. Bryan. Hey! You're in a demo right now. Say hello",
+        repaired,
+    ).ok
+
+
 def test_final_stabilizer_bounds_live_operational_overclaim():
     from core.conversation.response_reliability import assess_user_facing_reply
     from core.synthesis import stabilize_user_facing_response

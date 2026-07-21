@@ -3088,6 +3088,43 @@ class MLXLocalClient:
             return (40.0 if foreground_request else 45.0) * stretch
         return 8.0
 
+    def _confirm_worker_reported_loop_stall(
+        self,
+        payload: dict[str, Any],
+    ) -> tuple[bool, float]:
+        """Apply request-aware budgets to the worker's coarse progress alarm.
+
+        The child only knows that no token activity has occurred for 30s. On a
+        resident 32B request that is normal during prompt evaluation, so the
+        parent confirms the signal against the request's first-token or
+        inter-token budget before recording a runtime fault.
+        """
+
+        request_id = str(payload.get("request_id") or "")
+        current_request_id = str(getattr(self, "_current_request_id", "") or "")
+        if not request_id or not current_request_id or request_id != current_request_id:
+            return False, 0.0
+        try:
+            age_s = max(0.0, float(payload.get("job_age_s") or 0.0))
+        except (TypeError, ValueError):
+            return False, 0.0
+
+        first_token_at = float(getattr(self, "_current_first_token_at", 0.0) or 0.0)
+        if first_token_at <= 0.0:
+            threshold_s = float(
+                getattr(self, "_current_first_token_hard_ceiling_s", 0.0) or 0.0
+            )
+            if threshold_s <= 0.0:
+                threshold_s = self._first_token_hard_ceiling(
+                    foreground_request=self._is_primary_or_deep_lane(),
+                )
+        else:
+            threshold_s = self._token_stall_after(
+                foreground_request=self._is_primary_or_deep_lane(),
+            )
+        threshold_s = max(30.0, float(threshold_s))
+        return age_s > threshold_s, threshold_s
+
     def _warmup_timeout(self) -> float:
         # [STABILITY v56] Raised from 75.0s → 180.0s. 32B models on M5
         # regularly take 120-150s to cold-load and compile Metal shaders.
@@ -5183,19 +5220,21 @@ class MLXLocalClient:
                     # wedged decode loop is visible BEFORE the worker-side
                     # watchdog (360s) or a caller timeout fires. Surface it
                     # once per stall episode; liveness semantics stay as-is.
-                    stalled = bool(res.get("loop_stalled"))
-                    if stalled and not self._worker_loop_stall_reported:
+                    worker_reported_stall = bool(res.get("loop_stalled"))
+                    stalled, stall_threshold_s = self._confirm_worker_reported_loop_stall(res)
+                    if worker_reported_stall and stalled and not self._worker_loop_stall_reported:
                         self._worker_loop_stall_reported = True
                         _record_mlx_degradation(
                             RuntimeError(
                                 "worker_loop_stalled:"
                                 f"request={res.get('request_id') or '<unknown>'}:"
-                                f"age_s={res.get('job_age_s')}"
+                                f"age_s={res.get('job_age_s')}:"
+                                f"budget_s={stall_threshold_s:.1f}"
                             ),
-                            action="worker heartbeat reports an active job without token progress",
+                            action="worker heartbeat exceeded the active request's progress budget",
                             severity="error",
                         )
-                    elif not stalled:
+                    elif not worker_reported_stall or not stalled:
                         self._worker_loop_stall_reported = False
                     if bool(res.get("ipc_broken")) and not self._worker_ipc_broken_reported:
                         self._worker_ipc_broken_reported = True
