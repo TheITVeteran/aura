@@ -676,8 +676,11 @@ class MindTick:
                         classification="background_degraded",
                         context={"stage": "state_load", "tick_count": self._tick_count},
                     )
+                    # Liveness is preserved by the loop-progress marker (which
+                    # is_alive() reads via max(success, progress)); do NOT also
+                    # advance _last_successful_tick_at — no tick processed state,
+                    # so the "completed tick" marker must stay honest.
                     self._mark_loop_progress("state_load_timeout_yield")
-                    self._last_successful_tick_at = time.time()  # yield IS rhythm progress
                     sleep_time_override = 5.0
                     continue
                 self._mark_loop_progress("state_loaded" if state else "state_missing")
@@ -792,8 +795,9 @@ class MindTick:
                             classification="background_degraded",
                             context={"stage": "llm_health", "tick_count": self._tick_count},
                         )
+                        # Loop-progress marker keeps the rhythm alive without
+                        # fabricating a completed tick (is_alive reads both).
                         self._mark_loop_progress("llm_health_timeout_yield")
-                        self._last_successful_tick_at = time.time()
                     except _MIND_BOUNDARY_ERRORS as exc:
                         _record_mind_degradation(exc)
                         logger.debug("MindTick: LLM health recovery check failed: %s", exc)
@@ -1085,14 +1089,15 @@ class MindTick:
                                 )
                             # A correct yield to a contended/headroom-deferred model
                             # IS forward progress of the organism rhythm — record it
-                            # as a successful tick. Otherwise a mind that is merely
-                            # memory-backpressured (its background LLM lane deferred)
-                            # never advances _last_successful_tick_at, is falsely
-                            # declared dead, and the launcher respawns a duplicate 32B
-                            # → memory doubling → a self-sustaining respawn loop
-                            # (observed 2026-07-06). Kernel death itself is caught by
-                            # the separate REQUIRED kernel probe, not here.
-                            self._last_successful_tick_at = time.time()
+                            # via the loop-progress marker (which is_alive() reads
+                            # alongside the completed-tick marker). This preserves
+                            # the false-death protection from the 2026-07-06 respawn
+                            # cascade WITHOUT fabricating a completed tick: a mind
+                            # that is merely memory-backpressured stays alive through
+                            # loop progress, while _last_successful_tick_at keeps its
+                            # honest "a tick actually processed state" meaning.
+                            # Kernel death itself is caught by the separate REQUIRED
+                            # kernel probe, not here.
                             self._consecutive_loop_failures = 0
                             self._mark_loop_progress("kernel_tick_timeout_yield")
                             return current_state
@@ -1233,13 +1238,18 @@ class MindTick:
                     from core.event_bus import get_event_bus
                     bus = get_event_bus()
                     try:
+                        # metadata.duration is not assigned until the end of the
+                        # tick (after this publish), so reading it here always
+                        # emitted a stale 0.0. Publish the elapsed-so-far
+                        # measured from this tick's start instead.
+                        _elapsed_so_far = asyncio.get_running_loop().time() - start_time
                         # Wrap in a 5.0s timeout to prevent Redis stalls from blocking the tick.
                         await asyncio.wait_for(bus.publish("aura/events/mind_tick", {
                             "tick_id": self._tick_count,
                             "mode": self.mode.value,
                             "phases": metadata.phases_executed,
                             "durations": metadata.phase_durations,
-                            "total_duration": metadata.duration,
+                            "total_duration": _elapsed_so_far,
                             "timestamp": time.time()
                         }), timeout=5.0)
                         # Reset on success
@@ -1316,28 +1326,33 @@ class MindTick:
                             )
                             logger.warning("⚠️ MindTick: Prediction evaluation failed: %s", exc)
                             error = None
-                        if error is None:
-                            continue
-                        logger.info("💥 MindTick: Surprise signal: %s", f"{error.surprise_signal:.2f}")
-                        # Feed surprise into affect update (arousal/curiosity)
-                        current_state.affect.arousal = min(1.0, current_state.affect.arousal + error.surprise_signal * 0.2)
-                        current_state.affect.curiosity = min(1.0, current_state.affect.curiosity + error.surprise_signal * 0.1)
+                        # A missing error only means there is no surprise to
+                        # process — it must NOT `continue` out of the tick,
+                        # which skipped goal evaluation, resource stakes, the
+                        # state commit, and the heartbeat, losing already-
+                        # computed state changes. Guard the surprise block and
+                        # let the rest of the tick run.
+                        if error is not None:
+                            logger.info("💥 MindTick: Surprise signal: %s", f"{error.surprise_signal:.2f}")
+                            # Feed surprise into affect update (arousal/curiosity)
+                            current_state.affect.arousal = min(1.0, current_state.affect.arousal + error.surprise_signal * 0.2)
+                            current_state.affect.curiosity = min(1.0, current_state.affect.curiosity + error.surprise_signal * 0.1)
 
-                        # Disconnected logic re-attached: When surprise is high, log the causal link
-                        try:
-                            cwm = ServiceContainer.get("causal_world_model", default=None)
-                            if cwm and error.surprise_signal > 0.4:
-                                safe_prediction = str(prediction.content).strip()[:30] if hasattr(prediction, 'content') else "unknown"
-                                safe_actual = str(actual).strip()[:30]
-                                cwm.add_observation(
-                                    source=safe_prediction,
-                                    target=safe_actual,
-                                    correlation=error.surprise_signal
-                                )
-                                logger.info("🌐 CausalWorldModel learned new observation from surprise signal.")
-                        except _MIND_BOUNDARY_ERRORS as cwm_e:
-                            _record_mind_degradation(cwm_e)
-                            logger.error("Failed to record causal observation in MindTick: %s", cwm_e)
+                            # Disconnected logic re-attached: When surprise is high, log the causal link
+                            try:
+                                cwm = ServiceContainer.get("causal_world_model", default=None)
+                                if cwm and error.surprise_signal > 0.4:
+                                    safe_prediction = str(prediction.content).strip()[:30] if hasattr(prediction, 'content') else "unknown"
+                                    safe_actual = str(actual).strip()[:30]
+                                    cwm.add_observation(
+                                        source=safe_prediction,
+                                        target=safe_actual,
+                                        correlation=error.surprise_signal
+                                    )
+                                    logger.info("🌐 CausalWorldModel learned new observation from surprise signal.")
+                            except _MIND_BOUNDARY_ERRORS as cwm_e:
+                                _record_mind_degradation(cwm_e)
+                                logger.error("Failed to record causal observation in MindTick: %s", cwm_e)
 
                 # 5.5 Goal evaluation — check for goal completion every ~30 ticks
                 if self._tick_count % 30 == 0:
