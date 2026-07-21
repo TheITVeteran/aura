@@ -173,8 +173,10 @@ def main() -> int:
     parser.add_argument("--calibrate-samples", type=int, default=2)
     parser.add_argument("--calibrate-group", type=int, default=4,
                         help="completions per calibration probe (cheaper than the train group)")
-    parser.add_argument("--calibrate-tokens", type=int, default=160,
-                        help="max tokens per calibration completion (shorter than training)")
+    parser.add_argument("--calibrate-tokens", type=int, default=0,
+                        help="max tokens per calibration probe; 0 = match --max-tokens "
+                             "(reasoning tasks need room to finish, or the probe "
+                             "underestimates pass rate and mislabels learnable cells)")
     parser.add_argument("--calibrate-minutes", type=float, default=15.0,
                         help="wall-clock cap on the whole calibration phase")
     parser.add_argument("--cot", action="store_true",
@@ -317,7 +319,11 @@ def main() -> int:
             # "fail fast" not fast at all. Here: a small group, short
             # completions, per-cell progress, and a wall-clock cap.
             cal_group = min(config.group_size, args.calibrate_group)
-            cal_tokens = min(args.max_tokens, args.calibrate_tokens)
+            # Probe with the SAME token budget as training: a shorter probe
+            # cuts off the model's reasoning and measures "can it answer
+            # briefly", not "can it answer" -- which reported code@6 as 0.00
+            # when it is really ~0.68, and would falsely abort.
+            cal_tokens = args.calibrate_tokens if args.calibrate_tokens > 0 else args.max_tokens
             cal_deadline = time.time() + args.calibrate_minutes * 60.0
             cells_sorted = sorted(by_cell.keys())
             print(
