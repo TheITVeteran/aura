@@ -34,12 +34,18 @@ What this run refuses to do:
 from __future__ import annotations
 
 import argparse
-import json
+import hashlib
+import random
+import signal
 import sys
 import time
+from collections.abc import Mapping, Sequence
+from contextlib import nullcontext
 from pathlib import Path
+from typing import Any
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
 
 from core.learning.grpo import (  # noqa: E402
     GRPOConfig,
@@ -47,15 +53,31 @@ from core.learning.grpo import (  # noqa: E402
     group_advantages,
     grpo_loss,
     reward_from_verdict,
-    sequence_logprob,
+    sequence_token_logprobs,
+)
+from core.learning.grpo_training_state import (  # noqa: E402
+    GRPOCheckpointError,
+    canonical_json_bytes,
+    load_grpo_checkpoint,
+    save_grpo_checkpoint,
+    sha256_bytes,
 )
 from core.learning.verifiable_tasks import (  # noqa: E402
     disjoint_split,
     scaling_report,
 )
+from core.runtime.atomic_writer import (  # noqa: E402
+    atomic_write_bytes,
+    atomic_write_bytes_if_absent,
+    ensure_private_directory,
+    interprocess_file_lock,
+)
 from core.runtime.mlx_memory_guard import mlx_memory_envelope  # noqa: E402
 
-GRPO_TRAIN_SCHEMA = "aura.grpo_training.v1"
+GRPO_TRAIN_SCHEMA = "aura.grpo_training.v2"
+GRPO_DATASET_SCHEMA = "aura.grpo_dataset.v1"
+GRPO_PROTOCOL_SCHEMA = "aura.grpo_protocol.v1"
+RNG_STRATEGY = "stateless_sha256_step_seeded_v1"
 
 
 # Set by main() from --cot. Reasoning room is the fix the CP238 finding
@@ -63,6 +85,111 @@ GRPO_TRAIN_SCHEMA = "aura.grpo_training.v1"
 # FINAL_ANSWER format denied it chain-of-thought. This invites the
 # token-level deliberation that actually makes models reason.
 _COT_PREAMBLE = ""
+
+
+def _stable_seed(base_seed: int, *parts: Any) -> int:
+    """Process-independent seed for one named training decision."""
+    payload = canonical_json_bytes([int(base_seed), *parts])
+    return int.from_bytes(hashlib.sha256(payload).digest()[:4], "big")
+
+
+def _source_binding(path: Path) -> dict[str, Any]:
+    resolved = path.resolve(strict=True)
+    before = resolved.stat()
+    payload = resolved.read_bytes()
+    after = resolved.stat()
+    before_identity = (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+    after_identity = (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+    if before_identity != after_identity:
+        raise RuntimeError(f"training source changed while hashing: {resolved}")
+    return {
+        "path": str(resolved.relative_to(REPO_ROOT)),
+        "sha256": sha256_bytes(payload),
+        "size_bytes": len(payload),
+    }
+
+
+def _task_record(task: Any) -> dict[str, Any]:
+    return {
+        "task_id": task.task_id,
+        "prompt": task.prompt,
+        "domain": task.domain,
+        "depth": task.depth,
+        "knowledge": task.knowledge,
+        "grader": task.grader,
+        "expected": task.expected,
+        "metadata": task.metadata,
+    }
+
+
+def _dataset_payload(
+    train_tasks: Sequence[Any], holdout_tasks: Sequence[Any], *, seed: int
+) -> dict[str, Any]:
+    return {
+        "schema": GRPO_DATASET_SCHEMA,
+        "seed": int(seed),
+        "train": [_task_record(task) for task in train_tasks],
+        "holdout": [_task_record(task) for task in holdout_tasks],
+    }
+
+
+def _assert_exact_adapter_keys(
+    expected: Mapping[str, Any], loaded: Mapping[str, Any]
+) -> None:
+    expected_keys = set(expected)
+    loaded_keys = set(loaded)
+    if loaded_keys == expected_keys:
+        return
+    missing = sorted(expected_keys - loaded_keys)
+    unexpected = sorted(loaded_keys - expected_keys)
+    raise GRPOCheckpointError(
+        "checkpoint adapter keyset differs "
+        f"(missing={missing[:5]}, unexpected={unexpected[:5]})"
+    )
+
+
+def _point_estimate_delta(
+    baseline: Mapping[str, Any] | None, final: Mapping[str, Any] | None
+) -> float | None:
+    if baseline is None or final is None:
+        return None
+    return round(float(final["overall"]) - float(baseline["overall"]), 6)
+
+
+def _calibration_token_budget(max_tokens: int, requested: int) -> int:
+    if requested not in (0, max_tokens):
+        raise ValueError(
+            "calibration tokens must equal training max tokens; a shorter "
+            "probe truncates reasoning and corrupts learnability"
+        )
+    return max_tokens
+
+
+def _publish_adapter_snapshot(path: Path, tensors: Mapping[str, Any]) -> None:
+    import mlx.core as mx
+
+    scratch = path.parent / f".{path.stem}.{time.time_ns()}.tmp.safetensors"
+    try:
+        mx.save_safetensors(str(scratch), dict(tensors))
+        atomic_write_bytes(path, scratch.read_bytes(), mode=0o600)
+    finally:
+        scratch.unlink(missing_ok=True)
+
+
+def _publish_immutable_bytes(path: Path, payload: bytes, *, role: str) -> None:
+    if path.is_symlink():
+        raise GRPOCheckpointError(f"{role} symlink is forbidden")
+    if path.exists():
+        try:
+            existing = path.read_bytes()
+        except OSError as exc:
+            raise GRPOCheckpointError(f"{role} is unreadable") from exc
+        if existing != payload:
+            raise GRPOCheckpointError(f"{role} differs from the frozen run")
+        return
+    if not atomic_write_bytes_if_absent(path, payload, mode=0o600):
+        if path.is_symlink() or path.read_bytes() != payload:
+            raise GRPOCheckpointError(f"{role} publication raced with different bytes")
 
 
 def _render(tokenizer, task) -> str:
@@ -112,14 +239,17 @@ def completion_logprob(model, tokenizer, prompt, completion, *, adapters_on):
     prompt_ids = tokenizer.encode(prompt)
     completion_ids = tokenizer.encode(completion, add_special_tokens=False)
     if not completion_ids:
-        return None
+        eos_token_id = getattr(tokenizer, "eos_token_id", None)
+        if type(eos_token_id) is not int or eos_token_id < 0:
+            raise RuntimeError("empty completion has no EOS token for policy credit")
+        completion_ids = [eos_token_id]
     full = mx.array([prompt_ids + completion_ids])
     count = len(completion_ids)
 
     def forward():
         logits = model(full)
         start = full.shape[1] - count - 1
-        return sequence_logprob(
+        return sequence_token_logprobs(
             logits[:, start : start + count, :], mx.array([completion_ids])
         )
 
@@ -129,23 +259,45 @@ def completion_logprob(model, tokenizer, prompt, completion, *, adapters_on):
     return forward()  # no scope => ScopedLoRALinear passes through
 
 
-def evaluate_heldout(model, tokenizer, tasks, *, max_tokens, envelope):
-    """Greedy held-out accuracy by depth -- the number that counts."""
+def evaluate_heldout(
+    model,
+    tokenizer,
+    tasks,
+    *,
+    max_tokens,
+    envelope,
+    adapters_on: bool,
+):
+    """Greedy held-out accuracy by depth with explicit adapter exposure."""
     from mlx_lm import stream_generate
 
+    from core.brain.llm.latent_cortex.recurrence_adapter import (
+        recurrence_adapter_scope,
+    )
+
     results = []
-    for task in tasks:
-        pieces: list[str] = []
-        for response in stream_generate(
-            model, tokenizer, prompt=_render(tokenizer, task),
-            max_tokens=max_tokens,
-        ):
-            pieces.append(response.text)
-        verdict = task.grade("".join(pieces))
-        results.append((task, bool(verdict["correct"])))
-        if envelope is not None:
-            envelope.reclaim(force=True)
-    return scaling_report(results)
+    scope = (
+        recurrence_adapter_scope(start=None, stop=None)
+        if adapters_on
+        else nullcontext()
+    )
+    with scope:
+        for task in tasks:
+            pieces: list[str] = []
+            for response in stream_generate(
+                model,
+                tokenizer,
+                prompt=_render(tokenizer, task),
+                max_tokens=max_tokens,
+            ):
+                pieces.append(response.text)
+            verdict = task.grade("".join(pieces))
+            results.append((task, bool(verdict["correct"])))
+            if envelope is not None:
+                envelope.reclaim(force=True)
+    report = scaling_report(results)
+    report["adapters_on"] = adapters_on
+    return report
 
 
 def main() -> int:
@@ -160,7 +312,7 @@ def main() -> int:
     parser.add_argument("--temperature", type=float, default=0.9)
     parser.add_argument("--max-tokens", type=int, default=256)
     parser.add_argument("--kl-coefficient", type=float, default=0.04)
-    parser.add_argument("--format-credit", type=float, default=0.05)
+    parser.add_argument("--format-credit", type=float, default=0.0)
     parser.add_argument("--lora-rank", type=int, default=16)
     parser.add_argument("--lora-targets", default="o_proj,v_proj,q_proj")
     parser.add_argument("--lora-layers", type=int, default=24)
@@ -168,6 +320,7 @@ def main() -> int:
     parser.add_argument("--max-steps", type=int, default=300)
     parser.add_argument("--eval-every", type=int, default=50)
     parser.add_argument("--checkpoint-every", type=int, default=25)
+    parser.add_argument("--checkpoint-keep", type=int, default=3)
     parser.add_argument("--calibrate", action="store_true",
                         help="measure pass rates before training to skip dead cells")
     parser.add_argument("--calibrate-samples", type=int, default=2)
@@ -186,6 +339,37 @@ def main() -> int:
     parser.add_argument("--memory-fraction", type=float, default=0.55)
     args = parser.parse_args()
 
+    for name in (
+        "train_per_cell",
+        "holdout_per_cell",
+        "group_size",
+        "max_tokens",
+        "lora_rank",
+        "lora_layers",
+        "max_steps",
+        "eval_every",
+        "checkpoint_every",
+        "checkpoint_keep",
+        "calibrate_samples",
+        "calibrate_group",
+    ):
+        if getattr(args, name) <= 0:
+            parser.error(f"--{name.replace('_', '-')} must be positive")
+    if args.max_minutes <= 0.0 or args.calibrate_minutes <= 0.0:
+        parser.error("time budgets must be positive")
+    if not 0.0 < args.memory_fraction <= 0.9:
+        parser.error("--memory-fraction must be inside (0, 0.9]")
+    try:
+        _calibration_token_budget(args.max_tokens, args.calibrate_tokens)
+    except ValueError as exc:
+        parser.error(str(exc))
+    if not 0.0 < args.temperature <= 2.0:
+        parser.error("--temperature must be inside (0, 2]")
+    if not 0.0 < args.learning_rate <= 1.0:
+        parser.error("--learning-rate must be inside (0, 1]")
+    if not 0.0 <= args.format_credit <= 0.2:
+        parser.error("--format-credit must be inside [0, 0.2]")
+
     import mlx.core as mx
     import mlx.nn as nn
     import mlx.optimizers as optim
@@ -202,24 +386,109 @@ def main() -> int:
     )
     domains = [d.strip() for d in args.domains.split(",") if d.strip()]
     depths = [int(d) for d in args.depths.split(",") if d.strip()]
+    if not domains or not depths or any(depth <= 0 for depth in depths):
+        parser.error("--domains and positive --depths are required")
     train_tasks, holdout = disjoint_split(
         domains=domains, depths=depths,
         train_per_cell=args.train_per_cell,
         holdout_per_cell=args.holdout_per_cell, seed=args.seed,
     )
-    import random
-
-    random.Random(args.seed).shuffle(train_tasks)
     print(
         f"[tasks] {len(train_tasks)} train / {len(holdout)} held-out "
         f"(disjoint prompts verified)",
         flush=True,
     )
 
-    out_dir = Path(args.out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    started = time.time()
-    deadline = started + args.max_minutes * 60.0
+    out_dir = ensure_private_directory(Path(args.out_dir).expanduser().resolve())
+    dataset = _dataset_payload(train_tasks, holdout, seed=args.seed)
+    dataset_bytes = canonical_json_bytes(dataset)
+    dataset_sha256 = sha256_bytes(dataset_bytes)
+
+    from core.brain.llm.latent_cortex.recurrence_adapter_identity_v2 import (
+        full_weight_checkpoint_identity,
+        model_behavior_bundle_identity,
+        runtime_environment_identity,
+    )
+
+    model_path = str(Path(args.model).expanduser().resolve(strict=True))
+    source_files = {
+        "trainer": Path(__file__),
+        "grpo": REPO_ROOT / "core/learning/grpo.py",
+        "curriculum": REPO_ROOT / "core/learning/adaptive_curriculum.py",
+        "tasks": REPO_ROOT / "core/learning/verifiable_tasks.py",
+        "checkpoint": REPO_ROOT / "core/learning/grpo_training_state.py",
+        "adapter": (
+            REPO_ROOT
+            / "core/brain/llm/latent_cortex/recurrence_adapter.py"
+        ),
+    }
+    sources = {role: _source_binding(path) for role, path in source_files.items()}
+    base_identity = full_weight_checkpoint_identity(model_path)
+    behavior_identity = model_behavior_bundle_identity(model_path)
+    runtime_identity = runtime_environment_identity()
+    protocol = {
+        "schema": GRPO_PROTOCOL_SCHEMA,
+        "model_path": model_path,
+        "base_checkpoint": base_identity,
+        "model_behavior": behavior_identity,
+        "runtime": runtime_identity,
+        "dataset_sha256": dataset_sha256,
+        "sources": sources,
+        "training": {
+            "domains": domains,
+            "depths": depths,
+            "train_per_cell": args.train_per_cell,
+            "holdout_per_cell": args.holdout_per_cell,
+            "group_size": args.group_size,
+            "temperature": args.temperature,
+            "max_tokens": args.max_tokens,
+            "kl_coefficient": args.kl_coefficient,
+            "format_credit": args.format_credit,
+            "lora_rank": args.lora_rank,
+            "lora_targets": args.lora_targets,
+            "lora_layers": args.lora_layers,
+            "learning_rate": args.learning_rate,
+            "max_steps": args.max_steps,
+            "eval_every": args.eval_every,
+            "checkpoint_every": args.checkpoint_every,
+            "calibrate": args.calibrate,
+            "calibrate_samples": args.calibrate_samples,
+            "calibrate_group": args.calibrate_group,
+            "calibrate_tokens": args.calibrate_tokens,
+            "calibrate_minutes": args.calibrate_minutes,
+            "cot": args.cot,
+            "seed": args.seed,
+            "memory_fraction": args.memory_fraction,
+            "rng_strategy": RNG_STRATEGY,
+        },
+    }
+    protocol_bytes = canonical_json_bytes(protocol)
+    protocol_sha256 = sha256_bytes(protocol_bytes)
+    with interprocess_file_lock(out_dir / ".checkpoint.lock"):
+        _publish_immutable_bytes(
+            out_dir / "dataset_manifest.json", dataset_bytes, role="dataset manifest"
+        )
+        _publish_immutable_bytes(
+            out_dir / "training_protocol.json", protocol_bytes, role="training protocol"
+        )
+        source_snapshot_dir = ensure_private_directory(out_dir / "source_snapshots")
+        for role, source_path in source_files.items():
+            source_bytes = source_path.resolve(strict=True).read_bytes()
+            binding = sources[role]
+            if (
+                len(source_bytes) != binding["size_bytes"]
+                or sha256_bytes(source_bytes) != binding["sha256"]
+            ):
+                raise RuntimeError(f"training source changed while snapshotting: {role}")
+            _publish_immutable_bytes(
+                source_snapshot_dir / f"{role}.py",
+                source_bytes,
+                role=f"{role} source snapshot",
+            )
+
+    started_wall = time.time()
+    started_monotonic = time.monotonic()
+    deadline = started_monotonic + args.max_minutes * 60.0
 
     from mlx_lm import load
 
@@ -256,284 +525,451 @@ def main() -> int:
             raise RuntimeError("no projections adapted; check --lora-targets")
         print(f"[wiring] {attached} projections adapted", flush=True)
 
+        from mlx.utils import tree_flatten
+
+        from core.learning.adaptive_curriculum import (
+            AdaptiveCurriculum,
+            warm_start_pass_rates,
+        )
+
         optimizer = optim.Adam(learning_rate=args.learning_rate)
+        optimizer.init(model.trainable_parameters())
         telemetry = GRPOTelemetry()
-        history: list[dict] = []
-        baseline_eval = None
+        history: list[dict[str, Any]] = []
+        baseline_eval: dict[str, Any] | None = None
+        calibration: dict[str, Any] | None = None
         step = 0
+        optimizer_updates = 0
+        last_step_kind = "initial"
+        prior_elapsed_s = 0.0
+        invocation_count = 1
 
-        # Minimax curriculum (CP237): sample where the model is weakest but
-        # not hopeless, so groups have reward variance instead of being
-        # all-wrong. This is the cold-start fix -- skipping degenerate
-        # groups after sampling them wastes the compute already spent.
-        from core.learning.adaptive_curriculum import AdaptiveCurriculum
-        from core.learning.durable_run import DurableRun
-
-        by_cell: dict[tuple[str, int], list] = {}
+        by_cell: dict[tuple[str, int], list[Any]] = {}
         for task in train_tasks:
             by_cell.setdefault((task.domain, task.depth), []).append(task)
         curriculum = AdaptiveCurriculum.over(
-            sorted({d for d, _ in by_cell}), sorted({p for _, p in by_cell})
+            sorted({domain for domain, _depth in by_cell}),
+            sorted({depth for _domain, depth in by_cell}),
         )
-        sampler = random.Random(args.seed)
 
+        expected_adapters = dict(tree_flatten(model.trainable_parameters()))
+        if not expected_adapters or any("lora" not in key for key in expected_adapters):
+            raise RuntimeError("trainable tree contains non-LoRA parameters")
 
-        # Durable resume (CP237): pick up from the last checkpoint after a
-        # sleep, jetsam kill, or power loss -- the failure that killed the
-        # CP227 gate mid-run.
-        durable = DurableRun(out_dir / "checkpoints")
-        resumed = durable.latest()
-        if resumed is not None:
-            step = resumed.step
-            curriculum = AdaptiveCurriculum.from_state(resumed.payload["curriculum"])
-            adapter_file = out_dir / "checkpoints" / resumed.payload["adapters"]
-            if adapter_file.exists():
-                model.load_weights(str(adapter_file), strict=False)
-            print(f"[resume] continuing from step {step}", flush=True)
-
-        def checkpoint_now() -> None:
-            from mlx.utils import tree_flatten
-
-            name = f"adapters_{step:08d}.safetensors"
-            mx.save_safetensors(
-                str(out_dir / "checkpoints" / name),
-                {
-                    k: v for k, v in tree_flatten(model.trainable_parameters())
-                    if "lora" in k
-                },
+        resumed = None
+        if (out_dir / "latest.json").exists():
+            resumed = load_grpo_checkpoint(
+                out_dir,
+                expected_protocol_sha256=protocol_sha256,
+                expected_dataset_sha256=dataset_sha256,
             )
-            durable.save(step, {"curriculum": curriculum.state(), "adapters": name})
+            _assert_exact_adapter_keys(expected_adapters, resumed.adapter_tensors)
+            model.load_weights(list(resumed.adapter_tensors.items()), strict=False)
+            optimizer.state = resumed.optimizer_state
+            optimizer.init(model.trainable_parameters())
+            state = resumed.state
+            step = int(state["step"])
+            optimizer_updates = int(state["optimizer_updates"])
+            last_step_kind = str(state["last_step_kind"])
+            curriculum = AdaptiveCurriculum.from_state(state["curriculum"])
+            telemetry = GRPOTelemetry.from_state(state["telemetry"])
+            history = list(state["history"])
+            baseline_eval = state["baseline_eval"]
+            calibration = state["calibration"]
+            prior_elapsed_s = float(state["elapsed_training_s"])
+            invocation_count = int(state["invocation_count"]) + 1
+            print(
+                f"[resume] exact step={step} optimizer_updates={optimizer_updates} "
+                f"checkpoint={resumed.checkpoint_dir.name}",
+                flush=True,
+            )
+        elif (out_dir / "checkpoints" / "checkpoint_manifest.json").exists():
+            raise GRPOCheckpointError(
+                "legacy GRPO checkpoint lacks optimizer/protocol state; use a fresh "
+                "output directory instead of claiming exact resume"
+            )
 
-        # Warm-start calibration (CP237/238): the first CP238 run wasted 86%
-        # of its steps on cells that were already mastered or impossible,
-        # because it discovered difficulty online while paying for every
-        # degenerate group. Measuring pass rates FIRST -- a few cheap
-        # rollouts per cell, no backward pass -- lets the curriculum start on
-        # the learnable band instead of finding it the expensive way. Opt-in
-        # so a resumed run (which already has a learned map) skips it.
+        def elapsed_training_s() -> float:
+            return prior_elapsed_s + (time.monotonic() - started_monotonic)
+
+        def adapter_tensors() -> dict[str, Any]:
+            tensors = dict(tree_flatten(model.trainable_parameters()))
+            _assert_exact_adapter_keys(expected_adapters, tensors)
+            return tensors
+
+        def checkpoint_now() -> Path:
+            optimizer_tensors = dict(tree_flatten(optimizer.state))
+            if not optimizer_tensors:
+                raise GRPOCheckpointError("optimizer state is empty")
+            return save_grpo_checkpoint(
+                out_dir,
+                adapter_tensors=adapter_tensors(),
+                optimizer_tensors=optimizer_tensors,
+                state={
+                    "protocol_sha256": protocol_sha256,
+                    "dataset_sha256": dataset_sha256,
+                    "step": step,
+                    "curriculum": curriculum.state(),
+                    "telemetry": telemetry.state(),
+                    "history": history,
+                    "baseline_eval": baseline_eval,
+                    "calibration": calibration,
+                    "elapsed_training_s": elapsed_training_s(),
+                    "invocation_count": invocation_count,
+                    "rng_strategy": RNG_STRATEGY,
+                    "optimizer_updates": optimizer_updates,
+                    "last_step_kind": last_step_kind,
+                    "last_step_committed": True,
+                },
+                keep=args.checkpoint_keep,
+            )
+
+        if resumed is None:
+            baseline_eval = evaluate_heldout(
+                model,
+                tokenizer,
+                holdout,
+                max_tokens=args.max_tokens,
+                envelope=envelope,
+                adapters_on=False,
+            )
+            baseline_eval["step"] = 0
+            baseline_eval["role"] = "frozen_pretraining_baseline"
+            print(
+                f"[baseline 0] overall={baseline_eval['overall']:.3f} "
+                f"by_depth={baseline_eval['accuracy_by_depth']}",
+                flush=True,
+            )
+
+        training_allowed = True
         if args.calibrate and resumed is None:
-            # Cheap, observable, bounded probe. A pass-rate ESTIMATE needs a
-            # handful of short completions, not the full training group at
-            # full length -- the earlier config did 360 x 320-token
-            # generations and took over an hour with no output, which made
-            # "fail fast" not fast at all. Here: a small group, short
-            # completions, per-cell progress, and a wall-clock cap.
             cal_group = min(config.group_size, args.calibrate_group)
-            # Probe with the SAME token budget as training: a shorter probe
-            # cuts off the model's reasoning and measures "can it answer
-            # briefly", not "can it answer" -- which reported code@6 as 0.00
-            # when it is really ~0.68, and would falsely abort.
-            cal_tokens = args.calibrate_tokens if args.calibrate_tokens > 0 else args.max_tokens
-            cal_deadline = time.time() + args.calibrate_minutes * 60.0
-            cells_sorted = sorted(by_cell.keys())
+            cal_tokens = _calibration_token_budget(
+                args.max_tokens, args.calibrate_tokens
+            )
+            cal_deadline = time.monotonic() + args.calibrate_minutes * 60.0
+            cells_sorted = sorted(by_cell)
+            probe_counts: dict[tuple[str, int], int] = {}
+            probes: list[dict[str, Any]] = []
             print(
                 f"[calibrate] {len(cells_sorted)} cells x {cal_group} completions "
                 f"x {cal_tokens} tokens, cap {args.calibrate_minutes}m",
                 flush=True,
             )
 
-            def _measure(family: str, difficulty: int) -> float:
-                pool = by_cell.get((family, difficulty))
-                if not pool or time.time() > cal_deadline:
-                    return 0.5  # unmeasured -> optimistic (curriculum explores it)
-                probe = pool[sampler.randrange(len(pool))]
+            def _measure(family: str, difficulty: int) -> float | None:
+                key = (family, difficulty)
+                pool = by_cell.get(key)
+                probe_index = probe_counts.get(key, 0)
+                probe_counts[key] = probe_index + 1
+                if not pool or time.monotonic() >= cal_deadline:
+                    return None
+                decision_seed = _stable_seed(
+                    args.seed, "calibration", family, difficulty, probe_index
+                )
+                probe = pool[decision_seed % len(pool)]
                 with recurrence_adapter_scope(start=None, stop=None):
-                    _, comps = sample_group(
-                        model, tokenizer, probe, size=cal_group,
-                        max_tokens=cal_tokens, temperature=args.temperature,
-                        seed=args.seed + hash((family, difficulty)) % 9973,
+                    _, completions = sample_group(
+                        model,
+                        tokenizer,
+                        probe,
+                        size=cal_group,
+                        max_tokens=cal_tokens,
+                        temperature=args.temperature,
+                        seed=decision_seed,
                     )
                 rate = sum(
-                    reward_from_verdict(probe.grade(c), format_credit=args.format_credit)
-                    for c in comps
-                ) / len(comps)
+                    int(bool(probe.grade(completion)["correct"]))
+                    for completion in completions
+                ) / len(completions)
+                probes.append(
+                    {
+                        "family": family,
+                        "difficulty": difficulty,
+                        "probe_index": probe_index,
+                        "task_id": probe.task_id,
+                        "seed": decision_seed,
+                        "pass_rate": round(rate, 6),
+                    }
+                )
                 print(
                     f"[calibrate] {family}@{difficulty} pass={rate:.2f} "
-                    f"({(time.time()-started)/60:.1f}m)",
+                    f"({elapsed_training_s() / 60.0:.1f}m)",
                     flush=True,
                 )
                 return rate
 
-            from core.learning.adaptive_curriculum import warm_start_pass_rates
-
             curriculum = warm_start_pass_rates(
-                sorted({d for d, _ in by_cell}),
-                sorted({p for _, p in by_cell}),
-                _measure, samples_per_cell=args.calibrate_samples,
+                sorted({domain for domain, _depth in by_cell}),
+                sorted({depth for _domain, depth in by_cell}),
+                _measure,
+                samples_per_cell=args.calibrate_samples,
             )
-            calib = curriculum.report()
-            print(f"[calibrate] {calib}", flush=True)
-            # Fail fast on a known-bad config. If calibration finds no
-            # learnable cell -- everything already mastered or impossible --
-            # training would burn its whole budget on degenerate groups and
-            # produce no signal, which is exactly how the first two runs were
-            # wasted. Abort with the diagnosis instead of running for hours.
-            if not calib.get("learnable") and not calib.get("unexplored"):
-                verdict = {
-                    "schema": GRPO_TRAIN_SCHEMA,
-                    "aborted": "no_reachable_frontier",
-                    "diagnosis": (
-                        "all cells saturated (too easy) or hopeless (too hard); "
-                        "widen or shift the difficulty band before training"
-                    ),
-                    "calibration": calib,
-                }
-                (out_dir / "grpo_receipt.json").write_text(json.dumps(verdict, indent=2))
-                print(f"[abort] no reachable frontier -> {verdict['diagnosis']}", flush=True)
-                return 0
-
-        while step < args.max_steps and time.time() < deadline:
-            cell = curriculum.sample(sampler)
-            pool = by_cell.get(cell) or train_tasks
-            task = pool[sampler.randrange(len(pool))]
-            with recurrence_adapter_scope(start=None, stop=None):
-                prompt, completions = sample_group(
-                    model, tokenizer, task, size=config.group_size,
-                    max_tokens=args.max_tokens, temperature=args.temperature,
-                    seed=args.seed + step,
-                )
-            rewards = [
-                reward_from_verdict(
-                    task.grade(text), format_credit=args.format_credit
-                )
-                for text in completions
-            ]
-            advantage_report = group_advantages(
-                rewards, clip=config.advantage_clip
+            curriculum_report = curriculum.report()
+            expected_probes = len(cells_sorted) * max(2, args.calibrate_samples)
+            calibration = {
+                **curriculum_report,
+                "max_tokens": cal_tokens,
+                "group_size": cal_group,
+                "probes": probes,
+                "expected_probes": expected_probes,
+                "partial": len(probes) < expected_probes,
+            }
+            print(f"[calibrate] {calibration}", flush=True)
+            training_allowed = bool(
+                calibration.get("learnable") or calibration.get("unexplored")
             )
-            telemetry.observe(advantage_report)
-            # Teach the curriculum what it just learned about this cell, so
-            # difficulty tracks competence instead of being fixed.
-            curriculum.observe(
-                task.domain, task.depth, advantage_report["mean_reward"],
-                degenerate=advantage_report["degenerate"],
-            )
-            step += 1
-            if step % args.checkpoint_every == 0:
-                checkpoint_now()
 
-            def run_eval() -> None:
-                """Evaluation must not depend on the step having trained.
+        # Step zero is durable only after the true frozen baseline and any
+        # calibration are complete. A restart cannot silently recompute them
+        # under different random process state.
+        checkpoint_path = checkpoint_now()
 
-                Placed on both paths deliberately: when it lived after the
-                degenerate `continue`, a step that produced no signal also
-                skipped its evaluation -- so a run could spend its entire
-                budget and never measure itself. The smoke run did exactly
-                that: 6 groups, 0 evals.
-                """
-                nonlocal baseline_eval
-                if step % args.eval_every != 0:
-                    return
-                with recurrence_adapter_scope(start=None, stop=None):
-                    report = evaluate_heldout(
-                        model, tokenizer, holdout,
-                        max_tokens=args.max_tokens, envelope=envelope,
-                    )
-                if baseline_eval is None:
-                    baseline_eval = report
-                report["step"] = step
-                history.append(report)
+        requested_signal: int | None = None
+
+        def request_stop(signum: int, _frame: Any) -> None:
+            nonlocal requested_signal
+            if requested_signal is None:
+                requested_signal = int(signum)
                 print(
-                    f"[eval {step}] overall={report['overall']:.3f} "
-                    f"by_depth={report['accuracy_by_depth']} "
-                    f"falloff={report['depth_falloff']}",
+                    f"[signal] {signal.Signals(signum).name}; stopping after "
+                    "the current committed step",
                     flush=True,
                 )
 
-            if advantage_report["degenerate"]:
-                # No preference to learn from. Skipping is honest; training
-                # on zeros would produce a smooth curve over no signal.
-                if step % 10 == 0:
-                    print(
-                        f"[step {step}] degenerate "
-                        f"(mean_r={advantage_report['mean_reward']:.2f}) "
-                        f"({(time.time()-started)/60:.1f}m)",
-                        flush=True,
-                    )
-                run_eval()
-                continue
+        previous_handlers = {
+            signum: signal.getsignal(signum)
+            for signum in (signal.SIGINT, signal.SIGTERM)
+        }
+        for signum in previous_handlers:
+            signal.signal(signum, request_stop)
 
-            reference = [
-                mx.stop_gradient(
-                    completion_logprob(
-                        model, tokenizer, prompt, text, adapters_on=False
-                    )
+        halt_reason = "no_reachable_frontier" if not training_allowed else "max_steps"
+        try:
+            while training_allowed and step < args.max_steps:
+                if requested_signal is not None:
+                    halt_reason = "interrupted"
+                    break
+                if time.monotonic() >= deadline:
+                    halt_reason = "wall_clock_budget"
+                    break
+
+                step_number = step + 1
+                decision_rng = random.Random(
+                    _stable_seed(args.seed, "curriculum", step_number)
                 )
-                for text in completions
-            ]
-
-            def loss_fn(_model):
-                policy = [
-                    completion_logprob(
-                        _model, tokenizer, prompt, text, adapters_on=True
+                cell = curriculum.sample(decision_rng)
+                pool = by_cell.get(cell) or train_tasks
+                task_rng = random.Random(_stable_seed(args.seed, "task", step_number))
+                task = pool[task_rng.randrange(len(pool))]
+                sample_seed = _stable_seed(args.seed, "group", step_number, task.task_id)
+                with recurrence_adapter_scope(start=None, stop=None):
+                    prompt, completions = sample_group(
+                        model,
+                        tokenizer,
+                        task,
+                        size=config.group_size,
+                        max_tokens=args.max_tokens,
+                        temperature=args.temperature,
+                        seed=sample_seed,
+                    )
+                rewards = [
+                    reward_from_verdict(
+                        task.grade(text), format_credit=args.format_credit
                     )
                     for text in completions
                 ]
-                loss, _ = grpo_loss(
-                    policy, advantage_report["advantages"],
-                    reference_logprobs=reference,
-                    kl_coefficient=config.kl_coefficient,
+                advantage_report = group_advantages(
+                    rewards, clip=config.advantage_clip
                 )
-                return loss
+                loss_value: float | None = None
+                step_kind = "degenerate_group"
 
-            loss, grads = nn.value_and_grad(model, loss_fn)(model)
-            optimizer.update(model, grads)
-            mx.eval(model.parameters(), optimizer.state)
-            envelope.reclaim(force=True)
+                if not advantage_report["degenerate"]:
+                    reference = [
+                        mx.stop_gradient(
+                            completion_logprob(
+                                model,
+                                tokenizer,
+                                prompt,
+                                text,
+                                adapters_on=False,
+                            )
+                        )
+                        for text in completions
+                    ]
 
-            if step % 10 == 0:
-                print(
-                    f"[step {step}] loss={float(loss):.4f} "
-                    f"mean_r={advantage_report['mean_reward']:.2f} "
-                    f"({(time.time()-started)/60:.1f}m)",
-                    flush=True,
+                    def loss_fn(
+                        _model,
+                        *,
+                        _prompt=prompt,
+                        _completions=tuple(completions),
+                        _advantages=tuple(advantage_report["advantages"]),
+                        _reference=tuple(reference),
+                    ):
+                        policy = [
+                            completion_logprob(
+                                _model,
+                                tokenizer,
+                                _prompt,
+                                text,
+                                adapters_on=True,
+                            )
+                            for text in _completions
+                        ]
+                        loss, _report = grpo_loss(
+                            policy,
+                            _advantages,
+                            reference_logprobs=_reference,
+                            kl_coefficient=config.kl_coefficient,
+                        )
+                        return loss
+
+                    loss, grads = nn.value_and_grad(model, loss_fn)(model)
+                    optimizer.update(model, grads)
+                    mx.eval(model.parameters(), optimizer.state)
+                    loss_value = float(loss)
+                    optimizer_updates += 1
+                    step_kind = "optimizer_update"
+                    del grads
+                    envelope.reclaim(force=True)
+
+                # State mutates only after a complete optimizer update or a
+                # fully graded degenerate group. The durable step is therefore
+                # always replay-safe.
+                telemetry.observe(advantage_report)
+                curriculum.observe(
+                    task.domain,
+                    task.depth,
+                    advantage_report["mean_reward"],
+                    degenerate=advantage_report["degenerate"],
                 )
+                step = step_number
+                last_step_kind = step_kind
 
-            run_eval()
+                if step % 10 == 0:
+                    detail = (
+                        f"loss={loss_value:.4f}"
+                        if loss_value is not None
+                        else "degenerate"
+                    )
+                    print(
+                        f"[step {step}] {detail} "
+                        f"mean_r={advantage_report['mean_reward']:.2f} "
+                        f"({elapsed_training_s() / 60.0:.1f}m)",
+                        flush=True,
+                    )
 
-        from mlx.utils import tree_flatten
+                if step % args.eval_every == 0:
+                    report = evaluate_heldout(
+                        model,
+                        tokenizer,
+                        holdout,
+                        max_tokens=args.max_tokens,
+                        envelope=envelope,
+                        adapters_on=True,
+                    )
+                    report["step"] = step
+                    report["role"] = "adapter_standard_decode"
+                    history.append(report)
+                    print(
+                        f"[eval {step}] overall={report['overall']:.3f} "
+                        f"delta={_point_estimate_delta(baseline_eval, report)} "
+                        f"by_depth={report['accuracy_by_depth']}",
+                        flush=True,
+                    )
+                if step % args.checkpoint_every == 0:
+                    checkpoint_path = checkpoint_now()
+                if not curriculum.report()["has_reachable_frontier"]:
+                    training_allowed = False
+                    halt_reason = "frontier_exhausted"
+                    print(
+                        "[halt] every measured curriculum cell is saturated "
+                        "or hopeless",
+                        flush=True,
+                    )
 
-        adapters = {
-            name: value
-            for name, value in tree_flatten(model.trainable_parameters())
-            if "lora" in name
-        }
-        mx.save_safetensors(str(out_dir / "grpo_adapters.safetensors"), adapters)
-        checkpoint_now()  # a final resumable point at the true end
+            if step >= args.max_steps:
+                halt_reason = "max_steps"
+            if (
+                requested_signal is None
+                and training_allowed
+                and (not history or history[-1].get("step") != step)
+            ):
+                report = evaluate_heldout(
+                    model,
+                    tokenizer,
+                    holdout,
+                    max_tokens=args.max_tokens,
+                    envelope=envelope,
+                    adapters_on=True,
+                )
+                report["step"] = step
+                report["role"] = "adapter_standard_decode"
+                history.append(report)
+            checkpoint_path = checkpoint_now()
+        finally:
+            for signum, handler in previous_handlers.items():
+                signal.signal(signum, handler)
+
+        adapters = adapter_tensors()
+        _publish_adapter_snapshot(out_dir / "grpo_adapters.safetensors", adapters)
         curriculum_report = curriculum.report()
         print(f"[curriculum] {curriculum_report}", flush=True)
 
-    signal = telemetry.verdict(config)
+    learning_signal = telemetry.verdict(config)
     final = history[-1] if history else None
+    delta = _point_estimate_delta(baseline_eval, final)
+    completed = halt_reason in {"max_steps", "wall_clock_budget"}
     receipt = {
         "schema": GRPO_TRAIN_SCHEMA,
-        "model": args.model,
+        "protocol_sha256": protocol_sha256,
+        "dataset_sha256": dataset_sha256,
+        "model": {
+            "path": model_path,
+            "base_checkpoint": base_identity,
+            "behavior": behavior_identity,
+        },
         "config": config.to_receipt(),
         "domains": domains,
         "depths": depths,
         "train_tasks": len(train_tasks),
         "holdout_tasks": len(holdout),
         "steps": step,
-        "learning_signal": signal,
+        "optimizer_updates": optimizer_updates,
+        "invocation_count": invocation_count,
+        "termination": {
+            "reason": halt_reason,
+            "completed_budget": completed,
+            "signal": requested_signal,
+        },
+        "learning_signal": learning_signal,
         "curriculum": curriculum_report,
+        "calibration": calibration,
+        "baseline": baseline_eval,
         "history": history,
         "final": final,
+        "adapter_standard_decode_delta": delta,
+        "checkpoint": str(checkpoint_path.relative_to(out_dir)),
         "verdict": {
-            # A run with no usable groups did not fail to improve -- it
-            # never had anything to improve from, and those need opposite
-            # fixes.
-            "had_signal": bool(signal["learning_signal"]),
-            "heldout_improved": bool(
-                final and baseline_eval
-                and final["overall"] > baseline_eval["overall"]
+            "had_signal": bool(learning_signal["learning_signal"]),
+            "point_estimate_improved": bool(delta is not None and delta > 0.0),
+            "causal_gain_proven": False,
+            "causal_gain_blocker": (
+                "requires fresh powered base/adapter x standard/RLC factorial gate"
             ),
-            "diagnosis": signal["diagnosis"],
+            "diagnosis": learning_signal["diagnosis"],
         },
-        "elapsed_minutes": round((time.time() - started) / 60.0, 2),
+        "elapsed_minutes": round((time.time() - started_wall) / 60.0, 2),
     }
-    (out_dir / "grpo_receipt.json").write_text(json.dumps(receipt, indent=2))
+    receipt_bytes = canonical_json_bytes(receipt)
+    atomic_write_bytes(out_dir / "grpo_receipt.json", receipt_bytes, mode=0o600)
     print(f"[verdict] {receipt['verdict']}", flush=True)
     print(f"[receipt] {out_dir / 'grpo_receipt.json'}", flush=True)
+    if requested_signal is not None:
+        return 128 + requested_signal
+    if not training_allowed:
+        return 3
     return 0
 
 

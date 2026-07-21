@@ -94,7 +94,7 @@ class CellStats:
             "family": self.family,
             "difficulty": self.difficulty,
             "trials": self.trials,
-            "reward_sum": round(self.reward_sum, 6),
+            "reward_sum": self.reward_sum,
             "degenerate": self.degenerate,
         }
 
@@ -109,7 +109,7 @@ class AdaptiveCurriculum:
     @classmethod
     def over(
         cls, families: list[str], difficulties: list[int]
-    ) -> "AdaptiveCurriculum":
+    ) -> AdaptiveCurriculum:
         if not families or not difficulties:
             raise ValueError("curriculum needs families and difficulties")
         curriculum = cls()
@@ -153,7 +153,7 @@ class AdaptiveCurriculum:
 
     def report(self) -> dict[str, Any]:
         learnable, saturated, hopeless, unexplored = [], [], [], []
-        for key, cell in self.cells.items():
+        for cell in self.cells.values():
             label = f"{cell.family}@{cell.difficulty}"
             if cell.trials < 2:
                 unexplored.append(label)
@@ -189,17 +189,67 @@ class AdaptiveCurriculum:
         }
 
     @classmethod
-    def from_state(cls, state: dict[str, Any]) -> "AdaptiveCurriculum":
-        curriculum = cls(exploration_prior=float(state.get("exploration_prior", 0.3)))
-        for entry in state.get("cells", []):
+    def from_state(cls, state: dict[str, Any]) -> AdaptiveCurriculum:
+        if not isinstance(state, dict) or set(state) != {
+            "schema",
+            "exploration_prior",
+            "cells",
+        }:
+            raise ValueError("curriculum state shape differs")
+        if state.get("schema") != ADAPTIVE_CURRICULUM_SCHEMA:
+            raise ValueError("curriculum state schema differs")
+        exploration_prior = state.get("exploration_prior")
+        if (
+            isinstance(exploration_prior, bool)
+            or not isinstance(exploration_prior, (int, float))
+            or not math.isfinite(float(exploration_prior))
+            or not 0.0 <= float(exploration_prior) <= 1.0
+        ):
+            raise ValueError("curriculum exploration prior is invalid")
+        entries = state.get("cells")
+        if not isinstance(entries, list) or not entries:
+            raise ValueError("curriculum cells are invalid")
+        curriculum = cls(exploration_prior=float(exploration_prior))
+        for entry in entries:
+            if not isinstance(entry, dict) or set(entry) != {
+                "family",
+                "difficulty",
+                "trials",
+                "reward_sum",
+                "degenerate",
+            }:
+                raise ValueError("curriculum cell state shape differs")
+            family = entry.get("family")
+            difficulty = entry.get("difficulty")
+            trials = entry.get("trials")
+            reward_sum = entry.get("reward_sum")
+            degenerate = entry.get("degenerate")
+            if not isinstance(family, str) or not family:
+                raise ValueError("curriculum cell family is invalid")
+            if type(difficulty) is not int or difficulty < 1:
+                raise ValueError("curriculum cell difficulty is invalid")
+            if type(trials) is not int or trials < 0:
+                raise ValueError("curriculum cell trials are invalid")
+            if type(degenerate) is not int or not 0 <= degenerate <= trials:
+                raise ValueError("curriculum cell degenerate count is invalid")
+            if (
+                isinstance(reward_sum, bool)
+                or not isinstance(reward_sum, (int, float))
+                or not math.isfinite(float(reward_sum))
+                or not 0.0 <= float(reward_sum) <= float(trials)
+            ):
+                raise ValueError("curriculum cell reward sum is invalid")
             cell = CellStats(
-                family=entry["family"],
-                difficulty=int(entry["difficulty"]),
-                trials=int(entry["trials"]),
-                reward_sum=float(entry["reward_sum"]),
-                degenerate=int(entry.get("degenerate", 0)),
+                family=family,
+                difficulty=difficulty,
+                trials=trials,
+                reward_sum=float(reward_sum),
+                degenerate=degenerate,
             )
-            curriculum.cells[(cell.family, cell.difficulty)] = cell
+            key = (cell.family, cell.difficulty)
+            if key in curriculum.cells:
+                raise ValueError("curriculum cell is duplicated")
+            curriculum.cells[key] = cell
         return curriculum
 
 
@@ -212,15 +262,21 @@ def warm_start_pass_rates(
 ) -> AdaptiveCurriculum:
     """Measure base pass rates BEFORE training, so step one is not wasted.
 
-    ``measure(family, difficulty) -> reward in [0, 1]`` runs a quick base
-    rollout. Without this, the first many steps are spent discovering which
-    cells are all-wrong; with it, the sampler starts on the learnable band.
+    ``measure(family, difficulty) -> reward in [0, 1] | None`` runs a quick
+    base rollout. ``None`` means the cell was not measured (for example, a
+    wall-clock deadline); it remains unexplored rather than receiving a
+    fabricated mid-band pass rate. Without this, the first many steps are
+    spent discovering which cells are all-wrong; with it, the sampler starts
+    on the measured learnable band while unknown cells stay explicit.
     """
     curriculum = AdaptiveCurriculum.over(families, difficulties)
     for family in families:
         for difficulty in difficulties:
             for _ in range(max(2, samples_per_cell)):
-                reward = float(measure(family, difficulty))
+                measured = measure(family, difficulty)
+                if measured is None:
+                    break
+                reward = float(measured)
                 curriculum.observe(
                     family, difficulty, reward,
                     degenerate=reward <= 0.0 or reward >= 1.0,

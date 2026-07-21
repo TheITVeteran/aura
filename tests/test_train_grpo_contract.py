@@ -1,0 +1,143 @@
+"""Scientific and persistence contracts for the GRPO trainer."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+import pytest
+
+from core.learning.grpo_training_state import (
+    GRPOCheckpointError,
+    canonical_json_bytes,
+    sha256_bytes,
+)
+from tools.train_grpo import (
+    GRPO_DATASET_SCHEMA,
+    _assert_exact_adapter_keys,
+    _calibration_token_budget,
+    _dataset_payload,
+    _point_estimate_delta,
+    _publish_adapter_snapshot,
+    _publish_immutable_bytes,
+    _stable_seed,
+    completion_logprob,
+)
+
+
+@dataclass(frozen=True)
+class _Task:
+    task_id: str
+    prompt: str = "prompt"
+    domain: str = "logic"
+    depth: int = 4
+    knowledge: str = "parametric"
+    grader: str = "boolean"
+    expected: bool = True
+    metadata: dict = field(default_factory=dict)
+
+
+def test_stable_seed_has_a_fixed_process_independent_value():
+    assert _stable_seed(7, "cell", 4) == 3478236081
+    assert _stable_seed(7, "cell", 4) != _stable_seed(7, "cell", 5)
+
+
+def test_dataset_identity_binds_split_order_and_task_bytes():
+    first = _Task("first")
+    second = _Task("second", prompt="different")
+    payload = _dataset_payload([first], [second], seed=11)
+
+    assert payload["schema"] == GRPO_DATASET_SCHEMA
+    digest = sha256_bytes(canonical_json_bytes(payload))
+    swapped = _dataset_payload([second], [first], seed=11)
+    assert sha256_bytes(canonical_json_bytes(swapped)) != digest
+    assert _dataset_payload([first], [second], seed=11) == payload
+
+
+def test_adapter_resume_requires_the_exact_trainable_keyset():
+    expected = {"a.lora_a": object(), "a.lora_b": object()}
+    _assert_exact_adapter_keys(expected, dict(expected))
+
+    with pytest.raises(GRPOCheckpointError, match="keyset differs"):
+        _assert_exact_adapter_keys(expected, {"a.lora_a": object()})
+    with pytest.raises(GRPOCheckpointError, match="keyset differs"):
+        _assert_exact_adapter_keys(expected, {**expected, "foreign": object()})
+
+
+def test_point_estimate_delta_does_not_manufacture_missing_comparisons():
+    assert _point_estimate_delta(None, {"overall": 0.7}) is None
+    assert _point_estimate_delta({"overall": 0.5}, None) is None
+    assert _point_estimate_delta({"overall": 0.5}, {"overall": 0.625}) == 0.125
+
+
+def test_calibration_cannot_reintroduce_a_short_reasoning_budget():
+    assert _calibration_token_budget(320, 0) == 320
+    assert _calibration_token_budget(320, 320) == 320
+    with pytest.raises(ValueError, match="must equal training"):
+        _calibration_token_budget(320, 128)
+
+
+def test_adapter_snapshot_is_atomically_published_as_real_safetensors(tmp_path):
+    mx = pytest.importorskip("mlx.core")
+    target = tmp_path / "grpo_adapters.safetensors"
+
+    _publish_adapter_snapshot(target, {"layer.lora_a": mx.array([1.0, 2.0])})
+
+    loaded = mx.load(str(target))
+    assert set(loaded) == {"layer.lora_a"}
+    assert bool(mx.array_equal(loaded["layer.lora_a"], mx.array([1.0, 2.0])))
+    assert not list(tmp_path.glob(".*.tmp.safetensors"))
+
+
+def test_run_metadata_is_immutable_and_idempotent(tmp_path):
+    target = tmp_path / "protocol.json"
+    _publish_immutable_bytes(target, b"frozen\n", role="protocol")
+    _publish_immutable_bytes(target, b"frozen\n", role="protocol")
+
+    with pytest.raises(GRPOCheckpointError, match="differs from the frozen run"):
+        _publish_immutable_bytes(target, b"drift\n", role="protocol")
+    assert target.read_bytes() == b"frozen\n"
+
+
+def test_run_metadata_rejects_symlink_indirection(tmp_path):
+    outside = tmp_path / "outside.json"
+    outside.write_bytes(b"outside\n")
+    target = tmp_path / "protocol.json"
+    target.symlink_to(outside)
+
+    with pytest.raises(GRPOCheckpointError, match="symlink is forbidden"):
+        _publish_immutable_bytes(target, b"frozen\n", role="protocol")
+    assert outside.read_bytes() == b"outside\n"
+
+
+def test_empty_text_completion_uses_eos_for_policy_credit():
+    mx = pytest.importorskip("mlx.core")
+
+    class Tokenizer:
+        eos_token_id = 2
+
+        @staticmethod
+        def encode(text, add_special_tokens=True):
+            return [1] if text else []
+
+    class Model:
+        @staticmethod
+        def __call__(tokens):
+            return mx.zeros((1, tokens.shape[1], 4))
+
+    logprobs = completion_logprob(
+        Model(), Tokenizer(), "prompt", "", adapters_on=False
+    )
+    assert logprobs.shape == (1, 1)
+    assert float(logprobs[0, 0]) < 0.0
+
+
+def test_empty_text_completion_without_eos_fails_explicitly():
+    class Tokenizer:
+        eos_token_id = None
+
+        @staticmethod
+        def encode(text, add_special_tokens=True):
+            return [1] if text else []
+
+    with pytest.raises(RuntimeError, match="no EOS token"):
+        completion_logprob(object(), Tokenizer(), "prompt", "", adapters_on=False)

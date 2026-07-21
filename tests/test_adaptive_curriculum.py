@@ -108,6 +108,27 @@ def test_state_round_trips_so_a_resumed_run_keeps_its_map():
     assert restored.cells[("g", 4)].trials == 5
 
 
+def test_state_round_trip_does_not_round_the_sampling_distribution():
+    curriculum = AdaptiveCurriculum.over(["f"], [2])
+    curriculum.observe("f", 2, 0.123456789, degenerate=False)
+
+    restored = AdaptiveCurriculum.from_state(curriculum.state())
+
+    assert restored.cells[("f", 2)].reward_sum == 0.123456789
+
+
+def test_state_loader_refuses_schema_drift_and_duplicate_cells():
+    state = AdaptiveCurriculum.over(["f"], [2]).state()
+    state["schema"] = "unknown"
+    with pytest.raises(ValueError, match="schema differs"):
+        AdaptiveCurriculum.from_state(state)
+
+    state = AdaptiveCurriculum.over(["f"], [2]).state()
+    state["cells"].append(dict(state["cells"][0]))
+    with pytest.raises(ValueError, match="duplicated"):
+        AdaptiveCurriculum.from_state(state)
+
+
 def test_warm_start_measures_before_training():
     def measure(family, difficulty):
         return {1: 0.9, 4: 0.3, 8: 0.0}[difficulty]
@@ -116,6 +137,23 @@ def test_warm_start_measures_before_training():
     report = curriculum.report()
     assert "f@4" in report["learnable"]
     assert "f@8" in report["hopeless"]
+
+
+def test_unmeasured_warm_start_cell_remains_explicitly_unexplored():
+    calls = []
+
+    def measure(family, difficulty):
+        calls.append((family, difficulty))
+        return None if difficulty == 8 else 0.4
+
+    curriculum = warm_start_pass_rates(
+        ["f"], [4, 8], measure, samples_per_cell=3
+    )
+    report = curriculum.report()
+
+    assert report["learnable"] == ["f@4"]
+    assert report["unexplored"] == ["f@8"]
+    assert calls.count(("f", 8)) == 1
 
 
 def test_bad_reward_is_refused():

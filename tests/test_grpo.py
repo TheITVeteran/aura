@@ -16,7 +16,6 @@ from core.learning.grpo import (
     reward_from_verdict,
 )
 
-
 # ── Group-relative advantage ────────────────────────────────────────────
 
 
@@ -44,6 +43,21 @@ def test_all_wrong_group_is_distinguished_from_all_correct():
     assert report["degenerate"] is True
     assert report["all_wrong"] is True
     assert report["all_correct"] is False
+
+
+def test_uniform_partial_reward_is_not_mislabeled_as_success_or_failure():
+    report = group_advantages([0.05, 0.05, 0.05, 0.05])
+    assert report["degenerate"] is True
+    assert report["all_wrong"] is False
+    assert report["all_correct"] is False
+    assert report["uniform_partial"] is True
+
+    telemetry = GRPOTelemetry()
+    telemetry.observe(report)
+    verdict = telemetry.verdict(GRPOConfig(max_degenerate_fraction=0.5))
+    assert verdict["learning_signal"] is False
+    assert verdict["uniform_partial_groups"] == 1
+    assert "uniform_partial_reward" in verdict["diagnosis"]
 
 
 def test_a_lucky_outlier_cannot_dominate_the_group():
@@ -96,6 +110,8 @@ def test_group_of_one_is_refused():
         GRPOConfig(group_size=1)
     with pytest.raises(ValueError, match="advantage_clip"):
         GRPOConfig(advantage_clip=0.0)
+    with pytest.raises(ValueError, match="max_degenerate_fraction"):
+        GRPOConfig(max_degenerate_fraction=1.1)
 
 
 # ── Telemetry decides whether the run is learning at all ────────────────
@@ -139,6 +155,31 @@ def test_empty_telemetry_does_not_claim_success():
     assert GRPOTelemetry().verdict(GRPOConfig())["learning_signal"] is False
 
 
+def test_telemetry_state_round_trips_exactly_for_resume():
+    telemetry = GRPOTelemetry()
+    telemetry.observe(group_advantages([1.0, 0.0, 1.0, 0.0]))
+    telemetry.observe(group_advantages([0.0, 0.0, 0.0, 0.0]))
+
+    restored = GRPOTelemetry.from_state(telemetry.state())
+
+    assert restored == telemetry
+    assert restored.verdict(GRPOConfig()) == telemetry.verdict(GRPOConfig())
+
+
+def test_invalid_telemetry_resume_state_is_refused():
+    state = GRPOTelemetry().state()
+    state["groups"] = 1
+    state["degenerate"] = 2
+    with pytest.raises(ValueError, match="degenerate exceeds groups"):
+        GRPOTelemetry.from_state(state)
+
+    state = GRPOTelemetry().state()
+    state["groups"] = 1
+    state["reward_sum"] = 1.1
+    with pytest.raises(ValueError, match="reward_sum exceeds groups"):
+        GRPOTelemetry.from_state(state)
+
+
 # ── Loss: MLX-dependent, so guarded ─────────────────────────────────────
 
 
@@ -164,6 +205,25 @@ def test_grpo_loss_and_kl_leash():
         kl_coefficient=1.0,
     )
     assert far["kl"] > 0.0, "drift from the reference must be penalized"
+
+
+def test_grpo_loss_is_token_normalized_and_kl_is_token_level():
+    mx = pytest.importorskip("mlx.core")
+    from core.learning.grpo import grpo_loss
+
+    policy = [mx.array([-2.0, -2.0, -2.0]), mx.array([-3.0])]
+    advantages = [1.0, -1.0]
+    loss, _ = grpo_loss(policy, advantages)
+    assert float(loss) == pytest.approx((2.0 - 3.0) / 2, rel=1e-5)
+
+    _, telemetry = grpo_loss(
+        policy,
+        advantages,
+        reference_logprobs=[mx.array([-1.0, -1.0, -1.0]), mx.array([-3.0])],
+        kl_coefficient=1.0,
+    )
+    expected_first = pytest.approx((2.718281828 - 1.0 - 1.0) / 2, rel=1e-5)
+    assert telemetry["kl"] == expected_first
 
 
 def test_misaligned_inputs_are_refused():

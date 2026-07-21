@@ -22541,3 +22541,59 @@ repair GRPO calibration truth, deterministic replay, pre-training baseline,
 checkpoint ordering, optimizer/RNG persistence, protocol identity, and terminal
 interruption receipts before resuming resident-32B training. Final long soaks
 remain deferred.
+
+## Checkpoint 2026-07-21-255: Exact GRPO State and Scientific Baseline
+
+The verifier-RL trainer now has an immutable, crash-consistent run identity.
+Its frozen protocol binds the full base-weight hash, tokenizer/config behavior
+bundle, runtime versions, exact train/holdout task bytes, scientific arguments,
+and source snapshots. Dataset, protocol, and source files are create-once under
+an interprocess lock; conflicting relaunches fail before model load and cannot
+rewrite the evidence root. Each checkpoint is an immutable generation whose
+atomic pointer binds canonical state plus adapter and optimizer tensor digests.
+Resume restores the exact adapter keyset, optimizer moments, curriculum,
+telemetry, baseline, calibration, evaluation history, update count, elapsed
+compute, and invocation count. Stateless SHA-256 seeds make every step decision
+replayable without process-randomized Python hashes.
+
+Calibration now measures binary correctness with the same token budget as
+training. A shorter calibration budget is rejected because it truncates deep
+reasoning and falsely labels cells hopeless; an expired calibration leaves
+cells explicitly unexplored instead of fabricating a 0.5 result. The held-out
+baseline is measured at step zero with the adapter disabled. Later evaluations
+are labeled `adapter_standard_decode`, and their delta is only a point estimate;
+the receipt permanently keeps `causal_gain_proven=false` until a fresh powered
+base/adapter x standard/RLC factorial gate passes. Correctness-only reward is
+the default. Uniform partial reward has its own diagnosis instead of being
+mislabeled as model mastery.
+
+The learning objective no longer applies sequence-length-biased policy loss or
+an exponential KL penalty to whole-sequence log-probability sums. Policy terms
+are token-normalized and the k3 reference penalty is computed per token. A
+training step advances only after a complete optimizer update or a fully graded
+degenerate group; checkpoints distinguish those cases and record the exact
+optimizer-update count. `SIGINT` and `SIGTERM` request a stop after the current
+atomic step, produce an interrupted receipt, and return nonzero so a chained
+proof campaign cannot consume partial training as success.
+
+Validation is green: 51 focused state/objective/trainer contract tests and 133
+connected GRPO, recurrence-adapter, recurrence-native, task, durable-run, and
+memory-guard tests pass; focused Ruff, bytecode compilation, and diff checks
+pass. A real 1.5B run completed baseline, two groups, one optimizer update, two
+held-out evaluations, adapter publication, and exact resume without replay. A
+changed-learning-rate relaunch was rejected while protocol and latest-pointer
+SHA-256 values remained unchanged. A separate live interruption run exited 143
+with `reason=interrupted` and a committed replay-safe checkpoint.
+
+This is total checkpoint record 316. The earlier resident-32B step-20 score of
+0.729 is not promoted: it lacked a true pre-training baseline and paired RLC
+control, and that run terminated at step 40. This review also confirms that the
+current GRPO objective trains recurrence-scoped adapters through standard
+autoregressive forwards; it does not yet differentiate verifier reward through
+the RLC recurrent hidden-state graph. Recurrence-native verifier training, a
+fresh resident-32B campaign, powered same-checkpoint interaction, broad
+regression, named frontier comparison, external custody, release, and soak
+gates remain open. Machine-certified completion remains unchanged until the
+evidence ledger is populated. Next: publish CP255, then connect verifier-driven
+optimization to the true recurrent execution graph and preregister its bounded
+32B factorial proof campaign. Final long soaks remain deferred.

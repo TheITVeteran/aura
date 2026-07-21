@@ -33,10 +33,12 @@ Three disciplines, each answering a specific way RL produces fake progress:
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Sequence
+from itertools import pairwise
+from typing import Any
 
-GRPO_SCHEMA = "aura.grpo.v1"
+GRPO_SCHEMA = "aura.grpo.v2"
 
 # Below this spread, the group's rewards are effectively identical and the
 # normalized advantage is numerical noise rather than learning signal.
@@ -61,7 +63,7 @@ class GRPOConfig:
                 "group_size must be at least 2: a group of one has no "
                 "baseline, which is the entire mechanism"
             )
-        for name in ("kl_coefficient", "advantage_clip", "max_degenerate_fraction"):
+        for name in ("kl_coefficient", "advantage_clip"):
             value = getattr(self, name)
             if (
                 isinstance(value, bool)
@@ -71,6 +73,13 @@ class GRPOConfig:
                 raise ValueError(f"{name} must be a non-negative finite number")
         if self.advantage_clip <= 0.0:
             raise ValueError("advantage_clip must be positive")
+        if (
+            isinstance(self.max_degenerate_fraction, bool)
+            or not isinstance(self.max_degenerate_fraction, (int, float))
+            or not math.isfinite(float(self.max_degenerate_fraction))
+            or not 0.0 <= float(self.max_degenerate_fraction) <= 1.0
+        ):
+            raise ValueError("max_degenerate_fraction must be inside [0, 1]")
 
     def to_receipt(self) -> dict[str, Any]:
         return {
@@ -116,6 +125,9 @@ def group_advantages(
         "degenerate": bool(degenerate),
         "all_correct": bool(degenerate and mean >= 1.0 - 1e-9),
         "all_wrong": bool(degenerate and mean <= 1e-9),
+        "uniform_partial": bool(
+            degenerate and mean > 1e-9 and mean < 1.0 - 1e-9
+        ),
     }
 
 
@@ -178,9 +190,7 @@ def trajectory_shaped_rewards(
             raise ValueError("step scores must be finite")
         if any(not 0.0 <= s <= 1.0 for s in scores):
             raise ValueError("step scores must be inside [0, 1]")
-        improvements = [
-            after - before for before, after in zip(scores, scores[1:])
-        ]
+        improvements = [after - before for before, after in pairwise(scores)]
         shaping = (
             float(shaping_weight) * (sum(improvements) / len(improvements))
             if improvements
@@ -218,12 +228,21 @@ def sequence_logprob(logits: Any, tokens: Any) -> Any:
     every advantage weighting.
     """
     import mlx.core as mx
+
+    return mx.sum(sequence_token_logprobs(logits, tokens))
+
+
+def sequence_token_logprobs(logits: Any, tokens: Any) -> Any:
+    """Per-token log-probabilities for length-neutral policy and KL terms."""
+    import mlx.core as mx
     import mlx.nn as nn
 
     losses = nn.losses.cross_entropy(
-        logits.astype(mx.float32), tokens, reduction="none"
+        logits.astype(mx.float32),
+        tokens,
+        reduction="none",
     )
-    return -mx.sum(losses)
+    return -losses
 
 
 def grpo_loss(
@@ -247,8 +266,8 @@ def grpo_loss(
         raise ValueError("nothing to optimize")
 
     weighted = [
-        -float(advantage) * logprob
-        for logprob, advantage in zip(policy_logprobs, advantages)
+        -float(advantage) * mx.mean(logprobs)
+        for logprobs, advantage in zip(policy_logprobs, advantages, strict=True)
     ]
     policy_loss = mx.stack(weighted).mean()
 
@@ -259,11 +278,14 @@ def grpo_loss(
             raise ValueError("reference logprobs must align with policy")
         # k3 estimator: exp(d) - d - 1, non-negative and lower variance
         # than the naive difference.
-        deltas = [
-            reference - policy
-            for policy, reference in zip(policy_logprobs, reference_logprobs)
-        ]
-        kl_terms = [mx.exp(d) - d - 1.0 for d in deltas]
+        deltas = []
+        for policy, reference in zip(
+            policy_logprobs, reference_logprobs, strict=True
+        ):
+            if policy.shape != reference.shape:
+                raise ValueError("policy and reference token logprobs must align")
+            deltas.append(reference - policy)
+        kl_terms = [mx.mean(mx.exp(delta) - delta - 1.0) for delta in deltas]
         kl = mx.stack(kl_terms).mean()
         total = policy_loss + float(kl_coefficient) * kl
         kl_value = float(kl)
@@ -285,6 +307,7 @@ class GRPOTelemetry:
     degenerate: int = 0
     all_correct: int = 0
     all_wrong: int = 0
+    uniform_partial: int = 0
     reward_sum: float = 0.0
 
     def observe(self, report: dict[str, Any]) -> None:
@@ -294,6 +317,66 @@ class GRPOTelemetry:
             self.degenerate += 1
             self.all_correct += int(report["all_correct"])
             self.all_wrong += int(report["all_wrong"])
+            self.uniform_partial += int(report["uniform_partial"])
+
+    def state(self) -> dict[str, Any]:
+        """Exact JSON-safe state for crash-consistent resume."""
+        return {
+            "schema": GRPO_SCHEMA,
+            "groups": self.groups,
+            "degenerate": self.degenerate,
+            "all_correct": self.all_correct,
+            "all_wrong": self.all_wrong,
+            "uniform_partial": self.uniform_partial,
+            "reward_sum": self.reward_sum,
+        }
+
+    @classmethod
+    def from_state(cls, state: dict[str, Any]) -> GRPOTelemetry:
+        if not isinstance(state, dict) or set(state) != {
+            "schema",
+            "groups",
+            "degenerate",
+            "all_correct",
+            "all_wrong",
+            "uniform_partial",
+            "reward_sum",
+        }:
+            raise ValueError("GRPO telemetry state shape differs")
+        if state.get("schema") != GRPO_SCHEMA:
+            raise ValueError("GRPO telemetry state schema differs")
+        values: dict[str, int] = {}
+        for key in (
+            "groups",
+            "degenerate",
+            "all_correct",
+            "all_wrong",
+            "uniform_partial",
+        ):
+            value = state.get(key)
+            if type(value) is not int or value < 0:
+                raise ValueError(f"GRPO telemetry {key} is invalid")
+            values[key] = value
+        reward_sum = state.get("reward_sum")
+        if (
+            isinstance(reward_sum, bool)
+            or not isinstance(reward_sum, (int, float))
+            or not math.isfinite(float(reward_sum))
+            or float(reward_sum) < 0.0
+        ):
+            raise ValueError("GRPO telemetry reward_sum is invalid")
+        if values["degenerate"] > values["groups"]:
+            raise ValueError("GRPO telemetry degenerate exceeds groups")
+        classified_degenerate = (
+            values["all_correct"]
+            + values["all_wrong"]
+            + values["uniform_partial"]
+        )
+        if classified_degenerate != values["degenerate"]:
+            raise ValueError("GRPO telemetry degenerate classification differs")
+        if float(reward_sum) > values["groups"]:
+            raise ValueError("GRPO telemetry reward_sum exceeds groups")
+        return cls(**values, reward_sum=float(reward_sum))
 
     def verdict(self, config: GRPOConfig) -> dict[str, Any]:
         if not self.groups:
@@ -307,14 +390,24 @@ class GRPOTelemetry:
         usable = self.groups - self.degenerate
         diagnosis = "healthy"
         if degenerate_fraction > config.max_degenerate_fraction:
-            # Both failure modes look identical in the loss curve and need
-            # opposite fixes: harder tasks vs. easier ones.
-            if self.all_wrong > self.all_correct:
-                diagnosis = "tasks_too_hard: the model never succeeds, so "
-                "there is nothing to reinforce"
+            dominant = max(
+                self.all_wrong, self.all_correct, self.uniform_partial
+            )
+            if self.all_wrong == dominant:
+                diagnosis = (
+                    "tasks_too_hard: the model never succeeds, so there is "
+                    "nothing to reinforce"
+                )
+            elif self.all_correct == dominant:
+                diagnosis = (
+                    "tasks_too_easy: the model always succeeds, so there is "
+                    "nothing to improve"
+                )
             else:
-                diagnosis = "tasks_too_easy: the model always succeeds, so "
-                "there is nothing to improve"
+                diagnosis = (
+                    "uniform_partial_reward: formatting or another shaped "
+                    "reward is constant and provides no relative signal"
+                )
         return {
             "schema": GRPO_SCHEMA,
             "groups": self.groups,
@@ -322,6 +415,7 @@ class GRPOTelemetry:
             "degenerate_fraction": round(degenerate_fraction, 4),
             "all_correct_groups": self.all_correct,
             "all_wrong_groups": self.all_wrong,
+            "uniform_partial_groups": self.uniform_partial,
             "mean_reward": round(self.reward_sum / self.groups, 4),
             "learning_signal": bool(
                 degenerate_fraction <= config.max_degenerate_fraction
@@ -360,6 +454,7 @@ __all__ = [
     "grpo_loss",
     "reward_from_verdict",
     "sequence_logprob",
+    "sequence_token_logprobs",
     "step_scores_from_ce",
     "trajectory_shaped_rewards",
 ]
