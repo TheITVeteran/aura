@@ -694,6 +694,9 @@ class AgencyCore:
         self._registry_shards_update_pending = False  # Guard shard count registry updates
         self._last_viability_error: str | None = None
         self._last_tool_routing_error: str | None = None
+        self._cognitive_loop_task: asyncio.Task[Any] | None = None
+        self._cognitive_loop_last_run: float | None = None
+        self._last_cognitive_loop_receipt: dict[str, Any] | None = None
 
         try:
             from core.orchestrator.meta_cognition_shard import MetaCognitionShard
@@ -720,6 +723,7 @@ class AgencyCore:
             "self_development": self._pathway_self_development,
             "social_reflection": self._pathway_social_reflection,
             "autonomous_research": self._pathway_autonomous_research,
+            "cognitive_loop": self._pathway_cognitive_loop,
             "creative_synthesis": self._pathway_creative_synthesis,
             "metacognitive_audit": self._pathway_metacognitive_audit,
         }
@@ -843,10 +847,10 @@ class AgencyCore:
             name="agency.spatial_empathy.watch",
         )
 
-        # Cognitive-loop pathway (CP244): let Aura's Will invoke the full
+        # Cognitive-loop pathway (CP244/CP254): let Aura's Will invoke the full
         # identify-gap -> acquire -> deliberate -> verify loop during
-        # autonomous pulses. Gated OFF by default (AURA_COGNITIVE_LOOP_PATHWAY);
-        # when off this registers nothing and behaviour is unchanged. Wrapped
+        # autonomous pulse. It is on by default with an explicit kill switch;
+        # when off this registers nothing. Wrapped
         # so a wiring fault can never break agency startup.
         try:
             from core.agency.cognitive_loop_pathway import register_if_enabled
@@ -1580,6 +1584,14 @@ class AgencyCore:
         }
 
     # --- AGENCY PATHWAYS ---
+
+    def _pathway_cognitive_loop(
+        self,
+        _now: float,
+        _idle_seconds: float,
+    ) -> None:
+        """Dedicated hook slot; the registered provider owns its proposal."""
+        return None
 
     def _pathway_social_hunger(self, now: float, idle_seconds: float) -> dict[str, Any] | None:
         """Pathway 1: Social hunger drives proactive conversation initiation.
@@ -2629,6 +2641,19 @@ class AgencyCore:
         data = self.state.model_dump()
         # Add derived metrics
         degraded = bool(self._last_viability_error or self._last_tool_routing_error)
+        loop_task = getattr(self, "_cognitive_loop_task", None)
+        loop_running = False
+        if loop_task is not None:
+            try:
+                loop_running = not bool(loop_task.done())
+            except (AttributeError, RuntimeError):
+                loop_running = True
+        loop_receipt = getattr(self, "_last_cognitive_loop_receipt", None)
+        if not isinstance(loop_receipt, dict):
+            loop_receipt = {}
+        workspace_receipt = loop_receipt.get("workspace")
+        if not isinstance(workspace_receipt, dict):
+            workspace_receipt = {}
         data.update({
             "status": "degraded" if degraded else "active",
             "alive": not degraded,
@@ -2637,6 +2662,15 @@ class AgencyCore:
             "engagement_mode": self.state.engagement_mode.value,
             "last_viability_error": self._last_viability_error,
             "last_tool_routing_error": self._last_tool_routing_error,
+            "cognitive_loop": {
+                "registered": bool(self._pathway_hooks.get("cognitive_loop")),
+                "running": loop_running,
+                "last_run": getattr(self, "_cognitive_loop_last_run", None),
+                "last_verified": loop_receipt.get("verified"),
+                "last_attempts": loop_receipt.get("attempts"),
+                "workspace_admitted": workspace_receipt.get("admitted"),
+                "workspace_reason": workspace_receipt.get("reason"),
+            },
         })
         return data
 

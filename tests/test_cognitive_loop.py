@@ -92,6 +92,37 @@ def test_verification_failure_triggers_bounded_retries():
     assert {s.detail["attempt"] for s in verify_stages} == {1, 2, 3}
 
 
+def test_verifier_feedback_causally_changes_next_deliberation():
+    class CorrectingDeliberator:
+        def __init__(self):
+            self.material_seen = []
+
+        def deliberate(self, query, material):
+            self.material_seen.append(list(material))
+            if any("Use 42" in item for item in material):
+                return "the answer is 42"
+            return "the answer is 41"
+
+    class FeedbackVerifier:
+        def check(self, query, candidate):
+            if "42" in candidate:
+                return {"correct": True}
+            return {"correct": False, "feedback": "Use 42, not 41."}
+
+    deliberator = CorrectingDeliberator()
+    result = CognitiveLoop(
+        deliberator=deliberator,
+        verifier=FeedbackVerifier(),
+        max_attempts=2,
+    ).run("q")
+
+    assert result.verified is True
+    assert result.attempts == 2
+    assert deliberator.material_seen[0] == []
+    assert "Use 42, not 41." in deliberator.material_seen[1][-1]
+    assert "the answer is 41" in deliberator.material_seen[1][-1]
+
+
 def test_first_attempt_success_does_not_retry():
     loop = CognitiveLoop(
         composer=WorkspaceComposer(producers=[RetrievalProducer(_Retrieval(["42"]))]),
@@ -114,6 +145,68 @@ def test_missing_verifier_means_unverified_never_assumed_correct():
     assert result.verified is False
     assert result.learned is False
     assert [s for s in result.stages if s.name == "verify"][0].status == "unavailable"
+
+
+def test_missing_verifier_disables_unjudgeable_retries():
+    deliberator = _Deliberator(fixed="a hypothesis")
+    loop = CognitiveLoop(
+        deliberator=deliberator,
+        verifier=None,
+        max_attempts=4,
+    )
+
+    result = loop.run("q")
+
+    assert result.attempts == 1
+    assert deliberator.calls == 1
+    retry = [stage for stage in result.stages if stage.name == "retry_control"]
+    assert retry[0].status == "skipped"
+    assert retry[0].detail == {
+        "reason": "verifier_unavailable",
+        "configured_attempts": 4,
+        "effective_attempts": 1,
+    }
+
+
+def test_empty_answer_skips_verifier_and_is_reported_as_failure():
+    class CountingVerifier:
+        calls = 0
+
+        def check(self, query, candidate):
+            self.calls += 1
+            return {"correct": True}
+
+    verifier = CountingVerifier()
+    result = CognitiveLoop(
+        deliberator=_Deliberator(fixed=""),
+        verifier=verifier,
+        max_attempts=1,
+    ).run("q")
+
+    assert verifier.calls == 0
+    deliberate = [stage for stage in result.stages if stage.name == "deliberate"][0]
+    verify = [stage for stage in result.stages if stage.name == "verify"][0]
+    assert deliberate.status == "failed"
+    assert deliberate.detail["error"] == "empty_answer"
+    assert verify.status == "skipped"
+    assert verify.detail["reason"] == "no_answer"
+
+
+def test_malformed_verifier_result_fails_honestly():
+    class MalformedVerifier:
+        def check(self, query, candidate):
+            return "looks good"
+
+    result = CognitiveLoop(
+        deliberator=_Deliberator(fixed="candidate"),
+        verifier=MalformedVerifier(),
+        max_attempts=1,
+    ).run("q")
+
+    verify = [stage for stage in result.stages if stage.name == "verify"][0]
+    assert result.verified is False
+    assert verify.status == "failed"
+    assert verify.detail["error"] == "invalid_verifier_result"
 
 
 def test_unverified_answer_is_never_retained():
@@ -156,7 +249,7 @@ def test_gap_detector_can_skip_acquisition():
 
 
 def test_loop_health_distinguishes_working_from_running():
-    good = LoopResults = [
+    good = [
         CognitiveLoop(
             composer=WorkspaceComposer(producers=[RetrievalProducer(_Retrieval(["42"]))]),
             deliberator=_Deliberator(), verifier=_Verifier("42"),

@@ -22500,3 +22500,44 @@ reasoning gain, frontier capability, external custody, release, and soak gates
 remain open. Next: publish CP253, harden the live cognitive loop's action
 semantics and resource accounting, then repair GRPO checkpoint/replay integrity
 before any resumed resident-32B campaign. Final long soaks remain deferred.
+
+## Checkpoint 2026-07-21-254: Supervised Cognitive Loop Integration
+
+The CP244-247 live cognitive-loop wiring has been corrected as one connected
+runtime path. Two adjacent drive hooks are replaced by one dedicated AgencyCore
+pathway, preventing duplicate inference in one pulse. A cycle is launched
+through the canonical task tracker and collected on a later pulse, so a model
+generation can no longer block AgencyCore's heartbeat. Router calls explicitly
+declare background origin, purpose, and foreground status; cooldown, generation,
+cycle, and workspace budgets are bounded and invalid environment values fall
+back observably to safe defaults.
+
+Verifier-less cycles now make one inference, not two unjudgeable attempts. Empty
+answers, malformed verifier results, composer failures, gap-detector failures,
+and learner failures receive truthful stage status and typed receipts. When a
+verifier rejects a candidate, its bounded feedback and the prior candidate are
+causally included in the next deliberation; retry is therefore correction rather
+than an identical rerun. Unverified results are emitted only as
+`internal_reflection`, marked `unverified_hypothesis`, and never retained by the
+learner or dispatched as external action.
+
+Completed results enter the canonical Global Workspace through governed
+structured ingress as META candidates. The payload preserves the loop receipt,
+trust class, and `retained_as_belief=false`; workspace rejection is recorded
+rather than promoted. Agency status now exposes registration, running state,
+last run, verification/attempt count, and workspace admission. The query fallback
+also reads the real `pending_goals` state schema instead of the nonexistent
+`state.goals` field.
+
+Validation is green: 61 cognitive-loop, agency-runtime, orchestrator-wiring, and
+Global Workspace contract tests pass; focused Ruff and bytecode compilation
+pass; and task-tracker refusal, cooldown rollback, supervised non-blocking
+execution, causal verifier feedback, and non-belief workspace publication are
+covered explicitly.
+
+This is total checkpoint record 315. No RLC reasoning-gain, frontier,
+external-custody, release, or soak credit is awarded. Next: publish CP254 and
+repair GRPO calibration truth, deterministic replay, pre-training baseline,
+checkpoint ordering, optimizer/RNG persistence, protocol identity, and terminal
+interruption receipts before resuming resident-32B training. Final long soaks
+remain deferred.

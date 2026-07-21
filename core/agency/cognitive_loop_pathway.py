@@ -1,19 +1,17 @@
 """Wire the cognitive loop into Aura's live Will (CP244).
 
 The conductor (CP243) runs the full loop for any query. This connects it to
-agency: when the ``autonomous_research`` or ``curiosity_drive`` pathway
-fires during a pulse, a hook runs the loop over a query drawn from Aura's
-current context, and proposes an action based on what it found. It is her
-Will invoking the loop in her actual life, instead of an operator hand-
-driving a lab pipeline.
+agency through one dedicated pathway: a supervised hook runs the loop over a
+query drawn from Aura's current context and offers its trust-labelled result
+to Global Workspace. It is her Will invoking the loop in her actual life,
+instead of an operator hand-driving a lab pipeline.
 
 The wiring obeys the discipline that has kept the live instance safe all
 along -- the same one the halting head follows:
 
-* **Gated OFF by default.** Unless ``AURA_COGNITIVE_LOOP_PATHWAY=1``, this
-  registers nothing and the live agency behaves byte-identically. The loop
-  goes live only when explicitly enabled, after it has earned it -- exactly
-  how retrieval earned its 0->56%.
+* **On by default, explicitly disableable.** ``AURA_COGNITIVE_LOOP_PATHWAY=0``
+  is the kill switch. The live path remains bounded, background-classified,
+  and incapable of turning unverified output into action or retained belief.
 * **Degrades honestly.** If the memory or LLM organs are not resolvable, the
   loop is not built and the hook proposes nothing; it never fabricates an
   action to look busy. A pathway hook that raises is already caught by
@@ -27,6 +25,7 @@ along -- the same one the halting head follows:
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from typing import Any
 
@@ -34,18 +33,44 @@ from core.service_names import ServiceNames
 
 COGNITIVE_LOOP_PATHWAY_SCHEMA = "aura.cognitive_loop_pathway.v1"
 ENABLE_FLAG = "AURA_COGNITIVE_LOOP_PATHWAY"
-# The pathways where running the full loop is a natural act of Will:
-# researching something, or resolving a curiosity.
-TARGET_PATHWAYS = ("autonomous_research", "curiosity_drive")
-# The loop runs real 32B inference. A cooldown keeps it from firing on every
+logger = logging.getLogger("Aura.Agency.CognitiveLoop")
+
+
+def _bounded_seconds(name: str, default: float, *, minimum: float, maximum: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        logger.warning("Invalid %s=%r; using %.1fs", name, raw, default)
+        return default
+    if not minimum <= value <= maximum:
+        logger.warning("Out-of-range %s=%r; using %.1fs", name, raw, default)
+        return default
+    return value
+
+
+# One dedicated pathway avoids duplicate model work through adjacent drives.
+TARGET_PATHWAYS = ("cognitive_loop",)
+# The loop runs real model inference. A cooldown keeps it from firing on every
 # agency pulse and loading a latency-sensitive live instance -- the same
 # rate-limit discipline the other autonomous pathways already use.
-COOLDOWN_SECONDS = float(os.environ.get("AURA_COGNITIVE_LOOP_COOLDOWN", "180"))
+COOLDOWN_SECONDS = _bounded_seconds(
+    "AURA_COGNITIVE_LOOP_COOLDOWN", 180.0, minimum=1.0, maximum=86_400.0
+)
 # Every external call is bounded: an unbounded generate() could hang the
 # agency pulse hook. A whole loop (up to max_attempts generations) must also
 # not run away, so the cycle carries its own ceiling.
-GENERATE_TIMEOUT_S = float(os.environ.get("AURA_COGNITIVE_LOOP_GENERATE_TIMEOUT", "45"))
-CYCLE_TIMEOUT_S = float(os.environ.get("AURA_COGNITIVE_LOOP_CYCLE_TIMEOUT", "150"))
+GENERATE_TIMEOUT_S = _bounded_seconds(
+    "AURA_COGNITIVE_LOOP_GENERATE_TIMEOUT", 45.0, minimum=1.0, maximum=300.0
+)
+CYCLE_TIMEOUT_S = _bounded_seconds(
+    "AURA_COGNITIVE_LOOP_CYCLE_TIMEOUT", 150.0, minimum=1.0, maximum=900.0
+)
+WORKSPACE_TIMEOUT_S = _bounded_seconds(
+    "AURA_COGNITIVE_LOOP_WORKSPACE_TIMEOUT", 2.0, minimum=0.05, maximum=30.0
+)
 
 
 def _degrade(exc: BaseException, action: str, *, severity: str = "degraded") -> None:
@@ -63,9 +88,15 @@ def _degrade(exc: BaseException, action: str, *, severity: str = "degraded") -> 
             "cognitive_loop_pathway", exc, severity=severity, action=action,
             enforce_failure_policy=False,
         )
-    except Exception:
-        # Degradation recording itself must never raise into the pulse.
-        pass
+    except Exception as record_exc:
+        # The primary recorder may itself be unavailable during boot. Keep a
+        # secondary observable signal without raising into the agency pulse.
+        logger.warning(
+            "Cognitive-loop degradation recorder failed (%s) while handling %s: %s",
+            type(record_exc).__name__,
+            action,
+            type(exc).__name__,
+        )
 
 
 def is_enabled() -> bool:
@@ -92,9 +123,16 @@ class _RouterDeliberator:
         try:
             # Bounded: an unbounded generate() would hang the pulse hook.
             return await asyncio.wait_for(
-                self._router.generate(prompt), timeout=GENERATE_TIMEOUT_S
+                self._router.generate(
+                    prompt,
+                    origin="cognitive_loop_pathway",
+                    purpose="autonomous_internal_deliberation",
+                    is_background=True,
+                    foreground_request=False,
+                ),
+                timeout=GENERATE_TIMEOUT_S,
             )
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             _degrade(exc, "cognitive-loop deliberation timed out", severity="warning")
             return ""
         except Exception as exc:
@@ -135,9 +173,10 @@ def build_live_loop(container: Any = None) -> Any:
             # are UNVERIFIED and never retained. A real verifier organ can be
             # wired here later, and only then does learning switch on.
             verifier=None,
-            max_attempts=2,
+            max_attempts=1,
         )
-    except ValueError:
+    except ValueError as exc:
+        _degrade(exc, "cognitive-loop live construction rejected")
         return None
 
 
@@ -159,9 +198,17 @@ def _derive_query(agency: Any) -> str:
     monologue = str(getattr(agency, "_current_monologue", "") or "").strip()
     if len(monologue) > 12:
         return monologue[:400]
-    goals = getattr(getattr(agency, "state", None), "goals", None) or []
+    goals = getattr(getattr(agency, "state", None), "pending_goals", None) or []
     for goal in goals:
-        text = str((goal or {}).get("goal") or (goal or {}).get("description") or "").strip()
+        if not isinstance(goal, dict) or goal.get("status", "pending") != "pending":
+            continue
+        text = str(
+            goal.get("text")
+            or goal.get("goal")
+            or goal.get("description")
+            or goal.get("objective")
+            or ""
+        ).strip()
         if len(text) > 8:
             return text[:400]
     return ""
@@ -170,18 +217,50 @@ def _derive_query(agency: Any) -> str:
 async def cognitive_loop_provider(
     *, pathway: str, now: float, idle_seconds: float, agency: Any
 ) -> dict[str, Any] | None:
-    """The agency hook: run the loop and propose an action, or nothing."""
-    # Cooldown: the loop is real 32B inference, so it must not fire on every
-    # pulse. Mark BEFORE running so a slow loop cannot be re-entered by the
-    # next pulse while it is still working.
-    marks = getattr(agency, "_cognitive_loop_last_run", None)
-    if marks is None:
-        marks = {}
-        try:
-            setattr(agency, "_cognitive_loop_last_run", marks)
-        except (AttributeError, TypeError):
-            pass
-    if now - float(marks.get(pathway, 0.0)) < COOLDOWN_SECONDS:
+    """Schedule one cycle without blocking the agency pulse.
+
+    A completed supervised task is collected on the next pulse. Running work
+    returns immediately, preserving AgencyCore's non-blocking contract.
+    """
+    pending = getattr(agency, "_cognitive_loop_task", None)
+    if pending is not None:
+        if not isinstance(pending, asyncio.Task):
+            _degrade(
+                TypeError("cognitive-loop task latch is not an asyncio.Task"),
+                "cognitive-loop task latch reset",
+            )
+            try:
+                agency._cognitive_loop_task = None
+            except (AttributeError, TypeError):
+                return None
+        elif not pending.done():
+            return None
+        else:
+            try:
+                action = pending.result()
+            except asyncio.CancelledError:
+                action = None
+            except Exception as exc:
+                _degrade(exc, "cognitive-loop supervised task failed")
+                action = None
+            try:
+                agency._cognitive_loop_task = None
+            except (AttributeError, TypeError):
+                logger.warning("Cognitive-loop completed task latch could not be cleared")
+            return action if isinstance(action, dict) else None
+
+    raw_last_run = getattr(agency, "_cognitive_loop_last_run", None)
+    if isinstance(raw_last_run, dict):
+        # Migrate the pre-CP254 per-pathway clock without losing its bound.
+        prior_values = [float(value or 0.0) for value in raw_last_run.values()]
+        last_run = max(prior_values, default=0.0)
+    elif raw_last_run is None:
+        last_run = None
+    else:
+        last_run = float(raw_last_run)
+    if last_run is not None and (
+        now <= last_run or now - last_run < COOLDOWN_SECONDS
+    ):
         return None
     loop = build_live_loop()
     if loop is None:
@@ -189,7 +268,59 @@ async def cognitive_loop_provider(
     query = _derive_query(agency)
     if not query:
         return None
-    marks[pathway] = now
+    try:
+        agency._cognitive_loop_last_run = float(now)
+    except (AttributeError, TypeError) as exc:
+        _degrade(exc, "cognitive-loop cooldown latch unavailable")
+        return None
+
+    cycle = _run_cognitive_loop_cycle(
+        loop=loop,
+        query=query,
+        pathway=pathway,
+        agency=agency,
+    )
+    try:
+        from core.utils.task_tracker import get_task_tracker
+
+        task = get_task_tracker().create_task(
+            cycle,
+            name="agency.cognitive_loop.cycle",
+        )
+    except Exception as exc:
+        cycle.close()
+        agency._cognitive_loop_last_run = raw_last_run
+        _degrade(exc, "cognitive-loop supervised task creation failed")
+        return None
+    if not isinstance(task, asyncio.Task):
+        cycle.close()
+        agency._cognitive_loop_last_run = raw_last_run
+        _degrade(
+            RuntimeError("task tracker returned no asyncio.Task"),
+            "cognitive-loop supervised task creation rejected",
+        )
+        return None
+    try:
+        agency._cognitive_loop_task = task
+    except (AttributeError, TypeError) as exc:
+        task.cancel()
+        try:
+            agency._cognitive_loop_last_run = raw_last_run
+        except (AttributeError, TypeError):
+            logger.warning("Cognitive-loop cooldown could not be rolled back")
+        _degrade(exc, "cognitive-loop supervised task latch unavailable")
+        return None
+    return None
+
+
+async def _run_cognitive_loop_cycle(
+    *,
+    loop: Any,
+    query: str,
+    pathway: str,
+    agency: Any,
+) -> dict[str, Any] | None:
+    """Execute the governed background cycle and return an internal action."""
 
     # Run inside the governed maintenance scope the rest of agency uses for
     # internal model work, and under a whole-cycle timeout so a stuck loop
@@ -202,7 +333,7 @@ async def cognitive_loop_provider(
             "cognitive_loop_pathway", domain="state_mutation"
         ):
             result = await asyncio.wait_for(loop.arun(query), timeout=CYCLE_TIMEOUT_S)
-    except asyncio.TimeoutError as exc:
+    except TimeoutError as exc:
         _degrade(exc, f"cognitive-loop cycle timed out on {pathway}", severity="warning")
         return None
     except Exception as exc:
@@ -210,17 +341,85 @@ async def cognitive_loop_provider(
         return None
     if result.answer is None or not str(result.answer).strip():
         return None
-    # A verified conclusion is offered with more priority than an unverified
-    # musing -- Aura acts on what she has checked more readily than on a hunch.
+
+    answer = str(result.answer).strip()[:600]
     priority = 0.55 if result.verified else 0.3
+    workspace_receipt = await _publish_result_to_workspace(
+        answer=answer,
+        pathway=pathway,
+        verified=bool(result.verified),
+        priority=priority,
+        loop_receipt=result.to_receipt(),
+    )
+    receipt = result.to_receipt()
+    receipt["workspace"] = workspace_receipt
+    try:
+        agency._last_cognitive_loop_receipt = receipt
+    except (AttributeError, TypeError):
+        logger.warning("Cognitive-loop receipt could not be attached to AgencyCore")
     return {
-        "type": "inner_reasoning",
+        "type": "internal_reflection",
+        "internal_only": True,
         "source": f"{pathway}:cognitive_loop",
-        "content": str(result.answer)[:600],
+        "thought": answer,
+        "content": answer,
+        "trust": "verified" if result.verified else "unverified_hypothesis",
         "verified": result.verified,
         "attempts": result.attempts,
         "priority": priority,
-        "receipt": result.to_receipt(),
+        "workspace_admitted": bool(workspace_receipt.get("admitted")),
+        "receipt": receipt,
+    }
+
+
+async def _publish_result_to_workspace(
+    *,
+    answer: str,
+    pathway: str,
+    verified: bool,
+    priority: float,
+    loop_receipt: dict[str, Any],
+) -> dict[str, Any]:
+    """Offer the thought to attention without retaining it as a belief."""
+    try:
+        from core.consciousness.global_workspace import ContentType
+        from core.container import ServiceContainer
+
+        workspace = ServiceContainer.get("global_workspace", default=None)
+    except (ImportError, AttributeError, RuntimeError) as exc:
+        _degrade(exc, "cognitive-loop workspace resolution failed")
+        return {"admitted": False, "reason": "workspace_resolution_failed"}
+    if workspace is None or not hasattr(workspace, "publish"):
+        return {"admitted": False, "reason": "workspace_unavailable"}
+    trust = "verified" if verified else "unverified_hypothesis"
+    try:
+        admitted = await asyncio.wait_for(
+            workspace.publish(
+                priority=priority,
+                source="cognitive_loop_pathway",
+                payload={
+                    "schema": COGNITIVE_LOOP_PATHWAY_SCHEMA,
+                    "pathway": pathway,
+                    "trust": trust,
+                    "answer": answer,
+                    "loop_receipt": loop_receipt,
+                    "retained_as_belief": False,
+                },
+                reason=f"[{trust}] {answer}",
+                content_type=ContentType.META,
+            ),
+            timeout=WORKSPACE_TIMEOUT_S,
+        )
+    except TimeoutError as exc:
+        _degrade(exc, "cognitive-loop workspace publication timed out", severity="warning")
+        return {"admitted": False, "reason": "workspace_timeout"}
+    except Exception as exc:
+        _degrade(exc, "cognitive-loop workspace publication failed")
+        return {"admitted": False, "reason": "workspace_error"}
+    return {
+        "admitted": bool(admitted),
+        "reason": "accepted_for_competition" if admitted else "workspace_rejected",
+        "trust": trust,
     }
 
 

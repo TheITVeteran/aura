@@ -199,6 +199,39 @@ def test_phenomenal_pulse_resets_pending_when_schedule_deferred(monkeypatch):
     assert agency._phenomenal_pulse_pending is False
 
 
+def test_agency_registers_one_dedicated_cognitive_loop_hook_slot():
+    agency = AgencyCore(orchestrator=None)
+
+    assert "cognitive_loop" in agency._pathway_registry
+    assert agency._pathway_cognitive_loop(0.0, 0.0) is None
+
+
+def test_agency_status_exposes_cognitive_loop_runtime_receipt():
+    agency = AgencyCore(orchestrator=None)
+    agency._pathway_hooks["cognitive_loop"] = [object()]
+    agency._cognitive_loop_last_run = 1234.5
+    agency._last_cognitive_loop_receipt = {
+        "verified": False,
+        "attempts": 1,
+        "workspace": {
+            "admitted": True,
+            "reason": "accepted_for_competition",
+        },
+    }
+
+    status = agency.get_status()["cognitive_loop"]
+
+    assert status == {
+        "registered": True,
+        "running": False,
+        "last_run": 1234.5,
+        "last_verified": False,
+        "last_attempts": 1,
+        "workspace_admitted": True,
+        "workspace_reason": "accepted_for_competition",
+    }
+
+
 @pytest.mark.asyncio
 async def test_pulse_commits_visible_side_effects_only_after_bus_approval(monkeypatch):
     monkeypatch.setattr("core.organism.viability.get_viability", lambda: Viability())

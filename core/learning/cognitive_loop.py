@@ -34,8 +34,9 @@ Two properties are load-bearing, both learned the hard way this session:
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
 
 COGNITIVE_LOOP_SCHEMA = "aura.cognitive_loop.v1"
 
@@ -65,9 +66,10 @@ class Deliberator(Protocol):
 class Verifier(Protocol):
     """A programmatic or organ check of a candidate answer.
 
-    Returns a dict with at least ``{"correct": bool}``. Reward comes from
-    here and only here -- never from the model's own confidence, which would
-    strengthen confident mistakes.
+    Returns a dict with at least ``{"correct": bool}`` and may include a
+    bounded ``feedback`` or ``reason`` string for the next attempt. Reward
+    comes from here and only here -- never from the model's own confidence,
+    which would strengthen confident mistakes.
     """
 
     def check(self, query: str, candidate: str) -> dict[str, Any]: ...
@@ -131,7 +133,14 @@ class CognitiveLoop:
             # is cheap; skipping acquisition you needed is a wrong answer.
             return True, StageResult("identify_gap", "unavailable",
                                      {"assumed_gap": True})
-        gap = bool(self.gap_detector.has_gap(query))
+        try:
+            gap = bool(self.gap_detector.has_gap(query))
+        except Exception as exc:
+            return True, StageResult(
+                "identify_gap",
+                "failed",
+                {"assumed_gap": True, "error": type(exc).__name__},
+            )
         return gap, StageResult("identify_gap", "ok", {"gap": gap})
 
     def _acquire(self, query: str, gap: bool) -> tuple[list[str], StageResult]:
@@ -141,9 +150,20 @@ class CognitiveLoop:
             return [], StageResult("acquire", "unavailable", {})
         try:
             block = self.composer.compose(query)
-        except Exception:
-            return [], StageResult("acquire", "failed", {})
-        lines = block.get("lines", [])
+        except Exception as exc:
+            return [], StageResult(
+                "acquire", "failed", {"error": type(exc).__name__}
+            )
+        if not isinstance(block, dict):
+            return [], StageResult(
+                "acquire", "failed", {"error": "invalid_composer_result"}
+            )
+        raw_lines = block.get("lines", [])
+        if not isinstance(raw_lines, list):
+            return [], StageResult(
+                "acquire", "failed", {"error": "invalid_material_lines"}
+            )
+        lines = [str(line).strip() for line in raw_lines if str(line).strip()]
         return lines, StageResult("acquire", "ok", {
             "material": len(lines),
             "grounded": block.get("grounded", 0),
@@ -155,20 +175,40 @@ class CognitiveLoop:
             answer = self.deliberator.deliberate(query, material)
         except Exception as exc:
             return "", StageResult("deliberate", "failed", {"error": type(exc).__name__})
-        return str(answer or ""), StageResult(
-            "deliberate", "ok", {"answered": bool(answer)}
+        answer_text = str(answer or "").strip()
+        return answer_text, StageResult(
+            "deliberate",
+            "ok" if answer_text else "failed",
+            {"answered": bool(answer_text), **({"error": "empty_answer"} if not answer_text else {})},
         )
 
     def _verify(self, query: str, candidate: str) -> tuple[bool, StageResult]:
+        if not candidate.strip():
+            return False, StageResult(
+                "verify", "skipped", {"verified": False, "reason": "no_answer"}
+            )
         if self.verifier is None:
             # No verifier -> the answer is UNVERIFIED, never assumed correct.
             return False, StageResult("verify", "unavailable", {"verified": False})
         try:
             verdict = self.verifier.check(query, candidate)
-        except Exception:
-            return False, StageResult("verify", "failed", {"verified": False})
+        except Exception as exc:
+            return False, StageResult(
+                "verify", "failed", {"verified": False, "error": type(exc).__name__}
+            )
+        if not isinstance(verdict, dict) or "correct" not in verdict:
+            return False, StageResult(
+                "verify",
+                "failed",
+                {"verified": False, "error": "invalid_verifier_result"},
+            )
         ok = bool(verdict.get("correct"))
-        return ok, StageResult("verify", "ok", {"verified": ok})
+        detail: dict[str, Any] = {"verified": ok}
+        for key in ("feedback", "reason"):
+            value = str(verdict.get(key) or "").strip()
+            if value:
+                detail[key] = value[:500]
+        return ok, StageResult("verify", "ok", detail)
 
     async def _adeliberate(self, query: str, material: list[str]) -> tuple[str, StageResult]:
         import inspect
@@ -179,21 +219,77 @@ class CognitiveLoop:
                 result = await result
         except Exception as exc:
             return "", StageResult("deliberate", "failed", {"error": type(exc).__name__})
-        return str(result or ""), StageResult("deliberate", "ok", {"answered": bool(result)})
+        answer_text = str(result or "").strip()
+        return answer_text, StageResult(
+            "deliberate",
+            "ok" if answer_text else "failed",
+            {"answered": bool(answer_text), **({"error": "empty_answer"} if not answer_text else {})},
+        )
 
     async def _averify(self, query: str, candidate: str) -> tuple[bool, StageResult]:
         import inspect
 
+        if not candidate.strip():
+            return False, StageResult(
+                "verify", "skipped", {"verified": False, "reason": "no_answer"}
+            )
         if self.verifier is None:
             return False, StageResult("verify", "unavailable", {"verified": False})
         try:
             verdict = self.verifier.check(query, candidate)
             if inspect.isawaitable(verdict):
                 verdict = await verdict
-        except Exception:
-            return False, StageResult("verify", "failed", {"verified": False})
+        except Exception as exc:
+            return False, StageResult(
+                "verify", "failed", {"verified": False, "error": type(exc).__name__}
+            )
+        if not isinstance(verdict, dict) or "correct" not in verdict:
+            return False, StageResult(
+                "verify",
+                "failed",
+                {"verified": False, "error": "invalid_verifier_result"},
+            )
         ok = bool(verdict.get("correct"))
-        return ok, StageResult("verify", "ok", {"verified": ok})
+        detail: dict[str, Any] = {"verified": ok}
+        for key in ("feedback", "reason"):
+            value = str(verdict.get(key) or "").strip()
+            if value:
+                detail[key] = value[:500]
+        return ok, StageResult("verify", "ok", detail)
+
+    def _attempt_budget(self, stages: list[StageResult]) -> int:
+        """Retries require a verifier capable of judging the changed answer."""
+        if self.verifier is not None or self.max_attempts == 1:
+            return self.max_attempts
+        stages.append(
+            StageResult(
+                "retry_control",
+                "skipped",
+                {
+                    "reason": "verifier_unavailable",
+                    "configured_attempts": self.max_attempts,
+                    "effective_attempts": 1,
+                },
+            )
+        )
+        return 1
+
+    @staticmethod
+    def _correction_material(
+        candidate: str,
+        verify_stage: StageResult,
+    ) -> str:
+        """Turn adjudicated failure into bounded next-attempt context."""
+        feedback = str(
+            verify_stage.detail.get("feedback")
+            or verify_stage.detail.get("reason")
+            or "The verifier rejected the prior candidate."
+        ).strip()[:500]
+        prior = str(candidate or "").strip()[:500]
+        return (
+            "[verifier correction] The prior candidate was rejected. "
+            f"Feedback: {feedback} Prior candidate: {prior}"
+        )
 
     async def arun(self, query: str) -> LoopResult:
         """Async cycle for live organs (the LLM router's generate is async).
@@ -211,9 +307,12 @@ class CognitiveLoop:
         answer: str | None = None
         verified = False
         attempts = 0
-        for attempt in range(self.max_attempts):
+        correction_material = ""
+        for attempt in range(self._attempt_budget(stages)):
             attempts = attempt + 1
             material, acq_stage = self._acquire(query, gap)
+            if correction_material:
+                material = [*material, correction_material]
             deliberated, del_stage = await self._adeliberate(query, material)
             verified, ver_stage = await self._averify(query, deliberated)
             for stage in (acq_stage, del_stage, ver_stage):
@@ -223,6 +322,8 @@ class CognitiveLoop:
             if verified:
                 break
             gap = True
+            if self.verifier is not None and deliberated:
+                correction_material = self._correction_material(deliberated, ver_stage)
         learned = False
         if verified and self.learner is not None and answer is not None:
             import inspect
@@ -232,10 +333,18 @@ class CognitiveLoop:
                 if inspect.isawaitable(outcome):
                     outcome = await outcome
                 learned = bool(outcome)
-            except Exception:
+            except Exception as exc:
                 learned = False
-            stages.append(StageResult("learn", "ok" if learned else "skipped",
-                                      {"retained": learned}))
+                stages.append(
+                    StageResult(
+                        "learn",
+                        "failed",
+                        {"retained": False, "error": type(exc).__name__},
+                    )
+                )
+            else:
+                stages.append(StageResult("learn", "ok" if learned else "skipped",
+                                          {"retained": learned}))
         elif self.learner is not None:
             stages.append(StageResult("learn", "skipped",
                                       {"reason": "unverified" if not verified else "no_answer"}))
@@ -253,9 +362,12 @@ class CognitiveLoop:
         answer: str | None = None
         verified = False
         attempts = 0
-        for attempt in range(self.max_attempts):
+        correction_material = ""
+        for attempt in range(self._attempt_budget(stages)):
             attempts = attempt + 1
             material, acq_stage = self._acquire(query, gap)
+            if correction_material:
+                material = [*material, correction_material]
             deliberated, del_stage = self._deliberate(query, material)
             verified, ver_stage = self._verify(query, deliberated)
             # Tag each stage with the attempt so retries are legible, not
@@ -269,6 +381,8 @@ class CognitiveLoop:
             # Self-correction: a failed check means try again -- widening
             # acquisition next round -- until the budget is spent.
             gap = True
+            if self.verifier is not None and deliberated:
+                correction_material = self._correction_material(deliberated, ver_stage)
 
         # Learn: a verified outcome becomes a retained training signal. An
         # unverified one never does -- retaining unverified answers is how a
@@ -277,10 +391,18 @@ class CognitiveLoop:
         if verified and self.learner is not None and answer is not None:
             try:
                 learned = bool(self.learner(query, answer, {"verified": True}))
-            except Exception:
+            except Exception as exc:
                 learned = False
-            stages.append(StageResult("learn", "ok" if learned else "skipped",
-                                      {"retained": learned}))
+                stages.append(
+                    StageResult(
+                        "learn",
+                        "failed",
+                        {"retained": False, "error": type(exc).__name__},
+                    )
+                )
+            else:
+                stages.append(StageResult("learn", "ok" if learned else "skipped",
+                                          {"retained": learned}))
         elif verified and self.learner is not None:
             stages.append(StageResult("learn", "skipped", {"reason": "no_answer"}))
         elif self.learner is not None:
