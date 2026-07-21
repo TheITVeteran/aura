@@ -1297,9 +1297,15 @@ def _runtime_revision_blocker(revision: Any) -> str:
     if _launched_from_app_flag() and required is not True:
         return "runtime_revision_required_contract_missing"
     if required is False:
+        # A source/direct-launch contract is honest with verified=False and no
+        # signed revision token — even when the source tree itself WAS
+        # hash-verified (source_verified=True, which the collector legitimately
+        # sets in direct mode). Only a claimed FULL verification (verified=True)
+        # or a present signed revision token is contradictory with required=False.
+        # Rejecting source_verified=True here downgraded every source/test run's
+        # health to "degraded" (regression from the signed-shell hardening).
         if (
             contract.get("verified") is not False
-            or contract.get("source_verified") is not False
             or str(contract.get("revision_token") or "")
         ):
             return "runtime_revision_contract_invalid"
