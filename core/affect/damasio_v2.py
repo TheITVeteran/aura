@@ -38,17 +38,20 @@ class DamasioMarkers:
         
         if weights_path.exists():
             try:
-                w = np.load(weights_path, allow_pickle=True)
+                # allow_pickle=False: the weights are numeric baselines only.
+                # Pickle deserialization on a mutable data/config path would
+                # allow arbitrary object construction from a tampered file.
+                w = np.load(weights_path, allow_pickle=False)
                 # Issue 101: Robust key access
                 if 'damasio_baselines' in w:
                     b = w['damasio_baselines']
                     if hasattr(b, 'tolist'): b = b.tolist()
-                
+
                 if 'emotions_default' in w:
                     emotion_def = float(w['emotions_default'])
-                
+
                 logger.info("✓ Damasio weights loaded from .npz")
-            except (RuntimeError, AttributeError, TypeError) as e:
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('damasio_v2', e)
                 logger.error("Failed to load Damasio weights (falling back to defaults): %s", e)
 
