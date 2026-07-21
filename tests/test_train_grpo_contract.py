@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass, field
 
 import pytest
 
+from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec
 from core.learning.grpo_training_state import (
     GRPOCheckpointError,
     canonical_json_bytes,
@@ -16,9 +19,11 @@ from tools.train_grpo import (
     _assert_exact_adapter_keys,
     _calibration_token_budget,
     _dataset_payload,
+    _load_execution_spec,
     _point_estimate_delta,
     _publish_adapter_snapshot,
     _publish_immutable_bytes,
+    _record_recurrent_step_failure,
     _stable_seed,
     completion_logprob,
 )
@@ -74,6 +79,59 @@ def test_calibration_cannot_reintroduce_a_short_reasoning_budget():
     assert _calibration_token_budget(320, 320) == 320
     with pytest.raises(ValueError, match="must equal training"):
         _calibration_token_budget(320, 128)
+
+
+def test_execution_mode_requires_and_strictly_loads_recurrent_spec(tmp_path):
+    assert _load_execution_spec("standard", None) is None
+    with pytest.raises(ValueError, match="only applies"):
+        _load_execution_spec("standard", str(tmp_path / "unused.json"))
+    with pytest.raises(ValueError, match="requires"):
+        _load_execution_spec("recurrent", None)
+
+    spec = RLCExecutionSpec(
+        n_slots=4,
+        branch_roles=("constructive_solution", "critical_audit"),
+        recurrent_steps=3,
+    )
+    path = tmp_path / "execution_spec.json"
+    path.write_text(json.dumps(spec.to_dict()), encoding="ascii")
+
+    loaded = _load_execution_spec("recurrent", str(path))
+    assert loaded == spec
+    assert loaded.sha256 == spec.sha256
+
+    payload = spec.to_dict()
+    payload["unknown"] = True
+    path.write_text(json.dumps(payload), encoding="ascii")
+    with pytest.raises(ValueError, match="unknown"):
+        _load_execution_spec("recurrent", str(path))
+
+
+def test_recurrent_failure_receipt_is_immutable_and_latest_is_bound(tmp_path):
+    receipt = _record_recurrent_step_failure(
+        tmp_path,
+        protocol_sha256="a" * 64,
+        dataset_sha256="b" * 64,
+        execution_spec_sha256="c" * 64,
+        attempted_step=3,
+        last_durable_step=1,
+        phase="exact_adjoint",
+        task_id="logic-3",
+        sample_seed=41,
+        samples=(),
+        error=RuntimeError("clip admission failed"),
+    )
+
+    payload = json.loads(receipt.read_text(encoding="ascii"))
+    latest = json.loads(
+        (tmp_path / "latest_failure.json").read_text(encoding="ascii")
+    )
+    assert payload["attempted_step"] == 3
+    assert payload["last_durable_step"] == 1
+    assert payload["volatile_completed_steps"] == 1
+    assert payload["error"]["type"] == "RuntimeError"
+    assert latest["receipt"] == str(receipt.relative_to(tmp_path))
+    assert latest["receipt_sha256"] == hashlib.sha256(receipt.read_bytes()).hexdigest()
 
 
 def test_adapter_snapshot_is_atomically_published_as_real_safetensors(tmp_path):

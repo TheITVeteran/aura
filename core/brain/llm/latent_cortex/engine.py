@@ -811,9 +811,17 @@ class LatentCortexEngine:
         cancel_check: Callable[[], bool] | None = None,
         progress: Callable[[dict], None] | None = None,
         capture_decode_logprobs: bool = False,
+        decode_sentence_grace_tokens: int | None = None,
     ) -> LatentReasoningResult:
         if type(capture_decode_logprobs) is not bool:
             raise TypeError("capture_decode_logprobs must be boolean")
+        if decode_sentence_grace_tokens is not None and (
+            type(decode_sentence_grace_tokens) is not int
+            or not 0 <= decode_sentence_grace_tokens <= 4096
+        ):
+            raise ValueError(
+                "decode_sentence_grace_tokens must be null or inside [0, 4096]"
+            )
         receipt = EpisodeReceipt(episode_id=uuid.uuid4().hex[:12])
         episode_started = time.monotonic()
         receipt.n_layers = self.n_layers
@@ -877,6 +885,7 @@ class LatentCortexEngine:
                         if capture_decode_logprobs
                         else None
                     ),
+                    decode_sentence_grace_tokens=decode_sentence_grace_tokens,
                 )
             except _FastWeightCleanupError as exc:
                 record_degradation(
@@ -925,6 +934,7 @@ class LatentCortexEngine:
                                 if capture_decode_logprobs
                                 else None
                             ),
+                            sentence_grace_tokens=decode_sentence_grace_tokens,
                         )
                         receipt.decode_requested_tokens = (
                             decode_max_tokens
@@ -1057,6 +1067,7 @@ class LatentCortexEngine:
         progress: Callable[[dict], None] | None = None,
         episode_started: float | None = None,
         token_logprobs_out: list[float] | None = None,
+        decode_sentence_grace_tokens: int | None = None,
     ) -> tuple[list[int], EpisodeReceipt]:
         import mlx.core as mx
 
@@ -1746,6 +1757,7 @@ class LatentCortexEngine:
                     6.0 if self.config.fast_weights.enabled else 0.0
                 ),
                 token_logprobs_out=token_logprobs_out,
+                sentence_grace_tokens=decode_sentence_grace_tokens,
             )
             receipt.decode_requested_tokens = decode_limit
             receipt.decode_generated_tokens = len(out_tokens)

@@ -74,10 +74,11 @@ from core.runtime.atomic_writer import (  # noqa: E402
 )
 from core.runtime.mlx_memory_guard import mlx_memory_envelope  # noqa: E402
 
-GRPO_TRAIN_SCHEMA = "aura.grpo_training.v2"
+GRPO_TRAIN_SCHEMA = "aura.grpo_training.v3"
 GRPO_DATASET_SCHEMA = "aura.grpo_dataset.v1"
-GRPO_PROTOCOL_SCHEMA = "aura.grpo_protocol.v1"
+GRPO_PROTOCOL_SCHEMA = "aura.grpo_protocol.v2"
 RNG_STRATEGY = "stateless_sha256_step_seeded_v1"
+EXECUTION_MODES = ("standard", "recurrent")
 
 
 # Set by main() from --cot. Reasoning room is the fix the CP238 finding
@@ -203,6 +204,133 @@ def _render(tokenizer, task) -> str:
     )
 
 
+def _load_execution_spec(mode: str, path: str | None):
+    if mode not in EXECUTION_MODES:
+        raise ValueError(f"unsupported execution mode: {mode}")
+    if mode == "standard":
+        if path:
+            raise ValueError("--execution-spec only applies to recurrent mode")
+        return None
+    if not path:
+        raise ValueError("recurrent mode requires --execution-spec")
+    import json
+
+    from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec
+
+    spec_path = Path(path).expanduser().resolve(strict=True)
+    if not spec_path.is_file():
+        raise ValueError("execution spec must be a regular file")
+    try:
+        payload = json.loads(spec_path.read_text(encoding="ascii"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError("execution spec is not readable canonical JSON") from exc
+    return RLCExecutionSpec.from_dict(payload)
+
+
+def _task_prompt_tokens(tokenizer, task) -> list[int]:
+    tokens = list(tokenizer.encode(_render(tokenizer, task)))
+    if not tokens or any(type(token) is not int or token < 0 for token in tokens):
+        raise RuntimeError("rendered task produced invalid prompt tokens")
+    return tokens
+
+
+def sample_recurrent_group(
+    model,
+    tokenizer,
+    task,
+    *,
+    spec,
+    size: int,
+    max_tokens: int,
+    seed: int,
+):
+    """Bounded behavior-policy completions from the fixed recurrent graph."""
+
+    from core.learning.recurrent_grpo import (
+        RecurrentSamplingConfig,
+        sample_recurrent_completion,
+    )
+
+    prompt_tokens = _task_prompt_tokens(tokenizer, task)
+    sampling = RecurrentSamplingConfig(max_tokens=max_tokens)
+    samples = []
+    completions: list[str] = []
+    for index in range(size):
+        sample = sample_recurrent_completion(
+            model,
+            prompt_tokens,
+            spec=spec,
+            seed=_stable_seed(seed, "recurrent_completion", index),
+            sampling=sampling,
+            tokenizer=tokenizer,
+        )
+        samples.append(sample)
+        completions.append(tokenizer.decode(list(sample.tokens)))
+    return prompt_tokens, samples, completions
+
+
+def _record_recurrent_step_failure(
+    out_dir: Path,
+    *,
+    protocol_sha256: str,
+    dataset_sha256: str,
+    execution_spec_sha256: str,
+    attempted_step: int,
+    last_durable_step: int,
+    phase: str,
+    task_id: str | None,
+    sample_seed: int | None,
+    samples: Sequence[Any],
+    error: Exception,
+) -> Path:
+    """Durably bind a failed recurrent attempt without mutating its checkpoint."""
+
+    sample_receipts = [sample.receipt() for sample in samples]
+    rejected_sample = getattr(error, "sample", None)
+    payload = {
+        "schema": "aura.grpo_recurrent_failure.v1",
+        "protocol_sha256": protocol_sha256,
+        "dataset_sha256": dataset_sha256,
+        "execution_spec_sha256": execution_spec_sha256,
+        "attempted_step": int(attempted_step),
+        "last_durable_step": int(last_durable_step),
+        "volatile_completed_steps": max(
+            0, int(attempted_step) - 1 - int(last_durable_step)
+        ),
+        "phase": str(phase),
+        "task_id": task_id,
+        "sample_seed": sample_seed,
+        "samples": sample_receipts,
+        "rejected_sample": (
+            rejected_sample.receipt()
+            if rejected_sample is not None
+            and callable(getattr(rejected_sample, "receipt", None))
+            else None
+        ),
+        "error": {
+            "type": type(error).__name__,
+            "message": str(error)[:2000],
+        },
+        "recorded_at_ns": time.time_ns(),
+    }
+    encoded = canonical_json_bytes(payload)
+    incident = sha256_bytes(encoded)[:16]
+    failures = ensure_private_directory(out_dir / "failures")
+    path = failures / f"step-{attempted_step:06d}-{incident}.json"
+    if not atomic_write_bytes_if_absent(path, encoded, mode=0o600):
+        if path.read_bytes() != encoded:
+            raise GRPOCheckpointError("recurrent failure receipt publication raced")
+    latest = canonical_json_bytes(
+        {
+            "schema": "aura.grpo_recurrent_failure_pointer.v1",
+            "receipt": str(path.relative_to(out_dir)),
+            "receipt_sha256": sha256_bytes(encoded),
+        }
+    )
+    atomic_write_bytes(out_dir / "latest_failure.json", latest, mode=0o600)
+    return path
+
+
 def sample_group(model, tokenizer, task, *, size, max_tokens, temperature, seed):
     """K completions for one prompt. Diversity is the mechanism."""
     import mlx.core as mx
@@ -297,6 +425,79 @@ def evaluate_heldout(
                 envelope.reclaim(force=True)
     report = scaling_report(results)
     report["adapters_on"] = adapters_on
+    report["execution_mode"] = "standard"
+    return report
+
+
+def evaluate_recurrent_heldout(
+    model,
+    tokenizer,
+    tasks,
+    *,
+    spec,
+    max_tokens: int,
+    envelope,
+    adapters_on: bool,
+    seed: int,
+):
+    """Greedy held-out accuracy through the exact fixed RLC graph."""
+
+    import mlx.core as mx
+
+    from core.brain.llm.latent_cortex.engine import LatentCortexEngine
+    from core.brain.llm.latent_cortex.recurrence_adapter import (
+        recurrence_adapter_disabled,
+    )
+    from core.learning.recurrent_grpo import (
+        RecurrentSamplingConfig,
+        cortex_config_from_execution_spec,
+    )
+
+    config = cortex_config_from_execution_spec(
+        spec,
+        sampling=RecurrentSamplingConfig(max_tokens=max_tokens),
+    )
+    config.decode_temperature = 0.0
+    engine = LatentCortexEngine(
+        model,
+        tokenizer=tokenizer,
+        config=config,
+        schedule_library=None,
+    )
+    results = []
+    receipts: list[dict[str, Any]] = []
+    for index, task in enumerate(tasks):
+        mx.random.seed(_stable_seed(seed, "recurrent_eval", index, task.task_id))
+        scope = nullcontext() if adapters_on else recurrence_adapter_disabled()
+        with scope:
+            result = engine.reason(
+                token_ids=_task_prompt_tokens(tokenizer, task),
+                decode_max_tokens=max_tokens,
+                decode_sentence_grace_tokens=0,
+            )
+        if not result.ok:
+            raise RuntimeError(
+                f"recurrent held-out task {task.task_id} failed: {result.reason}"
+            )
+        verdict = task.grade(result.text)
+        results.append((task, bool(verdict["correct"])))
+        receipts.append(
+            {
+                "task_id": task.task_id,
+                "selected_branch": result.receipt.selected_branch,
+                "steps_taken": result.receipt.steps_taken,
+                "decode_termination": result.receipt.decode_termination,
+                "output_tokens": len(result.tokens),
+                "correct": bool(verdict["correct"]),
+            }
+        )
+        if envelope is not None:
+            envelope.reclaim(force=True)
+    report = scaling_report(results)
+    report["adapters_on"] = adapters_on
+    report["execution_mode"] = "recurrent"
+    report["execution_spec_sha256"] = spec.sha256
+    report["episode_receipts"] = receipts
     return report
 
 
@@ -304,6 +505,15 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", required=True)
     parser.add_argument("--out-dir", required=True)
+    parser.add_argument(
+        "--execution-mode",
+        choices=EXECUTION_MODES,
+        default="standard",
+    )
+    parser.add_argument(
+        "--execution-spec",
+        help="strict RLCExecutionSpec JSON required by recurrent mode",
+    )
     parser.add_argument("--domains", default="arithmetic_chain,program_trace,constraint_order")
     parser.add_argument("--depths", default="2,4,8")
     parser.add_argument("--train-per-cell", type=int, default=32)
@@ -369,6 +579,14 @@ def main() -> int:
         parser.error("--learning-rate must be inside (0, 1]")
     if not 0.0 <= args.format_credit <= 0.2:
         parser.error("--format-credit must be inside [0, 0.2]")
+    try:
+        execution_spec = _load_execution_spec(
+            args.execution_mode, args.execution_spec
+        )
+    except (OSError, TypeError, ValueError) as exc:
+        parser.error(str(exc))
+    if args.execution_mode == "recurrent" and args.temperature != 1.0:
+        parser.error("recurrent mode requires --temperature 1")
 
     import mlx.core as mx
     import mlx.nn as nn
@@ -384,6 +602,14 @@ def main() -> int:
     config = GRPOConfig(
         group_size=args.group_size, kl_coefficient=args.kl_coefficient
     )
+    recurrent_config = None
+    if execution_spec is not None:
+        from core.learning.recurrent_grpo import RecurrentGRPOConfig
+
+        recurrent_config = RecurrentGRPOConfig(
+            kl_coefficient=args.kl_coefficient,
+            advantage_clip=config.advantage_clip,
+        )
     domains = [d.strip() for d in args.domains.split(",") if d.strip()]
     depths = [int(d) for d in args.depths.split(",") if d.strip()]
     if not domains or not depths or any(depth <= 0 for depth in depths):
@@ -422,6 +648,25 @@ def main() -> int:
             / "core/brain/llm/latent_cortex/recurrence_adapter.py"
         ),
     }
+    if execution_spec is not None:
+        source_files.update(
+            {
+                "recurrent_grpo": REPO_ROOT / "core/learning/recurrent_grpo.py",
+                "recurrent_objective": (
+                    REPO_ROOT / "core/learning/recurrence_native_objective_v2.py"
+                ),
+                "execution_spec": (
+                    REPO_ROOT
+                    / "core/brain/llm/latent_cortex/execution_spec.py"
+                ),
+                "latent_engine": (
+                    REPO_ROOT / "core/brain/llm/latent_cortex/engine.py"
+                ),
+                "recurrence": (
+                    REPO_ROOT / "core/brain/llm/latent_cortex/recurrence.py"
+                ),
+            }
+        )
     sources = {role: _source_binding(path) for role, path in source_files.items()}
     base_identity = full_weight_checkpoint_identity(model_path)
     behavior_identity = model_behavior_bundle_identity(model_path)
@@ -435,6 +680,13 @@ def main() -> int:
         "dataset_sha256": dataset_sha256,
         "sources": sources,
         "training": {
+            "execution_mode": args.execution_mode,
+            "execution_spec": (
+                execution_spec.to_dict() if execution_spec is not None else None
+            ),
+            "execution_spec_sha256": (
+                execution_spec.sha256 if execution_spec is not None else None
+            ),
             "domains": domains,
             "depths": depths,
             "train_per_cell": args.train_per_cell,
@@ -505,7 +757,24 @@ def main() -> int:
         total_layers = len(model.model.layers)
         targets = tuple(t.strip() for t in args.lora_targets.split(","))
         attached = 0
-        for index in range(max(0, total_layers - args.lora_layers), total_layers):
+        if execution_spec is None:
+            adapted_indices = range(
+                max(0, total_layers - args.lora_layers), total_layers
+            )
+        else:
+            prelude_end = max(
+                1, int(total_layers * execution_spec.prelude_frac)
+            )
+            coda_start = min(
+                total_layers - 1,
+                total_layers
+                - max(1, int(total_layers * execution_spec.coda_frac)),
+            )
+            adapted_indices = range(
+                max(prelude_end, coda_start - args.lora_layers),
+                coda_start,
+            )
+        for index in adapted_indices:
             layer = model.model.layers[index]
             for parent_name in ("self_attn", "mlp"):
                 parent = getattr(layer, parent_name, None)
@@ -536,6 +805,7 @@ def main() -> int:
         optimizer.init(model.trainable_parameters())
         telemetry = GRPOTelemetry()
         history: list[dict[str, Any]] = []
+        step_receipts: list[dict[str, Any]] = []
         baseline_eval: dict[str, Any] | None = None
         calibration: dict[str, Any] | None = None
         step = 0
@@ -574,6 +844,26 @@ def main() -> int:
             curriculum = AdaptiveCurriculum.from_state(state["curriculum"])
             telemetry = GRPOTelemetry.from_state(state["telemetry"])
             history = list(state["history"])
+            raw_step_receipts = state.get("step_receipts", [])
+            if not isinstance(raw_step_receipts, list) or any(
+                not isinstance(entry, dict) for entry in raw_step_receipts
+            ):
+                raise GRPOCheckpointError("checkpoint step receipts are invalid")
+            step_receipts = list(raw_step_receipts)
+            if state.get("execution_mode", "standard") != args.execution_mode:
+                raise GRPOCheckpointError("checkpoint execution mode differs")
+            if state.get("execution_spec_sha256") != (
+                execution_spec.sha256 if execution_spec is not None else None
+            ):
+                raise GRPOCheckpointError("checkpoint execution spec differs")
+            if execution_spec is not None and len(step_receipts) != step:
+                raise GRPOCheckpointError(
+                    "recurrent checkpoint does not receipt every committed step"
+                )
+            if execution_spec is None and step_receipts:
+                raise GRPOCheckpointError(
+                    "standard checkpoint contains recurrent step receipts"
+                )
             baseline_eval = state["baseline_eval"]
             calibration = state["calibration"]
             prior_elapsed_s = float(state["elapsed_training_s"])
@@ -597,11 +887,14 @@ def main() -> int:
             _assert_exact_adapter_keys(expected_adapters, tensors)
             return tensors
 
+        last_durable_step = step
+
         def checkpoint_now() -> Path:
+            nonlocal last_durable_step
             optimizer_tensors = dict(tree_flatten(optimizer.state))
             if not optimizer_tensors:
                 raise GRPOCheckpointError("optimizer state is empty")
-            return save_grpo_checkpoint(
+            path = save_grpo_checkpoint(
                 out_dir,
                 adapter_tensors=adapter_tensors(),
                 optimizer_tensors=optimizer_tensors,
@@ -612,6 +905,7 @@ def main() -> int:
                     "curriculum": curriculum.state(),
                     "telemetry": telemetry.state(),
                     "history": history,
+                    "step_receipts": step_receipts,
                     "baseline_eval": baseline_eval,
                     "calibration": calibration,
                     "elapsed_training_s": elapsed_training_s(),
@@ -620,21 +914,43 @@ def main() -> int:
                     "optimizer_updates": optimizer_updates,
                     "last_step_kind": last_step_kind,
                     "last_step_committed": True,
+                    "execution_mode": args.execution_mode,
+                    "execution_spec_sha256": (
+                        execution_spec.sha256
+                        if execution_spec is not None
+                        else None
+                    ),
                 },
                 keep=args.checkpoint_keep,
             )
+            last_durable_step = step
+            return path
 
         if resumed is None:
-            baseline_eval = evaluate_heldout(
-                model,
-                tokenizer,
-                holdout,
-                max_tokens=args.max_tokens,
-                envelope=envelope,
-                adapters_on=False,
-            )
+            if execution_spec is None:
+                baseline_eval = evaluate_heldout(
+                    model,
+                    tokenizer,
+                    holdout,
+                    max_tokens=args.max_tokens,
+                    envelope=envelope,
+                    adapters_on=False,
+                )
+                baseline_role = "frozen_pretraining_baseline"
+            else:
+                baseline_eval = evaluate_recurrent_heldout(
+                    model,
+                    tokenizer,
+                    holdout,
+                    spec=execution_spec,
+                    max_tokens=args.max_tokens,
+                    envelope=envelope,
+                    adapters_on=False,
+                    seed=_stable_seed(args.seed, "baseline"),
+                )
+                baseline_role = "frozen_base_recurrent_baseline"
             baseline_eval["step"] = 0
-            baseline_eval["role"] = "frozen_pretraining_baseline"
+            baseline_eval["role"] = baseline_role
             print(
                 f"[baseline 0] overall={baseline_eval['overall']:.3f} "
                 f"by_depth={baseline_eval['accuracy_by_depth']}",
@@ -668,14 +984,25 @@ def main() -> int:
                     args.seed, "calibration", family, difficulty, probe_index
                 )
                 probe = pool[decision_seed % len(pool)]
-                with recurrence_adapter_scope(start=None, stop=None):
-                    _, completions = sample_group(
+                if execution_spec is None:
+                    with recurrence_adapter_scope(start=None, stop=None):
+                        _, completions = sample_group(
+                            model,
+                            tokenizer,
+                            probe,
+                            size=cal_group,
+                            max_tokens=cal_tokens,
+                            temperature=args.temperature,
+                            seed=decision_seed,
+                        )
+                else:
+                    _, _samples, completions = sample_recurrent_group(
                         model,
                         tokenizer,
                         probe,
+                        spec=execution_spec,
                         size=cal_group,
                         max_tokens=cal_tokens,
-                        temperature=args.temperature,
                         seed=decision_seed,
                     )
                 rate = sum(
@@ -745,6 +1072,7 @@ def main() -> int:
             signal.signal(signum, request_stop)
 
         halt_reason = "no_reachable_frontier" if not training_allowed else "max_steps"
+        active_recurrent_step: dict[str, Any] | None = None
         try:
             while training_allowed and step < args.max_steps:
                 if requested_signal is not None:
@@ -763,16 +1091,40 @@ def main() -> int:
                 task_rng = random.Random(_stable_seed(args.seed, "task", step_number))
                 task = pool[task_rng.randrange(len(pool))]
                 sample_seed = _stable_seed(args.seed, "group", step_number, task.task_id)
-                with recurrence_adapter_scope(start=None, stop=None):
-                    prompt, completions = sample_group(
-                        model,
-                        tokenizer,
-                        task,
-                        size=config.group_size,
-                        max_tokens=args.max_tokens,
-                        temperature=args.temperature,
-                        seed=sample_seed,
+                recurrent_samples = None
+                if execution_spec is not None:
+                    active_recurrent_step = {
+                        "attempted_step": step_number,
+                        "phase": "sampling",
+                        "task_id": task.task_id,
+                        "sample_seed": sample_seed,
+                        "samples": (),
+                    }
+                if execution_spec is None:
+                    with recurrence_adapter_scope(start=None, stop=None):
+                        prompt, completions = sample_group(
+                            model,
+                            tokenizer,
+                            task,
+                            size=config.group_size,
+                            max_tokens=args.max_tokens,
+                            temperature=args.temperature,
+                            seed=sample_seed,
+                        )
+                else:
+                    prompt, recurrent_samples, completions = (
+                        sample_recurrent_group(
+                            model,
+                            tokenizer,
+                            task,
+                            spec=execution_spec,
+                            size=config.group_size,
+                            max_tokens=args.max_tokens,
+                            seed=sample_seed,
+                        )
                     )
+                    active_recurrent_step["samples"] = tuple(recurrent_samples)
+                    active_recurrent_step["phase"] = "grading"
                 rewards = [
                     reward_from_verdict(
                         task.grade(text), format_credit=args.format_credit
@@ -784,55 +1136,109 @@ def main() -> int:
                 )
                 loss_value: float | None = None
                 step_kind = "degenerate_group"
+                update_receipt: dict[str, Any] | None = None
 
                 if not advantage_report["degenerate"]:
-                    reference = [
-                        mx.stop_gradient(
-                            completion_logprob(
-                                model,
-                                tokenizer,
-                                prompt,
-                                text,
-                                adapters_on=False,
+                    if execution_spec is None:
+                        reference = [
+                            mx.stop_gradient(
+                                completion_logprob(
+                                    model,
+                                    tokenizer,
+                                    prompt,
+                                    text,
+                                    adapters_on=False,
+                                )
                             )
-                        )
-                        for text in completions
-                    ]
-
-                    def loss_fn(
-                        _model,
-                        *,
-                        _prompt=prompt,
-                        _completions=tuple(completions),
-                        _advantages=tuple(advantage_report["advantages"]),
-                        _reference=tuple(reference),
-                    ):
-                        policy = [
-                            completion_logprob(
-                                _model,
-                                tokenizer,
-                                _prompt,
-                                text,
-                                adapters_on=True,
-                            )
-                            for text in _completions
+                            for text in completions
                         ]
-                        loss, _report = grpo_loss(
-                            policy,
-                            _advantages,
-                            reference_logprobs=_reference,
-                            kl_coefficient=config.kl_coefficient,
-                        )
-                        return loss
 
-                    loss, grads = nn.value_and_grad(model, loss_fn)(model)
+                        def loss_fn(
+                            _model,
+                            *,
+                            _prompt=prompt,
+                            _completions=tuple(completions),
+                            _advantages=tuple(advantage_report["advantages"]),
+                            _reference=tuple(reference),
+                        ):
+                            policy = [
+                                completion_logprob(
+                                    _model,
+                                    tokenizer,
+                                    _prompt,
+                                    text,
+                                    adapters_on=True,
+                                )
+                                for text in _completions
+                            ]
+                            loss, _report = grpo_loss(
+                                policy,
+                                _advantages,
+                                reference_logprobs=_reference,
+                                kl_coefficient=config.kl_coefficient,
+                            )
+                            return loss
+
+                        loss, grads = nn.value_and_grad(model, loss_fn)(model)
+                        loss_value = float(loss)
+                    else:
+                        from core.learning.recurrent_grpo import (
+                            exact_adjoint_sampled_group_value_and_grad,
+                        )
+
+                        if recurrent_samples is None or recurrent_config is None:
+                            raise RuntimeError("recurrent training state is missing")
+                        active_recurrent_step["phase"] = "exact_adjoint"
+                        recurrent_result = (
+                            exact_adjoint_sampled_group_value_and_grad(
+                                model,
+                                prompt,
+                                recurrent_samples,
+                                rewards,
+                                spec=execution_spec,
+                                config=recurrent_config,
+                            )
+                        )
+                        if recurrent_result.gradients is None:
+                            raise RuntimeError(
+                                "non-degenerate recurrent group has no gradient"
+                            )
+                        grads = recurrent_result.gradients
+                        loss_value = float(
+                            recurrent_result.gradient_surrogate_value
+                        )
+                        update_receipt = recurrent_result.receipt()
+                        active_recurrent_step["phase"] = "optimizer_update"
                     optimizer.update(model, grads)
                     mx.eval(model.parameters(), optimizer.state)
-                    loss_value = float(loss)
                     optimizer_updates += 1
                     step_kind = "optimizer_update"
                     del grads
                     envelope.reclaim(force=True)
+
+                if recurrent_samples is not None:
+                    from core.learning.recurrent_grpo import (
+                        recurrent_policy_sha256,
+                    )
+
+                    step_receipts.append(
+                        {
+                            "step": step_number,
+                            "task_id": task.task_id,
+                            "sample_seed": sample_seed,
+                            "execution_spec_sha256": execution_spec.sha256,
+                            "samples": [
+                                sample.receipt() for sample in recurrent_samples
+                            ],
+                            "rewards": [float(value) for value in rewards],
+                            "advantage_report": advantage_report,
+                            "step_kind": step_kind,
+                            "update": update_receipt,
+                            "policy_after_sha256": recurrent_policy_sha256(
+                                model, execution_spec
+                            ),
+                        }
+                    )
 
                 # State mutates only after a complete optimizer update or a
                 # fully graded degenerate group. The durable step is therefore
@@ -846,6 +1252,8 @@ def main() -> int:
                 )
                 step = step_number
                 last_step_kind = step_kind
+                if active_recurrent_step is not None:
+                    active_recurrent_step["phase"] = "post_update_evaluation"
 
                 if step % 10 == 0:
                     detail = (
@@ -861,16 +1269,30 @@ def main() -> int:
                     )
 
                 if step % args.eval_every == 0:
-                    report = evaluate_heldout(
-                        model,
-                        tokenizer,
-                        holdout,
-                        max_tokens=args.max_tokens,
-                        envelope=envelope,
-                        adapters_on=True,
-                    )
+                    if execution_spec is None:
+                        report = evaluate_heldout(
+                            model,
+                            tokenizer,
+                            holdout,
+                            max_tokens=args.max_tokens,
+                            envelope=envelope,
+                            adapters_on=True,
+                        )
+                        report_role = "adapter_standard_decode"
+                    else:
+                        report = evaluate_recurrent_heldout(
+                            model,
+                            tokenizer,
+                            holdout,
+                            spec=execution_spec,
+                            max_tokens=args.max_tokens,
+                            envelope=envelope,
+                            adapters_on=True,
+                            seed=_stable_seed(args.seed, "eval", step),
+                        )
+                        report_role = "adapter_recurrent_decode"
                     report["step"] = step
-                    report["role"] = "adapter_standard_decode"
+                    report["role"] = report_role
                     history.append(report)
                     print(
                         f"[eval {step}] overall={report['overall']:.3f} "
@@ -888,6 +1310,7 @@ def main() -> int:
                         "or hopeless",
                         flush=True,
                     )
+                active_recurrent_step = None
 
             if step >= args.max_steps:
                 halt_reason = "max_steps"
@@ -896,18 +1319,56 @@ def main() -> int:
                 and training_allowed
                 and (not history or history[-1].get("step") != step)
             ):
-                report = evaluate_heldout(
-                    model,
-                    tokenizer,
-                    holdout,
-                    max_tokens=args.max_tokens,
-                    envelope=envelope,
-                    adapters_on=True,
-                )
+                if execution_spec is None:
+                    report = evaluate_heldout(
+                        model,
+                        tokenizer,
+                        holdout,
+                        max_tokens=args.max_tokens,
+                        envelope=envelope,
+                        adapters_on=True,
+                    )
+                    report_role = "adapter_standard_decode"
+                else:
+                    report = evaluate_recurrent_heldout(
+                        model,
+                        tokenizer,
+                        holdout,
+                        spec=execution_spec,
+                        max_tokens=args.max_tokens,
+                        envelope=envelope,
+                        adapters_on=True,
+                        seed=_stable_seed(args.seed, "eval", step),
+                    )
+                    report_role = "adapter_recurrent_decode"
                 report["step"] = step
-                report["role"] = "adapter_standard_decode"
+                report["role"] = report_role
                 history.append(report)
             checkpoint_path = checkpoint_now()
+        except Exception as exc:
+            if execution_spec is not None:
+                context = active_recurrent_step or {
+                    "attempted_step": step + 1,
+                    "phase": "between_steps",
+                    "task_id": None,
+                    "sample_seed": None,
+                    "samples": (),
+                }
+                failure_path = _record_recurrent_step_failure(
+                    out_dir,
+                    protocol_sha256=protocol_sha256,
+                    dataset_sha256=dataset_sha256,
+                    execution_spec_sha256=execution_spec.sha256,
+                    attempted_step=context["attempted_step"],
+                    last_durable_step=last_durable_step,
+                    phase=context["phase"],
+                    task_id=context["task_id"],
+                    sample_seed=context["sample_seed"],
+                    samples=context["samples"],
+                    error=exc,
+                )
+                print(f"[failure-receipt] {failure_path}", flush=True)
+            raise
         finally:
             for signum, handler in previous_handlers.items():
                 signal.signal(signum, handler)
@@ -931,6 +1392,13 @@ def main() -> int:
             "behavior": behavior_identity,
         },
         "config": config.to_receipt(),
+        "execution_mode": args.execution_mode,
+        "execution_spec": (
+            execution_spec.to_dict() if execution_spec is not None else None
+        ),
+        "execution_spec_sha256": (
+            execution_spec.sha256 if execution_spec is not None else None
+        ),
         "domains": domains,
         "depths": depths,
         "train_tasks": len(train_tasks),
@@ -948,8 +1416,15 @@ def main() -> int:
         "calibration": calibration,
         "baseline": baseline_eval,
         "history": history,
+        "step_receipts": step_receipts,
         "final": final,
-        "adapter_standard_decode_delta": delta,
+        "adapter_decode_delta": delta,
+        "adapter_standard_decode_delta": (
+            delta if execution_spec is None else None
+        ),
+        "adapter_recurrent_decode_delta": (
+            delta if execution_spec is not None else None
+        ),
         "checkpoint": str(checkpoint_path.relative_to(out_dir)),
         "verdict": {
             "had_signal": bool(learning_signal["learning_signal"]),

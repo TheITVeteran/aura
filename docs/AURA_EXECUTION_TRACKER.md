@@ -22646,3 +22646,68 @@ publish CP256, integrate this admitted sampler and exact update into CP255's
 crash-consistent detached trainer, then preregister and run a fresh powered
 base/adapter x standard/RLC factorial campaign after the presentation window.
 Final long soaks remain deferred.
+
+## Checkpoint 2026-07-21-257: Crash-Consistent Recurrent GRPO
+
+CP256's recurrent sampler and exact adjoint now run inside CP255's immutable,
+restartable trainer. `--execution-mode recurrent` requires a strict frozen
+`RLCExecutionSpec`; the protocol binds that graph and the recurrent engine,
+objective, adapter, task, checkpoint, and trainer source bytes. LoRA placement
+is confined to the recurrent middle-layer window. Baseline and held-out
+evaluation both execute the same fixed RLC graph, with only the durable adapter
+disabled for the frozen reference. Every committed recurrent step records the
+task and stateless seed, compact sample provenance, programmatic rewards,
+advantages, exact-adjoint metrics, and before/after policy identities. Resume
+rejects a changed mode, graph, source, dataset, model, adapter keyset, or missing
+step receipt.
+
+Real 1.5B integration exposed and corrected a false assumption in CP256's
+wording: MLX's quantized KV-cached sampling kernel and full teacher-forced
+adjoint kernel are not numerically identical. The observed differences were
+often concentrated at the first or another sparse token even when aggregate
+drift was small. The trainer therefore no longer pretends those paths are
+exactly on-policy. Cached inference is a bounded behavior policy; exact
+per-token ratios feed a clipped PPO objective, clipped tokens receive no policy
+gradient, and admission is controlled by clipped-token fraction plus
+distribution-level approximate KL. Wider maximum/mean drift limits remain as
+secondary whole-graph divergence guards. The exact streamed gradient still
+matches the monolithic differentiable objective. Receipts expose drift, maximum
+index, clip fraction, approximate KL, both probability-vector digests, and the
+fixed graph and policy identities. Any sampling, admission, grading, adjoint,
+optimizer, or pre-checkpoint runtime failure now publishes an immutable failure
+receipt and latest pointer without mutating the last durable checkpoint.
+
+The final real-model gate used the tracked CP138 graph and
+`Qwen2.5-1.5B-Instruct-4bit`. One stochastic group earned rewards
+`[1, 0, 1, 0]`; the 85-token exact adjoint produced one optimizer update with
+`0.014643` clipped-token fraction and `0.001661` behavior approximate KL, and
+changed the recurrent policy identity from
+`b15042604115bf6767ed65a65814b1d9bd138145a9dab8cf22f1daf631aca0b4` to
+`354e6a8efc49c23dd4308e49340d510f2824f6c62c131aa4dd099c5bbdd910ea`.
+An identical second invocation resumed at step 1 with one step receipt and one
+optimizer update: it did not resample or apply the update twice. A separate
+live `SIGTERM` gate observed the signal during recurrent work, completed the
+in-flight atomic step, and published `reason=interrupted`, signal 15, 10
+committed step receipts, and 5 optimizer updates. Earlier rejected runs left
+durable failure receipts and no policy mutation; those failures drove the
+behavior-policy correction rather than a silent threshold bypass.
+
+Validation is green: 49 focused recurrent-GRPO, trainer, checkpoint, and
+objective tests pass; focused Ruff, bytecode compilation, and diff checks pass;
+and a 916-test connected battery spanning the latent engine, schedules,
+branches, recurrence objectives and trainers, output contracts, task verifiers,
+GRPO state, paired experiments, campaign evidence, and custody surfaces passes.
+
+This is total checkpoint record 318. It proves that verifier reward can be
+sampled, differentiated, optimized, interrupted, and resumed through Aura's
+actual recurrent graph. It does **not** prove a retained reasoning gain: the
+one-task smoke baseline was already 1.0, so its held-out delta was 0.0. No
+resident-32B positive-interaction, frontier, external-custody, release, or soak
+credit is awarded. Machine-certified completion remains unchanged until the
+acceptance evidence ledger is populated. The current low-confidence
+policy-prior forecast remains 394-661 total records, now approximately 76-343
+records after this checkpoint; it may narrow only from reviewed evidence, never
+from dropped scope. Next: publish CP257, preregister a fresh powered resident-32B
+base/adapter x standard/RLC factorial with equal-compute and broad-regression
+controls, then run it detached and grade the named frontier claim from its
+artifacts. Final long soaks remain deferred.

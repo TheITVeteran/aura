@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 
 import pytest
 
@@ -21,6 +22,7 @@ from core.learning.recurrence_native_objective_v2 import (  # noqa: E402
     LivePathForward,
 )
 from core.learning.recurrent_grpo import (  # noqa: E402
+    RecurrentGroupClipAdmissionError,
     RecurrentGRPOConfig,
     RecurrentSamplingConfig,
     branch_token_logprobs,
@@ -33,6 +35,7 @@ from core.learning.recurrent_grpo import (  # noqa: E402
     verifier_group_objective,
 )
 from tools.recurrence_native_train_v2 import _wrap_window_layers  # noqa: E402
+from tools.train_grpo import sample_recurrent_group  # noqa: E402
 
 
 def _model(seed: int = 311) -> Model:
@@ -199,8 +202,8 @@ def test_cached_recurrent_sampler_is_admitted_by_differentiable_policy():
     assert len(sample.tokens) == 3
     assert len(sample.behavior_logprobs) == len(sample.differentiable_logprobs) == 3
     assert sample.branch_index in (0, 1)
-    assert sample.parity_admitted is True
-    assert receipt["parity_admitted"] is True
+    assert sample.behavior_admitted is True
+    assert receipt["behavior_admitted"] is True
     assert receipt["seed"] == 117
     assert len(receipt["prompt_tokens_sha256"]) == 64
     assert len(receipt["policy_sha256"]) == 64
@@ -208,6 +211,48 @@ def test_cached_recurrent_sampler_is_admitted_by_differentiable_policy():
     assert len(receipt["differentiable_logprobs_sha256"]) == 64
     assert receipt["cached_params_unchanged"] is True
     assert receipt["cached_recurrence_adapter"]["active"] is True
+
+
+def test_trainer_group_uses_tokenizer_and_distinct_bound_seeds():
+    model = _prepared(seed=941)
+
+    class Tokenizer:
+        eos_token_id = None
+
+        @staticmethod
+        def apply_chat_template(messages, **_kwargs):
+            assert messages[0]["content"] == "solve"
+            return "rendered"
+
+        @staticmethod
+        def encode(text, **_kwargs):
+            assert text == "rendered"
+            return [5, 9, 17]
+
+        @staticmethod
+        def decode(tokens):
+            return " ".join(str(token) for token in tokens)
+
+    class Task:
+        prompt = "solve"
+
+    prompt, samples, completions = sample_recurrent_group(
+        model,
+        Tokenizer(),
+        Task(),
+        spec=_spec(depth=2),
+        size=2,
+        max_tokens=2,
+        seed=51,
+    )
+
+    assert prompt == [5, 9, 17]
+    assert len(samples) == len(completions) == 2
+    assert samples[0].seed != samples[1].seed
+    assert all(sample.behavior_admitted for sample in samples)
+    assert completions == [
+        " ".join(str(token) for token in sample.tokens) for sample in samples
+    ]
 
 
 def test_sampled_verifier_update_improves_preference_without_base_drift():
@@ -285,6 +330,84 @@ def test_sampled_verifier_update_improves_preference_without_base_drift():
     )
     assert reference_after == pytest.approx(reference_before, abs=1e-7)
     assert bool(mx.array_equal(standard_after, standard_before))
+
+
+def test_sampled_group_rejects_excess_clip_fraction_before_adjoint():
+    model = _prepared(seed=983)
+    prompt = [5, 9, 17]
+    spec = _spec(depth=2)
+    samples = [
+        sample_recurrent_completion(
+            model,
+            prompt,
+            spec=spec,
+            seed=seed,
+            sampling=RecurrentSamplingConfig(max_tokens=2),
+        )
+        for seed in (31, 37)
+    ]
+    shifted = []
+    for sample in samples:
+        behavior = list(sample.differentiable_logprobs)
+        behavior[0] -= 0.19
+        differences = [
+            abs(left - right)
+            for left, right in zip(
+                behavior, sample.differentiable_logprobs, strict=True
+            )
+        ]
+        shifted.append(
+            replace(
+                sample,
+                behavior_logprobs=tuple(behavior),
+                max_abs_logprob_drift=max(differences),
+                mean_abs_logprob_drift=sum(differences) / len(differences),
+                max_abs_logprob_drift_token_index=differences.index(
+                    max(differences)
+                ),
+                clipped_token_fraction=0.5,
+                old_policy_approx_kl=sum(
+                    (math.exp(target - cached) - 1.0) - (target - cached)
+                    for target, cached in zip(
+                        sample.differentiable_logprobs,
+                        behavior,
+                        strict=True,
+                    )
+                )
+                / len(behavior),
+                behavior_admitted=True,
+                sampling_config=replace(
+                    sample.sampling_config,
+                    max_mean_abs_logprob_drift=0.1,
+                    max_clipped_token_fraction=1.0,
+                ),
+            )
+        )
+
+    with pytest.raises(RecurrentGroupClipAdmissionError) as captured:
+        exact_adjoint_sampled_group_value_and_grad(
+            model,
+            prompt,
+            shifted,
+            [1.0, 0.0],
+            spec=spec,
+            config=RecurrentGRPOConfig(max_initial_clip_fraction=0.2),
+        )
+
+    assert captured.value.clip_fraction == pytest.approx(0.5)
+
+    with pytest.raises(RuntimeError, match="PPO KL admission"):
+        exact_adjoint_sampled_group_value_and_grad(
+            model,
+            prompt,
+            shifted,
+            [1.0, 0.0],
+            spec=spec,
+            config=RecurrentGRPOConfig(
+                max_initial_clip_fraction=1.0,
+                max_initial_old_policy_approx_kl=1e-6,
+            ),
+        )
 
 
 def test_verifier_advantage_produces_finite_nonzero_recurrent_gradients():
@@ -365,6 +488,10 @@ def test_exact_adjoint_group_matches_monolithic_recurrent_grpo_gradient():
         )
         for tokens, branch in zip(completions, branches, strict=True)
     ]
+    behavior = [
+        old[0] + mx.array([-0.25, 0.05]),
+        old[1] + mx.array([0.0, 0.10]),
+    ]
     reference = [
         mx.stop_gradient(
             recurrent_completion_token_logprobs(
@@ -378,7 +505,7 @@ def test_exact_adjoint_group_matches_monolithic_recurrent_grpo_gradient():
         )
         for tokens, branch in zip(completions, branches, strict=True)
     ]
-    mx.eval(old, reference)
+    mx.eval(old, behavior, reference)
 
     def loss_fn(current_model):
         policy = [
@@ -389,7 +516,7 @@ def test_exact_adjoint_group_matches_monolithic_recurrent_grpo_gradient():
         ]
         objective, _report = verifier_group_objective(
             policy,
-            old,
+            behavior,
             rewards,
             reference_logprobs=reference,
             config=config,
@@ -404,6 +531,9 @@ def test_exact_adjoint_group_matches_monolithic_recurrent_grpo_gradient():
         branches,
         rewards,
         spec=spec,
+        behavior_logprobs=[
+            [float(value) for value in values] for values in behavior
+        ],
         config=config,
     )
     mx.eval(monolithic_gradients, streamed_result.gradients)
@@ -412,6 +542,7 @@ def test_exact_adjoint_group_matches_monolithic_recurrent_grpo_gradient():
 
     assert set(monolithic_flat) == set(streamed_flat)
     assert streamed_result.receipt()["has_gradient"] is True
+    assert streamed_result.receipt()["clip_fraction"] == pytest.approx(0.25)
     for key in monolithic_flat:
         difference = float(
             mx.max(mx.abs(monolithic_flat[key] - streamed_flat[key]))
