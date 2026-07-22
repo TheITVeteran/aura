@@ -41,7 +41,7 @@ def _contract(root: Path) -> dict:
         },
         "independent_custody": {"required_roles": ["task_issuer", "verifier"]},
     }
-    return {**material, "contract_sha256": post._document_sha(material)}
+    return {**material, "contract_sha256": post.prereg._document_sha(material)}
 
 
 @pytest.fixture
@@ -78,6 +78,7 @@ def test_config_binds_nonclaiming_six_arm_directional_contract(isolated_repo):
 
     assert observed == contract
     assert validated["directional"]["profile"] == "full"
+    assert validated["directional"]["rlc_profile"] == "resident_full_stack"
     assert validated["directional"]["seeds"] == seeds
     assert validated["directional"]["claim_eligible"] is False
     assert all(
@@ -89,6 +90,22 @@ def test_config_binds_nonclaiming_six_arm_directional_contract(isolated_repo):
             "release_eligible",
         )
     )
+
+
+def test_directional_command_runs_the_full_stack_profile(isolated_repo):
+    root, contract_path, contract = isolated_repo
+    config = post.build_config(
+        contract_path=contract_path,
+        output_root=root / "artifacts/cp259/post-training",
+        source_commit="a" * 40,
+        seeds=[(1 << 62) + index for index in range(8)],
+    )
+    (root / "artifacts/cp259/frozen-adapter").mkdir(parents=True)
+
+    command = post.ControllerRun(config, contract).campaign_command()
+
+    profile_index = command.index("--rlc-profile") + 1
+    assert command[profile_index] == "resident_full_stack"
 
 
 def test_config_rejects_rebound_frontier_claim(isolated_repo):

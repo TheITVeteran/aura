@@ -225,6 +225,7 @@ def build_config(
             "difficulty": 3,
             "task_registry_version": CURRENT_REGISTRY_VERSION,
             "profile": "full",
+            "rlc_profile": "resident_full_stack",
             "n_slots": 16,
             "branches": 2,
             "rlc_steps": 4,
@@ -295,7 +296,7 @@ def validate_config(
     contract_sha = contract_material.pop("contract_sha256", None)
     if (
         contract.get("schema") != prereg.CONTRACT_SCHEMA
-        or contract_sha != _document_sha(contract_material)
+        or contract_sha != prereg._document_sha(contract_material)
         or contract_sha != config.get("contract_sha256")
         or contract.get("campaign_id") != config.get("campaign_id")
     ):
@@ -317,6 +318,7 @@ def validate_config(
         or not isinstance(directional, Mapping)
         or directional.get("claim_eligible") is not False
         or directional.get("profile") != "full"
+        or directional.get("rlc_profile") != "resident_full_stack"
         or len(directional.get("seeds", [])) != 8
     ):
         _fail("claim_policy_invalid")
@@ -719,7 +721,7 @@ class ControllerRun:
             "--rlc-steps",
             str(spec["rlc_steps"]),
             "--rlc-profile",
-            "recurrence_attribution",
+            str(spec["rlc_profile"]),
             "--decode-max-tokens",
             str(spec["decode_max_tokens"]),
             "--episode-timeout",

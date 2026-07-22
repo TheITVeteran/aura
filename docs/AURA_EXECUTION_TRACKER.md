@@ -23673,3 +23673,41 @@ CP285, launch the detached CP285 resident-32B training with sleep protection
 and exact resume verification, then keep working on the broader Aura hardening
 queue while the detached run produces calibration, no-signal, or optimizer
 evidence.
+
+## Checkpoint 2026-07-21-286: Post-Training Controller Uses Full-Stack RLC Proof Profile
+
+The CP285 detached resident-32B training run has been launched under the frozen
+contract. Detached status reports supervisor PID `24346`, child PID `24359`,
+`state=running`, `resume_contract=target_checkpoint`, and no terminal receipt.
+The trainer has passed early setup: it built 288 training tasks and 36 held-out
+tasks, entered the 26.88-GiB MLX envelope, attached 24 LoRA projections, and
+started the frozen recurrent baseline. The visible baseline progress is still
+early and not a capability result.
+
+Preparing the post-training controller exposed two proof-chain defects before
+the controller was installed. First, the controller recomputed the
+preregistration contract digest with its own campaign-journal canonical JSON
+helper, while the preregistration tool uses the GRPO training-state canonical
+helper; the same CP285 contract therefore failed as
+`contract_identity_invalid`. The controller now verifies preregistration
+contracts with `prereg._document_sha` while preserving its own state/config
+hashing scheme. Second, the directional campaign command was hardcoded to
+`--rlc-profile recurrence_attribution`, which would have evaluated the fixed
+recurrence profile after training instead of the resident full-stack RLC profile
+required by CP284. The controller config now binds
+`rlc_profile=resident_full_stack`, validation requires it, and the generated
+campaign command passes that profile explicitly.
+
+Validation is clean: `tests/test_resident_recurrent_grpo_post_training.py` and
+`tests/test_resident_recurrent_grpo_preregistration.py` pass together with
+15 tests; bytecode compilation passes for the controller and tests;
+`make lint` passes; and `git diff --check` passes. The earlier generated
+post-training config was intentionally not used because it was built before
+this source fix and failed verification.
+
+This is total checkpoint record 347. The forecast remains 394-661 total
+records, now approximately 47-314 records after this checkpoint. Next: publish
+CP286, regenerate and verify the CP285 post-training config from the fixed
+controller source, install or run the controller so it waits for training and
+launches freeze/directional proof automatically, and continue hardening while
+the resident training emits calibration or optimizer evidence.
