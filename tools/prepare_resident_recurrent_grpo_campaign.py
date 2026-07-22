@@ -935,6 +935,44 @@ def _run_answer_channel_preflight(contract: Mapping[str, Any]) -> int:
         sys.argv = previous
 
 
+def _launch_answer_channel_preflight(contract_path: Path) -> int:
+    contract = _strict_json(contract_path)
+    validate_contract(contract, verify_model=True)
+    python = str(Path(sys.executable))
+    if not Path(python).exists():
+        _fail("python_launcher_missing")
+    tool = str(Path(__file__).resolve(strict=True))
+    supplied = contract_path.expanduser()
+    if not supplied.is_absolute():
+        supplied = REPO_ROOT / supplied
+    contract_absolute = str(supplied.resolve(strict=True))
+    root = _repo_path(
+        str(contract["paths"]["artifact_root"]),
+        role="artifact_root",
+        must_exist=False,
+    )
+    run_dir = str(root / "detached-answer-channel-preflight")
+    argv = [
+        "launch",
+        "--run-dir",
+        run_dir,
+        "--name",
+        f"{contract['campaign_id']}-answer-channel-preflight",
+        "--cwd",
+        str(REPO_ROOT),
+        "--timeout",
+        "5400",
+        "--resume-contract",
+        "none",
+        python,
+        tool,
+        "run-answer-channel-preflight",
+        "--contract",
+        contract_absolute,
+    ]
+    return run_detached_step.main(argv)
+
+
 def _launch_training(contract_path: Path, *, resume: bool) -> int:
     contract = _strict_json(contract_path)
     validate_contract(contract, verify_model=True)
@@ -1005,6 +1043,8 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--contract", default=DEFAULT_CONTRACT)
     preflight = subparsers.add_parser("run-answer-channel-preflight")
     preflight.add_argument("--contract", default=DEFAULT_CONTRACT)
+    preflight_launch = subparsers.add_parser("launch-answer-channel-preflight")
+    preflight_launch.add_argument("--contract", default=DEFAULT_CONTRACT)
     launch = subparsers.add_parser("launch-training")
     launch.add_argument("--contract", default=DEFAULT_CONTRACT)
     launch.add_argument("--resume", action="store_true")
@@ -1032,6 +1072,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return _run_training(contract)
             if args.action == "run-answer-channel-preflight":
                 return _run_answer_channel_preflight(contract)
+            if args.action == "launch-answer-channel-preflight":
+                return _launch_answer_channel_preflight(Path(args.contract))
             if args.action == "launch-training":
                 return _launch_training(Path(args.contract), resume=args.resume)
             if args.action == "verify-resume":

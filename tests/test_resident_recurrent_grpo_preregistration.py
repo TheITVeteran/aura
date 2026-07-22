@@ -241,3 +241,47 @@ def test_answer_channel_preflight_invokes_trainer_without_launching_detached(
     assert isinstance(argv, list)
     assert argv[0] == "tools/train_grpo.py"
     assert "answer_channel_curriculum" in argv
+
+
+def test_launch_answer_channel_preflight_is_detached_and_source_bound(
+    tmp_path, monkeypatch
+):
+    contract = _contract()
+    contract["paths"]["artifact_root"] = "artifacts/preflight"
+    contract_path = tmp_path / "config" / "preflight-contract.json"
+    contract_path.parent.mkdir(parents=True)
+    contract_path.write_text(json.dumps(contract), encoding="ascii")
+    venv_python = tmp_path / ".venv" / "bin" / "python"
+    venv_python.parent.mkdir(parents=True)
+    venv_python.symlink_to(Path(__import__("sys").executable))
+    captured: dict[str, object] = {}
+
+    def fake_detached_main(argv):
+        captured["argv"] = list(argv)
+        return 13
+
+    monkeypatch.setattr(prereg, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(prereg.sys, "executable", str(venv_python))
+    monkeypatch.setattr(prereg, "validate_contract", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(prereg.run_detached_step, "main", fake_detached_main)
+
+    assert prereg._launch_answer_channel_preflight(contract_path) == 13
+
+    argv = captured["argv"]
+    assert isinstance(argv, list)
+    assert argv[0] == "launch"
+    assert argv[argv.index("--run-dir") + 1] == str(
+        tmp_path / "artifacts" / "preflight" / "detached-answer-channel-preflight"
+    )
+    assert argv[argv.index("--name") + 1].endswith(
+        "-answer-channel-preflight"
+    )
+    assert argv[argv.index("--cwd") + 1] == str(tmp_path)
+    assert argv[argv.index("--timeout") + 1] == "5400"
+    resume_index = argv.index("--resume-contract")
+    assert argv[resume_index + 1] == "none"
+    command = argv[resume_index + 2 :]
+    assert command[0] == str(venv_python)
+    assert command[1] == str(Path(prereg.__file__).resolve(strict=True))
+    assert command[2:4] == ["run-answer-channel-preflight", "--contract"]
+    assert command[4] == str(contract_path.resolve(strict=True))

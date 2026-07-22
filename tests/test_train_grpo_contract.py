@@ -708,6 +708,17 @@ def test_recurrent_heldout_uses_contract_aware_decode(monkeypatch):
     import core.brain.llm.latent_cortex.engine as engine_module
 
     monkeypatch.setattr(engine_module, "LatentCortexEngine", FakeEngine)
+    adapter_module = types.ModuleType(
+        "core.brain.llm.latent_cortex.recurrence_adapter"
+    )
+    adapter_module.recurrence_adapter_disabled = __import__(
+        "contextlib"
+    ).nullcontext
+    monkeypatch.setitem(
+        sys.modules,
+        "core.brain.llm.latent_cortex.recurrence_adapter",
+        adapter_module,
+    )
 
     class Tokenizer:
         @staticmethod

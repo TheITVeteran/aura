@@ -24598,3 +24598,34 @@ records, now approximately 21-288 records after this checkpoint. Next: commit
 and push CP312, then run or detach the answer-channel preflight when it is safe
 to use the resident model, inspect the resulting parseability/variance receipt,
 and only then decide whether a new long resident-GRPO proof run is admissible.
+
+## Checkpoint 2026-07-22-313: Resident Answer-Channel Preflight Can Survive The Session
+
+The bounded answer-channel preflight now has a detached launch action instead
+of requiring a foreground shell to remain alive. The launcher validates the
+resident preregistration and model identity before dispatch, preserves the
+active virtual-environment interpreter path, binds the absolute contract path,
+and isolates output under `detached-answer-channel-preflight` inside the
+campaign artifact root. It has a 5,400-second supervisor timeout around the
+preflight's own 45-minute budget and declares `resume_contract=none`: a failed
+one-step bridge run is restarted from a new preregistered attempt rather than
+silently resuming optimizer state from an ambiguous boundary.
+
+The detached-launch contract test proves the exact run directory, campaign
+name, working directory, interpreter, tool path, action, absolute contract,
+timeout, and no-resume policy passed to the supervisor. The broader run also
+exposed and closed a test-isolation defect: the contract-aware recurrent
+held-out test now supplies its adapter-disable dependency explicitly instead of
+passing only when another test happened to preload the MLX LoRA module.
+
+Validation: the resident preregistration, answer-channel curriculum, GRPO
+trainer contract, and GRPO tests pass 62/62; bytecode compilation passes for
+the launcher and affected tests; `git diff --check` passes; and `make lint`
+passes. No resident model was loaded and no training or reasoning-gain claim is
+made in this checkpoint.
+
+This is total checkpoint record 374. The forecast remains 394-661 total
+records, now approximately 20-287 records after this checkpoint. Next: commit
+CP313, integrate the newer `origin/main` integrity-proof checkpoint without
+discarding either line of work, then expand the tracker with the complete Spark
+architecture and proof matrix before launching a fresh source-bound preflight.
