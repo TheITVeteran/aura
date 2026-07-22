@@ -50,15 +50,15 @@ class ChatDeliveryJournalError(RuntimeError):
     """Base class for delivery-journal failures."""
 
 
-class ChatDeliveryJournalUnavailable(ChatDeliveryJournalError):
+class ChatDeliveryJournalUnavailable(ChatDeliveryJournalError):  # noqa: N818 - public API
     """The durable coordinator could not be reached safely."""
 
 
-class ChatDeliveryJournalCorruption(ChatDeliveryJournalError):
+class ChatDeliveryJournalCorruption(ChatDeliveryJournalError):  # noqa: N818 - public API
     """The database or one of its response records failed validation."""
 
 
-class ChatDeliveryFenceLost(ChatDeliveryJournalError):
+class ChatDeliveryFenceLost(ChatDeliveryJournalError):  # noqa: N818 - public API
     """A superseded execution attempted to publish a result."""
 
 
@@ -91,7 +91,7 @@ class DeliveryIdentity:
         principal: str,
         session_id: str,
         idempotency_key: str,
-    ) -> "DeliveryIdentity":
+    ) -> DeliveryIdentity:
         normalized_principal = " ".join(str(principal or "").strip().split())
         normalized_session = str(session_id or "default").strip() or "default"
         normalized_key = str(idempotency_key or "").strip()
@@ -681,13 +681,15 @@ class ChatDeliveryJournal:
             SET state='ambiguous', owner_token='', lease_expires_at=0,
                 updated_at=?, terminal_at=?, http_status=409,
                 response_json=?, response_hash=?
-            WHERE state IN ('queued','running') AND updated_at < ?
+            WHERE (state='running' AND lease_expires_at <= ?)
+               OR (state='queued' AND updated_at < ?)
             """,
             (
                 now,
                 now,
                 ambiguous_payload,
                 ambiguous_hash,
+                now,
                 now - self.abandon_after_s,
             ),
         ).rowcount

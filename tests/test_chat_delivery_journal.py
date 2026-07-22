@@ -286,6 +286,53 @@ async def test_status_read_reconciles_expired_running_owner(
 
 
 @pytest.mark.asyncio
+async def test_compaction_fences_expired_owner_from_another_turn(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "chat.sqlite3"
+    short = ChatDeliveryJournal(
+        path,
+        stale_after_s=0.05,
+        abandon_after_s=30.0,
+        poll_interval_s=0.01,
+    )
+    abandoned_identity = _identity("abandoned-turn")
+    owner = await short.reserve(
+        abandoned_identity,
+        _request_hash("abandoned"),
+        wait_timeout_s=0,
+    )
+    await asyncio.sleep(0.07)
+
+    # Make the next unrelated reservation run compaction. The expired running
+    # row must be fenced by its lease, not left active until abandon_after_s.
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "UPDATE chat_delivery_meta SET value='0' WHERE key='last_compaction_at'"
+        )
+    unrelated = await short.reserve(
+        _identity("unrelated-turn"),
+        _request_hash("new request"),
+        wait_timeout_s=0,
+    )
+    recovered = await short.get(abandoned_identity)
+
+    assert unrelated.kind is AdmissionKind.EXECUTE
+    assert recovered is not None
+    assert recovered.state is DeliveryState.AMBIGUOUS
+    assert recovered.http_status == 409
+    assert recovered.response is not None
+    assert recovered.response["status"] == "delivery_ambiguous"
+    with pytest.raises(ChatDeliveryFenceLost):
+        await short.finalize(
+            owner,
+            state=DeliveryState.COMPLETED,
+            http_status=200,
+            response={"response": "late"},
+        )
+
+
+@pytest.mark.asyncio
 async def test_terminal_receipt_survives_journal_recreation(tmp_path: Path) -> None:
     path = tmp_path / "chat.sqlite3"
     first = ChatDeliveryJournal(path)

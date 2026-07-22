@@ -22999,3 +22999,64 @@ chat or latent-reasoning claims. The low-confidence policy-prior forecast
 remains 394-661 total records, now approximately 68-335 records after this
 checkpoint; no scope was removed. Next: publish CP265 and launch CP259 at the
 frozen boundary. Final long soaks remain deferred.
+
+## Checkpoint 2026-07-21-266: Resident-32B Training Launch And Interpreter Admission
+
+CP259 crossed its immutable 17:00 PDT gate with no live Aura or competing model
+owner. The first detached plan failed closed in 0.587 seconds before model
+allocation: the campaign launcher resolved `.venv/bin/python` to the Homebrew
+base interpreter and thereby discarded the virtual environment, producing
+`ModuleNotFoundError: cryptography`. Containment passed, the child process
+group was empty, no descendant cleanup was needed, and the signed failed
+receipt remains at
+`detached-training-attempt1-base-python-failure/`; it was not deleted or
+rewritten.
+
+The admitted replacement invokes the same frozen campaign validator and
+training command through the virtual-environment launcher path. Detached plan
+`05417a387ea563de254d604dc02863f0d84b53f93a42d609a57699e8a1279c27`
+binds both target and resume verifier to the launcher symlink, its resolved
+Python bytes, and `pyvenv.cfg` hash. It also binds the complete tracked source
+tree, no-fork sandbox, `caffeinate`, restart-never policy, 93,600-second
+timeout, and target-checkpoint resume verifier. The live child accepted the
+frozen resident fingerprint `8eae71e...`, behavior bundle `7eb54f8b...`,
+dataset `1812ff8e...`, 288/36 disjoint task split, 26.88 GB MLX limit, and 24
+recurrent adapter projections. Supervisor PID 1657 and child PID 1670 are
+running with an advancing heartbeat and zero restarts.
+
+The wrapper-level interpreter defect remains an explicit post-run code task:
+preserve the virtual-environment invocation path in
+`prepare_resident_recurrent_grpo_campaign.py`, bind its `pyvenv.cfg`, add a
+real subprocess regression, then supersede the launcher source commitment for
+future campaigns. That frozen source cannot be edited during this active
+campaign without invalidating exact resume and evidence identity.
+
+This is total checkpoint record 327. It proves detached admission and active
+resident computation, not calibration completion, optimizer progress,
+reasoning gain, frontier performance, or training success. Those credits stay
+closed until their immutable artifacts exist. The forecast remains 394-661
+total records, now approximately 67-334 records after this checkpoint.
+
+## Checkpoint 2026-07-21-267: Cross-Turn Chat Delivery Lease Recovery
+
+The live delivery journal retained a turn in `running` state from 16:22 after
+its execution lease expired at 16:25, even though later turns triggered normal
+compaction. The per-identity replay path honored the lease, but global
+compaction waited the 24-hour never-started abandonment threshold for running
+work. Orphaned executions could therefore pollute status and consume the
+bounded active-row budget long after ownership was lost.
+
+Compaction now fences every running row as ambiguous as soon as its
+authoritative lease expires. The longer abandonment threshold remains only for
+queued work that never acquired an execution owner. A late owner cannot publish
+over the fence. Twenty-six complete delivery-journal tests pass, including a
+new case where an unrelated later turn compacts and fences an expired owner;
+focused Ruff, bytecode compilation, and diff checks pass.
+
+This is total checkpoint record 328. It closes one durable chat-recovery defect
+but does not close the general-chat reliability program in CP264. The forecast
+remains 394-661 total records, now approximately 66-333 records after this
+checkpoint. Next: publish CP267, monitor CP259 through its first durable
+calibration/training checkpoint without contending for the resident model, and
+continue read-only analysis plus low-compute fixes outside the frozen training
+source set. Final long soaks remain deferred.
