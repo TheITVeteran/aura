@@ -24006,3 +24006,38 @@ This is total checkpoint record 355. The forecast remains 394-661 total
 records, now approximately 39-306 records after this checkpoint. Next: publish
 CP294, launch CP294 detached, install its post-training controller, then keep
 working on system-level RLC gaps while the corrected diagnostic run proceeds.
+
+## Checkpoint 2026-07-21-295: CP294 Corrected Diagnostic Run Is Live
+
+The CP294 corrected resident-32B recurrent-GRPO proof run is live. Detached
+training launch receipt reports supervisor PID `43522`, child PID `43536`, run
+directory
+`artifacts/closeout/latent_cortex/cp294_resident_32b_recurrent_grpo/detached-training`,
+plan digest `ff4c3b2711c6611ebc5a58dc66f02e3180ed64187ffa7f6ab28c5ff951d769e0`,
+and command digest
+`8ec7b46d4d22739277e594999740fe7b7945f38f954bebbf011019450079d7bf`.
+The initial log shows the expected 288 training / 36 held-out task split, the
+resident MLX memory envelope, and 24 adapted projections.
+
+The CP294 post-training controller config verified with digest
+`3d8ae0c43593e45b960d7a13d8e7dcad3d2b86c7f2209c48f0bfe516fe4f8045`, and the
+LaunchAgent install receipt digest is
+`e4400a893c3b35d2977388760428976e57e8a53840e3a7fdf6dad6d513d4435f`.
+`launchctl print` shows
+`com.aura.resident-32b-recurrent-grpo-cp294.post-training` running under the
+repository virtualenv Python. Controller state reports PID `11979`, config
+digest `3d8ae0c43593e45b960d7a13d8e7dcad3d2b86c7f2209c48f0bfe516fe4f8045`,
+stage `exclusive_model_owner_admission`, and status `waiting`, which is
+expected while detached training owns the resident model and only ~20.7 GiB is
+available against the 40 GiB admission floor.
+
+No reasoning-gain verdict exists yet. CP294 is now the current source-bound
+run to watch for corrected baseline, score/contract diagnostic distributions,
+calibration, optimizer updates, eval-96/final held-out deltas, freeze,
+directional full-stack proof, mechanism-attribution ablations, and independent
+replay.
+
+This is total checkpoint record 356. The forecast remains 394-661 total
+records, now approximately 38-305 records after this checkpoint. Next: leave
+CP294 running, poll it for diagnostic evidence, and continue bounded RLC/system
+hardening that does not restart or compete with the resident proof run.
