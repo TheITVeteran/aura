@@ -23,11 +23,13 @@ from tools.train_grpo import (
     _calibration_token_budget,
     _dataset_payload,
     _advantage_report_with_verifier_rate,
+    _answer_channel_report_from_verdicts,
     _load_execution_spec,
     _point_estimate_delta,
     _publish_adapter_snapshot,
     _publish_immutable_bytes,
     _record_recurrent_step_failure,
+    _signal_admission_report,
     _shape_recurrent_rewards_from_ce_trails,
     _should_halt_for_no_learning_signal,
     _stable_seed,
@@ -146,6 +148,60 @@ def test_training_halts_when_grpo_has_no_learning_signal():
     assert "too_hard" in verdict["diagnosis"]
 
 
+def test_no_signal_halt_reports_answer_channel_blocker():
+    telemetry = GRPOTelemetry()
+    config = GRPOConfig(group_size=4, max_degenerate_fraction=0.5)
+    receipts = []
+    for step in range(4):
+        report = group_advantages([0.0, 0.0, 0.0, 0.0])
+        telemetry.observe(report)
+        receipts.append(
+            {
+                "step": step + 1,
+                "answer_channel": {
+                    "completions": 4,
+                    "parseable": 0,
+                    "unparseable": 4,
+                    "correct": 0,
+                    "parseable_fraction": 0.0,
+                    "correct_fraction": 0.0,
+                    "grade_reasons": {"unparseable": 4},
+                },
+                "advantage_report": report,
+            }
+        )
+
+    verdict = _should_halt_for_no_learning_signal(
+        telemetry,
+        config,
+        min_groups=4,
+        step_receipts=receipts,
+    )
+
+    assert verdict is not None
+    assert verdict["schema"] == "aura.grpo_signal_admission.v1"
+    assert verdict["answer_channel"]["completions"] == 16
+    assert verdict["answer_channel"]["parseable_fraction"] == 0.0
+    assert "answer_channel_blocked" in verdict["diagnosis"]
+    assert "decode contract" in verdict["required_next_gate"]
+
+
+def test_answer_channel_report_counts_parseability_separately_from_correctness():
+    report = _answer_channel_report_from_verdicts(
+        [
+            {"correct": False, "parsed": None, "reason": "unparseable"},
+            {"correct": False, "parsed": {"node": 3}},
+            {"correct": True, "parsed": {"node": 4}},
+        ]
+    )
+
+    assert report["completions"] == 3
+    assert report["parseable"] == 2
+    assert report["correct"] == 1
+    assert report["parseable_fraction"] == pytest.approx(0.6667)
+    assert report["grade_reasons"] == {"correct": 1, "incorrect": 1, "unparseable": 1}
+
+
 def test_recurrent_trajectory_credit_preserves_verifier_rewards():
     verifier = [0.0, 0.0, 0.0]
     shaped = _shape_recurrent_rewards_from_ce_trails(
@@ -183,6 +239,42 @@ def test_recurrent_trajectory_credit_keeps_telemetry_mean_as_verifier_rate():
     assert report["shaped_mean_reward"] > 1.0
     assert report["degenerate"] is False
     assert telemetry.state()["reward_sum"] == 1.0
+
+
+def test_degenerate_trajectory_credit_does_not_masquerade_as_partial_reward():
+    verifier_report = group_advantages([0.0, 0.0, 0.0, 0.0])
+    shaped_report = group_advantages([0.03, 0.03, 0.03, 0.03])
+
+    report = _advantage_report_with_verifier_rate(
+        shaped_report,
+        verifier_report,
+    )
+    telemetry = GRPOTelemetry()
+    telemetry.observe(report)
+    verdict = _signal_admission_report(
+        telemetry.verdict(GRPOConfig(group_size=4, max_degenerate_fraction=0.5)),
+        step_receipts=[
+            {
+                "answer_channel": {
+                    "completions": 4,
+                    "parseable": 4,
+                    "unparseable": 0,
+                    "correct": 0,
+                    "parseable_fraction": 1.0,
+                    "correct_fraction": 0.0,
+                    "grade_reasons": {"incorrect": 4},
+                },
+                "advantage_report": report,
+            }
+        ],
+    )
+
+    assert report["mean_reward"] == 0.0
+    assert report["shaped_mean_reward"] == 0.03
+    assert report["all_wrong"] is True
+    assert report["uniform_partial"] is False
+    assert telemetry.state()["reward_sum"] == 0.0
+    assert "trajectory_credit_constant" in verdict["diagnosis"]
 
 
 def test_task_gold_answer_text_prefers_bound_answer_contract():

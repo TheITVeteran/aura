@@ -24451,3 +24451,44 @@ This is total checkpoint record 369. The forecast remains 394-661 total
 records, now approximately 25-292 records after this checkpoint. Next: commit
 and push CP308, rebuild `/Applications/Aura.app`, poll CP305, then continue
 runtime/chat/action reliability closeout.
+
+## Checkpoint 2026-07-22-309: CP305 No-Signal Diagnosis Separates Answer Channel From Reasoning
+
+CP305 reached a terminal diagnostic failure, not a reasoning-gain result. The
+detached resident-32B recurrent-GRPO run exited with return code 3 after
+calibration and eight training groups, produced zero optimizer updates, and
+recorded `had_signal=false`, `point_estimate_improved=false`, and
+`causal_gain_proven=false`. The decisive blocker was that sampled completions
+were not providing a discriminative reward channel: baseline recurrent held-out
+accuracy was 0/36, calibration found only 0.00 pass-rate probes before the cap,
+and the trainer halted on no learning signal.
+
+The old receipt diagnosed the dominant degenerate groups as
+`uniform_partial_reward`, but that was too coarse for the recurrent trajectory
+case. A constant trajectory-shaping offset over verifier-all-wrong completions
+can look like a uniform partial reward even when the verifier success rate is
+zero. That mislabels the fix: the next step is not to trust a prettier shaped
+reward, it is to repair answer-channel/pretraining admission or restore
+discriminative trajectory credit before another long resident run.
+
+The GRPO trainer now records answer-channel telemetry for every recurrent
+training group: completions, parseable count, unparseable count, correct count,
+parseable fraction, correct fraction, and grade-reason counts. The no-signal
+halt and final receipt are enriched into `aura.grpo_signal_admission.v1`, which
+can report `answer_channel_blocked` when sampled completions rarely produce a
+parseable verifier answer, or `trajectory_credit_constant` when recurrent CE
+shaping is present but does not distinguish completions. Trajectory-shaped
+reports also preserve shaped degeneracy under explicit `shaped_*` fields while
+verifier-rate telemetry keeps the raw verifier classification, so degenerate
+all-wrong verifier groups no longer masquerade as partial correctness.
+
+Validation: `tests/test_train_grpo_contract.py` and `tests/test_grpo.py` pass
+44/44, bytecode compilation passes for `tools/train_grpo.py` and the trainer
+contract tests, and `git diff --check` passes. No frontier-level reasoning,
+positive interaction, or resident-RLC intelligence gain is claimed from CP305.
+
+This is total checkpoint record 370. The forecast remains 394-661 total
+records, now approximately 24-291 records after this checkpoint. Next: run the
+broader non-MLX trainer/proof slice, commit and push CP309, then build the next
+bounded RLC training gate around parseability admission and discriminative
+trajectory credit before launching another resident multi-hour run.

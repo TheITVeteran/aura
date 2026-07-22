@@ -170,6 +170,7 @@ def _should_halt_for_no_learning_signal(
     config: GRPOConfig,
     *,
     min_groups: int,
+    step_receipts: Sequence[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
     """Return the no-signal verdict once RL has enough evidence to stop."""
 
@@ -179,8 +180,128 @@ def _should_halt_for_no_learning_signal(
         return None
     verdict = telemetry.verdict(config)
     if verdict.get("learning_signal") is False:
-        return verdict
+        return _signal_admission_report(verdict, step_receipts=step_receipts)
     return None
+
+
+def _answer_channel_report_from_verdicts(
+    verdicts: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Summarize whether the trainer is grading reasoning or answer-channel failure."""
+
+    completions = len(verdicts)
+    if completions == 0:
+        return {
+            "completions": 0,
+            "parseable": 0,
+            "unparseable": 0,
+            "correct": 0,
+            "parseable_fraction": 0.0,
+            "correct_fraction": 0.0,
+            "grade_reasons": {},
+        }
+    reasons = Counter(_grade_reason(verdict) for verdict in verdicts)
+    parseable = sum(1 for verdict in verdicts if verdict.get("parsed") is not None)
+    correct = sum(1 for verdict in verdicts if bool(verdict.get("correct")))
+    return {
+        "completions": completions,
+        "parseable": parseable,
+        "unparseable": completions - parseable,
+        "correct": correct,
+        "parseable_fraction": round(parseable / completions, 4),
+        "correct_fraction": round(correct / completions, 4),
+        "grade_reasons": dict(sorted(reasons.items())),
+    }
+
+
+def _merge_answer_channel_reports(
+    step_receipts: Sequence[Mapping[str, Any]] | None,
+) -> dict[str, Any]:
+    totals = Counter()
+    reasons = Counter()
+    trajectory_shaped_groups = 0
+    degenerate_trajectory_shaped_groups = 0
+    for receipt in step_receipts or ():
+        channel = receipt.get("answer_channel")
+        if isinstance(channel, Mapping):
+            for key in ("completions", "parseable", "unparseable", "correct"):
+                value = channel.get(key, 0)
+                if isinstance(value, int) and value >= 0:
+                    totals[key] += value
+            raw_reasons = channel.get("grade_reasons", {})
+            if isinstance(raw_reasons, Mapping):
+                for reason, count in raw_reasons.items():
+                    if isinstance(reason, str) and isinstance(count, int) and count > 0:
+                        reasons[reason] += count
+        advantage = receipt.get("advantage_report")
+        if isinstance(advantage, Mapping) and advantage.get("trajectory_shaped"):
+            trajectory_shaped_groups += 1
+            if advantage.get("degenerate"):
+                degenerate_trajectory_shaped_groups += 1
+    completions = totals["completions"]
+    return {
+        "completions": completions,
+        "parseable": totals["parseable"],
+        "unparseable": totals["unparseable"],
+        "correct": totals["correct"],
+        "parseable_fraction": round(totals["parseable"] / completions, 4)
+        if completions
+        else 0.0,
+        "correct_fraction": round(totals["correct"] / completions, 4)
+        if completions
+        else 0.0,
+        "grade_reasons": dict(sorted(reasons.items())),
+        "trajectory_shaped_groups": trajectory_shaped_groups,
+        "degenerate_trajectory_shaped_groups": degenerate_trajectory_shaped_groups,
+    }
+
+
+def _signal_admission_report(
+    verdict: Mapping[str, Any],
+    *,
+    step_receipts: Sequence[Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Receipt-level diagnosis for whether GRPO had a trainable signal.
+
+    GRPO can fail before it ever tests reasoning: the model might not emit a
+    parseable answer contract, or trajectory credit might be constant across a
+    group. This keeps those separate from true reasoning difficulty.
+    """
+
+    report = dict(verdict)
+    report["schema"] = "aura.grpo_signal_admission.v1"
+    channel = _merge_answer_channel_reports(step_receipts)
+    report["answer_channel"] = channel
+    if report.get("learning_signal") is not False:
+        return report
+    completions = int(channel.get("completions") or 0)
+    parseable_fraction = float(channel.get("parseable_fraction") or 0.0)
+    correct = int(channel.get("correct") or 0)
+    if completions and correct == 0 and parseable_fraction < 0.25:
+        report["diagnosis"] = (
+            "answer_channel_blocked: sampled completions rarely produced a "
+            "parseable verifier answer, so GRPO measured contract emission "
+            "failure before reasoning correctness"
+        )
+        report["required_next_gate"] = (
+            "repair decode contract/pretraining or run a parseability scaffold "
+            "until sampled groups have parseable variance"
+        )
+    elif (
+        channel.get("trajectory_shaped_groups")
+        and channel.get("trajectory_shaped_groups")
+        == channel.get("degenerate_trajectory_shaped_groups")
+    ):
+        report["diagnosis"] = (
+            "trajectory_credit_constant: recurrent CE shaping was present but "
+            "did not distinguish completions, so no preference signal reached "
+            "the adapter"
+        )
+        report["required_next_gate"] = (
+            "restore discriminative trajectory credit or fall back to a task "
+            "cell with verifier reward variance before launching long training"
+        )
+    return report
 
 
 def _calibration_token_budget(max_tokens: int, requested: int) -> int:
@@ -258,9 +379,20 @@ def _advantage_report_with_verifier_rate(
     report = dict(shaped_report)
     report["shaped_mean_reward"] = report["mean_reward"]
     report["shaped_reward_std"] = report.get("reward_std")
+    report["shaped_degenerate"] = report.get("degenerate")
+    report["shaped_all_correct"] = report.get("all_correct")
+    report["shaped_all_wrong"] = report.get("all_wrong")
+    report["shaped_uniform_partial"] = report.get("uniform_partial")
     report["mean_reward"] = verifier_report["mean_reward"]
     report["verifier_reward_std"] = verifier_report.get("reward_std")
     report["verifier_degenerate"] = verifier_report.get("degenerate")
+    if report.get("degenerate"):
+        # A degenerate shaped group has no optimizer signal. Telemetry should
+        # diagnose the verifier state, not misread a constant CE-shaping offset
+        # as format credit or partial correctness.
+        report["all_correct"] = verifier_report.get("all_correct")
+        report["all_wrong"] = verifier_report.get("all_wrong")
+        report["uniform_partial"] = verifier_report.get("uniform_partial")
     report["trajectory_shaped"] = True
     return report
 
@@ -1685,12 +1817,14 @@ def main() -> int:
                     )
                     active_recurrent_step["samples"] = tuple(recurrent_samples)
                     active_recurrent_step["phase"] = "grading"
+                grade_verdicts = [task.grade(text) for text in completions]
                 rewards = [
-                    reward_from_verdict(
-                        task.grade(text), format_credit=args.format_credit
-                    )
-                    for text in completions
+                    reward_from_verdict(verdict, format_credit=args.format_credit)
+                    for verdict in grade_verdicts
                 ]
+                answer_channel = _answer_channel_report_from_verdicts(
+                    grade_verdicts
+                )
                 verifier_advantage_report = group_advantages(
                     rewards, clip=config.advantage_clip
                 )
@@ -1833,6 +1967,7 @@ def main() -> int:
                             ],
                             "rewards": [float(value) for value in effective_rewards],
                             "verifier_rewards": [float(value) for value in rewards],
+                            "answer_channel": answer_channel,
                             "verifier_advantage_report": verifier_advantage_report,
                             "trajectory_credit": trajectory_credit_receipt,
                             "advantage_report": advantage_report,
@@ -1860,6 +1995,7 @@ def main() -> int:
                     telemetry,
                     config,
                     min_groups=args.min_signal_groups,
+                    step_receipts=step_receipts,
                 )
                 if active_recurrent_step is not None:
                     active_recurrent_step["phase"] = "post_update_evaluation"
@@ -1999,7 +2135,10 @@ def main() -> int:
         curriculum_report = curriculum.report()
         print(f"[curriculum] {curriculum_report}", flush=True)
 
-    learning_signal = telemetry.verdict(config)
+    learning_signal = _signal_admission_report(
+        telemetry.verdict(config),
+        step_receipts=step_receipts,
+    )
     final = history[-1] if history else None
     delta = _point_estimate_delta(baseline_eval, final)
     completed = halt_reason in {"max_steps", "wall_clock_budget"}
