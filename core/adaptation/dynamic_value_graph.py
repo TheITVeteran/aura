@@ -56,6 +56,23 @@ class EvidenceType(str, Enum):
     LONGITUDINAL = "longitudinal"
 
 
+def _finite(value: Any, default: float, *, low: float, high: float) -> float:
+    """Finite, range-bounded coercion for caller-supplied evidence numbers.
+
+    Evidence signal/confidence arrive from arbitrary subsystems. A NaN
+    propagates silently through the weighted mean (every comparison against
+    it is False), and an out-of-range magnitude lets one observation
+    dominate every value in the graph.
+    """
+    try:
+        candidate = float(default if value is None else value)
+    except (TypeError, ValueError):
+        return default
+    if candidate != candidate or candidate in (float("inf"), float("-inf")):
+        return default
+    return max(low, min(high, candidate))
+
+
 @dataclass
 class ValueEvidence:
     """A single piece of evidence for or against a value."""
@@ -123,12 +140,21 @@ class ValueNode:
         if len(self.evidence_buffer) < min_evidence:
             return 0.0, 0.0
 
-        # Compute weighted average signal
+        # Confidence-weighted mean of the RAW signal.
+        #
+        # This used to accumulate weighted_signal() * w, and weighted_signal()
+        # is already signal * confidence — so confidence was applied TWICE
+        # (signal * confidence^2 over sum-of-confidence). Low-confidence
+        # evidence was therefore suppressed far more sharply than the
+        # documented weighting intends, systematically biasing every value
+        # delta toward whichever sources happened to self-report high
+        # confidence.
         total_weight = 0.0
         weighted_sum = 0.0
         for ev in self.evidence_buffer:
-            w = ev.confidence
-            weighted_sum += ev.weighted_signal() * w
+            signal = _finite(ev.signal, 0.0, low=-1.0, high=1.0)
+            w = _finite(ev.confidence, 0.0, low=0.0, high=1.0)
+            weighted_sum += signal * w
             total_weight += w
 
         if total_weight < 1e-6:
@@ -169,10 +195,22 @@ class ValueNode:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ValueNode":
+        # FAIL CLOSED. An unreadable or unknown persisted status used to
+        # become ADOPTED — the MOST trusted state — so corrupting one field
+        # in the value file promoted an unvetted value straight past the
+        # sandbox, provisional and grace-period gates. Unknown state means
+        # unproven, so it re-enters the pipeline as a candidate.
+        raw_status = data.get("status")
         try:
-            status = ValueNodeStatus(data.get("status", "adopted"))
+            status = ValueNodeStatus(raw_status)
         except ValueError:
-            status = ValueNodeStatus.ADOPTED
+            logger.warning(
+                "Value node %r carried an unrecognized status %r; "
+                "re-entering the adoption pipeline as CANDIDATE.",
+                data.get("name"),
+                raw_status,
+            )
+            status = ValueNodeStatus.CANDIDATE
         return cls(
             name=data["name"],
             weight=float(data.get("weight", 0.5)),
@@ -361,7 +399,15 @@ class DynamicValueGraph:
     def _process_candidate(
         self, node: ValueNode, delta: float, confidence: float
     ) -> Optional[ValueMutation]:
-        """Process a candidate value: promote to sandbox if evidence is sufficient."""
+        """Process a candidate value: promote to sandbox if evidence is sufficient.
+
+        Promotion requires evidence FOR the value. The gate used to test only
+        volume and confidence, so a value whose evidence was uniformly
+        negative — the system observing that it does not hold — advanced
+        through the pipeline exactly as fast as a well-supported one.
+        """
+        if delta <= 0.0:
+            return None
         if node.total_evidence_count >= self.MIN_EVIDENCE and confidence > 0.3:
             node.status = ValueNodeStatus.SANDBOX
             return ValueMutation(
@@ -379,7 +425,13 @@ class DynamicValueGraph:
     def _process_sandbox(
         self, node: ValueNode, delta: float, confidence: float
     ) -> Optional[ValueMutation]:
-        """Process a sandbox value: promote to provisional if diversity is sufficient."""
+        """Process a sandbox value: promote to provisional if diversity is sufficient.
+
+        As with the candidate gate, a negative net signal must not advance a
+        value toward adoption.
+        """
+        if delta <= 0.0:
+            return None
         if (node.source_diversity >= self.MIN_SOURCE_DIVERSITY
                 and node.total_evidence_count >= self.MIN_EVIDENCE * 2
                 and confidence > 0.5):
@@ -411,7 +463,13 @@ class DynamicValueGraph:
     ) -> Optional[ValueMutation]:
         """Process a provisional value: adopt if grace period passed and evidence holds."""
         now = time.time()
-        if now > node.rollback_deadline and confidence > 0.4:
+        # Adoption requires the evidence to still be POSITIVE at the end of
+        # the grace window. Gating on confidence alone meant a value whose
+        # evidence had turned against it during the grace period was adopted
+        # anyway — and the negative delta was then applied to its weight, so
+        # the system committed to a value precisely as it learned it was
+        # wrong. Confident negative evidence is a reason to hold, not adopt.
+        if now > node.rollback_deadline and confidence > 0.4 and delta > 0.0:
             node.status = ValueNodeStatus.ADOPTED
             old_weight = node.weight
             node.weight = max(0.05, min(0.95, node.weight + delta))
@@ -424,7 +482,7 @@ class DynamicValueGraph:
                 delta=delta,
                 evidence_count=node.total_evidence_count,
                 confidence=confidence,
-                reason="Grace period passed with sustained evidence — fully adopted",
+                reason="Grace period passed with sustained positive evidence — fully adopted",
             )
 
         # Still in grace period: apply delta conservatively
