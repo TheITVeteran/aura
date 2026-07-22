@@ -16,6 +16,11 @@ from core.runtime.errors import record_degradation
 from .base import VerificationResult
 
 _NUM = re.compile(r"-?\d[\d,]*(?:\.\d+)?")
+_ANSWER_TAG_RE = re.compile(r"<answer\b[^>]*>(.*?)</answer>", re.I | re.S)
+_FINAL_MARKER_RE = re.compile(
+    r"(?:^|\n)\s*(?:FINAL_ANSWER|final\s+answer|answer)\s*(?::|=|\bis\b)\s*(.+)",
+    re.I,
+)
 # Bounds keep derivation exact and cheap (no giant powers/factorials).
 _MAX_POW_EXP = 64
 _MAX_FACT_N = 50
@@ -59,19 +64,38 @@ def _derive_exact_answer(question: str) -> tuple[str, str] | None:
     return None
 
 
+def _final_answer_surface(text: str) -> str:
+    """Return the candidate's final asserted answer, never an intermediate step."""
+
+    rendered = str(text or "").strip()
+    tagged = _ANSWER_TAG_RE.findall(rendered)
+    if tagged:
+        return tagged[-1].strip()
+    marked = _FINAL_MARKER_RE.findall(rendered)
+    if marked:
+        return marked[-1].strip()
+    # Natural prose without an explicit envelope remains supported, but only
+    # its last numeric conclusion is eligible for an exact numeric target.
+    numbers = _NUM.findall(rendered)
+    return numbers[-1] if numbers else rendered
+
+
 def _final_answer_matches(text: str, exact: str) -> bool:
-    """True if the exact value appears as one of the numbers in the candidate."""
+    """Compare the exact target to the final asserted answer only."""
+
+    surface = _final_answer_surface(text)
     try:
         target = float(exact)
     except ValueError:
-        return exact in text
-    for tok in _NUM.findall(text):
-        try:
-            if abs(float(tok.replace(",", "")) - target) < 1e-6:
-                return True
-        except ValueError:
-            continue
-    return False
+        return exact.strip().casefold() == surface.strip().casefold()
+    numbers = _NUM.findall(surface)
+    if not numbers:
+        return False
+    try:
+        final_value = float(numbers[-1].replace(",", ""))
+    except ValueError:
+        return False
+    return math.isclose(final_value, target, rel_tol=0.0, abs_tol=1e-6)
 
 
 class MathTruthEngine:
@@ -101,7 +125,7 @@ class MathTruthEngine:
             res = bridge.evaluate(str(target))
             if res.ok:
                 target_value = res.result
-                target_ok = str(res.result) in text or str(res.result).rstrip("0").rstrip(".") in text
+                target_ok = _final_answer_matches(text, str(res.result))
 
         # No explicit target — derive a canonical exact answer from the QUESTION so the
         # verifier is SOUND for modulo/power/gcd/factorial/arithmetic (the classes models

@@ -59,9 +59,18 @@ ARMS: dict[str, dict[str, Any]] = {
 _WORD_RE = re.compile(r"[^\W\d_]{4,}", re.UNICODE)
 
 
-def _wilson(successes: float, n: int, *, upper: bool) -> float:
+def _wilson(successes: int, n: int, *, upper: bool) -> float:
+    """Wilson bound for binary, independently graded outcomes.
+
+    A mean verifier score is not a binomial success count. Keeping that score
+    as descriptive telemetry is useful, but feeding its sum into this formula
+    creates fictitious fractional trials and invalid confidence intervals.
+    """
+
     if n <= 0:
         return 1.0 if upper else 0.0
+    if successes < 0 or successes > n:
+        raise ValueError("Wilson successes must be an integer in [0, n]")
     p_hat = successes / n
     z2 = _Z95 * _Z95
     denominator = 1.0 + z2 / n
@@ -135,17 +144,34 @@ class ExecutionController:
             logger.warning("Controller ledger unreadable — observe-only: %s", exc)
 
     def _fold(self, row: dict[str, Any]) -> None:
+        if row.get("checked") is not True:
+            raise ValueError("controller outcome is not independently checked")
+        if not isinstance(row.get("success"), bool):
+            raise ValueError("controller outcome success must be boolean")
+        bucket = row.get("bucket")
+        arm = row.get("arm")
+        score = row.get("verified_score")
+        if not isinstance(bucket, str) or not bucket or len(bucket) > 160:
+            raise ValueError("controller outcome bucket is invalid")
+        if not isinstance(arm, str) or arm not in ARMS:
+            raise ValueError("controller outcome arm is invalid")
+        if (
+            not isinstance(score, (int, float))
+            or isinstance(score, bool)
+            or not math.isfinite(float(score))
+            or not 0.0 <= float(score) <= 1.0
+        ):
+            raise ValueError("controller verified score is invalid")
         cell = self._cells.setdefault(
-            (str(row["bucket"]), str(row["arm"])),
+            (bucket, arm),
             {"n": 0, "verified_sum": 0.0, "successes": 0},
         )
         cell["n"] += 1
-        score = float(row.get("verified_score", 0.0))
-        cell["verified_sum"] += max(0.0, min(1.0, score))
+        cell["verified_sum"] += float(score)
         cell["successes"] += int(bool(row.get("success")))
         self._episodes_seen += 1
 
-    def _append(self, row: dict[str, Any]) -> None:
+    def _append(self, row: dict[str, Any]) -> bool:
         try:
             from core.governance_context import local_internal_governed_scope
             from core.runtime.file_write_gateway import get_file_write_gateway
@@ -157,8 +183,10 @@ class ExecutionController:
                 get_file_write_gateway().append_text(
                     self.ledger_path, line, source="latent_execution_controller"
                 )
+            return True
         except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
             logger.debug("Controller outcome not persisted: %s", exc)
+            return False
 
     # ── Decisions ────────────────────────────────────────────────────────
     def choose(
@@ -187,7 +215,7 @@ class ExecutionController:
         base_cell = self._cells.get((bucket, "base"))
         base_n = int(base_cell["n"]) if base_cell else 0
         base_ub = (
-            _wilson(base_cell["verified_sum"], base_n, upper=True)
+            _wilson(int(base_cell["successes"]), base_n, upper=True)
             if base_cell and base_n
             else 1.0
         )
@@ -198,7 +226,9 @@ class ExecutionController:
             cell = self._cells.get((bucket, arm))
             if not cell or cell["n"] < MIN_TRIALS or base_n < MIN_TRIALS:
                 continue
-            lb = _wilson(cell["verified_sum"], int(cell["n"]), upper=False)
+            lb = _wilson(
+                int(cell["successes"]), int(cell["n"]), upper=False
+            )
             if lb > base_ub and lb > best_lb:
                 best_arm, best_lb = arm, lb
         if best_arm:
@@ -281,26 +311,42 @@ class ExecutionController:
         arm: str,
         verified_score: float,
         success: bool,
+        checked: bool,
         wall_clock_s: float = 0.0,
-    ) -> None:
-        """Fold one VERIFIED episode outcome and persist it."""
+    ) -> bool:
+        """Fold one independently checked episode outcome and persist it."""
+        if checked is not True or not isinstance(success, bool):
+            return False
+        if not isinstance(bucket, str) or not bucket or len(bucket) > 160:
+            return False
+        if not isinstance(arm, str) or arm not in ARMS:
+            return False
         if not isinstance(verified_score, (int, float)) or isinstance(
             verified_score, bool
         ):
-            return
+            return False
         score = float(verified_score)
-        if not math.isfinite(score):
-            return
+        if not math.isfinite(score) or not 0.0 <= score <= 1.0:
+            return False
+        try:
+            elapsed = float(wall_clock_s)
+        except (TypeError, ValueError, OverflowError):
+            return False
+        if not math.isfinite(elapsed) or elapsed < 0.0:
+            return False
         row = {
-            "bucket": str(bucket)[:160],
-            "arm": str(arm)[:40] if arm in ARMS else "base",
-            "verified_score": round(max(0.0, min(1.0, score)), 6),
-            "success": bool(success),
-            "wall_clock_s": round(max(0.0, float(wall_clock_s)), 3),
+            "bucket": bucket,
+            "arm": arm,
+            "verified_score": round(score, 6),
+            "success": success,
+            "checked": True,
+            "wall_clock_s": round(elapsed, 3),
             "at": time.time(),
         }
+        if not self._append(row):
+            return False
         self._fold(row)
-        self._append(row)
+        return True
 
     def status(self) -> dict[str, Any]:
         return {
@@ -313,6 +359,9 @@ class ExecutionController:
                     "n": int(cell["n"]),
                     "mean_verified": round(
                         cell["verified_sum"] / max(1, int(cell["n"])), 4
+                    ),
+                    "success_rate": round(
+                        int(cell["successes"]) / max(1, int(cell["n"])), 4
                     ),
                 }
                 for (bucket, arm), cell in sorted(self._cells.items())

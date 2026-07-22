@@ -70,3 +70,19 @@ def test_non_derivable_prose_stays_vacuous():
 def test_correct_answer_among_reasoning_passes():
     r = _verify("First 17^2 = 289, then 289^2 = 83521. Answer: 83521.", "What is 17 to the power of 4?")
     assert r.ok is True and r.checked is True
+
+
+def test_correct_intermediate_cannot_hide_wrong_final_answer():
+    r = _verify(
+        "I computed 17^4 as 83521, but my final answer is 81000.",
+        "What is 17 to the power of 4?",
+    )
+    assert r.ok is False and r.checked is True
+
+
+def test_last_answer_envelope_is_authoritative():
+    r = _verify(
+        "<answer>83521</answer>\nCorrection: <answer>81000</answer>",
+        "What is 17 to the power of 4?",
+    )
+    assert r.ok is False and r.checked is True

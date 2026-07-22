@@ -97,6 +97,34 @@ def _erased_layers_declared(receipt: Any) -> bool:
     return bool(isinstance(layers, (list, tuple)) and layers)
 
 
+def _controller_outcome(
+    verifier_evidence: Any,
+) -> tuple[float, bool, bool, str]:
+    """Extract only independently graded task outcomes for bandit learning."""
+
+    if not isinstance(verifier_evidence, dict):
+        return 0.0, False, False, "verifier_evidence_missing"
+    raw_best = verifier_evidence.get("best_score")
+    best_score = 0.0
+    if (
+        isinstance(raw_best, (int, float))
+        and not isinstance(raw_best, bool)
+        and math.isfinite(float(raw_best))
+    ):
+        best_score = max(0.0, min(1.0, float(raw_best)))
+    checked = verifier_evidence.get("outcome_checked") is True
+    passed = checked and verifier_evidence.get("outcome_passed") is True
+    reason = (
+        "independent_grade"
+        if checked
+        else str(
+            verifier_evidence.get("outcome_reason")
+            or "task_ground_truth_unavailable"
+        )
+    )
+    return best_score, checked, passed, reason
+
+
 class LatentCortexService:
     """Budget allocation + IPC routing for latent-reasoning episodes."""
 
@@ -1450,10 +1478,10 @@ class LatentCortexService:
             self._failure_streak = 0
             self._last_refusal = ""
             self._last_success_at = time.time()
-            # Controller learning: this episode's VERIFIED outcome becomes
-            # bandit evidence for its (context, arm) cell. Episodes that
-            # never completed record nothing — an arm can only earn
-            # exploitation with completed, verified wins.
+            # Controller learning accepts only an independently graded task
+            # outcome. Candidate-local arithmetic, syntax, facet, and
+            # grounding scores still steer this episode, but cannot become a
+            # Wilson trial or teach the bandit that the whole answer was right.
             if controller_decision is not None:
                 try:
                     from core.brain.llm.latent_cortex.execution_controller import (
@@ -1461,23 +1489,29 @@ class LatentCortexService:
                     )
 
                     verifier_evidence = result_receipt.get("verifier_guidance")
-                    best_score = 0.0
-                    if isinstance(verifier_evidence, dict):
-                        raw_best = verifier_evidence.get("best_score")
-                        if (
-                            isinstance(raw_best, (int, float))
-                            and not isinstance(raw_best, bool)
-                            and math.isfinite(float(raw_best))
-                        ):
-                            best_score = max(0.0, min(1.0, float(raw_best)))
-                    get_execution_controller().record_outcome(
+                    (
+                        best_score,
+                        outcome_checked,
+                        outcome_passed,
+                        outcome_reason,
+                    ) = _controller_outcome(verifier_evidence)
+                    outcome_recorded = get_execution_controller().record_outcome(
                         bucket=str(controller_decision.get("bucket") or ""),
                         arm=str(controller_decision.get("arm") or "base"),
                         verified_score=best_score,
-                        success=True,
+                        success=outcome_passed,
+                        checked=outcome_checked,
                         wall_clock_s=time.monotonic() - started,
                     )
-                    result_receipt["execution_controller"] = controller_decision
+                    result_receipt["execution_controller"] = {
+                        **controller_decision,
+                        "outcome_recorded": outcome_recorded,
+                        "outcome_checked": outcome_checked,
+                        "outcome_passed": (
+                            outcome_passed if outcome_checked else None
+                        ),
+                        "outcome_reason": outcome_reason,
+                    }
                     result["receipt"] = result_receipt
                 except (
                     ImportError,

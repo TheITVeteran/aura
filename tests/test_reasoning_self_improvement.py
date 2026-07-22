@@ -8,6 +8,17 @@ import pytest
 from core.brain.reasoning_self_improvement import ReasoningSelfImprovement
 
 
+@pytest.fixture(autouse=True)
+def admitted_test_domain(monkeypatch):
+    """Unit tests isolate trace mechanics from the live Foundry service."""
+
+    monkeypatch.setattr(
+        ReasoningSelfImprovement,
+        "_domain_admitted",
+        staticmethod(lambda _task_type: True),
+    )
+
+
 @pytest.fixture
 def si(tmp_path):
     return ReasoningSelfImprovement(tmp_path / "traces.json", min_confidence=0.7)

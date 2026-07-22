@@ -24742,3 +24742,46 @@ This is total checkpoint record 377. The revised forecast remains 466-733 total
 records, now approximately 89-356 records after this checkpoint. Next: repair
 the verifier and learning truth-semantics cluster, then implement the strict
 epistemic state that the branch, verifier, repair, and learning paths will share.
+
+## Checkpoint 2026-07-22-317: Unchecked Evidence Cannot Teach The Reasoning System
+
+The latent execution controller now computes Wilson intervals from integer
+success counts rather than the sum of fractional verifier scores. Its durable
+contract requires an explicit independently checked boolean outcome; unchecked,
+malformed, non-finite, and legacy rows are excluded rather than interpreted as
+trials. Mean candidate score remains descriptive telemetry, while success rate
+is reported separately. Equal binary outcomes with different soft scores can no
+longer manufacture statistically separated arms.
+
+The live RLC task verifier now states that its arithmetic, syntax, facet,
+grounding, and response-shape checks rank candidates but are not task ground
+truth. `LatentCortexService` records a controller outcome only when the receipt
+contains an independent `outcome_checked` grade, and receipts disclose whether
+an outcome was recorded and why. A mechanically complete episode is no longer
+unconditionally persisted as `success=True`.
+
+The same truth boundary now reaches durable learning and memory. Reasoning
+self-improvement fails closed when Verifier Foundry is absent or errors;
+unchecked amplifier passes receive the unverified confidence cap, cannot enter
+the solved cache, STaR traces, or procedural wins, are recorded as failed rather
+than successful reasoning memory, and do not count as valid candidates. The
+math verifier compares the exact target to the final answer surface (last answer
+envelope/marker or final numeric conclusion), so a correct intermediate number
+cannot hide a wrong conclusion. Source reliability normalizes host identities
+and updates toward boolean ground truth with the correctly parenthesized
+prediction error instead of adding a full positive learning rate.
+
+Validation after rebasing the concurrent Foundry-integrity and monotonic-revision
+checkpoints: the execution-controller, live RLC wiring, reasoning
+self-improvement, Verifier Foundry/curriculum, revision gate, amplifier,
+verifier-crash, math-verifier, reasoning-verifier, and source-ranker suites pass
+227/227 in 126.69 seconds. `make lint` and `git diff --check` pass. New
+regressions cover fractional-Wilson misuse, unchecked/legacy/malformed trials,
+undurable controller writes, absent and broken Foundry, unchecked success
+memory, correct-intermediate/wrong-final answers, normalized source cells, and
+non-boolean source outcomes.
+
+This is total checkpoint record 378. The revised forecast remains 466-733 total
+records, now approximately 88-355 records after this checkpoint. Next: publish
+this truth-semantics checkpoint, then build SPARK-005 through SPARK-013 around a
+single transactional epistemic state rather than adding another side ledger.

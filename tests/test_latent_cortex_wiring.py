@@ -1803,6 +1803,9 @@ def test_handler_builds_task_verifier_when_guided(monkeypatch):
     assert guidance["evaluations"] == 1
     assert "arithmetic" in guidance["best_applicable_checks"]
     assert not guidance.get("best_failures"), "correct arithmetic must not be flagged"
+    assert guidance["outcome_checked"] is False
+    assert guidance["outcome_passed"] is None
+    assert guidance["outcome_reason"] == "candidate_checks_are_not_task_ground_truth"
 
     # Without the flag, no verifier is constructed.
     captured.clear()

@@ -156,20 +156,33 @@ class ReasoningSelfImprovement:
 
     @staticmethod
     def _domain_admitted(task_type: str) -> bool:
-        """Consult the Verifier Foundry's admission gate. Absent foundry =
-        legacy behavior (admitted) so the existing loop never bricks; when the
-        foundry is registered, its evidence-based verdict is authoritative."""
+        """Consult the Verifier Foundry and fail closed without its evidence.
+
+        Self-improvement is a durable mutation path. Availability is not
+        evidence of verifier reliability, so an absent or failed Foundry may
+        delay learning but can never admit self-generated training data.
+        """
         try:
             from core.runtime.service_access import optional_service
 
             foundry = optional_service("verifier_foundry", default=None)
             if foundry is None:
-                return True
+                record_degradation(
+                    "reasoning_self_improvement",
+                    RuntimeError("verifier_foundry_unavailable"),
+                    severity="warning",
+                    action="refused self-training admission without verifier reliability evidence",
+                )
+                return False
             return bool(foundry.domain_admitted(task_type).admitted)
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
-            record_degradation("reasoning_self_improvement", exc, severity="warning",
-                               action="treated domain as admitted after foundry check failed")
-            return True
+            record_degradation(
+                "reasoning_self_improvement",
+                exc,
+                severity="warning",
+                action="refused self-training admission after verifier reliability check failed",
+            )
+            return False
 
     def pending_count(self) -> int:
         with self._lock:

@@ -773,7 +773,10 @@ class ReasoningAmplifierV2:
                 "reasoning_text_mutations": text_mutations,
             }
 
-        confidence = round(min(calibration.confidence, 0.98 if verifier_ok else 0.55), 4)
+        verified_pass = verifier_ok and verifier_checked
+        confidence = round(
+            min(calibration.confidence, 0.98 if verified_pass else 0.55), 4
+        )
 
         # 9b. learn from the outcome — memoize wins, queue losses for idle retry.
         # CRITICAL soundness gate: only cache/learn when the verifier ACTUALLY checked
@@ -781,7 +784,7 @@ class ReasoningAmplifierV2:
         # arithmetic to evaluate) must never be cached, or a wrong answer gets served as
         # truth forever. The hard bench caught exactly this poisoning.
         if "solved_cache_hit" not in fallbacks and not read_only_evaluation:
-            if verifier_ok and verifier_checked:
+            if verified_pass:
                 # Memoize verifier-clean source-independent derivations for instant re-use.
                 if _flag_on("AURA_REASONING_CACHE") and not request.context.get("skip_cache"):
                     try:
@@ -794,7 +797,7 @@ class ReasoningAmplifierV2:
                             confidence=confidence,
                             mode=mode.value,
                             verifiers_run=[v for v in verifiers_run if v],
-                            verified=verifier_ok,
+                            verified=verified_pass,
                         )
                     except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
                         record_degradation("amplifier_v2_cache_put", exc)
@@ -808,7 +811,7 @@ class ReasoningAmplifierV2:
                         answer=calibrated_answer,
                         confidence=confidence,
                         mode=mode.value,
-                        verified=verifier_ok,
+                        verified=verified_pass,
                     )
                 except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
                     record_degradation("amplifier_v2_self_improve", exc)
@@ -829,7 +832,7 @@ class ReasoningAmplifierV2:
                     )
                 except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
                     record_degradation("amplifier_v2_playbook_capture", exc)
-            elif not verifier_ok and not request.context.get("skip_precompute_enqueue"):
+            elif not verified_pass and not request.context.get("skip_precompute_enqueue"):
                 # Verifier-dirty under the foreground budget — queue an idle deep retry
                 # (off the critical path; the win lands in the cache for next time).
                 try:
@@ -845,7 +848,7 @@ class ReasoningAmplifierV2:
                 self._ensure_memory().record(
                     task_type=problem.task_type,
                     objective=problem.objective,
-                    passed=verifier_ok,
+                    passed=verified_pass,
                     verifier_issues=verifier_issues,
                 )
             except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
@@ -857,7 +860,7 @@ class ReasoningAmplifierV2:
             task_type=problem.task_type,
             num_candidates=n_cand,
             verifiers_run=[v for v in verifiers_run if v],
-            valid_candidates=1 if verifier_ok else 0,
+            valid_candidates=1 if verified_pass else 0,
             winning_candidate_id=winning_candidate_id,
             confidence=confidence,
             agreement=agreement,
@@ -875,7 +878,10 @@ class ReasoningAmplifierV2:
         )
         logger.info(
             "🧠 [AmplifyV2] mode=%s task=%s cands=%d verifier=%s conf=%.2f status=%s",
-            mode.value, problem.task_type, n_cand, "PASS" if verifier_ok else "FAIL",
+            mode.value,
+            problem.task_type,
+            n_cand,
+            "PASS" if verified_pass else "UNVERIFIED_OR_FAILED",
             confidence, calibration.overall.value,
         )
         return AmplifiedAnswer(
@@ -883,7 +889,7 @@ class ReasoningAmplifierV2:
             confidence=confidence,
             # "verified" is a claim to the user: only ok AND actually-checked
             # earns it. "The verifier had no objection to prose" does not.
-            verified=verifier_ok and verifier_checked,
+            verified=verified_pass,
             calibrated=(calibration.downgraded > 0 or calibration.flagged_impossible > 0),
             receipt=receipt,
             generation_metadata=winning_generation_metadata,

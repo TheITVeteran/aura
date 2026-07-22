@@ -11,6 +11,7 @@ from core.brain.llm.latent_cortex.execution_controller import (
     context_bucket,
     controller_enabled,
 )
+from core.brain.latent_cortex_service import _controller_outcome
 
 
 def _controller(tmp_path):
@@ -61,13 +62,18 @@ def test_exploitation_requires_wilson_separation(tmp_path):
     # 12 mediocre base episodes, 12 strong deeper-recurrence episodes.
     for _ in range(12):
         controller.record_outcome(
-            bucket=bucket, arm="base", verified_score=0.2, success=True
+            bucket=bucket,
+            arm="base",
+            verified_score=0.2,
+            success=False,
+            checked=True,
         )
         controller.record_outcome(
             bucket=bucket,
             arm="deeper_recurrence",
             verified_score=1.0,
             success=True,
+            checked=True,
         )
     decision = controller.choose(
         objective="q", domain="general", stakes=0.5, uncertainty=0.5
@@ -82,10 +88,18 @@ def test_no_exploitation_on_underpowered_or_overlapping_evidence(tmp_path):
     bucket = context_bucket("q", "general", 0.5, 0.5)
     for _ in range(11):  # one short of MIN_TRIALS
         controller.record_outcome(
-            bucket=bucket, arm="base", verified_score=0.2, success=True
+            bucket=bucket,
+            arm="base",
+            verified_score=0.2,
+            success=False,
+            checked=True,
         )
         controller.record_outcome(
-            bucket=bucket, arm="wider_branches", verified_score=1.0, success=True
+            bucket=bucket,
+            arm="wider_branches",
+            verified_score=1.0,
+            success=True,
+            checked=True,
         )
     decision = controller.choose(
         objective="q", domain="general", stakes=0.5, uncertainty=0.5
@@ -94,10 +108,18 @@ def test_no_exploitation_on_underpowered_or_overlapping_evidence(tmp_path):
     overlapping = _controller(tmp_path / "b")
     for _ in range(20):
         overlapping.record_outcome(
-            bucket=bucket, arm="base", verified_score=0.6, success=True
+            bucket=bucket,
+            arm="base",
+            verified_score=0.6,
+            success=True,
+            checked=True,
         )
         overlapping.record_outcome(
-            bucket=bucket, arm="wider_branches", verified_score=0.65, success=True
+            bucket=bucket,
+            arm="wider_branches",
+            verified_score=0.65,
+            success=True,
+            checked=True,
         )
     decision = overlapping.choose(
         objective="q", domain="general", stakes=0.5, uncertainty=0.5
@@ -111,7 +133,11 @@ def test_ledger_persists_and_tolerates_corruption(tmp_path):
     bucket = context_bucket("q", "general", 0.5, 0.5)
     for _ in range(3):
         first.record_outcome(
-            bucket=bucket, arm="base", verified_score=0.8, success=True
+            bucket=bucket,
+            arm="base",
+            verified_score=0.8,
+            success=True,
+            checked=True,
         )
     (root / "outcomes.jsonl").open("a").write("{corrupt\n")
     second = ExecutionController(root=root)
@@ -120,6 +146,19 @@ def test_ledger_persists_and_tolerates_corruption(tmp_path):
     assert status["restore_errors"] == 1
     cell = next(c for c in status["cells"] if c["arm"] == "base")
     assert cell["n"] == 3 and cell["mean_verified"] == 0.8
+
+
+def test_legacy_unchecked_rows_are_not_restored_as_evidence(tmp_path):
+    root = tmp_path / "controller"
+    root.mkdir(parents=True)
+    (root / "outcomes.jsonl").write_text(
+        '{"bucket":"b","arm":"base","verified_score":1.0,"success":true}\n'
+    )
+    controller = ExecutionController(root=root)
+    status = controller.status()
+    assert status["episodes_seen"] == 0
+    assert status["cells"] == []
+    assert status["restore_errors"] == 1
 
 
 def test_apply_arm_deltas_are_bounded(tmp_path):
@@ -159,14 +198,96 @@ def test_probe_guided_arm_emits_valid_bytecode_only_with_region(tmp_path):
 def test_junk_outcomes_are_ignored(tmp_path):
     controller = _controller(tmp_path)
     controller.record_outcome(
-        bucket="b", arm="base", verified_score=float("nan"), success=True
+        bucket="b",
+        arm="base",
+        verified_score=float("nan"),
+        success=True,
+        checked=True,
     )
     controller.record_outcome(
-        bucket="b", arm="not_an_arm", verified_score=0.5, success=True
+        bucket="b",
+        arm="not_an_arm",
+        verified_score=0.5,
+        success=True,
+        checked=True,
     )
     status = controller.status()
-    assert status["episodes_seen"] == 1  # junk arm coerced to base, NaN dropped
-    assert all(c["arm"] in ARMS for c in status["cells"])
+    assert status["episodes_seen"] == 0
+    assert status["cells"] == []
+
+
+def test_persistence_failure_cannot_create_transient_learning(tmp_path, monkeypatch):
+    controller = _controller(tmp_path)
+    monkeypatch.setattr(controller, "_append", lambda _row: False)
+    assert controller.record_outcome(
+        bucket="b",
+        arm="base",
+        verified_score=1.0,
+        success=True,
+        checked=True,
+    ) is False
+    assert controller.status()["cells"] == []
+
+
+def test_unchecked_and_fractional_scores_cannot_create_wilson_evidence(tmp_path):
+    controller = _controller(tmp_path)
+    bucket = context_bucket("q", "general", 0.5, 0.5)
+    assert controller.record_outcome(
+        bucket=bucket,
+        arm="base",
+        verified_score=1.0,
+        success=True,
+        checked=False,
+    ) is False
+    for _ in range(20):
+        controller.record_outcome(
+            bucket=bucket,
+            arm="base",
+            verified_score=0.1,
+            success=True,
+            checked=True,
+        )
+        controller.record_outcome(
+            bucket=bucket,
+            arm="wider_branches",
+            verified_score=0.99,
+            success=True,
+            checked=True,
+        )
+    decision = controller.choose(
+        objective="q", domain="general", stakes=0.5, uncertainty=0.5
+    )
+    assert decision["mode"] != "exploit"
+
+
+def test_live_candidate_scores_are_not_task_ground_truth():
+    score, checked, passed, reason = _controller_outcome(
+        {
+            "best_score": 0.99,
+            "outcome_checked": False,
+            "outcome_passed": None,
+            "outcome_reason": "candidate_checks_are_not_task_ground_truth",
+        }
+    )
+    assert score == 0.99
+    assert checked is False and passed is False
+    assert reason == "candidate_checks_are_not_task_ground_truth"
+
+
+def test_independently_graded_outcome_is_admissible():
+    score, checked, passed, reason = _controller_outcome(
+        {
+            "best_score": 0.8,
+            "outcome_checked": True,
+            "outcome_passed": True,
+        }
+    )
+    assert (score, checked, passed, reason) == (
+        0.8,
+        True,
+        True,
+        "independent_grade",
+    )
 
 
 def test_kill_switch_defaults_off_in_tests():

@@ -321,7 +321,7 @@ def test_record_win_blocked_for_unadmitted_domain(tmp_path, monkeypatch):
         foundry.close()
 
 
-def test_record_win_legacy_behavior_without_foundry(tmp_path, monkeypatch):
+def test_record_win_fails_closed_without_foundry(tmp_path, monkeypatch):
     import core.brain.reasoning_self_improvement as rsi_mod
 
     monkeypatch.setattr(
@@ -334,7 +334,31 @@ def test_record_win_legacy_behavior_without_foundry(tmp_path, monkeypatch):
         cacheable_task_types=frozenset({"factual"}),
     )
     assert rsi.record_win("capital of France?", "factual", answer="Paris",
-                          confidence=0.9, mode="deep", verified=True) is True
+                          confidence=0.9, mode="deep", verified=True) is False
+    assert rsi.pending_count() == 0
+
+
+def test_record_win_fails_closed_when_foundry_errors(tmp_path, monkeypatch):
+    import core.brain.reasoning_self_improvement as rsi_mod
+
+    class BrokenFoundry:
+        def domain_admitted(self, _task_type):
+            raise RuntimeError("ledger unavailable")
+
+    monkeypatch.setattr(
+        "core.runtime.service_access.optional_service",
+        lambda name, default=None: BrokenFoundry()
+        if name == "verifier_foundry"
+        else default,
+    )
+    monkeypatch.setenv("AURA_REASONING_SELF_IMPROVEMENT", "1")
+    rsi = rsi_mod.ReasoningSelfImprovement(
+        path=tmp_path / "traces.json",
+        cacheable_task_types=frozenset({"math"}),
+    )
+    assert rsi.record_win(
+        "2+2?", "math", answer="4", confidence=0.9, mode="deep", verified=True
+    ) is False
 
 
 # ─────────────────────────────────────────────────────────────────────────────

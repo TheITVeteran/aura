@@ -175,6 +175,54 @@ class _ScriptedVerifier:
 
 
 @pytest.mark.asyncio
+async def test_unchecked_pass_is_failure_memory_not_success_evidence():
+    from core.brain.reasoning_amplifier_v2 import (
+        AmplificationRequest,
+        ReasoningAmplifierV2,
+        ReasoningMode,
+    )
+
+    records = []
+
+    class RecordingMemory:
+        def as_guard_text(self, *_args, **_kwargs):
+            return ""
+
+        def record(self, **kwargs):
+            records.append(kwargs)
+
+    class UncheckedPassVerifier:
+        async def verify(self, _candidate, *, task_type="", context=None):
+            return _Verdict(ok=True, checked=False)
+
+    async def _generate(_prompt, _temp):
+        return "The answer may be 4."
+
+    amp = ReasoningAmplifierV2(
+        _generate,
+        verifier=UncheckedPassVerifier(),
+        memory=RecordingMemory(),
+    )
+    result = await amp.amplify(
+        AmplificationRequest(
+            objective="What is 2 + 2?",
+            task_type="math",
+            mode=ReasoningMode.NORMAL,
+            context={
+                "skip_evidence": True,
+                "skip_precompute_enqueue": True,
+                "disable_batched_candidates": True,
+            },
+        )
+    )
+
+    assert result.verified is False
+    assert result.receipt.valid_candidates == 0
+    assert result.confidence <= 0.55
+    assert records and records[-1]["passed"] is False
+
+
+@pytest.mark.asyncio
 async def test_v2_escalation_does_not_inherit_stale_checked_state():
     """An escalated answer that was never checked must not be presented as proven.
 

@@ -339,6 +339,9 @@ class EpisodeTaskVerifier:
                 "evaluations": 0,
                 "response_contract_required": bool(self.response_contract),
                 "response_contract_satisfied": False,
+                "outcome_checked": False,
+                "outcome_passed": None,
+                "outcome_reason": "candidate_checks_are_not_task_ground_truth",
             }
         best = max(self.evaluations, key=lambda row: row["score"])
         facets = best["checks"].get("facets") or {}
@@ -373,6 +376,12 @@ class EpisodeTaskVerifier:
             "response_contract_satisfied": bool(
                 best["checks"].get("response_contract", {}).get("valid", False)
             ),
+            # These candidate-local checks rank branches and reject concrete
+            # defects. They are not a ground-truth grade of the whole task, so
+            # the execution bandit must not count them as a successful trial.
+            "outcome_checked": False,
+            "outcome_passed": None,
+            "outcome_reason": "candidate_checks_are_not_task_ground_truth",
         }
 
 
