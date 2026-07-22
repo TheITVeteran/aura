@@ -27,6 +27,7 @@ returns the checklist so an operator run can't quietly skip a control.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import math
 import random
@@ -1077,6 +1078,7 @@ def run_factorial_ablations(
                             zip(
                                 ("success", "cost"),
                                 _coerce_solver_outcome(solve_arm(task, arm)),
+                                strict=True,
                             )
                         ),
                     )
@@ -1316,6 +1318,7 @@ ROLE_ARMS: tuple[str, ...] = (
     "distinct_roles",
     "lesioned_uniform_role",
     "swapped_roles",
+    "restored_roles",
 )
 
 
@@ -1338,13 +1341,16 @@ def run_role_lesion(
     - swapped_roles: the same distinct anchors, permuted across branch
       indices — if roles are causal, outcomes should track the anchors,
       not the branch index.
+    - restored_roles: the original distinct assignment reinstated after the
+      lesion, so an apparent effect must recover instead of merely drift.
 
     Claims: a paired behavioral claim (distinct vs lesioned), a
     mechanistic divergence claim (distinct trajectories diverge more than
     lesioned ones by at least ``divergence_margin``), and a swap-parity
     observation (swapped ≈ distinct implies anchor-causality, not
-    index-causality). Divergence claims cap at SUPPORTED: internal
-    geometry cannot earn PROVEN.
+    index-causality), and a restoration claim. All behavioral comparisons
+    require exact measured layer-app parity. Divergence claims cap at
+    SUPPORTED: internal geometry cannot earn PROVEN.
     """
     if (
         isinstance(divergence_margin, bool)
@@ -1386,8 +1392,29 @@ def run_role_lesion(
         "expR_role_diversity",
         "distinct role anchors beat a lesioned uniform-role ensemble",
         paired,
-        # Arms run identical topology; compute parity is structural here.
-        require_compute=False,
+        require_compute=True,
+    )
+
+    restored_paired: dict[str, list[PairedObservation]] = {}
+    for family, tasks in tasks_by_family.items():
+        for index, task in enumerate(tasks):
+            treatment = outcomes["restored_roles"][family][index]
+            control = outcomes["lesioned_uniform_role"][family][index]
+            restored_paired.setdefault(family, []).append(
+                PairedObservation(
+                    task_id=f"{family}:{task.depth}:{task.seed}:{index}",
+                    family=family,
+                    treatment_success=treatment[0],
+                    control_success=control[0],
+                    treatment_layer_apps=treatment[1],
+                    control_layer_apps=control[1],
+                )
+            )
+    restoration = grade_paired_treatment_vs_control(
+        "expR_role_restoration",
+        "restoring distinct role anchors recovers the lesioned capability",
+        restored_paired,
+        require_compute=True,
     )
 
     def _mean_divergence(arm: str) -> tuple[float, int]:
@@ -1404,14 +1431,17 @@ def run_role_lesion(
     distinct_div, distinct_n = _mean_divergence("distinct_roles")
     lesioned_div, lesioned_n = _mean_divergence("lesioned_uniform_role")
     swapped_div, swapped_n = _mean_divergence("swapped_roles")
+    restored_div, restored_n = _mean_divergence("restored_roles")
     divergence_evidence = {
         "distinct_mean_divergence": distinct_div,
         "lesioned_mean_divergence": lesioned_div,
         "swapped_mean_divergence": swapped_div,
+        "restored_mean_divergence": restored_div,
         "samples": {
             "distinct_roles": distinct_n,
             "lesioned_uniform_role": lesioned_n,
             "swapped_roles": swapped_n,
+            "restored_roles": restored_n,
         },
         "divergence_margin": float(divergence_margin),
         "limitation": (
@@ -1444,7 +1474,9 @@ def run_role_lesion(
         "note": (
             "swapped ≈ distinct on both accuracy and divergence implies the "
             "ANCHOR, not the branch index, carries the role"
-        )
+        ),
+        "accuracy_tolerance": 0.05,
+        "all_families_within_tolerance": True,
     }
     for family in tasks_by_family:
         distinct_acc = sum(
@@ -1453,10 +1485,66 @@ def run_role_lesion(
         swapped_acc = sum(
             1 for ok, _, _ in outcomes["swapped_roles"][family] if ok
         ) / max(1, len(outcomes["swapped_roles"][family]))
+        task_compute_matched = all(
+            outcomes["distinct_roles"][family][index][1]
+            == outcomes["swapped_roles"][family][index][1]
+            for index in range(len(outcomes["distinct_roles"][family]))
+        )
+        within_tolerance = abs(distinct_acc - swapped_acc) <= 0.05
+        swap_parity["all_families_within_tolerance"] = bool(
+            swap_parity["all_families_within_tolerance"]
+            and within_tolerance
+            and task_compute_matched
+        )
         swap_parity[family] = {
             "distinct_accuracy": round(distinct_acc, 4),
             "swapped_accuracy": round(swapped_acc, 4),
+            "accuracy_delta": round(swapped_acc - distinct_acc, 4),
+            "within_tolerance": within_tolerance,
+            "task_compute_matched": task_compute_matched,
         }
+
+    task_identities = [
+        f"{family}:{task.depth}:{task.seed}:{index}"
+        for family, tasks in sorted(tasks_by_family.items())
+        for index, task in enumerate(tasks)
+    ]
+    task_set_sha256 = hashlib.sha256(
+        json.dumps(task_identities, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    compute_parity = all(
+        len(
+            {
+                outcomes[arm][family][index][1]
+                for arm in ROLE_ARMS
+            }
+        )
+        == 1
+        for family, tasks in tasks_by_family.items()
+        for index in range(len(tasks))
+    )
+    supported_tiers = {PROVEN, SUPPORTED}
+    causal_supported = bool(
+        behavioral.tier in supported_tiers
+        and restoration.tier in supported_tiers
+        and swap_parity["all_families_within_tolerance"] is True
+        and compute_parity
+    )
+    role_causality = {
+        "tier": SUPPORTED if causal_supported else CONJECTURE,
+        "task_set_sha256": task_set_sha256,
+        "task_count": len(task_identities),
+        "compute_parity": compute_parity,
+        "lesion_effect_supported": behavioral.tier in supported_tiers,
+        "restoration_supported": restoration.tier in supported_tiers,
+        "swap_follows_roles_not_indices": swap_parity[
+            "all_families_within_tolerance"
+        ],
+        "limitation": (
+            "supports differentiated role labor on this checked task set; "
+            "does not establish universal task benefit or frontier capability"
+        ),
+    }
 
     return {
         "arms": {
@@ -1471,8 +1559,10 @@ def run_role_lesion(
             for arm, by_family in outcomes.items()
         },
         "behavioral_claim": behavioral.to_dict(),
+        "restoration_claim": restoration.to_dict(),
         "divergence_claim": mechanistic.to_dict(),
         "swap_parity": swap_parity,
+        "role_causality": role_causality,
     }
 
 

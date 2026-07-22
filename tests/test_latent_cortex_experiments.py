@@ -551,7 +551,7 @@ def test_run_role_lesion_grades_diversity_and_divergence():
     def solve_arm(task, arm):
         # Distinct/swapped roles solve everything with high divergence;
         # the lesioned ensemble collapses (low divergence, half the wins).
-        if arm in {"distinct_roles", "swapped_roles"}:
+        if arm in {"distinct_roles", "swapped_roles", "restored_roles"}:
             return True, 100, 0.30
         lesioned_calls["n"] += 1
         return (lesioned_calls["n"] % 2 == 0), 100, 0.05
@@ -559,9 +559,13 @@ def test_run_role_lesion_grades_diversity_and_divergence():
     report = run_role_lesion(solve_arm, by_family)
     assert set(report["arms"]) == set(ROLE_ARMS)
     assert report["behavioral_claim"]["tier"] in {"PROVEN", "SUPPORTED"}
+    assert report["restoration_claim"]["tier"] in {"PROVEN", "SUPPORTED"}
     assert report["divergence_claim"]["tier"] == "SUPPORTED"
+    assert report["role_causality"]["tier"] == "SUPPORTED"
+    assert report["role_causality"]["compute_parity"] is True
     parity = report["swap_parity"]["boolean"]
     assert parity["distinct_accuracy"] == parity["swapped_accuracy"] == 1.0
+    assert parity["task_compute_matched"] is True
 
 
 def test_run_role_lesion_refutes_when_lesion_changes_nothing():
@@ -579,6 +583,7 @@ def test_run_role_lesion_refutes_when_lesion_changes_nothing():
     report = run_role_lesion(solve_arm, by_family)
     assert report["behavioral_claim"]["tier"] in {"CONJECTURE", "REFUTED"}
     assert report["divergence_claim"]["tier"] == "REFUTED"
+    assert report["role_causality"]["tier"] == "CONJECTURE"
 
 
 def test_run_role_lesion_conjectures_without_telemetry():
@@ -594,3 +599,23 @@ def test_run_role_lesion_conjectures_without_telemetry():
 
     report = run_role_lesion(solve_arm, {"boolean": battery})
     assert report["divergence_claim"]["tier"] == "CONJECTURE"
+
+
+def test_run_role_lesion_cannot_claim_causality_with_compute_mismatch():
+    from core.brain.llm.latent_cortex.experiments import (
+        run_role_lesion,
+        task_battery,
+    )
+
+    battery = task_battery(["boolean"], [2], 20, seed=11)
+    calls = {"lesioned_uniform_role": 0}
+
+    def solve_arm(task, arm):
+        if arm == "lesioned_uniform_role":
+            calls[arm] += 1
+            return calls[arm] % 2 == 0, 100, 0.05
+        return True, 101 if arm == "distinct_roles" else 100, 0.30
+
+    report = run_role_lesion(solve_arm, {"boolean": battery})
+    assert report["role_causality"]["compute_parity"] is False
+    assert report["role_causality"]["tier"] == "CONJECTURE"

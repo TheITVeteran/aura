@@ -10,8 +10,9 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, replace
-from typing import Any, Mapping
+from typing import Any
 
 from core.brain.llm.latent_cortex.branches import BRANCH_ROLES
 from core.brain.llm.latent_cortex.types import WorkspaceConfig
@@ -34,6 +35,10 @@ class RLCExecutionSpec:
     exchange_interval: int = 1
     exchange_gamma: float = 0.35
     comm_slot: int = 0
+    exchange_source_policy: str = (
+        "bounded_private_reasoning_mean_excluding_mailbox_and_context_v1"
+    )
+    exchange_source_slot_limit: int = 16
     collapse_cos_threshold: float = 0.98
     jitter_scale: float = 0.02
     recurrent_steps: int = 2
@@ -79,6 +84,12 @@ class RLCExecutionSpec:
             problems.append("exchange_gamma must be finite and inside [0, 1]")
         if type(self.comm_slot) is not int or not 0 <= self.comm_slot < self.n_slots:
             problems.append("comm_slot must identify a workspace slot")
+        if self.exchange_source_policy != (
+            "bounded_private_reasoning_mean_excluding_mailbox_and_context_v1"
+        ):
+            problems.append("exchange source policy is unsupported")
+        if self.exchange_source_slot_limit != 16:
+            problems.append("exchange source slot limit must be 16")
         if (
             not math.isfinite(self.collapse_cos_threshold)
             or not -1.0 <= self.collapse_cos_threshold <= 1.0

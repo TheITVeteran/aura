@@ -27,6 +27,14 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from core.brain.llm.latent_cortex.branch_exchange import (
+    BRANCH_EXCHANGE_SCHEMA,
+    MAX_EXCHANGE_SOURCE_SLOTS,
+    candidate_set_sha256,
+    canonical_sha256,
+    private_exchange_slots,
+    validate_branch_exchange_receipt,
+)
 from core.brain.llm.latent_cortex.cognitive_operators import (
     CognitiveOperator,
     execute_cognitive_operator,
@@ -133,6 +141,8 @@ class BranchEnsemble:
         self.config = config
         self.recurrence = recurrence
         self.exchanges = 0
+        self.exchange_receipts: list[dict[str, Any]] = []
+        self._exchange_sync_points: set[str] = set()
         # Optional per-episode observers, attached by the engine.
         self.telemetry: Any = None
         self._isolation_sealed = False
@@ -423,7 +433,10 @@ class BranchEnsemble:
             < max(b.steps for b in self.branches)
             and max(b.steps for b in self.branches) % self.config.exchange_interval == 0
         ):
-            if self.exchange():
+            if self.exchange(
+                sync_kind="interval",
+                sync_id=f"recurrent-step:{max(b.steps for b in self.branches)}",
+            ):
                 self.maintain_diversity()
         for branch, reason in deferred_fixed_depth_halts:
             self._halt(branch, reason)
@@ -456,11 +469,11 @@ class BranchEnsemble:
             branch.steps = prior_steps
 
     # ── Neural-bytecode instructions ────────────────────────────────────
-    def exchange_now(self) -> bool:
+    def exchange_now(self, *, sync_kind: str, sync_id: str) -> bool:
         """Bytecode-forced exchange: communicate immediately when ≥2 live."""
         if len(self.active()) < 2:
             return False
-        if not self.exchange():
+        if not self.exchange(sync_kind=sync_kind, sync_id=sync_id):
             return False
         self.maintain_diversity()
         return True
@@ -672,7 +685,7 @@ class BranchEnsemble:
             branch.escape.finalize()
 
     # ── Communication ───────────────────────────────────────────────────
-    def exchange(self) -> bool:
+    def exchange(self, *, sync_kind: str, sync_id: str) -> bool:
         """Blend the agreement-weighted consensus into each comm slot.
 
         Weights favor branches whose summaries agree with the ensemble mean —
@@ -688,7 +701,59 @@ class BranchEnsemble:
         if not self._isolation_sealed:
             self._blocked_cross_exposures += 1
             return False
-        summaries = [b.workspace.summary() for b in live]  # (1,1,D) each
+        gamma = float(self.config.exchange_gamma)
+        if not 0.0 < gamma <= 1.0:
+            return False
+        if sync_kind not in {
+            "interval",
+            "schedule_bytecode",
+            "controller_compare",
+            "test",
+        }:
+            raise ValueError("exchange requires a declared synchronization kind")
+        if not isinstance(sync_id, str) or not 1 <= len(sync_id) <= 160:
+            raise ValueError("exchange requires a bounded synchronization identity")
+        sync_point = f"{sync_kind}:{sync_id}"
+        if sync_point in self._exchange_sync_points:
+            raise ValueError("exchange synchronization point was already consumed")
+
+        context_slots = sorted(
+            {
+                int(item["slot"])
+                for item in live[0].workspace.context_slots
+                if isinstance(item, dict) and type(item.get("slot")) is int
+            }
+        )
+        if any(
+            sorted(
+                {
+                    int(item["slot"])
+                    for item in branch.workspace.context_slots
+                    if isinstance(item, dict) and type(item.get("slot")) is int
+                }
+            )
+            != context_slots
+            for branch in live[1:]
+        ):
+            raise RuntimeError("branch context-slot topology differs")
+        slot = int(self.config.comm_slot)
+        n_slots = int(live[0].z.shape[1])
+        source_slots = private_exchange_slots(
+            n_slots=n_slots,
+            comm_slot=slot,
+            context_slots=context_slots,
+        )
+        summaries = [
+            mx.mean(
+                mx.concatenate(
+                    [branch.z[:, index : index + 1, :] for index in source_slots],
+                    axis=1,
+                ),
+                axis=1,
+                keepdims=True,
+            )
+            for branch in live
+        ]
         if self.telemetry is not None:
             self.telemetry.record_exchange(summaries)
         stack = mx.concatenate(summaries, axis=1)  # (1,K,D)
@@ -707,15 +772,146 @@ class BranchEnsemble:
         weights = weights * support
         weights = weights / mx.maximum(mx.sum(weights), 1e-6)
         consensus = sum(w * s for w, s in zip(weights, summaries, strict=True))
+        mx.eval(weights, consensus, *summaries)
 
-        gamma = float(self.config.exchange_gamma)
-        slot = int(self.config.comm_slot)
+        candidate_rows = [
+            {
+                "index": branch.index,
+                "role": branch.role,
+                "candidate_sha256": branch.candidate_sha256,
+                "candidate_step": branch.candidate_step,
+            }
+            for branch in live
+        ]
+        isolation_binding = {
+            "candidates": candidate_rows,
+            "configured_role_lesion": self._configured_role_lesion,
+        }
+        excluded_slots = sorted(set(context_slots + [slot]))
+        source_rows = []
+        for position, (branch, summary) in enumerate(
+            zip(live, summaries, strict=True)
+        ):
+            private_state = mx.concatenate(
+                [branch.z[:, index : index + 1, :] for index in source_slots],
+                axis=1,
+            )
+            mx.eval(private_state)
+            source_rows.append(
+                {
+                    "branch_index": branch.index,
+                    "role": branch.role,
+                    "operator": branch.operator.value,
+                    "step": branch.steps,
+                    "candidate_sha256": branch.candidate_sha256,
+                    "candidate_step": branch.candidate_step,
+                    "source_slots": list(source_slots),
+                    "excluded_slots": excluded_slots,
+                    "state_sha256": _tensor_sha256(branch.z),
+                    "private_state_sha256": _tensor_sha256(private_state),
+                    "message_sha256": _tensor_sha256(summary),
+                    "support_weight": round(
+                        float(self._support_weights[branch.index]), 12
+                    ),
+                    "consensus_weight": round(float(weights[position]), 12),
+                }
+            )
+
+        prior_states = {branch.index: branch.z for branch in live}
         for branch in live:
             z = branch.z
             comm = (1.0 - gamma) * z[:, slot : slot + 1, :] + gamma * consensus
             branch.z = mx.concatenate([z[:, :slot, :], comm, z[:, slot + 1 :, :]], axis=1)
             branch.workspace.update(branch.z)
         mx.eval(*[b.z for b in live])
+
+        recipient_rows = []
+        for branch in live:
+            prior = prior_states[branch.index]
+            prior_non_comm = mx.concatenate(
+                [prior[:, :slot, :], prior[:, slot + 1 :, :]], axis=1
+            )
+            post_non_comm = mx.concatenate(
+                [branch.z[:, :slot, :], branch.z[:, slot + 1 :, :]], axis=1
+            )
+            mx.eval(prior_non_comm, post_non_comm)
+            comm_pre = _tensor_sha256(prior[:, slot : slot + 1, :])
+            comm_post = _tensor_sha256(branch.z[:, slot : slot + 1, :])
+            state_pre = _tensor_sha256(prior)
+            state_post = _tensor_sha256(branch.z)
+            recipient_rows.append(
+                {
+                    "branch_index": branch.index,
+                    "comm_pre_sha256": comm_pre,
+                    "comm_post_sha256": comm_post,
+                    "non_comm_pre_sha256": _tensor_sha256(prior_non_comm),
+                    "non_comm_post_sha256": _tensor_sha256(post_non_comm),
+                    "state_pre_sha256": state_pre,
+                    "state_post_sha256": state_post,
+                    "causal": comm_pre != comm_post and state_pre != state_post,
+                }
+            )
+        if not any(row["causal"] for row in recipient_rows):
+            return False
+
+        ordinal = len(self.exchange_receipts)
+        hidden_dimension = int(live[0].z.shape[-1])
+        payload = {
+            "schema": BRANCH_EXCHANGE_SCHEMA,
+            "ordinal": ordinal,
+            "sync_kind": sync_kind,
+            "sync_id": sync_id,
+            "generation": (
+                "lesioned_candidates"
+                if ordinal == 0 and self._configured_role_lesion
+                else "independent_candidates"
+                if ordinal == 0
+                else "cooperative_refinement"
+            ),
+            "n_branches": len(live),
+            "n_slots": n_slots,
+            "comm_slot": slot,
+            "exchange_gamma": gamma,
+            "source_policy": (
+                "bounded_private_reasoning_mean_excluding_mailbox_and_context_v1"
+            ),
+            "message_representation": "latent_tensor_only",
+            "message_slot_count": 1,
+            "hidden_dimension": hidden_dimension,
+            "source_slot_limit": MAX_EXCHANGE_SOURCE_SLOTS,
+            "context_slots_excluded": context_slots,
+            "comm_slot_excluded": True,
+            "first_answer_text_exposed": False,
+            "prior_peer_context_possible": ordinal > 0,
+            "counts_as_independent_support": (
+                ordinal == 0 and not self._configured_role_lesion
+            ),
+            "candidate_set_sha256": candidate_set_sha256(isolation_binding),
+            "source_rows": source_rows,
+            "consensus_sha256": _tensor_sha256(consensus),
+            "recipient_rows": recipient_rows,
+            "tensor_accounting": {
+                "source_elements_read": len(live)
+                * len(source_slots)
+                * hidden_dimension,
+                "message_elements_emitted": len(live) * hidden_dimension,
+                "consensus_elements_written": len(live) * hidden_dimension,
+                "hidden_layer_apps": 0,
+            },
+        }
+        receipt = {**payload, "receipt_sha256": canonical_sha256(payload)}
+        validate_branch_exchange_receipt(
+            receipt,
+            n_branches=len(live),
+            n_slots=n_slots,
+            comm_slot=slot,
+            exchange_gamma=gamma,
+            branch_isolation=isolation_binding,
+            cognitive_slots=[{"slot": index} for index in context_slots],
+            expected_ordinal=ordinal,
+        )
+        self.exchange_receipts.append(receipt)
+        self._exchange_sync_points.add(sync_point)
         self.exchanges += 1
         self._cross_exposure_started = True
         if self._first_exchange_step is None:

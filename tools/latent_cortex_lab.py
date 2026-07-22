@@ -388,7 +388,7 @@ def _run_admitted_lab(
         return bool(voted) and voted == task.answer, cost
 
     def solve_role_arm(task, arm: str) -> tuple[bool, int, float]:
-        """One Experiment-R arm: role rotation, lesioned, or swapped anchors.
+        """One Experiment-R role, lesion, swap, or restoration arm.
 
         Returns (success, layer_apps, branch_divergence) where divergence is
         1 − mean pairwise branch-summary cosine across exchange snapshots
@@ -397,7 +397,7 @@ def _run_admitted_lab(
 
         k = max(2, args.branches)
         base_roles = tuple(BRANCH_ROLES[i % len(BRANCH_ROLES)] for i in range(k))
-        if arm == "distinct_roles":
+        if arm in {"distinct_roles", "restored_roles"}:
             roles = base_roles
         elif arm == "lesioned_uniform_role":
             roles = (base_roles[0],) * k

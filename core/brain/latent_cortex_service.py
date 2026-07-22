@@ -789,6 +789,31 @@ class LatentCortexService:
                 )
             if not isolation_valid:
                 errors.append("branch_isolation_unproven")
+        exchanges = receipt.get("exchanges")
+        if type(exchanges) is int and exchanges > 0:
+            try:
+                from core.brain.llm.latent_cortex.branch_exchange import (
+                    validate_branch_exchange_trace,
+                )
+
+                validate_branch_exchange_trace(
+                    receipt.get("branch_exchange"),
+                    exchange_count=exchanges,
+                    n_branches=int(config.get("n_branches")),
+                    n_slots=int(config.get("n_slots")),
+                    comm_slot=int(config.get("comm_slot", 0)),
+                    exchange_gamma=float(config.get("exchange_gamma", 0.35)),
+                    branch_isolation=receipt.get("branch_isolation"),
+                    cognitive_slots=receipt.get("cognitive_slots"),
+                    exchange_interval=int(config.get("exchange_interval", 4)),
+                    schedule_hash=str(receipt.get("schedule_hash") or ""),
+                    bytecode_events=receipt.get("bytecode_events"),
+                    cognitive_action_trace=receipt.get("cognitive_action_trace"),
+                )
+            except (ImportError, TypeError, ValueError):
+                errors.append("branch_exchange_provenance_unproven")
+        elif receipt.get("branch_exchange") not in ({}, None):
+            errors.append("unexpected_branch_exchange_trace")
         raw_action_trace = receipt.get("cognitive_action_trace")
         if isinstance(raw_action_trace, list) and raw_action_trace:
             try:

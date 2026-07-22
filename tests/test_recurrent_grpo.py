@@ -228,8 +228,11 @@ def test_trainer_group_uses_tokenizer_and_distinct_bound_seeds():
 
         @staticmethod
         def encode(text, **_kwargs):
-            assert text == "rendered"
-            return [5, 9, 17]
+            if text == "rendered":
+                return [5, 9, 17]
+            assert _kwargs.get("add_special_tokens") is False
+            assert isinstance(text, str) and text
+            return [1 + (sum(text.encode("utf-8")) % 61)]
 
         @staticmethod
         def decode(tokens):

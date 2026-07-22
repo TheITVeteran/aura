@@ -84,6 +84,7 @@ ROLE_OPERATOR: dict[str, CognitiveOperator] = {
     "analogy": CognitiveOperator.ANALOGY_MAPPING,
     "assumption_removal": CognitiveOperator.ASSUMPTION_REMOVAL,
     "adversarial_criticism": CognitiveOperator.ASSUMPTION_REMOVAL,
+    "critical_audit": CognitiveOperator.ASSUMPTION_REMOVAL,
     "boundary_case_analysis": CognitiveOperator.BOUNDARY_CASE,
 }
 

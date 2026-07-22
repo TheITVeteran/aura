@@ -27,6 +27,7 @@ from core.brain.llm.latent_cortex.types import (  # noqa: E402
 )
 from core.brain.llm.latent_cortex.workspace import LatentWorkspace  # noqa: E402
 from core.learning.recurrence_native_objective_v2 import (  # noqa: E402
+    _exchange_and_decorrelate,
     depth_curriculum_loss_v2,
     detached_monotonicity_penalty,
     live_path_forward,
@@ -200,6 +201,38 @@ def test_two_branch_exchange_and_depth_curriculum_are_live():
     )
     mx.eval(loss)
     assert bool(mx.isfinite(loss))
+
+
+def test_training_exchange_cannot_rebroadcast_mailbox_content():
+    spec = _spec(
+        n_slots=4,
+        branch_roles=["constructive_solution", "counterexample_search"],
+        exchange_interval=1,
+        exchange_gamma=0.35,
+        jitter_scale=0.0,
+    )
+    private_left = mx.ones((1, 3, 8))
+    private_right = mx.ones((1, 3, 8)) * 2.0
+    first = [
+        mx.concatenate([mx.zeros((1, 1, 8)), private_left], axis=1),
+        mx.concatenate([mx.ones((1, 1, 8)) * 10.0, private_right], axis=1),
+    ]
+    mailbox_perturbed = [
+        mx.concatenate([mx.ones((1, 1, 8)) * 999.0, private_left], axis=1),
+        mx.concatenate([mx.ones((1, 1, 8)) * -999.0, private_right], axis=1),
+    ]
+    exchanged = _exchange_and_decorrelate(first, spec, 1)
+    perturbed = _exchange_and_decorrelate(mailbox_perturbed, spec, 1)
+
+    def inferred_consensus(output, prior):
+        return (
+            output[:, :1, :] - (1.0 - spec.exchange_gamma) * prior[:, :1, :]
+        ) / spec.exchange_gamma
+
+    for index in range(2):
+        left = inferred_consensus(exchanged[index], first[index])
+        right = inferred_consensus(perturbed[index], mailbox_perturbed[index])
+        assert bool(mx.allclose(left, right, atol=1e-3))
 
 
 def test_monotonic_hinge_cannot_reward_shallow_damage():

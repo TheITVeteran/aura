@@ -23,6 +23,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
 
+from core.brain.llm.latent_cortex.branch_exchange import private_exchange_slots
 from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec
 from core.brain.llm.latent_cortex.recurrence import rms_match
 from core.brain.llm.latent_cortex.recurrence_adapter import (
@@ -317,7 +318,24 @@ def _exchange_and_decorrelate(
 
     if len(states) < 2:
         return states
-    summaries = [mx.mean(state, axis=1, keepdims=True) for state in states]
+    source_slots = private_exchange_slots(
+        n_slots=int(states[0].shape[1]),
+        comm_slot=int(spec.comm_slot),
+        context_slots=(),
+    )
+    if len(source_slots) > spec.exchange_source_slot_limit:
+        raise ValueError("training exchange source exceeds execution spec")
+    summaries = [
+        mx.mean(
+            mx.concatenate(
+                [state[:, index : index + 1, :] for index in source_slots],
+                axis=1,
+            ),
+            axis=1,
+            keepdims=True,
+        )
+        for state in states
+    ]
     stack = mx.concatenate(summaries, axis=1)
     mean = mx.mean(stack, axis=1, keepdims=True)
 

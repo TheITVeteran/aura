@@ -1459,7 +1459,10 @@ class LatentCortexEngine:
                     {
                         "op": op_index,
                         "kind": op_kind,
-                        "done": ensemble.exchange_now(),
+                        "done": ensemble.exchange_now(
+                            sync_kind="schedule_bytecode",
+                            sync_id=f"schedule:{schedule.schedule_hash}:op:{op_index}",
+                        ),
                     }
                 )
                 continue
@@ -1646,7 +1649,12 @@ class LatentCortexEngine:
                         recurrence_budget_limited = True
                         outcome = "budget_refused"
                 elif action is OperationKind.COMPARE:
-                    affected_branches = int(ensemble.exchange_now())
+                    affected_branches = int(
+                        ensemble.exchange_now(
+                            sync_kind="controller_compare",
+                            sync_id=f"controller-action:{action_index}",
+                        )
+                    )
                     outcome = (
                         "branches_compared" if affected_branches else "comparison_unavailable"
                     )
@@ -2339,6 +2347,24 @@ class LatentCortexEngine:
             and receipt.branch_isolation.get("certified") is not True
         ):
             receipt.flag("branch_isolation_unproven")
+        if ensemble.exchanges:
+            from core.brain.llm.latent_cortex.branch_exchange import (
+                build_branch_exchange_trace,
+            )
+
+            receipt.branch_exchange = build_branch_exchange_trace(
+                exchanges=ensemble.exchange_receipts,
+                n_branches=len(ensemble.branches),
+                n_slots=int(self.config.workspace.n_slots),
+                comm_slot=int(self.config.branches.comm_slot),
+                exchange_gamma=float(self.config.branches.exchange_gamma),
+                branch_isolation=receipt.branch_isolation,
+                cognitive_slots=receipt.cognitive_slots,
+                exchange_interval=int(self.config.branches.exchange_interval),
+                schedule_hash=receipt.schedule_hash,
+                bytecode_events=receipt.bytecode_events,
+                cognitive_action_trace=receipt.cognitive_action_trace,
+            )
         if receipt.cognitive_operator_trace:
             from core.brain.llm.latent_cortex.structural_diversity import (
                 build_structural_diversity_receipt,

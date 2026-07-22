@@ -25527,3 +25527,57 @@ count completion is approximately 53.9%-84.8%, with a midpoint planning
 estimate of 65.9%. Next: publish CP334, then implement SPARK-021 bounded causal
 branch exchange with provenance and lesion/swap proof. Final multi-hour soaks
 remain deferred until every shorter gate is green.
+
+## Checkpoint 2026-07-22-335: Branch Communication Is a Receipted Neural Mailbox
+
+Cross-branch exchange no longer averages the complete latent workspace or
+reports only a count. Each sender now emits one fixed-width latent summary from
+at most 16 private reasoning slots; the mailbox itself and typed organ/context
+slots are excluded. The trace binds the sealed candidate, branch role,
+executable cognitive operator, recurrent step, source and message commitments,
+support/consensus weights, and causal recipient pre/post state. No decoded
+answer text enters the channel. The first non-lesioned exchange is the only
+generation eligible as independent support; all later exchanges disclose prior
+peer-context possibility and count only as cooperative refinement.
+
+Every interval, schedule-bytecode, and controller-compare exchange has a
+single-use declared synchronization identity. Worker-side construction and
+service-side reconstruction require recurrent-step divisibility, a successful
+bytecode event, or the exact successful controller transition. Replayed,
+missing, reordered, policy-modified, candidate-modified, protected-slot, and
+noncausal traces fail closed. Tensor-element accounting is included for the
+next equal-compute checkpoint.
+
+Train/live parity is causal rather than documentary: the differentiable
+recurrence-native objective uses the same bounded private-slot source policy,
+and the execution spec now binds both the policy and source-slot ceiling. This
+changes the spec hash deliberately; adapters trained under the old all-slot
+mean require retraining or explicit revalidation and cannot silently claim the
+new graph. The historical `critical_audit` role is now mapped to its intended
+executable assumption-removal program instead of passing spec parsing and then
+failing in the resident engine.
+
+Experiment R now includes lesion, swap, and restoration arms; commits the exact
+task set; enforces per-task compute parity; and withholds its combined causal
+verdict unless lesion effect, restoration, role-following swap parity, and
+compute parity all hold. Tiny-model tensor tests prove the operator program
+moves with the role across fixed branch indices and restoration reproduces the
+original state transition. This is a mechanism-level causal result, not a
+powered resident-32B task benefit.
+
+Validation: the affected branch, schedule, engine, worker/service, experiment,
+recurrence-native v2/v3/v4, recurrent-GRPO, trainer-contract, adapter-identity,
+structural-diversity, correlated-support, and operator suite passes 312/312 in
+111.25 seconds. The final fixed-snapshot RLC, latent-cortex, global-workspace,
+GWT, and execution-controller ownership gate passes 900/900 in 319.88 seconds.
+Focused Ruff, bytecode compilation, and `git diff --check` pass. SPARK-021
+closes at the mechanism level. No resident-32B improvement, positive
+interaction, or frontier gain is claimed; the capability verdict remains
+negative/no-signal.
+
+This is total checkpoint record 396. The revised forecast remains 466-733 total
+records, now approximately 70-337 records after this checkpoint. Checkpoint-
+count completion is approximately 54.0%-85.0%, with a midpoint planning
+estimate of 66.1%. Next: publish CP335, then implement SPARK-022 complete
+same-currency compute and information accounting. Final multi-hour soaks remain
+deferred until every shorter gate is green.

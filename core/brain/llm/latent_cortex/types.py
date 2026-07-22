@@ -11,7 +11,7 @@ from __future__ import annotations
 import math
 import time
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 # Hard ceilings no configuration may exceed. These protect the live host:
 # a runaway schedule on the resident 32B is a memory/latency incident, not
@@ -626,14 +626,14 @@ class WeightIntegrityProof:
         return bool(self.canary_before and self.canary_after)
 
     @property
-    def params_unchanged_proven(self) -> Optional[bool]:
+    def params_unchanged_proven(self) -> bool | None:
         """True/False only when both digests exist; None means unproven."""
         if not self.has_parameter_evidence:
             return None
         return self.params_before == self.params_after
 
     @property
-    def fast_weights_erased_proven(self) -> Optional[bool]:
+    def fast_weights_erased_proven(self) -> bool | None:
         """Erase is proven by the canary returning to its pre-episode digest.
 
         A parameter digest alone is too coarse: it can miss a small delta
@@ -660,7 +660,7 @@ class WeightIntegrityProof:
         }
 
     @classmethod
-    def from_dict(cls, data: Any) -> "WeightIntegrityProof":
+    def from_dict(cls, data: Any) -> WeightIntegrityProof:
         """Parse defensively: a malformed proof is NO proof, never a pass."""
         if not isinstance(data, dict):
             return cls(unavailable_reason="proof_not_a_mapping")
@@ -760,6 +760,11 @@ class EpisodeReceipt:
     # private; commitments and cache-discipline counters prove that every
     # candidate existed before cross-branch exposure.
     branch_isolation: dict[str, Any] = field(default_factory=dict)
+    # Every cross-branch mailbox write: declared synchronization point,
+    # candidate/role/operator provenance, bounded source slots, and causal
+    # pre/post commitments. Later cooperative generations never create a new
+    # independent vote.
+    branch_exchange: dict[str, Any] = field(default_factory=dict)
     selected_branch: int = 0
     exchanges: int = 0
     # Scoped durable-adapter activation. Zero calls means no recurrence-native
@@ -905,7 +910,7 @@ class EpisodeReceipt:
         acceptable is the exact fail-open this finding names.
         """
 
-        def _verdict(proven: Optional[bool]) -> str:
+        def _verdict(proven: bool | None) -> str:
             if proven is None:
                 return "unproven"
             return "proven" if proven else "refuted"
@@ -1005,6 +1010,7 @@ class EpisodeReceipt:
             "critic_identity": dict(self.critic_identity),
             "shared_blind_spots": dict(self.shared_blind_spots),
             "branch_isolation": dict(self.branch_isolation),
+            "branch_exchange": dict(self.branch_exchange),
             "selected_branch": self.selected_branch,
             "exchanges": self.exchanges,
             "recurrence_adapter": dict(self.recurrence_adapter),

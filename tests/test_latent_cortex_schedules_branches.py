@@ -1,6 +1,7 @@
 """Contract tests: layer-schedule programs + virtual-width branches."""
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import stat
@@ -379,7 +380,9 @@ def test_branch_seeding_gives_distinct_roles_and_clean_cache(tiny_model):
     assert all(c.offset == prompt_len for c in cache)
     z0, z1 = ensemble.branches[0].z, ensemble.branches[1].z
     assert not bool(mx.allclose(z0, z1)), "role basins must differ"
-    assert ensemble.exchange_now() is False, "peer exposure must wait for candidates"
+    assert (
+        ensemble.exchange_now(sync_kind="test", sync_id="before-candidates") is False
+    ), "peer exposure must wait for candidates"
 
 
 def test_fresh_context_candidates_seal_before_first_exchange(tiny_model):
@@ -461,6 +464,66 @@ def test_role_lesion_runs_but_cannot_claim_independent_candidates(tiny_model):
     assert isolation["configured_role_lesion"] is True
     assert isolation["certified"] is False
     assert isolation["reason"] == "configured_role_lesion"
+
+
+def test_role_swap_moves_executable_labor_and_restoration_recovers(tiny_model):
+    roles = ("constructive_solution", "counterexample_search")
+
+    def seeded(assignment):
+        cache = _prefill(tiny_model)
+        inner = tiny_model.model
+        embeddings = inner.embed_tokens(mx.array(PROMPT))
+        budget = ComputeBudget()
+        runner = WindowRunner(inner, budget)
+        ensemble = BranchEnsemble.seed(
+            embeddings,
+            WorkspaceConfig(n_slots=4, seed=3),
+            BranchConfig(
+                n_branches=2,
+                isolation_steps=1,
+                roles=assignment,
+            ),
+            RecurrenceConfig(max_steps=2, min_steps=1),
+            runner,
+            cache,
+            P_END,
+        )
+        receipts = ensemble.apply_cognitive_operators(
+            mx.ones((1, 1, 64)),
+            action="falsify",
+            action_step=0,
+        )
+        return ensemble, receipts
+
+    distinct, distinct_receipts = seeded(roles)
+    swapped, swapped_receipts = seeded(tuple(reversed(roles)))
+    lesioned, lesioned_receipts = seeded((roles[0], roles[0]))
+    restored, restored_receipts = seeded(roles)
+
+    assert [row["role"] for row in distinct_receipts] == list(roles)
+    assert [row["operator"] for row in distinct_receipts] == [
+        "constructive_solution",
+        "counterexample",
+    ]
+    assert [row["role"] for row in swapped_receipts] == list(reversed(roles))
+    assert [row["operator"] for row in swapped_receipts] == [
+        "counterexample",
+        "constructive_solution",
+    ]
+    assert [row["operator"] for row in lesioned_receipts] == [
+        "constructive_solution",
+        "constructive_solution",
+    ]
+    assert lesioned._configured_role_lesion is True
+    assert [branch.seed_sha256 for branch in restored.branches] == [
+        branch.seed_sha256 for branch in distinct.branches
+    ]
+    assert [row["output_sha256"] for row in restored_receipts] == [
+        row["output_sha256"] for row in distinct_receipts
+    ]
+    assert [branch.seed_sha256 for branch in swapped.branches] != [
+        branch.seed_sha256 for branch in distinct.branches
+    ]
 
 
 def test_branches_step_exchange_and_halt(tiny_model):
@@ -607,7 +670,7 @@ def test_exchange_blends_comm_slot_only(tiny_model):
     ensemble, runner, budget = _ensemble(tiny_model, cache, n_branches=2)
     assert ensemble.step_all(runner, cache, P_END, C_START, budget=budget)
     before = [b.z for b in ensemble.branches]
-    assert ensemble.exchange() is True
+    assert ensemble.exchange(sync_kind="test", sync_id="comm-slot-only") is True
     for b, prev in zip(ensemble.branches, before, strict=True):
         delta = mx.abs(b.z - prev)
         comm_delta = float(mx.max(delta[:, 0, :]))
@@ -636,12 +699,118 @@ def test_exchange_consensus_is_causally_discounted_by_support_weights(tiny_model
     discounted = prepared()
     discounted.set_support_weights({0: 1.0, 1: 0.2, 2: 0.2})
 
-    assert equal.exchange() is True
-    assert discounted.exchange() is True
+    assert equal.exchange(sync_kind="test", sync_id="equal-support") is True
+    assert discounted.exchange(sync_kind="test", sync_id="discounted-support") is True
 
     assert not bool(
         mx.allclose(equal.branches[0].z, discounted.branches[0].z)
     ), "correlation weights must change the exchanged neural state"
+
+
+def test_exchange_trace_excludes_mailbox_and_context_and_marks_generations(
+    tiny_model,
+):
+    from core.brain.llm.latent_cortex.branch_exchange import (
+        build_branch_exchange_trace,
+        validate_branch_exchange_trace,
+    )
+
+    cache = _prefill(tiny_model)
+    inner = tiny_model.model
+    embeddings = inner.embed_tokens(mx.array(PROMPT))
+    budget = ComputeBudget()
+    runner = WindowRunner(inner, budget)
+    ensemble = BranchEnsemble.seed(
+        embeddings,
+        WorkspaceConfig(n_slots=4, seed=3),
+        BranchConfig(n_branches=2, isolation_steps=1, exchange_interval=1),
+        RecurrenceConfig(max_steps=4, min_steps=1, fixed_depth=True),
+        runner,
+        cache,
+        P_END,
+        context_seeds=[("world_model", mx.ones((64,)))],
+    )
+
+    assert ensemble.step_all(runner, cache, P_END, C_START, budget=budget)
+    assert ensemble.step_all(runner, cache, P_END, C_START, budget=budget)
+    isolation = ensemble.isolation_receipt(runner.cache_discipline_receipt())
+    trace = build_branch_exchange_trace(
+        exchanges=ensemble.exchange_receipts,
+        n_branches=2,
+        n_slots=4,
+        comm_slot=0,
+        exchange_gamma=0.35,
+        branch_isolation=isolation,
+        cognitive_slots=[{"slot": 3}],
+        exchange_interval=1,
+        schedule_hash="test-schedule",
+        bytecode_events=[],
+        cognitive_action_trace=[],
+    )
+
+    assert trace["exchange_count"] == 2
+    assert trace["independent_support_generations"] == 1
+    first, second = trace["exchanges"]
+    assert first["generation"] == "independent_candidates"
+    assert first["counts_as_independent_support"] is True
+    assert first["prior_peer_context_possible"] is False
+    assert second["generation"] == "cooperative_refinement"
+    assert second["counts_as_independent_support"] is False
+    assert second["prior_peer_context_possible"] is True
+    assert all(row["source_slots"] == [1, 2] for row in first["source_rows"])
+    assert all(row["excluded_slots"] == [0, 3] for row in first["source_rows"])
+    assert first["first_answer_text_exposed"] is False
+    assert first["message_representation"] == "latent_tensor_only"
+    assert all(
+        row["non_comm_pre_sha256"] == row["non_comm_post_sha256"]
+        for row in first["recipient_rows"]
+    )
+    validate_branch_exchange_trace(
+        trace,
+        exchange_count=2,
+        n_branches=2,
+        n_slots=4,
+        comm_slot=0,
+        exchange_gamma=0.35,
+        branch_isolation=isolation,
+        cognitive_slots=[{"slot": 3}],
+        exchange_interval=1,
+        schedule_hash="test-schedule",
+        bytecode_events=[],
+        cognitive_action_trace=[],
+    )
+
+    tampered = copy.deepcopy(trace)
+    tampered["exchanges"][0]["source_rows"][0]["source_slots"] = [0, 1]
+    with pytest.raises(ValueError, match="source provenance"):
+        validate_branch_exchange_trace(
+            tampered,
+            exchange_count=2,
+            n_branches=2,
+            n_slots=4,
+            comm_slot=0,
+            exchange_gamma=0.35,
+            branch_isolation=isolation,
+            cognitive_slots=[{"slot": 3}],
+            exchange_interval=1,
+            schedule_hash="test-schedule",
+            bytecode_events=[],
+            cognitive_action_trace=[],
+        )
+
+
+def test_exchange_rejects_replayed_sync_point(tiny_model):
+    cache = _prefill(tiny_model)
+    ensemble, runner, budget = _ensemble(
+        tiny_model,
+        cache,
+        n_branches=2,
+        exchange_interval=8,
+    )
+    assert ensemble.step_all(runner, cache, P_END, C_START, budget=budget)
+    assert ensemble.exchange(sync_kind="test", sync_id="single-use") is True
+    with pytest.raises(ValueError, match="already consumed"):
+        ensemble.exchange(sync_kind="test", sync_id="single-use")
 
 
 def test_diversity_jitter_decorrelates_parallel_branches(tiny_model):

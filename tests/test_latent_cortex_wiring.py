@@ -27,6 +27,10 @@ from core.brain.llm.latent_cortex.worker_handler import (
 from core.brain.llm.mlx_client import MLXLocalClient
 
 
+def _digest(label: str) -> str:
+    return hashlib.sha256(label.encode("utf-8")).hexdigest()
+
+
 class _ResidentProcess:
     def __init__(self) -> None:
         self.alive = True
@@ -104,6 +108,12 @@ def _identity_receipt_for_request(request, **overrides):
 def _branch_isolation_fields(config, *, exchanges=0):
     count = config["n_branches"]
     required = config["isolation_steps"]
+    roles = (
+        "constructive_solution",
+        "counterexample_search",
+        "constraint_checking",
+        "causal_reconstruction",
+    )
 
     def digest(label):
         return hashlib.sha256(label.encode("utf-8")).hexdigest()
@@ -127,7 +137,7 @@ def _branch_isolation_fields(config, *, exchanges=0):
             "candidates": [
                 {
                     "index": index,
-                    "role": f"role-{index}",
+                    "role": roles[index % len(roles)],
                     "context_sha256": digest("shared-context"),
                     "rng_stream_sha256": digest(f"rng-{index}"),
                     "seed_sha256": digest(f"seed-{index}"),
@@ -145,6 +155,102 @@ def _branch_isolation_fields(config, *, exchanges=0):
             },
         },
     }
+
+
+def _branch_exchange_fields(config, isolation):
+    from core.brain.llm.latent_cortex.branch_exchange import (
+        BRANCH_EXCHANGE_SCHEMA,
+        MAX_EXCHANGE_SOURCE_SLOTS,
+        build_branch_exchange_trace,
+        candidate_set_sha256,
+        canonical_sha256,
+    )
+    from core.brain.llm.latent_cortex.cognitive_operators import operator_for_role
+
+    count = config["n_branches"]
+    n_slots = config["n_slots"]
+    hidden = 64
+    source_slots = list(range(1, n_slots))[:MAX_EXCHANGE_SOURCE_SLOTS]
+    source_rows = []
+    for index, candidate in enumerate(isolation["candidates"]):
+        source_rows.append(
+            {
+                "branch_index": index,
+                "role": candidate["role"],
+                "operator": operator_for_role(candidate["role"]).value,
+                "step": candidate["candidate_step"],
+                "candidate_sha256": candidate["candidate_sha256"],
+                "candidate_step": candidate["candidate_step"],
+                "source_slots": source_slots,
+                "excluded_slots": [0],
+                "state_sha256": _digest(f"state-{index}"),
+                "private_state_sha256": _digest(f"private-{index}"),
+                "message_sha256": _digest(f"message-{index}"),
+                "support_weight": 1.0,
+                "consensus_weight": round(1.0 / count, 12),
+            }
+        )
+    payload = {
+        "schema": BRANCH_EXCHANGE_SCHEMA,
+        "ordinal": 0,
+        "sync_kind": "interval",
+        "sync_id": "recurrent-step:2",
+        "generation": "independent_candidates",
+        "n_branches": count,
+        "n_slots": n_slots,
+        "comm_slot": 0,
+        "exchange_gamma": config["exchange_gamma"],
+        "source_policy": (
+            "bounded_private_reasoning_mean_excluding_mailbox_and_context_v1"
+        ),
+        "message_representation": "latent_tensor_only",
+        "message_slot_count": 1,
+        "hidden_dimension": hidden,
+        "source_slot_limit": MAX_EXCHANGE_SOURCE_SLOTS,
+        "context_slots_excluded": [],
+        "comm_slot_excluded": True,
+        "first_answer_text_exposed": False,
+        "prior_peer_context_possible": False,
+        "counts_as_independent_support": True,
+        "candidate_set_sha256": candidate_set_sha256(
+            {"candidates": isolation["candidates"]}
+        ),
+        "source_rows": source_rows,
+        "consensus_sha256": _digest("consensus"),
+        "recipient_rows": [
+            {
+                "branch_index": index,
+                "comm_pre_sha256": _digest(f"comm-pre-{index}"),
+                "comm_post_sha256": _digest(f"comm-post-{index}"),
+                "non_comm_pre_sha256": _digest(f"noncomm-{index}"),
+                "non_comm_post_sha256": _digest(f"noncomm-{index}"),
+                "state_pre_sha256": _digest(f"recipient-pre-{index}"),
+                "state_post_sha256": _digest(f"recipient-post-{index}"),
+                "causal": True,
+            }
+            for index in range(count)
+        ],
+        "tensor_accounting": {
+            "source_elements_read": count * len(source_slots) * hidden,
+            "message_elements_emitted": count * hidden,
+            "consensus_elements_written": count * hidden,
+            "hidden_layer_apps": 0,
+        },
+    }
+    exchange = {**payload, "receipt_sha256": canonical_sha256(payload)}
+    return build_branch_exchange_trace(
+        exchanges=[exchange],
+        n_branches=count,
+        n_slots=n_slots,
+        comm_slot=0,
+        exchange_gamma=config["exchange_gamma"],
+        branch_isolation={"candidates": isolation["candidates"]},
+        cognitive_slots=[],
+        exchange_interval=config["exchange_interval"],
+        schedule_hash="test-schedule",
+        bytecode_events=[],
+        cognitive_action_trace=[],
+    )
 
 
 def _bind_test_client_identity(monkeypatch, client):
@@ -419,7 +525,13 @@ def test_handler_runs_full_episode_on_tiny_model(monkeypatch, tmp_path):
     body = handle_latent_reason(
         {
             "prompt": "compose the deepest thought",
-            "config": {"n_slots": 4, "n_branches": 2, "max_steps": 4, "decode_max_tokens": 6},
+            "config": {
+                "n_slots": 4,
+                "n_branches": 2,
+                "max_steps": 4,
+                "exchange_interval": 1,
+                "decode_max_tokens": 6,
+            },
             "budget": {"wall_clock_s": 30.0},
             "domain": "unit",
             "verifier_guidance": True,
@@ -432,6 +544,10 @@ def test_handler_runs_full_episode_on_tiny_model(monkeypatch, tmp_path):
     assert body["receipt"]["params_unchanged"] is True
     assert body["receipt"]["steps_taken"] >= 2
     assert body["receipt"]["branch_isolation"]["certified"] is True
+    exchange_trace = body["receipt"]["branch_exchange"]
+    assert exchange_trace["exchange_count"] == body["receipt"]["exchanges"] >= 1
+    assert exchange_trace["declared_sync_points_proven"] is True
+    assert exchange_trace["independent_support_generations"] == 1
     policy = body["receipt"]["value_of_computation"]
     trace = body["receipt"]["cognitive_action_trace"]
     assert policy["active"] is True
@@ -479,9 +595,18 @@ def test_handler_runs_full_episode_on_tiny_model(monkeypatch, tmp_path):
     contract_config = {
         "n_slots": 4,
         "n_branches": 2,
+        "exchange_interval": 1,
+        "exchange_gamma": 0.35,
+        "comm_slot": 0,
         "decode_max_tokens": 6,
     }
     assert "cognitive_operator_execution_unproven" not in (
+        LatentCortexService._receipt_contract_errors(
+            body["receipt"],
+            contract_config,
+        )
+    )
+    assert "branch_exchange_provenance_unproven" not in (
         LatentCortexService._receipt_contract_errors(
             body["receipt"],
             contract_config,
@@ -1757,6 +1882,47 @@ def test_service_reconstructs_and_rejects_branch_isolation_tampering():
         },
     }
     assert "branch_isolation_unproven" in (
+        LatentCortexService._receipt_contract_errors(tampered, config)
+    )
+
+
+def test_service_reconstructs_and_rejects_branch_exchange_tampering():
+    config = {
+        "n_branches": 2,
+        "n_slots": 4,
+        "isolation_steps": 2,
+        "comm_slot": 0,
+        "exchange_gamma": 0.35,
+        "exchange_interval": 2,
+    }
+    isolation_fields = _branch_isolation_fields(config, exchanges=1)
+    receipt = {
+        "n_branches": 2,
+        "n_slots": 4,
+        "cognitive_slots": [],
+        "bytecode_events": [],
+        "cognitive_action_trace": [],
+        "schedule_hash": "test-schedule",
+        **isolation_fields,
+        "branch_exchange": _branch_exchange_fields(
+            config,
+            isolation_fields["branch_isolation"],
+        ),
+    }
+    errors = LatentCortexService._receipt_contract_errors(receipt, config)
+    assert "branch_exchange_provenance_unproven" not in errors
+
+    tampered = copy.deepcopy(receipt)
+    tampered["branch_exchange"]["exchanges"][0]["first_answer_text_exposed"] = True
+    assert "branch_exchange_provenance_unproven" in (
+        LatentCortexService._receipt_contract_errors(tampered, config)
+    )
+
+    tampered = copy.deepcopy(receipt)
+    tampered["branch_exchange"]["exchanges"][0]["source_rows"][0][
+        "candidate_sha256"
+    ] = _digest("different-candidate")
+    assert "branch_exchange_provenance_unproven" in (
         LatentCortexService._receipt_contract_errors(tampered, config)
     )
 

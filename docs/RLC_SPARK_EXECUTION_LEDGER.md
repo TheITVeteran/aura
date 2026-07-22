@@ -102,6 +102,10 @@ After CP334, the published total is record 395: 71-338 forecast records remain,
 checkpoint-count completion is 53.9%-84.8%, and the midpoint planning estimate
 is 65.9%.
 
+After CP335, the published total is record 396: 70-337 forecast records remain,
+checkpoint-count completion is 54.0%-85.0%, and the midpoint planning estimate
+is 66.1%.
+
 ## Code-grounded baseline and ownership
 
 The four-slice static audit covered the neural core, epistemic/verifier paths,
@@ -111,9 +115,9 @@ baseline below is exhaustive over SPARK-001 through SPARK-072:
 
 - `ACCEPTED`: SPARK-001, SPARK-005, SPARK-006, SPARK-007, SPARK-008, SPARK-009,
   SPARK-010, SPARK-011, SPARK-012, SPARK-014, SPARK-015, SPARK-016,
-  SPARK-017, SPARK-018, SPARK-019, SPARK-020.
+  SPARK-017, SPARK-018, SPARK-019, SPARK-020, SPARK-021.
 - `PARTIAL`: SPARK-003,
-  SPARK-021, SPARK-022, SPARK-023, SPARK-024, SPARK-025,
+  SPARK-022, SPARK-023, SPARK-024, SPARK-025,
   SPARK-026, SPARK-027, SPARK-035, SPARK-039, SPARK-040, SPARK-041,
   SPARK-042, SPARK-051, SPARK-052, SPARK-053, SPARK-054, SPARK-055,
   SPARK-056, SPARK-058, SPARK-060, SPARK-062, SPARK-063, SPARK-065, SPARK-066,
@@ -494,9 +498,36 @@ before those dependencies close is not admissible.
   disjoint implementation and live residual-meter mechanism, not a claim that
   the currently empty live ledger has measured a low shared-blind-spot rate,
   and not a resident-32B intelligence or frontier result.
-- [ ] **SPARK-021 - Causal branch exchange.** Exchange bounded summaries only at
-  declared synchronization points, preserve branch provenance, prevent early
-  answer leakage, and lesion/swap roles to prove differentiated labor.
+- [x] **SPARK-021 - Causal branch exchange.** CP335 replaces the count-only
+  mailbox with a strict hidden-state protocol. Each sender emits exactly one
+  latent slot derived from at most 16 private reasoning slots. The mailbox and
+  typed organ/context slots are excluded, no decoded text enters the channel,
+  and the receipt binds the sealed candidate, role, executable operator, step,
+  source/message/state commitments, support and consensus weights, and every
+  recipient's causal pre/post write. Only the first non-lesioned generation can
+  count as independent support; later exchanges explicitly carry possible peer
+  context and are cooperative refinement, never another vote.
+
+  Interval, schedule-bytecode, and controller-compare exchanges now carry
+  single-use synchronization identities. The service reconstructs each point
+  against recurrent step divisibility, successful bytecode events, or the
+  exact successful controller transition and rejects omitted, replayed,
+  reordered, policy-changed, candidate-changed, or noncausal traces. Raw tensor
+  element accounting is emitted now for SPARK-022; it is not yet promoted into
+  an equal-compute capability claim.
+
+  The same source policy now executes inside the differentiable
+  recurrence-native objective. The versioned execution spec binds the policy
+  and 16-slot ceiling, so an adapter trained under the earlier all-slot mean
+  cannot claim exact train/live parity and must be retrained or revalidated.
+  Tensor tests lesion roles, swap the role/operator programs across fixed branch
+  indices, and restore the original assignment exactly. Experiment R adds a
+  restoration arm, exact task-set commitment, per-task compute parity, and a
+  combined causal verdict that remains `CONJECTURE` if lesion, restoration,
+  swap parity, or compute parity is absent. This proves differentiated neural
+  execution and its falsification path, not broad task accuracy or frontier
+  benefit. The affected engine/service/training/GRPO/identity suite passes
+  312/312, and the final fixed ownership gate passes 900/900.
 - [ ] **SPARK-022 - Equal-compute virtual width.** Meter every branch, exchange,
   verifier, and decode operation in the same currency as controls; refuse
   comparisons with hidden compute or information advantages.
@@ -757,17 +788,23 @@ CP334 closes pre-causal critic/generator function separation and installs the
 durable shared-blind-spot meter and reliability gate; its live evidence state
 is still honestly unpowered and it does not change the negative capability
 verdict.
+CP335 closes bounded, declared, provenance-preserving branch exchange and
+train/live mailbox parity. The tensor role lesion/swap/restoration path proves
+that executable labor follows role programs rather than fixed branch indices,
+but no powered resident task campaign has yet established an accuracy benefit;
+the negative capability verdict is unchanged.
 
-Validation: focused critic identity, aggregate reconstruction, durable ledger,
-causal revocation, blind-review, task-verifier, and service contracts pass
-116/116 in 61.36 seconds. Final fixed-snapshot RLC, latent-cortex,
-global-workspace, GWT, and execution-controller ownership evidence is 895/895
-in 462.49 seconds. Strict focused Ruff, bytecode compilation, and
-`git diff --check` pass. No resident 32B campaign was run, and the negative
-frontier verdict is unchanged.
+Validation: the affected branch, schedule, engine, worker/service, experiment,
+recurrence-native v2/v3/v4, recurrent-GRPO, trainer-contract, adapter-identity,
+structural-diversity, correlated-support, and operator suite passes 312/312 in
+111.25 seconds. The final fixed-snapshot RLC, latent-cortex, global-workspace,
+GWT, and execution-controller ownership gate passes 900/900 in 319.88 seconds.
+Strict focused Ruff, bytecode compilation, and `git diff --check` pass. No
+resident 32B capability campaign was run, and the negative frontier verdict is
+unchanged.
 
-This is total checkpoint record 395. The revised forecast remains 466-733 total
-records, now approximately 71-338 records after this checkpoint. Checkpoint-
-count completion is approximately 53.9%-84.8%, with a midpoint planning
-estimate of 65.9%. Next: publish CP334, then implement bounded, provenance-
-preserving causal branch exchange and its lesion/swap proof for SPARK-021.
+This is total checkpoint record 396. The revised forecast remains 466-733 total
+records, now approximately 70-337 records after this checkpoint. Checkpoint-
+count completion is approximately 54.0%-85.0%, with a midpoint planning
+estimate of 66.1%. Next: publish CP335, then implement complete same-currency
+compute and information accounting for SPARK-022.
