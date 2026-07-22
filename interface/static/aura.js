@@ -3366,13 +3366,28 @@ function recordChatLatency(requestId, latencyMs, ok) {
     }
 }
 
+function chatComposerMaxHeight(input) {
+    const fallback = Math.max(180, Math.min(360, Math.floor(window.innerHeight * 0.34)));
+    if (!input || !window.getComputedStyle) return fallback;
+    const cssMax = Number.parseFloat(window.getComputedStyle(input).maxHeight || '');
+    return Number.isFinite(cssMax) && cssMax > 0 ? cssMax : fallback;
+}
+
+function resizeChatComposer(input) {
+    if (!input) return;
+    input.style.height = 'auto';
+    const maxHeight = chatComposerMaxHeight(input);
+    const nextHeight = Math.min(input.scrollHeight, maxHeight);
+    input.style.height = `${nextHeight}px`;
+    input.style.overflowY = input.scrollHeight > maxHeight ? 'auto' : 'hidden';
+}
+
 function sendMessage(message) {
     const input = $('chat-input');
     const form = $('chat-form');
     if (!input || !form || !message) return;
     input.value = message;
-    input.style.height = 'auto';
-    input.style.height = Math.min(input.scrollHeight, 150) + 'px';
+    resizeChatComposer(input);
     form.requestSubmit();
 }
 window.sendMessage = sendMessage;
@@ -3518,8 +3533,7 @@ function restoreChatHandoff(textarea) {
     const draft = String(payload.draft || '');
     if (textarea && draft && !textarea.value) {
         textarea.value = draft;
-        textarea.style.height = 'auto';
-        textarea.style.height = Math.min(textarea.scrollHeight, 150) + 'px';
+        resizeChatComposer(textarea);
     }
 
     const seen = new Set();
@@ -7712,8 +7726,7 @@ window.addEventListener('pagehide', () => {
 
     // Auto-resize textarea as user types
     textarea.addEventListener('input', () => {
-        textarea.style.height = 'auto';
-        textarea.style.height = Math.min(textarea.scrollHeight, 150) + 'px';
+        resizeChatComposer(textarea);
         noteTypingSignalInput(textarea);
         if (!textarea.value) retryDeferredShellTransition();
     });
@@ -7738,7 +7751,7 @@ window.addEventListener('pagehide', () => {
         // Escape = clear input
         if (e.key === 'Escape') {
             textarea.value = '';
-            textarea.style.height = 'auto';
+            resizeChatComposer(textarea);
             flushTypingSignal({ submitted: false, forceInactive: true, messageCharsOverride: 0 });
             persistChatHandoff();
             retryDeferredShellTransition();

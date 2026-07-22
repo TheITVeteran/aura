@@ -876,11 +876,19 @@ def test_desktop_chat_composer_focus_is_not_stolen_by_page_selection():
     assert "form?.addEventListener('pointerdown', focusComposer)" in aura_js
     assert "form?.addEventListener('click', focusComposer)" in aura_js
     assert "textarea.focus({ preventScroll: true })" in aura_js
+    assert "function chatComposerMaxHeight(input)" in aura_js
+    assert "function resizeChatComposer(input)" in aura_js
+    assert "resizeChatComposer(input)" in aura_js
+    assert "resizeChatComposer(textarea)" in aura_js
+    assert "Math.min(input.scrollHeight, 150)" not in aura_js
+    assert "Math.min(textarea.scrollHeight, 150)" not in aura_js
     assert "body {\n    background: var(--bg);" in aura_css
     assert "-webkit-user-select: none;" in aura_css
     assert "user-select: none;" in aura_css
     assert ".msg,\n.thought-card," in aura_css
     assert "#chat-input" in aura_css and "caret-color: var(--accent);" in aura_css
+    assert "max-height: min(34vh, 360px);" in aura_css
+    assert "overflow-y: hidden;" in aura_css
 
 
 def test_desktop_chat_and_neural_cards_do_not_clip_long_text():

@@ -24229,3 +24229,28 @@ This is total checkpoint record 362. The forecast remains 394-661 total
 records, now approximately 32-299 records after this checkpoint. Next: commit
 and push CP301, rebuild `/Applications/Aura.app`, keep CP294 running until its
 receipt, and continue bounded non-MLX hardening.
+
+## Checkpoint 2026-07-21-302: Chat Composer Growth Uses One Shared Layout Contract
+
+The clipped-text report found a remaining fixed-height class in the desktop
+composer: three independent JavaScript paths capped the textarea at 150px.
+That meant long prompts, restored handoff drafts, or programmatic demo sends
+could stop growing well before the visible shell had room, making the input feel
+cut off even though the message pipeline itself was intact.
+
+The composer now has one shared `resizeChatComposer()` path used by typed input,
+programmatic sends, restored drafts, and Escape reset. The max height is
+declared in CSS (`min(34vh, 360px)`) and read by JavaScript, so the control grows
+with the viewport and only switches to internal scrolling after it has consumed
+the available composer budget. This avoids a hidden per-call magic number and
+keeps the behavior general across every input path.
+
+Validation: focused runtime polish tests pass 2/2 for composer focus and
+long-form chat/neural clipping contracts, bytecode compilation still passes for
+the recently touched Python runtime files, and `git diff --check` passes.
+
+This is total checkpoint record 363. The forecast remains 394-661 total
+records, now approximately 31-298 records after this checkpoint. Next: lint,
+commit and push CP302, rebuild `/Applications/Aura.app`, keep CP294 running
+until its receipt, and continue bounded non-MLX reliability hardening while the
+resident proof campaign remains isolated.

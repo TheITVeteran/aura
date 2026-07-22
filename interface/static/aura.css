@@ -1187,6 +1187,8 @@ main {
 
 #chat-input {
     flex: 1;
+    min-height: 46px;
+    max-height: min(34vh, 360px);
     background: transparent;
     border: none;
     color: #fff;
@@ -1200,6 +1202,8 @@ main {
     pointer-events: auto;
     -webkit-user-select: text;
     user-select: text;
+    overflow-y: hidden;
+    line-height: 1.45;
 }
 
 #chat-input::placeholder {
