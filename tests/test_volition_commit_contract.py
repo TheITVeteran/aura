@@ -188,3 +188,50 @@ def test_inquiry_cooldown_only_burns_on_admission(engine, monkeypatch):
     will.approve_action = True
     asyncio.run(engine.tick(None))
     assert engine.last_inquiry_goal_time > 0.0
+
+
+def test_roadmap_phases_order_numerically_not_lexicographically():
+    """"Phase 9" must not sort after "Phase 10".
+
+    The current phase is taken as the LAST element and injected into the
+    evolution objective, so lexicographic ordering named the wrong milestone.
+    """
+    phases = ["Phase 10", "Phase 9", "Phase 2", "Phase 1"]
+    ordered = sorted(phases, key=volition_module._phase_sort_key)
+    assert ordered == ["Phase 1", "Phase 2", "Phase 9", "Phase 10"]
+    assert ordered[-1] == "Phase 10"
+    # The old behaviour, retained here to document what regressed.
+    assert sorted(phases)[-1] == "Phase 9"
+
+
+def test_interest_catalog_is_bounded_and_neutralized():
+    """interests.json is unsigned on-disk text formatted into objectives."""
+    sanitize = volition_module._sanitize_interest_list
+
+    # Embedded newlines/control characters cannot smuggle extra instructions.
+    assert sanitize(["Quantum\nError\tCorrection"]) == ["quantum error correction"]
+    # Oversized entries are bounded.
+    assert len(sanitize(["x" * 5000])[0]) <= volition_module._MAX_INTEREST_LEN
+    # Non-string junk is dropped, duplicates collapse.
+    assert sanitize([None, {"a": 1}, "topic", "TOPIC"]) == ["topic"]
+    # A hostile catalog cannot grow the impulse surface without limit.
+    assert len(sanitize([f"t-{i}" for i in range(1000)])) == (
+        volition_module._MAX_INTERESTS_PER_CATEGORY
+    )
+    # A non-list category is rejected outright.
+    assert sanitize("not-a-list") == []
+
+
+def test_add_interest_bounds_the_catalog(engine):
+    for index in range(volition_module._MAX_INTERESTS_PER_CATEGORY + 25):
+        engine.add_interest(f"topic-{index}", "technical")
+    assert len(engine.technical_interests) <= volition_module._MAX_INTERESTS_PER_CATEGORY
+    # Newest adoption survives; the catalog retires oldest-first.
+    assert engine.technical_interests[-1] == (
+        f"topic-{volition_module._MAX_INTERESTS_PER_CATEGORY + 24}"
+    )
+
+
+def test_roadmap_scan_is_not_run_during_construction(engine):
+    """Construction must not walk the brain tree (startup filesystem IO)."""
+    assert engine.milestones == []

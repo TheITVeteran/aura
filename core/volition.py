@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import random
+import re
 import time
 import uuid
 from typing import Any
@@ -33,6 +34,37 @@ _MAX_OBJECTIVE_TASK_LEN = 300
 _COMMIT_EFFECTS_KEY = "_volition_commit_effects"
 
 
+# Bound on how often an empty roadmap re-globs the brain tree from the tick
+# loop (synchronous filesystem IO on the event loop).
+_ROADMAP_RESCAN_INTERVAL_S = 300.0
+
+# Interests are unsigned, mutable, on-disk JSON that is formatted DIRECTLY
+# into autonomous objectives ("Tell the user about something I've been curious
+# about: {topic}"). They are therefore treated as untrusted input: bounded in
+# count and length, stripped of control characters, and deduplicated.
+_MAX_INTEREST_LEN = 120
+_MAX_INTERESTS_PER_CATEGORY = 64
+
+
+def _sanitize_interest_list(raw: Any) -> list[str]:
+    """Bound and neutralize a category of the interest catalog."""
+    if not isinstance(raw, (list, tuple)):
+        return []
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for entry in raw:
+        if not isinstance(entry, (str, int, float)):
+            continue
+        topic = _sanitize_task_text(str(entry), limit=_MAX_INTEREST_LEN).strip().lower()
+        if not topic or topic in seen:
+            continue
+        seen.add(topic)
+        cleaned.append(topic)
+        if len(cleaned) >= _MAX_INTERESTS_PER_CATEGORY:
+            break
+    return cleaned
+
+
 def _sanitize_task_text(text: str, *, limit: int = _MAX_OBJECTIVE_TASK_LEN) -> str:
     """Bound and neutralize file-derived text before it becomes objective text.
 
@@ -46,6 +78,25 @@ def _sanitize_task_text(text: str, *, limit: int = _MAX_OBJECTIVE_TASK_LEN) -> s
     if len(cleaned) > limit:
         cleaned = cleaned[: max(0, limit - 1)].rstrip() + "…"
     return cleaned
+
+
+def _phase_sort_key(phase: str) -> list[tuple[int, int, str]]:
+    """Natural ordering for roadmap phase headings.
+
+    Lexicographic sorting reported "Phase 9" as LATER than "Phase 10", so the
+    "current phase" injected into the evolution objective could name the wrong
+    milestone. Numeric runs are compared as numbers; each element is a uniform
+    triple so mixed numeric/text segments never compare across types.
+    """
+    key: list[tuple[int, int, str]] = []
+    for part in re.split(r"(\d+)", str(phase or "")):
+        if not part:
+            continue
+        if part.isdigit():
+            key.append((1, int(part), ""))
+        else:
+            key.append((0, 0, part.lower()))
+    return key
 
 
 _VOLITION_RECOVERABLE_ERRORS = (
@@ -169,7 +220,10 @@ class VolitionEngine:
 
         # Singularity Upgrade: Roadmap Awareness
         self.brain_base = config.paths.brain_dir
-        self.milestones = self._scan_roadmap()
+        # Scanned lazily on first roadmap check: globbing the brain tree
+        # during construction blocked startup on filesystem IO.
+        self.milestones: list[str] = []
+        self._last_roadmap_scan = 0.0
 
     async def tick(self, current_goal: Any) -> dict[str, Any] | None:
         """Process a single volition cycle to determine if action is needed."""
@@ -808,9 +862,15 @@ class VolitionEngine:
             try:
                 with open(interests_path, encoding="utf-8") as f:
                     data = json.load(f)
-                self.general_interests = data.get("general", [])
-                self.fun_interests = data.get("fun", [])
-                self.technical_interests = data.get("technical", [])
+                if not isinstance(data, dict):
+                    raise ValueError(
+                        f"interest catalog must be an object, got {type(data).__name__}"
+                    )
+                # Untrusted on-disk content: every category is bounded and
+                # neutralized before it can reach an autonomous objective.
+                self.general_interests = _sanitize_interest_list(data.get("general"))
+                self.fun_interests = _sanitize_interest_list(data.get("fun"))
+                self.technical_interests = _sanitize_interest_list(data.get("technical"))
             except _VOLITION_RECOVERABLE_ERRORS as e:
                 _record_volition_degradation(
                     "volition_interest_load",
@@ -840,20 +900,29 @@ class VolitionEngine:
             ]
 
     def add_interest(self, topic: str, category: str = "general"):
-        """Dynamically adopt a new interest."""
-        topic = topic.strip().lower()
+        """Dynamically adopt a new interest.
+
+        The topic is sanitized and the category is bounded: an adopted
+        interest is formatted directly into future autonomous objectives, and
+        an unbounded catalog would grow the impulse surface without limit.
+        """
+        topic = _sanitize_task_text(str(topic or ""), limit=_MAX_INTEREST_LEN).strip().lower()
         if not topic:
             return
         category = category.strip().lower() if category else "general"
         if category == "fun":
-            if topic not in self.fun_interests:
-                self.fun_interests.append(topic)
+            target = self.fun_interests
         elif category == "technical":
-            if topic not in self.technical_interests:
-                self.technical_interests.append(topic)
+            target = self.technical_interests
         else:
-            if topic not in self.general_interests:
-                self.general_interests.append(topic)
+            target = self.general_interests
+        if topic in target:
+            return
+        if len(target) >= _MAX_INTERESTS_PER_CATEGORY:
+            # Bounded catalog: retire the oldest adopted interest rather than
+            # growing without limit.
+            del target[0]
+        target.append(topic)
 
         interests_path = config.paths.data_dir / "interests.json"
         try:
@@ -905,12 +974,19 @@ class VolitionEngine:
                 )
                 logger.debug("Roadmap task scan failed for %s: %s", task_file, exc)
                 continue
-        return sorted(milestones)
+        return sorted(milestones, key=_phase_sort_key)
 
     def _check_roadmap(self) -> dict[str, Any] | None:
         """Identify the next evolutionary step."""
         if not self.milestones:
-            self.milestones = self._scan_roadmap()
+            # Rescan is rate-limited: an empty or missing roadmap otherwise
+            # re-globbed the whole brain tree on EVERY volition tick, doing
+            # synchronous filesystem IO on the event loop several times a
+            # minute for a result that had just been empty.
+            now = time.monotonic()
+            if now - self._last_roadmap_scan >= _ROADMAP_RESCAN_INTERVAL_S:
+                self._last_roadmap_scan = now
+                self.milestones = self._scan_roadmap()
 
         current_phase = self.milestones[-1] if self.milestones else "Unknown"
         if random.random() < 0.05:
