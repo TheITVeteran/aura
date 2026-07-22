@@ -24569,3 +24569,32 @@ This is total checkpoint record 372. The forecast remains 394-661 total
 records, now approximately 22-289 records after this checkpoint. Next: commit
 and push CP311, then create the bounded resident preflight command that can run
 answer-channel calibration before any multi-hour recurrent-GRPO launch.
+
+## Checkpoint 2026-07-22-312: Resident Answer-Channel Preflight Command Is Bounded
+
+The answer-channel bridge now has a resident preregistration entrypoint instead
+of remaining an ad hoc trainer option. `tools/prepare_resident_recurrent_grpo_campaign.py`
+can run `run-answer-channel-preflight`, deriving a short preflight from the same
+resident contract model, execution spec, LoRA target surface, memory fraction,
+and verifier stack used by the long recurrent-GRPO campaign.
+
+The derived command writes to the campaign artifact root under
+`answer-channel-preflight`, uses `--task-source answer_channel_curriculum`, runs
+only the JSON-copy/typed-boolean/key-selection bridge families, calibrates for a
+bounded 10 minutes, runs at most one optimizer step, and caps the whole preflight
+at 45 minutes. It deliberately excludes `--trajectory-credit` and does not use
+the recurrence reasoning curriculum, because this gate measures verifier-entry
+readiness, not reasoning improvement.
+
+Validation: `tests/test_resident_recurrent_grpo_preregistration.py`,
+`tests/test_answer_channel_curriculum.py`, `tests/test_train_grpo_contract.py`,
+and `tests/test_grpo.py` pass 61/61, bytecode compilation passes for the
+resident preregistration tool and test, `git diff --check` passes, and
+`make lint` passes. No resident model was loaded and no training was launched in
+this checkpoint.
+
+This is total checkpoint record 373. The forecast remains 394-661 total
+records, now approximately 21-288 records after this checkpoint. Next: commit
+and push CP312, then run or detach the answer-channel preflight when it is safe
+to use the resident model, inspect the resulting parseability/variance receipt,
+and only then decide whether a new long resident-GRPO proof run is admissible.

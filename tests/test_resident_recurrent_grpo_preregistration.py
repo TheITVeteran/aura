@@ -202,3 +202,42 @@ def test_launch_training_preserves_virtualenv_launcher_path(tmp_path, monkeypatc
     assert command[0] == str(venv_python)
     assert str(Path(venv_python).resolve()) not in verifier
     assert str(Path(venv_python).resolve()) not in command
+
+
+def test_answer_channel_preflight_command_is_bounded_and_source_separated():
+    contract = _contract()
+
+    argv = prereg._answer_channel_preflight_argv(contract)
+
+    assert argv[0] == "tools/train_grpo.py"
+    assert argv[argv.index("--model") + 1] == contract["model"]["path"]
+    assert argv[argv.index("--execution-spec") + 1] == contract["execution_spec"]["path"]
+    assert argv[argv.index("--task-source") + 1] == "answer_channel_curriculum"
+    assert argv[argv.index("--domains") + 1] == "json_copy,typed_boolean,key_selection"
+    assert argv[argv.index("--max-steps") + 1] == "1"
+    assert argv[argv.index("--max-minutes") + 1] == "45.0"
+    assert argv[argv.index("--calibrate-minutes") + 1] == "10.0"
+    assert "--trajectory-credit" not in argv
+    assert "recurrence_curriculum" not in argv
+
+
+def test_answer_channel_preflight_invokes_trainer_without_launching_detached(
+    monkeypatch,
+):
+    contract = _contract()
+    captured: dict[str, object] = {}
+
+    def fake_train_main():
+        captured["argv"] = list(prereg.sys.argv)
+        return 7
+
+    monkeypatch.setattr(prereg, "validate_contract", lambda *_args, **_kwargs: {})
+    from tools import train_grpo
+
+    monkeypatch.setattr(train_grpo, "main", fake_train_main)
+
+    assert prereg._run_answer_channel_preflight(contract) == 7
+    argv = captured["argv"]
+    assert isinstance(argv, list)
+    assert argv[0] == "tools/train_grpo.py"
+    assert "answer_channel_curriculum" in argv

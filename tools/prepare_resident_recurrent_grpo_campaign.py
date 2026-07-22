@@ -848,6 +848,93 @@ def _run_training(contract: Mapping[str, Any]) -> int:
     return 0
 
 
+def _answer_channel_preflight_argv(contract: Mapping[str, Any]) -> list[str]:
+    """Small resident gate for verifier-entry before long recurrent GRPO."""
+
+    root = PurePosixPath(str(contract["paths"]["artifact_root"]))
+    output = str(root / "answer-channel-preflight")
+    params = contract["training"]["parameters"]
+    max_tokens = min(160, int(params["max_tokens"]))
+    return [
+        "tools/train_grpo.py",
+        "--model",
+        str(contract["model"]["path"]),
+        "--out-dir",
+        output,
+        "--adapter-id",
+        f"{contract['campaign_id']}-answer-channel-preflight",
+        "--execution-mode",
+        "recurrent",
+        "--execution-spec",
+        str(contract["execution_spec"]["path"]),
+        "--task-source",
+        "answer_channel_curriculum",
+        "--domains",
+        "json_copy,typed_boolean,key_selection",
+        "--depths",
+        "1,2",
+        "--train-per-cell",
+        "2",
+        "--holdout-per-cell",
+        "1",
+        "--group-size",
+        str(params["group_size"]),
+        "--temperature",
+        "1.0",
+        "--max-tokens",
+        str(max_tokens),
+        "--kl-coefficient",
+        str(params["kl_coefficient"]),
+        "--format-credit",
+        "0.0",
+        "--lora-rank",
+        str(params["lora_rank"]),
+        "--lora-targets",
+        str(params["lora_targets"]),
+        "--lora-layers",
+        str(params["lora_layers"]),
+        "--learning-rate",
+        str(params["learning_rate"]),
+        "--max-steps",
+        "1",
+        "--eval-every",
+        "1",
+        "--checkpoint-every",
+        "1",
+        "--checkpoint-keep",
+        "1",
+        "--calibrate-samples",
+        "1",
+        "--calibrate-group",
+        str(params["calibrate_group"]),
+        "--calibrate-tokens",
+        str(max_tokens),
+        "--calibrate-minutes",
+        "10.0",
+        "--max-minutes",
+        "45.0",
+        "--memory-fraction",
+        str(params["memory_fraction"]),
+        "--seed",
+        str(int(params["seed"]) + 311),
+        "--calibrate",
+        "--cot",
+    ]
+
+
+def _run_answer_channel_preflight(contract: Mapping[str, Any]) -> int:
+    validate_contract(contract, verify_model=True)
+    from tools import train_grpo
+
+    argv = _answer_channel_preflight_argv(contract)
+    previous = list(sys.argv)
+    try:
+        sys.argv = [argv[0], *argv[1:]]
+        return int(train_grpo.main())
+    finally:
+        sys.argv = previous
+
+
 def _launch_training(contract_path: Path, *, resume: bool) -> int:
     contract = _strict_json(contract_path)
     validate_contract(contract, verify_model=True)
@@ -916,6 +1003,8 @@ def _parser() -> argparse.ArgumentParser:
     verify.add_argument("--skip-model", action="store_true")
     run = subparsers.add_parser("run-training")
     run.add_argument("--contract", default=DEFAULT_CONTRACT)
+    preflight = subparsers.add_parser("run-answer-channel-preflight")
+    preflight.add_argument("--contract", default=DEFAULT_CONTRACT)
     launch = subparsers.add_parser("launch-training")
     launch.add_argument("--contract", default=DEFAULT_CONTRACT)
     launch.add_argument("--resume", action="store_true")
@@ -941,6 +1030,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             contract = _strict_json(Path(args.contract))
             if args.action == "run-training":
                 return _run_training(contract)
+            if args.action == "run-answer-channel-preflight":
+                return _run_answer_channel_preflight(contract)
             if args.action == "launch-training":
                 return _launch_training(Path(args.contract), resume=args.resume)
             if args.action == "verify-resume":
