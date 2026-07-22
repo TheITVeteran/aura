@@ -444,6 +444,10 @@ def test_handler_runs_full_episode_on_tiny_model(monkeypatch, tmp_path):
         "constructive_solution",
         "counterexample",
     }
+    structure = body["receipt"]["structural_diversity"]
+    assert structure["certified"] is True
+    assert structure["independent_support_count"] == 2
+    assert structure["wording_counted"] is False
     contract_config = {
         "n_slots": 4,
         "n_branches": 2,
@@ -458,6 +462,11 @@ def test_handler_runs_full_episode_on_tiny_model(monkeypatch, tmp_path):
     tampered = copy.deepcopy(body["receipt"])
     tampered["cognitive_operator_trace"][0]["receipt_sha256"] = "0" * 64
     assert "cognitive_operator_execution_unproven" in (
+        LatentCortexService._receipt_contract_errors(tampered, contract_config)
+    )
+    tampered = copy.deepcopy(body["receipt"])
+    tampered["structural_diversity"]["wording_counted"] = True
+    assert "structural_diversity_unproven" in (
         LatentCortexService._receipt_contract_errors(tampered, contract_config)
     )
     assert body["requires_cache_clear"] is False

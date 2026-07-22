@@ -2267,6 +2267,20 @@ class LatentCortexEngine:
             and receipt.branch_isolation.get("certified") is not True
         ):
             receipt.flag("branch_isolation_unproven")
+        if receipt.cognitive_operator_trace:
+            from core.brain.llm.latent_cortex.structural_diversity import (
+                build_structural_diversity_receipt,
+            )
+
+            receipt.structural_diversity = build_structural_diversity_receipt(
+                n_branches=len(ensemble.branches),
+                cognitive_slots=receipt.cognitive_slots,
+                operator_trace=receipt.cognitive_operator_trace,
+                action_trace=receipt.cognitive_action_trace,
+                branch_isolation=receipt.branch_isolation,
+            )
+            if receipt.structural_diversity.get("certified") is not True:
+                receipt.flag("structural_diversity_unproven")
         receipt.latent_telemetry = telemetry.to_receipt()
         if self._episode_probe_cache is not None:
             receipt.probe_cache = self._episode_probe_cache.to_receipt()

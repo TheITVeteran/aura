@@ -271,6 +271,7 @@ def validate_operator_receipt(value: Any) -> dict[str, Any]:
     role = value.get("role")
     if operator_for_role(role) is not operator:
         raise ValueError("cognitive operator role differs from its program")
+    strength = value.get("strength")
     if (
         type(value.get("branch_index")) is not int
         or value["branch_index"] < 0
@@ -278,7 +279,10 @@ def validate_operator_receipt(value: Any) -> dict[str, Any]:
         or value["action_step"] < 0
         or not isinstance(value.get("action"), str)
         or not value["action"]
-        or not math.isclose(float(value.get("strength", -1.0)), spec.strength)
+        or isinstance(strength, bool)
+        or not isinstance(strength, (int, float))
+        or not math.isfinite(float(strength))
+        or not math.isclose(float(strength), spec.strength)
         or value.get("causal") is not True
     ):
         raise ValueError("cognitive operator execution metadata is invalid")

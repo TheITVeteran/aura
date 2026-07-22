@@ -25315,3 +25315,44 @@ count completion is approximately 53.2%-83.7%, with a midpoint planning
 estimate of 65.1%. Next: publish CP329, then implement structural reasoning
 fingerprints and reject stylistic or causally duplicate branch support. Final
 multi-hour soaks remain deferred until every shorter gate is green.
+
+## Checkpoint 2026-07-22-330: Structural Support Is Not Prose Variety
+
+Aura now produces a canonical structural-diversity receipt from the primary
+cognitive-slot, action, operator, and branch-isolation evidence. Each branch is
+fingerprinted across admitted premises, dependency topology, executable
+algorithms, observed intermediate-state transitions, predicted consequences,
+and failure conditions. Mid-episode attractor-escape role changes remain visible
+as ordered role/operator paths.
+
+Candidate wording is deliberately not an input. Different prose or raw hidden
+states cannot manufacture another vote when the causal program is the same.
+Canonical support classes collapse such duplicates, while pairwise independence
+requires different dependency and algorithm structure plus a different state,
+prediction, or failure facet. Raw state commitments remain auditable but are
+excluded from the independence count.
+
+The service independently reconstructs the complete receipt from existing
+primary traces and rejects changed counts, support classes, facet hashes,
+pairwise decisions, receipt digests, or any claim that wording counted. Tests
+also prove repeated direct-derivation programs collapse despite different state
+commitments and that legitimate escape-driven role shifts remain explicit.
+
+Validation: focused structural/operator/engine/wiring/escape tests pass 24/24;
+the integrated affected suite passes 191/191 in 99.38 seconds; and the fixed-
+snapshot RLC, latent-cortex, GWT, and execution-controller gate passes 866/866
+in 443.17 seconds. New-module Ruff, bytecode compilation, and `git diff --check`
+pass.
+
+SPARK-016 closes. SPARK-017 remains open because this checkpoint classifies
+structural independence but does not yet estimate empirical branch/error
+correlation or discount confidence and votes by that evidence. It does not
+claim task accuracy, resident-32B improvement, positive interaction, or
+frontier gain; the current capability verdict remains negative/no-signal.
+
+This is total checkpoint record 391. The revised forecast remains 466-733 total
+records, now approximately 75-342 records after this checkpoint. Checkpoint-
+count completion is approximately 53.3%-83.9%, with a midpoint planning
+estimate of 65.2%. Next: publish CP330, then implement correlated-support
+estimation and confidence/vote discounting for SPARK-017. Final multi-hour soaks
+remain deferred until every shorter gate is green.

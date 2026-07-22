@@ -82,6 +82,10 @@ After CP329, the published total is record 390: 76-343 forecast records remain,
 checkpoint-count completion is 53.2%-83.7%, and the midpoint planning estimate
 is 65.1%.
 
+After CP330, the published total is record 391: 75-342 forecast records remain,
+checkpoint-count completion is 53.3%-83.9%, and the midpoint planning estimate
+is 65.2%.
+
 ## Code-grounded baseline and ownership
 
 The four-slice static audit covered the neural core, epistemic/verifier paths,
@@ -90,7 +94,7 @@ entire Spark source and traced callers rather than crediting class names. The
 baseline below is exhaustive over SPARK-001 through SPARK-072:
 
 - `ACCEPTED`: SPARK-001, SPARK-005, SPARK-006, SPARK-007, SPARK-008, SPARK-009,
-  SPARK-010, SPARK-011, SPARK-012, SPARK-014, SPARK-015.
+  SPARK-010, SPARK-011, SPARK-012, SPARK-014, SPARK-015, SPARK-016.
 - `PARTIAL`: SPARK-003,
   SPARK-021, SPARK-022, SPARK-023, SPARK-024, SPARK-025,
   SPARK-026, SPARK-027, SPARK-035, SPARK-039, SPARK-040, SPARK-041,
@@ -98,7 +102,7 @@ baseline below is exhaustive over SPARK-001 through SPARK-072:
   SPARK-056, SPARK-058, SPARK-060, SPARK-062, SPARK-063, SPARK-065, SPARK-066,
   SPARK-067.
 - `MISSING`: SPARK-002,
-  SPARK-016, SPARK-017, SPARK-018, SPARK-019, SPARK-020,
+  SPARK-017, SPARK-018, SPARK-019, SPARK-020,
   SPARK-028, SPARK-029, SPARK-030, SPARK-031, SPARK-032, SPARK-033,
   SPARK-034, SPARK-036, SPARK-037, SPARK-038, SPARK-043, SPARK-044,
   SPARK-045, SPARK-046, SPARK-047, SPARK-048, SPARK-049, SPARK-050,
@@ -356,9 +360,27 @@ before those dependencies close is not admissible.
   integrated operator/engine/service/escape/journal suite passes 187/187 and
   the fixed ownership gate passes 861/861. This closes executable distinction,
   not task-level superiority, structural-independence scoring, or frontier gain.
-- [ ] **SPARK-016 - Structural diversity measurement.** Fingerprint premises,
-  dependencies, algorithms, intermediate states, predictions, and failure
-  conditions; reject stylistic paraphrases as independent evidence.
+- [x] **SPARK-016 - Structural diversity measurement.** CP330 adds the
+  service-reconstructible `aura.rlc.structural_diversity.v1` receipt over the
+  primary cognitive-slot, action, operator, and isolation traces. Every branch
+  is fingerprinted across the exact six required facets: admitted premise
+  commitments and usage modes; dependency templates and changed-slot edges;
+  executable action/operator/transform algorithms; observed state-transition
+  topology; predicted program consequences; and program plus runtime failure
+  conditions. Attractor-escape role changes are preserved as ordered role and
+  operator paths rather than flattened or rejected.
+
+  Surface text is not an input to the measurement. Canonical support classes
+  therefore collapse identical causal programs even when candidate state
+  commitments or prose differ, and pairwise independence requires differences
+  in dependencies and algorithms plus at least one state, prediction, or
+  failure facet. The service independently rebuilds the full receipt and
+  rejects count, class, digest, facet, or wording-policy tampering. Focused
+  structural, operator, engine, wiring, and escape tests pass 24/24; the
+  integrated affected suite passes 191/191; and the fixed ownership gate passes
+  866/866. This closes structural measurement, not empirical error-correlation
+  estimation, vote weighting, or task-level gain, which remain SPARK-017 and
+  later proof work.
 - [ ] **SPARK-017 - Correlated-support discount.** Estimate branch/error
   correlation and prevent near-duplicate paths from receiving multiple votes or
   inflated confidence.
@@ -621,16 +643,18 @@ CP328 closes fresh-context branch isolation and exact cache restoration; it does
 not change the negative capability verdict.
 CP329 closes the nine-program executable cognitive-operator bank; it does not
 change the negative capability verdict.
+CP330 closes wording-independent structural support classes and exact service
+reconstruction; it does not change the negative capability verdict.
 
-Validation: the integrated operator, engine, branch, wiring, escape, and journal
-contracts pass 187/187. The
+Validation: the focused structural/operator/engine/wiring/escape contracts pass
+24/24 and the integrated affected contracts pass 191/191. The
 fixed-snapshot integrated RLC, latent-cortex, GWT, and execution-controller gate
-passes 861/861 in 440.53 seconds. Strict new-module Ruff, focused lint, bytecode
+passes 866/866 in 443.17 seconds. Strict new-module Ruff, focused lint, bytecode
 compilation, and `git diff --check` pass. No resident 32B campaign was run, and
 the negative frontier verdict is unchanged.
 
-This is total checkpoint record 390. The revised forecast remains 466-733 total
-records, now approximately 76-343 records after this checkpoint. Checkpoint-
-count completion is approximately 53.2%-83.7%, with a midpoint planning
-estimate of 65.1%. Next: publish CP329, then implement structural reasoning
-fingerprints and reject stylistic or causally duplicate branch support.
+This is total checkpoint record 391. The revised forecast remains 466-733 total
+records, now approximately 75-342 records after this checkpoint. Checkpoint-
+count completion is approximately 53.3%-83.9%, with a midpoint planning
+estimate of 65.2%. Next: publish CP330, then estimate correlated branch support
+and prevent duplicate paths from inflating votes or confidence.

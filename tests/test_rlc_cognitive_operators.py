@@ -85,6 +85,7 @@ def test_operator_receipt_rejects_role_digest_and_causality_tampering():
         {"output_sha256": receipt["input_sha256"]},
         {"receipt_sha256": "0" * 64},
         {"changed_slots": [5]},
+        {"strength": None},
     ):
         with pytest.raises(ValueError):
             validate_operator_receipt({**receipt, **patch})

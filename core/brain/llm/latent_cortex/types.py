@@ -844,6 +844,10 @@ class EpisodeReceipt:
     value_of_computation: dict[str, Any] = field(default_factory=dict)
     cognitive_action_trace: list[dict[str, Any]] = field(default_factory=list)
     cognitive_operator_trace: list[dict[str, Any]] = field(default_factory=list)
+    # Wording-independent structural support classes reconstructed from the
+    # primary action/operator/isolation traces. Different prose never creates
+    # another vote; causal structure has to differ across six named facets.
+    structural_diversity: dict[str, Any] = field(default_factory=dict)
     # Latent interpretability/safety telemetry (telemetry.LatentTelemetry).
     latent_telemetry: dict[str, Any] = field(default_factory=dict)
     # Decode-probe memoization evidence (probe_cache.DecodeProbeCache).
@@ -1037,6 +1041,7 @@ class EpisodeReceipt:
             "cognitive_operator_trace": [
                 dict(row) for row in self.cognitive_operator_trace
             ],
+            "structural_diversity": dict(self.structural_diversity),
             "latent_telemetry": dict(self.latent_telemetry),
             "probe_cache": dict(self.probe_cache),
             "decode_temperature": self.decode_temperature,

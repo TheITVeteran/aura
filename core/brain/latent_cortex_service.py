@@ -813,6 +813,21 @@ class LatentCortexService:
                         raise ValueError("cognitive operator coverage is invalid")
             except (ImportError, TypeError, ValueError):
                 errors.append("cognitive_operator_execution_unproven")
+            try:
+                from core.brain.llm.latent_cortex.structural_diversity import (
+                    validate_structural_diversity_receipt,
+                )
+
+                validate_structural_diversity_receipt(
+                    receipt.get("structural_diversity"),
+                    n_branches=int(receipt.get("n_branches")),
+                    cognitive_slots=receipt.get("cognitive_slots"),
+                    operator_trace=receipt.get("cognitive_operator_trace"),
+                    action_trace=raw_action_trace,
+                    branch_isolation=receipt.get("branch_isolation"),
+                )
+            except (ImportError, TypeError, ValueError):
+                errors.append("structural_diversity_unproven")
         exchange_interval = config.get("exchange_interval")
         if (
             type(exchange_interval) is int

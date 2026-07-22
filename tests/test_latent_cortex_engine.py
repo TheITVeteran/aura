@@ -90,6 +90,9 @@ def test_full_episode_produces_tokens_and_truthful_receipt(tiny_model):
         row["operator"] for row in r.cognitive_operator_trace
     } == {"constructive_solution", "counterexample"}
     assert all(validate_operator_receipt(row) for row in r.cognitive_operator_trace)
+    assert r.structural_diversity["certified"] is True
+    assert r.structural_diversity["wording_counted"] is False
+    assert r.structural_diversity["independent_support_count"] == 2
     assert r.residual_trail, "receipt must carry the residual trail"
     assert r.halting_reason
     assert r.schedule_hash
