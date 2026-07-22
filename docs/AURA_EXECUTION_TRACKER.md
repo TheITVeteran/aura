@@ -23780,3 +23780,47 @@ controller freeze and run the nonclaiming full-stack directional proof if
 training completes; in parallel, build the remaining mechanism-attribution
 execution so the CP284 ablation profiles are actually run and independently
 scored before any full-stack frontier claim.
+
+## Checkpoint 2026-07-21-289: Post-Training Controller Runs Mechanism Attribution
+
+The CP285 post-training controller no longer stops at a single full-stack
+directional campaign. The controller config now freezes a nonclaiming
+mechanism-attribution matrix for the four executable ablation profiles:
+`recurrence_attribution`, `resident_full_stack_no_latent_opt`,
+`resident_full_stack_no_fast_weights`, and
+`resident_full_stack_no_branch_exchange`. These profiles share the same seeds,
+domains, task registry version, task difficulty, decode budget, and detached
+broker policy shape as the full-stack directional campaign.
+
+The launch path was refactored from a directional-only command into a generic
+campaign launcher. After the main directional campaign passes independent
+replay, the controller now launches each mechanism profile in its own detached
+campaign directory under `mechanism-attribution/`, waits for terminal
+containment evidence, independently verifies each campaign artifact, and writes
+one immutable verifier verdict per profile. The final controller verdict now
+records whether every mechanism profile passed replay, while keeping
+`mechanism_claim_eligible=false`, `reasoning_gain_proven=false`,
+`positive_interaction_proven=false`, and `frontier_level_proven=false` until
+external trust roots and powered confirmatory evidence exist.
+
+This closes the immediate proof-scope gap where the preregistration and paired
+runner knew about ablations but the installed post-training state machine would
+not actually run them. It still does not claim frontier gains; it makes the
+eventual evidence capable of separating "full-stack RLC helped" from "fixed
+recurrence alone, fast weights, latent optimization, or branch exchange were
+irrelevant."
+
+Validation is clean: `tests/test_resident_recurrent_grpo_post_training.py`
+passes 13/13; the combined post-training, preregistration, and paired campaign
+runner suites pass 50/50; bytecode compilation passes for the controller and
+post-training tests; `make lint` passes; and `git diff --check` passes. CP285
+training remains alive under detached supervisor PID `24346`, child PID
+`24359`; latest baseline progress observed was 20/36 with running accuracy
+still `0.000`, so no frontier-gain result exists yet.
+
+This is total checkpoint record 350. The forecast remains 394-661 total
+records, now approximately 44-311 records after this checkpoint. Next: publish
+CP289, regenerate and verify the source-bound CP285 post-training config from
+the new controller source, reinstall the LaunchAgent so it will execute the
+mechanism campaigns after training, and then continue from the next missing RLC
+system piece rather than waiting idly on the trainer.

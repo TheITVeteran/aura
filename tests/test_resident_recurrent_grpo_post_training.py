@@ -82,6 +82,13 @@ def test_config_binds_nonclaiming_six_arm_directional_contract(isolated_repo):
     assert validated["directional"]["rlc_profile"] == "resident_full_stack"
     assert validated["directional"]["seeds"] == seeds
     assert validated["directional"]["claim_eligible"] is False
+    mechanism = validated["mechanism_attribution"]
+    assert mechanism["required"] is True
+    assert mechanism["claim_eligible"] is False
+    assert mechanism["baseline_profile"] == "resident_full_stack"
+    assert tuple(mechanism["profiles"]) == post._MECHANISM_PROFILES
+    assert mechanism["seeds"] == seeds
+    assert mechanism["domains"] == validated["directional"]["domains"]
     assert all(
         validated["claim_policy"][claim] is False
         for claim in (
@@ -107,11 +114,37 @@ def test_directional_command_runs_the_full_stack_profile(isolated_repo, monkeypa
     )
     (root / "artifacts/cp259/frozen-adapter").mkdir(parents=True)
 
-    command = post.ControllerRun(config, contract).campaign_command()
+    command = post.ControllerRun(config, contract).directional_command()
 
     assert command[0] == str(venv_python)
     profile_index = command.index("--rlc-profile") + 1
     assert command[profile_index] == "resident_full_stack"
+
+
+@pytest.mark.parametrize("profile", post._MECHANISM_PROFILES)
+def test_mechanism_command_runs_requested_ablation_profile(
+    isolated_repo, monkeypatch, profile
+):
+    root, contract_path, contract = isolated_repo
+    venv_python = root / ".venv" / "bin" / "python"
+    venv_python.parent.mkdir(parents=True)
+    venv_python.symlink_to(Path(sys.executable))
+    monkeypatch.setattr(post.sys, "executable", str(venv_python))
+    config = post.build_config(
+        contract_path=contract_path,
+        output_root=root / "artifacts/cp259/post-training",
+        source_commit="a" * 40,
+        seeds=[(1 << 62) + index for index in range(8)],
+    )
+    (root / "artifacts/cp259/frozen-adapter").mkdir(parents=True)
+
+    command = post.ControllerRun(config, contract).mechanism_command(profile)
+
+    assert command[0] == str(venv_python)
+    profile_index = command.index("--rlc-profile") + 1
+    assert command[profile_index] == profile
+    campaign_dir_index = command.index("--campaign-dir") + 1
+    assert command[campaign_dir_index].endswith(f"mechanism-attribution/{profile}")
 
 
 def test_config_rejects_rebound_frontier_claim(isolated_repo):

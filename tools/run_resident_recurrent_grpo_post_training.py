@@ -80,6 +80,12 @@ _MODEL_OWNER_SCRIPTS = frozenset(
     }
 )
 _MIN_TRAINING_AVAILABLE_BYTES = 40 * 1024**3
+_MECHANISM_PROFILES = (
+    "recurrence_attribution",
+    "resident_full_stack_no_latent_opt",
+    "resident_full_stack_no_fast_weights",
+    "resident_full_stack_no_branch_exchange",
+)
 
 
 class PostTrainingError(RuntimeError):
@@ -251,6 +257,30 @@ def build_config(
             "detached_timeout_s": 90000.0,
             "claim_eligible": False,
         },
+        "mechanism_attribution": {
+            "required": True,
+            "claim_eligible": False,
+            "campaign_root": str((artifact_root / "mechanism-attribution").relative_to(REPO_ROOT)),
+            "baseline_profile": "resident_full_stack",
+            "profiles": list(_MECHANISM_PROFILES),
+            "seeds": directional_seeds,
+            "domains": list(FRONTIER_DOMAINS),
+            "difficulty": 3,
+            "task_registry_version": CURRENT_REGISTRY_VERSION,
+            "profile": "full",
+            "n_slots": 16,
+            "branches": 2,
+            "rlc_steps": 4,
+            "decode_max_tokens": 768,
+            "episode_timeout_s": 1200.0,
+            "load_timeout_s": 1200.0,
+            "warmup_timeout_s": 600.0,
+            "arm_timeout_s": 21600.0,
+            "campaign_timeout_s": 86400.0,
+            "equal_compute_max_samples": 8,
+            "max_infra_attempts": 3,
+            "detached_timeout_s": 90000.0,
+        },
         "claim_policy": {
             "directional_result_is_nonclaiming": True,
             "reasoning_gain_proven": False,
@@ -282,6 +312,7 @@ def validate_config(
         "directional_campaign",
         "wait",
         "directional",
+        "mechanism_attribution",
         "claim_policy",
         "config_sha256",
     }
@@ -316,6 +347,7 @@ def validate_config(
         prereg.validate_contract(contract, verify_model=True)
     claim_policy = config.get("claim_policy")
     directional = config.get("directional")
+    mechanism = config.get("mechanism_attribution")
     if (
         not isinstance(claim_policy, Mapping)
         or any(claim_policy.get(key) is not False for key in (
@@ -331,6 +363,15 @@ def validate_config(
         or directional.get("profile") != "full"
         or directional.get("rlc_profile") != "resident_full_stack"
         or len(directional.get("seeds", [])) != 8
+        or not isinstance(mechanism, Mapping)
+        or mechanism.get("required") is not True
+        or mechanism.get("claim_eligible") is not False
+        or mechanism.get("baseline_profile") != "resident_full_stack"
+        or tuple(mechanism.get("profiles", ())) != _MECHANISM_PROFILES
+        or mechanism.get("profile") != "full"
+        or mechanism.get("seeds") != directional.get("seeds")
+        or mechanism.get("domains") != directional.get("domains")
+        or mechanism.get("task_registry_version") != directional.get("task_registry_version")
     ):
         _fail("claim_policy_invalid")
     return dict(config), contract
@@ -698,15 +739,21 @@ class ControllerRun:
         _write_once(self.root / "external_custody_request.json", request)
         return request
 
-    def campaign_command(self) -> list[str]:
-        spec = self.config["directional"]
+    def campaign_command(
+        self,
+        *,
+        spec: Mapping[str, Any],
+        campaign_dir: Path,
+        campaign_name: str,
+        rlc_profile: str,
+    ) -> list[str]:
         return [
             str(_python_launcher_path()),
             str(REPO_ROOT / "tools/run_latent_cortex_paired_campaign.py"),
             "--campaign-dir",
-            str(_resolved(Path(str(self.config["directional_campaign"])), must_exist=False)),
+            str(_resolved(campaign_dir, must_exist=False)),
             "--campaign-name",
-            str(spec["campaign_name"]),
+            campaign_name,
             "--model",
             str(_resolved(Path(str(self.contract["model"]["path"])))),
             "--adapter",
@@ -732,7 +779,7 @@ class ControllerRun:
             "--rlc-steps",
             str(spec["rlc_steps"]),
             "--rlc-profile",
-            str(spec["rlc_profile"]),
+            rlc_profile,
             "--decode-max-tokens",
             str(spec["decode_max_tokens"]),
             "--episode-timeout",
@@ -751,15 +798,50 @@ class ControllerRun:
             str(spec["max_infra_attempts"]),
         ]
 
-    def ensure_directional_launched(self) -> None:
-        campaign_dir = _resolved(
-            Path(str(self.config["directional_campaign"])), must_exist=False
+    def directional_command(self) -> list[str]:
+        spec = self.config["directional"]
+        return self.campaign_command(
+            spec=spec,
+            campaign_dir=Path(str(self.config["directional_campaign"])),
+            campaign_name=str(spec["campaign_name"]),
+            rlc_profile=str(spec["rlc_profile"]),
         )
+
+    def mechanism_campaign_dir(self, profile: str) -> Path:
+        if profile not in _MECHANISM_PROFILES:
+            _fail("mechanism_profile_invalid")
+        root = _resolved(
+            Path(str(self.config["mechanism_attribution"]["campaign_root"])),
+            must_exist=False,
+        )
+        return root / profile
+
+    def mechanism_command(self, profile: str) -> list[str]:
+        if profile not in _MECHANISM_PROFILES:
+            _fail("mechanism_profile_invalid")
+        spec = self.config["mechanism_attribution"]
+        return self.campaign_command(
+            spec=spec,
+            campaign_dir=self.mechanism_campaign_dir(profile),
+            campaign_name=f"{self.contract['campaign_id']}-mechanism-{profile}",
+            rlc_profile=profile,
+        )
+
+    def ensure_campaign_launched(
+        self,
+        *,
+        role: str,
+        campaign_dir: Path,
+        campaign_name: str,
+        command: Sequence[str],
+        plan_log_name: str,
+        detached_timeout_s: float,
+    ) -> None:
+        campaign_dir = _resolved(campaign_dir, must_exist=False)
         run_dir = campaign_dir / "detached-supervisor"
         if (run_dir / detached.PLAN_FILE).exists():
             return
         ensure_private_directory(campaign_dir)
-        command = self.campaign_command()
         completed = subprocess.run(
             [*command, "--plan-only"],
             cwd=REPO_ROOT,
@@ -769,19 +851,20 @@ class ControllerRun:
             check=False,
         )
         log = {
-            "schema": "aura.resident_recurrent_grpo_directional_plan_command.v1",
+            "schema": "aura.resident_recurrent_grpo_campaign_plan_command.v1",
+            "role": role,
             "command": [*command, "--plan-only"],
             "returncode": completed.returncode,
             "stdout": completed.stdout,
             "stderr": completed.stderr,
         }
-        _write_once(self.root / "directional_plan_command.json", log)
+        _write_once(self.root / plan_log_name, log)
         if completed.returncode != 0:
-            _fail(f"directional_plan_failed:{completed.returncode}")
+            _fail(f"{role}_plan_failed:{completed.returncode}")
         try:
             plan = json.loads(completed.stdout)
         except json.JSONDecodeError as exc:
-            raise PostTrainingError("directional_plan_output_invalid") from exc
+            raise PostTrainingError(f"{role}_plan_output_invalid") from exc
         policy = plan.get("detached_broker_policy") if isinstance(plan, Mapping) else None
         if (
             not isinstance(policy, list)
@@ -789,30 +872,53 @@ class ControllerRun:
             or plan.get("claim_eligible") is not False
             or plan.get("cell_count") != len(FRONTIER_DOMAINS) * 8 * 6
         ):
-            _fail("directional_plan_contract_invalid")
+            _fail(f"{role}_plan_contract_invalid")
         argv = [
             "launch",
             "--run-dir",
             str(run_dir),
             "--name",
-            str(self.config["directional"]["campaign_name"]),
+            campaign_name,
             "--cwd",
             str(REPO_ROOT),
             "--timeout",
-            str(self.config["directional"]["detached_timeout_s"]),
+            str(detached_timeout_s),
             "--broker-policy-json",
             json.dumps(policy, sort_keys=True, separators=(",", ":")),
             "--",
             *command,
         ]
         if detached.main(argv) != 0:
-            _fail("directional_detached_launch_failed")
+            _fail(f"{role}_detached_launch_failed")
         self.event("launched", {"plan_sha256": plan["plan_sha256"]})
+
+    def ensure_directional_launched(self) -> None:
+        spec = self.config["directional"]
+        self.ensure_campaign_launched(
+            role="directional",
+            campaign_dir=Path(str(self.config["directional_campaign"])),
+            campaign_name=str(spec["campaign_name"]),
+            command=self.directional_command(),
+            plan_log_name="directional_plan_command.json",
+            detached_timeout_s=float(spec["detached_timeout_s"]),
+        )
+
+    def ensure_mechanism_launched(self, profile: str) -> None:
+        spec = self.config["mechanism_attribution"]
+        self.ensure_campaign_launched(
+            role=f"mechanism_{profile}",
+            campaign_dir=self.mechanism_campaign_dir(profile),
+            campaign_name=f"{self.contract['campaign_id']}-mechanism-{profile}",
+            command=self.mechanism_command(profile),
+            plan_log_name=f"mechanism_plan_command_{profile}.json",
+            detached_timeout_s=float(spec["detached_timeout_s"]),
+        )
 
     def final_verdict(
         self,
         *,
         directional_evidence: Mapping[str, Any] | None,
+        mechanism_evidence: Mapping[str, Mapping[str, Any]] | None = None,
         failure_points: Sequence[str],
     ) -> dict[str, Any]:
         grade_path = _resolved(
@@ -832,6 +938,21 @@ class ControllerRun:
                 grade.get("verdict") if isinstance(grade, Mapping) else None
             ),
             "directional_claim_eligible": False,
+            "mechanism_attribution_required": True,
+            "mechanism_profiles": list(_MECHANISM_PROFILES),
+            "mechanism_evidence_passed": {
+                profile: bool(evidence.get("passed") is True)
+                for profile, evidence in (mechanism_evidence or {}).items()
+            },
+            "mechanism_attribution_complete": (
+                mechanism_evidence is not None
+                and set(mechanism_evidence) == set(_MECHANISM_PROFILES)
+                and all(
+                    evidence.get("passed") is True
+                    for evidence in mechanism_evidence.values()
+                )
+            ),
+            "mechanism_claim_eligible": False,
             "training_mechanics_admitted": (
                 self.root / "training_admission.json"
             ).exists(),
@@ -942,9 +1063,44 @@ class ControllerRun:
                 "claim_tier": evidence.get("claim_tier"),
             },
         )
+        mechanism_evidence: dict[str, Mapping[str, Any]] = {}
+        for profile in _MECHANISM_PROFILES:
+            self.set_stage(f"mechanism_attribution_{profile}")
+            self.ensure_mechanism_launched(profile)
+            mechanism_dir = self.mechanism_campaign_dir(profile)
+            mechanism_status = self.wait_detached(
+                mechanism_dir / "detached-supervisor",
+                timeout_s=float(
+                    self.config["mechanism_attribution"]["detached_timeout_s"]
+                ),
+                role=f"mechanism_{profile}",
+            )
+            mechanism_receipt = _validate_detached_terminal(
+                mechanism_status,
+                role=f"mechanism_{profile}",
+                allowed_returncodes=frozenset({0}),
+            )
+            mechanism_result = campaign_verifier.verify_campaign_evidence(mechanism_dir)
+            _write_once(
+                self.root / f"mechanism_evidence_verdict_{profile}.json",
+                mechanism_result,
+            )
+            if mechanism_result.get("passed") is not True:
+                _fail(f"mechanism_independent_replay_failed:{profile}")
+            mechanism_evidence[profile] = mechanism_result
+            self.event(
+                "completed",
+                {
+                    "profile": profile,
+                    "receipt_sha256": mechanism_receipt["receipt_sha256"],
+                    "verified_verdict": mechanism_result.get("verified_verdict"),
+                    "claim_tier": mechanism_result.get("claim_tier"),
+                },
+            )
         self.set_stage("awaiting_external_custody")
         verdict = self.final_verdict(
             directional_evidence=evidence,
+            mechanism_evidence=mechanism_evidence,
             failure_points=["external_trust_roots_and_distinct_custodied_roles_not_present"],
         )
         self.event("terminal", {"verdict_sha256": verdict["verdict_sha256"]})
