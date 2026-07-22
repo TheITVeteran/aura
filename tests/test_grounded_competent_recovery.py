@@ -63,6 +63,34 @@ async def test_degraded_recovery_is_rejected(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("reply", "reason"),
+    [
+        ("Down a notch, please. Actually, never mind.", "unprovoked_rebuke"),
+        (
+            "These are the limits of my actual runtime. That's a frontend with more tools.",
+            "unsupported_runtime_limits_claim",
+        ),
+        (
+            "I could not produce a reliable full-mind reply, so I failed closed instead of sending an ungrounded answer.",
+            "cognitive_engine_failure_envelope",
+        ),
+    ],
+)
+async def test_live_transcript_failure_recovery_reasons_are_rejected(monkeypatch, reply, reason):
+    from core.conversation import response_reliability as rr
+
+    gate = _FakeGate(reply)
+
+    class _HardFail:
+        reasons = (reason,)
+
+    monkeypatch.setattr(rr, "assess_user_facing_reply", lambda *a, **k: _HardFail())
+
+    assert await _grounded_competent_recovery("Could you actually do it?", gate=gate) is None
+
+
+@pytest.mark.asyncio
 async def test_soft_assessment_flag_still_serves_competent_reply(monkeypatch):
     # the false-positive that caused the original fail-closed (foreign_name_intrusion on a
     # confusion-repair reply) must NOT block a competent recovery
