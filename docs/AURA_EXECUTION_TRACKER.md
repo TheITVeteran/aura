@@ -23172,3 +23172,27 @@ now approximately 63-330 records after this checkpoint. Next: publish CP270,
 launch a fresh detached resident-32B recurrent GRPO attempt from this repaired
 source, then continue with admission/curriculum fixes if the next terminal
 artifact exposes another real blocker.
+
+## Checkpoint 2026-07-21-271: Repaired Resident-32B GRPO Relaunch Contract
+
+The repaired trainer cannot honestly run under the original CP259
+preregistration because that contract freezes the pre-fix `tools/train_grpo.py`
+hash. A new CP271 preregistration was prepared instead:
+`config/latent_cortex/resident_32b_recurrent_grpo_cp271_preregistration.json`.
+It preserves the same model identity, execution spec, training task corpus,
+resource envelope, hypotheses, and no-claim state, but writes to the separate
+artifact root
+`artifacts/closeout/latent_cortex/cp271_resident_32b_recurrent_grpo` and binds
+the repaired trainer hash `b604a2a494ac288bbe3bf2b51a2eb8341fa2900a656c3e052290d429de105aff`.
+
+The contract verified with model checking enabled. Receipt summary:
+contract `8bfcb19a8389465cbf8cb6e5a5499bb05a9e3ddcfeb45b683a8a738a85843205`,
+288 training tasks, 36 held-out tasks, 17,262 confirmatory cells, and
+`claim_eligible=false`. This is launch admission only: it does not prove
+training completion, gain, positive adapter/RLC interaction, external frontier
+performance, or release eligibility.
+
+This is total checkpoint record 332. The forecast remains 394-661 total
+records, now approximately 62-329 records after this checkpoint. Next: publish
+CP271, launch the repaired detached resident-32B GRPO run, protect it from
+sleep, and continue bounded non-model work while it runs.
