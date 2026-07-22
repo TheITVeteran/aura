@@ -2779,6 +2779,12 @@ def _expert_adapter_approved_roots() -> list[Path]:
     return roots
 
 
+# Fine-tune types whose load produces DETACHABLE wrapper modules. Anything
+# else mutates resident weights in place and cannot be undone on a live
+# model, so it is refused rather than attached and discovered later.
+_RESTORABLE_FINE_TUNE_TYPES = frozenset({"lora", "qlora"})
+
+
 def _validate_expert_adapter_dir(adapter_dir: str) -> Path:
     """Structural + policy validation BEFORE any resident-weight mutation.
 
@@ -2798,9 +2804,30 @@ def _validate_expert_adapter_dir(adapter_dir: str) -> Path:
     if not config_path.is_file():
         raise ValueError(f"expert_adapter_missing_config:{path}")
     try:
-        json.loads(config_path.read_text())
+        adapter_config = json.loads(config_path.read_text())
     except (OSError, ValueError) as exc:
         raise ValueError(f"expert_adapter_config_unparseable:{path}") from exc
+    # CP126 15f68852. The config was parsed and then ignored. mlx_lm's
+    # load_adapters honours fine_tune_type: a "full" (or "dora"/unknown)
+    # adapter does NOT produce restorable wrapper modules — it writes into
+    # the resident weights. Detach can only unwrap .linear/.embedding
+    # wrappers, so such a load permanently rewrites the personality model
+    # this worker is serving, with no way back short of a reload.
+    #
+    # The type is therefore constrained BEFORE any weight mutation, rather
+    # than discovered afterwards by a detach that silently restores nothing.
+    if not isinstance(adapter_config, dict):
+        raise ValueError(f"expert_adapter_config_not_an_object:{path}")
+    fine_tune_type = str(
+        adapter_config.get("fine_tune_type")
+        or adapter_config.get("fine_tune")
+        # Absent means LoRA in mlx_lm's own default.
+        or "lora"
+    ).strip().lower()
+    if fine_tune_type not in _RESTORABLE_FINE_TUNE_TYPES:
+        raise ValueError(
+            f"expert_adapter_fine_tune_type_not_restorable:{fine_tune_type}:{path}"
+        )
     has_weights = any(path.glob("*.safetensors")) or (path / "adapters.npz").is_file()
     if not has_weights:
         raise ValueError(f"expert_adapter_missing_weights:{path}")
@@ -2852,7 +2879,21 @@ def _attach_expert_adapter(model: Any, adapter_dir: str) -> list[tuple[str, Any]
         # (Even unwound-late these layers are identity: LoRA B initializes 0.)
         _detach_expert_adapter(model, _newly_wrapped())
         raise
-    return _newly_wrapped()
+    wrapped = _newly_wrapped()
+    # Belt and braces for CP126 15f68852: the config said the load would be
+    # restorable, but the authority on what actually happened is the module
+    # tree. A load that wrapped nothing either did nothing or mutated weights
+    # in place, and a wrap we cannot unwrap is an identity change with no way
+    # back — both are refused here, while the unwind is still possible.
+    unrestorable = _unrestorable_wrapped(wrapped)
+    if unrestorable:
+        _detach_expert_adapter(model, wrapped)
+        raise RuntimeError(
+            "expert_adapter_attach_unrestorable:" + ",".join(unrestorable[:4])
+        )
+    if not wrapped:
+        raise RuntimeError(f"expert_adapter_attach_wrapped_nothing:{adapter_dir}")
+    return wrapped
 
 
 def _detach_expert_adapter(model: Any, wrapped: list[tuple[str, Any]]) -> int:
