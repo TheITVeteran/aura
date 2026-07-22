@@ -7527,6 +7527,13 @@ async def _run_cognitive_engine_chat_turn(
         context.update(
             {
                 "desktop_execution_contract": True,
+                "foreground_request": True,
+                "user_explicitly_authorized": True,
+                "user_requested_action": True,
+                "user_visible_desktop_action": True,
+                "verification_required": True,
+                "source": "desktop_ui",
+                "origin": "user",
                 "allow_heuristic_desktop_plan": True,
                 "desktop_task_planning_schema": desktop_task_planning_schema(),
                 "desktop_task_allowed_actions": DESKTOP_TASK_ALLOWED_ACTIONS,

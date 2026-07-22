@@ -10924,6 +10924,13 @@ async def test_desktop_execution_contract_uses_bounded_planning_context(monkeypa
     assert reply == '{"steps": []}'
     assert calls and calls[0]["mode"] is ThinkingMode.SLOW
     assert calls[0]["context"]["desktop_execution_contract"] is True
+    assert calls[0]["context"]["foreground_request"] is True
+    assert calls[0]["context"]["user_explicitly_authorized"] is True
+    assert calls[0]["context"]["user_requested_action"] is True
+    assert calls[0]["context"]["user_visible_desktop_action"] is True
+    assert calls[0]["context"]["verification_required"] is True
+    assert calls[0]["context"]["source"] == "desktop_ui"
+    assert calls[0]["context"]["origin"] == "user"
     assert calls[0]["context"]["allow_heuristic_desktop_plan"] is True
     assert calls[0]["context"]["max_tokens"] == 1024
     assert calls[0]["context"]["num_predict"] == 1024
