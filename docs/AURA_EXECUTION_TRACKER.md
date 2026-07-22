@@ -23583,3 +23583,53 @@ CP283, then build the remaining full-stack RLC proof pieces: explicit
 fast-weight/latent-opt training arms, equal-compute ablations, live 32B
 post-training proof launch, and independently scored frontier comparison
 before any frontier-level reasoning claim is allowed.
+
+## Checkpoint 2026-07-21-284: Full-Stack RLC Mechanism Attribution Becomes Executable
+
+CP280 identified a proof-scope mismatch: the training/proof path could show a
+gain for fixed-depth recurrence while the live RLC stack also includes latent
+optimization, episodic fast weights, branch exchange, answer-contract control,
+and equal-compute sampling. CP283 fixed the missing credit-assignment signal
+inside recurrent GRPO, but it still did not make the later live-stack claim
+causally attributable.
+
+The resident recurrent-GRPO preregistration now contains a required
+mechanism-attribution matrix. It names the candidate profiles that must be
+tested before the live stack can claim credit: fixed trained recurrence,
+resident full stack, full stack without latent optimization, full stack without
+fast weights, and full stack without branch exchange. It also names the
+acceptance rules that keep the result causal rather than narrative:
+same model, same adapter, same task manifest, same answer reveal, same decode
+contract, no higher control compute budget, fast-weight erase/canary receipts,
+latent-opt acceptance/rejection receipts, and no claim from profiles whose
+required receipts are missing.
+
+`tools/run_latent_cortex_paired_campaign.py` now makes those mechanism profiles
+executable. The existing `resident_full_stack` profile remains the treatment
+profile; three new ablation profiles toggle exactly one full-stack mechanism:
+`resident_full_stack_no_latent_opt`,
+`resident_full_stack_no_fast_weights`, and
+`resident_full_stack_no_branch_exchange`. The branch-exchange ablation preserves
+the branch count but disables exchange by setting exchange gamma to zero and an
+interval beyond the fixed step horizon. This lets a later campaign ask whether
+the full live stack's measured gain survives or disappears under specific
+mechanism removals instead of treating RLC as a black box.
+
+This still does not prove frontier-level reasoning gains. It removes another
+reason a positive future run would have been overbroad: the proof machinery can
+now execute the mechanism ablations named by the contract. The remaining
+frontier proof path still needs a fresh detached resident-32B training run, an
+adapter freeze, directional and powered campaigns, broad regression battery,
+external frontier comparison, and independent replay.
+
+Validation is clean: `tests/test_latent_cortex_paired_campaign_runner.py` and
+`tests/test_resident_recurrent_grpo_preregistration.py` pass together with
+37 tests; bytecode compilation passes for the changed runner, preregistration,
+and tests; `make lint` passes; and `git diff --check` passes.
+
+This is total checkpoint record 345. The forecast remains 394-661 total
+records, now approximately 49-316 records after this checkpoint. Next: publish
+CP284, then regenerate a post-CP284 resident-32B preregistration for the
+trajectory-credit trainer and executable mechanism-attribution profiles, launch
+the detached training/proof pipeline only when the new contract is clean, and
+continue the broader Aura hardening queue while it runs.

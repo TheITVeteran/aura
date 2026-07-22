@@ -134,6 +134,13 @@ DETACHED_PLAN_PATH_ENV = "AURA_DETACHED_PLAN_PATH"
 DETACHED_ATTEMPTS_PATH_ENV = "AURA_DETACHED_ATTEMPTS_PATH"
 DETACHED_PLAN_SHA256_ENV = "AURA_DETACHED_PLAN_SHA256"
 DETACHED_SUPERVISOR_ATTEMPT_ENV = "AURA_DETACHED_SUPERVISOR_ATTEMPT"
+RLC_MECHANISM_PROFILES = (
+    "recurrence_attribution",
+    "resident_full_stack",
+    "resident_full_stack_no_latent_opt",
+    "resident_full_stack_no_fast_weights",
+    "resident_full_stack_no_branch_exchange",
+)
 
 
 class CampaignProducerError(RuntimeError):
@@ -1356,14 +1363,28 @@ def _build_rlc_config(
             allow_vanilla_fallback=False,
             escape={"enabled": False},
         )
-    if args.rlc_profile == "resident_full_stack":
+    if args.rlc_profile in {
+        "resident_full_stack",
+        "resident_full_stack_no_latent_opt",
+        "resident_full_stack_no_fast_weights",
+        "resident_full_stack_no_branch_exchange",
+    }:
+        branch_exchange_enabled = (
+            args.rlc_profile != "resident_full_stack_no_branch_exchange"
+        )
+        latent_opt_enabled = args.rlc_profile != "resident_full_stack_no_latent_opt"
+        fast_weights_enabled = args.rlc_profile != "resident_full_stack_no_fast_weights"
         return CortexConfig(
             workspace=WorkspaceConfig(n_slots=4, seed=0),
             recurrence=RecurrenceConfig(max_steps=2, min_steps=2),
-            branches=BranchConfig(n_branches=2, exchange_interval=1),
-            latent_opt=LatentOptConfig(enabled=True, steps=1, lr=0.03),
+            branches=BranchConfig(
+                n_branches=2,
+                exchange_interval=1 if branch_exchange_enabled else 999999,
+                exchange_gamma=0.35 if branch_exchange_enabled else 0.0,
+            ),
+            latent_opt=LatentOptConfig(enabled=latent_opt_enabled, steps=1, lr=0.03),
             fast_weights=FastWeightsConfig(
-                enabled=True,
+                enabled=fast_weights_enabled,
                 rank=2,
                 opt_steps=1,
                 lr=0.005,
@@ -3646,7 +3667,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--rlc-steps", type=_positive_int, default=8)
     parser.add_argument(
         "--rlc-profile",
-        choices=("recurrence_attribution", "resident_full_stack"),
+        choices=RLC_MECHANISM_PROFILES,
         default="recurrence_attribution",
     )
     parser.add_argument("--decode-max-tokens", type=_positive_int, default=512)

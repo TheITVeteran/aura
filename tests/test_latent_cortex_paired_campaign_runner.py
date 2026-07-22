@@ -1518,6 +1518,40 @@ def test_effective_full_stack_shape_is_frozen_not_cli_placeholder():
     assert effective.verifier_probe_max_tokens == 192
 
 
+@pytest.mark.parametrize(
+    ("profile", "latent_opt", "fast_weights", "exchange_gamma"),
+    [
+        ("resident_full_stack", True, True, 0.35),
+        ("resident_full_stack_no_latent_opt", False, True, 0.35),
+        ("resident_full_stack_no_fast_weights", True, False, 0.35),
+        ("resident_full_stack_no_branch_exchange", True, True, 0.0),
+    ],
+)
+def test_full_stack_mechanism_profiles_toggle_one_mechanism(
+    profile: str,
+    latent_opt: bool,
+    fast_weights: bool,
+    exchange_gamma: float,
+):
+    args = SimpleNamespace(
+        rlc_profile=profile,
+        n_slots=16,
+        branches=7,
+        rlc_steps=8,
+        decode_max_tokens=512,
+    )
+
+    effective = runner._build_rlc_config(args)
+
+    assert effective.workspace.n_slots == 4
+    assert effective.branches.n_branches == 2
+    assert effective.latent_opt.enabled is latent_opt
+    assert effective.fast_weights.enabled is fast_weights
+    assert effective.branches.exchange_gamma == pytest.approx(exchange_gamma)
+    if profile == "resident_full_stack_no_branch_exchange":
+        assert effective.branches.exchange_interval > effective.recurrence.max_steps
+
+
 def test_v2_execution_spec_overrides_cli_and_preserves_training_graph():
     args = SimpleNamespace(
         rlc_profile="resident_full_stack",

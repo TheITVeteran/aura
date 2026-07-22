@@ -359,6 +359,49 @@ def build_contract(
         "base_equal_compute",
         "adapter_equal_compute",
     ]
+    mechanism_attribution = {
+        "required": True,
+        "claim_eligible": False,
+        "purpose": (
+            "separate the permanent recurrent-adapter gain from runtime "
+            "latent optimization, episodic fast weights, branch exchange, "
+            "and equal-compute sampling"
+        ),
+        "candidate_profiles": [
+            "recurrent_trained_fixed_depth",
+            "resident_full_stack",
+            "resident_full_stack_no_latent_opt",
+            "resident_full_stack_no_fast_weights",
+            "resident_full_stack_no_branch_exchange",
+        ],
+        "required_comparisons": [
+            "resident_full_stack > recurrent_trained_fixed_depth",
+            (
+                "resident_full_stack > "
+                "resident_full_stack_no_latent_opt"
+            ),
+            (
+                "resident_full_stack > "
+                "resident_full_stack_no_fast_weights"
+            ),
+            (
+                "resident_full_stack > "
+                "resident_full_stack_no_branch_exchange"
+            ),
+            "resident_full_stack > adapter_equal_compute",
+        ],
+        "acceptance_rules": [
+            "same_model_checkpoint",
+            "same_adapter_checkpoint",
+            "same_task_manifest",
+            "same_answer_reveal",
+            "same_decode_contract",
+            "same_or_lower_layer_app_budget_for_controls",
+            "fast_weight_erase_and_canary_receipts_required",
+            "latent_opt_acceptance_and_rejection_receipts_required",
+            "no_claim_from_profile_without_required_receipts",
+        ],
+    }
     confirmatory_tasks = (
         len(FRONTIER_DOMAINS) * CONFIRMATORY_OBSERVATIONS_PER_DOMAIN
     )
@@ -428,6 +471,7 @@ def build_contract(
                 "same_information_and_tools": True,
                 "separate_compute_and_latency_reporting": True,
             },
+            "mechanism_attribution": mechanism_attribution,
         },
         "hypotheses": {
             "positive_interaction": (

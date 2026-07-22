@@ -36,6 +36,17 @@ def test_preregistration_binds_broad_training_and_powered_evaluation():
     assert contract["training"]["dataset"]["train_holdout_id_overlap"] == 0
     assert contract["training"]["parameters"]["trajectory_credit"] is True
     assert "--trajectory-credit" in contract["training"]["argv"]
+    mechanism = contract["evaluation"]["mechanism_attribution"]
+    assert mechanism["required"] is True
+    assert mechanism["claim_eligible"] is False
+    assert "resident_full_stack" in mechanism["candidate_profiles"]
+    assert "resident_full_stack_no_fast_weights" in mechanism["candidate_profiles"]
+    assert "resident_full_stack > adapter_equal_compute" in mechanism[
+        "required_comparisons"
+    ]
+    assert "fast_weight_erase_and_canary_receipts_required" in mechanism[
+        "acceptance_rules"
+    ]
     assert contract["evaluation"]["powered_confirmatory"]["task_count"] == 2877
     assert contract["evaluation"]["powered_confirmatory"]["cell_count"] == 17262
     assert receipt["claim_eligible"] is False
