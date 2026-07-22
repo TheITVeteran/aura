@@ -53,8 +53,8 @@ training/proof surfaces, and the selected live/full-mind path. It read the
 entire Spark source and traced callers rather than crediting class names. The
 baseline below is exhaustive over SPARK-001 through SPARK-072:
 
-- `ACCEPTED`: SPARK-001, SPARK-005, SPARK-007.
-- `PARTIAL`: SPARK-003, SPARK-008, SPARK-010, SPARK-011, SPARK-012,
+- `ACCEPTED`: SPARK-001, SPARK-005, SPARK-007, SPARK-011.
+- `PARTIAL`: SPARK-003, SPARK-008, SPARK-010, SPARK-012,
   SPARK-014, SPARK-021, SPARK-022, SPARK-023, SPARK-024, SPARK-025,
   SPARK-026, SPARK-027, SPARK-035, SPARK-039, SPARK-040, SPARK-041,
   SPARK-042, SPARK-052, SPARK-053, SPARK-054, SPARK-055, SPARK-056,
@@ -171,9 +171,15 @@ before those dependencies close is not admissible.
 - [ ] **SPARK-010 - Cognitive operation history.** Record which operators were
   attempted, their inputs, costs, evidence gained, affected claims, and outcome
   so recurrence cannot unknowingly repeat failed work.
-- [ ] **SPARK-011 - Transactional state revision.** Apply revisions atomically,
+- [x] **SPARK-011 - Transactional state revision.** Apply revisions atomically,
   hash lineage, reject malformed/stale updates, invalidate descendants, and
   recover the last verified state after interruption.
+  Accepted at CP320: the state machine publishes only after a governed,
+  fsync-sealed, canonical hash-chain append; replay is anchored to the external
+  genesis, enforces immutable history and direct parentage, rejects stale
+  writers and complete corruption, and repairs only a torn final fragment after
+  the entire complete prefix verifies. Live ownership is tracked separately by
+  SPARK-013 and SPARK-065-068.
 - [ ] **SPARK-012 - Selective memory bridge.** Query working, episodic,
   semantic, procedural, and nonparametric memory through evidence-scoped
   retrieval; prevent recalled text from becoming instruction or fact merely by

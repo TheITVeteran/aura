@@ -24873,3 +24873,54 @@ records, now approximately 86-353 records after this checkpoint. Checkpoint-
 count completion is approximately 51.8%-81.5%, with a midpoint planning
 estimate of 63.4%. Next: publish CP319, then add the hash-chained fsync-backed
 journal and prove recovery from process interruption and a torn final append.
+
+## Checkpoint 2026-07-22-320: Epistemic Publication Is Crash-Consistent
+
+The epistemic state machine now supports a durable write-ahead authority. A
+candidate is fully built and validated, appended as canonical JSON to a
+governed private journal, flushed and fsynced, and only then published as the
+in-memory current state. A persistence failure leaves the authoritative state
+unchanged and the transaction retryable. `commit_async()` performs the durable
+commit on a worker thread so a live caller need not fsync on Aura's event loop.
+
+Each journal entry carries an exact schema, monotonic sequence, previous-entry
+hash, full state, state hash, and entry hash. Replay is anchored to the caller's
+preregistered genesis rather than trusting a root read from the journal itself.
+It verifies canonical encoding, duplicate-key rejection, finite numbers,
+entry/state hashes, chain linkage, state parentage, episode/problem identity,
+budget monotonicity, immutable evidence and operation history, claim/hypothesis
+non-deletion, operation base hashes, and operation coverage for every revised
+claim.
+
+The journal uses Aura's FileWriteGateway, atomic create-if-absent publication,
+private permissions, no-follow owned-file opens, and an interprocess lock. The
+new synchronous gateway primitive has the same governance and non-replacement
+contract as its async counterpart. A second process with a stale head cannot
+fork the chain. Final-file, ancestor-directory, and lock-file symlinks are
+rejected without touching their targets.
+
+Recovery may truncate only bytes after the last newline and only after every
+complete preceding entry passes the full replay contract. A malformed complete
+entry remains byte-for-byte intact and fails closed even when followed by a
+torn fragment. Injected partial appends never publish in memory; the same open
+transaction can retry after the verified prefix is restored. CRLF framing,
+rehashed chain forks, rewritten history, wrong external genesis, and use before
+trusted bootstrap are also rejected.
+
+Validation: the state, journal, and FileWriteGateway adversarial slice passes
+46/46. The complete latent-cortex, RLC, GWT coupling, execution-controller,
+self-improvement, campaign, runtime-identity, persistence, canary, and proof-
+integrity gate passes 757/757 in 383.42 seconds. Focused Ruff checks and `git
+diff --check` pass.
+
+Only SPARK-011 closes here. The live worker/service does not yet instantiate
+this authority or route tools, verifiers, memory, and decode through it, so
+state causality and whole-runtime unity remain open. No resident model was
+loaded and no capability gain is claimed.
+
+This is total checkpoint record 381. The revised forecast remains 466-733 total
+records, now approximately 85-352 records after this checkpoint. Checkpoint-
+count completion is approximately 52.0%-81.8%, with a midpoint planning
+estimate of 63.6%. Next: publish CP320, then implement evidence-scoped records
+and uncertainty updates before wiring this same durable state through the live
+RLC episode.

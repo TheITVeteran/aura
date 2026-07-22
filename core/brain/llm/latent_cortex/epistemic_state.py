@@ -16,7 +16,7 @@ import threading
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from enum import StrEnum
-from typing import Any
+from typing import Any, Protocol
 
 EPISTEMIC_STATE_SCHEMA = "aura.rlc.epistemic_state.v1"
 
@@ -41,6 +41,19 @@ class EpistemicStateError(ValueError):
 
 class StaleEpistemicTransactionError(EpistemicStateError):
     """A transaction tried to replace a state other than its base."""
+
+
+class EpistemicStatePersistence(Protocol):
+    """Durable write-ahead authority used by the state machine."""
+
+    def bootstrap(self, genesis: EpistemicState) -> EpistemicState: ...
+
+    def append(
+        self,
+        *,
+        expected_base: EpistemicState,
+        candidate: EpistemicState,
+    ) -> None: ...
 
 
 class EvidenceKind(StrEnum):
@@ -1196,11 +1209,29 @@ class EpistemicTransaction:
 class EpistemicStateMachine:
     """Atomic in-memory authority for one episode's current state."""
 
-    def __init__(self, genesis: EpistemicState) -> None:
+    def __init__(
+        self,
+        genesis: EpistemicState,
+        *,
+        persistence: EpistemicStatePersistence | None = None,
+    ) -> None:
+        if not isinstance(genesis, EpistemicState):
+            raise TypeError("genesis must be an EpistemicState")
         if genesis.version != 0:
             raise EpistemicStateError("state machine requires a genesis state")
-        self._current = genesis
         self._lock = threading.RLock()
+        self._persistence = persistence
+        current = persistence.bootstrap(genesis) if persistence is not None else genesis
+        if not isinstance(current, EpistemicState):
+            raise EpistemicStateError("persistence returned an invalid state")
+        if current.episode_id != genesis.episode_id or current.problem != genesis.problem:
+            raise EpistemicStateError("recovered state does not match genesis identity")
+        if (
+            current.budget.total != genesis.budget.total
+            or current.budget.tool_calls_total != genesis.budget.tool_calls_total
+        ):
+            raise EpistemicStateError("recovered state changed preregistered budget caps")
+        self._current = current
 
     def snapshot(self) -> EpistemicState:
         with self._lock:
@@ -1215,9 +1246,24 @@ class EpistemicStateMachine:
         with self._lock:
             if transaction.base.state_sha256 != self._current.state_sha256:
                 raise StaleEpistemicTransactionError("transaction base is not current")
-            candidate = transaction.commit()
+            candidate = transaction._prepare()
+            if self._persistence is not None:
+                self._persistence.append(
+                    expected_base=self._current,
+                    candidate=candidate,
+                )
+            transaction._closed = True
             self._current = candidate
             return candidate
+
+    async def commit_async(
+        self, transaction: EpistemicTransaction
+    ) -> EpistemicState:
+        """Commit on a worker thread so durable fsync never blocks the event loop."""
+
+        import asyncio
+
+        return await asyncio.to_thread(self.commit, transaction)
 
 
 __all__ = [
@@ -1229,6 +1275,7 @@ __all__ = [
     "EpistemicState",
     "EpistemicStateError",
     "EpistemicStateMachine",
+    "EpistemicStatePersistence",
     "EpistemicTransaction",
     "EvidenceKind",
     "EvidenceRecord",
