@@ -291,3 +291,88 @@ def test_neighbors_carry_store_index(tmp_path):
     mem.add(b, 2)
     nearest = mem.query(a, k=1)[0]
     assert nearest.index == 0 and nearest.token_id == 1
+
+
+class TestRecallPathsShareTheConfidenceGate:
+    """apply_to_logits must not be more permissive than interpolate().
+
+    interpolate() drops every neighbour below the active similarity gate.
+    apply_to_logits fed the raw query result straight into knn_probs, so a
+    single below-threshold neighbour still produced nonzero kNN mass and
+    shifted the token distribution — the two recall paths enforced different
+    standards, and the one wired to logits was the weaker one.
+    """
+
+    def _store(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("AURA_NONPARAMETRIC_MEMORY", "1")
+        from core.brain.nonparametric_memory import NonParametricMemory
+
+        return NonParametricMemory(dim=8, path=str(tmp_path / "npm"))
+
+    def test_below_gate_neighbour_cannot_shift_logits_via_lam_override(
+        self, tmp_path, monkeypatch
+    ):
+        """The exact path that made this exploitable.
+
+        adaptive_lambda independently returns ~0 for weak neighbours, which
+        masked the missing gate in normal use. lam_override BYPASSES
+        adaptive_lambda, so without the gate a below-threshold neighbour did
+        reach knn_probs: measured against the pre-fix code, a neighbour at
+        similarity 0.8896 (gate 0.98) shifted the logits by 3.47.
+        """
+        import numpy as np
+
+        store = self._store(tmp_path, monkeypatch)
+        # Similarity ~0.89 — comfortably below the 0.98 raw gate.
+        store.add(
+            np.array([1, 1, 1, 1, 1, 1, 1, -0.3], dtype=np.float32),
+            token_id=5,
+            token="y",
+        )
+        query = np.ones(8, dtype=np.float32)
+
+        neighbours = store.query(query, k=8)
+        assert neighbours, "fixture must produce a neighbour"
+        assert neighbours[0].similarity < store.min_similarity(), (
+            "fixture neighbour must be BELOW the gate for this test to mean anything"
+        )
+
+        out = np.asarray(
+            store.apply_to_logits(
+                np.zeros(16, dtype=np.float32), query, lam_override=0.5
+            ),
+            dtype=np.float64,
+        )
+        assert np.allclose(out, 0.0), (
+            "a below-gate neighbour must not reach the recall distribution "
+            "even when adaptive_lambda is bypassed"
+        )
+
+    def test_above_gate_neighbour_still_recalls(self, tmp_path, monkeypatch):
+        """The gate must not disable legitimate recall."""
+        import numpy as np
+
+        store = self._store(tmp_path, monkeypatch)
+        store.add(
+            np.array([1, 1, 1, 1, 1, 1, 1, 0.55], dtype=np.float32),
+            token_id=5,
+            token="y",
+        )
+        query = np.ones(8, dtype=np.float32)
+
+        neighbours = store.query(query, k=8)
+        assert neighbours[0].similarity >= store.min_similarity()
+
+        out = np.asarray(
+            store.apply_to_logits(np.zeros(16, dtype=np.float32), query),
+            dtype=np.float64,
+        )
+        assert not np.allclose(out, 0.0), "above-gate recall must still apply"
+
+    def test_gate_is_the_same_function_both_paths_use(self, tmp_path, monkeypatch):
+        store = self._store(tmp_path, monkeypatch)
+        source = open("core/brain/nonparametric_memory.py", encoding="utf-8").read()
+        body = source.split("def apply_to_logits", 1)[1][:2000]
+        assert "self.min_similarity()" in body
+        assert "nb.similarity >= min_sim" in body
+        assert isinstance(store.min_similarity(), float)

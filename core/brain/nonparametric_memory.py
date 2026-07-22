@@ -351,6 +351,20 @@ class NonParametricMemory:
             neighbors = self.query(query_key, k=int(kw.pop("k", 8)))
             if not neighbors:
                 return logits
+            # SAME CONFIDENCE GATE AS interpolate(). This path fed the raw
+            # query result straight into knn_probs, so every neighbor BELOW
+            # the active similarity threshold was still mixed back into the
+            # recall distribution — the two recall paths enforced different
+            # standards, and the one wired to logits was the permissive one.
+            # A single weak neighbour was enough to obtain a nonzero kNN mass
+            # and shift the token distribution.
+            min_sim = self.min_similarity()
+            gated = [nb for nb in neighbors if nb.similarity >= min_sim]
+            if not gated:
+                with self._lock:
+                    self._stats["fallthrough"] += 1
+                return logits
+            neighbors = gated
             lam = kw.pop("lam_override", None)
             if lam is None:
                 lam = self.adaptive_lambda(
