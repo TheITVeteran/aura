@@ -1001,17 +1001,29 @@ def _repair_live_user_surface_operational_status(
             f"available; CPU load is {cpu_percent:.1f}% on this host."
         )
     except (ImportError, OSError, RuntimeError, TypeError, ValueError, AttributeError):
-        load_1m = 0.0
+        load_1m: float | None = None
         try:
             from core.runtime.resource_observation import get_resource_observer
 
             load_1m = float(get_resource_observer().compute().load_1m)
+            if not math.isfinite(load_1m):
+                load_1m = None
         except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError):
-            load_1m = 0.0
+            load_1m = None
+        if load_1m is not None:
+            return (
+                "I am with you. One live runtime signal I can perceive is the host "
+                f"load average at {load_1m:.2f}, with the Cortex/MLX worker active "
+                "for this foreground turn."
+            )
+        # BOTH probes failed: fabricating a 0.00 load sample converted an
+        # unavailable health probe into a confident live signal. Say what is
+        # actually true instead.
         return (
-            "I am with you. One live runtime signal I can perceive is the host "
-            f"load average at {load_1m:.2f}, with the Cortex/MLX worker active "
-            "for this foreground turn."
+            "I am with you. My host telemetry probes are not answering right "
+            "now, so I cannot quote a live load number this turn — the reply "
+            "lane itself is working, which is the one signal I can honestly "
+            "attest."
         )
 
 
@@ -1783,6 +1795,57 @@ def _first_token_suppression_ids(tokenizer: Any) -> list[int]:
     return sorted(banned)
 
 
+def _validate_schema_output(
+    text: str,
+    schema: Any,
+) -> tuple[bool, str, str]:
+    """Validate a structured-mode draft against the SUPPLIED schema.
+
+    Schema mode previously only forced temperature zero and nudged the
+    first token toward "{" — the schema itself was never parsed or
+    enforced. Returns (ok, failure_detail, normalized_json): the candidate
+    JSON value is located (fences stripped, leading prose skipped via
+    raw_decode), parsed, validated with jsonschema when the schema is a
+    mapping, and re-serialized compactly so callers receive clean JSON.
+    """
+    body = str(text or "").strip()
+    fence = re.search(r"```(?:json)?\s*\n(.+?)\n```", body, flags=re.DOTALL)
+    if fence:
+        body = fence.group(1).strip()
+    if not body:
+        return False, "empty_output", ""
+    decoder = json.JSONDecoder()
+    parsed = None
+    start = min(
+        (idx for idx in (body.find("{"), body.find("[")) if idx >= 0),
+        default=-1,
+    )
+    if start < 0:
+        return False, "no_json_value_found", ""
+    try:
+        parsed, _end = decoder.raw_decode(body[start:])
+    except (ValueError, TypeError) as exc:
+        return False, f"json_parse_failed:{exc}", ""
+    if isinstance(schema, dict) and schema:
+        try:
+            import jsonschema
+
+            jsonschema.validate(parsed, schema)
+        except ImportError:
+            logger.debug("jsonschema unavailable; structural parse only.")
+        except jsonschema.ValidationError as exc:  # type: ignore[union-attr]
+            return False, f"schema_violation:{exc.message[:200]}", ""
+        except jsonschema.SchemaError as exc:  # type: ignore[union-attr]
+            # A malformed schema is the CALLER's defect; the draft parsed,
+            # so deliver it rather than failing the model's valid JSON.
+            logger.warning("Supplied schema is itself invalid: %s", exc)
+    try:
+        normalized = json.dumps(parsed, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return False, "normalization_failed", ""
+    return True, "", normalized
+
+
 def _proof_evaluation_fragment_incomplete(text: str) -> bool:
     """Return True when a proof/eval generation is only a fragment.
 
@@ -2032,14 +2095,18 @@ def _should_emit_generation_progress(
 def _prompt_cache_entry_budget_for_model(model_path: str) -> int:
     from core.runtime.desktop_boot_safety import desktop_resource_guard_enabled
 
-    lowered = os.path.basename(str(model_path or "")).lower()
-    if any(token in lowered for token in ("72b", "solver")):
+    # Measured weight class (artifact evidence first): a renamed heavy model
+    # previously inherited the 12-entry cache budget of an unknown small lane.
+    from core.brain.llm.model_artifact_profile import model_size_class
+
+    weight_class = model_size_class(str(model_path or ""))
+    if weight_class == "72b":
         return 0
-    if any(token in lowered for token in ("32b", "cortex", "zenith")):
+    if weight_class == "32b":
         if desktop_resource_guard_enabled():
             return 0
         return 2
-    if any(token in lowered for token in ("14b", "7b", "brainstem")):
+    if weight_class in ("14b", "7b"):
         return 6
     return 12
 
@@ -2326,11 +2393,14 @@ class WorkerMemorySentinel(threading.Thread):
 
     def _worker_rss_limit_gb(self, total_gb: float) -> float:
         def _default_limit() -> float:
-            if any(token in self.model_path.lower() for token in ("72b", "solver")):
+            from core.brain.llm.model_artifact_profile import model_size_class
+
+            weight_class = model_size_class(self.model_path)
+            if weight_class == "72b":
                 if total_gb < 80.0:
                     return min(40.0, max(34.0, total_gb * 0.60))
                 return min(64.0, max(48.0, total_gb * 0.55))
-            if any(token in self.model_path.lower() for token in ("32b", "cortex", "zenith")):
+            if weight_class == "32b":
                 if total_gb < 80.0:
                     return min(36.0, max(28.0, total_gb * 0.56))
                 return min(56.0, max(42.0, total_gb * 0.48))
@@ -2489,12 +2559,25 @@ def _setup_worker_env():
 
     from core.runtime.subprocess_gateway import get_subprocess_gateway
 
-    # [PERFORMANCE] Fast-path: Use environment if already probed by parent
+    # [PERFORMANCE] Fast-path: Use environment if already probed by parent.
+    # The cached value gets the SAME prefix validation as fresh xcrun output —
+    # existence alone let a stale or injected env var redirect compilation to
+    # an arbitrary directory.
+    _sdk_allowed_prefixes = ("/Library/", "/Applications/Xcode", "/usr/")
     cached_sdk = os.environ.get("AURA_SDK_PATH")
-    if cached_sdk and os.path.exists(cached_sdk):
+    if (
+        cached_sdk
+        and os.path.exists(cached_sdk)
+        and any(cached_sdk.startswith(pfx) for pfx in _sdk_allowed_prefixes)
+    ):
         os.environ["SDKROOT"] = cached_sdk
         logger.info("Using cached SDK root: %s", cached_sdk)
     else:
+        if cached_sdk:
+            logger.warning(
+                "Cached AURA_SDK_PATH rejected (missing or outside allowed prefixes); reprobing: %s",
+                cached_sdk,
+            )
         try:
             proc = get_subprocess_gateway().run(
                 ["xcrun", "--show-sdk-path"],
@@ -2505,8 +2588,7 @@ def _setup_worker_env():
             sdk_path = (proc.stdout or "").strip()
             if proc.returncode != 0 or not sdk_path:
                 raise RuntimeError((proc.stderr or "xcrun failed").strip())
-            allowed_prefixes = ("/Library/", "/Applications/Xcode", "/usr/")
-            if not any(sdk_path.startswith(pfx) for pfx in allowed_prefixes):
+            if not any(sdk_path.startswith(pfx) for pfx in _sdk_allowed_prefixes):
                 raise RuntimeError(f"Suspicious SDK path rejected: {sdk_path}")
             os.environ["SDKROOT"] = sdk_path
             os.environ["AURA_SDK_PATH"] = sdk_path # Cache for subsequent spawns
@@ -2543,7 +2625,17 @@ def _setup_worker_env():
         )
         logger.warning("MLX worker deployment target/CPATH probe failed: %s", e)
 
-    os.environ["MLX_NUM_THREADS"] = "10"   # M-series has 10+ perf cores
+    # Thread budget derived from the actual host instead of one hardware
+    # profile: hard-coding 10 oversubscribed smaller machines and stacked
+    # multi-worker deployments. Explicit env wins; otherwise leave 2 cores
+    # for the parent runtime and IPC threads, floor 4 for decode throughput.
+    configured_threads = os.environ.get("AURA_MLX_NUM_THREADS", "").strip()
+    if configured_threads.isdigit() and int(configured_threads) > 0:
+        mlx_threads = int(configured_threads)
+    else:
+        host_cpus = os.cpu_count() or 8
+        mlx_threads = max(4, min(10, host_cpus - 2))
+    os.environ["MLX_NUM_THREADS"] = str(mlx_threads)
     os.environ["OMP_NUM_THREADS"] = "1"
     os.environ["MKL_NUM_THREADS"] = "1"
     os.environ["MLX_FORCE_SERIAL_COMPILE"] = "1"
@@ -3097,7 +3189,10 @@ def _run_nonparametric_ingest_job(
         }
 
     ingestor = NonParametricIngestor(memory)
-    collected_pairs = collect_trusted_pairs(limit=max(500, scan_limit))
+    # Collection is bounded BY the admitted scan limit (small multiple for
+    # the has_seen filter), not a fixed >=500 floor that let a "tiny
+    # bounded batch" job inspect the entire oversized collection.
+    collected_pairs = collect_trusted_pairs(limit=min(256, scan_limit * 4))
     if not collected_pairs:
         return {
             "state": "no_trusted_pairs",
@@ -3126,6 +3221,10 @@ def _run_nonparametric_ingest_job(
     for context, answer in pairs:
         if (
             pairs_ingested >= max_pairs
+            # scan_limit bounds budget-eligible scans; total budget-probe
+            # EXAMINATIONS are bounded by the collection cap above
+            # (scan_limit * 4, ≤ 256) instead of the old fixed >=500 floor
+            # that let a "tiny bounded batch" walk the whole collection.
             or pairs_scanned >= scan_limit
             or not _should_continue()
         ):
@@ -3164,8 +3263,21 @@ def _run_nonparametric_ingest_job(
     if positions_ingested > 0:
         if not memory.persist():
             raise RuntimeError("nonparametric_memory_persist_failed")
-        if not ingestor.persist_seen():
-            raise RuntimeError("nonparametric_ingest_receipt_persist_failed")
+        if not ingestor.persist_seen() and not ingestor.persist_seen():
+            # Memory is already durable but the dedupe receipt is not: the
+            # same pairs can be re-ingested next run (duplicate capacity
+            # waste, not corruption). One bounded retry, then a typed
+            # PARTIAL-COMMIT error so the caller never mistakes this for a
+            # clean failure it can blindly repeat.
+            _record_mlx_degradation(
+                RuntimeError("nonparametric_dedupe_receipt_lost_after_memory_commit"),
+                action="reported partial nonparametric commit (memory durable, dedupe receipt not)",
+                severity="error",
+            )
+            raise RuntimeError(
+                "nonparametric_ingest_receipt_persist_failed_after_memory_commit:"
+                f"pairs_ingested={pairs_ingested}:positions={positions_ingested}"
+            )
     state = stop_reason or (
         "complete" if positions_ingested > 0 else "no_new_eligible_pairs"
     )
@@ -3212,8 +3324,9 @@ def _load_speculative_draft(model_path: str, target_tokenizer: Any) -> Any:
     }
     if not enabled:
         return None
-    lowered = str(model_path).lower()
-    if not any(k in lowered for k in ("32b", "72b", "zenith", "solver", "cortex")):
+    from core.brain.llm.model_artifact_profile import model_size_class
+
+    if model_size_class(str(model_path)) not in ("72b", "32b"):
         return None  # drafting for a small model is pointless
     draft_candidates = [
         Path(__file__).resolve().parents[3] / "models" / "Qwen2.5-1.5B-Instruct-4bit",
@@ -3228,13 +3341,36 @@ def _load_speculative_draft(model_path: str, target_tokenizer: Any) -> Any:
         from mlx_lm import load as _load
 
         draft_model, draft_tokenizer = _load(draft_path)
-        # Vocabulary compatibility: the draft must tokenize identically or the
-        # accept/reject loop is meaningless.
-        probe = "Aura verifies every proposed token."
-        if draft_tokenizer.encode(probe) != target_tokenizer.encode(probe):
+        # Tokenizer IDENTITY contract, not a one-sentence probe: the draft
+        # must agree on vocabulary size, special-token ids, and tokenization
+        # across scripts, digits, code, and whitespace — a probe that only
+        # covered one plain English sentence admitted tokenizers whose
+        # divergence corrupts the accept/reject loop on real content.
+        mismatch = ""
+        for attr in ("vocab_size", "eos_token_id", "bos_token_id", "pad_token_id"):
+            draft_value = getattr(draft_tokenizer, attr, None)
+            target_value = getattr(target_tokenizer, attr, None)
+            if draft_value != target_value:
+                mismatch = f"{attr}:{draft_value}!={target_value}"
+                break
+        if not mismatch:
+            probes = (
+                "Aura verifies every proposed token.",
+                "def f(x):\n\treturn {x: [1, 2.5e-3, 'mixed']}  # comment",
+                "Numbers 1234567890 and unicode: naïve café — 日本語 テスト Ω≈ç√",
+                "  leading spaces\nand\twindows\r\nline endings ",
+                "<|im_start|>assistant роль and emoji 🚀🧠",
+            )
+            for probe in probes:
+                if draft_tokenizer.encode(probe) != target_tokenizer.encode(probe):
+                    mismatch = f"probe_tokenization:{probe[:32]!r}"
+                    break
+        if mismatch:
             _record_mlx_degradation(
-                RuntimeError(f"draft tokenizer mismatch: {os.path.basename(draft_path)}"),
-                action="continued without speculative decoding after tokenizer mismatch",
+                RuntimeError(
+                    f"draft tokenizer mismatch ({mismatch}): {os.path.basename(draft_path)}"
+                ),
+                action="continued without speculative decoding after tokenizer identity mismatch",
                 severity="warning",
             )
             return None
@@ -3558,8 +3694,10 @@ def _mlx_worker_loop(
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as rd_exc:
             explicit_disable = str(os.environ.get("AURA_RECURRENT_LOOPS", "")).strip() == "0"
             size_disable = str(os.environ.get("AURA_RECURRENT_LOOPS_32B", "")).strip() == "0"
+            from core.brain.llm.model_artifact_profile import model_size_class as _msc
+
             recurrent_depth_status["required"] = (
-                any(token in str(model_path).lower() for token in ("32b", "cortex", "zenith"))
+                _msc(str(model_path)) == "32b"
                 and not explicit_disable
                 and not size_disable
             )
@@ -4056,6 +4194,7 @@ def _mlx_worker_loop(
                             surface_retry_wall_s = _safe_float(
                                 os.getenv("AURA_SURFACE_RETRY_WALL_S", "20"), 20.0
                             )
+                            schema_validation_failed = ""
 
                             for internal_attempt in range(max_internal_retries + 1):
                                 surface_control_state["generation_max_tokens_applied"] = max(
@@ -4596,6 +4735,41 @@ def _mlx_worker_loop(
                                             response_text = get_refusal_fallback(seed=token_count)
                                             break
 
+                                    if schema and str(response_text or "").strip():
+                                        # ENFORCE the supplied schema: structured
+                                        # mode previously only forced temp=0 and a
+                                        # leading brace, so prose or wrong-shape
+                                        # JSON was certified as structured output.
+                                        schema_ok, schema_fail, normalized_json = (
+                                            _validate_schema_output(response_text, schema)
+                                        )
+                                        if schema_ok:
+                                            response_text = normalized_json
+                                            schema_validation_failed = ""
+                                        elif internal_attempt < max_internal_retries:
+                                            logger.warning(
+                                                "⚠️ [WORKER] Structured output failed schema validation "
+                                                "on attempt %s (%s). Retrying.",
+                                                internal_attempt + 1,
+                                                schema_fail,
+                                            )
+                                            if prompt_cache_lru is not None:
+                                                prompt_cache_lru.clear()
+                                            if mx and device != "cpu":
+                                                _clear_mlx_cache(mx)
+                                            _prepare_clean_retry_kwargs(kwargs, structured=True)
+                                            continue
+                                        else:
+                                            # Deliver the draft WITH a failure
+                                            # receipt rather than discarding real
+                                            # work — the parent decides.
+                                            schema_validation_failed = schema_fail
+                                            logger.warning(
+                                                "🚨 [WORKER] Structured output still schema-invalid "
+                                                "after retries (%s).",
+                                                schema_fail,
+                                            )
+
                                     if strict_answer_contract:
                                         sanitized_text = _sanitize_telemetry_leakage(response_text, is_proof=True)
                                         if sanitized_text is None:
@@ -5080,6 +5254,14 @@ def _mlx_worker_loop(
                     }
                     # Contract-truth verdicts: callers must never have to
                     # infer these from the text.
+                    if schema:
+                        generate_payload["schema_validated"] = not bool(
+                            schema_validation_failed
+                        )
+                        if schema_validation_failed:
+                            generate_payload["schema_validation_failed"] = str(
+                                schema_validation_failed
+                            )[:240]
                     if proof_evaluation_contract:
                         generate_payload["proof_contract_incomplete"] = bool(
                             proof_contract_incomplete
