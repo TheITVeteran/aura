@@ -1837,8 +1837,7 @@ class LatentCortexEngine:
             and branch_probe_cost + safety_reserve <= budget.remaining_layer_apps
         ):
             branch_probe_texts: dict[int, str] = {}
-
-            def branch_score(branch: BranchState) -> float:
+            for branch in ensemble.branches:
                 probe = self._decode_probe(
                     branch,
                     cache,
@@ -1848,9 +1847,20 @@ class LatentCortexEngine:
                 )
                 text = self.tokenizer.decode(probe)
                 branch_probe_texts[branch.index] = text
-                return float(verifier(text))
+            from core.brain.llm.latent_cortex.blind_review import run_blind_review
 
-            winner = ensemble.select(score_fn=branch_score)
+            blind_scores, receipt.blind_review = run_blind_review(
+                branch_probe_texts,
+                verifier,
+                episode_id=receipt.episode_id,
+                objective_sha256=receipt.input_tokens_sha256,
+                isolation_receipt=ensemble.isolation_receipt(
+                    runner.cache_discipline_receipt()
+                ),
+            )
+            winner = ensemble.select(
+                score_fn=lambda branch: blind_scores[branch.index]
+            )
             if math.isfinite(float(winner.score)):
                 branch_verifier_score = float(winner.score)
             # CP180: selection is auditable against the PUBLIC contract —

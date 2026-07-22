@@ -25397,3 +25397,42 @@ count completion is approximately 53.5%-84.1%, with a midpoint planning
 estimate of 65.4%. Next: publish CP331, then implement blind role-separated
 review and prove candidate ownership cannot leak into review for SPARK-018.
 Final multi-hour soaks remain deferred until every shorter gate is green.
+
+## Checkpoint 2026-07-22-332: Branch Review Cannot See First-Answer Origin
+
+Aura now decodes the complete branch candidate set before review and evaluates
+it in a deterministic derangement. No branch occupies its original index
+position, and the reviewer callable receives candidate text only. Branch, role,
+operator, selected-branch, first-answer, ownership, doubt-prompt, and anonymous-
+ID metadata remain outside that callable boundary. A separate review copy
+removes explicit first/previous-answer, Aura-ownership, numbered-branch,
+requested-critique, and doubt-prompt framing; the actual answer candidate is not
+rewritten.
+
+The blind-review receipt binds the episode objective, certified fresh-context
+isolation evidence, deranged review order, private branch mapping, candidate and
+review-text commitments, redaction counts, and scores. The service validates
+the exact visible and forbidden fields, objective and isolation commitments,
+complete unique mapping, finite rounded scores, row shape, and receipt digest.
+Tampered order, score, objective, and policy receipts fail closed.
+
+Validation: the affected blind-review, correlation, structural-diversity,
+operator, engine, branch, wiring, escape, and epistemic-runtime suite passes
+202/202 in 105.02 seconds. After final objective/policy binding and the origin-
+only fallback repair, focused blind-review, verifier, probe-cache, and service
+tests pass 27/27. The final fixed-snapshot RLC, latent-cortex, global-workspace,
+GWT, and execution-controller ownership set passes 877/877 in 443.58 seconds.
+New-module Ruff, bytecode compilation, and `git diff --check` pass.
+
+SPARK-018 closes at the mechanism level. This proves an origin-blind callable
+boundary and validated mapping, not an independently trained critic or an
+ability to detect unchanged/correct decoys. It does not claim resident-32B task
+improvement, positive interaction, or frontier gain; the capability verdict
+remains negative/no-signal.
+
+This is total checkpoint record 393. The revised forecast remains 466-733 total
+records, now approximately 73-340 records after this checkpoint. Checkpoint-
+count completion is approximately 53.6%-84.3%, with a midpoint planning
+estimate of 65.6%. Next: publish CP332, then implement SPARK-019 decoy-balanced
+verification. Final multi-hour soaks remain deferred until every shorter gate
+is green.

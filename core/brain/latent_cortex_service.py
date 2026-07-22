@@ -840,6 +840,21 @@ class LatentCortexService:
                 )
             except (ImportError, TypeError, ValueError):
                 errors.append("correlated_support_unproven")
+        if receipt.get("branch_contract"):
+            try:
+                from core.brain.llm.latent_cortex.blind_review import (
+                    validate_blind_review_receipt,
+                )
+
+                validate_blind_review_receipt(
+                    receipt.get("blind_review"),
+                    n_branches=int(receipt.get("n_branches")),
+                    branch_scores=receipt.get("branch_scores"),
+                    isolation_receipt=receipt.get("branch_isolation"),
+                    objective_sha256=receipt.get("input_tokens_sha256"),
+                )
+            except (ImportError, TypeError, ValueError):
+                errors.append("blind_branch_review_unproven")
         exchange_interval = config.get("exchange_interval")
         if (
             type(exchange_interval) is int

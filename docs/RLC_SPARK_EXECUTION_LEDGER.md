@@ -90,6 +90,10 @@ After CP331, the published total is record 392: 74-341 forecast records remain,
 checkpoint-count completion is 53.5%-84.1%, and the midpoint planning estimate
 is 65.4%.
 
+After CP332, the published total is record 393: 73-340 forecast records remain,
+checkpoint-count completion is 53.6%-84.3%, and the midpoint planning estimate
+is 65.6%.
+
 ## Code-grounded baseline and ownership
 
 The four-slice static audit covered the neural core, epistemic/verifier paths,
@@ -99,7 +103,7 @@ baseline below is exhaustive over SPARK-001 through SPARK-072:
 
 - `ACCEPTED`: SPARK-001, SPARK-005, SPARK-006, SPARK-007, SPARK-008, SPARK-009,
   SPARK-010, SPARK-011, SPARK-012, SPARK-014, SPARK-015, SPARK-016,
-  SPARK-017.
+  SPARK-017, SPARK-018.
 - `PARTIAL`: SPARK-003,
   SPARK-021, SPARK-022, SPARK-023, SPARK-024, SPARK-025,
   SPARK-026, SPARK-027, SPARK-035, SPARK-039, SPARK-040, SPARK-041,
@@ -107,7 +111,7 @@ baseline below is exhaustive over SPARK-001 through SPARK-072:
   SPARK-056, SPARK-058, SPARK-060, SPARK-062, SPARK-063, SPARK-065, SPARK-066,
   SPARK-067.
 - `MISSING`: SPARK-002,
-  SPARK-018, SPARK-019, SPARK-020,
+  SPARK-019, SPARK-020,
   SPARK-028, SPARK-029, SPARK-030, SPARK-031, SPARK-032, SPARK-033,
   SPARK-034, SPARK-036, SPARK-037, SPARK-038, SPARK-043, SPARK-044,
   SPARK-045, SPARK-046, SPARK-047, SPARK-048, SPARK-049, SPARK-050,
@@ -407,9 +411,27 @@ before those dependencies close is not admissible.
   fixed ownership gate passes 873/873. A fresh deployment truthfully starts in
   `bootstrap_unmeasured`; it discounts exact duplicates but does not invent
   empirical correlation before checked outcomes accrue.
-- [ ] **SPARK-018 - Blind role-separated review.** Anonymize candidate origin,
-  remove ownership/doubt framing, and prove the reviewer cannot infer which
-  answer is Aura's first answer.
+- [x] **SPARK-018 - Blind role-separated review.** CP332 decodes every branch
+  candidate before review, then evaluates the closed batch in a deterministic
+  derangement that never places a branch in its original index position.
+  Reviewer callables receive candidate text only: branch, role, operator,
+  selected-branch, first-answer, ownership, doubt-prompt, and even anonymous-ID
+  metadata remain outside the callable boundary. Review copies remove explicit
+  first/previous-answer, Aura-ownership, numbered-branch, requested-critique,
+  and doubt-prompt cues without rewriting the final answer candidates.
+
+  A content-addressed receipt binds the objective, certified fresh-context
+  isolation evidence, review order, private branch mapping, candidate and
+  review-text commitments, redaction counts, and mapped scores. The service
+  validates the exact visible/forbidden-field policy, objective and isolation
+  commitments, derangement, complete unique mapping, finite rounded scores,
+  row structure, and receipt digest. Tests reject origin-order, score,
+  objective, and policy tampering. Origin-only candidates become an explicit
+  non-substantive review sentinel rather than aborting the RLC episode. The
+  final fixed ownership set passes 877/877 and focused verifier/service
+  regressions pass 27/27. This accepts origin blindness by construction and
+  validation; it does not prove critic independence, balanced-error detection,
+  task accuracy, or frontier gain.
 - [ ] **SPARK-019 - Decoy-balanced verification.** Mix correct, incorrect, and
   unchanged controls so reviewers cannot exploit the assumption that every
   requested review contains an error.
@@ -670,16 +692,21 @@ CP330 closes wording-independent structural support classes and exact service
 reconstruction; it does not change the negative capability verdict.
 CP331 closes causal correlated-support weighting and durable checked-outcome
 calibration; it does not change the negative capability verdict.
+CP332 closes first-answer/ownership blindness for branch review and makes the
+review policy service-verifiable; it does not change the negative capability
+verdict.
 
-Validation: focused correlation/durability/engine/service/exchange contracts
-pass 10/10 and the integrated affected contracts pass 199/199. The
-fixed-snapshot integrated RLC, latent-cortex, GWT, and execution-controller gate
-passes 873/873 in 451.68 seconds. Strict new-module Ruff, focused lint, bytecode
-compilation, and `git diff --check` pass. No resident 32B campaign was run, and
-the negative frontier verdict is unchanged.
+Validation: the affected integration suite passes 202/202 in 105.02 seconds.
+After final objective/policy binding and the origin-only fallback repair,
+focused blind-review, verifier, probe-cache, and service tests pass 27/27. The
+final fixed-snapshot RLC, latent-cortex, global-workspace, GWT, and execution-
+controller ownership set passes 877/877 in 443.58 seconds. Strict new-module
+Ruff, bytecode compilation, and `git diff --check` pass. No resident 32B
+campaign was run, and the negative frontier verdict is unchanged.
 
-This is total checkpoint record 392. The revised forecast remains 466-733 total
-records, now approximately 74-341 records after this checkpoint. Checkpoint-
-count completion is approximately 53.5%-84.1%, with a midpoint planning
-estimate of 65.4%. Next: publish CP331, then implement blind role-separated
-review whose evaluator cannot infer candidate ownership or first-answer origin.
+This is total checkpoint record 393. The revised forecast remains 466-733 total
+records, now approximately 73-340 records after this checkpoint. Checkpoint-
+count completion is approximately 53.6%-84.3%, with a midpoint planning
+estimate of 65.6%. Next: publish CP332, then implement decoy-balanced
+verification so review requests do not imply that a candidate contains an
+error.

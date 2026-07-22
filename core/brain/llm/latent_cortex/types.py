@@ -747,6 +747,7 @@ class EpisodeReceipt:
     # why the others did not — selection is auditable against the contract,
     # not just a scalar score. Empty when no verifier probes ran.
     branch_contract: list[dict[str, Any]] = field(default_factory=list)
+    blind_review: dict[str, Any] = field(default_factory=dict)
     # Fresh-context virtual-width proof. Exact hidden-state contents stay
     # private; commitments and cache-discipline counters prove that every
     # candidate existed before cross-branch exposure.
@@ -990,6 +991,7 @@ class EpisodeReceipt:
             "reverted_to_best": self.reverted_to_best,
             "branch_scores": [round(s, 6) for s in self.branch_scores],
             "branch_contract": [dict(row) for row in self.branch_contract],
+            "blind_review": dict(self.blind_review),
             "branch_isolation": dict(self.branch_isolation),
             "selected_branch": self.selected_branch,
             "exchanges": self.exchanges,

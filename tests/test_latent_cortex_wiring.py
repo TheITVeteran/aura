@@ -422,6 +422,7 @@ def test_handler_runs_full_episode_on_tiny_model(monkeypatch, tmp_path):
             "config": {"n_slots": 4, "n_branches": 2, "max_steps": 4, "decode_max_tokens": 6},
             "budget": {"wall_clock_s": 30.0},
             "domain": "unit",
+            "verifier_guidance": True,
         },
         model=model,
         tokenizer=StubTokenizer(),
@@ -449,12 +450,31 @@ def test_handler_runs_full_episode_on_tiny_model(monkeypatch, tmp_path):
     assert structure["independent_support_count"] == 2
     assert structure["wording_counted"] is False
     assert body["receipt"]["correlated_support"]["raw_support_count"] == 2
+    assert body["receipt"]["blind_review"]["deranged_order"] is True
+    assert body["receipt"]["blind_review"]["first_answer_designated"] is False
+    from core.brain.llm.latent_cortex.blind_review import (
+        validate_blind_review_receipt,
+    )
+
+    validate_blind_review_receipt(
+        body["receipt"]["blind_review"],
+        n_branches=2,
+        branch_scores=body["receipt"]["branch_scores"],
+        isolation_receipt=body["receipt"]["branch_isolation"],
+        objective_sha256=body["receipt"]["input_tokens_sha256"],
+    )
     contract_config = {
         "n_slots": 4,
         "n_branches": 2,
         "decode_max_tokens": 6,
     }
     assert "cognitive_operator_execution_unproven" not in (
+        LatentCortexService._receipt_contract_errors(
+            body["receipt"],
+            contract_config,
+        )
+    )
+    assert "blind_branch_review_unproven" not in (
         LatentCortexService._receipt_contract_errors(
             body["receipt"],
             contract_config,
@@ -473,6 +493,11 @@ def test_handler_runs_full_episode_on_tiny_model(monkeypatch, tmp_path):
     tampered = copy.deepcopy(body["receipt"])
     tampered["correlated_support"]["effective_support_count"] = 1.0
     assert "correlated_support_unproven" in (
+        LatentCortexService._receipt_contract_errors(tampered, contract_config)
+    )
+    tampered = copy.deepcopy(body["receipt"])
+    tampered["blind_review"]["ownership_framing_supplied"] = True
+    assert "blind_branch_review_unproven" in (
         LatentCortexService._receipt_contract_errors(tampered, contract_config)
     )
     assert body["requires_cache_clear"] is False
