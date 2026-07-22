@@ -519,6 +519,10 @@ class CognitiveEngine:
     def __init__(self, backend: Any = None):
         self.backend = backend
         self.thoughts: deque = deque(maxlen=_THOUGHT_HISTORY_LIMIT)
+        # Shutdown state. stop() sets this and every cognitive entry point
+        # consults it, so a stopped engine cannot keep thinking.
+        self._stopped = False
+        self._active_tasks: set = set()
         self._phases = []
         self._augmentors = []
         self.state_repository = None
@@ -1237,6 +1241,7 @@ class CognitiveEngine:
         Execute a cognitive cycle to produce a thought.
         This now drives the 8 phases to transform state.
         """
+        self._refuse_if_stopped("think")
         origin = self._resolve_origin(origin, context)
         mode = self._normalize_mode(mode)
         is_background = self._is_background_request(
@@ -3035,9 +3040,45 @@ class CognitiveEngine:
             await self._set_recovery_in_progress(False)
 
     def stop(self):
-        """Shutdown logic (BUG-19)."""
+        """Stop the engine: refuse new cognitive work and cancel what is running.
+
+        CP126 8d7a39ac. This emptied the phase list and nothing else. The
+        engine was not marked stopped, in-flight thinking was neither
+        cancelled nor awaited, and think / think_stream / generate kept
+        working afterwards — a "stopped" engine that still thinks, still
+        calls the router, and still publishes events. Shutdown that does not
+        stop anything is worse than none, because callers believe it did.
+        """
         logger.info("🛑 CognitiveEngine stopping...")
+        self._stopped = True
         self._phases = []
+        cancelled = 0
+        for task in list(getattr(self, "_active_tasks", ()) or ()):
+            try:
+                if not task.done():
+                    task.cancel()
+                    cancelled += 1
+            except (AttributeError, RuntimeError) as exc:
+                logger.debug("CognitiveEngine task cancel skipped: %s", exc)
+        try:
+            self._active_tasks = set()
+        except AttributeError:
+            pass
+        if cancelled:
+            logger.info(
+                "🛑 CognitiveEngine cancelled %d in-flight cognitive task(s).",
+                cancelled,
+            )
+
+    @property
+    def stopped(self) -> bool:
+        """True once stop() has run. Consulted before any cognitive work."""
+        return bool(getattr(self, "_stopped", False))
+
+    def _refuse_if_stopped(self, operation: str) -> None:
+        """Raise rather than perform cognitive work on a stopped engine."""
+        if self.stopped:
+            raise RuntimeError(f"cognitive_engine_stopped:{operation}")
 
     def _structured_evaluation_thought(
         self,
@@ -3231,6 +3272,7 @@ class CognitiveEngine:
 
     async def think_stream(self, objective: str, **kwargs):
         """Streaming thought generator via modular router."""
+        self._refuse_if_stopped("think_stream")
         container = get_container()
         router = container.get("llm_router")
         state = await self.state_repository.get_current()
@@ -3280,6 +3322,7 @@ class CognitiveEngine:
         Returns:
             The generated text response.
         """
+        self._refuse_if_stopped("generate")
         container = get_container()
         purpose = str(kwargs.get("purpose", "") or "").strip().lower()
         origin = str(kwargs.get("origin", "") or "").strip().lower()

@@ -352,6 +352,18 @@ def _terminal_complete(text: str) -> bool:
     return stripped.endswith((".", "?", "!", ")", "]", "}"))
 
 
+# How much of an objective is examined at all. The old cap of 32 silently
+# ignored everything a long objective asked for beyond that point.
+_MAX_OBJECTIVE_TERMS = 64
+# A compound answer must engage with the objective in proportion to how much
+# it asks, bounded so paraphrase is not punished.
+_MIN_OBJECTIVE_TERM_MATCHES = 3
+_MAX_REQUIRED_TERM_MATCHES = 8
+_OBJECTIVE_TERM_MATCH_RATIO = 0.25
+_MIN_OBJECTIVE_COVERAGE = 0.20
+_WIDE_OBJECTIVE_COVERAGE = 0.15
+
+
 def _listed_subjects(objective: str) -> list[dict[str, Any]]:
     subjects: list[dict[str, Any]] = []
     seen: set[tuple[str, ...]] = set()
@@ -441,7 +453,7 @@ def evaluate_latent_output(
         concept = _concept(token)
         if len(concept) >= 4 and token not in _STOPWORDS and concept not in objective_terms:
             objective_terms.append(concept)
-        if len(objective_terms) >= 32:
+        if len(objective_terms) >= _MAX_OBJECTIVE_TERMS:
             break
     answer_concepts = {_concept(token) for token in words}
     matched_objective_terms = [
@@ -488,7 +500,32 @@ def evaluate_latent_output(
         reasons.append("prompt_echo_contamination")
     if surface["protocol_artifact_detected"]:
         reasons.append("protocol_artifact_leakage")
-    if compound and (len(matched_objective_terms) < 2 or objective_coverage < 0.08):
+    # CP126 a3f8d861. A compound answer cleared this with TWO matched terms
+    # and 8% coverage, so a long multi-part response could mention two topic
+    # words, ignore almost every requested constraint, and still certify as
+    # connected to its objective. A floor that low is not a check.
+    #
+    # The requirement now scales with how much was asked: a richer objective
+    # has to be engaged with proportionally, subject to a bound so that
+    # legitimate paraphrase is not punished. Explicit obligations are
+    # handled separately and strictly by listed_subjects_uncovered above —
+    # this is the backstop for objectives that state no explicit list.
+    required_term_matches = max(
+        _MIN_OBJECTIVE_TERM_MATCHES,
+        min(
+            _MAX_REQUIRED_TERM_MATCHES,
+            math.ceil(len(objective_terms) * _OBJECTIVE_TERM_MATCH_RATIO),
+        ),
+    )
+    required_coverage = (
+        _MIN_OBJECTIVE_COVERAGE
+        if len(objective_terms) <= 8
+        else _WIDE_OBJECTIVE_COVERAGE
+    )
+    if compound and (
+        len(matched_objective_terms) < required_term_matches
+        or objective_coverage < required_coverage
+    ):
         reasons.append("objective_disconnected")
     if len(listed_subjects) >= 2 and listed_subject_coverage < 1.0:
         reasons.append("listed_subjects_uncovered")
@@ -523,6 +560,10 @@ def evaluate_latent_output(
         "objective_term_count": len(objective_terms),
         "matched_objective_terms": matched_objective_terms,
         "objective_term_coverage": round(objective_coverage, 6),
+        # Truncation is disclosed: a coverage ratio computed over a clipped
+        # term list describes less of the objective than it appears to.
+        "objective_terms_considered": len(objective_terms),
+        "objective_terms_truncated": len(objective_terms) >= _MAX_OBJECTIVE_TERMS,
         "listed_subjects": [subject["label"] for subject in listed_subjects],
         "covered_listed_subjects": covered_subjects,
         "listed_subject_coverage": round(listed_subject_coverage, 6),

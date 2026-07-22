@@ -831,15 +831,30 @@ class ScheduleLibrary:
         return best
 
     def status(self) -> dict[str, Any]:
+        """A snapshot of one ledger state, not a blend of several.
+
+        CP126 e7bc7faa. The record list and revision were copied under the
+        lock, but each record's ``trials`` was summed AFTER releasing it —
+        and the records are mutable, so a concurrent observation could raise
+        a trial count that the reported revision does not cover. The
+        returned counts therefore need not describe any state the ledger was
+        ever actually in, which is exactly what makes a status surface
+        untrustworthy for the gates that read it.
+
+        Everything is now read inside the lock, so the counts, the domain
+        breakdown and the revision are one consistent observation.
+        """
         domains: dict[str, int] = {}
         with self._lock:
-            records = list(self._records.items())
             revision = self._revision
-        for (domain, _schedule_hash), _record in records:
-            domains[domain] = domains.get(domain, 0) + 1
+            record_count = len(self._records)
+            observations = 0
+            for (domain, _schedule_hash), record in self._records.items():
+                domains[domain] = domains.get(domain, 0) + 1
+                observations += int(record.trials)
         return {
-            "records": len(records),
-            "observations": sum(record.trials for _key, record in records),
+            "records": record_count,
+            "observations": observations,
             "domains": domains,
             "revision": revision,
         }
@@ -850,12 +865,64 @@ class ScheduleLibrary:
 
 @dataclass
 class SearchResult:
+    """The winner of a schedule search, and what would let you re-run it.
+
+    CP126 74987822. The result carried only the best schedule, a scalar
+    score, an evaluation count and a hash/score history. That is enough to
+    USE the winner and not nearly enough to audit it: nothing recorded the
+    seed, who produced the scores, what budget was spent, or on which model
+    topology — so a reported gain could not be reproduced, and no score
+    could be attributed to an evaluator.
+    """
+
     best: LayerSchedule
     best_score: float
     evaluated: int
     history: list[dict[str, Any]] = field(default_factory=list)
     # Held-out score of the winner, when a separate evaluator was supplied.
     holdout_score: float | None = None
+    # ── Reproduction ────────────────────────────────────────────────────
+    # The seed and the RNG state after the search, so a rerun can be shown
+    # to follow the same trajectory rather than merely a similar one.
+    seed: int | None = None
+    rng_state_sha256: str = ""
+    # ── Attribution ─────────────────────────────────────────────────────
+    # Who produced the scores, and against what. A score with no evaluator
+    # identity cannot be challenged or replicated by anyone else.
+    evaluator_id: str = ""
+    evaluator_build_sha256: str = ""
+    topology: dict[str, Any] = field(default_factory=dict)
+    # ── Budget ──────────────────────────────────────────────────────────
+    # What the search was allowed and what it actually spent: a winner found
+    # after exhausting the budget is a different claim from one found early.
+    population: int = 0
+    generations: int = 0
+    budget_evaluations: int = 0
+    budget_exhausted: bool = False
+    wall_seconds: float = 0.0
+    # Per-evaluation receipts, when the caller supplied them. Empty means
+    # unreceipted, which callers must not read as clean.
+    evaluation_receipts: list[dict[str, Any]] = field(default_factory=list)
+
+    def reproduction_gaps(self) -> list[str]:
+        """What is missing before this result could be independently re-run.
+
+        Empty means the search is reproducible and attributable from the
+        result alone. Anything listed is a reason a reported gain should not
+        yet be treated as established.
+        """
+        gaps: list[str] = []
+        if self.seed is None:
+            gaps.append("seed_absent")
+        if not self.evaluator_id:
+            gaps.append("evaluator_unidentified")
+        if not self.topology:
+            gaps.append("topology_unrecorded")
+        if self.budget_evaluations <= 0:
+            gaps.append("budget_unrecorded")
+        if not self.evaluation_receipts:
+            gaps.append("per_evaluation_receipts_absent")
+        return gaps
 
     def generalization_gap(self) -> float | None:
         """Search score minus held-out score.

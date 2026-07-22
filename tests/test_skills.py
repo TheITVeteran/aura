@@ -364,7 +364,6 @@ async def test_capability_engine_uses_skill_timeout_budget_for_cognitive_governo
         staticmethod(lambda *_args, **_kwargs: False),
     )
     monkeypatch.setattr("core.capability_engine.resolve_metabolic_monitor", lambda default=None: None)
-    monkeypatch.setattr("core.capability_engine.resolve_state_repository", lambda default=None: None)
     monkeypatch.setattr("core.capability_engine.resolve_edi", lambda default=None: None)
 
     result = await engine.execute("slow_skill", {}, {"origin": "desktop"})
@@ -421,7 +420,6 @@ async def test_capability_engine_blocks_when_permission_model_check_fails(monkey
         staticmethod(lambda *_args, **_kwargs: False),
     )
     monkeypatch.setattr("core.capability_engine.resolve_metabolic_monitor", lambda default=None: None)
-    monkeypatch.setattr("core.capability_engine.resolve_state_repository", lambda default=None: None)
     monkeypatch.setattr("core.capability_engine.resolve_edi", lambda default=None: None)
 
     result = await engine.execute("typed_action", {}, {"origin": "desktop"})

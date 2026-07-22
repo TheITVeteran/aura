@@ -33,6 +33,7 @@ import random
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from core.brain.verifiers.foundry import wilson_lower_bound, wilson_upper_bound
@@ -306,6 +307,37 @@ def _coerce_solver_outcome(value: Any) -> tuple[bool, int | None]:
     if isinstance(value, bool):
         return value, None
     raise ValueError("solver must return bool or (bool, non-negative layer_apps)")
+
+
+def _coerce_role_outcome(value: Any) -> tuple[bool, int, float]:
+    """Strict contract for role runners: (success, layer_apps, divergence).
+
+    The two-field contract above does not cover divergence, so this extends
+    it rather than letting a third field arrive unchecked. Divergence must
+    be a non-negative real or NaN: NaN is the DOCUMENTED "no exchange
+    telemetry recorded" sentinel (downstream means filter to finite values,
+    and an all-NaN arm grades CONJECTURE for missing telemetry), while
+    infinity and negative values are not distances and are refused.
+    """
+    if not isinstance(value, tuple) or len(value) != 3:
+        raise ValueError(
+            "role solver must return (bool, non-negative layer_apps, divergence)"
+        )
+    success, layer_apps, divergence = value
+    if not isinstance(success, bool):
+        raise ValueError("role solver success must be boolean")
+    if type(layer_apps) is not int or layer_apps < 0:
+        raise ValueError("role solver layer-app receipt must be a non-negative integer")
+    if isinstance(divergence, bool) or not isinstance(divergence, (int, float)):
+        raise ValueError("role solver divergence must be a real number")
+    divergence_value = float(divergence)
+    if math.isinf(divergence_value) or (
+        math.isfinite(divergence_value) and divergence_value < 0.0
+    ):
+        raise ValueError(
+            "role solver divergence must be non-negative (or NaN for no telemetry)"
+        )
+    return success, layer_apps, divergence_value
 
 
 def _exact_paired_pvalue_greater(wins: int, losses: int) -> float:
@@ -977,6 +1009,7 @@ def run_factorial_ablations(
     tasks_by_family: dict[str, list[Task]],
     *,
     arms: tuple[str, ...] = FACTORIAL_ARMS,
+    journal_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Attribute any gain to a mechanism: every arm paired against vanilla.
 
@@ -985,7 +1018,16 @@ def run_factorial_ablations(
     named combination). Each arm earns its own paired claim vs vanilla on
     the SAME tasks, so "the full stack helps" can be decomposed into which
     ingredient actually carried the effect — the RSL gap analysis's
-    mechanism-attribution obligation."""
+    mechanism-attribution obligation.
+
+    CP126 51654706. This is the longest runner (arms x families x tasks) and
+    it kept every accumulator in memory, returning only after the final
+    callback. A crash discarded hours of completed trials, and the rerun
+    could differ because the callbacks carry order-sensitive state. Passing
+    ``journal_path`` makes each trial durable the moment it completes: a
+    resumed run attaches only to the same manifest, skips exactly what it
+    already did, and records a failing trial as a failure receipt instead of
+    letting one exception destroy the completed work beside it."""
     arm_names = ("vanilla", *arms)
     results: dict[str, dict[str, ArmResult]] = {
         arm: {family: ArmResult(name=arm) for family in tasks_by_family}
@@ -994,15 +1036,60 @@ def run_factorial_ablations(
     outcomes: dict[str, dict[str, list[tuple[bool, int]]]] = {
         arm: {family: [] for family in tasks_by_family} for arm in arm_names
     }
+    journal = None
+    if journal_path is not None:
+        from core.brain.llm.latent_cortex.trial_journal import TrialJournal
+
+        journal = TrialJournal(
+            journal_path,
+            manifest={
+                "runner": "run_factorial_ablations",
+                "arms": list(arm_names),
+                "families": {
+                    family: [
+                        f"{task.depth}:{task.seed}" for task in tasks
+                    ]
+                    for family, tasks in tasks_by_family.items()
+                },
+            },
+        ).open()
+
     for family, tasks in tasks_by_family.items():
-        for task in tasks:
+        for index, task in enumerate(tasks):
             for arm in arm_names:
-                success, cost = solve_arm(task, arm)
+                # CP126 78632859. This unpacked the solver's return directly
+                # and coerced it with bool()/int(): a non-empty string became
+                # a SUCCESS, a fractional cost was truncated into evidence,
+                # and a negative cost could reach the report. The strict
+                # contract every other runner uses rejects those instead of
+                # laundering them into results.
+                if journal is None:
+                    success, cost = _coerce_solver_outcome(solve_arm(task, arm))
+                else:
+                    key = f"{arm}:{family}:{index}:{task.depth}:{task.seed}"
+                    record = journal.run_trial(
+                        key,
+                        lambda task=task, arm=arm: dict(
+                            zip(
+                                ("success", "cost"),
+                                _coerce_solver_outcome(solve_arm(task, arm)),
+                            )
+                        ),
+                    )
+                    if not record.ok:
+                        # A trial that could not produce evidence must not be
+                        # counted as evidence. It stays in the journal as an
+                        # explicit failure and is excluded from the claim.
+                        raise ValueError(
+                            f"factorial_trial_failed:{key}:{record.error}"
+                        )
+                    success = bool(record.payload.get("success"))
+                    cost = record.payload.get("cost")
                 row = results[arm][family]
                 row.n += 1
-                row.successes += int(bool(success))
-                row.layer_apps += int(cost)
-                outcomes[arm][family].append((bool(success), int(cost)))
+                row.successes += int(success)
+                row.layer_apps += int(cost or 0)
+                outcomes[arm][family].append((success, int(cost or 0)))
     claims: dict[str, dict[str, Any]] = {}
     for arm in arms:
         paired: dict[str, list[PairedObservation]] = {}
@@ -1269,8 +1356,12 @@ def run_role_lesion(
         for family, tasks in tasks_by_family.items():
             rows = outcomes[arm].setdefault(family, [])
             for task in tasks:
-                ok, cost, divergence = solve_arm(task, arm)
-                rows.append((bool(ok), int(cost), float(divergence)))
+                # CP126 78632859. bool()/int()/float() on a solver's return
+                # accepts almost anything: a non-empty string is a success, a
+                # fractional cost truncates, and an arbitrary or non-finite
+                # divergence reaches the report as evidence.
+                ok, cost, divergence = _coerce_role_outcome(solve_arm(task, arm))
+                rows.append((ok, cost, divergence))
 
     paired: dict[str, list[PairedObservation]] = {}
     for family, tasks in tasks_by_family.items():

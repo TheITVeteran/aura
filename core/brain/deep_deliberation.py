@@ -40,10 +40,26 @@ class DeliberationResult:
     timestamp: float = field(default_factory=time.time)
 
 
+# A deliberation that fell back to the sharpened question is not a failure
+# of correctness, but a run of them means no model is reachable.
+_UNHEALTHY_FAILURE_STREAK = 3
+# Below this share of model-backed deliberations the engine is degraded: it
+# is still answering, but not by deliberating.
+_MIN_MODEL_BACKED_RATE = 0.25
+
+
 class DeepDeliberationEngine:
     def __init__(self, orchestrator: Any = None):
         self.orchestrator = orchestrator
         self._deliberations = 0
+        # CP126 6b3e534c: health has to be derived from something. These are
+        # the observations get_status() reports on.
+        self._model_backed = 0
+        self._unbacked = 0
+        self._failures = 0
+        self._consecutive_failures = 0
+        self._last_latency_s = 0.0
+        self._last_completed_at = 0.0
         logger.info("🪐 DeepDeliberationEngine initialized (Deep Thought lineage)")
 
     @staticmethod
@@ -81,6 +97,7 @@ class DeepDeliberationEngine:
         if type(foreground_request) is not bool:
             raise ValueError("foreground_request must be boolean")
         self._deliberations += 1
+        _started_at = time.time()
         refined = self._heuristic_refine(question)
         answer = ""
         used_model = False
@@ -210,6 +227,17 @@ class DeepDeliberationEngine:
                 "No model was available to answer, but the question has been sharpened. "
                 f"Answer the refined question: {refined}"
             )
+        # Record what this deliberation actually achieved. A run that
+        # produced only the sharpened-question fallback did NOT deliberate
+        # with a model, and health must be able to say so.
+        self._last_latency_s = max(0.0, time.time() - _started_at)
+        self._last_completed_at = time.time()
+        if used_model:
+            self._model_backed += 1
+            self._consecutive_failures = 0
+        else:
+            self._unbacked += 1
+            self._consecutive_failures += 1
         return DeliberationResult(
             original_question=question[:300],
             refined_question=refined,
@@ -220,7 +248,51 @@ class DeepDeliberationEngine:
         )
 
     def get_status(self) -> dict[str, Any]:
-        return {"deliberations": self._deliberations, "healthy": True}
+        """Health derived from what this engine actually managed to do.
+
+        CP126 6b3e534c. ``healthy`` was the literal ``True`` — it ignored
+        model availability, latency, failure streaks and whether any
+        deliberation had ever completed with a model behind it. A health
+        surface that cannot report ill health is not a health surface; it is
+        a constant that happens to be shaped like one, and every consumer
+        polling it was being told nothing.
+
+        An engine is healthy when it is either untested (nothing has been
+        asked of it yet — that is honestly unknown, not broken) or has been
+        completing deliberations with a real model recently enough to
+        believe it still can.
+        """
+        completed = self._model_backed + self._unbacked
+        success_rate = (self._model_backed / completed) if completed else None
+        untested = completed == 0
+        healthy = bool(
+            untested
+            or (
+                self._consecutive_failures < _UNHEALTHY_FAILURE_STREAK
+                and (success_rate or 0.0) >= _MIN_MODEL_BACKED_RATE
+            )
+        )
+        reasons: list[str] = []
+        if not untested:
+            if self._consecutive_failures >= _UNHEALTHY_FAILURE_STREAK:
+                reasons.append(
+                    f"consecutive_unbacked_deliberations={self._consecutive_failures}"
+                )
+            if (success_rate or 0.0) < _MIN_MODEL_BACKED_RATE:
+                reasons.append(f"model_backed_rate={success_rate:.2f}")
+        return {
+            "deliberations": self._deliberations,
+            "healthy": healthy,
+            # "unknown" is distinct from "well": nothing has been asked yet.
+            "state": "untested" if untested else ("healthy" if healthy else "degraded"),
+            "model_backed": self._model_backed,
+            "unbacked": self._unbacked,
+            "consecutive_unbacked": self._consecutive_failures,
+            "model_backed_rate": success_rate,
+            "last_latency_s": round(self._last_latency_s, 3),
+            "last_completed_at": self._last_completed_at,
+            "unhealthy_reasons": reasons,
+        }
 
 
 _INSTANCE: DeepDeliberationEngine | None = None

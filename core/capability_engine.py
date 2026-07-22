@@ -5566,8 +5566,29 @@ async def execute_tool(
     from core.runtime.service_access import optional_service
     engine: CapabilityEngine | None = optional_service("skill_router", default=None)
     if not engine:
-        engine = CapabilityEngine()
-        ServiceContainer.register_instance("skill_router", engine)
+        # CP126 128107a8. This used to CONSTRUCT a CapabilityEngine and
+        # late-register it as the canonical skill_router whenever the real
+        # one was missing. Tool execution is an authority path: building a
+        # fresh one during a fault can kick off synchronous discovery and
+        # publish a partially wired authority under the canonical name,
+        # which then outlives the fault. The absence of the runtime engine
+        # is a readiness failure and is reported as one.
+        _record_capability_degradation(
+            RuntimeError("skill_router service is not registered"),
+            action="refused tool execution rather than constructing an ad hoc engine",
+            severity="error",
+        )
+        return {
+            "ok": False,
+            "error": "capability engine is not ready",
+            "reason": "capability_engine_unavailable",
+            "tool": str(tool_name or ""),
+            "readiness": {
+                "service": "skill_router",
+                "registered": False,
+                "remedy": "the runtime must register skill_router during boot",
+            },
+        }
 
     params = parameters or {}
     raw_context = kwargs.pop("context", None)
