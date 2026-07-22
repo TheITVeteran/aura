@@ -246,6 +246,25 @@ def _shape_recurrent_rewards_from_ce_trails(
     }
 
 
+def _advantage_report_with_verifier_rate(
+    shaped_report: dict[str, Any],
+    verifier_report: dict[str, Any],
+) -> dict[str, Any]:
+    """Use shaped advantages while preserving verifier-rate telemetry."""
+
+    verifier_mean = float(verifier_report["mean_reward"])
+    if not 0.0 <= verifier_mean <= 1.0:
+        raise ValueError("verifier mean_reward must be a rate in [0, 1]")
+    report = dict(shaped_report)
+    report["shaped_mean_reward"] = report["mean_reward"]
+    report["shaped_reward_std"] = report.get("reward_std")
+    report["mean_reward"] = verifier_report["mean_reward"]
+    report["verifier_reward_std"] = verifier_report.get("reward_std")
+    report["verifier_degenerate"] = verifier_report.get("degenerate")
+    report["trajectory_shaped"] = True
+    return report
+
+
 def _build_task_split(
     *,
     task_source: str,
@@ -1709,8 +1728,12 @@ def main() -> int:
                         float(value)
                         for value in trajectory_credit_receipt["shaped_rewards"]
                     ]
-                    advantage_report = group_advantages(
+                    shaped_advantage_report = group_advantages(
                         effective_rewards, clip=config.advantage_clip
+                    )
+                    advantage_report = _advantage_report_with_verifier_rate(
+                        shaped_advantage_report,
+                        verifier_advantage_report,
                     )
                 loss_value: float | None = None
                 step_kind = "degenerate_group"

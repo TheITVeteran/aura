@@ -22,6 +22,7 @@ from tools.train_grpo import (
     _build_task_split,
     _calibration_token_budget,
     _dataset_payload,
+    _advantage_report_with_verifier_rate,
     _load_execution_spec,
     _point_estimate_delta,
     _publish_adapter_snapshot,
@@ -164,6 +165,24 @@ def test_recurrent_trajectory_credit_preserves_verifier_rewards():
     assert shaped["rows"][2]["shaping"] < 0.0
     assert len(shaped["ce_trails"]) == 3
     assert len(shaped["score_trails"]) == 3
+
+
+def test_recurrent_trajectory_credit_keeps_telemetry_mean_as_verifier_rate():
+    verifier_report = group_advantages([1.0, 1.0, 1.0, 1.0])
+    shaped_report = group_advantages([1.12, 1.05, 0.98, 0.91])
+
+    report = _advantage_report_with_verifier_rate(
+        shaped_report,
+        verifier_report,
+    )
+    telemetry = GRPOTelemetry()
+    telemetry.observe(report)
+
+    assert report["trajectory_shaped"] is True
+    assert report["mean_reward"] == 1.0
+    assert report["shaped_mean_reward"] > 1.0
+    assert report["degenerate"] is False
+    assert telemetry.state()["reward_sum"] == 1.0
 
 
 def test_task_gold_answer_text_prefers_bound_answer_contract():

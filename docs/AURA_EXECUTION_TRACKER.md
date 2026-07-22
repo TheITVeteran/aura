@@ -24286,3 +24286,37 @@ This is total checkpoint record 364. The forecast remains 394-661 total
 records, now approximately 30-297 records after this checkpoint. Next: lint,
 commit and push CP303, rebuild `/Applications/Aura.app`, keep CP294 isolated,
 and continue chat/action reliability hardening plus semantic-review closeout.
+
+## Checkpoint 2026-07-21-304: Resident GRPO Trajectory Credit Preserves Verifier-Rate Telemetry
+
+CP294 finished with a real failure receipt rather than a capability verdict.
+The detached supervisor exited cleanly, containment was verified, and the
+trainer failed at step 6 with `mean_reward must be a rate in [0, 1]`. The
+artifact shows recurrence sampling was active, the adapter was engaged, and the
+failure occurred during `trajectory_credit`. Baseline recurrent accuracy was
+0/36 and the explored calibration probes were 0.00, so CP294 does not prove
+frontier reasoning gains or resident-32B RLC benefit.
+
+The root defect was a metrics/domain split in the trainer. Trajectory shaping
+correctly adds bounded credit to verifier rewards for group-relative learning,
+and shaped rewards can move slightly below 0 or above 1. But GRPO telemetry and
+resume validation treat `mean_reward` as a verifier success rate. Feeding the
+shaped mean into telemetry made the preregistration validator reject the run.
+
+The trainer now preserves that separation: optimizer advantages may use shaped
+trajectory rewards, while telemetry/curriculum `mean_reward` remains the raw
+verifier-rate mean. Receipts now carry `shaped_mean_reward`,
+`shaped_reward_std`, `verifier_reward_std`, `verifier_degenerate`, and
+`trajectory_shaped` so later proof analysis can attribute when recurrent
+trajectory credit supplied the learning signal.
+
+Validation: trainer/GRPO contract tests pass 41/41, including a regression where
+shaped rewards exceed 1.0 while telemetry remains a valid verifier rate.
+Bytecode compilation passes for `tools/train_grpo.py` and the trainer contract
+tests, and `git diff --check` passes.
+
+This is total checkpoint record 365. The forecast remains 394-661 total
+records, now approximately 29-296 records after this checkpoint. Next: lint,
+commit and push CP304, rebuild `/Applications/Aura.app`, then prepare a fresh
+source-bound resident training/proof rerun instead of claiming CP294 as a
+positive result.
