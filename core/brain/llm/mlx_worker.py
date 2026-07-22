@@ -742,6 +742,40 @@ _SELF_CLAIM_BOUNDARY_SUFFIX = (
 )
 
 
+def _verify_contract_authority(job: dict[str, Any], contract_key: bytes | None) -> str:
+    """Refusal reason for this job's privileged contract selection, or "".
+
+    Thin wrapper so a missing contract_authority module can never take the
+    worker down: the consistency half of the check (mutually exclusive
+    output contracts) is reproduced locally, because resolving a
+    contradiction by source order is a defect regardless of whether the
+    authority layer is importable.
+    """
+    try:
+        from core.brain.llm.contract_authority import verify_job
+
+        return verify_job(job, contract_key)
+    except ImportError as exc:
+        _record_mlx_degradation(
+            exc,
+            action="contract authority unavailable; consistency check only",
+            severity="error",
+        )
+        active = [
+            name
+            for name in (
+                "strict_answer_contract",
+                "strict_value_contract",
+                "proof_evaluation_contract",
+                "operator_evidence_contract",
+            )
+            if bool(job.get(name))
+        ]
+        if len(active) > 1:
+            return "ambiguous_output_contract:" + ",".join(active)
+        return ""
+
+
 def _terminal_contract_refusal(
     job: dict[str, Any],
     response_text: Any,
@@ -3521,6 +3555,7 @@ def _mlx_worker_loop(
     substrate_mem: Any = None,
     steering_active_flag: Any = None,
     cancel_seq: Any = None,
+    contract_key: bytes | None = None,
 ):
     """Runs in a FULLY ISOLATED native subprocess via ForkServer.
 
@@ -3996,40 +4031,33 @@ def _mlx_worker_loop(
                 # source order and the caller received output shaped by a
                 # contract it had not selected. An ambiguous contract is a
                 # caller defect and is refused with its own correlated error.
-                _selected_contracts = [
-                    name
-                    for name, active in (
-                        ("strict_answer_contract", strict_answer_contract),
-                        ("strict_value_contract", strict_value_contract),
-                        ("proof_evaluation_contract", proof_evaluation_contract),
-                        ("operator_evidence_contract", operator_evidence_contract),
-                    )
-                    if active
-                ]
-                if len(_selected_contracts) > 1:
+                # CONTRACT AUTHORITY. Privileged contracts each select a
+                # different prompt builder, sampling regime, validator and
+                # output normalizer. Two things must hold before any of that
+                # takes effect: the selection must be internally consistent
+                # (asserting several exclusive contracts would otherwise be
+                # resolved by source order, handing the caller output shaped
+                # by a contract it never chose), and it must carry the
+                # authority of the lane that owns this worker rather than
+                # being a bare boolean anyone could set.
+                _contract_refusal = _verify_contract_authority(job, contract_key)
+                if _contract_refusal:
                     _record_mlx_degradation(
-                        ValueError(
-                            "ambiguous_output_contract:" + ",".join(_selected_contracts)
-                        ),
-                        action="refused generation because the job asserted multiple exclusive output contracts",
+                        ValueError(_contract_refusal),
+                        action="refused generation with an unsound privileged contract selection",
                         severity="error",
                     )
                     logger.error(
-                        "🛑 [WORKER] Job %s asserted %d mutually exclusive output "
-                        "contracts (%s); refusing rather than resolving by source order.",
+                        "🛑 [WORKER] Job %s refused: %s",
                         job.get("id"),
-                        len(_selected_contracts),
-                        ", ".join(_selected_contracts),
+                        _contract_refusal,
                     )
                     ipc_writer.put(
                         {
                             "id": job.get("id"),
                             "action": "generate",
                             "status": "error",
-                            "message": (
-                                "ambiguous_output_contract:"
-                                + ",".join(_selected_contracts)
-                            ),
+                            "message": _contract_refusal,
                         }
                     )
                     continue

@@ -2379,6 +2379,10 @@ class MLXLocalClient:
         self._worker_ipc_broken_reported = False
         self._last_progress_at = 0.0
         self._last_token_progress_at = 0.0
+        # Per-spawn key authorizing privileged output-contract selection.
+        # Empty until a worker is spawned; a client with no worker has
+        # nothing to authorize.
+        self._contract_key: bytes = b""
         self._latent_progress_by_request: dict[str, dict[str, Any]] = {}
         # Explicit drop accounting for the latent progress channel: state that
         # was refused (uncorrelated id) and state that aged out (window
@@ -2715,6 +2719,28 @@ class MLXLocalClient:
             "dropped_unknown": self._latent_progress_dropped_unknown,
             "evicted": self._latent_progress_evicted,
         }
+
+    def _authorize_job(self, job: Any, *, principal: str) -> Any:
+        """Sign a job's privileged contract selection before submission.
+
+        Single choke point: every path that puts work on the request queue
+        goes through here, so a privileged contract cannot reach the worker
+        without the authority of the lane that owns it. Jobs selecting
+        nothing privileged are returned untouched.
+        """
+        if not isinstance(job, dict) or not self._contract_key:
+            return job
+        try:
+            from core.brain.llm.contract_authority import sign_job
+
+            return sign_job(job, self._contract_key, principal=principal)
+        except (ImportError, AttributeError, TypeError, ValueError) as exc:
+            _record_mlx_degradation(
+                exc,
+                action="could not sign a privileged contract selection",
+                severity="error",
+            )
+            return job
 
     def _record_latent_progress(self, response: dict[str, Any]) -> None:
         """Retain bounded parent-side evidence for the active latent stage."""
@@ -4098,7 +4124,12 @@ class MLXLocalClient:
         self._pending_generations[req_id] = fut
         timed_out = False
         try:
-            await run_io_bound(self._req_q.put, req, True, 2.0)
+            await run_io_bound(
+                self._req_q.put,
+                self._authorize_job(req, principal="mlx_client.health_probe"),
+                True,
+                2.0,
+            )
             res = await _await_shared_future(fut, timeout_s=admitted_timeout)
         except (TimeoutError, BrokenPipeError, OSError, queue.Full) as exc:
             # queue.Full included: queue saturation is expected load
@@ -4333,7 +4364,12 @@ class MLXLocalClient:
                 first_token_hard_ceiling_s=bounded_timeout_s,
                 request_seq=request_seq,
             )
-            await run_io_bound(self._req_q.put, request, True, 2.0)
+            await run_io_bound(
+                self._req_q.put,
+                self._authorize_job(request, principal="mlx_client.structured_request"),
+                True,
+                2.0,
+            )
             try:
                 response = await _await_shared_future(
                     future,
@@ -4441,7 +4477,10 @@ class MLXLocalClient:
         try:
             await run_io_bound(
                 self._req_q.put,
-                {"id": req_id, "action": "set_expert_adapter", "path": path},
+                self._authorize_job(
+                    {"id": req_id, "action": "set_expert_adapter", "path": path},
+                    principal="mlx_client.expert_adapter",
+                ),
                 True,
                 2.0,
             )
@@ -4867,7 +4906,7 @@ class MLXLocalClient:
             )
             await run_io_bound(
                 self._req_q.put,
-                job,
+                self._authorize_job(job, principal="mlx_client.latent_reason"),
                 True,
                 min(2.0, max(0.5, deadline.remaining or 2.0)),
             )
@@ -5510,6 +5549,13 @@ class MLXLocalClient:
                 if project_root not in sys.path:
                     sys.path.insert(0, project_root)
 
+                # CP126 841bf5f7. A fresh contract-signing key per spawn: it
+                # is handed to the child at fork, never persisted, and is
+                # meaningless to any other worker. Privileged output
+                # contracts must be signed with it to take effect.
+                from core.brain.llm.contract_authority import new_contract_key
+
+                self._contract_key = new_contract_key()
                 p = ctx.Process(
                     target=_mlx_worker_loop,
                     args=(
@@ -5520,6 +5566,7 @@ class MLXLocalClient:
                         self._substrate_mem,
                         self._steering_active,
                         self._cancel_seq,
+                        self._contract_key,
                     ),
                     daemon=True,
                     name=f"MLXWorker-{os.path.basename(self.model_path)}",
@@ -7593,7 +7640,12 @@ class MLXLocalClient:
         try:
             if self._req_q is None:
                 raise BrokenPipeError("MLX request queue is closed")
-            await run_io_bound(self._req_q.put, req, True, enqueue_timeout)
+            await run_io_bound(
+                self._req_q.put,
+                self._authorize_job(req, principal="mlx_client.generate"),
+                True,
+                enqueue_timeout,
+            )
         except asyncio.CancelledError:
             await asyncio.shield(
                 self._finish_generation_ownership(

@@ -157,24 +157,58 @@ class TestExclusiveOutputContracts:
         return open("core/brain/llm/mlx_worker.py", encoding="utf-8").read()
 
     def test_ambiguous_contract_is_refused(self):
-        source = self._worker_source()
-        assert "ambiguous_output_contract:" in source
-        assert "refused generation because the job asserted multiple exclusive output contracts" in source
+        """Behavioural: the worker's own gate rejects a contradiction.
+
+        This used to assert on the inline block's source text. The check now
+        lives in contract_authority and is reached through
+        _verify_contract_authority, so the test exercises that path directly
+        — which is what actually protects the caller.
+        """
+        from core.brain.llm.mlx_worker import _verify_contract_authority
+
+        refusal = _verify_contract_authority(
+            {
+                "id": "req-1",
+                "action": "generate",
+                "strict_answer_contract": True,
+                "proof_evaluation_contract": True,
+            },
+            None,
+        )
+        assert refusal.startswith("ambiguous_output_contract:")
+
+    def test_a_single_contract_is_not_refused(self):
+        from core.brain.llm.mlx_worker import _verify_contract_authority
+
+        assert _verify_contract_authority(
+            {"id": "req-1", "action": "generate", "proof_evaluation_contract": True},
+            None,
+        ) == ""
 
     def test_all_four_exclusive_contracts_are_checked(self):
-        source = self._worker_source()
-        block = source.split("_selected_contracts = [", 1)[1][:600]
+        from core.brain.llm.contract_authority import EXCLUSIVE_CONTRACT_FIELDS
+        from core.brain.llm.mlx_worker import _verify_contract_authority
+
         for name in (
             "strict_answer_contract",
             "strict_value_contract",
             "proof_evaluation_contract",
             "operator_evidence_contract",
         ):
-            assert name in block, name
+            assert name in EXCLUSIVE_CONTRACT_FIELDS, name
+            # Each one conflicts with every other, not just the first.
+            for other in EXCLUSIVE_CONTRACT_FIELDS:
+                if other == name:
+                    continue
+                refusal = _verify_contract_authority(
+                    {"id": "r", "action": "generate", name: True, other: True}, None,
+                )
+                assert refusal.startswith("ambiguous_output_contract:"), (name, other)
 
     def test_refusal_is_correlated_to_the_request(self):
         source = self._worker_source()
-        block = source.split("ambiguous_output_contract:", 1)[1][:900]
+        block = source.split("_contract_refusal = _verify_contract_authority", 1)[1][:1200]
         # The caller must be able to resolve its own future.
         assert '"id": job.get("id")' in block
         assert '"status": "error"' in block
+        assert '"message": _contract_refusal' in block
