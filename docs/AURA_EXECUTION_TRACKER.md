@@ -23260,3 +23260,29 @@ remains 394-661 total records, now approximately 60-327 records after this
 checkpoint. Next: publish CP273, launch detached training from this contract,
 protect it from sleep, and monitor for the first real calibration/training
 signal.
+
+## Checkpoint 2026-07-21-274: CP273 Resident Training Relaunched
+
+The repaired CP273 resident-32B recurrent GRPO contract was launched through
+the detached supervisor from the committed `main` state. Launch receipt:
+supervisor PID 1979, child PID 1992, run directory
+`artifacts/closeout/latent_cortex/cp273_resident_32b_recurrent_grpo/detached-training`,
+plan `6a10c85e5a3b757a528497cdf8b8da07da06a4638fc0c7073d26963941225c67`,
+and command
+`ae36e934c73b0d4b1d2df674f22e289c003b032955942418ce2bfe10b144ec57`.
+
+The run cleared the two prior launch blockers: it got past the base-Python
+`cryptography` import failure, loaded the virtualenv packages/MLX in the child,
+verified 288 train / 36 held-out recurrence-curriculum tasks with disjoint
+prompts and identities, wrote the dataset/protocol/source-snapshot artifacts,
+adapted 24 projections, and stayed heartbeat-running beyond four minutes with
+`caffeinate -i -w 1992` attached by the supervisor plus an explicit
+`pmset noidle` wrapper. This is launch/stability evidence only: calibration had
+not emitted a score yet, no optimizer checkpoint had landed, and no reasoning
+gain or frontier claim is available.
+
+This is total checkpoint record 335. The forecast remains 394-661 total
+records, now approximately 59-326 records after this checkpoint. Next: monitor
+CP273 until the first calibration/training signal, repair the next concrete
+blocker if it fails, or freeze/fuse/evaluate only after a valid completion
+artifact exists.
