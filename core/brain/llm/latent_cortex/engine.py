@@ -1221,7 +1221,7 @@ class LatentCortexEngine:
         # ── Recurrent computation under the schedule program ────────────
         recurrence_budget_limited = False
         bytecode_events: list[dict[str, Any]] = []
-        last_probe_score: float | None = None
+        last_probe_scores: dict[int, float] = {}
         for op_index, op in enumerate(schedule.ops):
             op_kind = getattr(op, "kind", "window")
             if op_kind == "exchange":
@@ -1281,18 +1281,17 @@ class LatentCortexEngine:
                     )
                     if (
                         op.revert_on_drop
-                        and last_probe_score is not None
-                        and probe_score < last_probe_score - 1e-9
+                        and target.index in last_probe_scores
+                        and probe_score < last_probe_scores[target.index] - 1e-9
                     ):
-                        event["reverted_branches"] = (
-                            ensemble.revert_all_to_savepoint()
+                        event["reverted_branches"] = int(
+                            ensemble.revert_branch_to_savepoint(target)
                         )
                         receipt.flag("bytecode_probe_reverted")
                     elif math.isfinite(probe_score):
-                        last_probe_score = (
-                            probe_score
-                            if last_probe_score is None
-                            else max(last_probe_score, probe_score)
+                        last_probe_scores[target.index] = max(
+                            last_probe_scores.get(target.index, -math.inf),
+                            probe_score,
                         )
                 bytecode_events.append(event)
                 continue

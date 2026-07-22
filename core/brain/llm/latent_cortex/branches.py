@@ -206,7 +206,11 @@ class BranchEnsemble:
                 alpha_override=alpha_override,
             )
             residual = relative_residual(z_next, branch.z)
-            score = score_fn(branch) if score_fn is not None else None
+            score = (
+                self._score_candidate(branch, z_next, score_fn)
+                if score_fn is not None
+                else None
+            )
             decision = branch.halting.observe(
                 branch.steps, z_next, residual, score=score, budget=budget
             )
@@ -251,6 +255,32 @@ class BranchEnsemble:
             self._halt(branch, reason)
         return True
 
+    @staticmethod
+    def _score_candidate(
+        branch: BranchState,
+        z_next: Any,
+        score_fn: Callable[[BranchState], float],
+    ) -> float:
+        """Evaluate a candidate through the existing branch-scoring contract.
+
+        The callback historically receives ``BranchState``. Project the
+        candidate into that view only for the call, then restore the committed
+        state even if the verifier raises. This prevents a score for ``z_t``
+        from being attached to ``z_(t+1)`` without changing public callers.
+        """
+
+        prior_z = branch.z
+        prior_steps = branch.steps
+        branch.z = z_next
+        branch.workspace.update(z_next)
+        branch.steps = prior_steps + 1
+        try:
+            return float(score_fn(branch))
+        finally:
+            branch.z = prior_z
+            branch.workspace.update(prior_z)
+            branch.steps = prior_steps
+
     # ── Neural-bytecode instructions ────────────────────────────────────
     def exchange_now(self) -> bool:
         """Bytecode-forced exchange: communicate immediately when ≥2 live."""
@@ -261,21 +291,60 @@ class BranchEnsemble:
         return True
 
     def savepoint_all(self) -> int:
-        """Snapshot every live branch's latent state (one slot each)."""
+        """Snapshot every live branch's complete mutable execution state."""
         saved = 0
         for branch in self.active():
-            branch.savepoint = branch.z
+            branch.savepoint = {
+                "z": branch.z,
+                "role": branch.role,
+                "halted": branch.halted,
+                "halt_reason": branch.halt_reason,
+                "steps": branch.steps,
+                "score": branch.score,
+                "halting": branch.halting.snapshot(),
+                "escape": branch.escape.snapshot() if branch.escape is not None else None,
+            }
             branch.savepoint_steps = branch.steps
             saved += 1
         return saved
 
+    def revert_branch_to_savepoint(self, branch: BranchState) -> bool:
+        """Transactionally restore one branch to its most recent savepoint."""
+
+        snapshot = branch.savepoint
+        if not isinstance(snapshot, dict):
+            return False
+        required = {
+            "z",
+            "role",
+            "halted",
+            "halt_reason",
+            "steps",
+            "score",
+            "halting",
+            "escape",
+        }
+        if set(snapshot) != required:
+            raise ValueError("invalid branch savepoint")
+        if (snapshot["escape"] is None) != (branch.escape is None):
+            raise ValueError("branch escape configuration changed after savepoint")
+        branch.z = snapshot["z"]
+        branch.workspace.update(branch.z)
+        branch.role = str(snapshot["role"])
+        branch.halted = bool(snapshot["halted"])
+        branch.halt_reason = str(snapshot["halt_reason"])
+        branch.steps = int(snapshot["steps"])
+        branch.score = float(snapshot["score"])
+        branch.halting.restore(snapshot["halting"])
+        if branch.escape is not None:
+            branch.escape.restore(snapshot["escape"])
+        return True
+
     def revert_all_to_savepoint(self) -> int:
-        """Backtrack every branch that holds a savepoint to it."""
+        """Backtrack every branch that holds a savepoint transactionally."""
         reverted = 0
         for branch in self.branches:
-            if branch.savepoint is not None:
-                branch.z = branch.savepoint
-                branch.workspace.update(branch.savepoint)
+            if self.revert_branch_to_savepoint(branch):
                 reverted += 1
         return reverted
 

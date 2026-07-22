@@ -14,6 +14,10 @@ from mlx_lm.models.cache import KVCache  # noqa: E402
 from mlx_lm.models.qwen2 import Model, ModelArgs  # noqa: E402
 
 from core.brain.llm.latent_cortex.branches import BRANCH_ROLES, BranchEnsemble  # noqa: E402
+from core.brain.llm.latent_cortex.escape import (  # noqa: E402
+    BranchEscapeLadder,
+    EscapeConfig,
+)
 from core.brain.llm.latent_cortex.recurrence import WindowRunner  # noqa: E402
 from core.brain.llm.latent_cortex.schedules import (  # noqa: E402
     LayerSchedule,
@@ -386,6 +390,79 @@ def test_branches_step_exchange_and_halt(tiny_model):
     assert all(b["halt_reason"] for b in receipt["branches"])
 
 
+def test_step_score_observes_candidate_state_not_committed_predecessor(tiny_model):
+    cache = _prefill(tiny_model)
+    ensemble, runner, budget = _ensemble(tiny_model, cache, n_branches=1)
+    branch = ensemble.branches[0]
+    predecessor = branch.z
+    observed = {}
+
+    def score(candidate):
+        observed["z"] = candidate.z
+        observed["steps"] = candidate.steps
+        return 7.25
+
+    assert ensemble.step_all(
+        runner,
+        cache,
+        P_END,
+        C_START,
+        budget=budget,
+        score_fn=score,
+    )
+
+    assert not bool(mx.allclose(observed["z"], predecessor))
+    assert observed["steps"] == 1
+    assert branch.steps == 1
+    assert branch.halting.score_trail == [pytest.approx(7.25)]
+    assert bool(mx.allclose(branch.halting.best_state, observed["z"]))
+
+
+def test_branch_savepoint_restores_full_state_machine(tiny_model):
+    cache = _prefill(tiny_model)
+    ensemble, runner, budget = _ensemble(tiny_model, cache, n_branches=1)
+    branch = ensemble.branches[0]
+    branch.escape = BranchEscapeLadder(EscapeConfig(), branch.index)
+
+    assert ensemble.step_all(runner, cache, P_END, C_START, budget=budget)
+    assert ensemble.savepoint_all() == 1
+    saved_z = branch.z
+    saved_role = branch.role
+    saved_steps = branch.steps
+    saved_residuals = list(branch.halting.residual_trail)
+    saved_scores = list(branch.halting.score_trail)
+    saved_best_step = branch.halting.best_step
+    saved_best_score = branch.halting.best_score
+    saved_best_state = branch.halting.best_state
+
+    assert ensemble.step_all(runner, cache, P_END, C_START, budget=budget)
+    branch.halting.head_halts = 4
+    assert branch.escape.on_divergence(branch, "diverged_norm") == "escaped"
+    branch.score = 99.0
+    branch.halted = True
+    branch.halt_reason = "after_savepoint"
+
+    assert ensemble.revert_branch_to_savepoint(branch) is True
+    assert bool(mx.allclose(branch.z, saved_z))
+    assert branch.workspace.z is branch.z
+    assert branch.role == saved_role
+    assert branch.steps == saved_steps
+    assert branch.score == 0.0
+    assert branch.halted is False
+    assert branch.halt_reason == ""
+    assert branch.halting.residual_trail == saved_residuals
+    assert branch.halting.score_trail == saved_scores
+    assert branch.halting.best_step == saved_best_step
+    assert branch.halting.best_score == pytest.approx(saved_best_score)
+    assert branch.halting.best_state is saved_best_state
+    assert branch.halting.head_halts == 0
+    assert branch.escape.to_receipt() == {
+        "attempts": [],
+        "rungs_used": [],
+        "on_probation": False,
+    }
+
+
 def test_fixed_depth_performs_terminal_exchange_before_halting(tiny_model):
     cache = _prefill(tiny_model)
     ensemble, runner, budget = _ensemble(
@@ -599,7 +676,7 @@ def test_bytecode_program_executes_and_traces(tiny_model):
     assert events[1]["ran"] is True and events[1]["score"] == 0.8
     assert events[2]["done"] is True
     assert events[3]["ran"] is True and events[3]["score"] == 0.2
-    assert events[3]["reverted_branches"] == 2
+    assert events[3]["reverted_branches"] == 1
     assert "bytecode_probe_reverted" in result.receipt.honest_flags
     assert result.receipt.to_dict()["bytecode_events"] == events
 

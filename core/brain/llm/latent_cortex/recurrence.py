@@ -102,6 +102,38 @@ class HaltingController:
     halting_head: Any = None
     head_halts: int = 0
 
+    def snapshot(self) -> dict[str, Any]:
+        """Capture every mutable field that can influence later halting."""
+
+        return {
+            "residual_trail": tuple(self.residual_trail),
+            "score_trail": tuple(self.score_trail),
+            "best_step": self.best_step,
+            "best_score": self.best_score,
+            "best_state": self.best_state,
+            "head_halts": self.head_halts,
+        }
+
+    def restore(self, snapshot: dict[str, Any]) -> None:
+        """Restore a snapshot without replacing configuration or head identity."""
+
+        required = {
+            "residual_trail",
+            "score_trail",
+            "best_step",
+            "best_score",
+            "best_state",
+            "head_halts",
+        }
+        if not isinstance(snapshot, dict) or set(snapshot) != required:
+            raise ValueError("invalid halting-controller snapshot")
+        self.residual_trail = [float(value) for value in snapshot["residual_trail"]]
+        self.score_trail = [float(value) for value in snapshot["score_trail"]]
+        self.best_step = int(snapshot["best_step"])
+        self.best_score = float(snapshot["best_score"])
+        self.best_state = snapshot["best_state"]
+        self.head_halts = int(snapshot["head_halts"])
+
     def observe(
         self,
         step: int,
@@ -153,10 +185,13 @@ class HaltingController:
             and not self.config.fixed_depth
             and step + 1 >= self.config.min_steps
         ):
-            probability = float(self.halting_head.halt_probability(z_next))
-            if probability >= self.halting_head.threshold:
-                self.head_halts += 1
-                return HaltDecision(True, "head_satisfied")
+            identity_probe = getattr(self.halting_head, "is_identity", None)
+            identity = bool(identity_probe()) if callable(identity_probe) else False
+            if not identity:
+                probability = float(self.halting_head.halt_probability(z_next))
+                if probability >= self.halting_head.threshold:
+                    self.head_halts += 1
+                    return HaltDecision(True, "head_satisfied")
         return HaltDecision(False)
 
     def final_state(self, z_last) -> tuple[Any, bool]:

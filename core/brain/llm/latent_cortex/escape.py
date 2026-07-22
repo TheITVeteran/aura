@@ -93,6 +93,73 @@ class BranchEscapeLadder:
             and len(self._used_rungs) < len(ESCAPE_RUNGS)
         )
 
+    def snapshot(self) -> dict[str, Any]:
+        """Capture the complete mutable escape state for transactional rewind."""
+
+        attempts = tuple(
+            {
+                "rung": attempt.rung,
+                "trigger": attempt.trigger,
+                "at_step": attempt.at_step,
+                "pre_best_score": attempt.pre_best_score,
+                "outcome": attempt.outcome,
+            }
+            for attempt in self.attempts
+        )
+        probation = None
+        if self._probation is not None:
+            attempt = self._probation["attempt"]
+            try:
+                attempt_index = self.attempts.index(attempt)
+            except ValueError as exc:  # pragma: no cover - internal invariant
+                raise RuntimeError("escape probation attempt is not registered") from exc
+            probation = {
+                "attempt_index": attempt_index,
+                "pre_best_score": float(self._probation["pre_best_score"]),
+                "pre_best_state": self._probation["pre_best_state"],
+                "deadline_step": int(self._probation["deadline_step"]),
+            }
+        return {
+            "attempts": attempts,
+            "used_rungs": frozenset(self._used_rungs),
+            "probation": probation,
+        }
+
+    def restore(self, snapshot: dict[str, Any]) -> None:
+        """Restore a snapshot while retaining this branch's fixed configuration."""
+
+        required = {"attempts", "used_rungs", "probation"}
+        if not isinstance(snapshot, dict) or set(snapshot) != required:
+            raise ValueError("invalid escape-ladder snapshot")
+        attempts = [
+            EscapeAttempt(
+                rung=str(item["rung"]),
+                trigger=str(item["trigger"]),
+                at_step=int(item["at_step"]),
+                pre_best_score=float(item["pre_best_score"]),
+                outcome=str(item["outcome"]),
+            )
+            for item in snapshot["attempts"]
+        ]
+        used_rungs = {str(value) for value in snapshot["used_rungs"]}
+        if any(rung not in ESCAPE_RUNGS for rung in used_rungs):
+            raise ValueError("escape snapshot contains an unknown rung")
+        probation_data = snapshot["probation"]
+        probation = None
+        if probation_data is not None:
+            index = int(probation_data["attempt_index"])
+            if index < 0 or index >= len(attempts):
+                raise ValueError("escape snapshot probation index is invalid")
+            probation = {
+                "attempt": attempts[index],
+                "pre_best_score": float(probation_data["pre_best_score"]),
+                "pre_best_state": probation_data["pre_best_state"],
+                "deadline_step": int(probation_data["deadline_step"]),
+            }
+        self.attempts = attempts
+        self._used_rungs = used_rungs
+        self._probation = probation
+
     def _stalled(self, branch) -> bool:
         patience = max(1, int(self.config.stall_patience))
         trail = branch.halting.residual_trail

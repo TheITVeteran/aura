@@ -53,8 +53,9 @@ class HaltingHead:
 
         self.hidden_size = hidden_size
         self.threshold = float(threshold)
-        # Zero weight => logit 0 => p = 0.5 everywhere. Combined with the
-        # minimum-steps floor, an untrained head never changes behaviour.
+        # Zero weight => logit 0 => p = 0.5 everywhere. Callers explicitly
+        # treat this identity parameterization as inert; relying on threshold
+        # comparison alone is incorrect when threshold == 0.5.
         self.weight = mx.zeros((hidden_size, 1))
         self.bias = mx.zeros((1,))
 
@@ -165,10 +166,15 @@ def decide_steps(
     probabilities: list[float] = []
     chosen = min(len(states), policy.max_steps)
     halted_early = False
+    identity = head.is_identity()
     for index, state in enumerate(states[: policy.max_steps], start=1):
         probability = float(head.halt_probability(state))
         probabilities.append(round(probability, 6))
-        if index >= policy.min_steps and probability >= head.threshold:
+        if (
+            not identity
+            and index >= policy.min_steps
+            and probability >= head.threshold
+        ):
             chosen = index
             halted_early = index < min(len(states), policy.max_steps)
             break

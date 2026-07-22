@@ -24668,3 +24668,38 @@ records, now approximately 91-358 records after this checkpoint. Next: finish
 the code-grounded four-slice audit, add exact owners and gap classifications,
 then begin the first dependency-ordered implementation checkpoint without
 launching a stale-source resident campaign.
+
+## Checkpoint 2026-07-22-315: Recurrent Branch State Transitions Are Transactional
+
+The recurrent branch engine no longer scores a proposed state through the
+previous committed state. `BranchEnsemble.step_all()` now projects the candidate
+latent tensor and candidate step into the existing scoring contract for the
+duration of the callback, then restores the committed view even if the scorer
+raises. The score attached to `z_(t+1)` therefore measures `z_(t+1)`, which is a
+required precondition for learned acceptance, best-state retention, and later
+confidence-bound replacement.
+
+Neural-bytecode savepoints now capture and restore the complete mutable branch
+state machine: latent/workspace state, role, halt state and reason, step and
+score, halting trails and best-state metadata, learned-head halt count, and the
+escape ladder including probation. Probe regressions revert only the measured
+branch and compare against that branch's own prior best probe score; one weak
+candidate can no longer erase unrelated branches' progress. Snapshot schemas
+are exact and fail closed if branch configuration changes underneath them.
+
+An untrained learned-halting head is now explicitly inert. Zero initialization
+produces probability 0.5, so threshold equality at the default 0.5 can no longer
+halt every episode at its minimum depth while claiming identity behavior.
+
+Validation: the focused state-transition, escape, and halting slice passed
+90/90. The broader latent engine, recurrence, schedules/branches, escape
+telemetry, adaptive-halting, learned-halting bridge, attachment, and live-wiring
+slice passed 216/216 in 164.07 seconds. `git diff --check` passes. This repairs
+foundational correctness but does not by itself close a Spark mechanism or make
+a reasoning-gain claim.
+
+This is total checkpoint record 376. The revised forecast remains 466-733 total
+records, now approximately 90-357 records after this checkpoint. Next: publish
+this transaction-integrity checkpoint, finish the four-slice code audit and
+ownership map, then repair verifier/learning truth semantics before expanding
+the unified epistemic state.

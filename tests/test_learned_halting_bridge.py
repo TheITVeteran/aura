@@ -189,7 +189,7 @@ def test_controller_without_a_head_is_the_old_policy():
 def test_an_attached_untrained_head_changes_nothing():
     """Attaching the mechanism must grant nothing -- the head is zero-init."""
     controller = _controller()
-    controller.halting_head = HaltingHead(HIDDEN, threshold=0.75)
+    controller.halting_head = HaltingHead(HIDDEN, threshold=0.5)
     decision = controller.observe(0, mx.ones((1, 4, HIDDEN)), residual=0.5)
     assert decision.should_halt is False
     assert controller.head_halts == 0

@@ -34,8 +34,12 @@ def test_untrained_head_never_changes_behaviour():
     """Allocation is earned, not imposed at attach time."""
     head = HaltingHead(HIDDEN)
     assert head.is_identity()
-    # p = 0.5 everywhere, below the default 0.5 threshold boundary check
+    # p = 0.5 everywhere, exactly on the default threshold. Identity is an
+    # explicit state, so equality at the threshold cannot activate it.
     assert float(head.halt_probability(mx.ones((1, 4, HIDDEN)))) == pytest.approx(0.5)
+    report = decide_steps(head, _states(8), HaltingPolicy(min_steps=1, max_steps=8))
+    assert report["steps"] == 8
+    assert report["halted_early"] is False
 
 
 def test_head_stays_small():
