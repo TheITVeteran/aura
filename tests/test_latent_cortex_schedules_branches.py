@@ -676,6 +676,8 @@ def test_bytecode_program_executes_and_traces(tiny_model):
     assert events[1]["ran"] is True and events[1]["score"] == 0.8
     assert events[2]["done"] is True
     assert events[3]["ran"] is True and events[3]["score"] == 0.2
+    assert events[3]["branch"] == events[1]["branch"]
+    assert events[3]["previous_score"] == 0.8
     assert events[3]["reverted_branches"] == 1
     assert "bytecode_probe_reverted" in result.receipt.honest_flags
     assert result.receipt.to_dict()["bytecode_events"] == events

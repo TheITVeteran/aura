@@ -53,7 +53,8 @@ _ANSWER_FACETS = {
 _STOPWORDS = {
     "about", "after", "again", "against", "also", "among", "answer", "because",
     "before", "being", "both", "could", "design", "does", "each", "every", "explain",
-    "from", "have", "into", "itself", "more", "most", "other", "should", "some", "stronger",
+    "enumerate", "from", "have", "into", "itself", "list", "more", "most", "other",
+    "should", "some", "stronger",
     "such", "than", "that", "their", "then", "there", "these", "they", "this", "through",
     "under", "using", "verify", "what", "when", "where", "which", "while", "with", "would",
 }
@@ -312,6 +313,9 @@ def _concept(token: str) -> str:
         "cancelled": "cancel",
         "canceled": "cancel",
         "cancelling": "cancel",
+        "verification": "verify",
+        "verifications": "verify",
+        "verified": "verify",
         "timeouts": "timeout",
         "restarted": "restart",
         "restarts": "restart",
@@ -510,11 +514,14 @@ def evaluate_latent_output(
     # legitimate paraphrase is not punished. Explicit obligations are
     # handled separately and strictly by listed_subjects_uncovered above —
     # this is the backstop for objectives that state no explicit list.
-    required_term_matches = max(
-        _MIN_OBJECTIVE_TERM_MATCHES,
-        min(
-            _MAX_REQUIRED_TERM_MATCHES,
-            math.ceil(len(objective_terms) * _OBJECTIVE_TERM_MATCH_RATIO),
+    required_term_matches = min(
+        len(objective_terms),
+        max(
+            _MIN_OBJECTIVE_TERM_MATCHES,
+            min(
+                _MAX_REQUIRED_TERM_MATCHES,
+                math.ceil(len(objective_terms) * _OBJECTIVE_TERM_MATCH_RATIO),
+            ),
         ),
     )
     required_coverage = (

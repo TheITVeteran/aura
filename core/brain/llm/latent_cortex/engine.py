@@ -101,7 +101,7 @@ class _FastWeightCleanupError(RuntimeError):
     """The resident model could not be proven clean after an episode."""
 
 
-class _LatentEpisodeCancelled(Exception):
+class _LatentEpisodeCancelledError(Exception):
     """Cooperative cancellation observed at a checkpoint-safe boundary."""
 
 
@@ -214,7 +214,7 @@ class LatentCortexEngine:
         if self._cancel_requested(cancel_check):
             receipt.flag("soft_cancelled")
             receipt.halting_reason = receipt.halting_reason or f"cancelled_after_{stage}"
-            raise _LatentEpisodeCancelled(str(stage))
+            raise _LatentEpisodeCancelledError(str(stage))
         return now
 
     # ── Tokenization ────────────────────────────────────────────────────
@@ -594,7 +594,7 @@ class LatentCortexEngine:
         extension = contract_grace if contract_required else grace_tokens
         for index in range(max(1, int(limit) + extension)):
             if self._cancel_requested(cancel_check):
-                raise _LatentEpisodeCancelled("decode")
+                raise _LatentEpisodeCancelledError("decode")
             if token in eos:
                 termination = "eos"
                 break
@@ -895,7 +895,7 @@ class LatentCortexEngine:
                     severity="critical",
                 )
                 failure_reason = "fast_weight_cleanup_unproven"
-            except _LatentEpisodeCancelled:
+            except _LatentEpisodeCancelledError:
                 receipt.flag("soft_cancelled")
                 receipt.halting_reason = receipt.halting_reason or "soft_cancelled"
                 failure_reason = "soft_cancelled"
@@ -951,7 +951,7 @@ class LatentCortexEngine:
                         )
                         if decode_termination.startswith("budget_"):
                             receipt.flag(f"decode_{decode_termination}")
-                    except _LatentEpisodeCancelled:
+                    except _LatentEpisodeCancelledError:
                         receipt.flag("soft_cancelled")
                         receipt.halting_reason = (
                             receipt.halting_reason or "soft_cancelled"
@@ -1078,7 +1078,7 @@ class LatentCortexEngine:
         )
         stage_started = time.monotonic()
         if self._cancel_requested(cancel_check):
-            raise _LatentEpisodeCancelled("admission")
+            raise _LatentEpisodeCancelledError("admission")
         cache = self._fresh_cache()
         runner = WindowRunner(self.model.model, budget)
         decode_limit = (
@@ -1256,6 +1256,14 @@ class LatentCortexEngine:
                     receipt.flag("bytecode_probe_skipped_budget")
                 else:
                     candidates = ensemble.active() or list(ensemble.branches)
+                    if op.revert_on_drop and last_probe_scores:
+                        comparable = [
+                            branch
+                            for branch in candidates
+                            if branch.index in last_probe_scores
+                        ]
+                        if comparable:
+                            candidates = comparable
                     target = min(
                         candidates,
                         key=lambda b: (
@@ -1272,17 +1280,23 @@ class LatentCortexEngine:
                         bridge_tokens=bridge_tokens,
                     )
                     probe_score = float(verifier(self.tokenizer.decode(probe)))
+                    previous_score = last_probe_scores.get(target.index)
                     event.update(
                         {
                             "ran": True,
                             "branch": target.index,
                             "score": round(probe_score, 6),
+                            "previous_score": (
+                                round(previous_score, 6)
+                                if previous_score is not None
+                                else None
+                            ),
                         }
                     )
                     if (
                         op.revert_on_drop
-                        and target.index in last_probe_scores
-                        and probe_score < last_probe_scores[target.index] - 1e-9
+                        and previous_score is not None
+                        and probe_score < previous_score - 1e-9
                     ):
                         event["reverted_branches"] = int(
                             ensemble.revert_branch_to_savepoint(target)

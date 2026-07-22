@@ -24785,3 +24785,50 @@ This is total checkpoint record 378. The revised forecast remains 466-733 total
 records, now approximately 88-355 records after this checkpoint. Next: publish
 this truth-semantics checkpoint, then build SPARK-005 through SPARK-013 around a
 single transactional epistemic state rather than adding another side ledger.
+
+## Checkpoint 2026-07-22-318: Epistemic State Is Canonical And Transactional
+
+The RLC now has one strict typed state object for the complete in-episode
+epistemic surface: immutable problem evidence, hypotheses, claims and premises,
+support and contradiction edges, observations, uncertainty intervals,
+attempted cognitive operations, compute/tool budgets, and the accepted answer's
+claim/evidence dependencies. Records are frozen and bounded; identifiers,
+text, enums, timestamps, digests, arrays, references, contradiction symmetry,
+and the claim DAG are validated before a state can become current.
+
+Every accepted state has deterministic canonical JSON, a SHA-256 content
+identity, a parent hash, and an exact-field parser. Unknown fields, scalar
+values masquerading as arrays, invalid record types, noncanonical JSON,
+content tampering, and state-hash tampering fail closed. Record insertion order
+cannot change state identity. Copy-on-write transactions reject duplicate IDs,
+budget-cap changes, budget refunds, operations bound to another base state, and
+stale commits; an invalid candidate leaves the current state object unchanged.
+
+The broad gate exposed two existing cross-surface defects before acceptance.
+Probe rollback could compare different branches after exchange, so rollback is
+now bound to a previously measured branch and its previous score is disclosed
+in the receipt. The output-quality gate also counted the instruction word
+`list` as topical content and failed to normalize verification language, which
+falsely rejected a complete release checklist; instruction-facet and topical-
+coverage accounting are now separated. The touched engine's internal
+cancellation exception was renamed to satisfy the checked exception contract.
+
+Validation: the new strict-state contracts pass 11/11; the affected state,
+schedule/branch, and output-quality slice passes 61/61; and the complete RLC,
+latent-cortex, GWT coupling, execution-controller, self-improvement, campaign,
+runtime-identity, persistence, canary, and proof-integrity gate passes 738/738
+in 421.10 seconds. The first full run was 736 passed / 2 failed and is retained
+as repair evidence rather than omitted. Focused Ruff checks and `git diff
+--check` pass.
+
+Only SPARK-005 closes here. Durable journal/recovery, descendant invalidation,
+evidence-scope enforcement, measured calibration, selective memory, live
+runtime wiring, causal ablation, and resident-32B gains remain open and receive
+no implicit credit.
+
+This is total checkpoint record 379. The revised forecast remains 466-733 total
+records, now approximately 87-354 records after this checkpoint. Checkpoint-
+count completion is approximately 51.7%-81.3%, with a midpoint planning
+estimate of 63.2%. Next: publish CP318, then extend the same state authority
+with descendant invalidation and a crash-consistent append journal/recovery
+path before connecting live producers and consumers.
