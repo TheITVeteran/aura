@@ -170,6 +170,32 @@ def _certify(bundle: dict, *, raw_artifact_receipt: dict | None = None) -> dict:
     )
 
 
+# A control that is genuinely vanilla declares every enhancement OFF and
+# pins its decoding, so "unenhanced" is a checked claim rather than an
+# unmentioned one.
+_VANILLA_CONTROL_MANIFEST = {
+    "fast_weights_applied": False,
+    "latent_opt_applied": False,
+    "recurrence_adapter_applied": False,
+    "retrieval_applied": False,
+    "nonparametric_memory_applied": False,
+    "contrastive_decoding_applied": False,
+    "speculative_decoding_applied": False,
+    "expert_adapter_applied": False,
+    "affective_steering_active": False,
+    "prompt_cache_reused": False,
+    "decode_temperature": 0.0,
+    "decode_top_p": 1.0,
+    "decode_repetition_penalty_applied": 1.0,
+}
+
+_CONTROL_DECODE_SPEC = {
+    "decode_temperature": 0.0,
+    "decode_top_p": 1.0,
+    "decode_repetition_penalty_applied": 1.0,
+}
+
+
 def _bundle(
     *,
     include_attestation: bool = True,
@@ -181,6 +207,10 @@ def _bundle(
     prereg = {
         "protocol_id": "rlc-frontier-v1",
         "comparison_kind": comparison_kind,
+        # The decoding the control is preregistered to run. A control run
+        # hotter or wider than the treatment is not a control of the same
+        # thing, so this is declared up front and checked per trial.
+        "control_decode_spec": dict(_CONTROL_DECODE_SPEC),
         "architecture_freeze_sha256": "a" * 64,
         "tool_policy_sha256": "c" * 64,
         "compute_estimator_sha256": "e" * 64,
@@ -287,11 +317,27 @@ def _bundle(
                             "mode": "vanilla",
                             "latent_cortex_enabled": False,
                             "params_unchanged": True,
+                            # CP126 6e1ef7be: a published claim needs the
+                            # digest evidence, not the boolean above.
+                            "weight_integrity": {
+                                "algorithm": "sha256",
+                                "version": 1,
+                                "params_before": canonical_sha256(
+                                    ["control-params", trial_id]
+                                ),
+                                "params_after": canonical_sha256(
+                                    ["control-params", trial_id]
+                                ),
+                            },
                             "checkpoint_fingerprint": checkpoint,
                             "checkpoint_fingerprint_method": "sha256",
                             "checkpoint_file_count": 8,
                             "worker_boot_id": "boot-live-1",
                             "installed_app_build_sha256": app_build,
+                            # CP126 869a0ce4: a control is vanilla only when
+                            # every enhancement is positively declared OFF.
+                            # An absent field is undeclared, not disabled.
+                            **_VANILLA_CONTROL_MANIFEST,
                         }
                     ),
                 }
@@ -304,6 +350,12 @@ def _bundle(
         "preregistration_sha256": canonical_sha256(prereg),
         "resident_model": {
             "parameter_count": 32_000_000_000,
+            # CP126 8923b135: a count inside the 30-40B window does not say
+            # WHICH 32B-class model this is; quantization and architecture
+            # change what the weights compute.
+            "architecture": "qwen2",
+            "quantization_bits": 4,
+            "quantization_group_size": 64,
             # The class claim must be derived from the hashed checkpoint
             # manifest, not asserted as a bare integer.
             "parameter_count_source": "checkpoint_manifest",

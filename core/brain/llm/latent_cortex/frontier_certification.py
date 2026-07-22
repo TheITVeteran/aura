@@ -174,6 +174,14 @@ def _validate_resident_model(
     # digest must match the declared checkpoint fingerprint.
     if resident.get("parameter_count_source") != "checkpoint_manifest":
         reasons.append("resident_parameter_count_not_manifest_derived")
+    # CP126 8923b135. A count inside the 30-40B window, even a
+    # manifest-derived one, does not establish WHICH 32B-class model this is:
+    # quantization layout and architecture change what the weights compute,
+    # and two runtimes can share a parameter count while serving materially
+    # different functions. The class claim must carry that identity.
+    for required_field in ("architecture", "quantization_bits", "quantization_group_size"):
+        if not resident.get(required_field):
+            reasons.append(f"resident_identity_incomplete:{required_field}")
     manifest_digest = str(resident.get("checkpoint_manifest_sha256") or "")
     if not _is_sha256(manifest_digest):
         reasons.append("resident_checkpoint_manifest_missing")
@@ -325,6 +333,113 @@ def _validate_treatment_receipt(
     return episode_id
 
 
+# Components that change what a "vanilla" control actually computes. Each
+# must be positively OFF in a control receipt: an absent field is treated as
+# undeclared, not as disabled, because a control that never reported its
+# configuration cannot be shown to have been unenhanced.
+_CONTROL_MUST_BE_DISABLED: tuple[tuple[str, Any], ...] = (
+    ("fast_weights_applied", False),
+    ("latent_opt_applied", False),
+    ("recurrence_adapter_applied", False),
+    ("retrieval_applied", False),
+    ("nonparametric_memory_applied", False),
+    ("contrastive_decoding_applied", False),
+    ("speculative_decoding_applied", False),
+    ("expert_adapter_applied", False),
+    ("affective_steering_active", False),
+    ("prompt_cache_reused", False),
+)
+
+# Decoding parameters that must match the preregistered control spec. A
+# control run hotter, wider, or with a different repetition penalty than the
+# treatment is not a control of the same thing.
+_CONTROL_DECODE_PARAMETERS: tuple[str, ...] = (
+    "decode_temperature",
+    "decode_top_p",
+    "decode_repetition_penalty_applied",
+)
+
+
+def _receipt_integrity_verdict(receipt: Any, claim: str) -> str:
+    """Verdict from the receipt's digest evidence; "unproven" when absent."""
+    if not isinstance(receipt, dict):
+        return "unproven"
+    verdicts = receipt.get("integrity_verdicts")
+    if isinstance(verdicts, dict):
+        entry = verdicts.get(claim)
+        if isinstance(entry, dict):
+            verdict = str(entry.get("verdict") or "")
+            if verdict in {"proven", "refuted", "unproven"}:
+                return verdict
+    try:
+        from core.brain.llm.latent_cortex.types import WeightIntegrityProof
+
+        proof = WeightIntegrityProof.from_dict(receipt.get("weight_integrity"))
+    except (ImportError, AttributeError, TypeError, ValueError):
+        return "unproven"
+    proven = (
+        proof.params_unchanged_proven
+        if claim == "params_unchanged"
+        else proof.fast_weights_erased_proven
+    )
+    if proven is None:
+        return "unproven"
+    return "proven" if proven else "refuted"
+
+
+def _validate_vanilla_control_manifest(
+    trial_id: str,
+    receipt: dict[str, Any],
+    prereg: dict[str, Any],
+    reasons: list[str],
+) -> None:
+    """Every enhancement is off, declared, and decoding matches the spec."""
+    for field_name, required in _CONTROL_MUST_BE_DISABLED:
+        if field_name not in receipt:
+            reasons.append(f"{trial_id}:control_component_undeclared:{field_name}")
+            continue
+        if receipt.get(field_name) is not required:
+            reasons.append(f"{trial_id}:control_component_enabled:{field_name}")
+
+    # Counters betray activity a boolean might not: a control that took
+    # optimization steps or wrapped layers was not vanilla whatever it
+    # claims.
+    for counter in (
+        "fast_weights_layers",
+        "fast_weight_optimization_attempts",
+        "latent_opt_attempts",
+        "steps_taken",
+    ):
+        value = receipt.get(counter)
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+            reasons.append(f"{trial_id}:control_activity_observed:{counter}")
+
+    declared = prereg.get("control_decode_spec")
+    if not isinstance(declared, dict):
+        reasons.append(f"{trial_id}:control_decode_spec_missing")
+        return
+    for parameter in _CONTROL_DECODE_PARAMETERS:
+        if parameter not in declared:
+            reasons.append(f"{trial_id}:control_decode_spec_incomplete:{parameter}")
+            continue
+        if parameter not in receipt:
+            reasons.append(f"{trial_id}:control_decode_undeclared:{parameter}")
+            continue
+        expected = declared.get(parameter)
+        actual = receipt.get(parameter)
+        if not _numbers_match(expected, actual):
+            reasons.append(f"{trial_id}:control_decode_mismatch:{parameter}")
+
+
+def _numbers_match(expected: Any, actual: Any) -> bool:
+    """Exact for non-numerics; tolerant of float representation otherwise."""
+    if isinstance(expected, bool) or isinstance(actual, bool):
+        return expected is actual
+    if isinstance(expected, (int, float)) and isinstance(actual, (int, float)):
+        return abs(float(expected) - float(actual)) <= 1e-9
+    return expected == actual
+
+
 def _validate_control_receipt(
     trial: dict[str, Any],
     prereg: dict[str, Any],
@@ -344,8 +459,19 @@ def _validate_control_receipt(
     if comparison_kind == "resident_32b_vs_vanilla_same_checkpoint":
         if receipt.get("mode") != "vanilla" or receipt.get("latent_cortex_enabled") is not False:
             reasons.append(f"{trial_id}:control_not_vanilla")
-        if receipt.get("params_unchanged") is not True:
+        # A published capability claim is exactly where an asserted-but-
+        # unmeasured integrity boolean must not pass: certification requires
+        # the digest evidence, not the claim.
+        if _receipt_integrity_verdict(receipt, "params_unchanged") != "proven":
             reasons.append(f"{trial_id}:control_params_unchanged_unproven")
+        # CP126 869a0ce4. "Vanilla" was three fields: mode, the latent-cortex
+        # switch, and params_unchanged. Nothing prohibited fast weights,
+        # retrieval, extra reasoning passes, altered decoding, or a warm
+        # cache carrying state from an earlier turn — so a control could be
+        # materially enhanced and still certify as the baseline the
+        # treatment is measured against. Every enhancement the runtime can
+        # apply must be positively absent, not merely unmentioned.
+        _validate_vanilla_control_manifest(trial_id, receipt, prereg, reasons)
         if str(receipt.get("checkpoint_fingerprint") or "") != str(
             prereg.get("control_checkpoint_fingerprint") or ""
         ):

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 from collections.abc import Mapping
 from pathlib import Path
@@ -206,7 +207,153 @@ def build_worker_identity(
         "worker_source_sha256": _stable_sha256(worker_source_path, max_bytes=8 * 1024 * 1024),
         "worker_affective_steering_active": bool(affective_steering_active),
         "worker_affective_steering_alpha": float(affective_steering_alpha),
+        # CP126 866530f6. Model path plus a parameter count cannot tell two
+        # runtimes apart when the difference is WHICH adapter is attached,
+        # which tokenizer resolved the text, or how the weights are
+        # quantized. Two workers with identical path and count could be
+        # serving materially different functions, so identity comparisons
+        # and control/treatment claims built on this receipt were weaker
+        # than they read.
+        **_serving_stack_identity(model, model_path),
     }
+
+
+def _serving_stack_identity(model: Any, model_path: str | Path) -> dict[str, Any]:
+    """Identity of everything that changes what the model computes.
+
+    Ordered adapter identity, tokenizer identity, and the quantization/dtype
+    layout — each best-effort and each reporting its own absence rather than
+    silently contributing nothing. A field that could not be determined is
+    recorded as an empty value with a reason in
+    ``worker_stack_identity_gaps``, so a consumer can see that identity is
+    partial instead of assuming it is complete.
+    """
+    gaps: list[str] = []
+
+    adapters = _attached_adapter_identity(model, gaps)
+    tokenizer = _tokenizer_identity(model_path, gaps)
+    quantization = _quantization_identity(model_path, gaps)
+
+    return {
+        "worker_adapters": adapters,
+        "worker_adapter_stack_sha256": _digest_of_json(adapters),
+        "worker_tokenizer": tokenizer,
+        "worker_quantization": quantization,
+        "worker_stack_identity_gaps": gaps,
+    }
+
+
+def _attached_adapter_identity(model: Any, gaps: list[str]) -> list[dict[str, Any]]:
+    """Ordered identity of adapter-class modules resident on the model.
+
+    Order matters: the same adapters applied in a different order can
+    compose to a different function, so this is a list, not a set.
+    """
+    adapters: list[dict[str, Any]] = []
+    try:
+        named_modules = getattr(model, "named_modules", None)
+        if not callable(named_modules):
+            gaps.append("adapters:model_exposes_no_named_modules")
+            return adapters
+        for name, module in named_modules():
+            type_name = type(module).__name__
+            if "LoRA" not in type_name and "Adapter" not in type_name:
+                continue
+            adapters.append(
+                {
+                    "name": str(name),
+                    "type": type_name,
+                    "rank": _int_or_zero(getattr(module, "r", None)),
+                    "scale": _float_or_zero(getattr(module, "scale", None)),
+                }
+            )
+    except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        gaps.append(f"adapters:{type(exc).__name__}")
+    return adapters
+
+
+def _tokenizer_identity(model_path: str | Path, gaps: list[str]) -> dict[str, Any]:
+    """Digest of the tokenizer artifacts that turn text into the token ids."""
+    identity: dict[str, Any] = {}
+    try:
+        root = Path(str(model_path))
+        found = False
+        for filename in (
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "special_tokens_map.json",
+            "vocab.json",
+            "merges.txt",
+        ):
+            candidate = root / filename
+            if candidate.is_file():
+                identity[filename] = _stable_sha256(candidate, max_bytes=32 * 1024 * 1024)
+                found = True
+        if not found:
+            gaps.append("tokenizer:no_tokenizer_artifacts_found")
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        gaps.append(f"tokenizer:{type(exc).__name__}")
+    return identity
+
+
+def _quantization_identity(model_path: str | Path, gaps: list[str]) -> dict[str, Any]:
+    """Quantization layout and dtype, which change the computed function."""
+    identity: dict[str, Any] = {}
+    try:
+        config_path = Path(str(model_path)) / "config.json"
+        if not config_path.is_file():
+            gaps.append("quantization:no_config")
+            return identity
+        with config_path.open("r", encoding="utf-8") as handle:
+            config = json.load(handle)
+        if not isinstance(config, dict):
+            gaps.append("quantization:config_not_an_object")
+            return identity
+        quantization = config.get("quantization")
+        if isinstance(quantization, dict):
+            identity["bits"] = _int_or_zero(quantization.get("bits"))
+            identity["group_size"] = _int_or_zero(quantization.get("group_size"))
+        else:
+            identity["bits"] = 0
+            identity["group_size"] = 0
+        identity["dtype"] = str(
+            config.get("torch_dtype") or config.get("dtype") or ""
+        )
+        identity["model_type"] = str(config.get("model_type") or "")
+        identity["config_sha256"] = _stable_sha256(config_path, max_bytes=4 * 1024 * 1024)
+    except (OSError, ValueError, TypeError, RuntimeError) as exc:
+        gaps.append(f"quantization:{type(exc).__name__}")
+    return identity
+
+
+def _digest_of_json(value: Any) -> str:
+    try:
+        return hashlib.sha256(
+            json.dumps(value, sort_keys=True, separators=(",", ":"), default=str).encode(
+                "utf-8"
+            )
+        ).hexdigest()
+    except (TypeError, ValueError):
+        return ""
+
+
+def _int_or_zero(value: Any) -> int:
+    try:
+        if isinstance(value, bool):
+            return 0
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _float_or_zero(value: Any) -> float:
+    try:
+        if isinstance(value, bool):
+            return 0.0
+        result = float(value)
+        return result if math.isfinite(result) else 0.0
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def worker_identity_errors(
@@ -283,6 +430,46 @@ def worker_identity_errors(
     return errors
 
 
+def _typed_issue_list(value: Any) -> list[str]:
+    """Issue strings from an untrusted field, never a crash.
+
+    A bare string is ONE issue, not a sequence of characters — iterating it
+    was how a malformed provenance response turned into a wall of
+    single-letter issues. Anything else non-iterable becomes a typed issue
+    describing the shape problem itself.
+    """
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    if isinstance(value, Mapping):
+        return [f"{key}:{val}" for key, val in value.items()]
+    try:
+        return [str(item) for item in value if str(item).strip()]
+    except TypeError:
+        return [f"provenance_issues_malformed:{type(value).__name__}"]
+
+
+def _mapping_or_empty(value: Any) -> Mapping:
+    """A mapping to read, or an empty one — never an AttributeError.
+
+    A truthy non-mapping (a list, a string) previously reached .get and
+    raised.
+    """
+    return value if isinstance(value, Mapping) else {}
+
+
+def _nonnegative_int(value: Any) -> int:
+    """Coerce an untrusted count, defaulting to 0 rather than raising."""
+    if isinstance(value, bool):
+        return 0
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return parsed if parsed >= 0 else 0
+
+
 def collect_latent_runtime_identity(
     project_root: str | Path,
     *,
@@ -295,13 +482,22 @@ def collect_latent_runtime_identity(
         collect_source_identity,
     )
 
+    # CP126 79271a67. This collector reports on identity DEGRADATION, so it
+    # is precisely the code that must not itself raise when the thing it is
+    # inspecting is malformed. Three unguarded assumptions lived here: that
+    # `issues` is an iterable collection (a bare string iterates into
+    # characters; an int raises), that a truthy `expected` is a mapping
+    # before calling .get on it, and that `source_change_count` converts
+    # with a bare int(). Any of those turned "identity could not be
+    # verified" into an exception on the caller.
     provenance = collect_runtime_launch_provenance(project_root, env=env)
+    provenance = dict(provenance) if isinstance(provenance, Mapping) else {}
     required = provenance.get("required") is True
     source = provenance.get("actual") if required else collect_source_identity(project_root)
     source = dict(source) if isinstance(source, Mapping) else {}
     manifest = provenance.get("manifest")
     manifest = dict(manifest) if isinstance(manifest, Mapping) else {}
-    issues = [str(item) for item in provenance.get("issues", []) if str(item)]
+    issues = _typed_issue_list(provenance.get("issues"))
 
     app_executable_sha256 = ""
     launch_manifest_sha256 = ""
@@ -355,11 +551,11 @@ def collect_latent_runtime_identity(
         "source_branch": str(source.get("branch") or ""),
         "workspace_state_sha256": workspace_sha256,
         "source_dirty": source.get("source_dirty") is True,
-        "source_change_count": int(source.get("source_change_count") or 0),
+        "source_change_count": _nonnegative_int(source.get("source_change_count")),
         "shell_assets_sha256": shell_assets_sha256,
         "bundle_identifier": str(
             manifest.get("bundle_identifier")
-            or (provenance.get("expected") or {}).get("bundle_identifier")
+            or _mapping_or_empty(provenance.get("expected")).get("bundle_identifier")
             or ""
         ),
         "app_executable_sha256": app_executable_sha256,

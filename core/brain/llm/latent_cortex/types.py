@@ -11,7 +11,7 @@ from __future__ import annotations
 import math
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Optional
 
 # Hard ceilings no configuration may exceed. These protect the live host:
 # a runaway schedule on the resident 32B is a memory/latency incident, not
@@ -562,6 +562,114 @@ class CortexConfig:
 
 
 @dataclass
+class WeightIntegrityProof:
+    """Digest evidence that resident weights survived an episode untouched.
+
+    CP126 6e1ef7be. ``params_unchanged`` and ``fast_weights_erased`` were
+    independent mutable booleans sitting beside the identity fields, with
+    nothing in the schema relating them to any measurement. A receipt could
+    assert that parameters were untouched and ephemeral weights erased while
+    carrying no evidence whatsoever — and downstream gates, which use those
+    booleans to decide whether the lane may keep serving without a reload,
+    had no way to tell an attested claim from a default.
+
+    A proof is a comparison, so this records both sides of it:
+
+    * ``params_before`` / ``params_after`` — digests over the resident
+      parameter set, taken before the episode and after teardown.
+    * ``canary_before`` / ``canary_after`` — digests over the protected
+      canary slice, which is what actually detects an incomplete erase: a
+      fast-weight delta that was applied and not fully removed changes the
+      canary even when a coarse parameter digest does not.
+    * ``erased_layer_ids`` — which layers the teardown claims to have
+      cleared, so the claim is enumerable rather than a bare True.
+
+    The verdicts below return ``None`` when the evidence is absent. That is
+    the whole point: callers must treat unknown as unproven and fail closed,
+    rather than reading a default False/True as a measurement.
+    """
+
+    algorithm: str = "sha256"
+    version: int = 1
+    params_before: str = ""
+    params_after: str = ""
+    canary_before: str = ""
+    canary_after: str = ""
+    erased_layer_ids: list[str] = field(default_factory=list)
+    # Why proof is missing, when it is. An empty reason with empty digests
+    # means nobody even tried, which is itself worth seeing.
+    unavailable_reason: str = ""
+
+    @property
+    def has_parameter_evidence(self) -> bool:
+        return bool(self.params_before and self.params_after)
+
+    @property
+    def has_canary_evidence(self) -> bool:
+        return bool(self.canary_before and self.canary_after)
+
+    @property
+    def params_unchanged_proven(self) -> Optional[bool]:
+        """True/False only when both digests exist; None means unproven."""
+        if not self.has_parameter_evidence:
+            return None
+        return self.params_before == self.params_after
+
+    @property
+    def fast_weights_erased_proven(self) -> Optional[bool]:
+        """Erase is proven by the canary returning to its pre-episode digest.
+
+        A parameter digest alone is too coarse: it can miss a small delta
+        left behind in a single layer. The canary slice is chosen to move
+        when the adapted function moves, so its return to baseline is the
+        evidence that the adaptation is really gone.
+        """
+        if not self.has_canary_evidence:
+            return None
+        return self.canary_before == self.canary_after
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "algorithm": self.algorithm,
+            "version": self.version,
+            "params_before": self.params_before,
+            "params_after": self.params_after,
+            "canary_before": self.canary_before,
+            "canary_after": self.canary_after,
+            "erased_layer_ids": list(self.erased_layer_ids),
+            "unavailable_reason": self.unavailable_reason,
+            "params_unchanged_proven": self.params_unchanged_proven,
+            "fast_weights_erased_proven": self.fast_weights_erased_proven,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Any) -> "WeightIntegrityProof":
+        """Parse defensively: a malformed proof is NO proof, never a pass."""
+        if not isinstance(data, dict):
+            return cls(unavailable_reason="proof_not_a_mapping")
+        raw_layers = data.get("erased_layer_ids")
+        layers = (
+            [str(item) for item in raw_layers]
+            if isinstance(raw_layers, (list, tuple))
+            else []
+        )
+        try:
+            version = int(data.get("version", 1))
+        except (TypeError, ValueError):
+            version = 0
+        return cls(
+            algorithm=str(data.get("algorithm") or ""),
+            version=version,
+            params_before=str(data.get("params_before") or ""),
+            params_after=str(data.get("params_after") or ""),
+            canary_before=str(data.get("canary_before") or ""),
+            canary_after=str(data.get("canary_after") or ""),
+            erased_layer_ids=layers,
+            unavailable_reason=str(data.get("unavailable_reason") or ""),
+        )
+
+
+@dataclass
 class EpisodeReceipt:
     """Everything one reasoning episode actually did — the honesty record."""
 
@@ -592,8 +700,17 @@ class EpisodeReceipt:
     # so "the organs reached her thoughts" is receipted per slot and each
     # seeded slot remains individually ablation-testable (Experiment 3).
     cognitive_slots: list[dict[str, Any]] = field(default_factory=list)
+    # CP126 6e1ef7be. These remain for compatibility with every existing
+    # reader, but they are no longer the AUTHORITY: weight_integrity below
+    # carries the digests, and integrity_verdicts() reports what the
+    # evidence actually supports. None means unproven, and consumers must
+    # treat unproven as unsafe rather than as a passed check.
     params_unchanged: bool | None = None
     fast_weights_erased: bool | None = None
+    # Digest evidence backing the two booleans above.
+    weight_integrity: WeightIntegrityProof = field(
+        default_factory=WeightIntegrityProof
+    )
     # Topology actually used.
     n_layers: int = 0
     prelude_end: int = 0
@@ -620,10 +737,30 @@ class EpisodeReceipt:
     recurrence_adapter: dict[str, Any] = field(default_factory=dict)
     # Optimization evidence.
     # Digest of the first-decode logits (next-token distribution conditioned
-    # on [prompt; refined thoughts]) — the cheap causal audit surface: any
-    # change to the latent computation shows up here even when greedy tokens
-    # collapse into the same attractor.
+    # on [prompt; refined thoughts]).
+    #
+    # CP126 16757b09. This was described as a universal causal audit — "any
+    # change to the latent computation shows up here". That claim is too
+    # strong and the field cannot support it: distinct latent states can
+    # produce identical first-token logits (the decoder is not injective),
+    # quantization and reduction order can collapse near-identical states to
+    # the same bytes, and a digest that differs proves only that SOMETHING
+    # differed, not what.
+    #
+    # What it honestly supports, one direction only:
+    #   same digest  -> the first-decode distribution was indistinguishable
+    #                   at this precision. NOT proof the latent path matched.
+    #   different    -> the first-decode distribution genuinely differed.
+    #
+    # Establishing that a latent change was causal needs controlled
+    # ablations plus later-token and output evidence. The digest is a cheap
+    # screen, not a verdict, and it is only comparable across runs sharing
+    # first_logits_digest_spec below.
     first_logits_digest: str = ""
+    # Binding for the digest above: what was hashed and how. Digests
+    # computed under different specs are NOT comparable, and comparing them
+    # was previously possible because nothing recorded the difference.
+    first_logits_digest_spec: dict[str, Any] = field(default_factory=dict)
     latent_opt_applied: bool = False
     latent_opt_mode: str = ""  # gradient | control | off
     latent_opt_loss_trail: list[float] = field(default_factory=list)
@@ -711,6 +848,66 @@ class EpisodeReceipt:
         if name not in self.honest_flags:
             self.honest_flags.append(name)
 
+    def integrity_verdicts(self) -> dict[str, Any]:
+        """What the EVIDENCE supports about weight integrity, not what was asserted.
+
+        CP126 6e1ef7be. Each verdict is one of:
+
+        * ``proven`` — digests exist and agree;
+        * ``refuted`` — digests exist and disagree (the claim is false);
+        * ``unproven`` — no digests, so nothing is established.
+
+        ``asserted`` reports the legacy boolean beside the verdict, so a
+        receipt makes disagreement between claim and evidence visible rather
+        than letting the boolean stand in for a measurement. A caller that
+        needs integrity must require ``proven`` — treating ``unproven`` as
+        acceptable is the exact fail-open this finding names.
+        """
+
+        def _verdict(proven: Optional[bool]) -> str:
+            if proven is None:
+                return "unproven"
+            return "proven" if proven else "refuted"
+
+        proof = self.weight_integrity
+        params_verdict = _verdict(proof.params_unchanged_proven)
+        erased_verdict = _verdict(proof.fast_weights_erased_proven)
+        verdicts = {
+            "params_unchanged": {
+                "verdict": params_verdict,
+                "asserted": self.params_unchanged,
+            },
+            "fast_weights_erased": {
+                "verdict": erased_verdict,
+                "asserted": self.fast_weights_erased,
+            },
+            "algorithm": proof.algorithm,
+            "version": proof.version,
+            "unavailable_reason": proof.unavailable_reason,
+        }
+        # A claim contradicted by its own evidence is the case worth
+        # shouting about, so it is named rather than left to be inferred by
+        # comparing two fields.
+        contradictions: list[str] = []
+        if params_verdict == "refuted" and self.params_unchanged is True:
+            contradictions.append("params_unchanged_asserted_but_refuted")
+        if erased_verdict == "refuted" and self.fast_weights_erased is True:
+            contradictions.append("fast_weights_erased_asserted_but_refuted")
+        verdicts["contradictions"] = contradictions
+        return verdicts
+
+    def integrity_is_proven(self) -> bool:
+        """True only when BOTH integrity claims are backed by agreeing digests.
+
+        Deliberately strict: this is the predicate a lane should consult
+        before continuing to serve on weights an episode touched.
+        """
+        verdicts = self.integrity_verdicts()
+        return (
+            verdicts["params_unchanged"]["verdict"] == "proven"
+            and verdicts["fast_weights_erased"]["verdict"] == "proven"
+        )
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "episode_id": self.episode_id,
@@ -741,6 +938,8 @@ class EpisodeReceipt:
             "cognitive_slots": [dict(row) for row in self.cognitive_slots],
             "params_unchanged": self.params_unchanged,
             "fast_weights_erased": self.fast_weights_erased,
+            "weight_integrity": self.weight_integrity.to_dict(),
+            "integrity_verdicts": self.integrity_verdicts(),
             "n_layers": self.n_layers,
             "prelude_end": self.prelude_end,
             "coda_start": self.coda_start,
@@ -751,6 +950,7 @@ class EpisodeReceipt:
             "residual_trail": [round(r, 6) for r in self.residual_trail],
             "halting_reason": self.halting_reason,
             "first_logits_digest": self.first_logits_digest,
+            "first_logits_digest_spec": dict(self.first_logits_digest_spec),
             "best_step": self.best_step,
             "reverted_to_best": self.reverted_to_best,
             "branch_scores": [round(s, 6) for s in self.branch_scores],

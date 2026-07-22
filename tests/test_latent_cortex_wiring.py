@@ -550,6 +550,7 @@ async def test_client_latent_reason_timeout_keeps_clean_cooperatively_cancelled_
     client._req_q = queue.Queue()
     reboot_reasons: list[str] = []
     await_count = 0
+    _captured: dict[str, str] = {"expected_sha256": ""}
 
     monkeypatch.setattr(
         mlx_client,
@@ -573,7 +574,13 @@ async def test_client_latent_reason_timeout_keeps_clean_cooperatively_cancelled_
                 }
             )
             raise TimeoutError
+        # CP126 07d62d51: a clean-cancel acknowledgement must be BOUND to
+        # this request, this payload and this worker. The real worker sets
+        # "id" on every response and its receipt carries the worker identity
+        # and payload digest, so the fake models that rather than the
+        # unbound shape an attacker (or a stale reply) could produce.
         return {
+            "id": client._current_request_id,
             "status": "error",
             "message": "soft_cancelled",
             "receipt": {
@@ -582,6 +589,10 @@ async def test_client_latent_reason_timeout_keeps_clean_cooperatively_cancelled_
                 "fast_weights_erased": True,
                 "last_stage": "prefill",
                 "input_token_count": 4096,
+                "request_payload_sha256": _captured["expected_sha256"],
+                "worker_boot_id": "b" * 32,
+                "worker_pid": 4242,
+                "worker_model_path": "/models/test-32b",
             },
         }
 
@@ -590,6 +601,22 @@ async def test_client_latent_reason_timeout_keeps_clean_cooperatively_cancelled_
 
     monkeypatch.setattr(mlx_client, "_await_shared_future", timeout_then_ack)
     monkeypatch.setattr(client, "reboot_worker", record_reboot)
+    client._worker_identity = {"worker_boot_id": "b" * 32, "worker_pid": 4242}
+
+    # The client imports this from runtime_identity inside the call, so the
+    # patch has to land on the source module.
+    from core.brain.llm.latent_cortex import runtime_identity as _runtime_identity
+
+    original_sha = _runtime_identity.latent_request_payload_sha256
+
+    def _capture_sha(*args, **kwargs):
+        digest = original_sha(*args, **kwargs)
+        _captured["expected_sha256"] = digest
+        return digest
+
+    monkeypatch.setattr(
+        _runtime_identity, "latent_request_payload_sha256", _capture_sha,
+    )
 
     result = await client.latent_reason_async(
         prompt="bounded episode", timeout_s=5.0, foreground_request=False
