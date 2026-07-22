@@ -471,6 +471,7 @@ def cmd_sweep(args: argparse.Namespace) -> int:
 
     counts: Counter = Counter()
     still_present: list[tuple[str, str, str, str]] = []
+    weak_present: list[tuple[str, str, str, str]] = []
     span_changed: list[tuple[str, str, str, str]] = []
 
     targets = sorted(per_file)
@@ -530,8 +531,19 @@ def cmd_sweep(args: argparse.Namespace) -> int:
                     ratio = 0.0
             row = (path, fid, finding["severity"], finding["title"])
             if ratio >= args.present_ratio:
-                counts["still_present"] += 1
-                still_present.append(row)
+                # CONFIDENCE MATTERS. With only ONE usable evidence line the
+                # contiguity test degrades to bare membership, and a single
+                # surviving line proves nothing: a fix frequently ADDS a guard
+                # around code the reviewer cited, leaving that line intact.
+                # Two findings in actuator_registry were confirmed fixed by
+                # reading source despite landing here, both single-line. Only
+                # multi-line contiguous survivals are treated as strong.
+                if len(cited) >= 2:
+                    counts["still_present_strong"] += 1
+                    still_present.append(row)
+                else:
+                    counts["still_present_weak"] += 1
+                    weak_present.append(row)
             else:
                 counts["span_changed"] += 1
                 span_changed.append(row)
@@ -539,15 +551,21 @@ def cmd_sweep(args: argparse.Namespace) -> int:
     print("CP126 per-finding sweep")
     print("=" * 70)
     for key in (
-        "recorded_closed", "untouched", "still_present", "span_changed",
+        "recorded_closed", "untouched", "still_present_strong",
+        "still_present_weak", "span_changed",
         "no_usable_evidence", "no_review_blob", "file_missing",
     ):
         if counts.get(key):
             print(f"  {key:<20} {counts[key]:>6}")
     print()
-    print("  still_present = the reviewer's exact lines survive -> OPEN")
-    print("  span_changed  = those lines are gone -> plausibly addressed,")
-    print("                  still requires a read before recording closure")
+    print("  still_present_strong = 2+ cited lines survive as a contiguous run")
+    print("                        -> high confidence OPEN")
+    print("  still_present_weak   = only ONE usable cited line survived; this is")
+    print("                        membership, not evidence. Measured ~66% of this")
+    print("                        bucket and confirmed false positives by reading")
+    print("                        source -> must be read, never assumed open")
+    print("  span_changed         = cited block gone -> plausibly addressed;")
+    print("                        validated 6/6 against known-fixed findings")
 
     if args.list_changed:
         print()
@@ -565,7 +583,8 @@ def cmd_sweep(args: argparse.Namespace) -> int:
         Path(args.out).write_text(
             json.dumps(
                 {
-                    "still_present": [list(r) for r in still_present],
+                    "still_present_strong": [list(r) for r in still_present],
+                    "still_present_weak": [list(r) for r in weak_present],
                     "span_changed": [list(r) for r in span_changed],
                     "counts": dict(counts),
                 },
