@@ -911,6 +911,10 @@ def run_virtual_width(
     Both callbacks return (success, layer_apps_spent) so the equal-compute
     premise is CHECKED, not assumed: a compute mismatch beyond
     ``_EQUAL_COMPUTE_TOLERANCE`` voids the claim."""
+    # K is the experiment's width and appears in every arm name and claim:
+    # a bool, zero, negative, or absurd K silently produced degenerate arms.
+    if isinstance(k, bool) or not isinstance(k, int) or not 1 <= k <= 64:
+        raise ValueError("virtual-width k must be an int in [1, 64]")
     treatment: dict[str, ArmResult] = {}
     control: dict[str, ArmResult] = {}
     paired: dict[str, list[PairedObservation]] = {}
