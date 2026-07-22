@@ -883,6 +883,10 @@ def test_desktop_task_in_your_own_words_does_not_force_self_summary():
         ('Open Notes and write a note saying \u201cHello"', "Hello"),
         ("Open Notes and write a message that says I'm here.", "I'm here."),
         (
+            "Open my Notes app and write a note that says, “Hello. I’m Aura” and then export that note as a PDF to my desktop.",
+            "Hello. I’m Aura",
+        ),
+        (
             'Type "Bryan\'s exact words" into Notes and then export it as a PDF.',
             "Bryan's exact words",
         ),
@@ -910,6 +914,51 @@ def test_desktop_task_extracts_literal_user_document_body(objective, expected):
 )
 def test_desktop_task_does_not_treat_composition_as_literal_text(objective):
     assert DesktopTaskSkill._literal_document_body_from_objective(objective) == ""
+
+
+def test_desktop_task_exact_notes_pdf_demo_request_derives_effectful_steps():
+    skill = DesktopTaskSkill()
+    objective = (
+        "Open my Notes app and write a note that says, “Hello. I’m Aura” "
+        "and then export that note as a PDF to my desktop."
+    )
+
+    steps = skill._derive_steps_from_objective(
+        objective,
+        {
+            "origin": "desktop_ui",
+            "desktop_execution_contract": True,
+            "allow_heuristic_desktop_plan": True,
+        },
+    )
+    actions = [step.action for step in steps]
+
+    assert len(steps) > 0
+    assert "open_app" in actions
+    assert "set_clipboard" in actions
+    assert "hotkey" in actions
+    assert "render_text_pdf" in actions
+    assert any(str(step.target).lower() == "notes" for step in steps)
+    assert any(
+        step.action == "set_clipboard" and step.target == "Hello. I’m Aura"
+        for step in steps
+    )
+    assert any(
+        step.action == "render_text_pdf"
+        and isinstance(step.target, dict)
+        and step.target.get("body") == "Hello. I’m Aura"
+        and str(step.target.get("path") or "").startswith("~/Desktop/")
+        for step in steps
+    )
+    assert skill._should_escalate_to_os_automation(
+        objective,
+        steps,
+        {
+            "origin": "desktop_ui",
+            "desktop_execution_contract": True,
+            "allow_heuristic_desktop_plan": True,
+        },
+    ) is False
 
 
 def test_desktop_task_self_summary_prefers_substantive_cognitive_draft():

@@ -645,7 +645,7 @@ class DesktopTaskSkill(BaseSkill):
             return ""
 
         cue_patterns = (
-            r"\b(?:saying|that\s+says?|containing)\b\s*(?::|=|-)?\s*",
+            r"\b(?:saying|that\s+says?|containing)\b\s*(?::|=|-|,)?\s*",
             r"\bwith\s+(?:the\s+)?(?:exact\s+)?(?:text|content|message|words?)\b\s*(?::|=|-)?\s*",
         )
         starts = [
