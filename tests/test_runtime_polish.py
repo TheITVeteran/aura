@@ -914,6 +914,7 @@ def test_desktop_chat_and_neural_cards_do_not_clip_long_text():
     assert ".msg {\n    flex: 0 0 auto;\n    height: auto;\n    max-height: none;\n    overflow: visible;\n}" in aura_css
     assert ".msg-content {\n    min-width: 0;\n    max-width: min(76ch, 100%);" in aura_css
     assert ".thought-card {\n    height: auto;\n    max-height: none;\n    overflow: visible;\n}" in aura_css
+    assert ".thought-block.expanded {\n    max-height: none;\n    height: auto;" in aura_css
     assert "max-height: 600px" not in aura_css
 
 

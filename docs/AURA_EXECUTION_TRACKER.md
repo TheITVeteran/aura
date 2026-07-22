@@ -23309,3 +23309,24 @@ runtime after a live Aura boot, desktop task completion, or GRPO gains. The
 forecast remains 394-661 total records, now approximately 58-325 records after
 this checkpoint. Next: continue monitoring CP273 and keep folding concrete
 runtime defects into bounded fixes.
+
+## Checkpoint 2026-07-21-276: Expanded Inline Thought Blocks Stop Clipping
+
+The chat/neural transcript clipping report had one concrete CSS defect left in
+the current UI. The outer chat bubbles, message content, neural thought cards,
+and full neural payloads already had long-form safety rules, but inline
+`Show thinking` blocks expanded with opacity and padding while inheriting
+`max-height: 0` from their collapsed state. Depending on browser/layout timing,
+that could make expanded thought text appear clipped or zero-height even after
+the toggle ran.
+
+`.thought-block.expanded` now explicitly sets `max-height: none` and
+`height: auto`, matching the runtime toggle's `block.style.maxHeight = 'none'`
+behavior. The existing UI polish regression now asserts that expanded inline
+thought blocks are covered by the long-form no-clipping contract.
+
+Validation is clean: `tests/test_runtime_polish.py::test_desktop_chat_and_neural_cards_do_not_clip_long_text`
+passes. This is total checkpoint record 337. The forecast remains 394-661 total
+records, now approximately 57-324 records after this checkpoint. Next: publish
+CP276, rebuild the installed app from the new commit, and continue monitoring
+CP273.

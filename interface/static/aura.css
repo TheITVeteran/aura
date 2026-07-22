@@ -633,6 +633,8 @@ header {
     word-break: break-word;
 }
 .thought-block.expanded {
+    max-height: none;
+    height: auto;
     opacity: 1;
     padding: 8px 10px;
     overflow: visible;
