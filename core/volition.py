@@ -38,6 +38,27 @@ _COMMIT_EFFECTS_KEY = "_volition_commit_effects"
 # loop (synchronous filesystem IO on the event loop).
 _ROADMAP_RESCAN_INTERVAL_S = 300.0
 
+# Explicit goal-selection ranks (lower wins). These make the documented
+# ordering — Strategic Duty > Soul Drives > Impulse > Boredom > Roadmap >
+# Inquiry — a property of the SELECTOR rather than an accident of the order
+# _search_for_autonomous_goals happens to append candidates in.
+_GOAL_PRIORITY_STRATEGIC = 0
+_GOAL_PRIORITY_IMPULSE = 2
+_GOAL_PRIORITY_DEFAULT = 3
+_GOAL_ORIGIN_RANKS: dict[str, int] = {
+    "intrinsic_duty_strategic": _GOAL_PRIORITY_STRATEGIC,
+    # Soul drives
+    "intrinsic_connection": 1,
+    "intrinsic_competence": 1,
+    "intrinsic_curiosity": 1,
+    # Boredom-derived work
+    "intrinsic_duty": 3,
+    "intrinsic_reflection": 3,
+    # Long-horizon background pulls
+    "intrinsic_evolution": 4,
+    "intrinsic_inquiry": 5,
+}
+
 # Interests are unsigned, mutable, on-disk JSON that is formatted DIRECTLY
 # into autonomous objectives ("Tell the user about something I've been curious
 # about: {topic}"). They are therefore treated as untrusted input: bounded in
@@ -424,15 +445,15 @@ class VolitionEngine:
         if not filtered_goals:
             return None
 
-        # 1. Check for Strategic Duty (Phase 17)
-        strategic_goal = next(
-            (g for g in filtered_goals if g.get("origin") == "intrinsic_duty_strategic"), None
-        )
-        if strategic_goal:
-            selected_goal = strategic_goal
-        else:
-            # 2. Priority selection: Soul Drives > Impulse > Boredom
-            selected_goal = filtered_goals[0]
+        # Priority is ENFORCED by explicit rank, not inherited from the order
+        # generators happen to append in. The documented ordering (Strategic
+        # Duty > Soul Drives > Impulse > Boredom > Roadmap > Inquiry) was
+        # previously produced only by taking filtered_goals[0] and trusting
+        # _search_for_autonomous_goals' append sequence — so adding a
+        # generator, reordering the search, or having an earlier source drop
+        # out silently changed which drive wins. Ties keep insertion order
+        # (min is stable), preserving today's behaviour within a rank.
+        selected_goal = min(filtered_goals, key=self._goal_priority_rank)
 
         # Final safety check and parsing
         if not isinstance(selected_goal, dict) or "objective" not in selected_goal:
@@ -446,6 +467,16 @@ class VolitionEngine:
         # caller commits via _commit_goal_effects once the concrete action is
         # admitted by the Will.
         return selected_goal
+
+    @staticmethod
+    def _goal_priority_rank(goal: dict[str, Any]) -> int:
+        """Explicit selection rank for a candidate goal (lower wins)."""
+        origin = str(goal.get("origin", "") or "")
+        if origin == "intrinsic_duty_strategic":
+            return _GOAL_PRIORITY_STRATEGIC
+        if origin.startswith("impulse"):
+            return _GOAL_PRIORITY_IMPULSE
+        return _GOAL_ORIGIN_RANKS.get(origin, _GOAL_PRIORITY_DEFAULT)
 
     def _commit_goal_effects(self, goal: dict[str, Any]) -> None:
         """Advance volition state for a goal that has actually been admitted.

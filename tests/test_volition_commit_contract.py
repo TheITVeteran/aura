@@ -235,3 +235,52 @@ def test_add_interest_bounds_the_catalog(engine):
 def test_roadmap_scan_is_not_run_during_construction(engine):
     """Construction must not walk the brain tree (startup filesystem IO)."""
     assert engine.milestones == []
+
+
+def test_goal_priority_is_explicit_not_append_order(engine):
+    """Selection must enforce the documented ranking regardless of list order.
+
+    Previously the selector took filtered_goals[0], so the documented
+    ordering existed only as an accident of the sequence
+    _search_for_autonomous_goals appended candidates in.
+    """
+    rank = engine._goal_priority_rank
+    assert rank({"origin": "intrinsic_duty_strategic"}) < rank({"origin": "intrinsic_connection"})
+    assert rank({"origin": "intrinsic_connection"}) < rank({"origin": "impulse_question"})
+    assert rank({"origin": "impulse_share"}) < rank({"origin": "intrinsic_reflection"})
+    assert rank({"origin": "intrinsic_reflection"}) < rank({"origin": "intrinsic_evolution"})
+    assert rank({"origin": "intrinsic_evolution"}) < rank({"origin": "intrinsic_inquiry"})
+
+
+def test_strategic_duty_wins_from_any_position(engine):
+    """A strategic duty appended LAST still wins."""
+    goals = [
+        {"objective": "impulse thing", "origin": "impulse_question", "id": "a"},
+        {"objective": "reflect", "origin": "intrinsic_reflection", "id": "b"},
+        {"objective": "strategic work", "origin": "intrinsic_duty_strategic", "id": "c"},
+    ]
+    selected = engine._select_and_parse_goal(goals)
+    assert selected is not None
+    assert selected["origin"] == "intrinsic_duty_strategic"
+
+
+def test_drive_beats_impulse_even_when_appended_after(engine):
+    """Reordering the search must not silently change which drive wins."""
+    goals = [
+        {"objective": "impulse thing", "origin": "impulse_question", "id": "a"},
+        {"objective": "reach out", "origin": "intrinsic_connection", "id": "b"},
+    ]
+    selected = engine._select_and_parse_goal(goals)
+    assert selected is not None
+    assert selected["origin"] == "intrinsic_connection"
+
+
+def test_equal_rank_keeps_insertion_order(engine):
+    """Ties preserve today's behaviour (first appended wins)."""
+    goals = [
+        {"objective": "first impulse", "origin": "impulse_share", "id": "a"},
+        {"objective": "second impulse", "origin": "impulse_question", "id": "b"},
+    ]
+    selected = engine._select_and_parse_goal(goals)
+    assert selected is not None
+    assert selected["objective"] == "first impulse"
