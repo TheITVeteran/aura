@@ -328,18 +328,21 @@ def _declared_mlx_worker_footprint_gb(model_path: str) -> float:
 
 
 def _memory_pressure_blocks_worker_spawn(model_path: str) -> str | None:
-    if str(os.environ.get("AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE", "")).strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }:
-        # The operator bypass stays available for recovery scenarios, but it
-        # must be VISIBLE: silently skipping every spawn admission check is
-        # how a stale deployment flag becomes an OOM.
+    # The operator bypass stays available for recovery, but it is a DECISION,
+    # not a setting: it is time-bounded, use-bounded and receipted, so a flag
+    # left in a launch profile cannot silently disable spawn admission for the
+    # life of a deployment. When the window closes the guard re-arms itself.
+    from core.brain.llm.emergency_override import consume_override
+
+    decision = consume_override(
+        "AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE",
+        guard="memory_pressure_spawn_admission",
+        observed=f"spawn of {os.path.basename(model_path)}",
+    )
+    if decision.active:
         _record_mlx_degradation(
-            RuntimeError("AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE active"),
-            action="bypassed memory-pressure spawn admission via operator override",
+            RuntimeError(decision.as_detail()),
+            action="bypassed memory-pressure spawn admission via governed operator override",
             severity="warning",
         )
         return None
@@ -6137,18 +6140,47 @@ class MLXLocalClient:
 
                 self._rebase_after_system_sleep()
 
+                # OBSERVATION and ENFORCEMENT are separated. They used to share
+                # one try block, so a failure while ABORTING (queue cleanup,
+                # future cancellation) was reported as "probe unavailable" and
+                # the loop kept waiting with lifecycle state half-cleared —
+                # the request neither aborted nor honestly failed.
+                memory_snapshot = None
                 try:
                     memory_snapshot = get_memory_pressure_snapshot()
                     if memory_snapshot.should_gc:
                         gc.collect()
-                    allow_critical_memory = str(
-                        os.environ.get("AURA_MLX_ALLOW_CRITICAL_MEMORY_GENERATION", "")
-                    ).strip().lower() in {"1", "true", "yes", "on"}
-                    if (
-                        memory_snapshot.refuse_heavy_local_generation
-                        and self._is_primary_or_deep_lane()
-                        and not allow_critical_memory
-                    ):
+                except (OSError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                    # Unobserved pressure is not observed headroom. Heavy lanes
+                    # are the allocation that pushes this host over, so a blind
+                    # probe is recorded rather than shrugged off at debug.
+                    if self._is_primary_or_deep_lane():
+                        _record_mlx_degradation(
+                            exc,
+                            action=(
+                                "live memory-pressure probe unavailable during heavy "
+                                "generation; abort decision could not be made"
+                            ),
+                            severity="warning",
+                        )
+                    else:
+                        logger.debug("MLX live memory pressure probe unavailable: %s", exc)
+
+                if (
+                    memory_snapshot is not None
+                    and memory_snapshot.refuse_heavy_local_generation
+                    and self._is_primary_or_deep_lane()
+                ):
+                    from core.brain.llm.emergency_override import consume_override
+
+                    live_override = consume_override(
+                        "AURA_MLX_ALLOW_CRITICAL_MEMORY_GENERATION",
+                        guard="live_memory_pressure_abort",
+                        observed=(
+                            f"{os.path.basename(self.model_path)}:{memory_snapshot.reason}"
+                        ),
+                    )
+                    if not live_override.active:
                         logger.error(
                             "🛑 [MLX] Aborting generation for %s under live memory pressure: %s",
                             os.path.basename(self.model_path),
@@ -6161,11 +6193,36 @@ class MLXLocalClient:
                             severity="critical",
                             foreground_request=foreground_request,
                         )
-                        self.force_abort_active_generation("memory_pressure_during_generation")
-                        _cancel_shared_future(future)
+                        try:
+                            self.force_abort_active_generation(
+                                "memory_pressure_during_generation"
+                            )
+                            _cancel_shared_future(future)
+                        except (
+                            OSError, AttributeError, RuntimeError, TypeError, ValueError,
+                        ) as abort_exc:
+                            # The abort itself failed. Critical pressure WAS
+                            # observed and cleanup cannot be proven, so the
+                            # request ends terminally with that on the record
+                            # instead of quietly resuming the wait.
+                            _record_mlx_degradation(
+                                abort_exc,
+                                action=(
+                                    "memory-pressure abort failed; generation state "
+                                    "could not be proven clean"
+                                ),
+                                severity="critical",
+                            )
+                            self._record_degraded_event(
+                                "generation_abort_failed_memory_pressure",
+                                detail=(
+                                    f"{os.path.basename(self.model_path)}:"
+                                    f"{type(abort_exc).__name__}"
+                                ),
+                                severity="critical",
+                                foreground_request=foreground_request,
+                            )
                         return None
-                except (OSError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
-                    logger.debug("MLX live memory pressure probe unavailable: %s", exc)
 
                 if self._process is not None and not self._process.is_alive():
                     logger.error(
@@ -6609,15 +6666,29 @@ class MLXLocalClient:
             )
             if memory_snapshot.should_gc:
                 gc.collect()
-            critical_override = str(
-                os.environ.get("AURA_MLX_ALLOW_CRITICAL_MEMORY_GENERATION", "")
-            ).strip().lower() in {"1", "true", "yes", "on"}
-            if (
+            # Consume the override only when the refusal it would bypass is
+            # actually about to fire; a guard that never triggers must not
+            # spend the emergency budget.
+            override_applies = (
                 memory_snapshot.refuse_heavy_local_generation
                 and self._is_primary_or_deep_lane()
                 and not benchmark_request_explicit
-                and critical_override
-            ):
+            )
+            override_decision = None
+            if override_applies:
+                from core.brain.llm.emergency_override import consume_override
+
+                override_decision = consume_override(
+                    "AURA_MLX_ALLOW_CRITICAL_MEMORY_GENERATION",
+                    guard="critical_memory_generation_refusal",
+                    observed=(
+                        f"{os.path.basename(self.model_path)}:{memory_snapshot.reason}"
+                    ),
+                )
+            critical_override = bool(
+                override_decision is not None and override_decision.active
+            )
+            if override_applies and critical_override:
                 # The override disables a refusal made AFTER critical pressure
                 # was positively observed, i.e. the last guard before the model
                 # process can push macOS into swap or jetsam. It stays
@@ -6628,7 +6699,7 @@ class MLXLocalClient:
                     "memory_pressure_generation_override",
                     detail=(
                         f"{os.path.basename(self.model_path)}:{memory_snapshot.reason}:"
-                        "AURA_MLX_ALLOW_CRITICAL_MEMORY_GENERATION"
+                        f"{override_decision.as_detail()}"
                     ),
                     severity="critical",
                     foreground_request=foreground_request,
@@ -6640,12 +6711,7 @@ class MLXLocalClient:
                     os.path.basename(self.model_path),
                     memory_snapshot.reason,
                 )
-            if (
-                memory_snapshot.refuse_heavy_local_generation
-                and self._is_primary_or_deep_lane()
-                and not benchmark_request_explicit
-                and not critical_override
-            ):
+            if override_applies and not critical_override:
                 if self.is_alive() and int(getattr(self, "_active_generations", 0) or 0) <= 0:
                     await self.reboot_worker(reason="memory_pressure_guard", mark_failed=False)
                 self._record_degraded_event(
