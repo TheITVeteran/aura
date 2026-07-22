@@ -53,14 +53,14 @@ training/proof surfaces, and the selected live/full-mind path. It read the
 entire Spark source and traced callers rather than crediting class names. The
 baseline below is exhaustive over SPARK-001 through SPARK-072:
 
-- `ACCEPTED`: SPARK-001, SPARK-005.
+- `ACCEPTED`: SPARK-001, SPARK-005, SPARK-007.
 - `PARTIAL`: SPARK-003, SPARK-008, SPARK-010, SPARK-011, SPARK-012,
   SPARK-014, SPARK-021, SPARK-022, SPARK-023, SPARK-024, SPARK-025,
   SPARK-026, SPARK-027, SPARK-035, SPARK-039, SPARK-040, SPARK-041,
   SPARK-042, SPARK-052, SPARK-053, SPARK-054, SPARK-055, SPARK-056,
   SPARK-058, SPARK-060, SPARK-062, SPARK-063, SPARK-065, SPARK-066,
   SPARK-067.
-- `MISSING`: SPARK-002, SPARK-006, SPARK-007, SPARK-009,
+- `MISSING`: SPARK-002, SPARK-006, SPARK-009,
   SPARK-015, SPARK-016, SPARK-017, SPARK-018, SPARK-019, SPARK-020,
   SPARK-028, SPARK-029, SPARK-030, SPARK-031, SPARK-032, SPARK-033,
   SPARK-034, SPARK-036, SPARK-037, SPARK-038, SPARK-043, SPARK-044,
@@ -154,9 +154,14 @@ before those dependencies close is not admissible.
 - [ ] **SPARK-006 - Hypothesis portfolio.** Preserve multiple weighted
   hypotheses without premature collapse; support minority survival and explicit
   unresolved status.
-- [ ] **SPARK-007 - Claim/dependency graph.** Represent premises, claims,
+- [x] **SPARK-007 - Claim/dependency graph.** Represent premises, claims,
   support, contradiction, descendants, failure conditions, and answer
   dependencies with cycle and consistency checks.
+  Accepted at CP319: premise/contradiction graphs are bounded and cycle-safe;
+  established status is dependency-consistent; descendant invalidation is
+  transitive, atomic, operation-receipted, budgeted, and revokes affected
+  hypotheses and answers. Evidence semantics and durable recovery remain owned
+  by SPARK-008 and SPARK-011 rather than being implied here.
 - [ ] **SPARK-008 - Evidence ledger.** Bind every tool result, retrieval,
   calculation, proof, simulation, and observation to provenance, freshness,
   scope, content digest, and the claims it can actually support.

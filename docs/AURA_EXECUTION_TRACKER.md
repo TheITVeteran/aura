@@ -24832,3 +24832,44 @@ count completion is approximately 51.7%-81.3%, with a midpoint planning
 estimate of 63.2%. Next: publish CP318, then extend the same state authority
 with descendant invalidation and a crash-consistent append journal/recovery
 path before connecting live producers and consumers.
+
+## Checkpoint 2026-07-22-319: Claim Invalidation Propagates Through The Answer
+
+The epistemic claim graph now enforces semantic validity rather than only
+referential validity. Supported and verified claims may depend only on
+supported or verified premises; mutually contradictory claims cannot both be
+established; favored hypotheses cannot rest on unestablished claims; and an
+accepted answer must cite at least one supported/verified claim explicitly
+marked as answer-relevant. Cycles, asymmetric contradictions, and missing
+premises continue to fail before publication.
+
+`claim_descendants()` computes every transitive dependent in deterministic
+order. `invalidate_claim()` performs one copy-on-write revision that rejects or
+contradicts the root, demotes non-independent descendants to unresolved,
+demotes affected non-refuted hypotheses, revokes any dependent accepted answer,
+records the complete affected set in a successful falsify/backtrack operation,
+and consumes its declared compute cost. The operation and budget are validated
+before transaction state changes, so an over-budget or duplicate operation
+cannot leave a half-mutated transaction.
+
+Arbitrary claim replacement is no longer invisible. Every replaced claim must
+be named by a new successful operation bound to the transaction's base-state
+hash; otherwise commit fails and the authoritative state remains unchanged.
+Operation affected-claim bounds now cover the full bounded claim graph rather
+than truncating invalidation at the generic 128-reference limit.
+
+Validation: the canonical-state, dependency graph, contradiction, answer,
+transaction, invalidation, replacement-provenance, malformed-input, and atomic-
+failure contracts pass 17/17. Focused Ruff and `git diff --check` pass. The
+receipt-order mismatch found by the first run was fixed by returning the same
+canonical affected-ID order that the operation persists.
+
+Only SPARK-007 closes here. Evidence support semantics, calibrated uncertainty,
+durable journal/recovery, live RLC wiring, causal ablation, and capability gains
+remain open.
+
+This is total checkpoint record 380. The revised forecast remains 466-733 total
+records, now approximately 86-353 records after this checkpoint. Checkpoint-
+count completion is approximately 51.8%-81.5%, with a midpoint planning
+estimate of 63.4%. Next: publish CP319, then add the hash-chained fsync-backed
+journal and prove recovery from process interruption and a torn final append.

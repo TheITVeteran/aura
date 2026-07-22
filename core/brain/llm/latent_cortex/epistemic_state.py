@@ -163,12 +163,14 @@ def _nonnegative(value: Any, *, name: str) -> float:
     return parsed
 
 
-def _bounded_ids(values: Iterable[str], *, name: str) -> tuple[str, ...]:
+def _bounded_ids(
+    values: Iterable[str], *, name: str, limit: int = MAX_REFS
+) -> tuple[str, ...]:
     if isinstance(values, (str, bytes)):
         raise EpistemicStateError(f"{name} must be a sequence of identifiers")
     result = tuple(_strict_id(value, name=f"{name} item") for value in values)
-    if len(result) > MAX_REFS:
-        raise EpistemicStateError(f"{name} exceeds {MAX_REFS} references")
+    if len(result) > limit:
+        raise EpistemicStateError(f"{name} exceeds {limit} references")
     if len(set(result)) != len(result):
         raise EpistemicStateError(f"{name} contains duplicate references")
     return tuple(sorted(result))
@@ -508,7 +510,15 @@ class OperationRecord:
             raise EpistemicStateError("operation kind/outcome use invalid enums")
         _strict_digest(self.input_state_sha256, name="operation.input_state_sha256")
         object.__setattr__(self, "cost", _nonnegative(self.cost, name="operation.cost"))
-        object.__setattr__(self, "affected_claim_ids", _bounded_ids(self.affected_claim_ids, name="operation affected claims"))
+        object.__setattr__(
+            self,
+            "affected_claim_ids",
+            _bounded_ids(
+                self.affected_claim_ids,
+                name="operation affected claims",
+                limit=MAX_CLAIMS,
+            ),
+        )
         object.__setattr__(self, "evidence_gained", _bounded_ids(self.evidence_gained, name="operation evidence"))
         object.__setattr__(self, "detail", _strict_text(self.detail, name="operation.detail", limit=MAX_SUMMARY_CHARS, empty=True))
 
@@ -614,6 +624,8 @@ class AcceptedAnswer:
         object.__setattr__(self, "evidence_ids", _bounded_ids(self.evidence_ids, name="answer evidence"))
         if not isinstance(self.confidence, ProbabilityInterval):
             raise EpistemicStateError("answer.confidence must be a ProbabilityInterval")
+        if not self.claim_ids:
+            raise EpistemicStateError("answer must cite at least one claim")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -708,6 +720,8 @@ class EpistemicState:
                 raise EpistemicStateError("evidence references an unknown claim")
             if evidence.evidence_id in immutable_ids and evidence.kind is not EvidenceKind.IMMUTABLE_PROBLEM:
                 raise EpistemicStateError("problem evidence must use immutable_problem kind")
+        blocked = {ClaimStatus.REJECTED, ClaimStatus.CONTRADICTED}
+        established = {ClaimStatus.SUPPORTED, ClaimStatus.VERIFIED}
         for claim in self.claims:
             if claim.claim_id in claim.premises or claim.claim_id in claim.contradictions:
                 raise EpistemicStateError("claim cannot depend on or contradict itself")
@@ -720,10 +734,31 @@ class EpistemicState:
             for other in claim.contradictions:
                 if claim.claim_id not in claim_map[other].contradictions:
                     raise EpistemicStateError("claim contradictions must be symmetric")
+            if claim.status in established and any(
+                claim_map[premise].status not in established
+                for premise in claim.premises
+            ):
+                raise EpistemicStateError(
+                    "supported or verified claim depends on an unestablished premise"
+                )
+            if claim.status in established and any(
+                claim_map[other].status in established
+                for other in claim.contradictions
+            ):
+                raise EpistemicStateError(
+                    "mutually contradictory claims cannot both be established"
+                )
         self._validate_claim_dag(claim_map)
         for hypothesis in self.hypotheses:
             if not set(hypothesis.claim_ids) <= claim_ids:
                 raise EpistemicStateError("hypothesis references an unknown claim")
+            if hypothesis.status is HypothesisStatus.FAVORED and any(
+                claim_map[claim_id].status not in established
+                for claim_id in hypothesis.claim_ids
+            ):
+                raise EpistemicStateError(
+                    "favored hypothesis depends on an unestablished claim"
+                )
         for operation in self.operations:
             if not set(operation.affected_claim_ids) <= claim_ids:
                 raise EpistemicStateError("operation references an unknown claim")
@@ -734,9 +769,20 @@ class EpistemicState:
                 raise EpistemicStateError("answer references an unknown claim")
             if not set(self.accepted_answer.evidence_ids) <= evidence_ids:
                 raise EpistemicStateError("answer references unknown evidence")
-            blocked = {ClaimStatus.REJECTED, ClaimStatus.CONTRADICTED}
             if any(claim_map[cid].status in blocked for cid in self.accepted_answer.claim_ids):
                 raise EpistemicStateError("answer depends on rejected or contradicted claims")
+            if any(
+                claim_map[claim_id].status not in established
+                for claim_id in self.accepted_answer.claim_ids
+            ):
+                raise EpistemicStateError("answer depends on unresolved claims")
+            if any(
+                not claim_map[claim_id].answer_relevant
+                for claim_id in self.accepted_answer.claim_ids
+            ):
+                raise EpistemicStateError(
+                    "answer depends on a claim not marked answer-relevant"
+                )
 
     @staticmethod
     def _validate_claim_dag(claim_map: Mapping[str, ClaimRecord]) -> None:
@@ -756,6 +802,37 @@ class EpistemicState:
 
         for claim_id in sorted(claim_map):
             visit(claim_id)
+
+    @staticmethod
+    def _claim_descendants(
+        claim_map: Mapping[str, ClaimRecord], claim_id: str
+    ) -> tuple[str, ...]:
+        if claim_id not in claim_map:
+            raise EpistemicStateError(f"claim does not exist: {claim_id}")
+        reverse: dict[str, list[str]] = {key: [] for key in claim_map}
+        for candidate in claim_map.values():
+            for premise in candidate.premises:
+                if premise not in reverse:
+                    raise EpistemicStateError("claim references an unknown premise")
+                reverse[premise].append(candidate.claim_id)
+        EpistemicState._validate_claim_dag(claim_map)
+        descendants: set[str] = set()
+        pending = list(sorted(reverse[claim_id], reverse=True))
+        while pending:
+            current = pending.pop()
+            if current in descendants:
+                continue
+            descendants.add(current)
+            pending.extend(sorted(reverse[current], reverse=True))
+        return tuple(sorted(descendants))
+
+    def claim_descendants(self, claim_id: str) -> tuple[str, ...]:
+        """Return every transitive dependent of a claim in stable order."""
+
+        return self._claim_descendants(
+            {item.claim_id: item for item in self.claims},
+            _strict_id(claim_id, name="claim_id"),
+        )
 
     def to_dict(self, *, include_hash: bool = True) -> dict[str, Any]:
         result = {
@@ -929,6 +1006,7 @@ class EpistemicTransaction:
         self._operations = {item.operation_id: item for item in base.operations}
         self._budget = base.budget
         self._accepted_answer = base.accepted_answer
+        self._replaced_claim_ids: set[str] = set()
         self._closed = False
 
     def _open(self) -> None:
@@ -957,10 +1035,94 @@ class EpistemicTransaction:
 
     def replace_claim(self, claim: ClaimRecord) -> EpistemicTransaction:
         self._open()
+        if not isinstance(claim, ClaimRecord):
+            raise TypeError("claim must be a ClaimRecord")
         if claim.claim_id not in self._claims:
             raise EpistemicStateError(f"claim does not exist: {claim.claim_id}")
         self._claims[claim.claim_id] = claim
+        self._replaced_claim_ids.add(claim.claim_id)
         return self
+
+    def invalidate_claim(
+        self,
+        claim_id: str,
+        *,
+        operation_id: str,
+        status: ClaimStatus = ClaimStatus.REJECTED,
+        cost: float = 0.0,
+        detail: str = "",
+    ) -> tuple[str, ...]:
+        """Invalidate a claim, its descendants, hypotheses, and accepted answer."""
+
+        self._open()
+        claim_id = _strict_id(claim_id, name="claim_id")
+        if not isinstance(status, ClaimStatus):
+            raise EpistemicStateError("claim invalidation status must be a ClaimStatus")
+        if status not in {ClaimStatus.REJECTED, ClaimStatus.CONTRADICTED}:
+            raise EpistemicStateError(
+                "claim invalidation status must be rejected or contradicted"
+            )
+        target = self._claims.get(claim_id)
+        if target is None:
+            raise EpistemicStateError(f"claim does not exist: {claim_id}")
+        if target.status in {ClaimStatus.REJECTED, ClaimStatus.CONTRADICTED}:
+            raise EpistemicStateError("claim is already invalidated")
+
+        descendants = EpistemicState._claim_descendants(self._claims, claim_id)
+        affected = tuple(sorted((claim_id, *descendants)))
+        operation = OperationRecord(
+            operation_id=operation_id,
+            kind=(
+                OperationKind.FALSIFY
+                if status is ClaimStatus.CONTRADICTED
+                else OperationKind.BACKTRACK
+            ),
+            outcome=OperationOutcome.SUCCEEDED,
+            input_state_sha256=self.base.state_sha256,
+            cost=cost,
+            affected_claim_ids=affected,
+            detail=detail or f"invalidated {claim_id} and its dependent claims",
+        )
+        if operation.operation_id in self._operations:
+            raise EpistemicStateError(
+                f"operation identifier already exists: {operation.operation_id}"
+            )
+        next_used = self._budget.used + operation.cost
+        if next_used > self._budget.total:
+            raise EpistemicStateError("claim invalidation exceeds compute budget")
+
+        revised_claims = dict(self._claims)
+        revised_claims[claim_id] = replace(target, status=status)
+        blocked = {ClaimStatus.REJECTED, ClaimStatus.CONTRADICTED}
+        for descendant_id in descendants:
+            descendant = revised_claims[descendant_id]
+            if descendant.status not in blocked:
+                revised_claims[descendant_id] = replace(
+                    descendant,
+                    status=ClaimStatus.UNRESOLVED,
+                )
+        revised_hypotheses = dict(self._hypotheses)
+        affected_set = set(affected)
+        for hypothesis_id, hypothesis in revised_hypotheses.items():
+            if (
+                affected_set.intersection(hypothesis.claim_ids)
+                and hypothesis.status is not HypothesisStatus.REFUTED
+            ):
+                revised_hypotheses[hypothesis_id] = replace(
+                    hypothesis,
+                    status=HypothesisStatus.UNRESOLVED,
+                )
+        answer = self._accepted_answer
+        if answer is not None and affected_set.intersection(answer.claim_ids):
+            answer = None
+
+        self._claims = revised_claims
+        self._hypotheses = revised_hypotheses
+        self._operations[operation.operation_id] = operation
+        self._budget = replace(self._budget, used=next_used)
+        self._accepted_answer = answer
+        self._replaced_claim_ids.update(affected)
+        return affected
 
     def add_hypothesis(self, hypothesis: HypothesisRecord) -> EpistemicTransaction:
         self._open()
@@ -996,7 +1158,7 @@ class EpistemicTransaction:
         self._accepted_answer = answer
         return self
 
-    def commit(self) -> EpistemicState:
+    def _prepare(self) -> EpistemicState:
         self._open()
         candidate = EpistemicState._build(
             episode_id=self.base.episode_id,
@@ -1010,6 +1172,23 @@ class EpistemicTransaction:
             budget=self._budget,
             accepted_answer=self._accepted_answer,
         )
+        base_operation_ids = {item.operation_id for item in self.base.operations}
+        covered_claim_ids = {
+            claim_id
+            for operation in candidate.operations
+            if operation.operation_id not in base_operation_ids
+            and operation.outcome is OperationOutcome.SUCCEEDED
+            for claim_id in operation.affected_claim_ids
+        }
+        if not self._replaced_claim_ids <= covered_claim_ids:
+            missing = sorted(self._replaced_claim_ids - covered_claim_ids)
+            raise EpistemicStateError(
+                f"claim revisions lack a successful operation receipt: {missing}"
+            )
+        return candidate
+
+    def commit(self) -> EpistemicState:
+        candidate = self._prepare()
         self._closed = True
         return candidate
 

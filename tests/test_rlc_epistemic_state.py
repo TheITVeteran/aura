@@ -251,6 +251,238 @@ def test_answer_cannot_depend_on_rejected_claim():
         machine.commit(tx)
 
 
+def test_claim_invalidation_revokes_descendants_hypothesis_and_answer_atomically():
+    machine = EpistemicStateMachine(genesis())
+    setup = machine.begin()
+    setup.add_claim(
+        ClaimRecord(
+            "claim.root",
+            "Root",
+            ClaimStatus.VERIFIED,
+            interval(0.9),
+            answer_relevant=True,
+        )
+    )
+    setup.add_claim(
+        ClaimRecord(
+            "claim.child",
+            "Child",
+            ClaimStatus.SUPPORTED,
+            interval(0.8),
+            premises=("claim.root",),
+            answer_relevant=True,
+        )
+    )
+    setup.add_claim(
+        ClaimRecord(
+            "claim.grandchild",
+            "Grandchild",
+            ClaimStatus.VERIFIED,
+            interval(0.8),
+            premises=("claim.child",),
+            answer_relevant=True,
+        )
+    )
+    setup.add_claim(
+        ClaimRecord(
+            "claim.independent",
+            "Independent",
+            ClaimStatus.SUPPORTED,
+            interval(0.7),
+        )
+    )
+    setup.add_hypothesis(
+        HypothesisRecord(
+            "hyp.main",
+            "Main",
+            interval(0.8),
+            HypothesisStatus.FAVORED,
+            ("claim.grandchild",),
+        )
+    )
+    setup.accept_answer(
+        AcceptedAnswer(
+            "Grandchild",
+            text_sha256("Grandchild"),
+            ("claim.grandchild",),
+            (),
+            interval(0.8),
+        )
+    )
+    base = machine.commit(setup)
+    assert base.claim_descendants("claim.root") == (
+        "claim.child",
+        "claim.grandchild",
+    )
+
+    tx = machine.begin()
+    affected = tx.invalidate_claim(
+        "claim.root",
+        operation_id="op.invalidate.root",
+        status=ClaimStatus.CONTRADICTED,
+        cost=2.0,
+    )
+    assert affected == ("claim.child", "claim.grandchild", "claim.root")
+    state = machine.commit(tx)
+    statuses = {claim.claim_id: claim.status for claim in state.claims}
+    assert statuses == {
+        "claim.child": ClaimStatus.UNRESOLVED,
+        "claim.grandchild": ClaimStatus.UNRESOLVED,
+        "claim.independent": ClaimStatus.SUPPORTED,
+        "claim.root": ClaimStatus.CONTRADICTED,
+    }
+    assert state.hypotheses[0].status is HypothesisStatus.UNRESOLVED
+    assert state.accepted_answer is None
+    assert state.budget.used == 2.0
+    assert state.operations[0].affected_claim_ids == affected
+
+
+def test_unestablished_premises_cannot_retain_supported_descendants_or_favored_hypotheses():
+    machine = EpistemicStateMachine(genesis())
+    tx = machine.begin()
+    tx.add_claim(ClaimRecord("claim.root", "Root", ClaimStatus.REJECTED, interval()))
+    tx.add_claim(
+        ClaimRecord(
+            "claim.child",
+            "Child",
+            ClaimStatus.SUPPORTED,
+            interval(),
+            premises=("claim.root",),
+        )
+    )
+    with pytest.raises(EpistemicStateError, match="unestablished premise"):
+        machine.commit(tx)
+
+    tx = machine.begin()
+    tx.add_claim(ClaimRecord("claim.root", "Root", ClaimStatus.REJECTED, interval()))
+    tx.add_hypothesis(
+        HypothesisRecord(
+            "hyp.bad",
+            "Bad",
+            interval(),
+            HypothesisStatus.FAVORED,
+            ("claim.root",),
+        )
+    )
+    with pytest.raises(EpistemicStateError, match="favored hypothesis"):
+        machine.commit(tx)
+
+    tx = machine.begin()
+    tx.add_claim(ClaimRecord("claim.root", "Root", ClaimStatus.PROPOSED, interval()))
+    tx.add_claim(
+        ClaimRecord(
+            "claim.child",
+            "Child",
+            ClaimStatus.VERIFIED,
+            interval(),
+            premises=("claim.root",),
+        )
+    )
+    with pytest.raises(EpistemicStateError, match="unestablished premise"):
+        machine.commit(tx)
+
+
+def test_mutually_contradictory_claims_cannot_both_be_established():
+    machine = EpistemicStateMachine(genesis())
+    tx = machine.begin()
+    tx.add_claim(
+        ClaimRecord(
+            "claim.a",
+            "A",
+            ClaimStatus.VERIFIED,
+            interval(),
+            contradictions=("claim.b",),
+        )
+    )
+    tx.add_claim(
+        ClaimRecord(
+            "claim.b",
+            "B",
+            ClaimStatus.SUPPORTED,
+            interval(),
+            contradictions=("claim.a",),
+        )
+    )
+    with pytest.raises(EpistemicStateError, match="both be established"):
+        machine.commit(tx)
+
+
+def test_answer_requires_supported_answer_relevant_claims():
+    machine = EpistemicStateMachine(genesis())
+    tx = machine.begin()
+    tx.add_claim(
+        ClaimRecord(
+            "claim.proposed",
+            "Proposed",
+            ClaimStatus.PROPOSED,
+            interval(),
+            answer_relevant=True,
+        )
+    )
+    tx.accept_answer(
+        AcceptedAnswer(
+            "Proposed",
+            text_sha256("Proposed"),
+            ("claim.proposed",),
+            (),
+            interval(),
+        )
+    )
+    with pytest.raises(EpistemicStateError, match="unresolved claims"):
+        machine.commit(tx)
+
+    with pytest.raises(EpistemicStateError, match="at least one claim"):
+        AcceptedAnswer("No claim", text_sha256("No claim"), (), (), interval())
+
+
+def test_claim_replacement_requires_successful_operation_receipt():
+    machine = EpistemicStateMachine(genesis())
+    setup = machine.begin()
+    setup.add_claim(ClaimRecord("claim.one", "One", ClaimStatus.PROPOSED, interval()))
+    machine.commit(setup)
+
+    tx = machine.begin()
+    tx.replace_claim(
+        ClaimRecord("claim.one", "Revised", ClaimStatus.PROPOSED, interval())
+    )
+    with pytest.raises(EpistemicStateError, match="lack a successful operation"):
+        machine.commit(tx)
+
+    tx = machine.begin()
+    tx.replace_claim(
+        ClaimRecord("claim.one", "Revised", ClaimStatus.PROPOSED, interval())
+    )
+    tx.add_operation(
+        OperationRecord(
+            "op.revise",
+            OperationKind.COMPARE,
+            OperationOutcome.SUCCEEDED,
+            tx.base.state_sha256,
+            0.0,
+            affected_claim_ids=("claim.one",),
+        )
+    )
+    assert machine.commit(tx).claims[0].text == "Revised"
+
+
+def test_failed_invalidation_does_not_partially_mutate_transaction():
+    machine = EpistemicStateMachine(genesis())
+    setup = machine.begin()
+    setup.add_claim(ClaimRecord("claim.one", "One", ClaimStatus.PROPOSED, interval()))
+    machine.commit(setup)
+    tx = machine.begin()
+    with pytest.raises(EpistemicStateError, match="exceeds compute budget"):
+        tx.invalidate_claim(
+            "claim.one",
+            operation_id="op.too-expensive",
+            cost=101.0,
+        )
+    tx.invalidate_claim("claim.one", operation_id="op.valid", cost=1.0)
+    state = machine.commit(tx)
+    assert state.operations[0].operation_id == "op.valid"
+    assert state.budget.used == 1.0
+
+
 def test_stale_transactions_cannot_overwrite_newer_state():
     machine = EpistemicStateMachine(genesis())
     first = machine.begin()
