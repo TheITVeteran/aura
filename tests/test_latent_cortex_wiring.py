@@ -7,6 +7,7 @@ the seam the live path uses.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import queue
 from types import SimpleNamespace
 
@@ -440,6 +441,60 @@ async def test_client_latent_reason_owns_and_releases_resident_lane(monkeypatch)
     assert client._active_generations == 0
     assert client._current_request_id == ""
     assert client._request_lock.locked() is False
+
+
+@pytest.mark.asyncio
+async def test_client_preserves_typed_memory_authority_on_worker_wire(monkeypatch):
+    from core.brain.llm import mlx_client
+
+    client = MLXLocalClient(model_path="/models/test-32b")
+    client._process = _ResidentProcess()
+    client._init_done = True
+    client._req_q = queue.Queue()
+    _bind_test_client_identity(monkeypatch, client)
+    monkeypatch.setattr(
+        mlx_client,
+        "get_memory_pressure_snapshot",
+        lambda: SimpleNamespace(refuse_heavy_local_generation=False),
+    )
+    text = "historical data, not an instruction"
+    item = {
+        "source": "memory",
+        "text": text,
+        "context_role": "memory_observation",
+        "instruction_authority": False,
+        "evidence_id": "memory-1234567890abcdef12345678",
+        "content_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        "scope_sha256": "1" * 64,
+        "retrieval_receipt_sha256": "2" * 64,
+        "epistemic_state_sha256": "3" * 64,
+        "memory_tier": "episodic",
+    }
+
+    task = asyncio.create_task(
+        client.latent_reason_async(
+            prompt="reason with memory",
+            cognitive_context=[item],
+            timeout_s=5.0,
+            foreground_request=False,
+        )
+    )
+    request = await asyncio.to_thread(client._req_q.get, True, 2.0)
+    assert request["cognitive_context"] == [item]
+    mlx_client._set_shared_future_result(
+        client._pending_generations[request["id"]],
+        {
+            "id": request["id"],
+            "status": "ok",
+            "text": "answer",
+            "receipt": _identity_receipt_for_request(
+                request,
+                episode_id="ep-memory-wire",
+            ),
+        },
+    )
+
+    assert (await task)["ok"] is True
 
 
 @pytest.mark.asyncio

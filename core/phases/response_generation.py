@@ -1621,10 +1621,10 @@ class ResponseGenerationPhase(BasePhase):
                             # punctuation. The prompt-shape gate above still
                             # decides WHETHER the turn is depth-worthy.
                             ingress_stakes = float(selection.get("stakes") or 0.75)
-                            ingress_uncertainty = float(
-                                selection.get("uncertainty") or 0.80
-                            )
+                            ingress_uncertainty = float(selection.get("uncertainty") or 0.80)
                             ingress_slot_items: list | None = None
+                            ingress_epistemic_state = None
+                            ingress_memory_result = None
                             try:
                                 from core.brain.cognitive_ingress import (
                                     assemble_cognitive_ingress_async,
@@ -1638,6 +1638,19 @@ class ResponseGenerationPhase(BasePhase):
                                         or objective
                                         or ""
                                     ),
+                                    tenant_id=str(
+                                        runtime_context.get("tenant_id") or "local"
+                                    ),
+                                    user_id=str(
+                                        runtime_context.get("user_id")
+                                        or runtime_context.get("owner_id")
+                                        or "owner"
+                                    ),
+                                    session_id=str(
+                                        runtime_context.get("session_id")
+                                        or runtime_context.get("conversation_id")
+                                        or "local"
+                                    ),
                                 )
                                 ingress_stakes = max(ingress.stakes, ingress_stakes - 0.15)
                                 ingress_uncertainty = ingress.uncertainty
@@ -1646,12 +1659,10 @@ class ResponseGenerationPhase(BasePhase):
                                 # episode — memory/goals/world model/
                                 # interoception reach her thoughts, not just
                                 # her compute budget.
-                                ingress_slot_items = (
-                                    cognitive_context_items(ingress) or None
-                                )
-                                latent_trace["latent_cortex_ingress"] = (
-                                    ingress.to_receipt()
-                                )
+                                ingress_slot_items = cognitive_context_items(ingress) or None
+                                ingress_epistemic_state = ingress.epistemic_state
+                                ingress_memory_result = ingress.memory_result
+                                latent_trace["latent_cortex_ingress"] = ingress.to_receipt()
                             except (
                                 ImportError,
                                 AttributeError,
@@ -1697,6 +1708,8 @@ class ResponseGenerationPhase(BasePhase):
                                 require_full_stack=True,
                                 foreground_request=True,
                                 cognitive_context=ingress_slot_items,
+                                epistemic_state=ingress_epistemic_state,
+                                selective_memory_result=ingress_memory_result,
                             )
                     if (
                         isinstance(latent_result, dict)

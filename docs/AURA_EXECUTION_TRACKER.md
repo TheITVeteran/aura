@@ -25072,3 +25072,43 @@ count completion is approximately 52.5%-82.6%, with a midpoint planning
 estimate of 64.2%. Next: publish CP324, then implement the selective memory
 bridge and value-of-computation authority in this same state before live
 resident integration and causal ablations.
+
+## Checkpoint 2026-07-22-325: Memory Enters Recurrence As Evidence, Never Authority
+
+The selective-memory bridge now queries working, episodic, semantic,
+procedural, and nonparametric memory through one typed
+`aura.rlc.selective_memory.v1` contract. Each query is bound to tenant, user,
+session, episode, immutable objective digest, expiry, and contest status.
+Sources execute concurrently under individual deadlines and publish explicit
+success, empty, unavailable, failure, or timeout receipts, so one broken store
+cannot erase healthy evidence or masquerade as a complete retrieval.
+
+Deterministic ranking, cross-tier deduplication, corroborating-tier attribution,
+and one-per-tier fairness produce a bounded result. Every admitted item becomes
+context-only memory evidence plus a durable `SEARCH_MEMORY` operation in the
+same transactional epistemic state. Memory text is content-addressed, bounded,
+and permanently marked `instruction_authority=false`; appearing in recall does
+not make text an instruction, a verified fact, or a privileged system claim.
+
+The same protected envelope crosses cognitive ingress, the latent-cortex
+service, MLX client, worker, and engine. Each boundary independently validates
+the exact text, digest, tier, scope, source receipt, result hash, state hash,
+episode, and objective before latent execution. Adversarial contracts reject
+memory-shaped prompt injection, cross-tenant/user/session/episode replay,
+expired or contested records, boolean timestamp coercion, reserved-field
+smuggling, authority mutation, and field-by-field envelope tampering.
+
+Validation: focused selective-memory contracts pass 19/19. The fixed-snapshot
+integrated RLC, latent-cortex, GWT, and execution-controller gate passes 823/823
+in 414.61 seconds. Focused Ruff, bytecode compilation, and `git diff --check`
+pass. SPARK-012 closes. SPARK-013 still owns causal lesion evidence;
+SPARK-066-068 still own resident neural execution, organism-wide coupling, and
+production/live reliability. No model was loaded, and the negative frontier
+verdict is unchanged.
+
+This is total checkpoint record 386. The revised forecast remains 466-733 total
+records, now approximately 80-347 records after this checkpoint. Checkpoint-
+count completion is approximately 52.7%-82.8%, with a midpoint planning
+estimate of 64.4%. Next: publish CP325, then make value-of-computation and
+operation-admission decisions causal in the live recurrent controller before
+resident integration and lesion proof.

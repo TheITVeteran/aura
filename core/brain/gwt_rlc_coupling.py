@@ -104,10 +104,10 @@ def workspace_coalition_context(
 
 
 def merge_cognitive_context(
-    organ_items: list[dict[str, str]] | None,
+    organ_items: list[dict[str, Any]] | None,
     *,
     max_items: int = _MAX_CONTEXT_ITEMS,
-) -> list[dict[str, str]] | None:
+) -> list[dict[str, Any]] | None:
     """Organ items first, live coalitions filling the remaining slots.
 
     Organ content (memory, goals, world model, interoception, epistemic

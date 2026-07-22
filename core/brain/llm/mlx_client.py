@@ -4704,7 +4704,7 @@ class MLXLocalClient:
                 parse_response_contract(response_contract)
             except ValueError:
                 return {**base, "reason": "invalid_response_contract"}
-        wire_cognitive_context: list[dict[str, str]] | None = None
+        wire_cognitive_context: list[dict[str, Any]] | None = None
         if cognitive_context is not None:
             if not isinstance(cognitive_context, list) or len(cognitive_context) > 6:
                 return {**base, "reason": "invalid_cognitive_context"}
@@ -4719,9 +4719,35 @@ class MLXLocalClient:
                     or len(entry["text"]) > 400
                 ):
                     return {**base, "reason": "invalid_cognitive_context"}
-                wire_cognitive_context.append(
-                    {"source": entry["source"].strip()[:40], "text": entry["text"]}
-                )
+                if entry.get("context_role") == "memory_observation":
+                    memory_fields = {
+                        "context_role",
+                        "instruction_authority",
+                        "evidence_id",
+                        "content_sha256",
+                        "scope_sha256",
+                        "retrieval_receipt_sha256",
+                        "epistemic_state_sha256",
+                        "memory_tier",
+                    }
+                    if (
+                        set(entry) != {"source", "text", *memory_fields}
+                        or entry.get("instruction_authority") is not False
+                    ):
+                        return {**base, "reason": "invalid_cognitive_context"}
+                    wire_cognitive_context.append(
+                        {
+                            **dict(entry),
+                            "source": entry["source"].strip()[:40],
+                            "text": entry["text"].strip(),
+                        }
+                    )
+                else:
+                    if set(entry) != {"source", "text"}:
+                        return {**base, "reason": "invalid_cognitive_context"}
+                    wire_cognitive_context.append(
+                        {"source": entry["source"].strip()[:40], "text": entry["text"]}
+                    )
             if not wire_cognitive_context:
                 wire_cognitive_context = None
         wire_config = dict(config or {})

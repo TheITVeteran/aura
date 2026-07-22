@@ -29,6 +29,7 @@ reason — the caller falls back to ordinary generation, no silence.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import uuid
@@ -367,21 +368,65 @@ def handle_latent_reason(
                 "message": "latent_reason cognitive_context must be a list of at most 6 items",
             }
         for entry in cognitive_context:
-            if (
+            basic_invalid = (
                 not isinstance(entry, dict)
                 or not isinstance(entry.get("source"), str)
                 or not entry["source"].strip()
                 or not isinstance(entry.get("text"), str)
                 or not entry["text"].strip()
                 or len(entry["text"]) > 400
-                or set(entry) - {"source", "text"}
-            ):
+            )
+            if basic_invalid:
                 return {
                     "status": "error",
                     "message": (
-                        "latent_reason cognitive_context entries must be "
-                        "{source, text<=400 chars}"
+                        "latent_reason cognitive_context entries require source and text<=400 chars"
                     ),
+                }
+            memory_fields = {
+                "context_role",
+                "instruction_authority",
+                "evidence_id",
+                "content_sha256",
+                "scope_sha256",
+                "retrieval_receipt_sha256",
+                "epistemic_state_sha256",
+                "memory_tier",
+            }
+            if entry.get("context_role") == "memory_observation":
+                digests = (
+                    entry.get("content_sha256"),
+                    entry.get("scope_sha256"),
+                    entry.get("retrieval_receipt_sha256"),
+                    entry.get("epistemic_state_sha256"),
+                )
+                if (
+                    set(entry) != {"source", "text", *memory_fields}
+                    or entry.get("instruction_authority") is not False
+                    or not isinstance(entry.get("evidence_id"), str)
+                    or not entry["evidence_id"].startswith("memory-")
+                    or not isinstance(entry.get("memory_tier"), str)
+                    or not (
+                        entry["source"] == "memory"
+                        or entry["source"].startswith(f"memory.{entry['memory_tier']}.")
+                    )
+                    or any(
+                        not isinstance(digest, str)
+                        or len(digest) != 64
+                        or any(char not in "0123456789abcdef" for char in digest)
+                        for digest in digests
+                    )
+                    or hashlib.sha256(entry["text"].strip().encode("utf-8")).hexdigest()
+                    != entry["content_sha256"]
+                ):
+                    return {
+                        "status": "error",
+                        "message": "latent_reason memory context authority is invalid",
+                    }
+            elif set(entry) != {"source", "text"}:
+                return {
+                    "status": "error",
+                    "message": "latent_reason non-memory context carries reserved fields",
                 }
     engine = LatentCortexEngine(
         model,

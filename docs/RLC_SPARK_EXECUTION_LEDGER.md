@@ -62,6 +62,10 @@ After CP324, the published total is record 385: 81-348 forecast records remain,
 checkpoint-count completion is 52.5%-82.6%, and the midpoint planning estimate
 is 64.2%.
 
+After CP325, the published total is record 386: 80-347 forecast records remain,
+checkpoint-count completion is 52.7%-82.8%, and the midpoint planning estimate
+is 64.4%.
+
 ## Code-grounded baseline and ownership
 
 The four-slice static audit covered the neural core, epistemic/verifier paths,
@@ -70,8 +74,8 @@ entire Spark source and traced callers rather than crediting class names. The
 baseline below is exhaustive over SPARK-001 through SPARK-072:
 
 - `ACCEPTED`: SPARK-001, SPARK-005, SPARK-006, SPARK-007, SPARK-008, SPARK-009,
-  SPARK-011.
-- `PARTIAL`: SPARK-003, SPARK-010, SPARK-012,
+  SPARK-011, SPARK-012.
+- `PARTIAL`: SPARK-003, SPARK-010,
   SPARK-014, SPARK-021, SPARK-022, SPARK-023, SPARK-024, SPARK-025,
   SPARK-026, SPARK-027, SPARK-035, SPARK-039, SPARK-040, SPARK-041,
   SPARK-042, SPARK-052, SPARK-053, SPARK-054, SPARK-055, SPARK-056,
@@ -253,10 +257,28 @@ before those dependencies close is not admissible.
   writers and complete corruption, and repairs only a torn final fragment after
   the entire complete prefix verifies. Live ownership is tracked separately by
   SPARK-013 and SPARK-065-068.
-- [ ] **SPARK-012 - Selective memory bridge.** Query working, episodic,
+- [x] **SPARK-012 - Selective memory bridge.** Query working, episodic,
   semantic, procedural, and nonparametric memory through evidence-scoped
   retrieval; prevent recalled text from becoming instruction or fact merely by
   appearing in context.
+  Accepted at CP325: one typed `aura.rlc.selective_memory.v1` contract queries
+  all five live memory surfaces concurrently under bounded per-source timeout
+  and records success, empty, unavailable, failure, and timeout receipts rather
+  than erasing partial failure. Retrieval is bound to tenant, user, session,
+  episode, immutable objective digest, expiry, and contest status. Deterministic
+  ranking, cross-tier deduplication, corroborating-tier attribution, and
+  one-per-tier fairness construct a bounded result without turning frequency
+  into truth. Every admitted memory becomes context-only evidence and a durable
+  `SEARCH_MEMORY` operation in the same transactional epistemic state.
+  Recalled text always carries `instruction_authority=false`; exact text,
+  digest, tier, scope, source receipt, result hash, and state hash are validated
+  independently at service, client, worker, and engine boundaries. Memory-shaped
+  prompt injection, cross-tenant/user/session/episode replay, stale or contested
+  records, boolean timestamp coercion, reserved-field smuggling, authority
+  mutation, and envelope tampering fail before latent execution. The focused
+  bridge contracts pass 19/19 and the integrated RLC/latent/GWT/controller gate
+  passes 823/823. Live capability effects and lesions remain separately owned
+  by SPARK-013 and SPARK-066-068.
 - [ ] **SPARK-013 - State causality.** Prove the structured state changes later
   computation and that removing required state causes task-appropriate loss;
   prohibit a prose-only shadow ledger.
@@ -504,3 +526,5 @@ CP323 adds a durable weighted hypothesis portfolio with protected alternatives;
 it likewise does not change the negative capability verdict.
 CP324 completes the durable operation-history authority but not its live
 controller consumer; it does not change the negative capability verdict.
+CP325 closes the selective-memory ingress and its context-only authority chain;
+it does not change the negative capability verdict.

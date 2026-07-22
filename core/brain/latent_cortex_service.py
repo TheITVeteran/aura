@@ -19,6 +19,7 @@ already exhausted. Nothing here fakes an answer.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import math
 import os
@@ -1084,6 +1085,8 @@ class LatentCortexService:
         require_full_stack: bool = True,
         foreground_request: bool = True,
         cognitive_context: list | None = None,
+        epistemic_state: Any | None = None,
+        selective_memory_result: Any | None = None,
     ) -> dict[str, Any]:
         """Run one latent-reasoning episode on the resident model."""
         if not _cortex_enabled():
@@ -1136,6 +1139,40 @@ class LatentCortexService:
                     or len(entry["text"]) > 400
                 ):
                     return self._record_failure("invalid_cognitive_context")
+        memory_context_present = any(
+            isinstance(entry, dict) and entry.get("context_role") == "memory_observation"
+            for entry in (cognitive_context or [])
+        )
+        if (
+            memory_context_present
+            or epistemic_state is not None
+            or selective_memory_result is not None
+        ):
+            try:
+                from core.brain.llm.latent_cortex.epistemic_memory import (
+                    SelectiveMemoryResult,
+                    validate_memory_context_items,
+                )
+                from core.brain.llm.latent_cortex.epistemic_state import EpistemicState
+
+                if not isinstance(epistemic_state, EpistemicState) or not isinstance(
+                    selective_memory_result, SelectiveMemoryResult
+                ):
+                    return self._record_failure("invalid_epistemic_memory_authority")
+                visible_objective = self._visible_objective(question, messages)
+                if (
+                    epistemic_state.problem.objective_sha256
+                    != hashlib.sha256(visible_objective.encode("utf-8")).hexdigest()
+                ):
+                    return self._record_failure("epistemic_objective_mismatch")
+                validate_memory_context_items(
+                    epistemic_state,
+                    selective_memory_result,
+                    cognitive_context or [],
+                )
+            except (ImportError, AttributeError, TypeError, ValueError) as exc:
+                logger.warning("Epistemic memory authority rejected: %s", exc)
+                return self._record_failure("invalid_epistemic_memory_authority")
         try:
             timeout_s = float(timeout_s)
         except (TypeError, ValueError, OverflowError):
@@ -1322,6 +1359,14 @@ class LatentCortexService:
             config["fast_weights"] = True
         self._last_allocation["config"] = dict(config)
         self._last_allocation["budget"] = dict(budget)
+        if epistemic_state is not None:
+            self._last_allocation["epistemic_state"] = {
+                "schema": epistemic_state.schema,
+                "episode_id": epistemic_state.episode_id,
+                "version": epistemic_state.version,
+                "state_sha256": epistemic_state.state_sha256,
+                "memory_result_sha256": selective_memory_result.result_sha256,
+            }
 
         try:
             from core.brain.llm_health_router import (
@@ -1422,13 +1467,20 @@ class LatentCortexService:
         if not isinstance(result, dict):
             return self._record_failure("invalid_client_response")
         raw_receipt = result.get("receipt")
-        result_receipt = (
-            dict(raw_receipt) if isinstance(raw_receipt, dict) else {}
-        )
+        result_receipt = dict(raw_receipt) if isinstance(raw_receipt, dict) else {}
+        if epistemic_state is not None:
+            result_receipt["epistemic_state"] = {
+                "schema": epistemic_state.schema,
+                "episode_id": epistemic_state.episode_id,
+                "version": epistemic_state.version,
+                "state_sha256": epistemic_state.state_sha256,
+                "memory_result_sha256": selective_memory_result.result_sha256,
+                "memory_evidence_ids": [
+                    candidate.evidence_id for candidate in selective_memory_result.candidates
+                ],
+            }
         raw_progress = result.get("progress")
-        self._last_progress = (
-            dict(raw_progress) if isinstance(raw_progress, dict) else {}
-        )
+        self._last_progress = dict(raw_progress) if isinstance(raw_progress, dict) else {}
         if result.get("ok"):
             contract_errors = self._receipt_contract_errors(
                 raw_receipt,
@@ -1646,6 +1698,7 @@ class LatentCortexService:
                     "last_stage",
                     "stage_timings_s",
                     "honest_flags",
+                    "epistemic_state",
                 )
                 if key in self._last_failure_receipt
             },
@@ -1696,6 +1749,7 @@ class LatentCortexService:
                     "last_stage",
                     "stage_timings_s",
                     "honest_flags",
+                    "epistemic_state",
                 )
                 if k in self._last_receipt
             },
@@ -1727,6 +1781,38 @@ def register_latent_cortex(orchestrator: Any = None) -> LatentCortexService:
         owner="core/brain/latent_cortex_service.py",
         registered_by="register_latent_cortex",
     )
+    # The selective-memory bridge resolves organs through the same runtime
+    # registry as every other cognitive signal. Register the existing
+    # playbook and reasoning-reflection stores as named organs; this does not
+    # create new memory databases or duplicate their ownership.
+    for service_name, getter in (
+        (
+            "procedural_memory",
+            lambda: __import__(
+                "core.brain.procedural_memory",
+                fromlist=["get_procedural_memory"],
+            ).get_procedural_memory(),
+        ),
+        (
+            "reasoning_memory",
+            lambda: __import__(
+                "core.brain.reasoning_memory",
+                fromlist=["get_reasoning_memory"],
+            ).get_reasoning_memory(),
+        ),
+    ):
+        if get_runtime_service(service_name, default=None) is not None:
+            continue
+        try:
+            register_runtime_service(
+                service_name,
+                getter(),
+                required=False,
+                owner="core/brain/latent_cortex_service.py",
+                registered_by="register_latent_cortex",
+            )
+        except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            logger.debug("Selective-memory organ registration skipped (%s): %s", service_name, exc)
     return inst
 
 

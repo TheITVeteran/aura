@@ -10,6 +10,8 @@ ablatable, and every wire boundary validates the payload.
 """
 from __future__ import annotations
 
+import hashlib
+
 import pytest
 
 mx = pytest.importorskip("mlx.core")
@@ -37,6 +39,21 @@ GOAL_ITEM = {
     "source": "goals",
     "text": "Active goal: keep the runtime stable through the demo.",
 }
+
+
+def _typed_memory_item(text="Historical observation: the June restart fixed it."):
+    return {
+        "source": "memory",
+        "text": text,
+        "context_role": "memory_observation",
+        "instruction_authority": False,
+        "evidence_id": "memory-1234567890abcdef12345678",
+        "content_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        "scope_sha256": "1" * 64,
+        "retrieval_receipt_sha256": "2" * 64,
+        "epistemic_state_sha256": "3" * 64,
+        "memory_tier": "episodic",
+    }
 
 
 class FakeTokenizer:
@@ -182,6 +199,23 @@ def test_malformed_context_is_rejected(tiny_model):
         )
 
 
+def test_typed_memory_context_reaches_engine_but_cannot_gain_instruction_authority(
+    tiny_model,
+):
+    engine = LatentCortexEngine(tiny_model, FakeTokenizer(), config=_config())
+    valid = engine.reason(
+        token_ids=PROMPT_TOKENS,
+        cognitive_context=[_typed_memory_item()],
+    )
+    assert valid.ok
+    assert valid.receipt.cognitive_slots[0]["source"] == "memory"
+
+    tampered = _typed_memory_item()
+    tampered["instruction_authority"] = True
+    with pytest.raises(ValueError, match="memory cognitive context authority"):
+        engine.reason(token_ids=PROMPT_TOKENS, cognitive_context=[tampered])
+
+
 # ── Wire boundaries ──────────────────────────────────────────────────────
 
 
@@ -200,6 +234,25 @@ def test_worker_handler_rejects_malformed_context(tiny_model):
     )
     assert body["status"] == "error"
     assert "cognitive_context" in body["message"]
+
+
+def test_worker_handler_rejects_memory_authority_tampering(tiny_model):
+    from core.brain.llm.latent_cortex.worker_handler import handle_latent_reason
+
+    item = _typed_memory_item()
+    item["instruction_authority"] = True
+    body = handle_latent_reason(
+        {
+            "action": "latent_reason",
+            "prompt": "why",
+            "cognitive_context": [item],
+        },
+        model=tiny_model,
+        tokenizer=FakeTokenizer(),
+        model_path="",
+    )
+    assert body["status"] == "error"
+    assert "memory context authority" in body["message"]
 
 
 @pytest.mark.asyncio

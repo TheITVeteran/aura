@@ -25,10 +25,13 @@ from prompt punctuation.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
 import logging
 import re
-from dataclasses import dataclass, field
+import threading
+import uuid
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 logger = logging.getLogger("Aura.CognitiveIngress")
@@ -80,6 +83,10 @@ class IngressSignal:
     # A caution the episode should be seeded with instead of (or alongside)
     # content, e.g. when retrieved reports conflict irreconcilably.
     caution_text: str = ""
+    # Typed slot envelopes. Memory uses these instead of a flattened prompt
+    # blob so provenance, scope, content digest, and instruction authority
+    # survive every hop to the resident recurrent workspace.
+    context_items: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -92,6 +99,7 @@ class IngressSignal:
             "context_text_chars": len(self.context_text),
             "firewall": dict(self.firewall),
             "caution_text_chars": len(self.caution_text),
+            "context_item_count": len(self.context_items),
         }
 
 
@@ -100,9 +108,13 @@ class CognitiveIngress:
     stakes: float
     uncertainty: float
     signals: list[IngressSignal] = field(default_factory=list)
+    # One authority for this RLC episode. The selective-memory bridge commits
+    # recalled observations here before their corresponding slots may run.
+    epistemic_state: Any | None = None
+    memory_result: Any | None = None
 
     def to_receipt(self) -> dict[str, Any]:
-        return {
+        receipt = {
             "schema": COGNITIVE_INGRESS_SCHEMA,
             "stakes": round(self.stakes, 4),
             "uncertainty": round(self.uncertainty, 4),
@@ -112,6 +124,20 @@ class CognitiveIngress:
             "absent_sources": [s.source for s in self.signals if not s.present],
             "signals": [s.to_dict() for s in self.signals],
         }
+        state = self.epistemic_state
+        if state is not None:
+            receipt["epistemic_state"] = {
+                "schema": str(getattr(state, "schema", "")),
+                "episode_id": str(getattr(state, "episode_id", "")),
+                "version": int(getattr(state, "version", 0)),
+                "state_sha256": str(getattr(state, "state_sha256", "")),
+                "evidence_count": len(tuple(getattr(state, "evidence", ()) or ())),
+                "operation_count": len(tuple(getattr(state, "operations", ()) or ())),
+            }
+        result = self.memory_result
+        if result is not None:
+            receipt["selective_memory"] = result.to_receipt()
+        return receipt
 
 
 def _objective_terms(objective: str) -> set[str]:
@@ -314,133 +340,401 @@ def _dispose_hidden_awaitable(value: Any) -> None:
         cancel()
 
 
-def _signal_memory(objective: str) -> IngressSignal:
-    """Recall familiarity + epistemic admission of what was recalled.
+def _service_version(service: Any) -> str:
+    cls = type(service)
+    return f"{cls.__module__}.{cls.__qualname__}"[:128]
 
-    Familiarity moves the allocation (strong hits ⇒ less uncertainty;
-    blankness ⇒ more). The recalled CONTENT then passes the epistemic
-    firewall before it may seed a thought slot: duplicate reports collapse
-    to independent sources, conflicting reports refuse each other, and an
-    unresolved conflict seeds a caution instead of a winner — with the whole
-    decision receipted on the signal.
-    """
-    from core.brain.epistemic_firewall import EpistemicFirewall, EvidenceItem
 
-    for name in ("memory_facade", "episodic_memory"):
-        service = _get_service(name)
-        if service is None:
+def _working_memory_records(orchestrator: Any, objective: str, limit: int) -> list[dict[str, Any]]:
+    state = getattr(orchestrator, "state", None)
+    cognition = getattr(state, "cognition", None)
+    history = getattr(cognition, "working_memory", None)
+    if not isinstance(history, list):
+        return []
+    records: list[dict[str, Any]] = []
+    for item in reversed(history[-24:]):
+        if not isinstance(item, dict):
             continue
-        # This ingress assembler is intentionally synchronous. Prefer the
-        # facade's explicit sync contract and never leak an async search
-        # coroutine into a synchronous cognitive cycle.
-        for method in ("search_sync", "recall", "search", "retrieve"):
-            fn = getattr(service, method, None)
-            if not callable(fn):
-                continue
-            if inspect.iscoroutinefunction(fn):
-                logger.debug(
-                    "Skipping async memory organ method on synchronous ingress (%s.%s)",
-                    name,
-                    method,
-                )
-                continue
-            try:
-                hits = fn(objective, limit=4) if method != "recall" else fn(objective)
-            except TypeError:
-                try:
-                    hits = fn(objective)
-                except Exception as retry_exc:  # noqa: BLE001 - organ contract unknown; absent
-                    logger.debug("Memory organ probe failed (%s.%s): %s", name, method, retry_exc)
-                    continue
-            except Exception as probe_exc:  # noqa: BLE001 - organ contract unknown; absent
-                logger.debug("Memory organ probe failed (%s.%s): %s", name, method, probe_exc)
-                continue
-            if inspect.isawaitable(hits):
-                # Unknown/decorated organ contracts can hide an awaitable
-                # behind a regular callable. Dispose it without leaking work,
-                # then try the next synchronous accessor.
-                _dispose_hidden_awaitable(hits)
-                logger.debug(
-                    "Skipped awaitable memory result on synchronous ingress (%s.%s)",
-                    name,
-                    method,
-                )
-                continue
-            raw_hits = list(hits) if isinstance(hits, (list, tuple)) else []
-            retrieved_count = len(raw_hits)
-            eligible_hits: list[tuple[int, Any]] = []
-            pre_admission_refused: list[dict[str, Any]] = []
-            for position, hit in enumerate(raw_hits[:8]):
-                origin = f"{name}.{method}#{position}"
+        content = str(item.get("content") or "").strip()
+        # The current user turn is already the immutable problem. Recalling
+        # the same text as evidence would double-count the prompt.
+        if not content or content == objective:
+            continue
+        role = str(item.get("role") or "unknown").strip()
+        records.append(
+            {
+                "id": str(item.get("id") or f"working-{len(records)}"),
+                "content": f"{role}: {content}",
+                "timestamp": item.get("timestamp"),
+                "source": "cognition.working_memory",
+                "source_version": "aura_state.v1",
+            }
+        )
+        if len(records) >= limit:
+            break
+    return records
+
+
+def _memory_adapter_specs(
+    orchestrator: Any,
+    objective: str,
+) -> tuple[dict[Any, tuple[str, str, Any]], dict[str, Any]]:
+    """Resolve Aura's five memory tiers without creating another store."""
+    from core.brain.llm.latent_cortex.epistemic_memory import MemoryTier
+    from core.brain.llm.latent_cortex.epistemic_state import text_sha256
+
+    tracking: dict[str, Any] = {
+        "retrieved_count": 0,
+        "eligible_count": 0,
+        "pre_admission_refused": [],
+        "raw_by_digest": {},
+        "origin_by_digest": {},
+        "source_labels": [],
+        "lock": threading.Lock(),
+    }
+
+    def tracked(tier: MemoryTier, source_label: str, adapter: Any):
+        if adapter is None:
+            return None
+
+        def invoke(query: str, limit: int):
+            raw = adapter(query, limit)
+            if inspect.isawaitable(raw):
+                return raw
+            if raw is None:
+                items: list[Any] = []
+            elif isinstance(raw, (str, dict)):
+                items = [raw]
+            else:
+                items = list(raw)
+            with tracking["lock"]:
+                tracking["retrieved_count"] += len(items)
+            eligible_items: list[Any] = []
+            for position, hit in enumerate(items[: limit * 2]):
+                origin = f"{source_label}#{position}"
                 eligible, refusal = _conversation_pre_admission(
                     objective,
                     hit,
                     origin=origin,
                 )
-                if eligible:
-                    eligible_hits.append((position, hit))
-                elif refusal is not None:
-                    pre_admission_refused.append(refusal)
-            eligible_count = len(eligible_hits)
-            familiarity = min(1.0, eligible_count / 4.0)
-            recalled = ""
-            caution = ""
-            firewall_receipt: dict[str, Any] = {}
-            conflict_uncertainty = 0.0
-            if retrieved_count:
-                evidence = [
-                    EvidenceItem(
-                        text=_hit_text(hit).strip(),
-                        origin=f"{name}.{method}#{position}",
-                        channel=name,
-                        observed_at=_hit_observed_at(hit),
-                        kind=_hit_kind(hit),
-                    )
-                    for position, hit in eligible_hits
-                    if _hit_text(hit).strip()
-                ]
-                try:
-                    verdict = EpistemicFirewall(max_admitted=2).review(
-                        objective, evidence
-                    )
-                    firewall_receipt = verdict.to_receipt()
-                    firewall_receipt.update(
-                        {
-                            "retrieved_count": retrieved_count,
-                            "eligible_count": eligible_count,
-                            "pre_admission_refused": pre_admission_refused,
-                        }
-                    )
-                    recalled = " ".join(verdict.admitted_texts())[:400]
-                    caution = verdict.caution_text()
-                    if verdict.abstain:
-                        # Irreconcilable recall is worse than no recall: the
-                        # episode must feel the doubt, not inherit one side.
-                        conflict_uncertainty = 0.10
-                        familiarity = min(familiarity, 0.25)
-                except (TypeError, ValueError) as exc:
-                    logger.warning("Epistemic firewall failed open->closed: %s", exc)
-                    recalled = ""
-                    caution = "Evidence check: retrieval admission failed; nothing seeded"
-            return IngressSignal(
-                source="memory",
-                present=True,
-                value=familiarity,
-                uncertainty_delta=(
-                    0.10
-                    if eligible_count == 0
-                    else -0.10 * familiarity + conflict_uncertainty
-                ),
-                detail=(
-                    f"{name}.{method}: {retrieved_count} retrieved, "
-                    f"{eligible_count} eligible, "
-                    f"{len(firewall_receipt.get('admitted', []))} admitted"
-                ),
-                context_text=recalled,
-                firewall=firewall_receipt,
-                caution_text=caution,
+                if not eligible:
+                    if refusal is not None:
+                        with tracking["lock"]:
+                            tracking["pre_admission_refused"].append(refusal)
+                    continue
+                content = _hit_text(hit).strip()[:400]
+                if not content:
+                    continue
+                with tracking["lock"]:
+                    tracking["eligible_count"] += 1
+                    digest = text_sha256(content)
+                    tracking["raw_by_digest"][digest] = hit
+                    tracking["origin_by_digest"][digest] = origin
+                eligible_items.append(hit)
+            return eligible_items
+
+        with tracking["lock"]:
+            tracking["source_labels"].append(source_label)
+        return invoke
+
+    specs: dict[Any, tuple[str, str, Any]] = {}
+    if getattr(getattr(orchestrator, "state", None), "cognition", None) is not None:
+        specs[MemoryTier.WORKING] = (
+            "cognition.working_memory",
+            "aura_state.v1",
+            tracked(
+                MemoryTier.WORKING,
+                "cognition.working_memory",
+                lambda query, limit: _working_memory_records(orchestrator, query, limit),
+            ),
+        )
+
+    episodic = _get_service("episodic_memory")
+    if episodic is not None:
+        recall_similar = getattr(episodic, "recall_similar", None)
+        recall = getattr(episodic, "recall", None)
+        if callable(recall_similar) and not inspect.iscoroutinefunction(recall_similar):
+
+            def adapter(query, limit, method=recall_similar):
+                return method(query, limit=limit)
+
+            label = "episodic_memory.recall_similar"
+        elif callable(recall) and not inspect.iscoroutinefunction(recall):
+
+            def adapter(query, limit, method=recall):
+                return method(query, limit=limit)
+
+            label = "episodic_memory.recall"
+        else:
+            adapter = None
+            label = "episodic_memory"
+        specs[MemoryTier.EPISODIC] = (
+            label,
+            _service_version(episodic),
+            tracked(MemoryTier.EPISODIC, label, adapter),
+        )
+
+    facade = _get_service("memory_facade")
+    semantic = _get_service("semantic_memory")
+    semantic_service = facade or semantic
+    if semantic_service is not None:
+        search_sync = getattr(semantic_service, "search_sync", None)
+        search_memories = getattr(semantic_service, "search_memories", None)
+        search = getattr(semantic_service, "search", None)
+        if callable(search_sync):
+
+            def adapter(query, limit, method=search_sync):
+                return method(query, limit=limit)
+
+            label = (
+                "memory_facade.search_sync" if facade is not None else "semantic_memory.search_sync"
             )
-    return IngressSignal(source="memory", present=False)
+        elif callable(search_memories) and not inspect.iscoroutinefunction(search_memories):
+
+            def adapter(query, limit, method=search_memories):
+                return method(query, top_k=limit)
+
+            label = "semantic_memory.search_memories"
+        elif callable(search) and not inspect.iscoroutinefunction(search):
+
+            def adapter(query, limit, method=search):
+                return method(query, limit=limit)
+
+            label = "memory_facade.search" if facade is not None else "semantic_memory.search"
+        else:
+            adapter = None
+            label = "memory_facade" if facade is not None else "semantic_memory"
+        specs[MemoryTier.SEMANTIC] = (
+            label,
+            _service_version(semantic_service),
+            tracked(MemoryTier.SEMANTIC, label, adapter),
+        )
+
+    procedural = _get_service("procedural_memory")
+    if procedural is not None and callable(getattr(procedural, "recall", None)):
+
+        def recall_procedural(query: str, limit: int):
+            try:
+                return procedural.recall(query, limit=limit, record_usage=False)
+            except TypeError:
+                return procedural.recall(query, limit=limit)
+
+        specs[MemoryTier.PROCEDURAL] = (
+            "procedural_memory.recall",
+            _service_version(procedural),
+            tracked(
+                MemoryTier.PROCEDURAL,
+                "procedural_memory.recall",
+                recall_procedural,
+            ),
+        )
+
+    nonparametric = _get_service("reasoning_memory")
+    if nonparametric is not None and callable(getattr(nonparametric, "recall", None)):
+
+        def recall_nonparametric(query: str, limit: int):
+            try:
+                return nonparametric.recall(
+                    query,
+                    limit=limit,
+                    failures_only=False,
+                )
+            except TypeError:
+                return nonparametric.recall(query, limit=limit)
+
+        specs[MemoryTier.NONPARAMETRIC] = (
+            "reasoning_memory.recall",
+            _service_version(nonparametric),
+            tracked(
+                MemoryTier.NONPARAMETRIC,
+                "reasoning_memory.recall",
+                recall_nonparametric,
+            ),
+        )
+    return specs, tracking
+
+
+def _new_memory_query(
+    objective: str,
+    *,
+    tenant_id: str,
+    user_id: str,
+    session_id: str,
+):
+    from core.brain.llm.latent_cortex.epistemic_memory import MemoryQuery
+
+    return MemoryQuery.create(
+        objective,
+        episode_id=f"rlc-{uuid.uuid4().hex[:24]}",
+        tenant_id=tenant_id,
+        user_id=user_id,
+        session_id=session_id,
+    )
+
+
+def _memory_signal_from_result(
+    objective: str,
+    result: Any,
+    tracking: dict[str, Any],
+) -> tuple[IngressSignal, Any, Any]:
+    """Firewall recalled content, then commit only admitted records."""
+    from core.brain.epistemic_firewall import EpistemicFirewall, EvidenceItem
+    from core.brain.llm.latent_cortex.epistemic_memory import attach_memory_result
+    from core.brain.llm.latent_cortex.epistemic_state import (
+        ComputeBudgetState,
+        EpistemicState,
+        ProblemFrame,
+    )
+
+    evidence: list[EvidenceItem] = []
+    raw_by_digest = tracking["raw_by_digest"]
+    origin_by_digest = tracking["origin_by_digest"]
+    for candidate in result.candidates:
+        raw = raw_by_digest.get(candidate.content_sha256)
+        evidence.append(
+            EvidenceItem(
+                text=candidate.content,
+                origin=origin_by_digest.get(
+                    candidate.content_sha256,
+                    candidate.candidate_id,
+                ),
+                channel=f"memory.{candidate.tier.value}",
+                observed_at=candidate.created_at,
+                kind=_hit_kind(raw) if raw is not None else "claim",
+            )
+        )
+
+    recalled = ""
+    caution = ""
+    conflict_uncertainty = 0.0
+    firewall_receipt: dict[str, Any]
+    admitted_candidates: tuple[Any, ...] = ()
+    try:
+        verdict = EpistemicFirewall(max_admitted=2).review(objective, evidence)
+        firewall_receipt = verdict.to_receipt()
+        admitted_content_sha256 = {
+            hashlib.sha256(str(row.get("text") or "").encode("utf-8")).hexdigest()
+            for row in verdict.admitted
+        }
+        if not verdict.abstain:
+            admitted_candidates = tuple(
+                candidate
+                for candidate in result.candidates
+                if candidate.content_sha256 in admitted_content_sha256
+            )
+        recalled = " ".join(candidate.content for candidate in admitted_candidates)[:400]
+        caution = verdict.caution_text()
+        if verdict.abstain:
+            conflict_uncertainty = 0.10
+    except (TypeError, ValueError) as exc:
+        logger.warning("Epistemic firewall failed closed: %s", exc)
+        firewall_receipt = {
+            "admitted": [],
+            "refused": [],
+            "abstain": True,
+            "reasons": ["firewall_contract_failure"],
+        }
+        caution = "Evidence check: retrieval admission failed; nothing seeded"
+
+    admitted_result = replace(result, candidates=admitted_candidates)
+    problem = ProblemFrame.create(objective)
+    genesis = EpistemicState.genesis(
+        episode_id=result.query.scope.episode_id,
+        problem=problem,
+        budget=ComputeBudgetState(total=1.0),
+    )
+    state = attach_memory_result(genesis, admitted_result, operation_cost=0.01)
+    context_items = (
+        admitted_result.context_items(
+            state_sha256=state.state_sha256,
+            max_items=2,
+        )
+        if admitted_result.candidates
+        else []
+    )
+
+    retrieved_count = int(tracking["retrieved_count"])
+    eligible_count = int(tracking["eligible_count"])
+    familiarity = min(1.0, eligible_count / 4.0)
+    if conflict_uncertainty:
+        familiarity = min(familiarity, 0.25)
+    firewall_receipt.update(
+        {
+            "retrieved_count": retrieved_count,
+            "eligible_count": eligible_count,
+            "pre_admission_refused": list(tracking["pre_admission_refused"]),
+            "selective_memory_result_sha256": admitted_result.result_sha256,
+            "epistemic_state_sha256": state.state_sha256,
+        }
+    )
+    available = any(
+        receipt.status.value in {"succeeded", "empty"} for receipt in result.source_receipts
+    )
+    labels = list(dict.fromkeys(tracking["source_labels"]))
+    source_detail = labels[0] if len(labels) == 1 else "selective_memory_bridge"
+    signal = IngressSignal(
+        source="memory",
+        present=available,
+        value=familiarity if available else None,
+        uncertainty_delta=(
+            0.10
+            if available and eligible_count == 0
+            else -0.10 * familiarity + conflict_uncertainty
+        ),
+        detail=(
+            f"{source_detail}: {retrieved_count} retrieved, "
+            f"{eligible_count} eligible, {len(admitted_candidates)} admitted"
+        )
+        if available
+        else "",
+        context_text=recalled,
+        firewall=firewall_receipt,
+        caution_text=caution,
+        context_items=context_items,
+    )
+    return signal, state, admitted_result
+
+
+def _resolve_memory_sync(
+    orchestrator: Any,
+    objective: str,
+    *,
+    tenant_id: str = "local",
+    user_id: str = "owner",
+    session_id: str = "local",
+) -> tuple[IngressSignal, Any, Any]:
+    from core.brain.llm.latent_cortex.epistemic_memory import SelectiveMemoryBridge
+
+    specs, tracking = _memory_adapter_specs(orchestrator, objective)
+    query = _new_memory_query(
+        objective,
+        tenant_id=tenant_id,
+        user_id=user_id,
+        session_id=session_id,
+    )
+    result = SelectiveMemoryBridge(specs).retrieve(query)
+    return _memory_signal_from_result(objective, result, tracking)
+
+
+async def _resolve_memory_async(
+    orchestrator: Any,
+    objective: str,
+    *,
+    tenant_id: str = "local",
+    user_id: str = "owner",
+    session_id: str = "local",
+) -> tuple[IngressSignal, Any, Any]:
+    from core.brain.llm.latent_cortex.epistemic_memory import SelectiveMemoryBridge
+
+    specs, tracking = _memory_adapter_specs(orchestrator, objective)
+    query = _new_memory_query(
+        objective,
+        tenant_id=tenant_id,
+        user_id=user_id,
+        session_id=session_id,
+    )
+    result = await SelectiveMemoryBridge(specs).retrieve_async(query)
+    return _memory_signal_from_result(objective, result, tracking)
 
 
 def _signal_reference(objective: str) -> IngressSignal:
@@ -892,10 +1186,21 @@ def _signal_world_model(orchestrator: Any) -> IngressSignal:
 def assemble_cognitive_ingress(
     orchestrator: Any,
     objective: str,
+    *,
+    tenant_id: str = "local",
+    user_id: str = "owner",
+    session_id: str = "local",
 ) -> CognitiveIngress:
     """Typed allocation inputs for one latent episode, with receipts."""
+    memory_signal, epistemic_state, memory_result = _resolve_memory_sync(
+        orchestrator,
+        objective,
+        tenant_id=tenant_id,
+        user_id=user_id,
+        session_id=session_id,
+    )
     signals = [
-        _signal_memory(objective),
+        memory_signal,
         _signal_reference(objective),
         _signal_body(orchestrator),
         _signal_goals(objective),
@@ -912,22 +1217,54 @@ def assemble_cognitive_ingress(
         stakes=min(1.0, max(0.0, stakes)),
         uncertainty=min(1.0, max(0.0, uncertainty)),
         signals=signals,
+        epistemic_state=epistemic_state,
+        memory_result=memory_result,
     )
 
 
 async def assemble_cognitive_ingress_async(
     orchestrator: Any,
     objective: str,
+    *,
+    tenant_id: str = "local",
+    user_id: str = "owner",
+    session_id: str = "local",
 ) -> CognitiveIngress:
-    """Assemble organ ingress without blocking the foreground event loop."""
-    return await asyncio.to_thread(
-        assemble_cognitive_ingress,
-        orchestrator,
-        objective,
+    """Assemble organ ingress with bounded concurrent memory retrieval."""
+    memory_task = asyncio.create_task(
+        _resolve_memory_async(
+            orchestrator,
+            objective,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            session_id=session_id,
+        )
+    )
+    other_signals = await asyncio.to_thread(
+        lambda: [
+            _signal_reference(objective),
+            _signal_body(orchestrator),
+            _signal_goals(objective),
+            _signal_will(orchestrator),
+            _signal_affect(orchestrator),
+            _signal_self_model(objective),
+            _signal_world_model(orchestrator),
+        ]
+    )
+    memory_signal, epistemic_state, memory_result = await memory_task
+    signals = [memory_signal, *other_signals]
+    stakes = _BASE_STAKES + sum(s.stakes_delta for s in signals if s.present)
+    uncertainty = _BASE_UNCERTAINTY + sum(s.uncertainty_delta for s in signals if s.present)
+    return CognitiveIngress(
+        stakes=min(1.0, max(0.0, stakes)),
+        uncertainty=min(1.0, max(0.0, uncertainty)),
+        signals=signals,
+        epistemic_state=epistemic_state,
+        memory_result=memory_result,
     )
 
 
-def cognitive_context_items(ingress: CognitiveIngress) -> list[dict[str, str]]:
+def cognitive_context_items(ingress: CognitiveIngress) -> list[dict[str, Any]]:
     """Slot-seeding items for the episode: organ CONTENT, not just budget.
 
     Every item is (source, text) drawn from the organs that actually spoke —
@@ -936,13 +1273,15 @@ def cognitive_context_items(ingress: CognitiveIngress) -> list[dict[str, str]]:
     felt state itself becomes an identifiable, ablatable thought slot.
     Bounded to 5 items x 400 chars (engine hard caps at 6).
     """
-    items: list[dict[str, str]] = []
+    items: list[dict[str, Any]] = []
     by_source = {signal.source: signal for signal in ingress.signals}
     for source in ("memory", "reference", "goals", "world_model", "self_model"):
         signal = by_source.get(source)
         if signal is None or not signal.present:
             continue
-        if signal.context_text.strip():
+        if source == "memory" and signal.context_items:
+            items.extend(dict(item) for item in signal.context_items[:2])
+        elif signal.context_text.strip():
             items.append({"source": source, "text": signal.context_text[:400]})
         # Epistemic caution outranks silence: when admission refused the
         # content (conflicts, thin coverage), the episode is seeded with the
