@@ -331,9 +331,22 @@ class EpisodeTaskVerifier:
     def __call__(self, text: str) -> float:
         return float(self.evaluate(text)["score"])
 
-    def to_receipt(self) -> dict[str, Any]:
+    def to_receipt(
+        self,
+        *,
+        exclude_evaluation_indices: set[int] | None = None,
+    ) -> dict[str, Any]:
         """Bounded evidence: every evaluation's score + the best row's why."""
-        if not self.evaluations:
+        excluded = set(exclude_evaluation_indices or ())
+        if any(
+            type(index) is not int or not 0 <= index < len(self.evaluations)
+            for index in excluded
+        ):
+            raise ValueError("excluded verifier evaluation index is invalid")
+        evaluations = [
+            row for index, row in enumerate(self.evaluations) if index not in excluded
+        ]
+        if not evaluations:
             return {
                 "schema": TASK_VERIFIER_SCHEMA,
                 "evaluations": 0,
@@ -343,7 +356,7 @@ class EpisodeTaskVerifier:
                 "outcome_passed": None,
                 "outcome_reason": "candidate_checks_are_not_task_ground_truth",
             }
-        best = max(self.evaluations, key=lambda row: row["score"])
+        best = max(evaluations, key=lambda row: row["score"])
         facets = best["checks"].get("facets") or {}
         # Per-facet judgments on the WINNING candidate, excerpt included —
         # the held-out grading surface. An operator (or downstream ground
@@ -361,8 +374,8 @@ class EpisodeTaskVerifier:
         ]
         return {
             "schema": TASK_VERIFIER_SCHEMA,
-            "evaluations": len(self.evaluations),
-            "score_trail": [row["score"] for row in self.evaluations[:32]],
+            "evaluations": len(evaluations),
+            "score_trail": [row["score"] for row in evaluations[:32]],
             "best_score": best["score"],
             "best_applicable_checks": list(best["applicable_checks"]),
             "best_failures": {

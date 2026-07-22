@@ -247,6 +247,33 @@ def test_episode_ships_probe_cache_receipt(tiny_model):
     assert receipt.get("schema") == PROBE_CACHE_SCHEMA
     assert receipt["hits"] + receipt["misses"] >= 1
     assert "probe_cache" in result.receipt.to_dict()
+    assert result.receipt.decoy_verification["selection_admitted"] is False
+    assert "branch_verifier_decoy_calibration_failed" in result.receipt.honest_flags
+    assert result.receipt.branch_scores != [0.5, 0.5]
+
+
+def test_broken_verifier_loses_authority_without_collapsing_the_episode(tiny_model):
+    engine = LatentCortexEngine(
+        tiny_model, tokenizer=_ProbeTokenizer(), config=_config()
+    )
+
+    def broken_verifier(_text: str) -> float:
+        raise RuntimeError("critic unavailable")
+
+    result = engine.reason(
+        token_ids=PROMPT_TOKENS,
+        budget=ComputeBudget(),
+        verifier=broken_verifier,
+    )
+
+    assert result.ok
+    assert result.receipt.blind_review == {}
+    assert result.receipt.decoy_verification == {}
+    assert result.receipt.branch_contract == []
+    assert "verifier_preflight_failed:RuntimeError" in result.receipt.honest_flags
+    assert not any(
+        flag.startswith("fallback_vanilla") for flag in result.receipt.honest_flags
+    )
 
 
 def test_probe_cache_can_be_disabled(tiny_model):

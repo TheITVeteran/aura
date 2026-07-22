@@ -580,7 +580,21 @@ def handle_latent_reason(
         progress=progress,
     )
     if task_verifier is not None:
-        result.receipt.verifier_guidance = task_verifier.to_receipt()
+        excluded = set(
+            result.receipt.verifier_preflight.get(
+                "control_evaluation_indices",
+                [],
+            )
+        )
+        excluded.update(
+            result.receipt.decoy_verification.get(
+                "control_evaluation_indices",
+                [],
+            )
+        )
+        result.receipt.verifier_guidance = task_verifier.to_receipt(
+            exclude_evaluation_indices=excluded,
+        )
     elif verifier_requested:
         # Legible in the receipt: downstream must be able to tell "no verifier
         # was wanted" from "a verifier was wanted and could not be built".

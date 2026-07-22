@@ -167,10 +167,11 @@ def test_engine_selects_branch_by_verifier_score():
     scored: list[str] = []
 
     def verifier(text: str) -> float:
+        if text.startswith("Independent consistency check:"):
+            result = check_arithmetic_claims(text)
+            return float(result["score"])
         scored.append(text)
-        # Prefer whichever probe this deterministic scorer sees SECOND —
-        # proving selection follows the score, not branch order.
-        return float(len(scored))
+        return 0.8 if len(scored) % 2 == 0 else 0.2
 
     result = engine.reason(token_ids=[5, 9, 17, 3, 42], verifier=verifier)
     assert result.ok
@@ -179,7 +180,7 @@ def test_engine_selects_branch_by_verifier_score():
     assert result.receipt.selected_branch == highest["branch"], (
         "the branch with the higher blind-review score must win"
     )
-    assert highest["review_position"] == 1
+    assert result.receipt.decoy_verification["selection_admitted"] is True
 
 
 # ── Goodhart hardening: cues without substance earn nothing ─────────────

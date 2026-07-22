@@ -706,6 +706,19 @@ class _ProbeTokenizer:
         return " ".join(str(i) for i in ids)
 
 
+def _decoy_control_score(text: str) -> float | None:
+    if not text.startswith("Independent consistency check:"):
+        return None
+    from core.brain.llm.latent_cortex.task_verifiers import (
+        check_arithmetic_claims,
+        check_code_blocks,
+    )
+
+    arithmetic = check_arithmetic_claims(text)["score"]
+    code = check_code_blocks(text)["score"]
+    return (float(arithmetic) + float(code)) / 2.0
+
+
 def _fresh_model():
     args = ModelArgs(
         model_type="qwen2",
@@ -764,8 +777,11 @@ def test_fast_weight_verifier_erases_on_regression(monkeypatch):
     calls = {"n": 0}
 
     def declining_verifier(text: str) -> float:
+        control = _decoy_control_score(text)
+        if control is not None:
+            return control
         calls["n"] += 1
-        return 1.0 / calls["n"]  # every later probe scores strictly worse
+        return 1.0 / (calls["n"] + 1)  # every later probe scores strictly worse
 
     engine = LatentCortexEngine(
         _fresh_model(), _ProbeTokenizer(), config=_fw_engine_config()
@@ -792,8 +808,11 @@ def test_fast_weight_verifier_accepts_on_improvement(monkeypatch):
     calls = {"n": 0}
 
     def improving_verifier(text: str) -> float:
+        control = _decoy_control_score(text)
+        if control is not None:
+            return control
         calls["n"] += 1
-        return float(calls["n"])  # every later probe scores strictly better
+        return calls["n"] / (calls["n"] + 1)  # bounded, strictly improving
 
     engine = LatentCortexEngine(
         _fresh_model(), _ProbeTokenizer(), config=_fw_engine_config()
@@ -821,13 +840,18 @@ def test_fast_weight_verifier_skips_identity_delta(monkeypatch):
         self.lifecycle.rejected_steps += 1  # V stays zero: exact identity
 
     monkeypatch.setattr(EpisodicFastWeights, "optimize", rejecting_optimize)
+
+    def stable_verifier(text: str) -> float:
+        control = _decoy_control_score(text)
+        return 0.5 if control is None else control
+
     engine = LatentCortexEngine(
         _fresh_model(), _ProbeTokenizer(), config=_fw_engine_config()
     )
     result = engine.reason(
         token_ids=PROMPT_TOKENS,
         budget=ComputeBudget(),
-        verifier=lambda text: 1.0,
+        verifier=stable_verifier,
     )
     assert result.ok
     arbitration = result.receipt.fast_weight_verifier

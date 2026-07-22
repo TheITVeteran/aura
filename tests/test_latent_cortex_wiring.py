@@ -452,6 +452,16 @@ def test_handler_runs_full_episode_on_tiny_model(monkeypatch, tmp_path):
     assert body["receipt"]["correlated_support"]["raw_support_count"] == 2
     assert body["receipt"]["blind_review"]["deranged_order"] is True
     assert body["receipt"]["blind_review"]["first_answer_designated"] is False
+    assert body["receipt"]["verifier_preflight"]["verifier_admitted"] is True
+    decoy = body["receipt"]["decoy_verification"]
+    assert decoy["certified"] is True
+    assert decoy["selection_admitted"] is True
+    assert {row["kind"] for row in decoy["controls"]} == {
+        "correct",
+        "incorrect",
+        "unchanged_a",
+        "unchanged_b",
+    }
     from core.brain.llm.latent_cortex.blind_review import (
         validate_blind_review_receipt,
     )
@@ -462,6 +472,9 @@ def test_handler_runs_full_episode_on_tiny_model(monkeypatch, tmp_path):
         branch_scores=body["receipt"]["branch_scores"],
         isolation_receipt=body["receipt"]["branch_isolation"],
         objective_sha256=body["receipt"]["input_tokens_sha256"],
+        episode_id=body["receipt"]["episode_id"],
+        selected_branch=body["receipt"]["selected_branch"],
+        decoy_receipt=body["receipt"]["decoy_verification"],
     )
     contract_config = {
         "n_slots": 4,
@@ -474,7 +487,13 @@ def test_handler_runs_full_episode_on_tiny_model(monkeypatch, tmp_path):
             contract_config,
         )
     )
-    assert "blind_branch_review_unproven" not in (
+    assert "blind_or_decoy_branch_review_unproven" not in (
+        LatentCortexService._receipt_contract_errors(
+            body["receipt"],
+            contract_config,
+        )
+    )
+    assert "decoy_verifier_preflight_unproven" not in (
         LatentCortexService._receipt_contract_errors(
             body["receipt"],
             contract_config,
@@ -497,7 +516,17 @@ def test_handler_runs_full_episode_on_tiny_model(monkeypatch, tmp_path):
     )
     tampered = copy.deepcopy(body["receipt"])
     tampered["blind_review"]["ownership_framing_supplied"] = True
-    assert "blind_branch_review_unproven" in (
+    assert "blind_or_decoy_branch_review_unproven" in (
+        LatentCortexService._receipt_contract_errors(tampered, contract_config)
+    )
+    tampered = copy.deepcopy(body["receipt"])
+    tampered["decoy_verification"]["controls"][0]["score"] = 0.123
+    assert "blind_or_decoy_branch_review_unproven" in (
+        LatentCortexService._receipt_contract_errors(tampered, contract_config)
+    )
+    tampered = copy.deepcopy(body["receipt"])
+    tampered["verifier_preflight"]["controls"][0]["score"] = 0.123
+    assert "decoy_verifier_preflight_unproven" in (
         LatentCortexService._receipt_contract_errors(tampered, contract_config)
     )
     assert body["requires_cache_clear"] is False

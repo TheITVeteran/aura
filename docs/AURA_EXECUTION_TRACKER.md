@@ -25436,3 +25436,48 @@ count completion is approximately 53.6%-84.3%, with a midpoint planning
 estimate of 65.6%. Next: publish CP332, then implement SPARK-019 decoy-balanced
 verification. Final multi-hour soaks remain deferred until every shorter gate
 is green.
+
+## Checkpoint 2026-07-22-333: Reviewers Must Pass Hidden Non-Error Controls
+
+Verifier authority now has two causal admission gates. Before any verifier-
+dependent recurrent action, Aura generates per-episode correct, incorrect, and
+byte-identical unchanged-twin controls spanning exact arithmetic and Python
+syntax. Correct must beat incorrect by a fixed margin, unchanged twins must be
+stable within tolerance, and all scores must be finite and bounded in `[0,1]`.
+A failed preflight leaves recurrence verifier-free and records the rejection.
+
+At branch selection, every origin-blinded candidate is interleaved with a fresh
+control set in one deterministic content-addressed batch. The reviewer callable
+receives text only; branch, role, candidate/control class, correctness label,
+ownership, and order metadata remain outside the boundary. Only a second
+passing calibration admits candidate scores for selection and downstream latent
+optimization or fast-weight verification. Constant, unstable, out-of-range, or
+throwing reviewers lose authority. A broken critic no longer collapses the
+otherwise valid latent episode into vanilla fallback.
+
+The service independently reconstructs control texts, mixed order, hashes,
+margins, repeat spread, verdicts, candidate mapping, and the admitted winning
+score. Synthetic control evaluations are excluded from task-verifier evidence,
+so passing canaries cannot inflate the reported candidate-quality trail.
+
+Validation: focused decoy, blind-review, selection, preflight, service, probe-
+cache, and scheduled backtrack contracts pass 32/32. The broader engine,
+branch, schedule, probe-cache, and wiring set passes 193/193 in 100.60 seconds;
+the affected RLC integration slice passes 219/219 in 113.40 seconds. The final
+fixed-snapshot RLC, latent-cortex, global-workspace, GWT, and execution-
+controller ownership gate passes 882/882 in 453.65 seconds. Focused Ruff,
+bytecode compilation, and `git diff --check` pass.
+
+SPARK-019 closes. This proves mixed non-error controls, repeat stability, and
+causal revocation at the live reviewer boundary. It does not prove reliable
+criticism in every domain or a generator-disjoint function/weight identity;
+SPARK-020 remains open. No resident-32B capability, positive-interaction, or
+frontier gain is claimed, and the capability verdict remains negative/no-
+signal.
+
+This is total checkpoint record 394. The revised forecast remains 466-733 total
+records, now approximately 72-339 records after this checkpoint. Checkpoint-
+count completion is approximately 53.8%-84.5%, with a midpoint planning
+estimate of 65.7%. Next: publish CP333, then implement SPARK-020 disjoint critic
+function identity and shared-blind-spot measurement. Final multi-hour soaks
+remain deferred until every shorter gate is green.

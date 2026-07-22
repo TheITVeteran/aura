@@ -779,6 +779,7 @@ def test_bytecode_validation_rejects_malformed_programs():
 
 def test_bytecode_program_executes_and_traces(tiny_model):
     from core.brain.llm.latent_cortex.engine import LatentCortexEngine
+    from core.brain.llm.latent_cortex.task_verifiers import check_arithmetic_claims
     from core.brain.llm.latent_cortex.types import (
         BranchConfig,
         ComputeBudget,
@@ -790,6 +791,8 @@ def test_bytecode_program_executes_and_traces(tiny_model):
     scores = iter([0.8, 0.2])  # second probe drops ⇒ backtrack
 
     def verifier(text: str) -> float:
+        if text.startswith("Independent consistency check:"):
+            return float(check_arithmetic_claims(text)["score"])
         return next(scores, 0.2)
 
     engine = LatentCortexEngine(

@@ -97,6 +97,8 @@ def test_full_episode_produces_tokens_and_truthful_receipt(tiny_model):
     assert r.correlated_support["evidence_state"] == "bootstrap_unmeasured"
     assert r.correlated_support["confidence_multiplier"] <= 1.0
     assert r.blind_review == {}
+    assert r.verifier_preflight == {}
+    assert r.decoy_verification == {}
     assert r.residual_trail, "receipt must carry the residual trail"
     assert r.halting_reason
     assert r.schedule_hash

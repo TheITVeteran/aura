@@ -1403,6 +1403,32 @@ class LatentCortexEngine:
         recurrence_budget_limited = False
         bytecode_events: list[dict[str, Any]] = []
         last_probe_scores: dict[int, float] = {}
+        pending_verifier = verifier
+        # Verifier-dependent recurrence is withheld until the decoy preflight
+        # proves discrimination and repeat stability. The later mixed batch
+        # revalidates authority before branch selection and adaptation.
+        verifier = None
+        if pending_verifier is not None and self.tokenizer is not None:
+            try:
+                from core.brain.llm.latent_cortex.blind_review import (
+                    run_decoy_preflight,
+                )
+
+                receipt.verifier_preflight = run_decoy_preflight(
+                    pending_verifier,
+                    episode_id=receipt.episode_id,
+                    objective_sha256=receipt.input_tokens_sha256,
+                )
+                if receipt.verifier_preflight["verifier_admitted"]:
+                    verifier = pending_verifier
+                else:
+                    receipt.flag("verifier_preflight_decoy_calibration_failed")
+            except Exception as exc:
+                receipt.flag(
+                    f"verifier_preflight_failed:{type(exc).__name__}"
+                )
+                pending_verifier = None
+                verifier = None
         value_policy = ValueOfComputationPolicy(action_policy_evidence)
         action_controls = self._embed_action_controls()
         context_sources = {
@@ -1832,7 +1858,7 @@ class LatentCortexEngine:
         )
         branch_verifier_score: float | None = None
         if (
-            verifier is not None
+            pending_verifier is not None
             and self.tokenizer is not None
             and branch_probe_cost + safety_reserve <= budget.remaining_layer_apps
         ):
@@ -1847,22 +1873,41 @@ class LatentCortexEngine:
                 )
                 text = self.tokenizer.decode(probe)
                 branch_probe_texts[branch.index] = text
-            from core.brain.llm.latent_cortex.blind_review import run_blind_review
+            from core.brain.llm.latent_cortex.blind_review import (
+                run_decoy_balanced_review,
+            )
 
-            blind_scores, receipt.blind_review = run_blind_review(
-                branch_probe_texts,
-                verifier,
-                episode_id=receipt.episode_id,
-                objective_sha256=receipt.input_tokens_sha256,
-                isolation_receipt=ensemble.isolation_receipt(
-                    runner.cache_discipline_receipt()
-                ),
-            )
-            winner = ensemble.select(
-                score_fn=lambda branch: blind_scores[branch.index]
-            )
-            if math.isfinite(float(winner.score)):
-                branch_verifier_score = float(winner.score)
+            try:
+                (
+                    blind_scores,
+                    receipt.blind_review,
+                    receipt.decoy_verification,
+                ) = run_decoy_balanced_review(
+                    branch_probe_texts,
+                    pending_verifier,
+                    episode_id=receipt.episode_id,
+                    objective_sha256=receipt.input_tokens_sha256,
+                    isolation_receipt=ensemble.isolation_receipt(
+                        runner.cache_discipline_receipt()
+                    ),
+                )
+            except Exception as exc:
+                receipt.flag(f"branch_decoy_review_failed:{type(exc).__name__}")
+                branch_probe_texts = {}
+                verifier = None
+                winner = ensemble.select()
+            else:
+                if receipt.decoy_verification["selection_admitted"]:
+                    verifier = pending_verifier
+                    winner = ensemble.select(
+                        score_fn=lambda branch: blind_scores[branch.index]
+                    )
+                    if math.isfinite(float(winner.score)):
+                        branch_verifier_score = float(winner.score)
+                else:
+                    receipt.flag("branch_verifier_decoy_calibration_failed")
+                    verifier = None
+                    winner = ensemble.select()
             # CP180: selection is auditable against the PUBLIC contract —
             # each probe's contract verdict (complete/valid/why-not) lands
             # in the receipt beside the scalar scores.
@@ -1885,8 +1930,9 @@ class LatentCortexEngine:
                     )
                 ]
         else:
-            if verifier is not None and self.tokenizer is not None:
+            if pending_verifier is not None and self.tokenizer is not None:
                 receipt.flag("branch_verifier_skipped_budget")
+            verifier = None
             winner = ensemble.select()
         receipt.branch_scores = [float(b.score) for b in ensemble.branches]
         receipt.selected_branch = winner.index

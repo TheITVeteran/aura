@@ -840,21 +840,60 @@ class LatentCortexService:
                 )
             except (ImportError, TypeError, ValueError):
                 errors.append("correlated_support_unproven")
+        preflight: dict[str, Any] | None = None
+        if receipt.get("verifier_preflight"):
+            try:
+                from core.brain.llm.latent_cortex.blind_review import (
+                    validate_decoy_preflight_receipt,
+                )
+
+                preflight = validate_decoy_preflight_receipt(
+                    receipt.get("verifier_preflight"),
+                    episode_id=receipt.get("episode_id"),
+                    objective_sha256=receipt.get("input_tokens_sha256"),
+                )
+                if (
+                    preflight["verifier_admitted"] is False
+                    and "verifier_preflight_decoy_calibration_failed"
+                    not in (receipt.get("honest_flags") or [])
+                ):
+                    raise ValueError("decoy preflight rejection was not disclosed")
+            except (ImportError, TypeError, ValueError):
+                errors.append("decoy_verifier_preflight_unproven")
         if receipt.get("branch_contract"):
             try:
                 from core.brain.llm.latent_cortex.blind_review import (
                     validate_blind_review_receipt,
+                    validate_decoy_review_receipt,
                 )
 
+                decoy = validate_decoy_review_receipt(
+                    receipt.get("decoy_verification"),
+                    blind_receipt=receipt.get("blind_review"),
+                    episode_id=receipt.get("episode_id"),
+                    objective_sha256=receipt.get("input_tokens_sha256"),
+                )
                 validate_blind_review_receipt(
                     receipt.get("blind_review"),
                     n_branches=int(receipt.get("n_branches")),
                     branch_scores=receipt.get("branch_scores"),
                     isolation_receipt=receipt.get("branch_isolation"),
                     objective_sha256=receipt.get("input_tokens_sha256"),
+                    episode_id=receipt.get("episode_id"),
+                    selected_branch=receipt.get("selected_branch"),
+                    decoy_receipt=receipt.get("decoy_verification"),
                 )
+                honest_flags = receipt.get("honest_flags")
+                if not isinstance(honest_flags, list):
+                    raise ValueError("decoy-review honest flags are invalid")
+                if (
+                    decoy["selection_admitted"] is False
+                    and "branch_verifier_decoy_calibration_failed"
+                    not in honest_flags
+                ):
+                    raise ValueError("decoy selection rejection was not disclosed")
             except (ImportError, TypeError, ValueError):
-                errors.append("blind_branch_review_unproven")
+                errors.append("blind_or_decoy_branch_review_unproven")
         exchange_interval = config.get("exchange_interval")
         if (
             type(exchange_interval) is int

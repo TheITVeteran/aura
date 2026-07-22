@@ -94,6 +94,10 @@ After CP332, the published total is record 393: 73-340 forecast records remain,
 checkpoint-count completion is 53.6%-84.3%, and the midpoint planning estimate
 is 65.6%.
 
+After CP333, the published total is record 394: 72-339 forecast records remain,
+checkpoint-count completion is 53.8%-84.5%, and the midpoint planning estimate
+is 65.7%.
+
 ## Code-grounded baseline and ownership
 
 The four-slice static audit covered the neural core, epistemic/verifier paths,
@@ -103,7 +107,7 @@ baseline below is exhaustive over SPARK-001 through SPARK-072:
 
 - `ACCEPTED`: SPARK-001, SPARK-005, SPARK-006, SPARK-007, SPARK-008, SPARK-009,
   SPARK-010, SPARK-011, SPARK-012, SPARK-014, SPARK-015, SPARK-016,
-  SPARK-017, SPARK-018.
+  SPARK-017, SPARK-018, SPARK-019.
 - `PARTIAL`: SPARK-003,
   SPARK-021, SPARK-022, SPARK-023, SPARK-024, SPARK-025,
   SPARK-026, SPARK-027, SPARK-035, SPARK-039, SPARK-040, SPARK-041,
@@ -111,7 +115,7 @@ baseline below is exhaustive over SPARK-001 through SPARK-072:
   SPARK-056, SPARK-058, SPARK-060, SPARK-062, SPARK-063, SPARK-065, SPARK-066,
   SPARK-067.
 - `MISSING`: SPARK-002,
-  SPARK-019, SPARK-020,
+  SPARK-020,
   SPARK-028, SPARK-029, SPARK-030, SPARK-031, SPARK-032, SPARK-033,
   SPARK-034, SPARK-036, SPARK-037, SPARK-038, SPARK-043, SPARK-044,
   SPARK-045, SPARK-046, SPARK-047, SPARK-048, SPARK-049, SPARK-050,
@@ -432,9 +436,33 @@ before those dependencies close is not admissible.
   regressions pass 27/27. This accepts origin blindness by construction and
   validation; it does not prove critic independence, balanced-error detection,
   task accuracy, or frontier gain.
-- [ ] **SPARK-019 - Decoy-balanced verification.** Mix correct, incorrect, and
-  unchanged controls so reviewers cannot exploit the assumption that every
-  requested review contains an error.
+- [x] **SPARK-019 - Decoy-balanced verification.** CP333 gives verifier
+  authority two explicit gates. Before any verifier-dependent recurrent
+  action, a preflight presents per-episode seeded correct, incorrect, and
+  byte-identical unchanged-twin controls covering exact arithmetic and Python
+  syntax. Correct must beat incorrect by a fixed margin, unchanged twins must
+  receive equal scores within tolerance, and every score must be finite and in
+  `[0,1]`. Failure leaves recurrence verifier-free and is disclosed.
+
+  At branch selection, Aura decodes the complete candidate set and interleaves
+  it with a fresh control set in one deterministic, content-addressed batch.
+  The callable sees text only; candidate/control class, correctness label,
+  branch, role, ownership, and order metadata are withheld during review. The
+  candidate subsequence remains deranged. Only a second passing calibration
+  admits reviewer scores for branch selection and later latent optimization or
+  fast-weight verification. A constant, unstable, out-of-range, or throwing
+  reviewer loses authority; the latent episode continues by convergence rather
+  than collapsing to vanilla fallback.
+
+  The service reconstructs both control sets, hidden-label orders, hashes,
+  margins, repeat spread, calibration verdicts, candidate mapping, and admitted
+  winner. Synthetic evaluations are excluded from the task-verifier quality
+  receipt so canaries cannot inflate evidence. The affected RLC integration
+  slice passes 219/219 and the engine/branch/wiring slice passes 193/193 before
+  the final bounded-score regression. Final fixed-snapshot ownership evidence
+  is recorded in CP333 below. This closes decoy balancing for the live reviewer
+  boundary, not domain-general critic validity or function/weight independence;
+  those remain SPARK-020.
 - [ ] **SPARK-020 - Disjoint critic function.** Provide a separately trained or
   independently implemented critic whose weight/function identity is proved
   distinct from the generator; measure shared-blind-spot residuals.
@@ -695,18 +723,19 @@ calibration; it does not change the negative capability verdict.
 CP332 closes first-answer/ownership blindness for branch review and makes the
 review policy service-verifiable; it does not change the negative capability
 verdict.
+CP333 closes decoy-balanced verifier admission and contains critic failures;
+it does not change the negative capability verdict.
 
-Validation: the affected integration suite passes 202/202 in 105.02 seconds.
-After final objective/policy binding and the origin-only fallback repair,
-focused blind-review, verifier, probe-cache, and service tests pass 27/27. The
-final fixed-snapshot RLC, latent-cortex, global-workspace, GWT, and execution-
-controller ownership set passes 877/877 in 443.58 seconds. Strict new-module
-Ruff, bytecode compilation, and `git diff --check` pass. No resident 32B
-campaign was run, and the negative frontier verdict is unchanged.
+Validation: focused decoy, blind-review, selection, preflight, service, probe-
+cache, and bytecode contracts pass 32/32. The broader engine/branch/wiring set
+passes 193/193 in 100.60 seconds, and the affected RLC integration slice passes
+219/219 in 113.40 seconds. Final fixed-snapshot ownership-gate evidence is
+882/882 in 453.65 seconds. Strict focused Ruff, bytecode compilation, and
+`git diff --check` pass. No resident 32B campaign was run, and the negative
+frontier verdict is unchanged.
 
-This is total checkpoint record 393. The revised forecast remains 466-733 total
-records, now approximately 73-340 records after this checkpoint. Checkpoint-
-count completion is approximately 53.6%-84.3%, with a midpoint planning
-estimate of 65.6%. Next: publish CP332, then implement decoy-balanced
-verification so review requests do not imply that a candidate contains an
-error.
+This is total checkpoint record 394. The revised forecast remains 466-733 total
+records, now approximately 72-339 records after this checkpoint. Checkpoint-
+count completion is approximately 53.8%-84.5%, with a midpoint planning
+estimate of 65.7%. Next: publish CP333, then implement and prove a critic whose
+function identity is disjoint from the generator for SPARK-020.
