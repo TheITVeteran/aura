@@ -15,7 +15,6 @@ from collections import deque
 
 import pytest
 
-import core.brain.inference_gate as ig_mod
 from core.brain.inference_gate import InferenceGate
 
 
@@ -92,11 +91,107 @@ def test_successful_serve_clears_backoff():
     assert len(gate._cortex_stuck_kill_times) == 0
 
 
+def _snapshot(*, available_gb: float, measured: bool = True, can_admit: bool = False):
+    """A memory-admission snapshot with a chosen available-RAM reading."""
+    return lambda context="background": {
+        "context": context,
+        "available_gb": available_gb,
+        "measured": measured,
+        "can_admit": can_admit,
+        "reason": "" if can_admit else "memory_pressure:90%/8GB",
+    }
+
+
 def test_force_warmup_env_overrides_backoff(monkeypatch):
+    from core.brain.llm import emergency_override
+
+    emergency_override.reset_overrides_for_test()
     gate = _bare_gate()
     gate._note_cortex_stuck_kill()
     gate._note_cortex_stuck_kill()
     assert gate._cortex_warmup_backoff_reason() is not None
+    # Plenty of headroom above the survival floor, and the probe is measured.
+    monkeypatch.setattr(
+        InferenceGate, "_cortex_warmup_admission_snapshot",
+        staticmethod(_snapshot(available_gb=32.0)),
+    )
     monkeypatch.setenv("AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE", "1")
-    # Operator override wins: warmup is never deferred, even mid-cooldown.
+    # Operator override wins mid-cooldown — but only above the survival floor.
     assert gate._cortex_warmup_deferral_reason("foreground") is None
+    emergency_override.reset_overrides_for_test()
+
+
+def test_force_warmup_denied_below_survival_floor(monkeypatch):
+    """The override may skip soft admission and backoff, never the RAM floor."""
+    from core.brain.llm import emergency_override
+
+    emergency_override.reset_overrides_for_test()
+    gate = _bare_gate()
+    monkeypatch.setattr(
+        InferenceGate, "_cortex_warmup_admission_snapshot",
+        staticmethod(_snapshot(available_gb=6.0)),  # below the 10GB floor
+    )
+    monkeypatch.setenv("AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE", "1")
+    reason = gate._cortex_warmup_deferral_reason("foreground")
+    assert reason is not None and reason.startswith("forced_warmup_denied_survival_floor:")
+    emergency_override.reset_overrides_for_test()
+
+
+def test_force_warmup_denied_when_memory_unmeasured(monkeypatch):
+    """A failed probe means the floor cannot be confirmed → fail closed."""
+    from core.brain.llm import emergency_override
+
+    emergency_override.reset_overrides_for_test()
+    gate = _bare_gate()
+    monkeypatch.setattr(
+        InferenceGate, "_cortex_warmup_admission_snapshot",
+        staticmethod(_snapshot(available_gb=0.0, measured=False)),
+    )
+    monkeypatch.setenv("AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE", "1")
+    assert (
+        gate._cortex_warmup_deferral_reason("foreground")
+        == "forced_warmup_denied_survival_floor_unmeasured"
+    )
+    emergency_override.reset_overrides_for_test()
+
+
+def test_force_warmup_override_is_use_bounded(monkeypatch):
+    """The override is a bounded decision: after its budget the guard re-arms."""
+    from core.brain.llm import emergency_override
+
+    emergency_override.reset_overrides_for_test()
+    gate = _bare_gate()
+    gate._note_cortex_stuck_kill()
+    gate._note_cortex_stuck_kill()  # a real deferral the override must bypass
+    monkeypatch.setattr(
+        InferenceGate, "_cortex_warmup_admission_snapshot",
+        staticmethod(_snapshot(available_gb=32.0)),
+    )
+    monkeypatch.setenv("AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE", "1")
+    bypasses = 0
+    for _ in range(emergency_override.DEFAULT_MAX_USES + 4):
+        if gate._cortex_warmup_deferral_reason("foreground") is None:
+            bypasses += 1
+    # The flag cannot authorize an unbounded stream of bypasses.
+    assert bypasses == emergency_override.DEFAULT_MAX_USES
+    # Once exhausted, the normal deferral (backoff) stands again.
+    assert gate._cortex_warmup_deferral_reason("foreground").startswith("warmup_backoff:")
+    emergency_override.reset_overrides_for_test()
+
+
+def test_no_override_needed_when_memory_is_calm(monkeypatch):
+    """With headroom and no backoff, warmup is admitted without touching the override."""
+    from core.brain.llm import emergency_override
+
+    emergency_override.reset_overrides_for_test()
+    gate = _bare_gate()
+    monkeypatch.setattr(
+        InferenceGate, "_cortex_warmup_admission_snapshot",
+        staticmethod(_snapshot(available_gb=32.0, can_admit=True)),
+    )
+    monkeypatch.setenv("AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE", "1")
+    assert gate._cortex_warmup_deferral_reason("foreground") is None
+    # The override budget was never spent, since it was never needed.
+    status = emergency_override.override_status("AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE")
+    assert status.get("seen") is False
+    emergency_override.reset_overrides_for_test()

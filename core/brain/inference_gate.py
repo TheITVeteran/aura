@@ -958,46 +958,89 @@ class InferenceGate:
             self._cortex_warmup_backoff_until = 0.0
             self._cortex_warmup_backoff_streak = 0
 
+    _FORCE_WARMUP_FLAG = "AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE"
+
     def _cortex_warmup_deferral_reason(self, context: str = "background") -> str | None:
-        if str(os.environ.get("AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE", "")).strip().lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }:
-            # The force override may skip the soft admission thresholds and
-            # warmup backoff, but never the host-survival floor: a cold 32B
-            # load into single-digit free GB risks jetsam/swap-death of the
-            # whole process tree, which no operator override should authorize.
-            snapshot = self._cortex_warmup_admission_snapshot(context)
-            hard_floor_gb = self._env_float(
-                "AURA_FORCE_CORTEX_WARMUP_HARD_FLOOR_GB", 10.0, minimum=4.0
-            )
-            if snapshot.get("measured", True) and (
-                float(snapshot.get("available_gb", 0.0) or 0.0) < hard_floor_gb
-            ):
-                return (
-                    "forced_warmup_denied_survival_floor:"
-                    f"{float(snapshot.get('available_gb', 0.0) or 0.0):.1f}GB"
-                    f"<{hard_floor_gb:.1f}GB"
-                )
-            now = time.monotonic()
-            last_log = getattr(self, "_last_forced_warmup_override_log_at", 0.0)
-            if (now - last_log) > 60.0:
-                self._last_forced_warmup_override_log_at = now
-                logger.warning(
-                    "⚠️ AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE active — bypassing "
-                    "%s warmup admission (available=%.1fGB, survival floor %.1fGB).",
-                    context,
-                    float(snapshot.get("available_gb", 0.0) or 0.0),
-                    hard_floor_gb,
-                )
-            return None
+        # The un-forced verdict: warmup backoff, then measured memory admission.
+        # A probe failure (measured=False) is treated as a deferral here — the
+        # snapshot only turns can_admit True on an unmeasured probe when the
+        # force flag is set, and that emergency path is decided below, never by
+        # a silent can_admit.
         backoff = self._cortex_warmup_backoff_reason()
-        if backoff is not None:
-            return backoff
         snapshot = self._cortex_warmup_admission_snapshot(context)
-        return None if snapshot["can_admit"] else str(snapshot["reason"] or "memory_pressure")
+        measured = bool(snapshot.get("measured", True))
+        if backoff is not None:
+            normal_reason: str | None = backoff
+        elif not measured:
+            normal_reason = "memory_probe_failed"
+        elif not snapshot["can_admit"]:
+            normal_reason = str(snapshot["reason"] or "memory_pressure")
+        else:
+            normal_reason = None
+
+        if normal_reason is None:
+            return None  # Admission already allows warmup; no override needed.
+
+        force_requested = str(
+            os.environ.get(self._FORCE_WARMUP_FLAG, "")
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        if not force_requested:
+            return normal_reason
+
+        # An override was requested to bypass a real deferral. It may skip the
+        # soft admission thresholds and warmup backoff, but never the
+        # host-survival floor: a cold 32B load into single-digit free GB risks
+        # jetsam/swap-death of the whole process tree, which no operator
+        # override should authorize.
+        hard_floor_gb = self._env_float(
+            "AURA_FORCE_CORTEX_WARMUP_HARD_FLOOR_GB", 10.0, minimum=4.0
+        )
+        available_gb = float(snapshot.get("available_gb", 0.0) or 0.0)
+        if not measured:
+            # The probe failed, so the survival floor cannot be confirmed. A
+            # blind ~20GB cold load under the override is exactly the host-death
+            # risk the floor exists to prevent — with no measurement there is no
+            # boundary, so we fail closed rather than authorize an unbounded
+            # load. The override takes effect again once the probe reports a
+            # real above-floor reading.
+            return "forced_warmup_denied_survival_floor_unmeasured"
+        if available_gb < hard_floor_gb:
+            return (
+                "forced_warmup_denied_survival_floor:"
+                f"{available_gb:.1f}GB"
+                f"<{hard_floor_gb:.1f}GB"
+            )
+
+        # Past the inviolable floor, the override is a bounded, receipted
+        # decision — not a permanent setting. It expires on its own, caps how
+        # many bypasses one flag can authorize, and leaves a GovernanceReceipt
+        # for each use, exactly as the MLX client governs the same flag.
+        from core.brain.llm.emergency_override import consume_override
+
+        decision = consume_override(
+            self._FORCE_WARMUP_FLAG,
+            guard=f"cortex_warmup_admission:{context}",
+            observed=f"{normal_reason} (available={available_gb:.1f}GB)",
+        )
+        if not decision.active:
+            # Expired or budget-exhausted: the memory guard is re-armed and the
+            # normal deferral stands until the operator renews the decision.
+            return normal_reason
+
+        now = time.monotonic()
+        last_log = getattr(self, "_last_forced_warmup_override_log_at", 0.0)
+        if (now - last_log) > 60.0:
+            self._last_forced_warmup_override_log_at = now
+            logger.warning(
+                "⚠️ %s active — bypassing %s warmup admission "
+                "(available=%.1fGB, survival floor %.1fGB, %s).",
+                self._FORCE_WARMUP_FLAG,
+                context,
+                available_gb,
+                hard_floor_gb,
+                decision.as_detail(),
+            )
+        return None
 
     def _log_cortex_warmup_deferral(self, reason: str, *, context: str) -> None:
         now = time.monotonic()
