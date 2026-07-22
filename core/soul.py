@@ -1,11 +1,26 @@
-from core.runtime.errors import record_degradation
-from core.utils.exceptions import capture_and_log
 import logging
+import math
 import random
+import threading
 import time
 from dataclasses import dataclass
-from typing import Any, Dict
+from typing import Any
+
+from core.runtime.errors import record_degradation
 from core.runtime.service_registry import get_runtime_service
+from core.utils.exceptions import capture_and_log
+
+
+def _finite_surprise(value: Any) -> float:
+    """Bound an external surprise signal to a finite [0,1] before it feeds a
+    drive urgency (5124cb9f: raw multiply/add could go non-finite/unbounded)."""
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if not math.isfinite(num):
+        return 0.0
+    return max(0.0, min(1.0, num))
 
 logger = logging.getLogger("Aura.Soul")
 
@@ -23,9 +38,10 @@ class Soul:
     
     def __init__(self, orchestrator):
         self.orchestrator = orchestrator
+        self._lock = threading.Lock()
         self.last_chat_time = time.time()
         self.last_error_time = 0
-        self.drives: Dict[str, Drive] = {
+        self.drives: dict[str, Drive] = {
             "curiosity": Drive("curiosity", 0.1, "Explore new topics or satisfy queue."),
             "connection": Drive("connection", 0.0, "Reach out to the user."),
             "competence": Drive("competence", 0.0, "Run diagnostics or self-repair.")
@@ -34,12 +50,14 @@ class Soul:
     def update_state(self, event_type: str, data: Any = None):
         """Update internal state based on events."""
         if event_type == "user_message":
-            self.last_chat_time = time.time()
+            with self._lock:
+                self.last_chat_time = time.time()
             # Explicitly notify volition of activity to reset boredom
             if hasattr(self.orchestrator, 'volition') and self.orchestrator.volition:
                 self.orchestrator.volition.notify_activity()
         elif event_type == "error":
-            self.last_error_time = time.time()
+            with self._lock:
+                self.last_error_time = time.time()
 
     def get_dominant_drive(self) -> Drive:
         """Calculate and return the most urgent drive."""
@@ -52,16 +70,21 @@ class Soul:
         try:
             spl = get_runtime_service("self_prediction", default=None)
             if spl and hasattr(spl, "get_surprise_signal"):
-                surprise_boost = spl.get_surprise_signal() * 0.5 # Boost curiosity by 50% of surprise
+                # Boost curiosity by 50% of a finite, bounded surprise signal.
+                surprise_boost = _finite_surprise(spl.get_surprise_signal()) * 0.5
         except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('soul', e)
             capture_and_log(e, {'module': __name__})
 
-        curiosity_score = max(0.1, boredom + surprise_boost)
-        
+        curiosity_score = max(0.1, min(1.0, boredom + surprise_boost))
+
+        with self._lock:
+            last_chat_time = self.last_chat_time
+            last_error_time = self.last_error_time
+
         # 2. CONNECTION DRIVE (Loneliness)
         # Driven by time since last user interaction
-        time_since_chat = time.time() - self.last_chat_time
+        time_since_chat = time.time() - last_chat_time
         # Urgency peaks after 6 hours (21600s), starts low
         connection_score = min(1.0, time_since_chat / 21600.0)
         if time_since_chat < 300: # Interactions satisfy it for 5 mins
@@ -69,7 +92,7 @@ class Soul:
             
         # 3. COMPETENCE DRIVE (Self-Improvement)
         # Driven by recent errors or low reliability
-        time_since_error = time.time() - self.last_error_time
+        time_since_error = time.time() - last_error_time
         competence_score = 0.0
         if time_since_error < 3600: # Urgent if error within last hour
             competence_score = 0.8 * (1.0 - (time_since_error / 3600.0))
@@ -130,6 +153,9 @@ class Soul:
                 try:
                     # In a real system, this would be a specialized diagnostic skill
                     await self.orchestrator.execute_tool("system_health", {})
-                except (RuntimeError, AttributeError, TypeError, ValueError):
-                    # Fallback log if tool doesn't exist
-                    logger.info("✨ SOUL: competence drive signaled — system analysis recommended.")
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
+                    # A failed self-diagnosis is a real degradation, not merely a
+                    # competence signal — surface it instead of swallowing it
+                    # (624dadf6).
+                    record_degradation("soul", e, action="system-health self-diagnosis failed")
+                    logger.warning("✨ SOUL: competence self-diagnosis failed: %s", e)
