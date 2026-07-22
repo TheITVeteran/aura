@@ -23633,3 +23633,43 @@ CP284, then regenerate a post-CP284 resident-32B preregistration for the
 trajectory-credit trainer and executable mechanism-attribution profiles, launch
 the detached training/proof pipeline only when the new contract is clean, and
 continue the broader Aura hardening queue while it runs.
+
+## Checkpoint 2026-07-21-285: Post-CP284 Resident-32B Proof Contract Frozen
+
+A fresh resident recurrent-GRPO preregistration has been generated from the
+post-CP284 source tree rather than reusing stale CP259/CP273 contracts. The new
+contract is
+`config/latent_cortex/resident_32b_recurrent_grpo_cp285_preregistration.json`
+for campaign `resident-32b-recurrent-grpo-cp285`, artifact root
+`artifacts/closeout/latent_cortex/cp285_resident_32b_recurrent_grpo`, and
+contract digest
+`b81fe15f680bfd5c1c45308befa9c30183a838243cff9bee5aff05d6670f8852`.
+
+The prepare and verify commands both passed with model verification enabled:
+288 training tasks, 36 held-out training-registry tasks, 2,877 powered
+confirmatory frontier tasks, and 17,262 confirmatory cells are bound. The frozen
+training argv includes `--trajectory-credit`; the frozen parameters include
+`trajectory_credit=true` and `trajectory_shaping_weight=0.25`; and the
+evaluation section binds the required mechanism-attribution profiles:
+fixed trained recurrence, resident full stack, full stack without latent
+optimization, full stack without fast weights, and full stack without branch
+exchange.
+
+This is still a prelaunch proof contract, not a capability result. It proves
+that the next detached resident-32B run will use the corrected trainer and that
+the later frontier claim cannot honestly bypass mechanism attribution. It does
+not prove positive interaction, broad reasoning gain, or frontier-level
+performance until the detached training, adapter freeze, campaigns, regression
+battery, external comparison, and independent replay all pass.
+
+Validation is clean for the frozen contract: `prepare` and `verify` returned
+the same model-verified receipt, and a direct JSON inspection confirmed the
+trajectory and mechanism fields. The contract file is staged as an immutable
+checkpoint artifact; older detached run artifacts remain unstaged.
+
+This is total checkpoint record 346. The forecast remains 394-661 total
+records, now approximately 48-315 records after this checkpoint. Next: publish
+CP285, launch the detached CP285 resident-32B training with sleep protection
+and exact resume verification, then keep working on the broader Aura hardening
+queue while the detached run produces calibration, no-signal, or optimizer
+evidence.
