@@ -847,6 +847,49 @@ class TestActionCoverage:
             for record in caplog.records
         )
 
+    def test_aura_now_defer_warning_is_rate_limited_without_changing_decision(
+        self,
+        will,
+        monkeypatch,
+        caplog,
+    ):
+        def defer_policy(**_kwargs):
+            return {
+                "outcome": "defer",
+                "constraints": ["welfare_recovery_drive=0.606"],
+                "defers": ["welfare_recovery_required_before_action"],
+                "evidence": {
+                    "state_hash": "unit_test_repeat_defer",
+                    "dominant_drive": "coherence",
+                    "workspace_winner": "body_pressure",
+                    "tick": 20,
+                    "source": "being_runtime",
+                },
+            }
+
+        monkeypatch.setattr(will, "_sample_aura_now_evidence", defer_policy)
+        with caplog.at_level("WARNING", logger="Aura.Will"):
+            first = will.decide(
+                content="generic state mutation",
+                source="being_runtime",
+                domain=ActionDomain.STATE_MUTATION,
+                context={"component": "runtime_engine"},
+            )
+            second = will.decide(
+                content="generic state mutation",
+                source="being_runtime",
+                domain=ActionDomain.STATE_MUTATION,
+                context={"component": "runtime_engine"},
+            )
+
+        assert first.outcome == WillOutcome.DEFER
+        assert second.outcome == WillOutcome.DEFER
+        aura_now_warnings = [
+            record for record in caplog.records
+            if "Will AuraNow defer:" in record.getMessage()
+        ]
+        assert len(aura_now_warnings) == 1
+
     def test_expression_path(self, will):
         d = will.decide(content="I find this fascinating", source="spontaneous",
                         domain=ActionDomain.EXPRESSION)

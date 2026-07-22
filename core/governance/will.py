@@ -306,6 +306,8 @@ class UnifiedWill:
         self._started = False
         self._fail_closed_when_stopped = False
         self._boot_time = time.time()
+        self._aura_now_defer_log_cache: dict[str, float] = {}
+        self._aura_now_defer_log_suppressed: dict[str, int] = {}
 
         # Identity anchors (loaded from CanonicalSelf)
         self._core_values: list[str] = []
@@ -1606,29 +1608,45 @@ class UnifiedWill:
                 constraints,
             )
         if policy_outcome == "defer" and self._is_consequential_domain(domain):
-            logger.warning(
-                "Will AuraNow defer: domain=%s source=%s constraints=%s defers=%s evidence=%s context_flags=%s",
-                domain.value,
-                str(
-                    (context or {}).get("source")
-                    or (context or {}).get("origin")
-                    or source
-                    or "unknown"
-                ),
-                policy_constraints,
-                list(policy.get("defers") or []),
-                dict(policy.get("evidence") or {}),
-                {
-                    key: bool((context or {}).get(key))
-                    for key in (
-                        "desktop_execution_contract",
-                        "foreground_request",
-                        "user_explicitly_authorized",
-                        "user_visible_desktop_action",
-                        "verification_required",
-                    )
-                },
+            log_source = str(
+                (context or {}).get("source")
+                or (context or {}).get("origin")
+                or source
+                or "unknown"
             )
+            policy_defers = list(policy.get("defers") or [])
+            policy_evidence = dict(policy.get("evidence") or {})
+            context_flags = {
+                key: bool((context or {}).get(key))
+                for key in (
+                    "desktop_execution_contract",
+                    "foreground_request",
+                    "user_explicitly_authorized",
+                    "user_visible_desktop_action",
+                    "verification_required",
+                )
+            }
+            should_warn, suppressed = self._should_log_aura_now_defer_warning(
+                domain=domain,
+                source=log_source,
+                constraints=policy_constraints,
+                defers=policy_defers,
+                evidence=policy_evidence,
+            )
+            if should_warn:
+                suppressed_suffix = (
+                    f" suppressed_repeats={suppressed}" if suppressed else ""
+                )
+                logger.warning(
+                    "Will AuraNow defer: domain=%s source=%s constraints=%s defers=%s evidence=%s context_flags=%s%s",
+                    domain.value,
+                    log_source,
+                    policy_constraints,
+                    policy_defers,
+                    policy_evidence,
+                    context_flags,
+                    suppressed_suffix,
+                )
             return (
                 WillOutcome.DEFER,
                 "aura_now_defer: present-state policy requires stabilization or observation first",
@@ -1637,6 +1655,51 @@ class UnifiedWill:
         if policy_constraints and outcome == WillOutcome.PROCEED:
             return WillOutcome.CONSTRAIN, "aura_now_constrained: " + "; ".join(policy_constraints), constraints
         return outcome, reason, constraints
+
+    def _should_log_aura_now_defer_warning(
+        self,
+        *,
+        domain: ActionDomain,
+        source: str,
+        constraints: list[str],
+        defers: list[str],
+        evidence: dict[str, Any],
+        now: float | None = None,
+    ) -> tuple[bool, int]:
+        """Rate-limit identical AuraNow deferral warnings without changing policy.
+
+        The decision itself remains a full DEFER and is still recorded in the
+        Will audit/consequence paths. This only prevents a stable welfare state
+        from producing one user-visible warning notification every tick.
+        """
+
+        now_s = time.time() if now is None else float(now)
+        key_payload = {
+            "domain": domain.value,
+            "source": str(source or "unknown"),
+            "constraints": sorted(str(item) for item in constraints),
+            "defers": sorted(str(item) for item in defers),
+            "state_hash": str(evidence.get("state_hash") or ""),
+            "dominant_drive": str(evidence.get("dominant_drive") or ""),
+            "workspace_winner": str(evidence.get("workspace_winner") or ""),
+        }
+        key = hashlib.sha256(
+            json.dumps(key_payload, sort_keys=True, separators=(",", ":")).encode(
+                "utf-8",
+                errors="replace",
+            )
+        ).hexdigest()
+        last = float(self._aura_now_defer_log_cache.get(key, 0.0) or 0.0)
+        interval_s = 120.0
+        if last and now_s - last < interval_s:
+            self._aura_now_defer_log_suppressed[key] = (
+                self._aura_now_defer_log_suppressed.get(key, 0) + 1
+            )
+            return False, 0
+
+        suppressed = int(self._aura_now_defer_log_suppressed.pop(key, 0))
+        self._aura_now_defer_log_cache[key] = now_s
+        return True, suppressed
 
     def _catatonia_relief_allowed(
         self,

@@ -24201,3 +24201,31 @@ records, now approximately 33-300 records after this checkpoint. Next: lint,
 diff-check, commit and push CP300, rebuild `/Applications/Aura.app`, continue
 watching CP294, and proceed with the next bounded live reliability/semantic
 closeout item.
+
+## Checkpoint 2026-07-21-301: AuraNow Welfare Defers Stop Spamming Identical Warnings
+
+The repeated live notification
+`Will AuraNow defer ... welfare_recovery_required_before_action` was traced to
+the warning surface rather than to an owner desktop-action policy regression.
+Existing tests already prove explicit foreground desktop contracts yield past
+soft welfare recovery, while generic/autonomous state mutation without recovery
+authority still defers. The remaining defect was that the same stable welfare
+state could emit a full `WARNING` every tick, producing noisy user-visible
+notifications even though the policy decision had not changed.
+
+Unified Will now rate-limits identical AuraNow consequential-defer warnings per
+domain/source/constraint/defer/state hash for two minutes. The Will decision,
+audit trail, and consequence publishing remain unchanged: repeated calls still
+return `DEFER`; only duplicate warning emission is suppressed. When the same
+defer logs again after the interval, the warning includes a suppressed-repeat
+count so operational evidence is not lost.
+
+Validation: full `tests/test_unified_will.py` passes 79/79, the focused
+foreground desktop welfare test still passes, bytecode compilation passes for
+`core/governance/will.py` and `tests/test_unified_will.py`, `make lint` passes,
+and `git diff --check` passes.
+
+This is total checkpoint record 362. The forecast remains 394-661 total
+records, now approximately 32-299 records after this checkpoint. Next: commit
+and push CP301, rebuild `/Applications/Aura.app`, keep CP294 running until its
+receipt, and continue bounded non-MLX hardening.
