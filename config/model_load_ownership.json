@@ -205,6 +205,39 @@
         "mlx_lm"
       ],
       "ownership_mode": "standalone_process",
+      "path": "tools/cortex_generation_upgrade.py",
+      "purpose": "evaluation"
+    },
+    {
+      "expected_load_references": 1,
+      "guard_symbol": "standalone_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "standalone_process",
+      "path": "tools/eval_integrated_reasoning.py",
+      "purpose": "evaluation"
+    },
+    {
+      "expected_load_references": 1,
+      "guard_symbol": "standalone_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "standalone_process",
+      "path": "tools/eval_intrinsic_accuracy.py",
+      "purpose": "evaluation"
+    },
+    {
+      "expected_load_references": 1,
+      "guard_symbol": "standalone_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "standalone_process",
       "path": "tools/front_door_demo.py"
     },
     {
@@ -235,6 +268,28 @@
         "mlx_lm"
       ],
       "ownership_mode": "standalone_process",
+      "path": "tools/integrated_rlc_eval.py",
+      "purpose": "evaluation"
+    },
+    {
+      "expected_load_references": 1,
+      "guard_symbol": "standalone_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "standalone_process",
+      "path": "tools/intrinsic_recurrence_probe.py",
+      "purpose": "evaluation"
+    },
+    {
+      "expected_load_references": 1,
+      "guard_symbol": "standalone_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "standalone_process",
       "path": "tools/latent_consolidation_train.py"
     },
     {
@@ -255,27 +310,7 @@
         "mlx_lm"
       ],
       "ownership_mode": "standalone_process",
-      "path": "tools/run_latent_cortex_paired_campaign.py"
-    },
-    {
-      "expected_load_references": 1,
-      "guard_symbol": "standalone_model_lane",
-      "min_guard_sites": 1,
-      "modules": [
-        "mlx_lm"
-      ],
-      "ownership_mode": "standalone_process",
       "path": "tools/nonparametric_proof.py"
-    },
-    {
-      "expected_load_references": 1,
-      "guard_symbol": "standalone_model_lane",
-      "min_guard_sites": 1,
-      "modules": [
-        "mlx_lm"
-      ],
-      "ownership_mode": "standalone_process",
-      "path": "tools/recurrence_native_train.py"
     },
     {
       "expected_load_references": 1,
@@ -295,7 +330,93 @@
         "mlx_lm"
       ],
       "ownership_mode": "standalone_process",
+      "path": "tools/recurrence_native_train.py"
+    },
+    {
+      "expected_load_references": 1,
+      "guard_symbol": "standalone_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "standalone_process",
+      "path": "tools/recurrence_native_train_v2.py",
+      "purpose": "training"
+    },
+    {
+      "expected_load_references": 1,
+      "guard_symbol": "standalone_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "standalone_process",
+      "path": "tools/rlc_accuracy_ladder.py",
+      "purpose": "evaluation"
+    },
+    {
+      "expected_load_references": 1,
+      "guard_symbol": "standalone_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "standalone_process",
+      "path": "tools/run_latent_cortex_paired_campaign.py"
+    },
+    {
+      "expected_load_references": 1,
+      "guard_symbol": "standalone_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "standalone_process",
+      "path": "tools/schedule_search_campaign.py",
+      "purpose": "evaluation"
+    },
+    {
+      "expected_load_references": 1,
+      "guard_symbol": "standalone_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "standalone_process",
       "path": "tools/selfplay_harvest.py"
+    },
+    {
+      "expected_load_references": 1,
+      "guard_symbol": "standalone_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "standalone_process",
+      "path": "tools/train_grpo.py",
+      "purpose": "training"
+    },
+    {
+      "expected_load_references": 1,
+      "guard_symbol": "standalone_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "standalone_process",
+      "path": "tools/train_intrinsic_recurrence.py",
+      "purpose": "training"
+    },
+    {
+      "expected_load_references": 1,
+      "guard_symbol": "standalone_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "standalone_process",
+      "path": "tools/verify_rlc_decode_path.py",
+      "purpose": "verification"
     },
     {
       "expected_load_references": 1,

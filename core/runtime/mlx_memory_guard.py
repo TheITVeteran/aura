@@ -45,10 +45,12 @@ DEFAULT_RECLAIM_EVERY = 16
 def host_memory_bytes() -> int:
     """Physical RAM, or a conservative floor when it cannot be read."""
     try:
-        size = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+        from core.runtime.resource_observation import get_resource_observer
+
+        size = int(get_resource_observer().memory(include_process_tree=False).total_bytes)
         if size > 0:
-            return int(size)
-    except (AttributeError, ValueError, OSError):
+            return size
+    except (ImportError, AttributeError, ValueError, OSError, RuntimeError, TypeError):
         pass
     return 8 * 1024**3
 
@@ -62,14 +64,18 @@ def host_pressure() -> dict[str, Any]:
     number is a false alarm; the signals that actually preceded this host's
     jetsam kill were SWAP and COMPRESSOR growth.
     """
-    import subprocess
+    from core.runtime.subprocess_gateway import get_subprocess_gateway
 
     stats: dict[str, int] = {}
     try:
-        output = subprocess.run(
-            ["vm_stat"], capture_output=True, text=True, timeout=5, check=True
+        output = get_subprocess_gateway().run(
+            ["vm_stat"],
+            timeout=5,
+            check=True,
+            read_only=True,
+            source="mlx_memory_guard.host_pressure.vm_stat",
         ).stdout
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, RuntimeError, ValueError):
         return {"available": False}
     page_size = 16384
     for line in output.splitlines():
@@ -98,15 +104,18 @@ def host_pressure() -> dict[str, Any]:
     reclaimable = free + inactive + speculative + purgeable
     swap_used = 0.0
     try:
-        swap = subprocess.run(
+        swap = get_subprocess_gateway().run(
             ["sysctl", "-n", "vm.swapusage"],
-            capture_output=True, text=True, timeout=5, check=True,
+            timeout=5,
+            check=True,
+            read_only=True,
+            source="mlx_memory_guard.host_pressure.swapusage",
         ).stdout
         for token in swap.replace("=", " ").split():
             if token.endswith("M") and token[:-1].replace(".", "").isdigit():
                 swap_used = float(token[:-1]) / 1024.0
                 break
-    except (OSError, subprocess.SubprocessError, ValueError):
+    except (OSError, RuntimeError, ValueError):
         pass
     return {
         "available": True,

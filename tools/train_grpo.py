@@ -1138,8 +1138,15 @@ def main() -> int:
     deadline = started_monotonic + args.max_minutes * 60.0
 
     from mlx_lm import load
+    from core.runtime.model_lane_control import standalone_model_lane
 
-    with mlx_memory_envelope(fraction=args.memory_fraction) as envelope:
+    with standalone_model_lane(
+        owner_id=f"train-grpo:{Path(args.out_dir).name}",
+        model_path=args.model,
+        purpose="training",
+        preemptible=False,
+        metadata={"tool": "train_grpo", "operator_launched": True},
+    ), mlx_memory_envelope(fraction=args.memory_fraction) as envelope:
         print(f"[envelope] {envelope.to_receipt()}", flush=True)
         model, tokenizer = load(args.model)
         model.freeze()

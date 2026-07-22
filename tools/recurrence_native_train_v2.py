@@ -1312,11 +1312,14 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
                         sum(window_cosines) / len(window_cosines), 6
                     )
                     window_cosines.clear()
+                from core.runtime.resource_observation import get_resource_observer
+
+                accelerator = get_resource_observer().accelerator()
                 trail_entry.update(
                     {
-                        "mlx_active_memory_bytes": int(mx.get_active_memory()),
-                        "mlx_cache_memory_bytes": int(mx.get_cache_memory()),
-                        "mlx_peak_memory_bytes": int(mx.get_peak_memory()),
+                        "mlx_active_memory_bytes": int(accelerator.active_bytes),
+                        "mlx_cache_memory_bytes": int(accelerator.cache_bytes),
+                        "mlx_peak_memory_bytes": int(accelerator.peak_bytes),
                     }
                 )
                 loss_trail.append(trail_entry)

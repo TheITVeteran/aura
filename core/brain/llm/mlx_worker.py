@@ -2633,7 +2633,12 @@ def _setup_worker_env():
     if configured_threads.isdigit() and int(configured_threads) > 0:
         mlx_threads = int(configured_threads)
     else:
-        host_cpus = os.cpu_count() or 8
+        try:
+            from core.runtime.resource_observation import get_resource_observer
+
+            host_cpus = get_resource_observer().compute().cpu_count
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            host_cpus = 8
         mlx_threads = max(4, min(10, host_cpus - 2))
     os.environ["MLX_NUM_THREADS"] = str(mlx_threads)
     os.environ["OMP_NUM_THREADS"] = "1"
@@ -3493,12 +3498,14 @@ def _mlx_worker_loop(
                 # machines could give. Derive conservatively from total RAM
                 # when observable; use small-safe limits when it is not.
                 try:
-                    import psutil as _fallback_psutil
+                    from core.runtime.resource_observation import get_resource_observer
 
-                    _total_gb = float(_fallback_psutil.virtual_memory().total) / float(
-                        1024**3
-                    )
-                except (ImportError, OSError, RuntimeError, AttributeError, ValueError):
+                    _total_gb = float(
+                        get_resource_observer()
+                        .memory(include_process_tree=False)
+                        .total_bytes
+                    ) / float(1024**3)
+                except (ImportError, OSError, RuntimeError, AttributeError, ValueError, TypeError):
                     _total_gb = 0.0
                 if _total_gb >= 96.0:
                     _cache_gb, _active_gb = 24, 40

@@ -128,12 +128,19 @@ def main() -> int:
     from mlx_lm import load
 
     from core.runtime.mlx_memory_guard import mlx_memory_envelope
+    from core.runtime.model_lane_control import standalone_model_lane
 
     prompts = [
         "What is 2 + 2? Answer with just the number.",
         "Name the capital of France in one word.",
     ]
-    with mlx_memory_envelope(fraction=args.memory_fraction) as envelope:
+    with standalone_model_lane(
+        owner_id=f"verify-rlc-decode-path:{Path(args.out).name}",
+        model_path=args.model,
+        purpose="verification",
+        preemptible=False,
+        metadata={"tool": "verify_rlc_decode_path", "operator_launched": True},
+    ), mlx_memory_envelope(fraction=args.memory_fraction) as envelope:
         print(f"memory envelope: {envelope.to_receipt()}", flush=True)
         model, tokenizer = load(args.model)
         rows = []

@@ -81,48 +81,57 @@ def run_eval(args: argparse.Namespace) -> dict[str, Any]:
         generate_tasks,
         grade,
     )
+    from core.runtime.model_lane_control import standalone_model_lane
 
     tasks = generate_tasks(count=args.count, seed=args.seed, hops=args.hops)
-    model, tokenizer = load(str(Path(args.model).expanduser().resolve()))
-    engine = _build_engine(
-        model, tokenizer, n_slots=args.n_slots, max_steps=args.max_steps
-    )
+    model_path = str(Path(args.model).expanduser().resolve())
+    with standalone_model_lane(
+        owner_id=f"integrated-rlc-eval:{Path(args.out).name}",
+        model_path=model_path,
+        purpose="evaluation",
+        preemptible=False,
+        metadata={"tool": "integrated_rlc_eval", "operator_launched": True},
+    ):
+        model, tokenizer = load(model_path)
+        engine = _build_engine(
+            model, tokenizer, n_slots=args.n_slots, max_steps=args.max_steps
+        )
 
-    arms: dict[str, list[str]] = {"context_on": [], "context_off": []}
-    ingress_failures = 0
-    rows: list[dict[str, Any]] = []
-    for index, task in enumerate(tasks):
-        for arm, with_facts in (("context_on", True), ("context_off", False)):
-            budget = ComputeBudget(
-                max_layer_apps=args.budget_layer_apps, wall_clock_s=180.0
-            )
-            result = engine.reason(
-                messages=[{"role": "user", "content": task.prompt}],
-                budget=budget,
-                cognitive_context=context_for_arm(task, with_facts=with_facts),
-            )
-            outcome = grade(task, result.text or "")
-            arms[arm].append(outcome)
-            seeded_sources = [
-                row.get("source") for row in result.receipt.cognitive_slots
-            ]
-            if with_facts and "memory" not in seeded_sources:
-                # The facts were supplied and never became slots: the
-                # mechanism did not fire. One such episode voids the arm's
-                # claim to measure ingress.
-                ingress_failures += 1
-            rows.append(
-                {
-                    "task_id": task.task_id(),
-                    "arm": arm,
-                    "outcome": outcome,
-                    "seeded_sources": seeded_sources,
-                }
-            )
-        if args.max_seconds and index >= 0 and time.time() - _START > args.max_seconds:
-            raise TimeoutError(
-                f"integrated eval exceeded --max-seconds {args.max_seconds}"
-            )
+        arms: dict[str, list[str]] = {"context_on": [], "context_off": []}
+        ingress_failures = 0
+        rows: list[dict[str, Any]] = []
+        for index, task in enumerate(tasks):
+            for arm, with_facts in (("context_on", True), ("context_off", False)):
+                budget = ComputeBudget(
+                    max_layer_apps=args.budget_layer_apps, wall_clock_s=180.0
+                )
+                result = engine.reason(
+                    messages=[{"role": "user", "content": task.prompt}],
+                    budget=budget,
+                    cognitive_context=context_for_arm(task, with_facts=with_facts),
+                )
+                outcome = grade(task, result.text or "")
+                arms[arm].append(outcome)
+                seeded_sources = [
+                    row.get("source") for row in result.receipt.cognitive_slots
+                ]
+                if with_facts and "memory" not in seeded_sources:
+                    # The facts were supplied and never became slots: the
+                    # mechanism did not fire. One such episode voids the arm's
+                    # claim to measure ingress.
+                    ingress_failures += 1
+                rows.append(
+                    {
+                        "task_id": task.task_id(),
+                        "arm": arm,
+                        "outcome": outcome,
+                        "seeded_sources": seeded_sources,
+                    }
+                )
+            if args.max_seconds and index >= 0 and time.time() - _START > args.max_seconds:
+                raise TimeoutError(
+                    f"integrated eval exceeded --max-seconds {args.max_seconds}"
+                )
 
     on = _tally(arms["context_on"])
     off = _tally(arms["context_off"])

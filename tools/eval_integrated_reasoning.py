@@ -132,8 +132,15 @@ def main() -> int:
     started = time.time()
 
     from mlx_lm import load
+    from core.runtime.model_lane_control import standalone_model_lane
 
-    with mlx_memory_envelope(fraction=args.memory_fraction) as envelope:
+    with standalone_model_lane(
+        owner_id=f"eval-integrated-reasoning:{Path(args.out).name}",
+        model_path=args.model,
+        purpose="evaluation",
+        preemptible=False,
+        metadata={"tool": "eval_integrated_reasoning", "operator_launched": True},
+    ), mlx_memory_envelope(fraction=args.memory_fraction) as envelope:
         print(f"[envelope] {envelope.to_receipt()}", flush=True)
         model, tokenizer = load(args.model)
         if args.adapter:

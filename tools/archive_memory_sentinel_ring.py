@@ -109,13 +109,17 @@ def select_new_records(
 
 def _target_state(pid: int, started_at: float) -> str:
     try:
-        process = psutil.Process(pid)
-        observed = float(process.create_time())
-        status = str(process.status()).lower()
-    except psutil.NoSuchProcess:
-        return "gone"
-    except (psutil.Error, OSError, RuntimeError, TypeError, ValueError):
+        from core.runtime.resource_observation import get_resource_observer
+
+        process = get_resource_observer().process(int(pid))
+        if process is None:
+            return "gone"
+        observed = float(process.create_time)
+        status = str(process.status).lower()
+    except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError):
         return "unobservable"
+    if not status:
+        return "gone"
     if abs(observed - started_at) > 0.5:
         return "reused"
     return "gone" if status in {"dead", "zombie"} else "current"
@@ -163,8 +167,13 @@ def archive(
     if destination.parent.resolve(strict=True) != state_path.parent.resolve(strict=True):
         _fail("archive_output_parent_mismatch")
     try:
-        target_started_at = float(psutil.Process(target_pid).create_time())
-    except (psutil.Error, OSError, RuntimeError, TypeError, ValueError) as exc:
+        from core.runtime.resource_observation import get_resource_observer
+
+        target = get_resource_observer().process(int(target_pid))
+        if target is None:
+            raise RuntimeError("target process missing")
+        target_started_at = float(target.create_time)
+    except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
         raise RingArchiveError("target_identity_unavailable") from exc
     destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     sample_count = 0

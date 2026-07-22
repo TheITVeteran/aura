@@ -589,7 +589,15 @@ def main() -> int:
         print(json.dumps(calibration, indent=2))
         return 0
 
-    with mlx_memory_envelope(fraction=args.memory_fraction) as envelope:
+    from core.runtime.model_lane_control import standalone_model_lane
+
+    with standalone_model_lane(
+        owner_id=f"rlc-accuracy-ladder:{Path(args.out).name}",
+        model_path=args.model,
+        purpose="evaluation",
+        preemptible=False,
+        metadata={"tool": "rlc_accuracy_ladder", "operator_launched": True},
+    ), mlx_memory_envelope(fraction=args.memory_fraction) as envelope:
         print(f"memory envelope: {envelope.to_receipt()}", flush=True)
         print(f"loading {args.model}", flush=True)
         load_kwargs = {"adapter_path": args.adapter} if args.adapter else {}

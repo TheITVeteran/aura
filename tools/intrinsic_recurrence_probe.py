@@ -123,8 +123,15 @@ def main() -> int:
     started = time.time()
 
     from mlx_lm import load
+    from core.runtime.model_lane_control import standalone_model_lane
 
-    with mlx_memory_envelope(fraction=0.55) as envelope:
+    with standalone_model_lane(
+        owner_id=f"intrinsic-recurrence-probe:{Path(args.out).name}",
+        model_path=args.model,
+        purpose="evaluation",
+        preemptible=False,
+        metadata={"tool": "intrinsic_recurrence_probe", "operator_launched": True},
+    ), mlx_memory_envelope(fraction=0.55) as envelope:
         print(f"[envelope] {envelope.to_receipt()}", flush=True)
         model, tokenizer = load(args.model)
         total_layers = len(model.model.layers)

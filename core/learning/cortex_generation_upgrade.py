@@ -253,27 +253,29 @@ class MemoryGuard:
     def _resident_giants_gb(threshold_gb: float = 6.0) -> list[dict[str, Any]]:
         """Python processes holding model-scale RSS (live app, training runs)."""
         try:
-            import psutil
+            from core.runtime.resource_observation import get_resource_observer
         except ImportError:
             return []
         giants = []
-        for proc in psutil.process_iter(["pid", "name", "memory_info"]):
-            try:
-                info = proc.info
-                rss_gb = (info["memory_info"].rss if info["memory_info"] else 0) / 1024**3
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                continue
+        for proc in get_resource_observer().processes():
+            rss_gb = proc.rss_bytes / 1024**3
             if rss_gb >= threshold_gb:
-                giants.append({"pid": info["pid"], "name": info["name"], "rss_gb": round(rss_gb, 1)})
+                giants.append(
+                    {
+                        "pid": proc.pid,
+                        "name": proc.name,
+                        "rss_gb": round(rss_gb, 1),
+                    }
+                )
         return giants
 
     @staticmethod
     def _available_gb() -> float:
         try:
-            import psutil
+            from core.runtime.resource_observation import get_resource_observer
 
-            return psutil.virtual_memory().available / 1024**3
-        except ImportError:
+            return get_resource_observer().memory(include_process_tree=False).available_bytes / 1024**3
+        except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError):
             return 0.0
 
     def admit(self, model_dir: Path | str) -> dict[str, Any]:

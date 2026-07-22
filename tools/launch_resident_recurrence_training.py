@@ -361,28 +361,20 @@ def _csv(values: Any, *, role: str) -> str:
 
 def _validate_no_competing_model_process(model: Path) -> None:
     try:
-        import psutil
+        from core.runtime.resource_observation import get_resource_observer
     except ImportError as exc:
-        raise ResidentRecurrenceLaunchError("psutil_required") from exc
+        raise ResidentRecurrenceLaunchError("resource_observer_required") from exc
 
+    observer = get_resource_observer()
+    current = observer.process(os.getpid())
     excluded: set[int] = {os.getpid()}
-    current = psutil.Process(os.getpid())
-    while True:
-        try:
-            current = current.parent()
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            break
-        if current is None:
-            break
-        excluded.add(current.pid)
+    if current is not None:
+        excluded.update(int(pid) for pid in current.ancestor_pids)
     model_text = str(model)
     conflicts: list[int] = []
-    for process in psutil.process_iter(["pid", "cmdline"]):
-        try:
-            pid = int(process.info["pid"])
-            command = process.info.get("cmdline") or []
-        except (TypeError, ValueError, psutil.NoSuchProcess, psutil.AccessDenied):
-            continue
+    for process in observer.processes():
+        pid = int(process.pid)
+        command = process.cmdline
         if pid in excluded or not command:
             continue
         tokens = [str(token) for token in command]

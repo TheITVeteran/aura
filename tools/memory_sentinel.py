@@ -247,13 +247,17 @@ def target_identity_state(pid: int, started_at: float) -> str:
     """Classify target identity without depending on memory telemetry."""
 
     try:
-        process = psutil.Process(int(pid))
-        observed_started_at = float(process.create_time())
-        status = str(process.status()).lower()
-    except psutil.NoSuchProcess:
-        return "gone"
-    except (psutil.Error, OSError, RuntimeError, SystemError, TypeError, ValueError):
+        from core.runtime.resource_observation import get_resource_observer
+
+        process = get_resource_observer().process(int(pid))
+        if process is None:
+            return "gone"
+        observed_started_at = float(process.create_time)
+        status = str(process.status).lower()
+    except (ImportError, AttributeError, OSError, RuntimeError, SystemError, TypeError, ValueError):
         return "unobservable"
+    if not status:
+        return "gone"
     if abs(observed_started_at - float(started_at)) > 0.5:
         return "reused"
     if status in {"dead", "zombie"}:

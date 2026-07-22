@@ -23359,3 +23359,45 @@ records, now approximately 56-323 records after this checkpoint. Next: publish
 CP277, rebuild the installed app from the new commit, continue watching CP273
 for the first real baseline/calibration artifact, and only relaunch under this
 observability fix if the old-source run fails or has to be superseded.
+
+## Checkpoint 2026-07-21-278: Model-Load and Resource-Observation Ownership Gates
+
+The closeout audit failed two ownership gates that directly affect the RLC/GRPO
+proof pipeline: standalone RLC tools loaded MLX checkpoints without registered
+model-lane ownership, and runtime/training paths read host resources directly
+instead of through the canonical `ResourceObserver`. Those are not cosmetic
+issues. They make live Aura, detached training, and proof CLIs compete for the
+same resident-model host without a complete admission record.
+
+All flagged standalone model-loading tools now acquire `standalone_model_lane`
+around their MLX load path and are registered in
+`config/model_load_ownership.json`; the inventory now covers 54 load references
+across 42 owned paths with zero findings. Resource observation findings were
+closed by routing CPU count, memory totals, process identity/table scans, and
+MLX accelerator-memory reporting through `ResourceObserver`. The MLX memory
+pressure helper now uses the subprocess gateway for read-only `vm_stat` and
+swap probes instead of raw subprocess calls.
+
+Validation is clean for the closed gates: `tools/closeout/audit_model_load_ownership.py
+--json` reports `passed=true`, `tools/closeout/audit_resource_observation_ownership.py
+--json` reports `passed=true` and `finding_count=0`, touched files pass
+bytecode compilation, `git diff --check` passes, and `make lint` passes.
+Governance lint still reports baseline drift for reviewed-but-unbaselined
+learning storage, resource-stage, actuator, verifier, and volition ownership
+changes; that gate remains open and must be reviewed or reduced in a separate
+checkpoint rather than silently blessed here.
+
+CP273 resident-32B recurrent GRPO also produced its first negative calibration
+evidence during this checkpoint. Frozen recurrent baseline was `overall=0.000`
+across depths 2/4/8, and calibration explored only `bayes_update@2`,
+`bayes_update@4`, and `bayes_update@8`, all with pass rate `0.00`; no learnable
+cells were found before the partial calibration receipt. This is not a
+frontier-gain proof. It is evidence that the current run is either measuring an
+unreachable slice, failing answer extraction, or otherwise needs curriculum/
+calibration repair before it can prove a positive resident-32B interaction.
+
+This is total checkpoint record 339. The forecast remains 394-661 total
+records, now approximately 55-322 records after this checkpoint. Next: publish
+CP278, decide whether to let CP273 continue to a terminal receipt or supersede
+it with the now-observable and lane-owned trainer, then reduce the governance
+lint baseline drift without starting the deferred multi-hour soak.

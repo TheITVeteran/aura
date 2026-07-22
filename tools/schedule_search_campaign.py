@@ -188,8 +188,17 @@ def run_campaign(args: argparse.Namespace) -> dict[str, Any]:
             }
         )
 
+    from core.runtime.model_lane_control import standalone_model_lane
+
     model_dir = Path(args.model).expanduser().resolve()
-    model, tokenizer = load(str(model_dir))
+    with standalone_model_lane(
+        owner_id=f"schedule-search-campaign:{Path(args.out).name}",
+        model_path=str(model_dir),
+        purpose="evaluation",
+        preemptible=False,
+        metadata={"tool": "schedule_search_campaign", "operator_launched": True},
+    ):
+        model, tokenizer = load(str(model_dir))
     tool_sha = _file_sha256(Path(__file__).resolve())
     model_sha = _model_manifest_sha256(model_dir)
     run_id = f"schedule-campaign-{args.seed}-{uuid.uuid4().hex[:12]}"

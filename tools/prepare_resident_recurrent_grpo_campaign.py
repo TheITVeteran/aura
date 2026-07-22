@@ -46,6 +46,7 @@ from tools.train_grpo import _build_task_split, _dataset_payload  # noqa: E402
 
 CONTRACT_SCHEMA = "aura.resident_recurrent_grpo_preregistration.v1"
 DEFAULT_CAMPAIGN_ID = "resident-32b-recurrent-grpo-cp259"
+CAMPAIGN_ID = DEFAULT_CAMPAIGN_ID
 DEFAULT_MODEL = (
     "training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118"
 )

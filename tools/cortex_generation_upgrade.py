@@ -45,8 +45,16 @@ def _write(out_dir: Path, name: str, payload: dict) -> Path:
 
 def _load_model(path: str):
     from mlx_lm import load
+    from core.runtime.model_lane_control import standalone_model_lane
 
-    return load(path)
+    with standalone_model_lane(
+        owner_id=f"cortex-generation-upgrade:{Path(path).name}",
+        model_path=path,
+        purpose="evaluation",
+        preemptible=False,
+        metadata={"tool": "cortex_generation_upgrade", "operator_launched": True},
+    ):
+        return load(path)
 
 
 def cmd_evaluate(args) -> int:
