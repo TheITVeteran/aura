@@ -6548,7 +6548,14 @@ class MLXLocalClient:
                 kwargs["deadline"] = deadline
         origin_label = str(kwargs.get("origin", "") or "")
         purpose_label = str(kwargs.get("purpose", "") or "")
-        benchmark_request = bool(kwargs.get("benchmark_request", False)) or (
+        # SCHEDULING classification may be inferred from labels — treating a
+        # baseline run as foreground is harmless. SAFETY exemption may not:
+        # benchmark_request also waives the critical memory-pressure refusal,
+        # and inferring it from any free-form purpose containing "_baseline"
+        # let any caller self-authorize that waiver. The explicit kwarg is the
+        # only thing that can lift a safety guard.
+        benchmark_request_explicit = bool(kwargs.get("benchmark_request", False))
+        benchmark_request = benchmark_request_explicit or (
             origin_label.strip().lower() in {"baseline", "benchmark"}
             or purpose_label.strip().lower() == "baseline"
             or purpose_label.strip().lower().endswith("_baseline")
@@ -6599,12 +6606,42 @@ class MLXLocalClient:
             )
             if memory_snapshot.should_gc:
                 gc.collect()
+            critical_override = str(
+                os.environ.get("AURA_MLX_ALLOW_CRITICAL_MEMORY_GENERATION", "")
+            ).strip().lower() in {"1", "true", "yes", "on"}
             if (
                 memory_snapshot.refuse_heavy_local_generation
                 and self._is_primary_or_deep_lane()
-                and not benchmark_request
-                and str(os.environ.get("AURA_MLX_ALLOW_CRITICAL_MEMORY_GENERATION", "")).strip().lower()
-                not in {"1", "true", "yes", "on"}
+                and not benchmark_request_explicit
+                and critical_override
+            ):
+                # The override disables a refusal made AFTER critical pressure
+                # was positively observed, i.e. the last guard before the model
+                # process can push macOS into swap or jetsam. It stays
+                # available for recovery, but a stale deployment flag must not
+                # be able to do this silently — the bypass is now as loud as
+                # the refusal it replaces.
+                self._record_degraded_event(
+                    "memory_pressure_generation_override",
+                    detail=(
+                        f"{os.path.basename(self.model_path)}:{memory_snapshot.reason}:"
+                        "AURA_MLX_ALLOW_CRITICAL_MEMORY_GENERATION"
+                    ),
+                    severity="critical",
+                    foreground_request=foreground_request,
+                )
+                logger.critical(
+                    "[MLX] Proceeding with heavy local generation for %s DESPITE critical "
+                    "memory pressure (%s) because AURA_MLX_ALLOW_CRITICAL_MEMORY_GENERATION "
+                    "is set. This bypasses the last guard before swap/jetsam.",
+                    os.path.basename(self.model_path),
+                    memory_snapshot.reason,
+                )
+            if (
+                memory_snapshot.refuse_heavy_local_generation
+                and self._is_primary_or_deep_lane()
+                and not benchmark_request_explicit
+                and not critical_override
             ):
                 if self.is_alive() and int(getattr(self, "_active_generations", 0) or 0) <= 0:
                     await self.reboot_worker(reason="memory_pressure_guard", mark_failed=False)
@@ -6620,7 +6657,33 @@ class MLXLocalClient:
                     memory_snapshot.reason,
                 )
                 return None
-        except (OSError, AttributeError) as exc:
+        except (OSError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            # The guard exists because critical pressure can trigger swap or
+            # jetsam before a single token is produced. A probe that cannot
+            # answer is NOT evidence of headroom, and logging at debug made an
+            # unobservable memory state indistinguishable from a healthy one.
+            # Heavy primary/deep generation is refused while blind; smaller
+            # lanes continue, since they are not the allocation that pushes
+            # the host over.
+            _record_mlx_degradation(
+                exc,
+                action="refused heavy local generation because memory pressure could not be observed",
+                severity="critical",
+            )
+            if self._is_primary_or_deep_lane() and not benchmark_request_explicit:
+                self._record_degraded_event(
+                    "memory_pressure_unobservable_refused_generation",
+                    detail=f"{os.path.basename(self.model_path)}:{type(exc).__name__}",
+                    severity="critical",
+                    foreground_request=foreground_request,
+                )
+                logger.warning(
+                    "[MLX] Refusing heavy local generation for %s: memory pressure probe "
+                    "unavailable (%s), so headroom cannot be established.",
+                    os.path.basename(self.model_path),
+                    exc,
+                )
+                return None
             logger.debug("MLX memory pressure probe unavailable: %s", exc)
 
         # ── SOMATIC COUPLING: Metabolic hardware throttle ────────────
