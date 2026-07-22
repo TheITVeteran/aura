@@ -604,8 +604,30 @@ def build_agentic_tool_map(
         return None
 
 
+_TRUE_FLAG_VALUES = frozenset({"1", "true", "yes", "on", "enable", "enabled"})
+
+
+def _env_flag_enabled(name: str) -> bool:
+    """True only when an environment flag is explicitly switched ON.
+
+    Presence is not truth: "0", "false", "no", "off" and "" all mean off.
+    Anything unrecognised is treated as off, so a typo cannot silently
+    disable a guard.
+    """
+    return str(os.environ.get(name, "")).strip().lower() in _TRUE_FLAG_VALUES
+
+
 def should_force_tool_handoff(contract: ResponseContract | None, *, is_background: bool) -> bool:
-    if os.environ.get("AURA_EMBODIED_CHALLENGE"):
+    """Whether a turn requiring search must hand off to tools before answering.
+
+    CP126 8eda805e. The embodied-challenge escape tested only that the
+    environment variable was PRESENT and non-empty, so exporting it as "0",
+    "false", "no" or "disabled" — every conventional way to turn a flag OFF
+    — silently switched off a mandatory handoff and let the model answer a
+    search-requiring question with no tool evidence. A flag whose "off"
+    values mean "on" is worse than no flag.
+    """
+    if _env_flag_enabled("AURA_EMBODIED_CHALLENGE"):
         return False
     if contract and getattr(contract, "requires_capability_inventory", False):
         return False

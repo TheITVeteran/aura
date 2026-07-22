@@ -55,6 +55,12 @@ def _clamp(v: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, v))
 
 
+# Below this, a centered vector has no usable direction: the cosine would be
+# noise divided by ~zero. Queries and keys that degenerate this far are
+# reported as unknown rather than ranked.
+_DEGENERATE_NORM = 1e-9
+
+
 @dataclass
 class Neighbor:
     token_id: int
@@ -180,25 +186,76 @@ class NonParametricMemory:
                 self._query_mu += (q - self._query_mu) / float(self._query_mu_n)
             else:
                 self._query_mu += 0.005 * (q - self._query_mu)
-            # ||x-q||^2 = ||x||^2 + ||q||^2 - 2x.q avoids allocating an
-            # n-by-hidden-dimension difference matrix on every decode step.
-            dists_sq = self._key_norms[:n] + float(np.dot(q, q))
-            dists_sq = dists_sq - 2.0 * (self._keys[:n] @ q)
-            dists = np.sqrt(np.maximum(dists_sq, 0.0))
+            # CP126 d5cc1faf. Candidates used to be selected by raw
+            # Euclidean distance while the confidence gate judged them by
+            # mean-centered cosine — two metrics that disagree precisely
+            # where it matters. Raw hidden states share a dominant common
+            # direction (measured on the live 1.5B: UNRELATED prompts at raw
+            # cos 0.81-0.93), so ||x-q|| is dominated by vector norm and that
+            # shared direction. The semantically strongest centered-cosine
+            # neighbour could therefore be ranked outside the top k and never
+            # reach the gate at all — and no gate threshold can repair a
+            # candidate set that already excluded the right answer.
+            #
+            # Selection now uses the SAME metric as the gate, computed for
+            # every entry without materialising an n-by-dim difference
+            # matrix:
+            #
+            #   <q-mu, x-mu> = x.q - x.mu - q.mu + mu.mu
+            #   ||x-mu||^2   = ||x||^2 - 2 x.mu + ||mu||^2
+            #
+            # so two matrix-vector products (keys@q, keys@mu) give exact
+            # centered cosines for all n — the same asymptotic cost as the
+            # distance scan it replaces. Before the mean estimate is ready mu
+            # is zero and this reduces exactly to raw cosine.
+            keys = self._keys[:n]
+            centered = self._query_mu_n >= self.MU_READY_N
+            mu = self._query_mu if centered else np.zeros_like(q)
+            kq = keys @ q
+            km = keys @ mu
+            qm = float(np.dot(q, mu))
+            mm = float(np.dot(mu, mu))
+            numerator = kq - km - qm + mm
+            key_centered_sq = np.maximum(self._key_norms[:n] - 2.0 * km + mm, 0.0)
+            q_centered_norm = math.sqrt(max(float(np.dot(q, q)) - 2.0 * qm + mm, 0.0))
+            if q_centered_norm <= _DEGENERATE_NORM:
+                # The query sits on the common direction itself: after
+                # centering it has no direction left to compare, so every
+                # cosine here would be numerical noise amplified by a
+                # near-zero denominator. Report unknown (-1) and let the
+                # confidence gate refuse rather than inventing a ranking.
+                self._stats["degenerate_query"] = (
+                    int(self._stats.get("degenerate_query", 0)) + 1
+                )
+                return []
+            denominator = np.sqrt(key_centered_sq) * q_centered_norm
+            sims_all = np.where(
+                denominator > _DEGENERATE_NORM,
+                numerator / np.maximum(denominator, _DEGENERATE_NORM),
+                -1.0,
+            )
             kk = min(max(1, int(k)), n)
-            idx = np.argpartition(dists, kk - 1)[:kk]
-            idx = idx[np.argsort(dists[idx])]
-            similarities = self._similarities_for(q, idx)
+            # Highest similarity first — argpartition on the negated scores.
+            idx = np.argpartition(-sims_all, kk - 1)[:kk]
+            idx = idx[np.argsort(-sims_all[idx])]
+            # Euclidean distance is still REPORTED (callers and telemetry use
+            # it), computed only for the k that were selected.
+            selected = keys[idx]
+            diff_sq = (
+                self._key_norms[:n][idx] + float(np.dot(q, q)) - 2.0 * (selected @ q)
+            )
+            dists = np.sqrt(np.maximum(diff_sq, 0.0))
+            similarities = sims_all[idx]
             return [
                 Neighbor(
                     self._token_ids[i],
                     self._tokens[i],
-                    float(dists[i]),
+                    float(dist),
                     float(self._weights[i]),
                     similarity=float(sim),
                     index=int(i),
                 )
-                for i, sim in zip(idx, similarities)
+                for i, dist, sim in zip(idx, dists, similarities)
             ]
 
     def _similarities_for(self, q: np.ndarray, idx: Any) -> list[float]:

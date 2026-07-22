@@ -5,6 +5,7 @@ import contextlib
 import logging
 import math
 import threading
+import time
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -701,17 +702,37 @@ class NucleusManager(LLMProvider):
         entry["tokenizer"] = None
         entry["loaded"] = False
         entry["cache"] = None
-        lease, entry["lane_lease"] = entry.get("lane_lease"), None
-        if lease is not None:
-            try:
-                await lease.release(reason=f"nucleus_unload:{reason}")
-            except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
-                _record_nucleus_degradation(
-                    exc,
-                    severity="warning",
-                    action="cleared in-process model references but lane lease release failed",
-                    extra={"model": name, "reason": reason},
-                )
+        # CP126 5a7bdf9c. The lease handle used to be dropped in the same
+        # statement that read it, BEFORE the release was known to have
+        # succeeded. A failed release then left authoritative lane ownership
+        # stranded with the one object needed to retry, compensate or report
+        # it already thrown away. The handle is kept until the release is
+        # confirmed, and retained on failure so recovery has something to
+        # act on.
+        lease = entry.get("lane_lease")
+        if lease is None:
+            return
+        try:
+            await lease.release(reason=f"nucleus_unload:{reason}")
+        except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            entry["lane_lease"] = lease
+            entry["lane_lease_release_failed"] = {
+                "reason": reason,
+                "error": f"{type(exc).__name__}: {exc}"[:200],
+                "at_unix": time.time(),
+            }
+            _record_nucleus_degradation(
+                exc,
+                severity="critical",
+                action=(
+                    "cleared in-process model references but RETAINED the lane "
+                    "lease: release failed and ownership is still held"
+                ),
+                extra={"model": name, "reason": reason},
+            )
+            return
+        entry["lane_lease"] = None
+        entry.pop("lane_lease_release_failed", None)
 
     async def unload_models(self):
         """Force unload all internal models and clear caches."""
