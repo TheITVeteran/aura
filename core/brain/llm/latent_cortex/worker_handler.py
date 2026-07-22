@@ -408,9 +408,27 @@ def handle_latent_reason(
     # trajectory converged prettier. Tokenizer required: verification reads
     # decoded probe text.
     task_verifier = None
-    if (
-        bool(job.get("verifier_guidance")) or response_contract is not None
-    ) and tokenizer is not None:
+    verifier_requested = bool(job.get("verifier_guidance")) or response_contract is not None
+    if verifier_requested and tokenizer is None:
+        # A REQUESTED verifier that cannot be built must not vanish. Without
+        # a tokenizer the guidance was skipped silently, so the episode ran
+        # with no task verifier while the caller — which had asked for one,
+        # or supplied a response contract that implies one — received a
+        # receipt that simply omitted it. Absence of guidance then read as
+        # "no guidance was wanted" rather than "guidance was lost".
+        from core.runtime.errors import record_degradation
+
+        record_degradation(
+            "latent_cortex_worker_handler",
+            RuntimeError("verifier_guidance_requested_without_tokenizer"),
+            severity="error",
+            action="ran latent episode without the requested task verifier because no tokenizer was available",
+        )
+        logger.error(
+            "Latent episode requested verifier guidance but no tokenizer is "
+            "available; the episode runs UNVERIFIED and the receipt records it."
+        )
+    if verifier_requested and tokenizer is not None:
         from core.brain.llm.latent_cortex.task_verifiers import (
             _ANSWER_FACET_HINTS,
             EpisodeTaskVerifier,
@@ -462,6 +480,14 @@ def handle_latent_reason(
     )
     if task_verifier is not None:
         result.receipt.verifier_guidance = task_verifier.to_receipt()
+    elif verifier_requested:
+        # Legible in the receipt: downstream must be able to tell "no verifier
+        # was wanted" from "a verifier was wanted and could not be built".
+        result.receipt.verifier_guidance = {
+            "requested": True,
+            "available": False,
+            "reason": "tokenizer_unavailable",
+        }
     if worker_identity is None:
         from core.brain.llm.latent_cortex.runtime_identity import build_worker_identity
 
@@ -528,13 +554,25 @@ def handle_latent_reason(
         result.receipt.fast_weights_applied
         and result.receipt.fast_weights_erased is not True
     )
+    # MISSING PROOF IS NOT PROOF OF SAFETY. This tested `is False` only, so a
+    # parameter check that FAILED to run — or was skipped entirely — left
+    # params_unchanged as None and the worker kept serving with weights whose
+    # integrity had never been established. The absent case is exactly when a
+    # recycle matters most: it is the case where nothing can vouch for the
+    # resident parameters. Only an explicit True (the check ran and the
+    # parameters were unchanged) avoids the recycle.
     body["requires_worker_recycle"] = (
-        result.receipt.params_unchanged is False
+        result.receipt.params_unchanged is not True
         or (
             result.receipt.fast_weights_applied
             and result.receipt.fast_weights_erased is not True
         )
     )
+    if result.receipt.params_unchanged is None:
+        logger.warning(
+            "Latent episode returned no parameter-integrity proof; recycling the "
+            "worker rather than trusting unverified resident weights."
+        )
     return body
 
 

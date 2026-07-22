@@ -252,6 +252,21 @@ class EpisodicFastWeights:
         """Wrap the target linear in up to ``max_wrapped_layers`` window layers."""
         if self.handles:
             raise RuntimeError("fast weights already attached — one episode at a time")
+        # EPISODE BOUNDARY: clear the previous episode's proof state.
+        #
+        # detach() empties `handles`, which is the only thing this guard
+        # checks, so the same object could be re-attached for a NEW episode
+        # while still carrying the last one's erase_proven, exported flag and
+        # exported handle snapshots. A stale erase_proven=True would then
+        # vouch for weights it never saw — the proof would survive the thing
+        # it was proving. Nothing about the prior episode may outlive it.
+        self.lifecycle.erase_proven = None
+        self.lifecycle.exported = False
+        self.lifecycle.erased = False
+        self.lifecycle.detach_conflicts = 0
+        self.lifecycle.canary_rescales = 0
+        self.lifecycle.canary_erased = False
+        self._exported_handles = []
         parent_attr, leaf_attr = _TARGET_ATTRS[self.config.target]
         start, end = layer_range
         candidates = list(range(start, end))[: max(1, self.config.max_wrapped_layers)]
