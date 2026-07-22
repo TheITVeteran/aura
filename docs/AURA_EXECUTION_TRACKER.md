@@ -23975,3 +23975,34 @@ This is total checkpoint record 354. The forecast remains 394-661 total
 records, now approximately 40-307 records after this checkpoint. Next: publish
 CP293, retire CP291, freeze the replacement corrected+diagnostic resident proof
 contract, launch that run and controller, then continue RLC system inspection.
+
+## Checkpoint 2026-07-21-294: Fresh Resident Proof Contract Bound to Diagnostics
+
+CP291 was stopped through its authenticated detached supervisor after CP293
+made its trainer source stale. The stopped receipt shows `returncode=-15`,
+`containment_verified=true`, `process_group_empty=true`, and
+`lineage_empty=true`; its post-training LaunchAgent was booted out before any
+proof stage could run on stale measurements.
+
+A replacement resident-32B recurrent-GRPO preregistration was generated as
+`resident-32b-recurrent-grpo-cp294` with artifact root
+`artifacts/closeout/latent_cortex/cp294_resident_32b_recurrent_grpo`. The
+contract digest is
+`6801513d33e161ec9c8b843dc04d757a82f794624ef09d5d03a42cc1e6db7177`, and the
+bound trainer source hash is
+`98b23e44f1469cdddc713672f34a12f13b49a8852d12fc75fbe5824bc25d3db5`.
+
+This contract includes the corrected answer-contract recurrent held-out
+evaluation and the non-leaking score/contract diagnostics. It verifies against
+the resident 32B model and freezes the same proof scope: 288 training tasks,
+36 held-out tasks, 2,877 powered confirmatory tasks, 17,262 confirmatory
+cells, trajectory credit enabled, and required mechanism attribution.
+
+Validation: `tools/prepare_resident_recurrent_grpo_campaign.py verify` passed
+with `model_verified=true`, `training_tasks=288`, `holdout_tasks=36`, and
+`confirmatory_tasks=2877`.
+
+This is total checkpoint record 355. The forecast remains 394-661 total
+records, now approximately 39-306 records after this checkpoint. Next: publish
+CP294, launch CP294 detached, install its post-training controller, then keep
+working on system-level RLC gaps while the corrected diagnostic run proceeds.
