@@ -13,6 +13,7 @@ pytest.importorskip("mlx_lm")
 from mlx_lm.models.cache import KVCache  # noqa: E402
 from mlx_lm.models.qwen2 import Model, ModelArgs  # noqa: E402
 
+import core.brain.llm.latent_cortex.recurrence as recurrence_mod  # noqa: E402
 from core.brain.llm.latent_cortex.branches import BRANCH_ROLES, BranchEnsemble  # noqa: E402
 from core.brain.llm.latent_cortex.escape import (  # noqa: E402
     BranchEscapeLadder,
@@ -33,6 +34,7 @@ from core.brain.llm.latent_cortex.types import (  # noqa: E402
     RecurrenceConfig,
     WorkspaceConfig,
 )
+from core.brain.llm.recurrent_depth import CacheSnapshotError  # noqa: E402
 
 N_LAYERS, P_END, C_START = 8, 2, 6
 PROMPT = [[5, 9, 17, 3, 42, 7, 11, 23, 2, 88]]
@@ -341,6 +343,7 @@ def _ensemble(
     *,
     max_steps=8,
     fixed_depth=False,
+    isolation_steps=1,
 ):
     inner = model.model
     emb = inner.embed_tokens(mx.array(PROMPT))
@@ -349,7 +352,11 @@ def _ensemble(
     ensemble = BranchEnsemble.seed(
         emb,
         WorkspaceConfig(n_slots=4, seed=3),
-        BranchConfig(n_branches=n_branches, exchange_interval=exchange_interval),
+        BranchConfig(
+            n_branches=n_branches,
+            isolation_steps=isolation_steps,
+            exchange_interval=exchange_interval,
+        ),
         RecurrenceConfig(
             max_steps=max_steps,
             convergence_eps=0.02,
@@ -372,6 +379,88 @@ def test_branch_seeding_gives_distinct_roles_and_clean_cache(tiny_model):
     assert all(c.offset == prompt_len for c in cache)
     z0, z1 = ensemble.branches[0].z, ensemble.branches[1].z
     assert not bool(mx.allclose(z0, z1)), "role basins must differ"
+    assert ensemble.exchange_now() is False, "peer exposure must wait for candidates"
+
+
+def test_fresh_context_candidates_seal_before_first_exchange(tiny_model):
+    cache = _prefill(tiny_model)
+    ensemble, runner, budget = _ensemble(
+        tiny_model,
+        cache,
+        n_branches=3,
+        exchange_interval=1,
+        isolation_steps=2,
+    )
+    original_second = ensemble.branches[1].z
+    ensemble.branches[0].z = ensemble.branches[0].z * 1.01
+    ensemble.branches[0].workspace.update(ensemble.branches[0].z)
+    assert bool(mx.allclose(ensemble.branches[1].z, original_second))
+
+    assert ensemble.step_all(runner, cache, P_END, C_START, budget=budget)
+    assert ensemble.exchanges == 0
+    assert ensemble.step_all(runner, cache, P_END, C_START, budget=budget)
+    assert ensemble.exchanges == 1
+
+    isolation = ensemble.isolation_receipt(runner.cache_discipline_receipt())
+    assert isolation["certified"] is True
+    assert isolation["first_exchange_step"] == 2
+    assert isolation["blocked_cross_exposures"] >= 1
+    assert len({row["candidate_sha256"] for row in isolation["candidates"]}) == 3
+    assert len({row["rng_stream_sha256"] for row in isolation["candidates"]}) == 3
+    assert len({row["context_sha256"] for row in isolation["candidates"]}) == 1
+    assert isolation["cache_discipline"]["all_restored"] is True
+
+
+def test_window_runner_fails_when_cache_restore_postcondition_is_false(
+    tiny_model, monkeypatch
+):
+    cache = _prefill(tiny_model)
+    budget = ComputeBudget()
+    runner = WindowRunner(tiny_model.model, budget)
+    slots = mx.zeros((1, 4, 64))
+    monkeypatch.setattr(
+        recurrence_mod,
+        "_restore_recurrent_caches",
+        lambda *_args, **_kwargs: None,
+    )
+
+    with pytest.raises(CacheSnapshotError, match="restore postcondition"):
+        runner.run(slots, cache, P_END, C_START, persist=False)
+    discipline = runner.cache_discipline_receipt()
+    assert discipline == {
+        "schema": "aura.rlc.cache_discipline.v1",
+        "nonpersistent_calls": 1,
+        "restored_calls": 0,
+        "restore_failures": 1,
+        "all_restored": False,
+    }
+
+
+def test_role_lesion_runs_but_cannot_claim_independent_candidates(tiny_model):
+    cache = _prefill(tiny_model)
+    inner = tiny_model.model
+    embeddings = inner.embed_tokens(mx.array(PROMPT))
+    budget = ComputeBudget()
+    runner = WindowRunner(inner, budget)
+    ensemble = BranchEnsemble.seed(
+        embeddings,
+        WorkspaceConfig(n_slots=4, seed=3),
+        BranchConfig(
+            n_branches=2,
+            isolation_steps=1,
+            roles=("analogy", "analogy"),
+        ),
+        RecurrenceConfig(max_steps=4, min_steps=1),
+        runner,
+        cache,
+        P_END,
+    )
+    assert ensemble.step_all(runner, cache, P_END, C_START, budget=budget)
+    isolation = ensemble.isolation_receipt(runner.cache_discipline_receipt())
+    assert isolation["sealed"] is True
+    assert isolation["configured_role_lesion"] is True
+    assert isolation["certified"] is False
+    assert isolation["reason"] == "configured_role_lesion"
 
 
 def test_branches_step_exchange_and_halt(tiny_model):
@@ -392,7 +481,7 @@ def test_branches_step_exchange_and_halt(tiny_model):
 
 def test_cognitive_operator_primitives_mutate_only_live_bounded_state(tiny_model):
     cache = _prefill(tiny_model)
-    ensemble, _, _ = _ensemble(tiny_model, cache, n_branches=2)
+    ensemble, runner, budget = _ensemble(tiny_model, cache, n_branches=2)
     before = [branch.z for branch in ensemble.branches]
     control = mx.ones((1, 1, int(before[0].shape[-1])))
 
@@ -405,6 +494,8 @@ def test_cognitive_operator_primitives_mutate_only_live_bounded_state(tiny_model
 
     disagreement = ensemble.disagreement()
     assert 0.0 <= disagreement <= 1.0
+    assert ensemble.compress_state() == 0, "aggregation cannot precede isolation"
+    assert ensemble.step_all(runner, cache, P_END, C_START, budget=budget)
     before_compression = [branch.z for branch in ensemble.branches]
     assert ensemble.compress_state() == 2
     assert any(
@@ -513,9 +604,10 @@ def test_fixed_depth_performs_terminal_exchange_before_halting(tiny_model):
 
 def test_exchange_blends_comm_slot_only(tiny_model):
     cache = _prefill(tiny_model)
-    ensemble, _, _ = _ensemble(tiny_model, cache, n_branches=2)
+    ensemble, runner, budget = _ensemble(tiny_model, cache, n_branches=2)
+    assert ensemble.step_all(runner, cache, P_END, C_START, budget=budget)
     before = [b.z for b in ensemble.branches]
-    ensemble.exchange()
+    assert ensemble.exchange() is True
     for b, prev in zip(ensemble.branches, before, strict=True):
         delta = mx.abs(b.z - prev)
         comm_delta = float(mx.max(delta[:, 0, :]))
@@ -526,11 +618,12 @@ def test_exchange_blends_comm_slot_only(tiny_model):
 
 def test_diversity_jitter_decorrelates_parallel_branches(tiny_model):
     cache = _prefill(tiny_model)
-    ensemble, _, _ = _ensemble(tiny_model, cache, n_branches=2)
+    ensemble, runner, budget = _ensemble(tiny_model, cache, n_branches=2)
+    assert ensemble.step_all(runner, cache, P_END, C_START, budget=budget)
     a, b = ensemble.branches
     b.z = a.z  # force collapse
     b.workspace.update(b.z)
-    ensemble.maintain_diversity()
+    assert ensemble.maintain_diversity() is True
     assert not bool(mx.allclose(a.z, b.z)), "collapsed branches must be jittered apart"
 
 

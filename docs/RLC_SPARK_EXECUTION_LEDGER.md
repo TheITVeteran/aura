@@ -74,6 +74,10 @@ After CP327, the published total is record 388: 78-345 forecast records remain,
 checkpoint-count completion is 52.9%-83.3%, and the midpoint planning estimate
 is 64.7%.
 
+After CP328, the published total is record 389: 77-344 forecast records remain,
+checkpoint-count completion is 53.1%-83.5%, and the midpoint planning estimate
+is 64.9%.
+
 ## Code-grounded baseline and ownership
 
 The four-slice static audit covered the neural core, epistemic/verifier paths,
@@ -82,12 +86,12 @@ entire Spark source and traced callers rather than crediting class names. The
 baseline below is exhaustive over SPARK-001 through SPARK-072:
 
 - `ACCEPTED`: SPARK-001, SPARK-005, SPARK-006, SPARK-007, SPARK-008, SPARK-009,
-  SPARK-010, SPARK-011, SPARK-012.
+  SPARK-010, SPARK-011, SPARK-012, SPARK-014.
 - `PARTIAL`: SPARK-003,
-  SPARK-014, SPARK-021, SPARK-022, SPARK-023, SPARK-024, SPARK-025,
+  SPARK-021, SPARK-022, SPARK-023, SPARK-024, SPARK-025,
   SPARK-026, SPARK-027, SPARK-035, SPARK-039, SPARK-040, SPARK-041,
-  SPARK-042, SPARK-052, SPARK-053, SPARK-054, SPARK-055, SPARK-056,
-  SPARK-051, SPARK-058, SPARK-060, SPARK-062, SPARK-063, SPARK-065, SPARK-066,
+  SPARK-042, SPARK-051, SPARK-052, SPARK-053, SPARK-054, SPARK-055,
+  SPARK-056, SPARK-058, SPARK-060, SPARK-062, SPARK-063, SPARK-065, SPARK-066,
   SPARK-067.
 - `MISSING`: SPARK-002,
   SPARK-015, SPARK-016, SPARK-017, SPARK-018, SPARK-019, SPARK-020,
@@ -305,9 +309,24 @@ before those dependencies close is not admissible.
 
 ## C. Independent hypotheses and virtual width
 
-- [ ] **SPARK-014 - Fresh-context branch isolation.** Generate candidates from
+- [x] **SPARK-014 - Fresh-context branch isolation.** Generate candidates from
   the original problem in independent contexts before exposing any branch to
   another answer; test for context, cache, RNG, and hidden-state contamination.
+  Accepted at CP328: every branch now advances from the same content-addressed
+  original context in a distinct workspace and deterministic role RNG stream.
+  Cross-branch exchange, consensus compression, and diversity comparison are
+  blocked until every branch has produced a content-addressed latent candidate
+  after the configured isolation floor. Explicit schedule exchanges cannot
+  bypass the floor. The first exchange step, blocked attempts, seed/candidate/
+  RNG/context commitments, state-alias check, and role-lesion status are carried
+  in one exact receipt. Every speculative shared-cache pass restores the exact
+  immutable K/V tensor objects and metadata and checks that postcondition before
+  another branch can run. The service independently validates cardinality,
+  uniqueness, common original context, cache counts, and exchange timing.
+  Deliberate repeated-role lesion arms may run but cannot claim certified branch
+  independence. Focused branch/engine/wiring contracts pass 150/150; the fixed
+  ownership gate passes 857/857, and forged receipt checks pass 1/1. This closes
+  isolation mechanics, not differentiated operator labor or capability gain.
 - [ ] **SPARK-015 - Distinct cognitive operators.** Implement direct,
   constructive, counterexample, inverse, causal simulation, formal, analogy-
   mapping, assumption-removal, and boundary-case operators as different
@@ -573,18 +592,17 @@ CP326 closes durable live cognitive-operation history and admission; it does
 not change the negative capability verdict.
 CP327 makes the full action vocabulary causal inside recurrent execution and
 persists checked outcomes; it does not change the negative capability verdict.
+CP328 closes fresh-context branch isolation and exact cache restoration; it does
+not change the negative capability verdict.
 
-Validation: the fixed-snapshot integrated RLC, latent-cortex, GWT, and
-execution-controller gate passes 854/854 in 438.07 seconds. This includes the
-real tiny-Qwen2 worker path, tensor-level operator causality, service-side policy
-reconstruction, exact cost conservation, journal recovery, malformed-batch
-atomicity, and escape-finalization honesty. Focused Ruff, bytecode compilation,
-and `git diff --check` pass. No resident 32B campaign was run, and the negative
-frontier verdict is unchanged.
+Validation: focused branch, engine, and wiring contracts pass 150/150. The
+fixed-snapshot integrated RLC, latent-cortex, GWT, and execution-controller gate
+passes 857/857 in 436.98 seconds, and adversarial service reconstruction passes
+1/1. Focused Ruff, bytecode compilation, and `git diff --check` pass. No
+resident 32B campaign was run, and the negative frontier verdict is unchanged.
 
-This is total checkpoint record 388. The revised forecast remains 466-733 total
-records, now approximately 78-345 records after this checkpoint. Checkpoint-
-count completion is approximately 52.9%-83.3%, with a midpoint planning
-estimate of 64.7%. Next: publish CP327, then close fresh-context branch
-isolation and distinct executable operator policies before resident integration
-and lesion proof.
+This is total checkpoint record 389. The revised forecast remains 466-733 total
+records, now approximately 77-344 records after this checkpoint. Checkpoint-
+count completion is approximately 53.1%-83.5%, with a midpoint planning
+estimate of 64.9%. Next: publish CP328, then implement distinct executable
+cognitive operator policies and their causal role/lesion proof.

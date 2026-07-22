@@ -76,6 +76,9 @@ class BranchConfig:
     """Virtual width: K concurrent latent trajectories of the same weights."""
 
     n_branches: int = 1
+    # Every branch must independently advance this many recurrent steps from
+    # the original prompt before any cross-branch exchange or aggregation.
+    isolation_steps: int = 1
     exchange_interval: int = 4
     # Blend factor when writing the cross-branch consensus into each branch's
     # communication slot.
@@ -358,6 +361,12 @@ class CortexConfig:
             problems.append(
                 f"n_branches {self.branches.n_branches} outside [1, {ABSOLUTE_MAX_BRANCHES}]"
             )
+        if not (
+            type(self.branches.isolation_steps) is int
+            and type(self.recurrence.max_steps) is int
+            and 1 <= self.branches.isolation_steps <= self.recurrence.max_steps
+        ):
+            problems.append("isolation_steps must be inside [1, max_steps]")
         if not integer_in(
             self.branches.exchange_interval, 1, ABSOLUTE_MAX_RECURRENT_STEPS
         ):
@@ -734,6 +743,10 @@ class EpisodeReceipt:
     # why the others did not — selection is auditable against the contract,
     # not just a scalar score. Empty when no verifier probes ran.
     branch_contract: list[dict[str, Any]] = field(default_factory=list)
+    # Fresh-context virtual-width proof. Exact hidden-state contents stay
+    # private; commitments and cache-discipline counters prove that every
+    # candidate existed before cross-branch exposure.
+    branch_isolation: dict[str, Any] = field(default_factory=dict)
     selected_branch: int = 0
     exchanges: int = 0
     # Scoped durable-adapter activation. Zero calls means no recurrence-native
@@ -967,6 +980,7 @@ class EpisodeReceipt:
             "reverted_to_best": self.reverted_to_best,
             "branch_scores": [round(s, 6) for s in self.branch_scores],
             "branch_contract": [dict(row) for row in self.branch_contract],
+            "branch_isolation": dict(self.branch_isolation),
             "selected_branch": self.selected_branch,
             "exchanges": self.exchanges,
             "recurrence_adapter": dict(self.recurrence_adapter),

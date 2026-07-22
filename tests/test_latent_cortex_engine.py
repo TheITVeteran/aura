@@ -78,6 +78,9 @@ def test_full_episode_produces_tokens_and_truthful_receipt(tiny_model):
     assert r.n_layers == N_LAYERS and r.prelude_end == 2 and r.coda_start == 6
     assert r.n_branches == 2 and r.n_slots == 4
     assert r.steps_taken >= 2
+    assert r.branch_isolation["certified"] is True
+    assert r.branch_isolation["first_exchange_step"] >= 1
+    assert r.branch_isolation["cache_discipline"]["all_restored"] is True
     assert r.residual_trail, "receipt must carry the residual trail"
     assert r.halting_reason
     assert r.schedule_hash

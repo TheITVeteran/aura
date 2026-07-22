@@ -90,6 +90,7 @@ _CONFIG_KEYS = {
     "fast_weights_target",
     "jitter_scale",
     "input_context_max_chars",
+    "isolation_steps",
     "latent_opt",
     "latent_opt_control",
     "latent_opt_lambda_manifold",
@@ -181,6 +182,7 @@ def config_from_job(job_config: dict[str, Any] | None) -> CortexConfig:
         ),
         branches=BranchConfig(
             n_branches=_typed_value(raw, "n_branches", 2, int),
+            isolation_steps=_typed_value(raw, "isolation_steps", 2, int),
             exchange_interval=_typed_value(raw, "exchange_interval", 4, int),
             exchange_gamma=_typed_value(raw, "exchange_gamma", 0.35, float),
             comm_slot=_typed_value(raw, "comm_slot", 0, int),

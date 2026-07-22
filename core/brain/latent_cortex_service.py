@@ -224,6 +224,7 @@ class LatentCortexService:
             "max_steps": max_steps,
             "min_steps": 2,
             "n_branches": n_branches,
+            "isolation_steps": 2,
             "alpha_schedule": "cosine",
             # The production service exercises the complete machine. Ablation
             # arms belong to the falsification harness, never the live default.
@@ -647,6 +648,115 @@ class LatentCortexService:
             "n_branches"
         ) != config.get("n_branches"):
             errors.append("branch_cardinality_mismatch")
+        isolation_steps = config.get("isolation_steps")
+        if type(isolation_steps) is int:
+            isolation = receipt.get("branch_isolation")
+            isolation_valid = isinstance(isolation, dict)
+            if isolation_valid:
+                candidates = isolation.get("candidates")
+                cache_discipline = isolation.get("cache_discipline")
+                branch_count = config.get("n_branches")
+                candidate_rows_valid = (
+                    isinstance(candidates, list)
+                    and type(branch_count) is int
+                    and len(candidates) == branch_count
+                    and all(
+                        isinstance(row, dict)
+                        and row.get("index") == index
+                        and isinstance(row.get("role"), str)
+                        and bool(row["role"])
+                        and sha256(row.get("context_sha256"))
+                        and sha256(row.get("rng_stream_sha256"))
+                        and sha256(row.get("seed_sha256"))
+                        and sha256(row.get("candidate_sha256"))
+                        and type(row.get("candidate_step")) is int
+                        and row["candidate_step"] >= isolation_steps
+                        for index, row in enumerate(candidates)
+                    )
+                )
+                unique_commitments = bool(candidate_rows_valid) and all(
+                    len({row[key] for row in candidates}) == len(candidates)
+                    for key in (
+                        "rng_stream_sha256",
+                        "seed_sha256",
+                        "candidate_sha256",
+                    )
+                )
+                one_context = bool(candidate_rows_valid) and len(
+                    {row["context_sha256"] for row in candidates}
+                ) == 1
+                cache_valid = (
+                    isinstance(cache_discipline, dict)
+                    and set(cache_discipline)
+                    == {
+                        "schema",
+                        "nonpersistent_calls",
+                        "restored_calls",
+                        "restore_failures",
+                        "all_restored",
+                    }
+                    and cache_discipline.get("schema")
+                    == "aura.rlc.cache_discipline.v1"
+                    and positive_int(cache_discipline, "nonpersistent_calls")
+                    and cache_discipline.get("restored_calls")
+                    == cache_discipline.get("nonpersistent_calls")
+                    and cache_discipline.get("restore_failures") == 0
+                    and cache_discipline.get("all_restored") is True
+                )
+                exchanges = receipt.get("exchanges")
+                first_exchange_step = isolation.get("first_exchange_step")
+                exposure_valid = (
+                    nonnegative_int(isolation, "blocked_cross_exposures")
+                    and (
+                        (exchanges == 0 and first_exchange_step is None)
+                        or (
+                            type(exchanges) is int
+                            and exchanges > 0
+                            and type(first_exchange_step) is int
+                            and first_exchange_step >= isolation_steps
+                        )
+                    )
+                    and isolation.get("cross_exposure_started")
+                    is (type(exchanges) is int and exchanges > 0)
+                )
+                isolation_valid = (
+                    set(isolation)
+                    == {
+                        "schema",
+                        "n_branches",
+                        "required_steps",
+                        "sealed",
+                        "certified",
+                        "reason",
+                        "configured_role_lesion",
+                        "seed_alias_free",
+                        "seed_states_unique",
+                        "rng_streams_unique",
+                        "cross_exposure_started",
+                        "first_exchange_step",
+                        "blocked_cross_exposures",
+                        "candidates",
+                        "cache_discipline",
+                    }
+                    and isolation.get("schema")
+                    == "aura.rlc.branch_isolation.v1"
+                    and isolation.get("n_branches") == branch_count
+                    and isolation.get("required_steps") == isolation_steps
+                    and isolation.get("sealed") is True
+                    and isolation.get("certified") is True
+                    and isolation.get("reason") == "certified"
+                    and isolation.get("configured_role_lesion") is False
+                    and isolation.get("seed_alias_free") is True
+                    and isolation.get("seed_states_unique") is True
+                    and isolation.get("rng_streams_unique") is True
+                    and candidate_rows_valid
+                    and unique_commitments
+                    and one_context
+                    and cache_valid
+                    and exposure_valid
+                )
+            if not isolation_valid:
+                errors.append("branch_isolation_unproven")
         exchange_interval = config.get("exchange_interval")
         if (
             type(exchange_interval) is int

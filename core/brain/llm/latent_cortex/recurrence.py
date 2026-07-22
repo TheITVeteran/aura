@@ -31,11 +31,74 @@ from typing import Any
 from core.brain.llm.latent_cortex.types import ComputeBudget, RecurrenceConfig
 from core.brain.llm.latent_cortex.workspace import per_position_rms
 from core.brain.llm.recurrent_depth import (
+    CacheSnapshotError,
     _restore_recurrent_caches,
     _snapshot_recurrent_caches,
 )
 
 logger = logging.getLogger("Aura.LatentCortex.Recurrence")
+
+CACHE_DISCIPLINE_SCHEMA = "aura.rlc.cache_discipline.v1"
+
+
+def _snapshot_value_matches(current: Any, expected: Any) -> bool:
+    """Compare a restored cache snapshot without scanning tensor contents.
+
+    MLX arrays are immutable values. Restoring the exact tensor objects proves
+    that a speculative branch cannot leave K/V writes reachable by the next
+    branch; scalar metadata is compared by value.
+    """
+
+    if current is expected:
+        return True
+    if isinstance(expected, tuple):
+        return isinstance(current, tuple) and len(current) == len(expected) and all(
+            _snapshot_value_matches(left, right)
+            for left, right in zip(current, expected, strict=True)
+        )
+    if isinstance(expected, list):
+        return isinstance(current, list) and len(current) == len(expected) and all(
+            _snapshot_value_matches(left, right)
+            for left, right in zip(current, expected, strict=True)
+        )
+    if isinstance(expected, dict):
+        return (
+            isinstance(current, dict)
+            and set(current) == set(expected)
+            and all(
+                _snapshot_value_matches(current[key], expected[key])
+                for key in expected
+            )
+        )
+    return isinstance(expected, (str, int, float, bool, type(None))) and (
+        type(current) is type(expected) and current == expected
+    )
+
+
+def _cache_matches_snapshot(cache, start: int, end: int, snapshots: list) -> bool:
+    for index, layer_index in enumerate(range(start, end)):
+        item = cache[layer_index]
+        snapshot = snapshots[index]
+        if item is None or snapshot is None:
+            if item is not None or snapshot is not None:
+                return False
+            continue
+        kind = snapshot[0]
+        if kind == "state":
+            if not _snapshot_value_matches(item.state, snapshot[1]):
+                return False
+            if not _snapshot_value_matches(item.meta_state, snapshot[2]):
+                return False
+        elif kind == "attrs":
+            if (
+                item.keys is not snapshot[1]
+                or item.values is not snapshot[2]
+                or item.offset != snapshot[3]
+            ):
+                return False
+        else:
+            return False
+    return True
 
 
 def rms_match(new_state, ref_state, clip_ratio: float):
@@ -222,6 +285,9 @@ class WindowRunner:
         self._adapter_calls = 0
         self._adapter_adapted_positions = 0
         self._adapter_observed_positions = 0
+        self._nonpersistent_calls = 0
+        self._restored_calls = 0
+        self._restore_failures = 0
 
     def adapter_receipt(self) -> dict[str, int | str | bool]:
         """Aggregate proof that scoped weights ran only inside slot windows."""
@@ -233,6 +299,20 @@ class WindowRunner:
             "adapted_positions": self._adapter_adapted_positions,
             "observed_positions": self._adapter_observed_positions,
             "active": self._adapter_calls > 0,
+        }
+
+    def cache_discipline_receipt(self) -> dict[str, int | str | bool]:
+        """Public proof that every speculative cache mutation was rewound."""
+
+        return {
+            "schema": CACHE_DISCIPLINE_SCHEMA,
+            "nonpersistent_calls": self._nonpersistent_calls,
+            "restored_calls": self._restored_calls,
+            "restore_failures": self._restore_failures,
+            "all_restored": (
+                self._restore_failures == 0
+                and self._restored_calls == self._nonpersistent_calls
+            ),
         }
 
     def _mask(self, h, cache_slice):
@@ -264,6 +344,7 @@ class WindowRunner:
         snaps = None
         if not persist:
             snaps = _snapshot_recurrent_caches(cache, start, end)
+            self._nonpersistent_calls += 1
         adapter_activation = None
         try:
             mask = self._mask(h, cache[start:end])
@@ -284,7 +365,17 @@ class WindowRunner:
                     adapter_activation.observed_positions
                 )
             if snaps is not None:
-                _restore_recurrent_caches(cache, start, end, snaps)
+                try:
+                    _restore_recurrent_caches(cache, start, end, snaps)
+                    if not _cache_matches_snapshot(cache, start, end, snaps):
+                        raise CacheSnapshotError(
+                            "KV cache restore postcondition failed after recurrent pass"
+                        )
+                except Exception:
+                    self._restore_failures += 1
+                    raise
+                else:
+                    self._restored_calls += 1
         return h
 
 
@@ -328,6 +419,7 @@ def recurrence_step(
 __all__ = [
     "HaltDecision",
     "HaltingController",
+    "CACHE_DISCIPLINE_SCHEMA",
     "WindowRunner",
     "alpha_at",
     "recurrence_step",

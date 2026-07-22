@@ -1502,7 +1502,10 @@ class LatentCortexEngine:
                         (branch.steps for branch in ensemble.branches),
                         default=0,
                     ),
-                    min_neural_steps=self.config.recurrence.min_steps,
+                    min_neural_steps=max(
+                        self.config.recurrence.min_steps,
+                        self.config.branches.isolation_steps,
+                    ),
                     active_branches=len(ensemble.active()),
                     total_branches=len(ensemble.branches),
                     residual=before_residual,
@@ -2234,6 +2237,14 @@ class LatentCortexEngine:
             raise _FastWeightCleanupError("fast-weight cleanup proof did not pass")
 
         receipt.recurrence_adapter = runner.adapter_receipt()
+        receipt.branch_isolation = ensemble.isolation_receipt(
+            runner.cache_discipline_receipt()
+        )
+        if (
+            self.config.branches.n_branches > 1
+            and receipt.branch_isolation.get("certified") is not True
+        ):
+            receipt.flag("branch_isolation_unproven")
         receipt.latent_telemetry = telemetry.to_receipt()
         if self._episode_probe_cache is not None:
             receipt.probe_cache = self._episode_probe_cache.to_receipt()

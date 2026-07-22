@@ -25222,3 +25222,48 @@ estimate of 64.7%. Next: publish CP327, then close fresh-context branch
 isolation and distinct executable operator policies before resident integration
 and lesion proof. Final multi-hour soaks remain deferred until every shorter
 gate is green.
+
+## Checkpoint 2026-07-22-328: Branches Think Independently Before They Confer
+
+Virtual-width branches now have an enforced fresh-context isolation phase. Each
+branch starts from the same content-addressed original prompt context but owns a
+distinct workspace object, hidden state, deterministic role RNG stream, and
+seed commitment. It must advance through the configured isolation floor before
+its latent candidate is committed. Exchange, consensus compression, and
+cross-branch diversity comparison refuse to run before every branch has a
+candidate; explicit schedule bytecode cannot bypass the gate.
+
+The shared prompt cache is now read-only by checked postcondition, not by
+assumption. Every non-persistent branch pass snapshots the relevant K/V state,
+restores the exact immutable tensor objects and metadata, and verifies exact
+restoration before returning. Restoration attempts, successes, and failures are
+receipted. A failed postcondition raises immediately instead of allowing the
+next branch to inherit contaminated attention state.
+
+The branch-isolation receipt binds the required step floor, branch count,
+common original-context digest, unique RNG/seed/candidate digests, state-alias
+check, first exchange step, blocked early exposures, deliberate role-lesion
+status, and cache-discipline proof. The service independently reconstructs the
+public contract and rejects duplicate candidates, early exchange, cardinality
+drift, cache mismatches, or malformed fields. Repeated-role lesion arms remain
+executable for causal experiments but are explicitly non-certified rather than
+being mistaken for independent evidence.
+
+Validation: focused branch, engine, and service wiring contracts pass 150/150.
+The fixed-snapshot integrated RLC, latent-cortex, GWT, and execution-controller
+gate passes 857/857 in 436.98 seconds. An additional adversarial service test
+passes 1/1 and proves early-exchange and duplicate-candidate receipt tampering is
+rejected. Focused Ruff, bytecode compilation, and `git diff --check` pass.
+
+SPARK-014 closes. SPARK-015 remains open because role anchors and action-control
+vectors are not yet nine demonstrably distinct executable cognitive policies;
+SPARK-016-022 still own structural diversity, correlated-support discount,
+blind/decoy review, independent criticism, causal exchange, and equal-compute
+evidence. No resident-32B or frontier gain is claimed.
+
+This is total checkpoint record 389. The revised forecast remains 466-733 total
+records, now approximately 77-344 records after this checkpoint. Checkpoint-
+count completion is approximately 53.1%-83.5%, with a midpoint planning
+estimate of 64.9%. Next: publish CP328, then implement distinct executable
+cognitive operator policies and their causal role/lesion proof. Final
+multi-hour soaks remain deferred until every shorter gate is green.

@@ -100,6 +100,52 @@ def _identity_receipt_for_request(request, **overrides):
     return receipt
 
 
+def _branch_isolation_fields(config, *, exchanges=0):
+    count = config["n_branches"]
+    required = config["isolation_steps"]
+
+    def digest(label):
+        return hashlib.sha256(label.encode("utf-8")).hexdigest()
+
+    return {
+        "exchanges": exchanges,
+        "branch_isolation": {
+            "schema": "aura.rlc.branch_isolation.v1",
+            "n_branches": count,
+            "required_steps": required,
+            "sealed": True,
+            "certified": True,
+            "reason": "certified",
+            "configured_role_lesion": False,
+            "seed_alias_free": True,
+            "seed_states_unique": True,
+            "rng_streams_unique": True,
+            "cross_exposure_started": exchanges > 0,
+            "first_exchange_step": required if exchanges else None,
+            "blocked_cross_exposures": 0,
+            "candidates": [
+                {
+                    "index": index,
+                    "role": f"role-{index}",
+                    "context_sha256": digest("shared-context"),
+                    "rng_stream_sha256": digest(f"rng-{index}"),
+                    "seed_sha256": digest(f"seed-{index}"),
+                    "candidate_sha256": digest(f"candidate-{index}"),
+                    "candidate_step": required,
+                }
+                for index in range(count)
+            ],
+            "cache_discipline": {
+                "schema": "aura.rlc.cache_discipline.v1",
+                "nonpersistent_calls": count + required,
+                "restored_calls": count + required,
+                "restore_failures": 0,
+                "all_restored": True,
+            },
+        },
+    }
+
+
 def _bind_test_client_identity(monkeypatch, client):
     from core.brain.llm.latent_cortex import runtime_identity
 
@@ -118,6 +164,7 @@ def test_config_from_job_defaults_are_conservative():
     assert cfg.workspace.n_slots == 16
     assert cfg.recurrence.max_steps == 8
     assert cfg.branches.n_branches == 2
+    assert cfg.branches.isolation_steps == 2
     assert cfg.latent_opt.enabled is False
     assert cfg.fast_weights.enabled is False
     assert cfg.verifier_probe_max_tokens == 48
@@ -136,6 +183,8 @@ def test_config_from_job_rejects_out_of_band_requests():
         config_from_job({"fast_weight": True})
     with pytest.raises(ValueError):
         config_from_job({"exchange_interval": 0})
+    with pytest.raises(ValueError):
+        config_from_job({"isolation_steps": 9, "max_steps": 8})
     with pytest.raises(ValueError):
         config_from_job({"decode_temperature": float("nan")})
     with pytest.raises(ValueError):
@@ -380,6 +429,7 @@ def test_handler_runs_full_episode_on_tiny_model(monkeypatch, tmp_path):
     assert body["status"] == "ok", body
     assert body["receipt"]["params_unchanged"] is True
     assert body["receipt"]["steps_taken"] >= 2
+    assert body["receipt"]["branch_isolation"]["certified"] is True
     policy = body["receipt"]["value_of_computation"]
     trace = body["receipt"]["cognitive_action_trace"]
     assert policy["active"] is True
@@ -753,7 +803,7 @@ async def test_client_latent_reason_timeout_keeps_clean_cooperatively_cancelled_
             "id": client._current_request_id,
             "status": "error",
             "message": "soft_cancelled",
-            "receipt": {
+                    "receipt": {
                 "params_unchanged": True,
                 "fast_weights_applied": True,
                 "fast_weights_erased": True,
@@ -1452,7 +1502,8 @@ def test_service_routes_through_client_and_records_receipt(monkeypatch):
                     "checkpoint_fingerprint": "a" * 64,
                     "checkpoint_fingerprint_method": "sha256",
                     "checkpoint_file_count": 8,
-                    **_identity_receipt(),
+                        **_identity_receipt(),
+                        **_branch_isolation_fields(kwargs["config"]),
                     "params_unchanged": True,
                     "budget": {
                         "max_layer_apps": 1_000,
@@ -1575,6 +1626,40 @@ def test_service_rejects_nominal_full_stack_without_accepted_optimization():
 
     assert "latent_optimization_no_accepted_steps" in errors
     assert "fast_weight_optimization_no_accepted_steps" in errors
+
+
+def test_service_reconstructs_and_rejects_branch_isolation_tampering():
+    config = {"n_branches": 2, "isolation_steps": 2}
+    receipt = {
+        "n_branches": 2,
+        **_branch_isolation_fields(config, exchanges=1),
+    }
+    assert "branch_isolation_unproven" not in (
+        LatentCortexService._receipt_contract_errors(receipt, config)
+    )
+
+    tampered = {
+        **receipt,
+        "branch_isolation": {
+            **receipt["branch_isolation"],
+            "first_exchange_step": 1,
+        },
+    }
+    assert "branch_isolation_unproven" in (
+        LatentCortexService._receipt_contract_errors(tampered, config)
+    )
+    candidates = [dict(row) for row in receipt["branch_isolation"]["candidates"]]
+    candidates[1]["candidate_sha256"] = candidates[0]["candidate_sha256"]
+    tampered = {
+        **receipt,
+        "branch_isolation": {
+            **receipt["branch_isolation"],
+            "candidates": candidates,
+        },
+    }
+    assert "branch_isolation_unproven" in (
+        LatentCortexService._receipt_contract_errors(tampered, config)
+    )
 
 
 def test_service_validates_interactive_verifier_profile_and_acceptance_receipt():
@@ -2040,6 +2125,7 @@ def _full_success_stub_client(captured):
                     "checkpoint_fingerprint_method": "sha256",
                     "checkpoint_file_count": 8,
                     **_identity_receipt(),
+                    **_branch_isolation_fields(kwargs["config"]),
                     "params_unchanged": True,
                     "budget": {
                         "max_layer_apps": 1_000,

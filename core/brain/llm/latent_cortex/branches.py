@@ -21,6 +21,7 @@ the harness is allowed to say so.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -35,9 +36,15 @@ from core.brain.llm.latent_cortex.recurrence import (
     rms_match,
 )
 from core.brain.llm.latent_cortex.types import BranchConfig, ComputeBudget, RecurrenceConfig
-from core.brain.llm.latent_cortex.workspace import LatentWorkspace, per_position_rms
+from core.brain.llm.latent_cortex.workspace import (
+    LatentWorkspace,
+    _role_seed,
+    per_position_rms,
+)
 
 logger = logging.getLogger("Aura.LatentCortex.Branches")
+
+BRANCH_ISOLATION_SCHEMA = "aura.rlc.branch_isolation.v1"
 
 # Cognitive roles for branch seeding, in priority order (from the spec's
 # "tied-weight latent society"). Branch k takes BRANCH_ROLES[k % len].
@@ -51,6 +58,17 @@ BRANCH_ROLES: tuple[str, ...] = (
     "simplification",
     "adversarial_criticism",
 )
+
+
+def _tensor_sha256(array: Any) -> str:
+    import numpy as np
+
+    data = np.asarray(array)
+    hasher = hashlib.sha256()
+    hasher.update(str(data.dtype).encode("ascii"))
+    hasher.update(str(data.shape).encode("ascii"))
+    hasher.update(data.tobytes())
+    return hasher.hexdigest()
 
 
 @dataclass
@@ -70,6 +88,10 @@ class BranchState:
     # savepoints overwrite). verify_probe(revert_on_drop) restores it.
     savepoint: Any = None
     savepoint_steps: int = 0
+    seed_sha256: str = ""
+    candidate_sha256: str = ""
+    candidate_step: int = 0
+    rng_stream_sha256: str = ""
 
     def to_receipt(self) -> dict[str, Any]:
         receipt = {
@@ -107,6 +129,25 @@ class BranchEnsemble:
         self.exchanges = 0
         # Optional per-episode observers, attached by the engine.
         self.telemetry: Any = None
+        self._isolation_sealed = False
+        self._isolation_failure = ""
+        self._blocked_cross_exposures = 0
+        self._cross_exposure_started = False
+        self._first_exchange_step: int | None = None
+        self._context_sha256 = ""
+        self._configured_role_lesion = len({branch.role for branch in branches}) != len(
+            branches
+        )
+        self._seed_alias_free = (
+            len({id(branch.workspace) for branch in branches}) == len(branches)
+            and len({id(branch.z) for branch in branches}) == len(branches)
+        )
+        self._seed_states_unique = len(
+            {branch.seed_sha256 for branch in branches}
+        ) == len(branches)
+        self._rng_streams_unique = len(
+            {branch.rng_stream_sha256 for branch in branches}
+        ) == len(branches)
 
     # ── Construction ────────────────────────────────────────────────────
     @classmethod
@@ -126,6 +167,7 @@ class BranchEnsemble:
         import mlx.core as mx
 
         branches: list[BranchState] = []
+        context_sha256 = _tensor_sha256(prompt_embeddings)
         role_override = tuple(branch_cfg.roles or ())
         if role_override and len(role_override) != branch_cfg.n_branches:
             raise ValueError(
@@ -168,9 +210,113 @@ class BranchEnsemble:
                         if escape_cfg is not None and escape_cfg.enabled
                         else None
                     ),
+                    seed_sha256=_tensor_sha256(z0),
+                    rng_stream_sha256=hashlib.sha256(
+                        f"{role}:{_role_seed(role, workspace_cfg.seed)}".encode()
+                    ).hexdigest(),
                 )
             )
-        return cls(branches, branch_cfg, recurrence_cfg)
+        ensemble = cls(branches, branch_cfg, recurrence_cfg)
+        ensemble._context_sha256 = context_sha256
+        return ensemble
+
+    def _seal_isolation_if_ready(self) -> None:
+        if self._isolation_sealed or self._isolation_failure:
+            return
+        required = int(self.config.isolation_steps)
+        short_halts = [
+            branch.index
+            for branch in self.branches
+            if branch.halted and branch.steps < required
+        ]
+        if short_halts:
+            self._isolation_failure = "branch_halted_before_candidate"
+            return
+        if any(branch.steps < required for branch in self.branches):
+            return
+        for branch in self.branches:
+            branch.candidate_sha256 = _tensor_sha256(branch.z)
+            branch.candidate_step = branch.steps
+        if not self._seed_alias_free:
+            self._isolation_failure = "branch_state_alias_detected"
+            return
+        if not self._configured_role_lesion and not self._seed_states_unique:
+            self._isolation_failure = "seed_state_collision"
+            return
+        if not self._configured_role_lesion and not self._rng_streams_unique:
+            self._isolation_failure = "rng_stream_collision"
+            return
+        if not self._configured_role_lesion and len(
+            {branch.candidate_sha256 for branch in self.branches}
+        ) != len(self.branches):
+            self._isolation_failure = "candidate_state_collision"
+            return
+        self._isolation_sealed = True
+
+    def isolation_receipt(self, cache_discipline: dict[str, Any]) -> dict[str, Any]:
+        """Return the public proof that candidates preceded peer exposure."""
+
+        self._seal_isolation_if_ready()
+        cache_proven = (
+            isinstance(cache_discipline, dict)
+            and cache_discipline.get("all_restored") is True
+            and cache_discipline.get("restore_failures") == 0
+            and cache_discipline.get("restored_calls")
+            == cache_discipline.get("nonpersistent_calls")
+        )
+        candidates = [
+            {
+                "index": branch.index,
+                "role": branch.role,
+                "context_sha256": self._context_sha256,
+                "rng_stream_sha256": branch.rng_stream_sha256,
+                "seed_sha256": branch.seed_sha256,
+                "candidate_sha256": branch.candidate_sha256,
+                "candidate_step": branch.candidate_step,
+            }
+            for branch in self.branches
+        ]
+        certified = (
+            self._isolation_sealed
+            and not self._isolation_failure
+            and not self._configured_role_lesion
+            and self._seed_alias_free
+            and self._seed_states_unique
+            and self._rng_streams_unique
+            and cache_proven
+            and all(branch.candidate_sha256 for branch in self.branches)
+            and (
+                self._first_exchange_step is None
+                or self._first_exchange_step >= int(self.config.isolation_steps)
+            )
+        )
+        if certified:
+            reason = "certified"
+        elif self._isolation_failure:
+            reason = self._isolation_failure
+        elif self._configured_role_lesion:
+            reason = "configured_role_lesion"
+        elif not cache_proven:
+            reason = "cache_restoration_unproven"
+        else:
+            reason = "isolation_incomplete"
+        return {
+            "schema": BRANCH_ISOLATION_SCHEMA,
+            "n_branches": len(self.branches),
+            "required_steps": int(self.config.isolation_steps),
+            "sealed": self._isolation_sealed,
+            "certified": certified,
+            "reason": reason,
+            "configured_role_lesion": self._configured_role_lesion,
+            "seed_alias_free": self._seed_alias_free,
+            "seed_states_unique": self._seed_states_unique,
+            "rng_streams_unique": self._rng_streams_unique,
+            "cross_exposure_started": self._cross_exposure_started,
+            "first_exchange_step": self._first_exchange_step,
+            "blocked_cross_exposures": self._blocked_cross_exposures,
+            "candidates": candidates,
+            "cache_discipline": dict(cache_discipline),
+        }
 
     # ── Stepping ────────────────────────────────────────────────────────
     def active(self) -> list[BranchState]:
@@ -244,14 +390,16 @@ class BranchEnsemble:
                 if action.startswith("halt:"):
                     self._halt(branch, action.removeprefix("halt:"))
 
+        self._seal_isolation_if_ready()
+
         if (
             len(self.active()) > 1
             and self.exchanges * self.config.exchange_interval
             < max(b.steps for b in self.branches)
             and max(b.steps for b in self.branches) % self.config.exchange_interval == 0
         ):
-            self.exchange()
-            self.maintain_diversity()
+            if self.exchange():
+                self.maintain_diversity()
         for branch, reason in deferred_fixed_depth_halts:
             self._halt(branch, reason)
         return True
@@ -287,7 +435,8 @@ class BranchEnsemble:
         """Bytecode-forced exchange: communicate immediately when ≥2 live."""
         if len(self.active()) < 2:
             return False
-        self.exchange()
+        if not self.exchange():
+            return False
         self.maintain_diversity()
         return True
 
@@ -392,6 +541,9 @@ class BranchEnsemble:
         live = self.active()
         if not live:
             return 0
+        if len(live) > 1 and not self._isolation_sealed:
+            self._blocked_cross_exposures += 1
+            return 0
         summaries = [branch.workspace.summary() for branch in live]
         global_summary = sum(summaries) / len(summaries)
         for branch in live:
@@ -458,7 +610,7 @@ class BranchEnsemble:
             branch.escape.finalize()
 
     # ── Communication ───────────────────────────────────────────────────
-    def exchange(self) -> None:
+    def exchange(self) -> bool:
         """Blend the agreement-weighted consensus into each comm slot.
 
         Weights favor branches whose summaries agree with the ensemble mean —
@@ -470,7 +622,10 @@ class BranchEnsemble:
 
         live = self.active()
         if len(live) < 2:
-            return
+            return False
+        if not self._isolation_sealed:
+            self._blocked_cross_exposures += 1
+            return False
         summaries = [b.workspace.summary() for b in live]  # (1,1,D) each
         if self.telemetry is not None:
             self.telemetry.record_exchange(summaries)
@@ -495,12 +650,19 @@ class BranchEnsemble:
             branch.workspace.update(branch.z)
         mx.eval(*[b.z for b in live])
         self.exchanges += 1
+        self._cross_exposure_started = True
+        if self._first_exchange_step is None:
+            self._first_exchange_step = min(branch.steps for branch in live)
+        return True
 
-    def maintain_diversity(self) -> None:
+    def maintain_diversity(self) -> bool:
         """Decorrelate near-parallel branch pairs with deterministic jitter."""
         import mlx.core as mx
 
         live = self.active()
+        if len(live) > 1 and not self._isolation_sealed:
+            self._blocked_cross_exposures += 1
+            return False
         for i in range(len(live)):
             for j in range(i + 1, len(live)):
                 a, b = live[i], live[j]
@@ -524,6 +686,7 @@ class BranchEnsemble:
                 logger.debug(
                     "Branch diversity jitter: %s↔%s cos=%.4f", a.index, b.index, cos
                 )
+        return True
 
     # ── Selection ───────────────────────────────────────────────────────
     def all_halted(self) -> bool:
@@ -551,4 +714,9 @@ class BranchEnsemble:
         }
 
 
-__all__ = ["BRANCH_ROLES", "BranchEnsemble", "BranchState"]
+__all__ = [
+    "BRANCH_ISOLATION_SCHEMA",
+    "BRANCH_ROLES",
+    "BranchEnsemble",
+    "BranchState",
+]
