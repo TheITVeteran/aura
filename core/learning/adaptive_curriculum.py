@@ -270,12 +270,22 @@ def warm_start_pass_rates(
     on the measured learnable band while unknown cells stay explicit.
     """
     curriculum = AdaptiveCurriculum.over(families, difficulties)
-    for family in families:
-        for difficulty in difficulties:
-            for _ in range(max(2, samples_per_cell)):
+    samples = max(2, samples_per_cell)
+
+    # Probe breadth before depth. A wall-clock cap should leave a partial
+    # but representative frontier map, not spend the whole budget repeatedly
+    # proving that the first sorted cell is hopeless.
+    exhausted: set[tuple[str, int]] = set()
+    for _sample_index in range(samples):
+        for family in families:
+            for difficulty in difficulties:
+                key = (family, difficulty)
+                if key in exhausted:
+                    continue
                 measured = measure(family, difficulty)
                 if measured is None:
-                    break
+                    exhausted.add(key)
+                    continue
                 reward = float(measured)
                 curriculum.observe(
                     family, difficulty, reward,

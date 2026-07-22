@@ -23401,3 +23401,35 @@ records, now approximately 55-322 records after this checkpoint. Next: publish
 CP278, decide whether to let CP273 continue to a terminal receipt or supersede
 it with the now-observable and lane-owned trainer, then reduce the governance
 lint baseline drift without starting the deferred multi-hour soak.
+
+## Checkpoint 2026-07-21-279: Fair Frontier Calibration for Recurrent GRPO
+
+CP273's first resident-32B recurrent-GRPO signal exposed a research
+infrastructure flaw rather than a capability proof: the calibration pass spent
+its bounded wall-clock budget on repeated `bayes_update` probes and timed out
+before touching the rest of the 36-cell curriculum. That can falsely make a
+run look hopeless when the reachable learning band is simply in another
+family or depth.
+
+`warm_start_pass_rates` now probes breadth before depth. Calibration covers
+each `(family, difficulty)` cell once before spending a second probe on any
+one cell, and exhausted cells are skipped explicitly after `measure` returns
+`None`. This preserves the honesty contract for partial calibration receipts
+while making them representative enough to guide the next run. A new regression
+forces the first calls to cover distinct cells under a tight measurement
+budget, so a single sorted family cannot starve the search again.
+
+Validation is clean: `tests/test_adaptive_curriculum.py` and
+`tests/test_train_grpo_contract.py` pass together, bytecode compilation passes
+for the changed curriculum and trainer, `make lint` passes, and
+`git diff --check` passes. The live CP273 process is still running old source,
+so this checkpoint does not alter its already-started calibration receipt and
+does not claim a frontier-level reasoning gain. It prevents the next
+resident-32B proof run from repeating the same sequential-calibration
+false-negative failure mode.
+
+This is total checkpoint record 340. The forecast remains 394-661 total
+records, now approximately 54-321 records after this checkpoint. Next: publish
+CP279, then inspect CP273 for a terminal receipt and decide whether to
+supersede it with the fair-calibration trainer plus any answer-extraction or
+curriculum repairs still needed for a real positive interaction proof.

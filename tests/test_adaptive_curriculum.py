@@ -156,6 +156,21 @@ def test_unmeasured_warm_start_cell_remains_explicitly_unexplored():
     assert calls.count(("f", 8)) == 1
 
 
+def test_warm_start_probes_breadth_before_repeating_one_cell():
+    calls = []
+
+    def measure(family, difficulty):
+        calls.append((family, difficulty))
+        return 0.0 if len(calls) <= 3 else None
+
+    curriculum = warm_start_pass_rates(
+        ["a", "b", "c"], [2], measure, samples_per_cell=2
+    )
+
+    assert calls[:3] == [("a", 2), ("b", 2), ("c", 2)]
+    assert curriculum.report()["unexplored"] == ["a@2", "b@2", "c@2"]
+
+
 def test_bad_reward_is_refused():
     with pytest.raises(ValueError, match="rate in"):
         CellStats("f", 1).observe(1.5, degenerate=False)
