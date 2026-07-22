@@ -24629,3 +24629,42 @@ records, now approximately 20-287 records after this checkpoint. Next: commit
 CP313, integrate the newer `origin/main` integrity-proof checkpoint without
 discarding either line of work, then expand the tracker with the complete Spark
 architecture and proof matrix before launching a fresh source-bound preflight.
+
+## Checkpoint 2026-07-22-314: Spark Requirements Are A Source-Bound 72-Checkpoint Ledger
+
+The 1,239-line Spark design is now a canonical, checkable execution ledger at
+`docs/RLC_SPARK_EXECUTION_LEDGER.md`, bound to source SHA-256
+`b9caf67c7709b1b0d82fd7eb917c88e1afa17d514af0df17ca03ed600685237c`.
+The ledger does not collapse the source's distinct designs into a shared slogan:
+epistemic state, independent branch structure, ALRSR update gates, state-tree
+KV rewind, HLA reflection/perturbation/integration, DELTA disagreement testing,
+verifier diversity, adaptive compute, temporary and permanent learning,
+organism-wide causal integration, and the complete falsification matrix each
+retain separate acceptance contracts.
+
+Seventy-two bounded Spark checkpoints are now explicitly unchecked. A checkbox
+can close only after exact implementation, focused and integration tests, live
+wiring where applicable, and empirical proof for empirical claims. Helpers,
+configuration fields, dormant modules, prompt-only resemblance, and format
+training cannot receive mechanism or capability credit. The `WOW Signal`
+commit name is reserved until a powered resident-32B certificate accepts the
+preregistered frontier or strong positive-interaction claim; a negative result
+must be published and converted into named repair checkpoints.
+
+Adding the 72 records revises the whole-project forecast from 394-661 to
+466-733 total checkpoint records. At total record 375, checkpoint-count
+completion is approximately 51.2%-80.5%, with a midpoint planning estimate of
+62.6%. This is work-ledger completion, not an intelligence or release score.
+The forecast remains a range because failed scientific gates create explicit
+repair records rather than disappearing into narrative progress.
+
+Validation: the ledger contains exactly 72 uniquely numbered Spark checkboxes,
+the source digest was recomputed from the supplied file, and `git diff --check`
+passes. No Spark architecture or capability checkbox is credited by this
+requirements checkpoint.
+
+This is total checkpoint record 375. The revised forecast is 466-733 total
+records, now approximately 91-358 records after this checkpoint. Next: finish
+the code-grounded four-slice audit, add exact owners and gap classifications,
+then begin the first dependency-ordered implementation checkpoint without
+launching a stale-source resident campaign.
