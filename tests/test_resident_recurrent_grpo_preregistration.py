@@ -39,6 +39,25 @@ def test_preregistration_binds_broad_training_and_powered_evaluation():
     assert receipt["claim_eligible"] is False
 
 
+def test_preregistration_can_bind_new_attempt_campaign_identity():
+    contract = prereg.build_contract(
+        campaign_id="resident-32b-recurrent-grpo-cp273",
+        artifact_root="artifacts/closeout/latent_cortex/cp273_resident_32b_recurrent_grpo",
+        committed_at="2026-07-21T15:00:00-07:00",
+        model_identity=BASE_IDENTITY,
+        behavior_identity=BEHAVIOR_IDENTITY,
+    )
+    receipt = prereg.validate_contract(contract, verify_model=False)
+
+    assert contract["campaign_id"] == "resident-32b-recurrent-grpo-cp273"
+    assert receipt["campaign_id"] == "resident-32b-recurrent-grpo-cp273"
+    assert "resident-32b-recurrent-grpo-cp273" in contract["training"]["argv"]
+    assert (
+        contract["paths"]["artifact_root"]
+        == "artifacts/closeout/latent_cortex/cp273_resident_32b_recurrent_grpo"
+    )
+
+
 def test_preregistration_rejects_command_or_claim_rebinding():
     contract = _contract()
     rebound = copy.deepcopy(contract)

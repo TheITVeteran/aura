@@ -45,7 +45,7 @@ from tools import run_detached_step  # noqa: E402
 from tools.train_grpo import _build_task_split, _dataset_payload  # noqa: E402
 
 CONTRACT_SCHEMA = "aura.resident_recurrent_grpo_preregistration.v1"
-CAMPAIGN_ID = "resident-32b-recurrent-grpo-cp259"
+DEFAULT_CAMPAIGN_ID = "resident-32b-recurrent-grpo-cp259"
 DEFAULT_MODEL = (
     "training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118"
 )
@@ -216,7 +216,7 @@ def _load_spec(relative: str) -> tuple[RLCExecutionSpec, dict[str, Any]]:
 
 
 def _training_argv(
-    *, model: str, output: str, execution_spec: str
+    *, campaign_id: str, model: str, output: str, execution_spec: str
 ) -> list[str]:
     params = TRAINING_PARAMETERS
     argv = [
@@ -226,7 +226,7 @@ def _training_argv(
         "--out-dir",
         output,
         "--adapter-id",
-        CAMPAIGN_ID,
+        campaign_id,
         "--execution-mode",
         "recurrent",
         "--execution-spec",
@@ -303,6 +303,7 @@ def _dataset_commitment() -> dict[str, Any]:
 
 def build_contract(
     *,
+    campaign_id: str = DEFAULT_CAMPAIGN_ID,
     model: str = DEFAULT_MODEL,
     execution_spec: str = DEFAULT_SPEC,
     artifact_root: str = DEFAULT_ROOT,
@@ -310,6 +311,8 @@ def build_contract(
     model_identity: Mapping[str, Any] | None = None,
     behavior_identity: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
+    if not campaign_id.startswith("resident-32b-recurrent-grpo-cp"):
+        _fail("campaign_id_invalid")
     model_path = _repo_path(model, role="model")
     if not model_path.is_dir():
         _fail("model_path_invalid")
@@ -337,6 +340,7 @@ def build_contract(
     )
     sources = {role: _binding(path) for role, path in SOURCE_ROLES.items()}
     training_argv = _training_argv(
+        campaign_id=campaign_id,
         model=model,
         output=paths["training_output"],
         execution_spec=execution_spec,
@@ -354,7 +358,7 @@ def build_contract(
     )
     material = {
         "schema": CONTRACT_SCHEMA,
-        "campaign_id": CAMPAIGN_ID,
+        "campaign_id": campaign_id,
         "committed_at": committed_at,
         "launch_not_before": NOT_BEFORE,
         "launch_not_before_unix": int(not_before.timestamp()),
@@ -496,7 +500,11 @@ def validate_contract(
     claimed_sha = material.pop("contract_sha256")
     if claimed_sha != _document_sha(material):
         _fail("contract_digest_mismatch")
-    if contract.get("campaign_id") != CAMPAIGN_ID:
+    campaign_id = contract.get("campaign_id")
+    if (
+        not isinstance(campaign_id, str)
+        or not campaign_id.startswith("resident-32b-recurrent-grpo-cp")
+    ):
         _fail("campaign_identity_mismatch")
     try:
         committed = datetime.fromisoformat(str(contract["committed_at"]))
@@ -527,6 +535,7 @@ def validate_contract(
     if not isinstance(paths, Mapping) or not isinstance(training, Mapping):
         _fail("training_contract_invalid")
     expected_argv = _training_argv(
+        campaign_id=campaign_id,
         model=DEFAULT_MODEL,
         output=str(paths.get("training_output")),
         execution_spec=DEFAULT_SPEC,
@@ -589,7 +598,7 @@ def validate_contract(
             _fail("model_behavior_identity_mismatch")
     return {
         "schema": "aura.resident_recurrent_grpo_preregistration_receipt.v1",
-        "campaign_id": CAMPAIGN_ID,
+        "campaign_id": campaign_id,
         "contract_sha256": claimed_sha,
         "model_verified": bool(verify_model),
         "training_tasks": dataset["train_tasks"],
@@ -818,7 +827,7 @@ def _launch_training(contract_path: Path, *, resume: bool) -> int:
         "--run-dir",
         run_dir,
         "--name",
-        CAMPAIGN_ID,
+        str(contract["campaign_id"]),
         "--cwd",
         str(REPO_ROOT),
         "--timeout",
@@ -847,6 +856,7 @@ def _parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="action", required=True)
     prepare = subparsers.add_parser("prepare")
     prepare.add_argument("--contract", default=DEFAULT_CONTRACT)
+    prepare.add_argument("--campaign-id", default=DEFAULT_CAMPAIGN_ID)
     prepare.add_argument("--model", default=DEFAULT_MODEL)
     prepare.add_argument("--execution-spec", default=DEFAULT_SPEC)
     prepare.add_argument("--artifact-root", default=DEFAULT_ROOT)
@@ -869,6 +879,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.action == "prepare":
             contract = build_contract(
+                campaign_id=args.campaign_id,
                 model=args.model,
                 execution_spec=args.execution_spec,
                 artifact_root=args.artifact_root,

@@ -23224,3 +23224,39 @@ The forecast remains 394-661 total records, now approximately 61-328 records
 after this checkpoint. Next: publish CP272, regenerate a CP271/CP273 contract
 that binds this launcher fix, relaunch detached training, then monitor for the
 first real calibration/training signal.
+
+## Checkpoint 2026-07-21-273: CP273 Resident GRPO Provenance Contract
+
+The follow-up resident-32B recurrent GRPO attempt needed one more provenance
+repair before launch. The campaign preparer previously hardcoded the original
+CP259 campaign id into every regenerated preregistration and into the frozen
+training argv. That made CP271/CP273 artifact roots distinct while their
+internal campaign identity still claimed CP259, which is unacceptable for an
+external proof chain.
+
+The preparer now accepts an explicit `--campaign-id`, validates that resident
+GRPO campaign ids keep the expected namespace, writes that id into the contract,
+threads it into the frozen trainer `--adapter-id`, returns it in verification
+receipts, and gives the detached supervisor the same id as the run name. A
+regression proves a new CP273 attempt binds the explicit campaign id, adapter
+id, and artifact root together. The existing virtualenv launcher regression
+continues to pass.
+
+Validation is clean: `tests/test_resident_recurrent_grpo_preregistration.py`
+passes all six tests, bytecode compilation passes, and the regenerated CP273
+contract verifies against the live resident model. Receipt summary: campaign
+`resident-32b-recurrent-grpo-cp273`, contract
+`b127c4d1d33a444d6d26780d124602391d9964dd0b1367c46abb9757876f2cd4`, 288
+training tasks, 36 held-out tasks, 17,262 confirmatory cells, and
+`claim_eligible=false`. The bound source hashes include trainer
+`b604a2a494ac288bbe3bf2b51a2eb8341fa2900a656c3e052290d429de105aff` and
+campaign launcher
+`4685c8c6cddc7ed01268fe401f23e91ede78e35c1f631cfbe7fd6987dcfe9efe`.
+
+This is total checkpoint record 334. It closes the stale campaign identity
+defect and freezes the repaired launch contract, but it does not claim training
+started, completed, improved reasoning, or reached frontier level. The forecast
+remains 394-661 total records, now approximately 60-327 records after this
+checkpoint. Next: publish CP273, launch detached training from this contract,
+protect it from sleep, and monitor for the first real calibration/training
+signal.
