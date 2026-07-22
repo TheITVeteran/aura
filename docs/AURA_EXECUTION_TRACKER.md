@@ -24320,3 +24320,47 @@ records, now approximately 29-296 records after this checkpoint. Next: lint,
 commit and push CP304, rebuild `/Applications/Aura.app`, then prepare a fresh
 source-bound resident training/proof rerun instead of claiming CP294 as a
 positive result.
+
+## Checkpoint 2026-07-21-305: CP305 Source-Bound Resident Proof Rerun Is Live
+
+After CP304 fixed the trajectory-credit telemetry defect, a fresh resident-32B
+recurrent-GRPO preregistration was generated as
+`resident-32b-recurrent-grpo-cp305` with artifact root
+`artifacts/closeout/latent_cortex/cp305_resident_32b_recurrent_grpo`. The
+contract verifies against the resident 32B model with contract digest
+`c9a9e49991af62fd6e3e1d26495b23589af6d98c232bcfd27b6cc6a9fe656188`,
+288 training tasks, 36 held-out tasks, 2,877 powered confirmatory tasks, and
+17,262 confirmatory cells.
+
+The detached training run launched successfully with supervisor PID `66120`,
+child PID `66133`, run directory
+`artifacts/closeout/latent_cortex/cp305_resident_32b_recurrent_grpo/detached-training`,
+plan digest `476b8aae67a0b2a0e85a5342cf300994b47eb654f0ad6a5bd1d06cc0445c6dfe`,
+and command digest
+`ef7e0d13501cc1c6a7f734daef748ea0d6a8bb03eb45fdd6984a060454eb0723`.
+Direct status shows the supervisor and child alive, no receipt yet, and the log
+has entered the expected baseline-recurrent phase.
+
+The CP305 post-training controller was generated and verified with config digest
+`760c99cb88f05b5ddf3d23511336c8870a40146d510457bccdf6165371e9b4ca`, then
+installed as LaunchAgent
+`com.aura.resident-32b-recurrent-grpo-cp305.post-training` with launch digest
+`57caf36993c4dc947f7de7c3e029071f63771b6aab9a74e76d0194b035c093ec`.
+`launchctl print` shows it running under `/usr/bin/caffeinate -i`, which keeps
+the proof continuation awake while the training process owns the resident model.
+
+One non-blocking note: direct shell execution of `verify-resume` returned
+`resume_environment_incomplete`, which is expected outside the detached
+supervisor because that verifier requires injected `AURA_DETACHED_*` resume
+evidence. The launch path itself created the detached run and controller
+successfully.
+
+No reasoning-gain or frontier claim is made from CP305 yet. It is the fresh
+source-bound run to watch for corrected training completion, adapter freeze,
+directional six-arm factorial results, mechanism-attribution ablations, and
+independent replay evidence.
+
+This is total checkpoint record 366. The forecast remains 394-661 total
+records, now approximately 28-295 records after this checkpoint. Next: commit
+and push the CP305 preregistration checkpoint, rebuild `/Applications/Aura.app`,
+then continue non-MLX reliability/semantic closeout while CP305 runs detached.
