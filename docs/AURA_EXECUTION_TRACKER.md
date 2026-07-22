@@ -23864,3 +23864,39 @@ CP290, retire CP285 from claim-eligible proof use, generate a fresh resident
 32B recurrent-GRPO preregistration from the corrected trainer source, and
 continue inspecting the actual RLC systems for missing architecture rather than
 only trainer parameters.
+
+## Checkpoint 2026-07-21-291: Fresh Resident-32B RLC/GRPO Contract Bound to Corrected Evaluator
+
+A new resident-32B recurrent-GRPO preregistration was generated after CP290 so
+the proof contract binds the corrected recurrent held-out evaluator instead of
+the stale CP285 trainer source. The campaign id is
+`resident-32b-recurrent-grpo-cp291`, the artifact root is
+`artifacts/closeout/latent_cortex/cp291_resident_32b_recurrent_grpo`, and the
+contract digest is
+`0ba828b49b85a7bb1e3bca79d7b880f9282b30df4dae8dd6bbc54f8b98a51128`.
+
+The contract verifies against the resident 32B model and freezes the same broad
+scope as CP285: 288 recurrent-curriculum training tasks, 36 held-out tasks,
+2,877 powered confirmatory tasks, 17,262 confirmatory cells, trajectory credit
+enabled, and mechanism attribution required. The bound trainer source hash is
+now `4897ff4a99915cb2fbdc501b63bf1da6f36fd0bc8faf74e6500634f851bd86a4`,
+which includes the `final_answer_v1` recurrent held-out evaluation fix.
+
+CP285 remains useful only as diagnostic runtime evidence because it was
+launched under the old trainer hash. CP291 is the next claim-eligible
+resident-run contract for answering whether the adapter/RLC stack produces
+reasoning gains under the corrected evaluation surface. It remains
+nonclaiming until the full train, freeze, directional, mechanism-attribution,
+powered confirmatory, external comparison, and independent-custody gates are
+actually satisfied.
+
+Validation: `tools/prepare_resident_recurrent_grpo_campaign.py verify` passed
+with `model_verified=true`, `training_tasks=288`, `holdout_tasks=36`, and
+`confirmatory_tasks=2877`.
+
+This is total checkpoint record 352. The forecast remains 394-661 total
+records, now approximately 42-309 records after this checkpoint. Next: publish
+CP291, stop the stale CP285 detached trainer/controller so it does not consume
+the resident 32B slot, launch CP291 detached under caffeinate protection, build
+its post-training controller from the pushed source, and continue system-level
+RLC inspection while the corrected run proceeds.
