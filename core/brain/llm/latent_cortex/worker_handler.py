@@ -428,6 +428,26 @@ def handle_latent_reason(
                     "status": "error",
                     "message": "latent_reason non-memory context carries reserved fields",
                 }
+    operation_authority = job.get("operation_authority")
+    if operation_authority is not None:
+        try:
+            from core.brain.llm.latent_cortex.epistemic_runtime import (
+                validate_runtime_operation_authority,
+            )
+
+            operation_authority = validate_runtime_operation_authority(
+                operation_authority,
+                prompt=prompt if isinstance(prompt, str) else None,
+                messages=messages if isinstance(messages, list) else None,
+                config=dict(job.get("config") or {}),
+                budget=dict(job.get("budget") or {}),
+                cognitive_context=cognitive_context,
+            )
+        except (ImportError, TypeError, ValueError) as exc:
+            return {
+                "status": "error",
+                "message": f"latent_reason operation authority rejected: {exc}",
+            }
     engine = LatentCortexEngine(
         model,
         tokenizer,
@@ -543,6 +563,7 @@ def handle_latent_reason(
             worker_source_path=Path(__file__).resolve().parents[1] / "mlx_worker.py",
         )
     receipt = result.receipt
+    receipt.runtime_operation_authority = dict(operation_authority or {})
     receipt.worker_boot_id = str(worker_identity.get("worker_boot_id") or "")
     receipt.worker_pid = int(worker_identity.get("worker_pid") or 0)
     receipt.worker_model_path = str(worker_identity.get("worker_model_path") or "")
@@ -587,6 +608,7 @@ def handle_latent_reason(
         budget=job.get("budget"),
         runtime_controls=job.get("runtime_controls"),
         cognitive_context=cognitive_context,
+        operation_authority=operation_authority,
         response_contract=response_contract,
     )
     body = result.to_dict()

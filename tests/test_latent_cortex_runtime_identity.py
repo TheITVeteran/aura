@@ -137,10 +137,15 @@ def test_request_digest_binds_runtime_controls_and_is_order_stable():
         **kwargs,
         response_contract='{"answer":int}',
     )
+    operation_bound = runtime_identity.latent_request_payload_sha256(
+        **kwargs,
+        operation_authority={"attempt_sha256": "a" * 64},
+    )
 
     assert first == reordered
     assert first != changed
     assert first != contracted
+    assert first != operation_bound
 
 
 def test_direct_runtime_identity_binds_exact_source(monkeypatch):

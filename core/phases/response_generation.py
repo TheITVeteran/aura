@@ -1623,6 +1623,7 @@ class ResponseGenerationPhase(BasePhase):
                             ingress_stakes = float(selection.get("stakes") or 0.75)
                             ingress_uncertainty = float(selection.get("uncertainty") or 0.80)
                             ingress_slot_items: list | None = None
+                            ingress_epistemic_genesis = None
                             ingress_epistemic_state = None
                             ingress_memory_result = None
                             try:
@@ -1660,6 +1661,7 @@ class ResponseGenerationPhase(BasePhase):
                                 # interoception reach her thoughts, not just
                                 # her compute budget.
                                 ingress_slot_items = cognitive_context_items(ingress) or None
+                                ingress_epistemic_genesis = ingress.epistemic_genesis
                                 ingress_epistemic_state = ingress.epistemic_state
                                 ingress_memory_result = ingress.memory_result
                                 latent_trace["latent_cortex_ingress"] = ingress.to_receipt()
@@ -1708,6 +1710,7 @@ class ResponseGenerationPhase(BasePhase):
                                 require_full_stack=True,
                                 foreground_request=True,
                                 cognitive_context=ingress_slot_items,
+                                epistemic_genesis=ingress_epistemic_genesis,
                                 epistemic_state=ingress_epistemic_state,
                                 selective_memory_result=ingress_memory_result,
                             )

@@ -25112,3 +25112,46 @@ count completion is approximately 52.7%-82.8%, with a midpoint planning
 estimate of 64.4%. Next: publish CP325, then make value-of-computation and
 operation-admission decisions causal in the live recurrent controller before
 resident integration and lesion proof.
+
+## Checkpoint 2026-07-22-326: Recurrent Operations Are Admitted Before They Run
+
+The primary foreground execution controller now remains active when the live
+desktop path supplies answer-surface decode overrides. Only explicit structural
+experiment or lesion overrides opt out, preserving exact controlled arms. The
+prior behavior skipped the controller whenever *any* override existed, which
+made the normal desktop call path observational rather than causal.
+
+Each selected recurrent action now enters the same transactional epistemic
+state used by selective memory. Before worker compute, a runtime-operation
+lease consults canonical retry admission and fsync-journals a zero-cost UNKNOWN
+intent. This is crash-honest: disappearance leaves a recoverable pending
+attempt, not a fabricated success or an erased operation. Completion is an
+explicit retry carrying measured token-layer cost and SUCCEEDED, FAILED, or
+CANCELLED outcome. A completed attempt cannot be silently rerun, and a second
+completion cannot rewrite history.
+
+The authority binds the objective, input and admitted state hashes, controller
+schema/bucket/arm/mode/evidence, exact config and budget, operation kind,
+operator identity/version, claim/hypothesis/evidence inputs, payload digest,
+attempt digest, and deterministic operation ID. The service, MLX client, and
+worker independently recompute those relationships; the request-identity hash
+also includes the authority. Memory slots are rebound to the admitted state
+before worker execution, so recall and operation control cannot name different
+state versions. If the ingress assembler is unavailable, the controller creates
+an objective-bound minimal genesis rather than performing unjournaled work.
+
+Validation: focused runtime/memory/client/worker contracts pass 33/33. The
+fixed-snapshot integrated RLC, latent-cortex, GWT, and execution-controller gate
+passes 837/837 in 468.43 seconds, including tiny-real-Qwen2 execution under the
+worker authority. Focused Ruff, bytecode compilation, and `git diff --check`
+pass. SPARK-010 closes. SPARK-051 remains `PARTIAL`: full learned selection
+across all sixteen cognitive actions at every recurrence is not implemented
+yet. SPARK-013 and SPARK-066-068 still own causal lesions, resident/full-mind
+proof, and production evidence. No frontier gain is claimed.
+
+This is total checkpoint record 387. The revised forecast remains 466-733 total
+records, now approximately 79-346 records after this checkpoint. Checkpoint-
+count completion is approximately 52.8%-83.0%, with a midpoint planning
+estimate of 64.6%. Next: publish CP326, then implement the complete
+value-of-computation policy and make each per-recurrence action change the same
+state before resident causal ablations.

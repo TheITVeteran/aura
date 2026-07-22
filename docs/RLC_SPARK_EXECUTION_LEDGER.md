@@ -66,6 +66,10 @@ After CP325, the published total is record 386: 80-347 forecast records remain,
 checkpoint-count completion is 52.7%-82.8%, and the midpoint planning estimate
 is 64.4%.
 
+After CP326, the published total is record 387: 79-346 forecast records remain,
+checkpoint-count completion is 52.8%-83.0%, and the midpoint planning estimate
+is 64.6%.
+
 ## Code-grounded baseline and ownership
 
 The four-slice static audit covered the neural core, epistemic/verifier paths,
@@ -74,8 +78,8 @@ entire Spark source and traced callers rather than crediting class names. The
 baseline below is exhaustive over SPARK-001 through SPARK-072:
 
 - `ACCEPTED`: SPARK-001, SPARK-005, SPARK-006, SPARK-007, SPARK-008, SPARK-009,
-  SPARK-011, SPARK-012.
-- `PARTIAL`: SPARK-003, SPARK-010,
+  SPARK-010, SPARK-011, SPARK-012.
+- `PARTIAL`: SPARK-003,
   SPARK-014, SPARK-021, SPARK-022, SPARK-023, SPARK-024, SPARK-025,
   SPARK-026, SPARK-027, SPARK-035, SPARK-039, SPARK-040, SPARK-041,
   SPARK-042, SPARK-052, SPARK-053, SPARK-054, SPARK-055, SPARK-056,
@@ -231,10 +235,10 @@ before those dependencies close is not admissible.
   GWT/controller gate passed 780/780. External trust-root authenticity, live
   state causality, hypothesis-distribution calibration, and frontier gains remain
   separate checkpoints.
-- [ ] **SPARK-010 - Cognitive operation history.** Record which operators were
+- [x] **SPARK-010 - Cognitive operation history.** Record which operators were
   attempted, their inputs, costs, evidence gained, affected claims, and outcome
   so recurrence cannot unknowingly repeat failed work.
-  State authority completed at CP324, live acceptance still open: schema v5
+  State authority completed at CP324: schema v5
   records immutable operator/version identity, canonical payload and referenced
   inputs, attempt signature, parent state, start/completion time, affected
   claims/hypotheses, gained evidence, actual cost, outcome, failure code, and
@@ -244,10 +248,22 @@ before those dependencies close is not admissible.
   A typed admission query reports new, explicit-retry-required, stale-parent,
   already-succeeded, or retry-exhausted decisions. Compute use must exactly equal
   immutable operation costs, and journal replay preserves failed/unknown work.
-  Focused contracts pass 71/71 and the integrated gate passes 801/801. This item
-  remains unchecked until the live recurrent controller persists operation
-  intent/outcome and consults admission before execution; that causal consumer
-  is owned by SPARK-013 and SPARK-065-068.
+  Focused contracts pass 71/71 and the integrated gate passes 801/801.
+  Accepted at CP326: the primary foreground controller now consults that
+  admission authority before worker compute even when the live response path
+  supplies decode overrides. Structural experiment overrides remain exact and
+  intentionally opt out. A crash-consistent runtime lease fsync-journals a
+  zero-cost UNKNOWN intent before execution; normal completion is an explicit
+  retry carrying terminal outcome and measured token-layer cost. Recovery can
+  resume one pending intent but cannot silently rerun a completed attempt.
+  Objective, config, budget, controller evidence, operation kind, exact state
+  and input references, payload, attempt, and operation ID are recomputed at
+  service, MLX client, and worker boundaries and included in the request
+  identity. State-less ingress degradation receives an objective-bound genesis
+  rather than bypassing history. Focused runtime/wire contracts pass 33/33 and
+  the integrated RLC/latent/GWT/controller gate passes 837/837. SPARK-051 still
+  owns learned per-recurrence selection across the complete action vocabulary;
+  SPARK-013 and SPARK-066-068 still own lesion and full-live causal evidence.
 - [x] **SPARK-011 - Transactional state revision.** Apply revisions atomically,
   hash lineage, reject malformed/stale updates, invalidate descendants, and
   recover the last verified state after interruption.
@@ -412,6 +428,10 @@ before those dependencies close is not admissible.
   FALSIFY, CHECK_ASSUMPTION, REGENERATE_FROM_PREFIX, FORMALIZE, COMPARE,
   BACKTRACK, COMPRESS_STATE, ANSWER, and ABSTAIN using measured expected gain per
   cost.
+  CP326 makes the existing bounded execution-arm decision a state-admitted,
+  costed, durable live operation and removes the decode-override bypass. This
+  remains `PARTIAL`: the controller does not yet choose the complete action
+  vocabulary at every recurrence from calibrated expected gain per cost.
 - [ ] **SPARK-052 - Adaptive breadth/depth/tool routing.** Scale recurrence,
   branch count, lookahead, tools, and verifier effort from difficulty,
   uncertainty, stakes, body pressure, deadlines, and resource admission while
@@ -528,3 +548,5 @@ CP324 completes the durable operation-history authority but not its live
 controller consumer; it does not change the negative capability verdict.
 CP325 closes the selective-memory ingress and its context-only authority chain;
 it does not change the negative capability verdict.
+CP326 closes durable live cognitive-operation history and admission; it does
+not change the negative capability verdict.

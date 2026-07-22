@@ -700,6 +700,10 @@ class EpisodeReceipt:
     # so "the organs reached her thoughts" is receipted per slot and each
     # seeded slot remains individually ablation-testable (Experiment 3).
     cognitive_slots: list[dict[str, Any]] = field(default_factory=list)
+    # Service-admitted operation authority echoed by the worker. It binds the
+    # exact epistemic state, controller decision, config, and budget to this
+    # request without exposing private reasoning content.
+    runtime_operation_authority: dict[str, Any] = field(default_factory=dict)
     # CP126 6e1ef7be. These remain for compatibility with every existing
     # reader, but they are no longer the AUTHORITY: weight_integrity below
     # carries the digests, and integrity_verdicts() reports what the
@@ -936,6 +940,9 @@ class EpisodeReceipt:
             "input_token_count": self.input_token_count,
             "input_context_compaction": dict(self.input_context_compaction),
             "cognitive_slots": [dict(row) for row in self.cognitive_slots],
+            "runtime_operation_authority": dict(
+                self.runtime_operation_authority
+            ),
             "params_unchanged": self.params_unchanged,
             "fast_weights_erased": self.fast_weights_erased,
             "weight_integrity": self.weight_integrity.to_dict(),

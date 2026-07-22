@@ -110,6 +110,7 @@ class CognitiveIngress:
     signals: list[IngressSignal] = field(default_factory=list)
     # One authority for this RLC episode. The selective-memory bridge commits
     # recalled observations here before their corresponding slots may run.
+    epistemic_genesis: Any | None = None
     epistemic_state: Any | None = None
     memory_result: Any | None = None
 
@@ -133,6 +134,14 @@ class CognitiveIngress:
                 "state_sha256": str(getattr(state, "state_sha256", "")),
                 "evidence_count": len(tuple(getattr(state, "evidence", ()) or ())),
                 "operation_count": len(tuple(getattr(state, "operations", ()) or ())),
+            }
+        genesis = self.epistemic_genesis
+        if genesis is not None:
+            receipt["epistemic_genesis"] = {
+                "schema": str(getattr(genesis, "schema", "")),
+                "episode_id": str(getattr(genesis, "episode_id", "")),
+                "version": int(getattr(genesis, "version", -1)),
+                "state_sha256": str(getattr(genesis, "state_sha256", "")),
             }
         result = self.memory_result
         if result is not None:
@@ -576,7 +585,7 @@ def _memory_signal_from_result(
     objective: str,
     result: Any,
     tracking: dict[str, Any],
-) -> tuple[IngressSignal, Any, Any]:
+) -> tuple[IngressSignal, Any, Any, Any]:
     """Firewall recalled content, then commit only admitted records."""
     from core.brain.epistemic_firewall import EpistemicFirewall, EvidenceItem
     from core.brain.llm.latent_cortex.epistemic_memory import attach_memory_result
@@ -692,7 +701,7 @@ def _memory_signal_from_result(
         caution_text=caution,
         context_items=context_items,
     )
-    return signal, state, admitted_result
+    return signal, genesis, state, admitted_result
 
 
 def _resolve_memory_sync(
@@ -702,7 +711,7 @@ def _resolve_memory_sync(
     tenant_id: str = "local",
     user_id: str = "owner",
     session_id: str = "local",
-) -> tuple[IngressSignal, Any, Any]:
+) -> tuple[IngressSignal, Any, Any, Any]:
     from core.brain.llm.latent_cortex.epistemic_memory import SelectiveMemoryBridge
 
     specs, tracking = _memory_adapter_specs(orchestrator, objective)
@@ -723,7 +732,7 @@ async def _resolve_memory_async(
     tenant_id: str = "local",
     user_id: str = "owner",
     session_id: str = "local",
-) -> tuple[IngressSignal, Any, Any]:
+) -> tuple[IngressSignal, Any, Any, Any]:
     from core.brain.llm.latent_cortex.epistemic_memory import SelectiveMemoryBridge
 
     specs, tracking = _memory_adapter_specs(orchestrator, objective)
@@ -1192,12 +1201,14 @@ def assemble_cognitive_ingress(
     session_id: str = "local",
 ) -> CognitiveIngress:
     """Typed allocation inputs for one latent episode, with receipts."""
-    memory_signal, epistemic_state, memory_result = _resolve_memory_sync(
+    memory_signal, epistemic_genesis, epistemic_state, memory_result = (
+        _resolve_memory_sync(
         orchestrator,
         objective,
         tenant_id=tenant_id,
         user_id=user_id,
         session_id=session_id,
+        )
     )
     signals = [
         memory_signal,
@@ -1217,6 +1228,7 @@ def assemble_cognitive_ingress(
         stakes=min(1.0, max(0.0, stakes)),
         uncertainty=min(1.0, max(0.0, uncertainty)),
         signals=signals,
+        epistemic_genesis=epistemic_genesis,
         epistemic_state=epistemic_state,
         memory_result=memory_result,
     )
@@ -1251,7 +1263,7 @@ async def assemble_cognitive_ingress_async(
             _signal_world_model(orchestrator),
         ]
     )
-    memory_signal, epistemic_state, memory_result = await memory_task
+    memory_signal, epistemic_genesis, epistemic_state, memory_result = await memory_task
     signals = [memory_signal, *other_signals]
     stakes = _BASE_STAKES + sum(s.stakes_delta for s in signals if s.present)
     uncertainty = _BASE_UNCERTAINTY + sum(s.uncertainty_delta for s in signals if s.present)
@@ -1259,6 +1271,7 @@ async def assemble_cognitive_ingress_async(
         stakes=min(1.0, max(0.0, stakes)),
         uncertainty=min(1.0, max(0.0, uncertainty)),
         signals=signals,
+        epistemic_genesis=epistemic_genesis,
         epistemic_state=epistemic_state,
         memory_result=memory_result,
     )

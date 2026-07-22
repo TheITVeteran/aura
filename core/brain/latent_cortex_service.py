@@ -24,6 +24,8 @@ import logging
 import math
 import os
 import time
+import uuid
+from pathlib import Path
 from typing import Any
 
 from core.brain.llm.latent_cortex.output_quality import evaluate_latent_output
@@ -31,6 +33,22 @@ from core.runtime.errors import record_degradation
 from core.runtime.structured_input import analyze_prompt_shape
 
 logger = logging.getLogger("Aura.LatentCortexService")
+
+_CONTROLLER_SURFACE_OVERRIDE_KEYS = {
+    "decode_max_tokens",
+    "decode_temperature",
+    "decode_top_p",
+}
+
+
+def _controller_accepts_overrides(overrides: dict[str, Any] | None) -> bool:
+    """Keep live answer-surface tuning from disabling cognitive control.
+
+    Structural overrides still opt out because experiment and lesion callers
+    must receive the exact recurrence/branch/schedule arm they requested.
+    """
+
+    return overrides is None or set(overrides) <= _CONTROLLER_SURFACE_OVERRIDE_KEYS
 
 
 def _cortex_enabled() -> bool:
@@ -1085,6 +1103,7 @@ class LatentCortexService:
         require_full_stack: bool = True,
         foreground_request: bool = True,
         cognitive_context: list | None = None,
+        epistemic_genesis: Any | None = None,
         epistemic_state: Any | None = None,
         selective_memory_result: Any | None = None,
     ) -> dict[str, Any]:
@@ -1145,6 +1164,7 @@ class LatentCortexService:
         )
         if (
             memory_context_present
+            or epistemic_genesis is not None
             or epistemic_state is not None
             or selective_memory_result is not None
         ):
@@ -1155,8 +1175,15 @@ class LatentCortexService:
                 )
                 from core.brain.llm.latent_cortex.epistemic_state import EpistemicState
 
-                if not isinstance(epistemic_state, EpistemicState) or not isinstance(
-                    selective_memory_result, SelectiveMemoryResult
+                if (
+                    not isinstance(epistemic_genesis, EpistemicState)
+                    or epistemic_genesis.version != 0
+                    or not isinstance(epistemic_state, EpistemicState)
+                    or not isinstance(selective_memory_result, SelectiveMemoryResult)
+                    or epistemic_state.episode_id != epistemic_genesis.episode_id
+                    or epistemic_state.problem != epistemic_genesis.problem
+                    or epistemic_state.parent_sha256
+                    != epistemic_genesis.state_sha256
                 ):
                     return self._record_failure("invalid_epistemic_memory_authority")
                 visible_objective = self._visible_objective(question, messages)
@@ -1233,7 +1260,7 @@ class LatentCortexService:
         # separation on graded outcomes in this context bucket; explores
         # sparsely; never touches explicit operator overrides.
         controller_decision: dict[str, Any] | None = None
-        if foreground_request and config_overrides is None:
+        if foreground_request and _controller_accepts_overrides(config_overrides):
             try:
                 from core.brain.llm.latent_cortex.execution_controller import (
                     controller_enabled,
@@ -1416,12 +1443,152 @@ class LatentCortexService:
             ) as exc:
                 logger.debug("Workspace coalition merge skipped: %s", exc)
 
+        operation_lease = None
+        operation_authority: dict[str, Any] | None = None
+        operation_cost_receipt: dict[str, Any] = {}
+
+        async def complete_runtime_operation(
+            outcome: Any,
+            *,
+            worker_receipt: Any,
+            failure_code: str = "",
+        ) -> dict[str, Any] | None:
+            nonlocal operation_cost_receipt
+            if operation_lease is None:
+                return None
+            from core.brain.llm.latent_cortex.epistemic_runtime import (
+                measured_operation_cost,
+            )
+            from core.brain.llm.latent_cortex.epistemic_state import (
+                OperationOutcome,
+            )
+
+            terminal_outcome = outcome
+            terminal_failure = failure_code
+            try:
+                cost, operation_cost_receipt = measured_operation_cost(
+                    worker_receipt,
+                    requested_budget=budget,
+                    state=operation_lease.state,
+                )
+            except (TypeError, ValueError, OverflowError) as exc:
+                terminal_outcome = OperationOutcome.FAILED
+                terminal_failure = "compute_receipt_invalid"
+                cost = 0.0
+                operation_cost_receipt = {
+                    "basis": "invalid_worker_compute_receipt",
+                    "error_type": type(exc).__name__,
+                }
+            if terminal_outcome is not OperationOutcome.SUCCEEDED and not terminal_failure:
+                terminal_failure = "worker_operation_failed"
+            detail = (
+                f"worker outcome={terminal_outcome.value}; "
+                f"cost basis={operation_cost_receipt.get('basis', 'unmeasured')}"
+            )
+            await asyncio.to_thread(
+                operation_lease.complete,
+                outcome=terminal_outcome,
+                cost=cost,
+                failure_code=terminal_failure,
+                detail=detail,
+            )
+            receipt = operation_lease.to_receipt()
+            receipt["compute"] = dict(operation_cost_receipt)
+            return receipt
+
         self._episodes += 1
         self._last_attempt_at = time.time()
         self._last_progress = {}
         self._last_failure_receipt = {}
         started = time.monotonic()
         try:
+            if controller_decision is not None:
+                try:
+                    from core.brain.llm.latent_cortex.epistemic_memory import (
+                        validate_memory_context_items,
+                    )
+                    from core.brain.llm.latent_cortex.epistemic_runtime import (
+                        RuntimeOperationLease,
+                    )
+                    from core.brain.llm.latent_cortex.epistemic_state import (
+                        ComputeBudgetState,
+                        EpistemicState,
+                        ProblemFrame,
+                    )
+                    from core.config import DATA_DIR
+
+                    if epistemic_state is None:
+                        objective = self._visible_objective(question, messages)
+                        epistemic_genesis = EpistemicState.genesis(
+                            episode_id=f"rlc-runtime-{uuid.uuid4().hex[:24]}",
+                            problem=ProblemFrame.create(objective),
+                            budget=ComputeBudgetState(total=1.0),
+                        )
+                        epistemic_state = epistemic_genesis
+
+                    operation_lease = await asyncio.to_thread(
+                        RuntimeOperationLease.begin,
+                        genesis=epistemic_genesis,
+                        state=epistemic_state,
+                        decision=controller_decision,
+                        config=config,
+                        budget=budget,
+                        root=Path(DATA_DIR)
+                        / "latent_cortex"
+                        / "epistemic_runtime",
+                    )
+                    operation_authority = dict(operation_lease.authority)
+                    epistemic_state = operation_lease.state
+                    rebound_context = []
+                    for entry in cognitive_context or []:
+                        if (
+                            isinstance(entry, dict)
+                            and entry.get("context_role") == "memory_observation"
+                        ):
+                            rebound_context.append(
+                                {
+                                    **entry,
+                                    "epistemic_state_sha256": epistemic_state.state_sha256,
+                                }
+                            )
+                        else:
+                            rebound_context.append(entry)
+                    cognitive_context = rebound_context or None
+                    if selective_memory_result is not None:
+                        validate_memory_context_items(
+                            epistemic_state,
+                            selective_memory_result,
+                            cognitive_context or [],
+                        )
+                    self._last_allocation["runtime_operation"] = {
+                        "schema": operation_authority["schema"],
+                        "operation_id": operation_authority["operation_id"],
+                        "operation_kind": operation_authority["operation_kind"],
+                        "attempt_sha256": operation_authority["attempt_sha256"],
+                        "admitted_state_sha256": operation_authority[
+                            "admitted_state_sha256"
+                        ],
+                    }
+                except (
+                    ImportError,
+                    AttributeError,
+                    OSError,
+                    RuntimeError,
+                    TypeError,
+                    ValueError,
+                ) as exc:
+                    record_degradation(
+                        "latent_cortex.operation_admission",
+                        exc,
+                        action=(
+                            "refused recurrent compute whose operation could not "
+                            "be admitted and journaled"
+                        ),
+                        severity="error",
+                    )
+                    return self._record_failure(
+                        f"runtime_operation_admission_failed:{type(exc).__name__}"
+                    )
             try:
                 result = await client.latent_reason_async(
                     prompt=question,
@@ -1436,6 +1603,7 @@ class LatentCortexService:
                     # goals, world model, interoception, self-model) seeds
                     # identifiable workspace slots inside the episode.
                     cognitive_context=cognitive_context,
+                    operation_authority=operation_authority,
                     # Foreground resident episodes select branches and accept
                     # latent-opt proposals by deterministic task-typed checks
                     # (arithmetic recomputation, code syntax, facet coverage,
@@ -1450,6 +1618,16 @@ class LatentCortexService:
                     facet_reliability=self._facet_reliability_weights(domain),
                 )
             except asyncio.CancelledError:
+                if operation_lease is not None:
+                    from core.brain.llm.latent_cortex.epistemic_state import (
+                        OperationOutcome,
+                    )
+
+                    await complete_runtime_operation(
+                        OperationOutcome.CANCELLED,
+                        worker_receipt={},
+                        failure_code="caller_cancelled",
+                    )
                 raise
             except (OSError, RuntimeError, AttributeError, TypeError, ValueError, TimeoutError) as exc:
                 record_degradation(
@@ -1459,26 +1637,108 @@ class LatentCortexService:
                     severity="warning",
                 )
                 self._last_latency_s = time.monotonic() - started
+                if operation_lease is not None:
+                    from core.brain.llm.latent_cortex.epistemic_state import (
+                        OperationOutcome,
+                    )
+
+                    await complete_runtime_operation(
+                        OperationOutcome.FAILED,
+                        worker_receipt={},
+                        failure_code="client_exception",
+                    )
                 return self._record_failure(f"client_error:{type(exc).__name__}")
         finally:
             release_external_generation_gate_lease(generation_lease_id)
         elapsed = time.monotonic() - started
         self._last_latency_s = elapsed
         if not isinstance(result, dict):
+            if operation_lease is not None:
+                from core.brain.llm.latent_cortex.epistemic_state import (
+                    OperationOutcome,
+                )
+
+                await complete_runtime_operation(
+                    OperationOutcome.FAILED,
+                    worker_receipt={},
+                    failure_code="invalid_client_response",
+                )
             return self._record_failure("invalid_client_response")
         raw_receipt = result.get("receipt")
         result_receipt = dict(raw_receipt) if isinstance(raw_receipt, dict) else {}
+        if operation_lease is not None:
+            from core.brain.llm.latent_cortex.epistemic_state import (
+                OperationOutcome,
+            )
+
+            worker_authority = result_receipt.get("runtime_operation_authority")
+            authority_matches = worker_authority == operation_authority
+            worker_succeeded = result.get("ok") is True and authority_matches
+            try:
+                operation_receipt = await complete_runtime_operation(
+                    (
+                        OperationOutcome.SUCCEEDED
+                        if worker_succeeded
+                        else OperationOutcome.FAILED
+                    ),
+                    worker_receipt=result_receipt,
+                    failure_code=(
+                        ""
+                        if worker_succeeded
+                        else (
+                            "operation_authority_mismatch"
+                            if not authority_matches
+                            else "worker_operation_failed"
+                        )
+                    ),
+                )
+            except (
+                AttributeError,
+                OSError,
+                RuntimeError,
+                TypeError,
+                ValueError,
+            ) as exc:
+                record_degradation(
+                    "latent_cortex.operation_completion",
+                    exc,
+                    action=(
+                        "refused recurrent output whose terminal operation state "
+                        "could not be journaled"
+                    ),
+                    severity="error",
+                )
+                return self._record_failure(
+                    f"runtime_operation_completion_failed:{type(exc).__name__}"
+                )
+            epistemic_state = operation_lease.state
+            result_receipt["epistemic_operation"] = operation_receipt
+            result["receipt"] = result_receipt
+            if not authority_matches:
+                reason = "runtime_operation_authority_mismatch"
+                failed = dict(result)
+                failed.update(self._record_failure(reason))
+                failed["receipt"] = result_receipt
+                self._last_failure_receipt = result_receipt
+                return failed
         if epistemic_state is not None:
-            result_receipt["epistemic_state"] = {
+            epistemic_state_receipt = {
                 "schema": epistemic_state.schema,
                 "episode_id": epistemic_state.episode_id,
                 "version": epistemic_state.version,
                 "state_sha256": epistemic_state.state_sha256,
-                "memory_result_sha256": selective_memory_result.result_sha256,
-                "memory_evidence_ids": [
-                    candidate.evidence_id for candidate in selective_memory_result.candidates
-                ],
             }
+            if selective_memory_result is not None:
+                epistemic_state_receipt.update(
+                    {
+                        "memory_result_sha256": selective_memory_result.result_sha256,
+                        "memory_evidence_ids": [
+                            candidate.evidence_id
+                            for candidate in selective_memory_result.candidates
+                        ],
+                    }
+                )
+            result_receipt["epistemic_state"] = epistemic_state_receipt
         raw_progress = result.get("progress")
         self._last_progress = dict(raw_progress) if isinstance(raw_progress, dict) else {}
         if result.get("ok"):

@@ -263,7 +263,8 @@ def test_memory_slot_quotes_prompt_injection_but_never_grants_authority():
             )
         }
     ).retrieve(query)
-    state = attach_memory_result(_state(query), result)
+    genesis = _state(query)
+    state = attach_memory_result(genesis, result)
 
     items = result.context_items(state_sha256=state.state_sha256)
 
@@ -294,7 +295,8 @@ def test_memory_context_tampering_is_rejected(field, value):
             )
         }
     ).retrieve(query)
-    state = attach_memory_result(_state(query), result)
+    genesis = _state(query)
+    state = attach_memory_result(genesis, result)
     item = result.context_items(state_sha256=state.state_sha256)[0]
     item[field] = value
 
@@ -358,7 +360,8 @@ async def test_service_requires_and_forwards_the_same_memory_authority(monkeypat
             )
         }
     ).retrieve(query)
-    state = attach_memory_result(_state(query), result)
+    genesis = _state(query)
+    state = attach_memory_result(genesis, result)
     items = result.context_items(state_sha256=state.state_sha256)
     captured = {}
 
@@ -389,6 +392,7 @@ async def test_service_requires_and_forwards_the_same_memory_authority(monkeypat
         query.objective,
         foreground_request=False,
         cognitive_context=items,
+        epistemic_genesis=genesis,
         epistemic_state=state,
         selective_memory_result=result,
     )

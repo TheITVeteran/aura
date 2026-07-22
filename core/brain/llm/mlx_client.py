@@ -4668,6 +4668,7 @@ class MLXLocalClient:
         verifier_guidance: bool = False,
         facet_reliability: dict[str, float] | None = None,
         cognitive_context: list | None = None,
+        operation_authority: dict[str, Any] | None = None,
         response_contract: str | None = None,
     ) -> dict[str, Any]:
         """Run a Recursive Latent Cortex episode on the RESIDENT worker model.
@@ -4753,6 +4754,23 @@ class MLXLocalClient:
         wire_config = dict(config or {})
         wire_budget = dict(budget or {})
         wire_runtime_controls = dict(runtime_controls or {})
+        wire_operation_authority: dict[str, Any] | None = None
+        if operation_authority is not None:
+            try:
+                from core.brain.llm.latent_cortex.epistemic_runtime import (
+                    validate_runtime_operation_authority,
+                )
+
+                wire_operation_authority = validate_runtime_operation_authority(
+                    operation_authority,
+                    prompt=prompt,
+                    messages=messages,
+                    config=wire_config,
+                    budget=wire_budget,
+                    cognitive_context=wire_cognitive_context,
+                )
+            except (ImportError, TypeError, ValueError):
+                return {**base, "reason": "invalid_runtime_operation_authority"}
         if runtime_controls is not None:
             required_controls = {
                 "clean_user_surface_recurrent_loops",
@@ -4790,6 +4808,7 @@ class MLXLocalClient:
                     wire_runtime_controls if runtime_controls is not None else None
                 ),
                 cognitive_context=wire_cognitive_context,
+                operation_authority=wire_operation_authority,
                 response_contract=response_contract,
             )
         except (TypeError, ValueError, OverflowError):
@@ -4900,6 +4919,8 @@ class MLXLocalClient:
                 job["allow_full_affective_steering"] = True
             if wire_cognitive_context is not None:
                 job["cognitive_context"] = wire_cognitive_context
+            if wire_operation_authority is not None:
+                job["operation_authority"] = wire_operation_authority
             if response_contract is not None:
                 job["response_contract"] = response_contract
 

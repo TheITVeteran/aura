@@ -91,6 +91,7 @@ def _identity_receipt_for_request(request, **overrides):
             budget=request.get("budget"),
             runtime_controls=request.get("runtime_controls"),
             cognitive_context=request.get("cognitive_context"),
+            operation_authority=request.get("operation_authority"),
             response_contract=request.get("response_contract"),
         )
     )
@@ -495,6 +496,102 @@ async def test_client_preserves_typed_memory_authority_on_worker_wire(monkeypatc
     )
 
     assert (await task)["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_client_preserves_runtime_operation_authority_on_worker_wire(
+    tmp_path, monkeypatch
+):
+    from core.brain.llm import mlx_client
+    from core.brain.llm.latent_cortex.epistemic_runtime import RuntimeOperationLease
+    from core.brain.llm.latent_cortex.epistemic_state import (
+        ComputeBudgetState,
+        EpistemicState,
+        EpistemicTransaction,
+        OperationKind,
+        OperationOutcome,
+        OperationRecord,
+        ProblemFrame,
+        text_sha256,
+    )
+
+    objective = "reason with a state-bound operation"
+    genesis = EpistemicState.genesis(
+        episode_id="rlc-client-operation-wire",
+        problem=ProblemFrame.create(objective),
+        budget=ComputeBudgetState(total=1.0),
+    )
+    memory = OperationRecord.create(
+        operation_id="client-wire-memory-search",
+        kind=OperationKind.SEARCH_MEMORY,
+        outcome=OperationOutcome.SUCCEEDED,
+        input_state_sha256=genesis.state_sha256,
+        cost=0.01,
+        operator_id="selective_memory_bridge",
+        operator_version="v1",
+        input_payload_sha256=text_sha256("client wire memory"),
+        started_at=1.0,
+        completed_at=2.0,
+    )
+    state = EpistemicTransaction(genesis).add_operation(memory).commit()
+    config = {"decode_max_tokens": 16, "n_branches": 2}
+    budget = {"max_layer_apps": 1000, "wall_clock_s": 30.0}
+    lease = RuntimeOperationLease.begin(
+        genesis=genesis,
+        state=state,
+        decision={
+            "schema": "aura.latent_execution_controller.v1",
+            "bucket": "unit|none|short|s:mid|u:mid",
+            "arm": "base",
+            "mode": "observe",
+            "evidence": {},
+        },
+        config=config,
+        budget=budget,
+        root=tmp_path / "runtime",
+        started_at=10.0,
+    )
+
+    client = MLXLocalClient(model_path="/models/test-32b")
+    client._process = _ResidentProcess()
+    client._init_done = True
+    client._req_q = queue.Queue()
+    _bind_test_client_identity(monkeypatch, client)
+    monkeypatch.setattr(
+        mlx_client,
+        "get_memory_pressure_snapshot",
+        lambda: SimpleNamespace(refuse_heavy_local_generation=False),
+    )
+
+    task = asyncio.create_task(
+        client.latent_reason_async(
+            prompt=objective,
+            config=config,
+            budget=budget,
+            operation_authority=lease.authority,
+            timeout_s=5.0,
+            foreground_request=False,
+        )
+    )
+    request = await asyncio.to_thread(client._req_q.get, True, 2.0)
+    assert request["operation_authority"] == lease.authority
+    mlx_client._set_shared_future_result(
+        client._pending_generations[request["id"]],
+        {
+            "id": request["id"],
+            "status": "ok",
+            "text": "answer",
+            "receipt": _identity_receipt_for_request(
+                request,
+                episode_id="ep-operation-wire",
+                runtime_operation_authority=request["operation_authority"],
+            ),
+        },
+    )
+
+    result = await task
+    assert result["ok"] is True
+    assert result["receipt"]["runtime_operation_authority"] == lease.authority
 
 
 @pytest.mark.asyncio

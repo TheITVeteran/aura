@@ -255,6 +255,92 @@ def test_worker_handler_rejects_memory_authority_tampering(tiny_model):
     assert "memory context authority" in body["message"]
 
 
+def test_worker_recomputes_and_echoes_runtime_operation_authority(
+    tiny_model, tmp_path
+):
+    from core.brain.llm.latent_cortex.epistemic_runtime import RuntimeOperationLease
+    from core.brain.llm.latent_cortex.epistemic_state import (
+        ComputeBudgetState,
+        EpistemicState,
+        EpistemicTransaction,
+        OperationKind,
+        OperationOutcome,
+        OperationRecord,
+        ProblemFrame,
+        text_sha256,
+    )
+    from core.brain.llm.latent_cortex.worker_handler import handle_latent_reason
+
+    objective = "compare two bounded recovery designs"
+    genesis = EpistemicState.genesis(
+        episode_id="rlc-worker-operation-wire",
+        problem=ProblemFrame.create(objective),
+        budget=ComputeBudgetState(total=1.0),
+    )
+    memory = OperationRecord.create(
+        operation_id="worker-wire-memory-search",
+        kind=OperationKind.SEARCH_MEMORY,
+        outcome=OperationOutcome.SUCCEEDED,
+        input_state_sha256=genesis.state_sha256,
+        cost=0.01,
+        operator_id="selective_memory_bridge",
+        operator_version="v1",
+        input_payload_sha256=text_sha256("worker wire memory"),
+        started_at=1.0,
+        completed_at=2.0,
+    )
+    state = EpistemicTransaction(genesis).add_operation(memory).commit()
+    config = {
+        "n_slots": 4,
+        "n_branches": 1,
+        "max_steps": 2,
+        "min_steps": 2,
+        "decode_max_tokens": 6,
+    }
+    budget = {"max_layer_apps": 200_000, "wall_clock_s": 30.0}
+    lease = RuntimeOperationLease.begin(
+        genesis=genesis,
+        state=state,
+        decision={
+            "schema": "aura.latent_execution_controller.v1",
+            "bucket": "unit|compare|short|s:mid|u:mid",
+            "arm": "base",
+            "mode": "observe",
+            "evidence": {},
+        },
+        config=config,
+        budget=budget,
+        root=tmp_path / "runtime",
+        started_at=10.0,
+    )
+    job = {
+        "action": "latent_reason",
+        "prompt": objective,
+        "config": config,
+        "budget": budget,
+        "operation_authority": lease.authority,
+    }
+
+    body = handle_latent_reason(
+        job,
+        model=tiny_model,
+        tokenizer=FakeTokenizer(),
+        model_path="",
+    )
+    assert body["status"] == "ok", body
+    assert body["receipt"]["runtime_operation_authority"] == lease.authority
+
+    tampered = {**job, "config": {**config, "max_steps": 3}}
+    rejected = handle_latent_reason(
+        tampered,
+        model=tiny_model,
+        tokenizer=FakeTokenizer(),
+        model_path="",
+    )
+    assert rejected["status"] == "error"
+    assert "operation authority rejected" in rejected["message"]
+
+
 @pytest.mark.asyncio
 async def test_service_validates_cognitive_context():
     from core.brain.latent_cortex_service import LatentCortexService
