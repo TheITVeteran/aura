@@ -18,6 +18,8 @@ from typing import Any
 
 from core.runtime.runtime_settings import get_runtime_setting
 
+logger = logging.getLogger("Aura.ModelRegistry")
+
 BASE_DIR = Path(os.getenv("AURA_ROOT", Path(__file__).resolve().parents[3]))
 LOCAL_BACKEND = str(os.getenv("AURA_LOCAL_BACKEND", "mlx")).strip().lower()
 
@@ -196,6 +198,41 @@ MODEL_PATHS = {
 ADAPTER_PATH = BASE_DIR / "data" / "adapters"
 
 
+# Tokenizer sentinel values (1e30) and corrupt metadata can advertise an
+# impossible allocation; a too-small value would break every request. The
+# registry bounds what an artifact is allowed to claim about itself.
+_MIN_CONTEXT_WINDOW = 2048
+_MAX_CONTEXT_WINDOW = 262144
+
+
+def _bounded_context_window(value: int) -> int:
+    return max(_MIN_CONTEXT_WINDOW, min(int(value), _MAX_CONTEXT_WINDOW))
+
+
+def _safe_positive_int(value: Any) -> int:
+    """Non-negative int from arbitrary JSON, never raising."""
+    try:
+        parsed = int(value or 0)
+    except (TypeError, ValueError, OverflowError):
+        return 0
+    return parsed if parsed > 0 else 0
+
+
+def _coerce_bool(value: Any) -> bool:
+    """Interpret JSON booleans AND their string spellings.
+
+    bool("false") is True, so a string-valued config flag silently enabled
+    behavior the artifact declared OFF.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
 def _normalize_model_identity(value: str | None) -> str:
     text = os.path.basename(str(value or "").strip()).lower()
     if text.endswith(".gguf"):
@@ -338,7 +375,24 @@ def get_lane_runtime_model_path(endpoint_name: str | None) -> str:
     return get_runtime_model_path(get_lane_model_name(endpoint_name))
 
 
-@lru_cache(maxsize=16)
+def _artifact_signature(model_path: Path) -> tuple:
+    """Cheap identity of the on-disk artifact for cache invalidation.
+
+    The context-window cache used to key on the LOGICAL model name alone, so
+    promoting a new fused artifact under the same name kept serving the old
+    limit for the life of the process. Including the config/tokenizer
+    mtime+size means a promotion invalidates the entry naturally.
+    """
+    signature: list[Any] = [str(model_path)]
+    for child in ("config.json", "tokenizer_config.json"):
+        try:
+            stat = (model_path / child).stat()
+            signature.append((child, stat.st_mtime_ns, stat.st_size))
+        except OSError:
+            signature.append((child, 0, 0))
+    return tuple(signature)
+
+
 def get_model_context_window(model_name: str | None = None) -> int:
     """Return the effective context window for a local model.
 
@@ -351,6 +405,12 @@ def get_model_context_window(model_name: str | None = None) -> int:
     model_path = MODEL_PATHS.get(name, BASE_DIR / "models" / str(name))
     if not isinstance(model_path, Path):
         return 32768
+    return _context_window_for_artifact(name, _artifact_signature(model_path))
+
+
+@lru_cache(maxsize=32)
+def _context_window_for_artifact_cached(name: str, signature: tuple) -> int:
+    model_path = Path(signature[0])
 
     config_path = model_path / "config.json"
     tokenizer_config_path = model_path / "tokenizer_config.json"
@@ -363,10 +423,29 @@ def get_model_context_window(model_name: str | None = None) -> int:
     try:
         if config_path.exists():
             config_payload = json.loads(config_path.read_text())
-            max_position_embeddings = int(config_payload.get("max_position_embeddings") or 0)
-            sliding_window = int(config_payload.get("sliding_window") or 0)
-            use_sliding_window = bool(config_payload.get("use_sliding_window"))
-    except (OSError, ConnectionError, TimeoutError):
+            if not isinstance(config_payload, dict):
+                raise ValueError("model config.json is not an object")
+            max_position_embeddings = _safe_positive_int(
+                config_payload.get("max_position_embeddings")
+            )
+            sliding_window = _safe_positive_int(config_payload.get("sliding_window"))
+            # JSON carries these as real booleans OR as strings. bool("false")
+            # is True, so a string-valued flag silently ENABLED sliding-window
+            # expansion and the registry then advertised the larger window.
+            use_sliding_window = _coerce_bool(config_payload.get("use_sliding_window"))
+    except (
+        OSError,
+        ConnectionError,
+        TimeoutError,
+        # A partial or malformed artifact raises these, and they used to
+        # escape context resolution entirely instead of degrading to the
+        # documented default.
+        json.JSONDecodeError,
+        UnicodeDecodeError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        logger.warning("Unreadable model config at %s: %s", config_path, exc)
         max_position_embeddings = 0
         sliding_window = 0
         use_sliding_window = False
@@ -374,23 +453,51 @@ def get_model_context_window(model_name: str | None = None) -> int:
     try:
         if tokenizer_config_path.exists():
             tokenizer_payload = json.loads(tokenizer_config_path.read_text())
-            tokenizer_model_max = int(tokenizer_payload.get("model_max_length") or 0)
-    except (OSError, ConnectionError, TimeoutError):
+            if not isinstance(tokenizer_payload, dict):
+                raise ValueError("tokenizer_config.json is not an object")
+            tokenizer_model_max = _safe_positive_int(
+                tokenizer_payload.get("model_max_length")
+            )
+    except (
+        OSError,
+        ConnectionError,
+        TimeoutError,
+        json.JSONDecodeError,
+        UnicodeDecodeError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        logger.warning(
+            "Unreadable tokenizer config at %s: %s", tokenizer_config_path, exc
+        )
         tokenizer_model_max = 0
 
     if max_position_embeddings > 0:
         # Respect the on-disk config unless sliding/YaRN is explicitly enabled.
         if use_sliding_window and sliding_window > max_position_embeddings:
-            return max(sliding_window, max_position_embeddings)
-        return max_position_embeddings
+            return _bounded_context_window(max(sliding_window, max_position_embeddings))
+        return _bounded_context_window(max_position_embeddings)
 
     if sliding_window > 0 and use_sliding_window:
-        return sliding_window
+        return _bounded_context_window(sliding_window)
 
     if tokenizer_model_max > 0:
-        return tokenizer_model_max
+        return _bounded_context_window(tokenizer_model_max)
 
     return 32768
+
+
+def _context_window_for_artifact(name: str, signature: tuple) -> int:
+    """Artifact-keyed context resolution (thin wrapper over the LRU)."""
+    return _context_window_for_artifact_cached(name, signature)
+
+
+# get_model_context_window is a public entry point that callers (and this
+# module's own test-reset helper) invalidate via .cache_clear(). The cache now
+# lives on the artifact-keyed inner function, so the attribute is re-exposed
+# here to keep that contract intact.
+get_model_context_window.cache_clear = _context_window_for_artifact_cached.cache_clear
+get_model_context_window.cache_info = _context_window_for_artifact_cached.cache_info
 
 
 def get_lane_context_window(endpoint_name: str | None) -> int:
