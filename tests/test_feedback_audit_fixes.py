@@ -1675,6 +1675,20 @@ def test_degraded_live_reply_is_grounded_in_user_topic():
     assert "verify" in reply.lower()
 
 
+def test_confusion_override_uses_degraded_live_composer_not_scripted_apology():
+    from interface.routes.chat import _maybe_build_conversation_repair_override
+
+    repair = _maybe_build_conversation_repair_override(
+        "Huh?",
+        "The demo slot routes through James and regular users can apply later.",
+    )
+
+    assert repair
+    assert "synthetic fallback" in repair
+    assert "this exact turn" in repair
+    assert "I lost the thread on that answer" not in repair
+
+
 def test_sanitize_attention_focus_blocks_symbolic_scene_leak():
     from interface.routes.chat import _sanitize_attention_focus
 

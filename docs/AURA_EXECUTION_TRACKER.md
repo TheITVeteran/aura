@@ -24147,3 +24147,31 @@ and push CP298, rebuild `/Applications/Aura.app` if the commit makes the bundle
 stale, keep CP294 running until it produces a real recurrent proof receipt, and
 continue bounded live chat/action semantic-review hardening that does not edit
 the active CP294 proof sources.
+
+## Checkpoint 2026-07-21-299: Confusion Repair Uses the Same Evidence-Bound Degraded Voice
+
+A second hardcoded conversation repair was removed from the final reply override
+path. Bare confusion turns that encounter an ungrounded or off-topic answer no
+longer return the scripted line "I lost the thread on that answer..." as a
+one-size explanation. They now use the same degraded live composer introduced
+in CP298, which binds the last-resort reply to the current expression frame and
+the actual user-topic anchor. Confusion particles such as `huh` and `wait` are
+also excluded from topic extraction so a bare repair anchors to the turn itself
+instead of treating filler as a subject.
+
+This keeps the rule general: Aura should regenerate or repair in her own words
+whenever the model path is available and safe; if every stronger path fails, the
+remaining deterministic floor must be explicitly degraded, evidence-bound, and
+non-random rather than a normal-looking canned answer.
+
+Validation: the broader chat/recovery cluster passes 197/197, including
+grounded competent recovery, the known live transcript reliability failures,
+stateful voice reflex regressions, degraded-live topic anchoring, and the new
+confusion override regression. Bytecode compilation passes for
+`interface/routes/chat.py` and `tests/test_feedback_audit_fixes.py`.
+
+This is total checkpoint record 360. The forecast remains 394-661 total
+records, now approximately 34-301 records after this checkpoint. Next: lint,
+diff-check, commit and push CP299, rebuild `/Applications/Aura.app`, keep CP294
+running for its diagnostic/proof receipt, and continue non-MLX live
+chat/action/semantic-review hardening.

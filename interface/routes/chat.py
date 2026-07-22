@@ -2761,6 +2761,7 @@ _TOPIC_STOPWORDS = frozenset(
         "has",
         "have",
         "how",
+        "huh",
         "i",
         "if",
         "in",
@@ -2811,6 +2812,7 @@ _TOPIC_STOPWORDS = frozenset(
         "was",
         "we",
         "were",
+        "wait",
         "what",
         "when",
         "where",
@@ -14144,11 +14146,10 @@ def _maybe_build_conversation_repair_override(user_message: str, reply_text: Any
                         "or say plainly that I do not have enough evidence yet."
                     ),
                 )
-            return (
-                "I lost the thread on that answer. The likely break is that "
-                "my reply drifted away from your last message instead of "
-                "anchoring to it. I should answer the actual question next "
-                "or ask one concrete clarification."
+            return _build_degraded_live_reply(
+                _build_aura_expression_frame(user_message),
+                user_message,
+                reason="confusion_repair",
             )
 
     if _contains_phrase(user_text, _SPECIFICITY_PUSH_MARKERS):
