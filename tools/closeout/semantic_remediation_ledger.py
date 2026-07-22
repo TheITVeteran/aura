@@ -1,0 +1,443 @@
+#!/usr/bin/env python3
+"""Record and summarize REMEDIATION of CP126 semantic-review findings.
+
+The review inventory (`semantic_review_ledger.py`) proves that spans were
+read and findings were recorded. It deliberately claims nothing about repair:
+its manifest lists ``finding_remediated`` under ``claim_not_supported``, and
+each finding carries only category/description/evidence_lines/finding_id/
+repair_group/severity/title — there is no status field anywhere.
+
+The consequence was that closure existed only in git commit prose. Multiple
+agents worked the same campaign concurrently with no shared, machine-readable
+answer to "how many findings are actually closed?", so neither Codex nor a
+later session could tell remediated findings from untouched ones, and a
+concurrent merge that reverted a batch (this happened twice) was invisible to
+any counter.
+
+This ledger closes that gap. It is append-only, one entry per finding, and
+every entry pins the file hash AT CLOSURE so drift is detectable later:
+
+    {finding_id, file, severity, title, status, commit, file_sha256_at_close,
+     inventory_file_sha256, evidence, note, agent, recorded_at_unix}
+
+Statuses
+--------
+remediated          the defect was fixed in code
+assessed_no_change  verified against current source; no change warranted
+                    (already fixed by later work, or the finding does not
+                    hold) — ``note`` must say why
+superseded          a different change removed the code path entirely
+wont_fix            deliberate, documented design decision — ``note`` required
+
+Usage
+-----
+    semantic_remediation_ledger.py record --finding <id> [...] \
+        --status remediated --commit <sha> --evidence "tests/test_x.py" \
+        --note "why"
+    semantic_remediation_ledger.py status [--by-file] [--severity critical]
+    semantic_remediation_ledger.py verify
+"""
+from __future__ import annotations
+
+import argparse
+import gzip
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import time
+from collections import Counter, defaultdict
+from pathlib import Path
+from typing import Any
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+SEMANTIC_DIR = ROOT / "artifacts" / "closeout" / "semantic_review"
+DEFAULT_LEDGER = SEMANTIC_DIR / "cp126" / "REMEDIATION_LEDGER.jsonl"
+DEFAULT_INVENTORY = SEMANTIC_DIR / "cp126" / "inventory_through_batch0037.jsonl.gz"
+REMEDIATION_ENTRY_SCHEMA = "aura.closeout.semantic_remediation_entry.v1"
+
+VALID_STATUSES = {
+    "remediated",
+    "assessed_no_change",
+    "superseded",
+    "wont_fix",
+}
+# Statuses that assert the finding required no code change must explain why;
+# an unexplained "assessed" is indistinguishable from a skipped finding.
+STATUSES_REQUIRING_NOTE = {"assessed_no_change", "wont_fix", "superseded"}
+
+
+def _sha256_file(path: Path) -> str:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return ""
+
+
+def load_inventory(inventory: Path) -> dict[str, dict[str, Any]]:
+    """Map finding_id -> {file, severity, title, inventory_file_sha256}."""
+    findings: dict[str, dict[str, Any]] = {}
+    opener = gzip.open if inventory.suffix == ".gz" else open
+    with opener(inventory, "rt") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            record = json.loads(line)
+            for finding in record.get("findings", []):
+                findings[finding["finding_id"]] = {
+                    "file": record["file"],
+                    "severity": finding.get("severity", "unknown"),
+                    "title": finding.get("title", ""),
+                    "repair_group": finding.get("repair_group", ""),
+                    "inventory_file_sha256": record.get("file_sha256", ""),
+                }
+    return findings
+
+
+def load_ledger(ledger: Path) -> dict[str, dict[str, Any]]:
+    """Map finding_id -> latest entry (last write wins, history preserved)."""
+    entries: dict[str, dict[str, Any]] = {}
+    if not ledger.exists():
+        return entries
+    with ledger.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
+            finding_id = entry.get("finding_id")
+            if finding_id:
+                entries[finding_id] = entry
+    return entries
+
+
+def _resolve_finding_id(token: str, inventory: dict[str, dict[str, Any]]) -> str | None:
+    """Accept a full id or the 8-char suffix used in commit messages."""
+    if token in inventory:
+        return token
+    matches = [fid for fid in inventory if fid.endswith(token)]
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
+def _git_head() -> str:
+    try:
+        return subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def cmd_record(args: argparse.Namespace) -> int:
+    inventory = load_inventory(Path(args.inventory))
+    ledger_path = Path(args.ledger)
+    ledger_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if args.status not in VALID_STATUSES:
+        print(f"error: --status must be one of {sorted(VALID_STATUSES)}", file=sys.stderr)
+        return 2
+    if args.status in STATUSES_REQUIRING_NOTE and not args.note.strip():
+        print(
+            f"error: --note is required for status '{args.status}' "
+            "(an unexplained assessment is indistinguishable from a skip)",
+            file=sys.stderr,
+        )
+        return 2
+
+    commit = args.commit or _git_head()
+    now = time.time()
+    written = 0
+    unknown: list[str] = []
+
+    with ledger_path.open("a", encoding="utf-8") as handle:
+        for token in args.finding:
+            finding_id = _resolve_finding_id(token, inventory)
+            if finding_id is None:
+                unknown.append(token)
+                continue
+            meta = inventory[finding_id]
+            entry = {
+                "schema": REMEDIATION_ENTRY_SCHEMA,
+                "finding_id": finding_id,
+                "file": meta["file"],
+                "severity": meta["severity"],
+                "title": meta["title"],
+                "repair_group": meta["repair_group"],
+                "status": args.status,
+                "commit": commit,
+                "agent": args.agent,
+                "evidence": list(args.evidence),
+                "note": args.note.strip(),
+                # Hash at closure: if the file later changes, a verify pass can
+                # tell that the fix may no longer be present (a concurrent
+                # merge reverted two whole batches during this campaign).
+                "file_sha256_at_close": _sha256_file(ROOT / meta["file"]),
+                "inventory_file_sha256": meta["inventory_file_sha256"],
+                "recorded_at_unix": now,
+                "claim_supported": "finding_remediation_recorded_by_agent",
+                "claim_not_supported": [
+                    "independent_verification",
+                    "full_closeout_complete",
+                ],
+            }
+            handle.write(json.dumps(entry, sort_keys=True) + "\n")
+            written += 1
+
+    print(f"recorded {written} finding(s) as {args.status}")
+    if unknown:
+        print(f"WARNING: {len(unknown)} unknown finding id(s): {', '.join(unknown)}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    inventory = load_inventory(Path(args.inventory))
+    ledger = load_ledger(Path(args.ledger))
+
+    total = len(inventory)
+    closed_ids = {fid for fid, e in ledger.items() if e.get("status") in VALID_STATUSES}
+    open_ids = set(inventory) - closed_ids
+
+    sev_total = Counter(m["severity"] for m in inventory.values())
+    sev_closed = Counter(inventory[f]["severity"] for f in closed_ids if f in inventory)
+    status_counts = Counter(e.get("status") for e in ledger.values())
+
+    print("CP126 semantic remediation status")
+    print("=" * 58)
+    print(f"  findings in inventory : {total}")
+    print(f"  recorded closed       : {len(closed_ids)}  ({100.0 * len(closed_ids) / max(1, total):.1f}%)")
+    print(f"  remaining open        : {len(open_ids)}")
+    print()
+    print("  by severity:")
+    for sev in ("critical", "high", "medium", "low", "info"):
+        if sev_total.get(sev):
+            print(
+                f"    {sev:<9} {sev_closed.get(sev, 0):>5} / {sev_total[sev]:<5} closed"
+                f"   ({sev_total[sev] - sev_closed.get(sev, 0)} open)"
+            )
+    print()
+    print("  by closure status:")
+    for status, count in sorted(status_counts.items()):
+        print(f"    {status:<20} {count}")
+
+    if args.by_file:
+        per_file_total: Counter = Counter()
+        per_file_closed: Counter = Counter()
+        for fid, meta in inventory.items():
+            per_file_total[meta["file"]] += 1
+            if fid in closed_ids:
+                per_file_closed[meta["file"]] += 1
+        print()
+        print("  top open files:")
+        ranked = sorted(
+            per_file_total.items(),
+            key=lambda kv: -(kv[1] - per_file_closed.get(kv[0], 0)),
+        )
+        for path, count in ranked[: args.limit]:
+            remaining = count - per_file_closed.get(path, 0)
+            if remaining <= 0:
+                continue
+            print(f"    {remaining:>4} open / {count:<4} total  {path}")
+    return 0
+
+
+def cmd_verify(args: argparse.Namespace) -> int:
+    """Detect ledger entries whose file changed since closure (possible revert)."""
+    inventory = load_inventory(Path(args.inventory))
+    ledger = load_ledger(Path(args.ledger))
+
+    drifted: list[tuple[str, str]] = []
+    orphaned: list[str] = []
+    for finding_id, entry in ledger.items():
+        if finding_id not in inventory:
+            orphaned.append(finding_id)
+            continue
+        current = _sha256_file(ROOT / entry["file"])
+        recorded = entry.get("file_sha256_at_close", "")
+        if recorded and current and current != recorded:
+            drifted.append((finding_id, entry["file"]))
+
+    print(f"ledger entries      : {len(ledger)}")
+    print(f"orphaned (unknown id): {len(orphaned)}")
+    print(f"files changed since closure: {len({f for _, f in drifted})}")
+    if drifted and args.show:
+        print()
+        print("  changed since their fix was recorded (re-verify these):")
+        for path in sorted({f for _, f in drifted}):
+            count = sum(1 for _, p in drifted if p == path)
+            print(f"    {count:>4} finding(s)  {path}")
+    # Drift is expected during an active campaign (later batches touch the
+    # same file), so it is reported, not failed.
+    return 1 if orphaned else 0
+
+
+def _cp126_commits_by_file() -> dict[str, list[str]]:
+    """Files touched by commits that describe CP126 remediation work.
+
+    Multiple agents worked this campaign concurrently and none of them cited
+    finding ids in commit messages, so a file's remediation history can only
+    be recovered from the commit log. This attributes WORK to files; it does
+    NOT claim any specific finding was closed.
+    """
+    try:
+        proc = subprocess.run(
+            [
+                "git", "log", "--name-only", "--no-merges",
+                "--format=%x00%h %s",
+                "--grep=CP126", "--grep=semantic findings", "--grep=semantic review",
+                "-i", "--all",
+            ],
+            cwd=str(ROOT), capture_output=True, text=True, timeout=120, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {}
+
+    by_file: dict[str, list[str]] = defaultdict(list)
+    current = ""
+    for raw in proc.stdout.splitlines():
+        if raw.startswith("\x00"):
+            current = raw[1:].strip()
+            continue
+        path = raw.strip()
+        if path and current and path not in ("",):
+            if current not in by_file[path]:
+                by_file[path].append(current)
+    return dict(by_file)
+
+
+def cmd_triage(args: argparse.Namespace) -> int:
+    """Honest three-state view of the campaign.
+
+    Distinguishes findings that are provably untouched from those in files
+    that HAVE been worked, without fabricating closure for either.
+    """
+    inventory = load_inventory(Path(args.inventory))
+    ledger = load_ledger(Path(args.ledger))
+    recorded = {fid for fid, e in ledger.items() if e.get("status") in VALID_STATUSES}
+    worked = _cp126_commits_by_file()
+
+    # file -> (inventory hash, findings)
+    per_file: dict[str, list[str]] = defaultdict(list)
+    file_hash: dict[str, str] = {}
+    for fid, meta in inventory.items():
+        per_file[meta["file"]].append(fid)
+        file_hash[meta["file"]] = meta["inventory_file_sha256"]
+
+    buckets: dict[str, list[str]] = {
+        "recorded_closed": [],
+        "untouched": [],
+        "worked_unverified": [],
+        "changed_unattributed": [],
+        "file_missing": [],
+    }
+    for path, fids in per_file.items():
+        if path.startswith(("archive/", "artifacts/")):
+            continue
+        target = ROOT / path
+        current = _sha256_file(target)
+        for fid in fids:
+            if fid in recorded:
+                buckets["recorded_closed"].append(fid)
+            elif not current:
+                buckets["file_missing"].append(fid)
+            elif current == file_hash[path]:
+                buckets["untouched"].append(fid)
+            elif path in worked:
+                buckets["worked_unverified"].append(fid)
+            else:
+                buckets["changed_unattributed"].append(fid)
+
+    total = sum(len(v) for v in buckets.values())
+    print("CP126 remediation triage")
+    print("=" * 66)
+    print(f"  {'recorded closed (in ledger)':<38} {len(buckets['recorded_closed']):>6}")
+    print(f"  {'UNTOUCHED file (definitely open)':<38} {len(buckets['untouched']):>6}")
+    print(f"  {'file worked by a CP126 commit':<38} {len(buckets['worked_unverified']):>6}  <- verify per finding")
+    print(f"  {'file changed, no CP126 commit':<38} {len(buckets['changed_unattributed']):>6}  <- verify per finding")
+    print(f"  {'file no longer present':<38} {len(buckets['file_missing']):>6}")
+    print(f"  {'-' * 46}")
+    print(f"  {'total (excl. archive/artifacts)':<38} {total:>6}")
+    print()
+    print("  Only 'recorded closed' is a claim. The two 'verify' buckets are")
+    print("  work other agents may already have done — they are NOT counted as")
+    print("  closed until someone checks the finding against current source.")
+
+    if args.queue:
+        print()
+        print(f"  next files by UNTOUCHED findings (guaranteed-real work), top {args.limit}:")
+        untouched_by_file: Counter = Counter()
+        crit_by_file: Counter = Counter()
+        for fid in buckets["untouched"]:
+            meta = inventory[fid]
+            untouched_by_file[meta["file"]] += 1
+            if meta["severity"] == "critical":
+                crit_by_file[meta["file"]] += 1
+        for path, count in untouched_by_file.most_common(args.limit):
+            print(f"    {count:>4} open ({crit_by_file.get(path, 0)} crit)  {path}")
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    common_inventory = os.environ.get("AURA_SEMANTIC_INVENTORY", str(DEFAULT_INVENTORY))
+    common_ledger = os.environ.get("AURA_SEMANTIC_REMEDIATION_LEDGER", str(DEFAULT_LEDGER))
+
+    record = sub.add_parser("record", help="Append remediation receipts for findings.")
+    record.add_argument("--finding", action="append", required=True,
+                        help="Finding id (full, or the 8-char suffix used in commits).")
+    record.add_argument("--status", required=True, help=f"One of {sorted(VALID_STATUSES)}")
+    record.add_argument("--commit", default="", help="Commit sha (defaults to HEAD).")
+    record.add_argument("--evidence", action="append", default=[],
+                        help="Test file or proof reference; repeatable.")
+    record.add_argument("--note", default="", help="Why (required for non-remediated statuses).")
+    record.add_argument("--agent", default=os.environ.get("AURA_AGENT", "unknown"))
+    record.add_argument("--ledger", default=common_ledger)
+    record.add_argument("--inventory", default=common_inventory)
+    record.set_defaults(func=cmd_record)
+
+    status = sub.add_parser("status", help="Summarize remediation progress.")
+    status.add_argument("--by-file", action="store_true")
+    status.add_argument("--limit", type=int, default=25)
+    status.add_argument("--ledger", default=common_ledger)
+    status.add_argument("--inventory", default=common_inventory)
+    status.set_defaults(func=cmd_status)
+
+    verify = sub.add_parser("verify", help="Detect drift/reverts since closure.")
+    verify.add_argument("--show", action="store_true")
+    verify.add_argument("--ledger", default=common_ledger)
+    verify.add_argument("--inventory", default=common_inventory)
+    verify.set_defaults(func=cmd_verify)
+
+    triage = sub.add_parser(
+        "triage",
+        help="Three-state view: recorded closed / untouched / needs verification.",
+    )
+    triage.add_argument("--queue", action="store_true", help="List next files to work.")
+    triage.add_argument("--limit", type=int, default=20)
+    triage.add_argument("--ledger", default=common_ledger)
+    triage.add_argument("--inventory", default=common_inventory)
+    triage.set_defaults(func=cmd_triage)
+
+    args = parser.parse_args()
+    return int(args.func(args))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
