@@ -794,7 +794,9 @@ def _launch_training(contract_path: Path, *, resume: bool) -> int:
     validate_contract(contract, verify_model=True)
     if time.time() < int(contract["launch_not_before_unix"]):
         _fail("presentation_window_still_active")
-    python = str(Path(sys.executable).resolve(strict=True))
+    python = str(Path(sys.executable))
+    if not Path(python).exists():
+        _fail("python_launcher_missing")
     tool = str(Path(__file__).resolve(strict=True))
     supplied = contract_path.expanduser()
     if not supplied.is_absolute():

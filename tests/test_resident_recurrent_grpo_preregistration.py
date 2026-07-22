@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+from pathlib import Path
 
 import pytest
 
@@ -138,3 +139,34 @@ def test_resume_verdict_binds_one_complete_checkpoint(tmp_path, monkeypatch):
         adapter
     ).hexdigest()
     assert json.loads(evidence.read_text(encoding="ascii")) == verdict["evidence"]
+
+
+def test_launch_training_preserves_virtualenv_launcher_path(tmp_path, monkeypatch):
+    contract = _contract()
+    contract["paths"]["detached_training"] = "artifacts/run"
+    contract_path = tmp_path / "contract.json"
+    contract_path.write_text(json.dumps(contract), encoding="ascii")
+    venv_python = tmp_path / ".venv" / "bin" / "python"
+    venv_python.parent.mkdir(parents=True)
+    venv_python.symlink_to(Path(__import__("sys").executable))
+    captured: dict[str, object] = {}
+
+    def fake_detached_main(argv):
+        captured["argv"] = list(argv)
+        return 0
+
+    monkeypatch.setattr(prereg, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(prereg.sys, "executable", str(venv_python))
+    monkeypatch.setattr(prereg, "validate_contract", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(prereg.run_detached_step, "main", fake_detached_main)
+
+    assert prereg._launch_training(contract_path, resume=False) == 0
+
+    argv = captured["argv"]
+    assert isinstance(argv, list)
+    verifier = json.loads(argv[argv.index("--resume-verifier-json") + 1])
+    command = argv[argv.index("--resume-verifier-json") + 2 :]
+    assert verifier[0] == str(venv_python)
+    assert command[0] == str(venv_python)
+    assert str(Path(venv_python).resolve()) not in verifier
+    assert str(Path(venv_python).resolve()) not in command

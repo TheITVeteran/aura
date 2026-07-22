@@ -23196,3 +23196,31 @@ This is total checkpoint record 332. The forecast remains 394-661 total
 records, now approximately 62-329 records after this checkpoint. Next: publish
 CP271, launch the repaired detached resident-32B GRPO run, protect it from
 sleep, and continue bounded non-model work while it runs.
+
+## Checkpoint 2026-07-21-272: Detached Resident Launch Preserves Virtualenv
+
+The first CP271 launch failed before model allocation with the same interpreter
+defect seen in CP259 attempt 1. `_launch_training` resolved `sys.executable`
+before handing the command to the detached supervisor, converting
+`.venv/bin/python` into the Homebrew base interpreter and losing the virtual
+environment. The child then failed immediately on
+`ModuleNotFoundError: No module named 'cryptography'`. No model was loaded, no
+optimizer step ran, and the failed CP271 attempt remains an immutable launch
+artifact.
+
+The campaign launcher now preserves the invoked Python launcher path exactly
+and only checks that it exists. This lets the detached supervisor's existing
+virtualenv-launcher binding verify the launcher symlink and `pyvenv.cfg`
+instead of erasing them. A preregistration regression monkeypatches
+`sys.executable` to a `.venv/bin/python` symlink and proves both the target
+command and resume verifier receive that launcher path rather than the resolved
+base interpreter.
+
+Validation is clean: `tests/test_resident_recurrent_grpo_preregistration.py`
+passes all five tests, and bytecode compilation passes for the campaign
+launcher and test file. This is total checkpoint record 333. It removes one
+launch infrastructure blocker but does not claim training progress or gain.
+The forecast remains 394-661 total records, now approximately 61-328 records
+after this checkpoint. Next: publish CP272, regenerate a CP271/CP273 contract
+that binds this launcher fix, relaunch detached training, then monitor for the
+first real calibration/training signal.
