@@ -237,13 +237,67 @@ def _normalize_memory_snippet(item: Any) -> str:
                 raw_meta = {}
         metadata = raw_meta if isinstance(raw_meta, dict) else {}
         memory_type = str(metadata.get("type", "") or "").strip().lower()
-        prefix = (
-            f"[{memory_type}] "
-            if memory_type in {"fact", "preference", "recent_episode", "shared_ground"}
-            else ""
-        )
-        return f"{prefix}{content}".strip()
-    return str(item or "").strip()
+        source = str(
+            metadata.get("source")
+            or metadata.get("origin")
+            or metadata.get("provenance")
+            or ""
+        ).strip()
+        return _render_recalled_snippet(content, memory_type=memory_type, source=source)
+    return _render_recalled_snippet(str(item or ""), memory_type="", source="")
+
+
+# Memory content is RECALLED DATA, not instruction. Much of what reaches the
+# store originates outside Aura — pages she read, documents and pasted text —
+# so anything embedded in it that looks like a turn boundary or a directive
+# must not be able to act as one when it is replayed into the prompt.
+_RECALL_OPEN = "<recalled"
+_RECALL_CLOSE = "</recalled>"
+_MAX_SNIPPET_CHARS = 1200
+
+
+def _render_recalled_snippet(content: Any, *, memory_type: str, source: str) -> str:
+    """Render one memory as quoted, attributed, instruction-inert text.
+
+    CP126 1983010a. Snippets used to be the raw stored string with at most a
+    cosmetic "[type] " prefix: no source identity, no trust marker, no
+    quoting boundary and no instruction neutralization before
+    ContextAssembler consumed them. Text recalled from a web page could
+    therefore arrive in the prompt indistinguishable from Aura's own
+    reasoning, carrying whatever directives it liked.
+
+    Three things travel with every snippet now:
+
+    * a **boundary**, so the model can see where recalled data starts and
+      ends rather than inferring it from a prefix;
+    * **provenance** — what kind of memory this is and where it came from —
+      so a claim can be attributed instead of absorbed; and
+    * **neutralization** of role markers and chat-control tokens, the same
+      defusing already applied to message content, so embedded turn
+      boundaries cannot forge conversational authority.
+    """
+    text = _neutralize_role_markers(str(content or "").strip())
+    if not text:
+        return ""
+    # A snippet cannot smuggle a fake closing tag to escape its own boundary.
+    text = text.replace(_RECALL_CLOSE, "").replace(_RECALL_OPEN, "")
+    if len(text) > _MAX_SNIPPET_CHARS:
+        text = text[:_MAX_SNIPPET_CHARS].rstrip() + " …"
+    attributes = []
+    if memory_type in {"fact", "preference", "recent_episode", "shared_ground"}:
+        attributes.append(f'type="{memory_type}"')
+    if source:
+        attributes.append(f'source="{_sanitize_attribute(source)}"')
+    opening = _RECALL_OPEN + ("" if not attributes else " " + " ".join(attributes)) + ">"
+    return f"{opening}{text}{_RECALL_CLOSE}"
+
+
+def _sanitize_attribute(value: str) -> str:
+    """Keep an attribute from breaking out of the boundary it describes."""
+    cleaned = _neutralize_role_markers(str(value or ""))
+    for character in ('"', "<", ">", "\n", "\r"):
+        cleaned = cleaned.replace(character, "")
+    return cleaned.strip()[:80]
 
 
 async def _call_memory_method(

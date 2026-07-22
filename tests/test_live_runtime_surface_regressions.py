@@ -46,7 +46,6 @@ def test_desktop_origins_are_foreground_across_live_response_stack():
         USER_FACING_ORIGINS,
         inference_gate._USER_FACING_ORIGINS,
         llm_health_router._USER_FACING_ORIGINS,
-        runtime_wiring._USER_FACING_ORIGINS,
         cognitive_routing_unitary._USER_FACING_ORIGINS,
         cognitive_engine._USER_FACING_ORIGINS,
         mlx_client._USER_FACING_ORIGINS,
@@ -55,6 +54,14 @@ def test_desktop_origins_are_foreground_across_live_response_stack():
 
     for origin_set in origin_sets:
         assert expected <= origin_set
+
+    # runtime_wiring no longer keeps its own copy of this set: it delegates
+    # to the canonical core.goals.objective_lifecycle predicate, so the
+    # property is asserted through the behaviour rather than a duplicate
+    # that could drift from it.
+    for origin in expected:
+        assert runtime_wiring.is_user_facing_origin(origin) is True
+    assert runtime_wiring.is_user_facing_origin("background-sweep") is False
 
     controller = flow_control.CognitiveFlowController()
     orch = SimpleNamespace(status=SimpleNamespace(is_processing=True))
