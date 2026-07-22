@@ -87,6 +87,9 @@ _SNAPSHOT_TIMEOUT_S = 20.0
 # body was not observed (host sleep, a stalled pulse loop) and strain is
 # decayed but never invented. Four metabolic pulses.
 _MAX_ATTRIBUTABLE_GAP_S = 240.0
+# Censoring share above which a coverage figure is too conditioned to trust
+# at face value, and bands widen to admit it.
+_HEAVY_CENSORING = 0.5
 # Issuer namespace for ledger identifiers. The forecast ledger is durable and
 # append-only across restarts, so an ID must be unique across every process
 # that ever wrote to it — not merely within this one. A per-process issuer
@@ -639,11 +642,36 @@ class _VitalCalibration:
     def coverage(self) -> Optional[float]:
         return (self.hits / self.scored) if self.scored else None
 
+    @property
+    def censored(self) -> int:
+        """Outcomes removed from scoring because the world changed under them."""
+        return self.intervened + self.superseded
+
+    @property
+    def censored_fraction(self) -> Optional[float]:
+        """Share of resolved forecasts that never reached the denominator.
+
+        Excluding intervened forecasts is right in principle — regulation
+        that prevents a crossing does not falsify the forecast that prompted
+        it — but it is also how a coverage figure stops meaning anything: an
+        engine that escalates on everything excuses everything. The censoring
+        rate has to travel WITH the coverage it conditions.
+        """
+        total = self.scored + self.censored
+        return (self.censored / total) if total else None
+
     def widen_factor(self, *, target_coverage: float, min_scored: int = 5) -> float:
         """Band multiplier from empirical coverage. Poorly calibrated → wider
         bands (honest uncertainty); never narrower than stated (≥ 1.0)."""
         cov = self.coverage
         if cov is None or self.scored < min_scored:
+            # Thin evidence is not evidence of good calibration. If forecasts
+            # ARE resolving but almost all of them are being censored, the
+            # coverage figure rests on a handful of outcomes and the bands
+            # should admit that rather than sit at nominal width.
+            censored_share = self.censored_fraction
+            if censored_share is not None and censored_share >= _HEAVY_CENSORING:
+                return 1.5
             return 1.0
         if cov <= 0.0:
             return 3.0
@@ -658,6 +686,11 @@ class _VitalCalibration:
             "intervened": self.intervened,
             "superseded": self.superseded,
             "scored": self.scored,
+            "censored": self.censored,
+            "censored_fraction": (
+                round(self.censored_fraction, 4)
+                if self.censored_fraction is not None else None
+            ),
             "coverage": round(self.coverage, 4) if self.coverage is not None else None,
         }
 
@@ -1787,6 +1820,9 @@ class AllostasisEngine:
                     "revisions": nearest.revisions,
                     "empirical_coverage": (book.coverage if book else None),
                     "scored_forecasts": (book.scored if book else 0),
+                    # Coverage conditioned on how much was censored out of it.
+                    "censored_forecasts": (book.censored if book else 0),
+                    "censored_fraction": (book.censored_fraction if book else None),
                 }
 
             get_event_bus().publish_threadsafe(

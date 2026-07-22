@@ -256,6 +256,61 @@ class TestPulseDoesNotBlockTheLoop:
         assert "asyncio.TimeoutError" in source
 
 
+class TestCoverageCensoring:
+    """``b90445ef`` — intervened forecasts leave the coverage denominator.
+
+    That exclusion is correct in principle: regulation that prevents a
+    crossing does not falsify the forecast that prompted it. But an engine
+    that escalates on everything would then excuse everything, and the
+    coverage figure would quietly stop meaning anything. The censoring rate
+    now travels with the coverage it conditions, and heavy censoring widens
+    the bands instead of leaving them at nominal width.
+    """
+
+    def _book(self, **kwargs):
+        book = allostasis._VitalCalibration()
+        for name, value in kwargs.items():
+            setattr(book, name, value)
+        return book
+
+    def test_censored_counts_interventions_and_supersessions(self):
+        book = self._book(intervened=3, superseded=2)
+        assert book.censored == 5
+
+    def test_censored_fraction_is_of_all_resolved(self):
+        book = self._book(hits=1, false_alarms=1, intervened=2)
+        assert book.scored == 2
+        assert book.censored_fraction == pytest.approx(0.5)
+
+    def test_no_resolutions_has_no_fraction(self):
+        assert self._book().censored_fraction is None
+
+    def test_heavy_censoring_widens_the_bands(self):
+        # Almost everything excused: coverage rests on one outcome.
+        book = self._book(hits=1, intervened=9)
+        assert book.censored_fraction >= allostasis._HEAVY_CENSORING
+        assert book.widen_factor(target_coverage=0.9) > 1.0
+
+    def test_light_censoring_leaves_bands_nominal(self):
+        book = self._book(hits=4, intervened=1)
+        assert book.censored_fraction < allostasis._HEAVY_CENSORING
+        assert book.widen_factor(target_coverage=0.9) == 1.0
+
+    def test_half_censored_already_counts_as_heavy(self):
+        book = self._book(hits=1, intervened=1)
+        assert book.widen_factor(target_coverage=0.9) > 1.0
+
+    def test_censoring_is_reported_in_the_calibration_surface(self):
+        payload = self._book(hits=2, intervened=2).to_dict()
+        assert payload["censored"] == 2
+        assert payload["censored_fraction"] == pytest.approx(0.5)
+
+    def test_the_threat_contract_carries_the_censoring_rate(self):
+        source = inspect.getsource(AllostasisEngine._raise_protecting)
+        assert '"censored_fraction"' in source
+        assert '"censored_forecasts"' in source
+
+
 class TestTierRestoreCeiling:
     def test_protecting_is_not_restored_without_strain(self, tmp_path):
         engine = _engine(tmp_path)
