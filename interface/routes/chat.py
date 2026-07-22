@@ -12522,6 +12522,98 @@ async def _build_grounded_self_process_repair_reply(
     return " ".join(parts).strip()
 
 
+async def _attempt_generated_social_grounding_repair(
+    user_message: str,
+    rejected_reply: str = "",
+    *,
+    desktop_cognitive_engine_required: bool = False,
+    protected_foreground_lane: bool = False,
+) -> str:
+    """Use the live model once to repair invented people/routing claims.
+
+    The deterministic social floor is still useful when the model lane is down,
+    but normal chat should recover in Aura's own words when a bounded foreground
+    generation is available.
+    """
+
+    allowed, admission_reason = _desktop_secondary_model_repair_allowed(
+        reason="social_grounding_repair",
+        default_enabled=True,
+    )
+    if not allowed:
+        logger.debug("Generated social grounding repair not admitted: %s", admission_reason)
+        return ""
+    try:
+        inference_gate = ServiceContainer.get("inference_gate", default=None)
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat", exc)
+        return ""
+    if inference_gate is None or not hasattr(inference_gate, "think"):
+        return ""
+
+    system_prompt = (
+        "You are Aura. Repair the current user-facing reply because the draft invented "
+        "a person, deployment route, demo slot, or server tier. Answer only the user's "
+        "actual prompt in first person as Aura. Do not mention James, server tiers, "
+        "demo slots, live path slots, routing, policies, receipts, or this repair step "
+        "unless the user explicitly supplied those facts. Keep it brief and natural."
+    )
+    correction_prompt = (
+        "## USER PROMPT\n"
+        f"{_clip_conversation_text(user_message, limit=900)}\n\n"
+        "## REJECTED DRAFT\n"
+        f"{_clip_conversation_text(rejected_reply, limit=900)}\n\n"
+        "Write the corrected reply now."
+    )
+    max_tokens, memory_block = _bound_stabilizer_generation_budget(96)
+    if memory_block:
+        logger.debug("Generated social grounding repair skipped under memory pressure: %s", memory_block)
+        return ""
+    try:
+        repaired = await asyncio.wait_for(
+            inference_gate.think(
+                correction_prompt,
+                system_prompt=system_prompt,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": correction_prompt},
+                ],
+                prefer_tier="primary",
+                origin="api_social_grounding_repair",
+                foreground_request=True,
+                is_background=False,
+                protected_foreground_lane=bool(
+                    protected_foreground_lane or desktop_cognitive_engine_required
+                ),
+                cognitive_engine_required=bool(desktop_cognitive_engine_required),
+                desktop_cognitive_engine_required=bool(desktop_cognitive_engine_required),
+                deep_handoff=False,
+                allow_deep_handoff=False,
+                allow_cloud_fallback=False,
+                skip_runtime_payload=True,
+                disable_prompt_cache=True,
+                clear_prompt_cache=True,
+                max_tokens=max_tokens,
+            ),
+            timeout=18.0 if desktop_cognitive_engine_required else 8.0,
+        )
+    except TimeoutError:
+        logger.warning("Generated social grounding repair timed out; using bounded social floor.")
+        return ""
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat", exc)
+        logger.debug("Generated social grounding repair failed: %s", exc)
+        return ""
+
+    cleaned = _apply_aura_voice_shaping_compat(
+        _strip_user_visible_context_leaks(
+            _strip_unexpected_cjk_artifacts(user_message, str(repaired or "").strip())
+        ),
+        user_message,
+    ).strip()
+    return cleaned if len(cleaned) >= 4 else ""
+
+
 def _humanize_self_process_dimensions(dimensions: Sequence[str]) -> str:
     labels = {
         "attention": "where my attention is",
@@ -12952,6 +13044,24 @@ async def _stabilize_user_facing_reply(
         try:
             from core.conversation.response_reliability import grounded_social_repair_reply
 
+            social_repair = await _attempt_generated_social_grounding_repair(
+                user_message,
+                text,
+                desktop_cognitive_engine_required=desktop_cognitive_engine_required,
+                protected_foreground_lane=protected_foreground_lane,
+            )
+            if social_repair:
+                social_assessment = assess_user_facing_reply(
+                    user_message,
+                    social_repair,
+                    recent_user_messages=recent_user_messages,
+                )
+                if not _reply_assessment_requires_repair(social_assessment):
+                    logger.info(
+                        "Stabilizer repaired an ungrounded social/deployment draft "
+                        "with bounded foreground generation."
+                    )
+                    return social_repair
             social_repair = grounded_social_repair_reply(user_message)
             if social_repair:
                 social_assessment = assess_user_facing_reply(

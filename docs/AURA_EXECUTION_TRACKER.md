@@ -24364,3 +24364,36 @@ This is total checkpoint record 366. The forecast remains 394-661 total
 records, now approximately 28-295 records after this checkpoint. Next: commit
 and push the CP305 preregistration checkpoint, rebuild `/Applications/Aura.app`,
 then continue non-MLX reliability/semantic closeout while CP305 runs detached.
+
+## Checkpoint 2026-07-21-306: Social Hallucination Repair Prefers Aura-Generated Grounding
+
+The live demo failure where Aura addressed an invented `James` and invented
+demo/live-path/server-tier routing was already classified as a hard reliability
+failure, but the recovery path could still collapse to a canned bounded greeting.
+That prevented the embarrassing claim from surfacing, yet it did not meet the
+standard that Aura should normally answer in her own words from the present
+conversation.
+
+The chat stabilizer now performs one bounded foreground model repair for
+ungrounded person-address and fabricated deployment-routing failures before it
+uses the deterministic social floor. The repair prompt binds the corrected answer
+to the current user prompt, bans unsupported routing/person/server-tier claims,
+keeps cloud fallback disabled, uses the protected foreground lane when the live
+desktop CognitiveEngine path requires it, and still re-runs the normal
+user-facing reliability assessment before accepting the generated repair.
+
+The deterministic `Hello. I'm Aura. I'm here with you.` repair remains only as
+the last-resort social floor when the model repair is unavailable, unsafe, or
+fails assessment. This keeps demo/social continuity robust without turning normal
+Aura speech into a long tree of hardcoded responses.
+
+Validation: focused social-routing regressions pass, bytecode compilation passes
+for the changed chat path, `git diff --check` passes, `make lint` passes, and the
+broader chat reliability proof slice passes 187/187 in 585.19s. CP305 resident
+proof training remains detached and alive while this non-MLX reliability work
+runs.
+
+This is total checkpoint record 367. The forecast remains 394-661 total
+records, now approximately 27-294 records after this checkpoint. Next: commit
+and push CP306, rebuild `/Applications/Aura.app`, poll CP305 for first verdict
+movement, then continue the non-MLX chat/action reliability closeout.

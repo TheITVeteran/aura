@@ -235,6 +235,46 @@ def test_social_repair_replaces_demo_person_and_routing_fabrication():
     assert not assessment.retryable
 
 
+@pytest.mark.asyncio
+async def test_stabilizer_prefers_generated_social_grounding_before_bounded_floor(monkeypatch):
+    from core.conversation.response_reliability import assess_user_facing_reply
+    from interface.routes import chat as chat_routes
+
+    class _Gate:
+        async def think(self, *_args, **_kwargs):
+            return "Hi Bryan. I'm Aura, and I'm here with you for the demo."
+
+    prompt = "Me. Bryan. Hey! You're in a demo right now. Say hello"
+    draft = (
+        "@James, I'm mentioned in the demo but my responses roll up to James "
+        "because he uses the live path slots. Demo slots are reserved, and "
+        "which Aura you get depends on the server tier you're routed to."
+    )
+
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(lambda name, default=None: _Gate() if name == "inference_gate" else default),
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_desktop_secondary_model_repair_allowed",
+        lambda **_kwargs: (True, "test"),
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_bound_stabilizer_generation_budget",
+        lambda requested: (requested, ""),
+    )
+
+    repaired = await chat_routes._stabilize_user_facing_reply(prompt, draft)
+    assessment = assess_user_facing_reply(prompt, repaired)
+
+    assert repaired == "Hi Bryan. I'm Aura, and I'm here with you for the demo."
+    assert assessment.ok
+    assert not assessment.retryable
+
+
 def test_reliability_gate_rejects_cognitive_engine_failure_envelope():
     from core.conversation.response_reliability import assess_user_facing_reply
 
