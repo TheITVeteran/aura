@@ -1,14 +1,123 @@
 """core/actuators/git_pkg_actuators.py
 ===================================
 Actuators for Git and package installation operations.
+
+Hardening (CP126): git runs only inside a confined workspace root, refuses
+option-injection in user positionals (end-of-options `--`), validates clone
+URL scheme/host and destination containment, and records a pre-op HEAD for
+mutating operations. Package installs are pinned by default, reject flag-like
+specs, run non-interactively, and have their output bounded and credential-
+redacted.
 """
 
+import os
+import re
 import subprocess
 import sys
-import re
 from typing import Any
-from core.actuators.actuator_registry import BaseActuator, ActuatorResult
+from urllib.parse import urlparse
+
+from core.actuators.actuator_registry import ActuatorResult, BaseActuator
 from core.runtime.subprocess_gateway import get_subprocess_gateway
+
+# ── Shared constraints ───────────────────────────────────────────────────────
+
+_MAX_OUTPUT_CHARS = 64 * 1024
+
+_CLONE_ALLOWED_SCHEMES = {"https", "ssh", "git"}
+_PRIVATE_HOST_MARKERS = (
+    "localhost", "127.0.0.1", "0.0.0.0", "::1",
+    "169.254.169.254",  # cloud metadata endpoint
+    ".internal", ".local",
+)
+# Package spec: a name with optional extras and a version specifier. Must NOT
+# start with a hyphen (which would be parsed as a pip option).
+_PACKAGE_SPEC_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\-]*(\[[A-Za-z0-9,._\-]+\])?([=<>!~]=?[A-Za-z0-9._\-*,]+)*$")
+_REF_RE = re.compile(r"^[A-Za-z0-9._/@+\-]+$")
+
+
+def _workspace_root() -> str:
+    root = os.environ.get("AURA_GIT_WORKSPACE", "").strip() or os.getcwd()
+    return os.path.realpath(os.path.abspath(root))
+
+
+def _validate_git_cwd(requested: Any, root: str) -> tuple[str | None, str]:
+    if requested is None:
+        return root, ""
+    if not isinstance(requested, str) or not requested.strip():
+        return None, "cwd must be a non-empty string"
+    resolved = os.path.realpath(os.path.abspath(requested))
+    if resolved != root and not resolved.startswith(root + os.sep):
+        return None, f"cwd escapes the git workspace root ({root})"
+    if not os.path.isdir(resolved):
+        return None, f"cwd does not exist: {resolved}"
+    return resolved, ""
+
+
+def _safe_positional(value: Any, *, kind: str) -> tuple[str | None, str]:
+    """Reject option-injection and control characters in a user positional."""
+    if not isinstance(value, str) or not value.strip():
+        return None, f"{kind} must be a non-empty string"
+    if value.startswith("-"):
+        return None, f"{kind} may not start with '-' (option injection)"
+    if any(c in value for c in "\x00\n\r"):
+        return None, f"{kind} contains control characters"
+    return value, ""
+
+
+def _validate_ref(value: Any, *, kind: str) -> tuple[str | None, str]:
+    ok, err = _safe_positional(value, kind=kind)
+    if ok is None:
+        return None, err
+    if ".." in value or not _REF_RE.match(value):
+        return None, f"{kind} is not a valid git ref"
+    return value, ""
+
+
+def _validate_clone_url(url: Any) -> tuple[str | None, str]:
+    if not isinstance(url, str) or not url.strip() or url.startswith("-"):
+        return None, "clone url is missing or malformed"
+    if any(c in url for c in "\x00\n\r"):
+        return None, "clone url contains control characters"
+    # scp-like syntax: user@host:path
+    scp = re.match(r"^[A-Za-z0-9._%+\-]+@([A-Za-z0-9._\-]+):", url)
+    host = scp.group(1) if scp else (urlparse(url).hostname or "")
+    scheme = "ssh" if scp else urlparse(url).scheme.lower()
+    if scheme not in _CLONE_ALLOWED_SCHEMES:
+        return None, f"clone scheme '{scheme}' is not allowed (use https/ssh/git)"
+    if not host:
+        return None, "clone url has no host"
+    low = host.lower()
+    if any(marker in low for marker in _PRIVATE_HOST_MARKERS):
+        return None, f"clone host '{host}' is not permitted"
+    return url, ""
+
+
+def _validate_dest_path(path: Any, root: str) -> tuple[str | None, str]:
+    if path is None:
+        return None, ""  # optional
+    if not isinstance(path, str) or not path.strip() or path.startswith("-"):
+        return None, "clone destination is malformed"
+    resolved = os.path.realpath(os.path.abspath(path))
+    if resolved != root and not resolved.startswith(root + os.sep):
+        return None, "clone destination escapes the workspace root"
+    return resolved, ""
+
+
+def _bound(text: Any) -> str:
+    s = str(text or "")
+    if len(s) > _MAX_OUTPUT_CHARS:
+        return s[:_MAX_OUTPUT_CHARS] + f"\n...[truncated {len(s) - _MAX_OUTPUT_CHARS} chars]"
+    return s
+
+
+def _redact_urls(text: str) -> str:
+    """Strip credentials embedded in URLs from tool output."""
+    return re.sub(r"(\w+://)[^/\s:@]+:[^/\s@]+@", r"\1***:***@", text)
+
+
+def _clean_output(text: Any) -> str:
+    return _bound(_redact_urls(str(text or "")))
 
 
 class GitActuator(BaseActuator):
@@ -32,6 +141,8 @@ class GitActuator(BaseActuator):
             return False
         if action == "commit" and "message" not in params:
             return False
+        if action == "checkout" and "branch_or_commit" not in params:
+            return False  # required target validated up front, never a KeyError
         if action in {"branch", "commit", "checkout"} and not bool(params.get("allow_mutation")):
             return False
         if action == "clone" and not bool(params.get("allow_external_clone")):
@@ -45,51 +156,102 @@ class GitActuator(BaseActuator):
             return ActuatorResult(False, "Invalid git action or missing parameters.", {})
 
         action = params["action"]
-        import os
-        cwd = params.get("cwd") or os.getcwd()
+        root = _workspace_root()
+        cwd, cwd_err = _validate_git_cwd(params.get("cwd"), root)
+        if cwd is None:
+            return ActuatorResult(False, f"Refused git op: {cwd_err}", {})
 
-        cmd = ["git"]
-        if action == "clone":
-            cmd.extend(["clone", params["url"]])
-            if "path" in params:
-                cmd.append(params["path"])
-        elif action == "commit":
-            cmd.extend(["commit", "-m", params["message"]])
-        elif action == "checkout":
-            cmd.extend(["checkout", params["branch_or_commit"]])
-        elif action == "diff":
-            cmd.extend(["diff"])
-            if "target" in params:
-                cmd.append(params["target"])
-        elif action == "branch":
-            cmd.extend(["branch"])
-            if "name" in params:
-                cmd.append(params["name"])
-        elif action == "status":
-            cmd.extend(["status"])
-        elif action == "log":
-            cmd.extend(["log", "-n", str(params.get("n", 5))])
+        cmd, build_err = self._build_command(action, params, root)
+        if cmd is None:
+            return ActuatorResult(False, f"Refused git op: {build_err}", {})
+
+        # Precondition for mutating ops: capture the pre-op HEAD as a rollback
+        # ref, and honor an optional expected_head guard.
+        pre_head = ""
+        if action in {"commit", "checkout", "branch"}:
+            pre_head = self._current_head(cwd)
+            expected = params.get("expected_head")
+            if isinstance(expected, str) and expected and pre_head and not pre_head.startswith(expected):
+                return ActuatorResult(
+                    False,
+                    f"Refused git {action}: expected HEAD {expected} but repository is at {pre_head[:12]}.",
+                    {"pre_op_head": pre_head},
+                )
 
         try:
-            res = get_subprocess_gateway().run(
-                cmd,
-                cwd=cwd,
-                timeout=30.0,
-                source="git_actuator",
-            )
+            res = get_subprocess_gateway().run(cmd, cwd=cwd, timeout=30.0, source="git_actuator")
             success = res.returncode == 0
-            msg = f"Git {action} executed with exit code {res.returncode}."
-            return ActuatorResult(
-                success=success,
-                message=msg,
-                updates={
-                    "exit_code": res.returncode,
-                    "stdout": res.stdout,
-                    "stderr": res.stderr
-                }
-            )
+            updates = {
+                "exit_code": res.returncode,
+                "stdout": _clean_output(res.stdout),
+                "stderr": _clean_output(res.stderr),
+            }
+            if pre_head:
+                updates["pre_op_head"] = pre_head
+            return ActuatorResult(success, f"Git {action} executed with exit code {res.returncode}.", updates)
         except (subprocess.SubprocessError, OSError, ValueError) as e:
             return ActuatorResult(False, f"Git execution failed: {e}", {})
+
+    def _build_command(self, action: str, params: dict[str, Any], root: str) -> tuple[list[str] | None, str]:
+        """Assemble a git argv with option-injection guards and `--` separators."""
+        if action == "status":
+            return ["git", "status"], ""
+        if action == "log":
+            try:
+                n = max(1, min(1000, int(params.get("n", 5))))
+            except (TypeError, ValueError):
+                return None, "log count must be an integer"
+            return ["git", "log", "-n", str(n)], ""
+        if action == "diff":
+            cmd = ["git", "diff"]
+            if "target" in params:
+                target, err = _safe_positional(params["target"], kind="diff target")
+                if target is None:
+                    return None, err
+                cmd += ["--", target]
+            return cmd, ""
+        if action == "branch":
+            cmd = ["git", "branch"]
+            if "name" in params:
+                name, err = _validate_ref(params["name"], kind="branch name")
+                if name is None:
+                    return None, err
+                cmd += ["--", name]
+            return cmd, ""
+        if action == "commit":
+            message = params["message"]
+            if not isinstance(message, str) or not message.strip():
+                return None, "commit message must be a non-empty string"
+            return ["git", "commit", "-m", message], ""
+        if action == "checkout":
+            ref, err = _validate_ref(params["branch_or_commit"], kind="checkout target")
+            if ref is None:
+                return None, err
+            return ["git", "checkout", "--", ref], ""
+        if action == "clone":
+            url, err = _validate_clone_url(params.get("url"))
+            if url is None:
+                return None, err
+            cmd = ["git", "clone", "--", url]
+            dest, derr = _validate_dest_path(params.get("path"), root)
+            if params.get("path") is not None:
+                if dest is None:
+                    return None, derr
+                cmd.append(dest)
+            return cmd, ""
+        return None, f"unsupported action: {action}"
+
+    @staticmethod
+    def _current_head(cwd: str) -> str:
+        try:
+            res = get_subprocess_gateway().run(
+                ["git", "rev-parse", "HEAD"], cwd=cwd, timeout=10.0, source="git_actuator_precondition"
+            )
+            if res.returncode == 0:
+                return str(res.stdout or "").strip()
+        except (subprocess.SubprocessError, OSError, ValueError):
+            return ""
+        return ""
 
 
 class PackageInstallActuator(BaseActuator):
@@ -109,7 +271,7 @@ class PackageInstallActuator(BaseActuator):
         pkg = params["package_name"]
         if not isinstance(pkg, str) or not pkg.strip():
             return False
-        if not re.match(r"^[a-zA-Z0-9_\-\[\]>=<.,]+$", pkg):
+        if not _PACKAGE_SPEC_RE.match(pkg.strip()):
             return False
         if not bool(params.get("allow_install")):
             return False
@@ -121,25 +283,33 @@ class PackageInstallActuator(BaseActuator):
         if not self.validate_params(params):
             return ActuatorResult(False, "Safety validation failed: package name or explicit install approval is invalid.", {})
 
-        pkg = params["package_name"]
-        cmd = [sys.executable, "-m", "pip", "install", pkg]
+        pkg = params["package_name"].strip()
+
+        # Pinned by default: an unpinned spec can silently install a different
+        # version (or a typo-squat) on every run. Opt out explicitly.
+        allow_unpinned = str(os.environ.get("AURA_PKG_ALLOW_UNPINNED", "")).strip().lower() in {"1", "true", "yes", "on"}
+        if "==" not in pkg and not allow_unpinned and not bool(params.get("allow_unpinned")):
+            return ActuatorResult(
+                False,
+                f"Refused install: '{pkg}' is not version-pinned (use name==X.Y.Z or set allow_unpinned).",
+                {},
+            )
+
+        # `--` terminates option parsing so a spec can never become a pip flag.
+        cmd = [sys.executable, "-m", "pip", "install", "--no-input", "--disable-pip-version-check", "--", pkg]
 
         try:
-            res = get_subprocess_gateway().run(
-                cmd,
-                timeout=120.0,
-                source="package_install_actuator",
-            )
+            res = get_subprocess_gateway().run(cmd, timeout=120.0, source="package_install_actuator")
             success = res.returncode == 0
-            msg = f"Package '{pkg}' installation finished with exit code {res.returncode}."
             return ActuatorResult(
-                success=success,
-                message=msg,
-                updates={
+                success,
+                f"Package '{pkg}' installation finished with exit code {res.returncode}.",
+                {
                     "exit_code": res.returncode,
-                    "stdout": res.stdout,
-                    "stderr": res.stderr
-                }
+                    "stdout": _clean_output(res.stdout),
+                    "stderr": _clean_output(res.stderr),
+                    "pinned": "==" in pkg,
+                },
             )
         except (subprocess.SubprocessError, OSError, ValueError) as e:
             return ActuatorResult(False, f"Package installation failed: {e}", {})
