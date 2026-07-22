@@ -76,7 +76,7 @@ def test_chat_confirmation_modal_retries_original_turn_without_duplicate_render(
     assert "approvalStatus === 'approval_required'" in JS
     assert "approvalStatus === 'require_fresh_user_auth'" in JS
     assert "(approval && approval.challenge_id)" in JS
-    assert "() => runChatRequest(msg, { messageAlreadyRendered: true })" in JS
+    assert "void runChatRequest(item, { messageAlreadyRendered: true })" in JS
     assert "await confirmNextRuntimeAction(challengeId)" in JS
     assert "JSON.stringify({ challenge_id: String(challengeId || '') })" in JS
     assert "'/api/settings/auth/revoke'" in JS
