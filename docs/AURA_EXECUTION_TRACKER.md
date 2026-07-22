@@ -25267,3 +25267,51 @@ count completion is approximately 53.1%-83.5%, with a midpoint planning
 estimate of 64.9%. Next: publish CP328, then implement distinct executable
 cognitive operator policies and their causal role/lesion proof. Final
 multi-hour soaks remain deferred until every shorter gate is green.
+
+## Checkpoint 2026-07-22-329: Cognitive Roles Become Different Programs
+
+Branch roles are no longer labels that seed different vectors and then run the
+same update. Aura now has nine executable latent cognitive programs: direct
+derivation, constructive solution, counterexample, inverse reasoning, causal
+simulation, formalization, analogy mapping, assumption removal, and boundary-
+case analysis. Their mechanics differ in slot targeting, anchor use, relation
+transport, projection, finite differences, sign reversal, and extrapolation.
+Every update remains RMS-bounded and leaves admitted context/evidence slots
+unchanged.
+
+Every neural value-of-computation action now invokes each live branch's bound
+program before recurrence, including BLIND_RESOLVE and BRANCH, which previously
+ran recurrence without an operator transform. When no tokenizer is available,
+the engine creates deterministic hidden-space action controls instead of
+silently dropping the operator. Role changes through the attractor-escape ladder
+change the executable operator as well; savepoints restore role and operator
+atomically.
+
+The public operator receipt binds the exact program/transform, branch, action,
+action step, bounded strength, changed and protected slots, and content digests
+for input, output, anchor, and control. It must prove a changed output. The
+service validates every receipt, requires one unique operator per active branch
+for each neural action, rejects operators on structural actions, and rejects
+orphaned steps, duplicate branch/program coverage, role/program mismatch,
+protected-slot mutation claims, non-causal outputs, or digest tampering.
+
+Validation: identical-input tensor tests prove all nine programs produce nine
+different state digests and nine different transforms while preserving both
+protected context slots. The integrated operator, engine, branch, wiring,
+escape, and durable-operation suite passes 187/187. The fixed-snapshot RLC,
+latent-cortex, GWT, and execution-controller gate passes 861/861 in 440.53
+seconds. Strict new-module Ruff, focused lint, bytecode compilation, and
+`git diff --check` pass.
+
+SPARK-015 closes. This does not claim the operators improve task accuracy or
+have independent error structure: SPARK-016-020 still require structural
+fingerprints, correlated-support discount, blind/decoy review, and a disjoint
+critic; SPARK-021-022 still require causal exchange and equal-compute proof.
+No resident-32B or frontier gain is claimed.
+
+This is total checkpoint record 390. The revised forecast remains 466-733 total
+records, now approximately 76-343 records after this checkpoint. Checkpoint-
+count completion is approximately 53.2%-83.7%, with a midpoint planning
+estimate of 65.1%. Next: publish CP329, then implement structural reasoning
+fingerprints and reject stylistic or causally duplicate branch support. Final
+multi-hour soaks remain deferred until every shorter gate is green.

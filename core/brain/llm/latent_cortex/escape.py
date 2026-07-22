@@ -280,6 +280,9 @@ class BranchEscapeLadder:
             z = 0.5 * base + 0.5 * branch.anchor + jitter
         elif rung == "role_shift":
             from core.brain.llm.latent_cortex.branches import BRANCH_ROLES
+            from core.brain.llm.latent_cortex.cognitive_operators import (
+                operator_for_role,
+            )
 
             new_role = next(
                 (role for role in BRANCH_ROLES if role != branch.role),
@@ -292,6 +295,7 @@ class BranchEscapeLadder:
             scale = 0.1 * mx.mean(per_position_rms(base))
             z = base + scale * direction[None, None, :]
             branch.role = new_role
+            branch.operator = operator_for_role(new_role)
         elif rung == "matched_perturbation":
             key = mx.random.key(9001 + 97 * self.branch_index + attempt_index)
             noise = mx.random.normal(base.shape, key=key)

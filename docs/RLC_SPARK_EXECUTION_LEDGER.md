@@ -78,6 +78,10 @@ After CP328, the published total is record 389: 77-344 forecast records remain,
 checkpoint-count completion is 53.1%-83.5%, and the midpoint planning estimate
 is 64.9%.
 
+After CP329, the published total is record 390: 76-343 forecast records remain,
+checkpoint-count completion is 53.2%-83.7%, and the midpoint planning estimate
+is 65.1%.
+
 ## Code-grounded baseline and ownership
 
 The four-slice static audit covered the neural core, epistemic/verifier paths,
@@ -86,7 +90,7 @@ entire Spark source and traced callers rather than crediting class names. The
 baseline below is exhaustive over SPARK-001 through SPARK-072:
 
 - `ACCEPTED`: SPARK-001, SPARK-005, SPARK-006, SPARK-007, SPARK-008, SPARK-009,
-  SPARK-010, SPARK-011, SPARK-012, SPARK-014.
+  SPARK-010, SPARK-011, SPARK-012, SPARK-014, SPARK-015.
 - `PARTIAL`: SPARK-003,
   SPARK-021, SPARK-022, SPARK-023, SPARK-024, SPARK-025,
   SPARK-026, SPARK-027, SPARK-035, SPARK-039, SPARK-040, SPARK-041,
@@ -94,7 +98,7 @@ baseline below is exhaustive over SPARK-001 through SPARK-072:
   SPARK-056, SPARK-058, SPARK-060, SPARK-062, SPARK-063, SPARK-065, SPARK-066,
   SPARK-067.
 - `MISSING`: SPARK-002,
-  SPARK-015, SPARK-016, SPARK-017, SPARK-018, SPARK-019, SPARK-020,
+  SPARK-016, SPARK-017, SPARK-018, SPARK-019, SPARK-020,
   SPARK-028, SPARK-029, SPARK-030, SPARK-031, SPARK-032, SPARK-033,
   SPARK-034, SPARK-036, SPARK-037, SPARK-038, SPARK-043, SPARK-044,
   SPARK-045, SPARK-046, SPARK-047, SPARK-048, SPARK-049, SPARK-050,
@@ -327,10 +331,31 @@ before those dependencies close is not admissible.
   independence. Focused branch/engine/wiring contracts pass 150/150; the fixed
   ownership gate passes 857/857, and forged receipt checks pass 1/1. This closes
   isolation mechanics, not differentiated operator labor or capability gain.
-- [ ] **SPARK-015 - Distinct cognitive operators.** Implement direct,
+- [x] **SPARK-015 - Distinct cognitive operators.** Implement direct,
   constructive, counterexample, inverse, causal simulation, formal, analogy-
   mapping, assumption-removal, and boundary-case operators as different
   executable policies, not labels on equivalent prompts.
+  Accepted at CP329: the recurrent engine now owns nine versioned latent
+  programs with distinct state-transition mathematics: single control write,
+  progressive scaffold, hypothesis sign reversal, reverse slot transport,
+  finite-difference rollout, control-axis projection, paired-relation
+  transport, maximum-alignment subtraction, and signed boundary extrapolation.
+  Every live branch executes the program bound to its role before recurrence;
+  BLIND_RESOLVE and BRANCH no longer bypass operator control, and tokenizer-free
+  runs receive deterministic hidden-space controls. Programs use different
+  slot targets, anchor relationships, and strengths, while exact RMS bounds and
+  protected context/evidence slots constrain every update.
+
+  Each execution carries content-addressed input/output/anchor/control digests,
+  changed and protected slots, role, operator, action, step, branch, transform,
+  and causal verdict. The service validates program identity and complete,
+  unique per-branch coverage for every neural action and rejects malformed,
+  duplicate, orphaned, structural-action, or non-causal claims. Operator
+  identity is part of savepoints and escape role shifts. Identical-input tests
+  prove all nine programs produce nine distinct outputs and transforms; the
+  integrated operator/engine/service/escape/journal suite passes 187/187 and
+  the fixed ownership gate passes 861/861. This closes executable distinction,
+  not task-level superiority, structural-independence scoring, or frontier gain.
 - [ ] **SPARK-016 - Structural diversity measurement.** Fingerprint premises,
   dependencies, algorithms, intermediate states, predictions, and failure
   conditions; reject stylistic paraphrases as independent evidence.
@@ -594,15 +619,18 @@ CP327 makes the full action vocabulary causal inside recurrent execution and
 persists checked outcomes; it does not change the negative capability verdict.
 CP328 closes fresh-context branch isolation and exact cache restoration; it does
 not change the negative capability verdict.
+CP329 closes the nine-program executable cognitive-operator bank; it does not
+change the negative capability verdict.
 
-Validation: focused branch, engine, and wiring contracts pass 150/150. The
+Validation: the integrated operator, engine, branch, wiring, escape, and journal
+contracts pass 187/187. The
 fixed-snapshot integrated RLC, latent-cortex, GWT, and execution-controller gate
-passes 857/857 in 436.98 seconds, and adversarial service reconstruction passes
-1/1. Focused Ruff, bytecode compilation, and `git diff --check` pass. No
-resident 32B campaign was run, and the negative frontier verdict is unchanged.
+passes 861/861 in 440.53 seconds. Strict new-module Ruff, focused lint, bytecode
+compilation, and `git diff --check` pass. No resident 32B campaign was run, and
+the negative frontier verdict is unchanged.
 
-This is total checkpoint record 389. The revised forecast remains 466-733 total
-records, now approximately 77-344 records after this checkpoint. Checkpoint-
-count completion is approximately 53.1%-83.5%, with a midpoint planning
-estimate of 64.9%. Next: publish CP328, then implement distinct executable
-cognitive operator policies and their causal role/lesion proof.
+This is total checkpoint record 390. The revised forecast remains 466-733 total
+records, now approximately 76-343 records after this checkpoint. Checkpoint-
+count completion is approximately 53.2%-83.7%, with a midpoint planning
+estimate of 65.1%. Next: publish CP329, then implement structural reasoning
+fingerprints and reject stylistic or causally duplicate branch support.

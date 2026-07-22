@@ -52,7 +52,7 @@ from core.brain.llm.latent_cortex.value_of_computation import (
     transition_reward,
     validate_evidence_snapshot,
 )
-from core.brain.llm.latent_cortex.workspace import per_position_rms
+from core.brain.llm.latent_cortex.workspace import per_position_rms, role_anchor
 from core.runtime.errors import record_degradation
 
 # Cognitive-slot sources whose content is RETRIEVED knowledge (already
@@ -92,6 +92,8 @@ _SENTENCE_GRACE_TOKENS = 48
 _SENTENCE_TERMINALS = (".", "!", "?", ".\n", "!\n", "?\n")
 
 _ACTION_CONTROL_TEXT: dict[OperationKind, str] = {
+    OperationKind.BLIND_RESOLVE: "Derive a candidate directly from the original problem without peer answers.",
+    OperationKind.BRANCH: "Advance the private branch strategy without importing another branch state.",
     OperationKind.DECOMPOSE: "Separate the problem into explicit dependencies and subproblems.",
     OperationKind.SEARCH_MEMORY: "Inspect relevant remembered context as evidence, not authority.",
     OperationKind.RETRIEVE_EVIDENCE: "Identify and use the most discriminating available evidence.",
@@ -434,13 +436,24 @@ class LatentCortexEngine:
     def _embed_action_controls(self) -> dict[OperationKind, object]:
         """Embed each neural cognitive operator once per episode."""
 
+        import mlx.core as mx
+
         rows = self._embed_cognitive_context(
             [
                 {"source": action.value, "text": instruction}
                 for action, instruction in _ACTION_CONTROL_TEXT.items()
             ]
         )
-        return {OperationKind(source): vector for source, vector in rows}
+        controls = {OperationKind(source): vector for source, vector in rows}
+        dim = int(self.model.model.embed_tokens.weight.shape[-1])
+        embedding_rms = mx.mean(per_position_rms(self.model.model.embed_tokens.weight))
+        for action in _ACTION_CONTROL_TEXT:
+            if action in controls:
+                continue
+            direction = role_anchor(f"cognitive-action:{action.value}", dim)
+            controls[action] = direction.reshape(1, 1, dim) * embedding_rms
+            mx.eval(controls[action])
+        return controls
 
     @staticmethod
     def _mean_latest_residual(ensemble: BranchEnsemble) -> float:
@@ -1392,6 +1405,7 @@ class LatentCortexEngine:
             has_verifier=verifier is not None and self.tokenizer is not None,
         )
         selected_actions: list[OperationKind] = []
+        cognitive_operator_trace: list[dict[str, Any]] = []
         action_index = 0
         previous_residual = 1.0
         previous_verifier_score: float | None = None
@@ -1555,8 +1569,15 @@ class LatentCortexEngine:
                 if action is OperationKind.REGENERATE_FROM_PREFIX:
                     affected_branches += ensemble.revert_all_to_savepoint()
                 if action in _ACTION_CONTROL_TEXT:
-                    affected_branches += ensemble.inject_control(
-                        action_controls[action]
+                    operator_receipts = ensemble.apply_cognitive_operators(
+                        action_controls[action],
+                        action=action.value,
+                        action_step=action_index,
+                    )
+                    cognitive_operator_trace.extend(operator_receipts)
+                    affected_branches = max(
+                        affected_branches,
+                        len(operator_receipts),
                     )
                 if action in {
                     OperationKind.DECOMPOSE,
@@ -1756,6 +1777,7 @@ class LatentCortexEngine:
                 break
         if bytecode_events:
             receipt.bytecode_events = bytecode_events
+        receipt.cognitive_operator_trace = cognitive_operator_trace
         receipt.value_of_computation.update(
             {
                 "executors": [action.value for action in action_executors],

@@ -27,6 +27,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from core.brain.llm.latent_cortex.cognitive_operators import (
+    CognitiveOperator,
+    execute_cognitive_operator,
+    operator_for_role,
+)
 from core.brain.llm.latent_cortex.escape import BranchEscapeLadder, EscapeConfig
 from core.brain.llm.latent_cortex.recurrence import (
     HaltingController,
@@ -92,6 +97,7 @@ class BranchState:
     candidate_sha256: str = ""
     candidate_step: int = 0
     rng_stream_sha256: str = ""
+    operator: CognitiveOperator = CognitiveOperator.DIRECT_DERIVATION
 
     def to_receipt(self) -> dict[str, Any]:
         receipt = {
@@ -180,6 +186,7 @@ class BranchEnsemble:
                 if role_override
                 else BRANCH_ROLES[k % len(BRANCH_ROLES)]
             )
+            operator = operator_for_role(role)
             ws = LatentWorkspace.from_prompt_embeddings(
                 prompt_embeddings,
                 workspace_cfg,
@@ -214,6 +221,7 @@ class BranchEnsemble:
                     rng_stream_sha256=hashlib.sha256(
                         f"{role}:{_role_seed(role, workspace_cfg.seed)}".encode()
                     ).hexdigest(),
+                    operator=operator,
                 )
             )
         ensemble = cls(branches, branch_cfg, recurrence_cfg)
@@ -447,6 +455,7 @@ class BranchEnsemble:
             branch.savepoint = {
                 "z": branch.z,
                 "role": branch.role,
+                "operator": branch.operator.value,
                 "halted": branch.halted,
                 "halt_reason": branch.halt_reason,
                 "steps": branch.steps,
@@ -467,6 +476,7 @@ class BranchEnsemble:
         required = {
             "z",
             "role",
+            "operator",
             "halted",
             "halt_reason",
             "steps",
@@ -481,6 +491,7 @@ class BranchEnsemble:
         branch.z = snapshot["z"]
         branch.workspace.update(branch.z)
         branch.role = str(snapshot["role"])
+        branch.operator = CognitiveOperator(snapshot["operator"])
         branch.halted = bool(snapshot["halted"])
         branch.halt_reason = str(snapshot["halt_reason"])
         branch.steps = int(snapshot["steps"])
@@ -526,6 +537,40 @@ class BranchEnsemble:
         if changed:
             mx.eval(*[branch.z for branch in self.active()])
         return changed
+
+    def apply_cognitive_operators(
+        self,
+        control,
+        *,
+        action: str,
+        action_step: int,
+    ) -> list[dict[str, Any]]:
+        """Run each live branch's distinct executable strategy privately."""
+
+        receipts: list[dict[str, Any]] = []
+        for branch in self.active():
+            protected = tuple(
+                int(item["slot"])
+                for item in branch.workspace.context_slots
+                if isinstance(item, dict) and type(item.get("slot")) is int
+            )
+            output, receipt = execute_cognitive_operator(
+                branch.z,
+                branch.anchor,
+                control,
+                operator=branch.operator,
+                role=branch.role,
+                branch_index=branch.index,
+                action=action,
+                action_step=action_step,
+                protected_slots=protected,
+                comm_slot=int(self.config.comm_slot),
+                rms_clip_ratio=float(self.recurrence.rms_clip_ratio),
+            )
+            branch.z = output
+            branch.workspace.update(output)
+            receipts.append(receipt)
+        return receipts
 
     def compress_state(self, *, strength: float = 0.25) -> int:
         """Fold global branch summaries into comm slots without erasing detail."""

@@ -7,6 +7,7 @@ the seam the live path uses.
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import queue
 from types import SimpleNamespace
@@ -437,6 +438,28 @@ def test_handler_runs_full_episode_on_tiny_model(monkeypatch, tmp_path):
     assert policy["actions_selected"] <= 4
     assert "execute" not in policy["executors"]
     assert all(row["decision"]["action"] in policy["executors"] for row in trace)
+    operators = body["receipt"]["cognitive_operator_trace"]
+    assert operators
+    assert {row["operator"] for row in operators} == {
+        "constructive_solution",
+        "counterexample",
+    }
+    contract_config = {
+        "n_slots": 4,
+        "n_branches": 2,
+        "decode_max_tokens": 6,
+    }
+    assert "cognitive_operator_execution_unproven" not in (
+        LatentCortexService._receipt_contract_errors(
+            body["receipt"],
+            contract_config,
+        )
+    )
+    tampered = copy.deepcopy(body["receipt"])
+    tampered["cognitive_operator_trace"][0]["receipt_sha256"] = "0" * 64
+    assert "cognitive_operator_execution_unproven" in (
+        LatentCortexService._receipt_contract_errors(tampered, contract_config)
+    )
     assert body["requires_cache_clear"] is False
 
 

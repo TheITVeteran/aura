@@ -843,6 +843,7 @@ class EpisodeReceipt:
     # never contains private reasoning text or hidden-state tensors.
     value_of_computation: dict[str, Any] = field(default_factory=dict)
     cognitive_action_trace: list[dict[str, Any]] = field(default_factory=list)
+    cognitive_operator_trace: list[dict[str, Any]] = field(default_factory=list)
     # Latent interpretability/safety telemetry (telemetry.LatentTelemetry).
     latent_telemetry: dict[str, Any] = field(default_factory=dict)
     # Decode-probe memoization evidence (probe_cache.DecodeProbeCache).
@@ -1032,6 +1033,9 @@ class EpisodeReceipt:
             "value_of_computation": dict(self.value_of_computation),
             "cognitive_action_trace": [
                 dict(row) for row in self.cognitive_action_trace
+            ],
+            "cognitive_operator_trace": [
+                dict(row) for row in self.cognitive_operator_trace
             ],
             "latent_telemetry": dict(self.latent_telemetry),
             "probe_cache": dict(self.probe_cache),

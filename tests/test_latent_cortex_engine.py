@@ -69,6 +69,10 @@ def _config(**overrides) -> CortexConfig:
 
 
 def test_full_episode_produces_tokens_and_truthful_receipt(tiny_model):
+    from core.brain.llm.latent_cortex.cognitive_operators import (
+        validate_operator_receipt,
+    )
+
     engine = LatentCortexEngine(tiny_model, config=_config())
     result = engine.reason(token_ids=PROMPT_TOKENS)
     assert result.ok
@@ -81,6 +85,11 @@ def test_full_episode_produces_tokens_and_truthful_receipt(tiny_model):
     assert r.branch_isolation["certified"] is True
     assert r.branch_isolation["first_exchange_step"] >= 1
     assert r.branch_isolation["cache_discipline"]["all_restored"] is True
+    assert r.cognitive_operator_trace
+    assert {
+        row["operator"] for row in r.cognitive_operator_trace
+    } == {"constructive_solution", "counterexample"}
+    assert all(validate_operator_receipt(row) for row in r.cognitive_operator_trace)
     assert r.residual_trail, "receipt must carry the residual trail"
     assert r.halting_reason
     assert r.schedule_hash

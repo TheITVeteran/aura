@@ -757,6 +757,62 @@ class LatentCortexService:
                 )
             if not isolation_valid:
                 errors.append("branch_isolation_unproven")
+        raw_action_trace = receipt.get("cognitive_action_trace")
+        if isinstance(raw_action_trace, list) and raw_action_trace:
+            try:
+                from core.brain.llm.latent_cortex.cognitive_operators import (
+                    validate_operator_receipt,
+                )
+
+                neural_actions = {
+                    "decompose",
+                    "blind_resolve",
+                    "branch",
+                    "search_memory",
+                    "retrieve_evidence",
+                    "simulate",
+                    "falsify",
+                    "check_assumption",
+                    "regenerate_from_prefix",
+                    "formalize",
+                }
+                raw_operator_trace = receipt.get("cognitive_operator_trace")
+                if not isinstance(raw_operator_trace, list) or not raw_operator_trace:
+                    raise ValueError("cognitive operator trace is absent")
+                operator_rows = [
+                    validate_operator_receipt(row) for row in raw_operator_trace
+                ]
+                by_step: dict[int, list[dict[str, Any]]] = {}
+                for row in operator_rows:
+                    by_step.setdefault(row["action_step"], []).append(row)
+                if set(by_step) - set(range(len(raw_action_trace))):
+                    raise ValueError("cognitive operator step is orphaned")
+                for step, action_row in enumerate(raw_action_trace):
+                    if not isinstance(action_row, dict):
+                        raise ValueError("cognitive action trace row is invalid")
+                    transition = action_row.get("transition")
+                    signal = action_row.get("state_signal")
+                    if not isinstance(transition, dict) or not isinstance(signal, dict):
+                        raise ValueError("cognitive action trace row is incomplete")
+                    action = transition.get("action")
+                    rows = by_step.get(step, [])
+                    if action not in neural_actions:
+                        if rows:
+                            raise ValueError("structural action claimed neural operators")
+                        continue
+                    active_branches = signal.get("active_branches")
+                    if (
+                        type(active_branches) is not int
+                        or active_branches <= 0
+                        or len(rows) != active_branches
+                        or {row["action"] for row in rows} != {action}
+                        or {row["action_step"] for row in rows} != {step}
+                        or len({row["branch_index"] for row in rows}) != len(rows)
+                        or len({row["operator"] for row in rows}) != len(rows)
+                    ):
+                        raise ValueError("cognitive operator coverage is invalid")
+            except (ImportError, TypeError, ValueError):
+                errors.append("cognitive_operator_execution_unproven")
         exchange_interval = config.get("exchange_interval")
         if (
             type(exchange_interval) is int
