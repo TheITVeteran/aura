@@ -6,6 +6,7 @@ hypotheses, operations, budgets, and answer dependencies. Every state is deeply
 immutable, bounded, canonically serialized, content-addressed, and validated as
 a dependency graph before it can become current.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -18,7 +19,7 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Any, Protocol
 
-EPISTEMIC_STATE_SCHEMA = "aura.rlc.epistemic_state.v1"
+EPISTEMIC_STATE_SCHEMA = "aura.rlc.epistemic_state.v2"
 
 MAX_OBJECTIVE_CHARS = 16_384
 MAX_TEXT_CHARS = 8_192
@@ -65,6 +66,18 @@ class EvidenceKind(StrEnum):
     SIMULATION = "simulation"
     OBSERVATION = "observation"
     MEMORY = "memory"
+
+
+class EvidenceVerification(StrEnum):
+    UNVERIFIED = "unverified"
+    SOURCE_BOUND = "source_bound"
+    INDEPENDENT = "independent"
+
+
+class EvidencePurpose(StrEnum):
+    IMMUTABLE_PROBLEM = "immutable_problem"
+    CLAIM_TEST = "claim_test"
+    CONTEXT_ONLY = "context_only"
 
 
 class ClaimStatus(StrEnum):
@@ -176,9 +189,7 @@ def _nonnegative(value: Any, *, name: str) -> float:
     return parsed
 
 
-def _bounded_ids(
-    values: Iterable[str], *, name: str, limit: int = MAX_REFS
-) -> tuple[str, ...]:
+def _bounded_ids(values: Iterable[str], *, name: str, limit: int = MAX_REFS) -> tuple[str, ...]:
     if isinstance(values, (str, bytes)):
         raise EpistemicStateError(f"{name} must be a sequence of identifiers")
     result = tuple(_strict_id(value, name=f"{name} item") for value in values)
@@ -206,9 +217,7 @@ def _wire_list(value: Any, *, name: str) -> tuple[Any, ...]:
     return tuple(value)
 
 
-def _wire_enum[EnumT: StrEnum](
-    enum_type: type[EnumT], value: Any, *, name: str
-) -> EnumT:
+def _wire_enum[EnumT: StrEnum](enum_type: type[EnumT], value: Any, *, name: str) -> EnumT:
     if not isinstance(value, str):
         raise EpistemicStateError(f"{name} must be a string enum value")
     try:
@@ -238,7 +247,9 @@ class ProbabilityInterval:
         object.__setattr__(self, "lower", lower)
         object.__setattr__(self, "point", point)
         object.__setattr__(self, "upper", upper)
-        object.__setattr__(self, "method", _strict_text(self.method, name="uncertainty.method", limit=96))
+        object.__setattr__(
+            self, "method", _strict_text(self.method, name="uncertainty.method", limit=96)
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -267,7 +278,9 @@ class ProblemFrame:
         objective = _strict_text(
             self.objective, name="problem.objective", limit=MAX_OBJECTIVE_CHARS
         )
-        if _strict_digest(self.objective_sha256, name="problem.objective_sha256") != text_sha256(objective):
+        if _strict_digest(self.objective_sha256, name="problem.objective_sha256") != text_sha256(
+            objective
+        ):
             raise EpistemicStateError("problem objective digest does not match objective")
         if isinstance(self.constraints, (str, bytes)):
             raise EpistemicStateError("problem constraints must be a sequence")
@@ -319,15 +332,183 @@ class ProblemFrame:
 
 
 @dataclass(frozen=True, slots=True)
+class EvidenceProvenance:
+    source_id: str
+    source_version: str
+    invocation_sha256: str
+    receipt_sha256: str
+    verification: EvidenceVerification
+    verifier_id: str = ""
+    verifier_version: str = ""
+    verification_receipt_sha256: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "source_id",
+            _strict_text(self.source_id, name="provenance.source_id", limit=512),
+        )
+        object.__setattr__(
+            self,
+            "source_version",
+            _strict_text(
+                self.source_version,
+                name="provenance.source_version",
+                limit=256,
+            ),
+        )
+        _strict_digest(
+            self.invocation_sha256,
+            name="provenance.invocation_sha256",
+        )
+        _strict_digest(self.receipt_sha256, name="provenance.receipt_sha256")
+        if not isinstance(self.verification, EvidenceVerification):
+            raise EpistemicStateError("provenance.verification must be an EvidenceVerification")
+        verifier_id = _strict_text(
+            self.verifier_id,
+            name="provenance.verifier_id",
+            limit=512,
+            empty=True,
+        )
+        verifier_version = _strict_text(
+            self.verifier_version,
+            name="provenance.verifier_version",
+            limit=256,
+            empty=True,
+        )
+        verification_receipt = _strict_digest(
+            self.verification_receipt_sha256,
+            name="provenance.verification_receipt_sha256",
+            empty=True,
+        )
+        verifier_fields = (verifier_id, verifier_version, verification_receipt)
+        if self.verification is EvidenceVerification.INDEPENDENT:
+            if not all(verifier_fields):
+                raise EpistemicStateError(
+                    "independent verification requires verifier identity and receipt"
+                )
+            if verifier_id == self.source_id:
+                raise EpistemicStateError(
+                    "independent verifier must differ from the evidence producer"
+                )
+        elif any(verifier_fields):
+            raise EpistemicStateError(
+                "non-independent evidence cannot claim an independent verifier"
+            )
+        object.__setattr__(self, "verifier_id", verifier_id)
+        object.__setattr__(self, "verifier_version", verifier_version)
+        object.__setattr__(
+            self,
+            "verification_receipt_sha256",
+            verification_receipt,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "source_id": self.source_id,
+            "source_version": self.source_version,
+            "invocation_sha256": self.invocation_sha256,
+            "receipt_sha256": self.receipt_sha256,
+            "verification": self.verification.value,
+            "verifier_id": self.verifier_id,
+            "verifier_version": self.verifier_version,
+            "verification_receipt_sha256": self.verification_receipt_sha256,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> EvidenceProvenance:
+        fields = {
+            "source_id",
+            "source_version",
+            "invocation_sha256",
+            "receipt_sha256",
+            "verification",
+            "verifier_id",
+            "verifier_version",
+            "verification_receipt_sha256",
+        }
+        _exact_fields(data, fields, name="evidence.provenance")
+        return cls(
+            source_id=data["source_id"],
+            source_version=data["source_version"],
+            invocation_sha256=data["invocation_sha256"],
+            receipt_sha256=data["receipt_sha256"],
+            verification=_wire_enum(
+                EvidenceVerification,
+                data["verification"],
+                name="provenance.verification",
+            ),
+            verifier_id=data["verifier_id"],
+            verifier_version=data["verifier_version"],
+            verification_receipt_sha256=data["verification_receipt_sha256"],
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class EvidenceScope:
+    episode_id: str
+    objective_sha256: str
+    claim_ids: tuple[str, ...]
+    purpose: EvidencePurpose
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "episode_id",
+            _strict_id(self.episode_id, name="evidence.scope.episode_id"),
+        )
+        _strict_digest(
+            self.objective_sha256,
+            name="evidence.scope.objective_sha256",
+        )
+        object.__setattr__(
+            self,
+            "claim_ids",
+            _bounded_ids(self.claim_ids, name="evidence scope claims"),
+        )
+        if not isinstance(self.purpose, EvidencePurpose):
+            raise EpistemicStateError("evidence.scope.purpose must be an EvidencePurpose")
+        if self.purpose is EvidencePurpose.CLAIM_TEST and not self.claim_ids:
+            raise EpistemicStateError("claim-test evidence scope requires a claim")
+        if self.purpose is not EvidencePurpose.CLAIM_TEST and self.claim_ids:
+            raise EpistemicStateError(
+                "only claim-test evidence scope may contain claim identifiers"
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "episode_id": self.episode_id,
+            "objective_sha256": self.objective_sha256,
+            "claim_ids": list(self.claim_ids),
+            "purpose": self.purpose.value,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> EvidenceScope:
+        fields = {"episode_id", "objective_sha256", "claim_ids", "purpose"}
+        _exact_fields(data, fields, name="evidence.scope")
+        return cls(
+            episode_id=data["episode_id"],
+            objective_sha256=data["objective_sha256"],
+            claim_ids=_wire_list(data["claim_ids"], name="evidence.scope.claim_ids"),
+            purpose=_wire_enum(
+                EvidencePurpose,
+                data["purpose"],
+                name="evidence.scope.purpose",
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class EvidenceRecord:
     evidence_id: str
     kind: EvidenceKind
     summary: str
     content_sha256: str
-    source: str
+    provenance: EvidenceProvenance
+    scope: EvidenceScope
     observed_at: float
     expires_at: float | None = None
-    receipt_sha256: str = ""
     supports: tuple[str, ...] = ()
     contradicts: tuple[str, ...] = ()
 
@@ -335,9 +516,16 @@ class EvidenceRecord:
         object.__setattr__(self, "evidence_id", _strict_id(self.evidence_id, name="evidence_id"))
         if not isinstance(self.kind, EvidenceKind):
             raise EpistemicStateError("evidence.kind must be an EvidenceKind")
-        object.__setattr__(self, "summary", _strict_text(self.summary, name="evidence.summary", limit=MAX_SUMMARY_CHARS))
+        object.__setattr__(
+            self,
+            "summary",
+            _strict_text(self.summary, name="evidence.summary", limit=MAX_SUMMARY_CHARS),
+        )
         _strict_digest(self.content_sha256, name="evidence.content_sha256")
-        object.__setattr__(self, "source", _strict_text(self.source, name="evidence.source", limit=512))
+        if not isinstance(self.provenance, EvidenceProvenance):
+            raise EpistemicStateError("evidence.provenance must be an EvidenceProvenance")
+        if not isinstance(self.scope, EvidenceScope):
+            raise EpistemicStateError("evidence.scope must be an EvidenceScope")
         observed = _nonnegative(self.observed_at, name="evidence.observed_at")
         object.__setattr__(self, "observed_at", observed)
         if self.expires_at is not None:
@@ -345,11 +533,37 @@ class EvidenceRecord:
             if expires < observed:
                 raise EpistemicStateError("evidence expires before it was observed")
             object.__setattr__(self, "expires_at", expires)
-        _strict_digest(self.receipt_sha256, name="evidence.receipt_sha256", empty=True)
         object.__setattr__(self, "supports", _bounded_ids(self.supports, name="evidence supports"))
-        object.__setattr__(self, "contradicts", _bounded_ids(self.contradicts, name="evidence contradicts"))
+        object.__setattr__(
+            self, "contradicts", _bounded_ids(self.contradicts, name="evidence contradicts")
+        )
         if set(self.supports) & set(self.contradicts):
             raise EpistemicStateError("evidence cannot both support and contradict one claim")
+        linked_claims = set(self.supports) | set(self.contradicts)
+        if linked_claims != set(self.scope.claim_ids):
+            raise EpistemicStateError("evidence claim links must exactly match its declared scope")
+        if self.kind is EvidenceKind.IMMUTABLE_PROBLEM:
+            if self.scope.purpose is not EvidencePurpose.IMMUTABLE_PROBLEM:
+                raise EpistemicStateError(
+                    "immutable problem evidence requires immutable-problem scope"
+                )
+        elif self.scope.purpose is EvidencePurpose.IMMUTABLE_PROBLEM:
+            raise EpistemicStateError("immutable-problem scope requires immutable problem evidence")
+        if self.kind is EvidenceKind.MEMORY:
+            if self.scope.purpose is not EvidencePurpose.CONTEXT_ONLY:
+                raise EpistemicStateError(
+                    "memory evidence is context-only until independently reverified"
+                )
+        if linked_claims and self.provenance.verification is EvidenceVerification.UNVERIFIED:
+            raise EpistemicStateError("unverified evidence cannot support or contradict a claim")
+
+    def is_fresh(self, at_time: float) -> bool:
+        """Return whether this evidence existed and remained valid at a time."""
+
+        checked = _nonnegative(at_time, name="evidence freshness time")
+        return checked >= self.observed_at and (
+            self.expires_at is None or checked <= self.expires_at
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -357,10 +571,10 @@ class EvidenceRecord:
             "kind": self.kind.value,
             "summary": self.summary,
             "content_sha256": self.content_sha256,
-            "source": self.source,
+            "provenance": self.provenance.to_dict(),
+            "scope": self.scope.to_dict(),
             "observed_at": self.observed_at,
             "expires_at": self.expires_at,
-            "receipt_sha256": self.receipt_sha256,
             "supports": list(self.supports),
             "contradicts": list(self.contradicts),
         }
@@ -372,10 +586,10 @@ class EvidenceRecord:
             "kind",
             "summary",
             "content_sha256",
-            "source",
+            "provenance",
+            "scope",
             "observed_at",
             "expires_at",
-            "receipt_sha256",
             "supports",
             "contradicts",
         }
@@ -385,10 +599,10 @@ class EvidenceRecord:
             kind=_wire_enum(EvidenceKind, data["kind"], name="evidence.kind"),
             summary=data["summary"],
             content_sha256=data["content_sha256"],
-            source=data["source"],
+            provenance=EvidenceProvenance.from_dict(data["provenance"]),
+            scope=EvidenceScope.from_dict(data["scope"]),
             observed_at=data["observed_at"],
             expires_at=data["expires_at"],
-            receipt_sha256=data["receipt_sha256"],
             supports=_wire_list(data["supports"], name="evidence.supports"),
             contradicts=_wire_list(data["contradicts"], name="evidence.contradicts"),
         )
@@ -408,15 +622,30 @@ class ClaimRecord:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "claim_id", _strict_id(self.claim_id, name="claim_id"))
-        object.__setattr__(self, "text", _strict_text(self.text, name="claim.text", limit=MAX_TEXT_CHARS))
+        object.__setattr__(
+            self, "text", _strict_text(self.text, name="claim.text", limit=MAX_TEXT_CHARS)
+        )
         if not isinstance(self.status, ClaimStatus):
             raise EpistemicStateError("claim.status must be a ClaimStatus")
         if not isinstance(self.uncertainty, ProbabilityInterval):
             raise EpistemicStateError("claim.uncertainty must be a ProbabilityInterval")
         object.__setattr__(self, "premises", _bounded_ids(self.premises, name="claim premises"))
-        object.__setattr__(self, "evidence_ids", _bounded_ids(self.evidence_ids, name="claim evidence"))
-        object.__setattr__(self, "contradictions", _bounded_ids(self.contradictions, name="claim contradictions"))
-        object.__setattr__(self, "failure_condition", _strict_text(self.failure_condition, name="claim.failure_condition", limit=MAX_SUMMARY_CHARS, empty=True))
+        object.__setattr__(
+            self, "evidence_ids", _bounded_ids(self.evidence_ids, name="claim evidence")
+        )
+        object.__setattr__(
+            self, "contradictions", _bounded_ids(self.contradictions, name="claim contradictions")
+        )
+        object.__setattr__(
+            self,
+            "failure_condition",
+            _strict_text(
+                self.failure_condition,
+                name="claim.failure_condition",
+                limit=MAX_SUMMARY_CHARS,
+                empty=True,
+            ),
+        )
         if not isinstance(self.answer_relevant, bool):
             raise EpistemicStateError("claim.answer_relevant must be boolean")
 
@@ -472,13 +701,21 @@ class HypothesisRecord:
     claim_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "hypothesis_id", _strict_id(self.hypothesis_id, name="hypothesis_id"))
-        object.__setattr__(self, "statement", _strict_text(self.statement, name="hypothesis.statement", limit=MAX_TEXT_CHARS))
+        object.__setattr__(
+            self, "hypothesis_id", _strict_id(self.hypothesis_id, name="hypothesis_id")
+        )
+        object.__setattr__(
+            self,
+            "statement",
+            _strict_text(self.statement, name="hypothesis.statement", limit=MAX_TEXT_CHARS),
+        )
         if not isinstance(self.posterior, ProbabilityInterval):
             raise EpistemicStateError("hypothesis.posterior must be a ProbabilityInterval")
         if not isinstance(self.status, HypothesisStatus):
             raise EpistemicStateError("hypothesis.status must be a HypothesisStatus")
-        object.__setattr__(self, "claim_ids", _bounded_ids(self.claim_ids, name="hypothesis claims"))
+        object.__setattr__(
+            self, "claim_ids", _bounded_ids(self.claim_ids, name="hypothesis claims")
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -519,7 +756,9 @@ class OperationRecord:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "operation_id", _strict_id(self.operation_id, name="operation_id"))
-        if not isinstance(self.kind, OperationKind) or not isinstance(self.outcome, OperationOutcome):
+        if not isinstance(self.kind, OperationKind) or not isinstance(
+            self.outcome, OperationOutcome
+        ):
             raise EpistemicStateError("operation kind/outcome use invalid enums")
         _strict_digest(self.input_state_sha256, name="operation.input_state_sha256")
         object.__setattr__(self, "cost", _nonnegative(self.cost, name="operation.cost"))
@@ -532,8 +771,14 @@ class OperationRecord:
                 limit=MAX_CLAIMS,
             ),
         )
-        object.__setattr__(self, "evidence_gained", _bounded_ids(self.evidence_gained, name="operation evidence"))
-        object.__setattr__(self, "detail", _strict_text(self.detail, name="operation.detail", limit=MAX_SUMMARY_CHARS, empty=True))
+        object.__setattr__(
+            self, "evidence_gained", _bounded_ids(self.evidence_gained, name="operation evidence")
+        )
+        object.__setattr__(
+            self,
+            "detail",
+            _strict_text(self.detail, name="operation.detail", limit=MAX_SUMMARY_CHARS, empty=True),
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -627,6 +872,7 @@ class AcceptedAnswer:
     claim_ids: tuple[str, ...]
     evidence_ids: tuple[str, ...]
     confidence: ProbabilityInterval
+    accepted_at: float
 
     def __post_init__(self) -> None:
         text = _strict_text(self.text, name="answer.text", limit=MAX_TEXT_CHARS)
@@ -634,9 +880,16 @@ class AcceptedAnswer:
             raise EpistemicStateError("answer text digest does not match")
         object.__setattr__(self, "text", text)
         object.__setattr__(self, "claim_ids", _bounded_ids(self.claim_ids, name="answer claims"))
-        object.__setattr__(self, "evidence_ids", _bounded_ids(self.evidence_ids, name="answer evidence"))
+        object.__setattr__(
+            self, "evidence_ids", _bounded_ids(self.evidence_ids, name="answer evidence")
+        )
         if not isinstance(self.confidence, ProbabilityInterval):
             raise EpistemicStateError("answer.confidence must be a ProbabilityInterval")
+        object.__setattr__(
+            self,
+            "accepted_at",
+            _nonnegative(self.accepted_at, name="answer.accepted_at"),
+        )
         if not self.claim_ids:
             raise EpistemicStateError("answer must cite at least one claim")
 
@@ -647,11 +900,19 @@ class AcceptedAnswer:
             "claim_ids": list(self.claim_ids),
             "evidence_ids": list(self.evidence_ids),
             "confidence": self.confidence.to_dict(),
+            "accepted_at": self.accepted_at,
         }
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> AcceptedAnswer:
-        fields = {"text", "text_sha256", "claim_ids", "evidence_ids", "confidence"}
+        fields = {
+            "text",
+            "text_sha256",
+            "claim_ids",
+            "evidence_ids",
+            "confidence",
+            "accepted_at",
+        }
         _exact_fields(data, fields, name="accepted_answer")
         return cls(
             text=data["text"],
@@ -659,6 +920,7 @@ class AcceptedAnswer:
             claim_ids=_wire_list(data["claim_ids"], name="answer.claim_ids"),
             evidence_ids=_wire_list(data["evidence_ids"], name="answer.evidence_ids"),
             confidence=ProbabilityInterval.from_dict(data["confidence"]),
+            accepted_at=data["accepted_at"],
         )
 
 
@@ -707,13 +969,57 @@ class EpistemicState:
             raise EpistemicStateError("genesis state cannot have a parent")
         if self.version > 0 and not self.parent_sha256:
             raise EpistemicStateError("non-genesis state requires a parent")
-        if not isinstance(self.problem, ProblemFrame) or not isinstance(self.budget, ComputeBudgetState):
+        if not isinstance(self.problem, ProblemFrame) or not isinstance(
+            self.budget, ComputeBudgetState
+        ):
             raise EpistemicStateError("state problem/budget types are invalid")
-        object.__setattr__(self, "evidence", _unique_by_id(self.evidence, expected_type=EvidenceRecord, attr="evidence_id", limit=MAX_EVIDENCE, name="evidence"))
-        object.__setattr__(self, "hypotheses", _unique_by_id(self.hypotheses, expected_type=HypothesisRecord, attr="hypothesis_id", limit=MAX_HYPOTHESES, name="hypotheses"))
-        object.__setattr__(self, "claims", _unique_by_id(self.claims, expected_type=ClaimRecord, attr="claim_id", limit=MAX_CLAIMS, name="claims"))
-        object.__setattr__(self, "operations", _unique_by_id(self.operations, expected_type=OperationRecord, attr="operation_id", limit=MAX_OPERATIONS, name="operations"))
-        if self.accepted_answer is not None and not isinstance(self.accepted_answer, AcceptedAnswer):
+        object.__setattr__(
+            self,
+            "evidence",
+            _unique_by_id(
+                self.evidence,
+                expected_type=EvidenceRecord,
+                attr="evidence_id",
+                limit=MAX_EVIDENCE,
+                name="evidence",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "hypotheses",
+            _unique_by_id(
+                self.hypotheses,
+                expected_type=HypothesisRecord,
+                attr="hypothesis_id",
+                limit=MAX_HYPOTHESES,
+                name="hypotheses",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "claims",
+            _unique_by_id(
+                self.claims,
+                expected_type=ClaimRecord,
+                attr="claim_id",
+                limit=MAX_CLAIMS,
+                name="claims",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "operations",
+            _unique_by_id(
+                self.operations,
+                expected_type=OperationRecord,
+                attr="operation_id",
+                limit=MAX_OPERATIONS,
+                name="operations",
+            ),
+        )
+        if self.accepted_answer is not None and not isinstance(
+            self.accepted_answer, AcceptedAnswer
+        ):
             raise EpistemicStateError("state accepted_answer type is invalid")
         self._validate_references()
         expected = canonical_sha256(self.to_dict(include_hash=False))
@@ -722,7 +1028,8 @@ class EpistemicState:
 
     def _validate_references(self) -> None:
         claim_map = {item.claim_id: item for item in self.claims}
-        evidence_ids = {item.evidence_id for item in self.evidence}
+        evidence_map = {item.evidence_id: item for item in self.evidence}
+        evidence_ids = set(evidence_map)
         claim_ids = set(claim_map)
         immutable_ids = set(self.problem.immutable_evidence_ids)
         if not immutable_ids <= evidence_ids:
@@ -731,8 +1038,16 @@ class EpistemicState:
             refs = set(evidence.supports) | set(evidence.contradicts)
             if not refs <= claim_ids:
                 raise EpistemicStateError("evidence references an unknown claim")
-            if evidence.evidence_id in immutable_ids and evidence.kind is not EvidenceKind.IMMUTABLE_PROBLEM:
-                raise EpistemicStateError("problem evidence must use immutable_problem kind")
+            if evidence.scope.episode_id != self.episode_id:
+                raise EpistemicStateError("evidence scope belongs to another episode")
+            if evidence.scope.objective_sha256 != self.problem.objective_sha256:
+                raise EpistemicStateError("evidence scope belongs to another objective")
+            if (evidence.evidence_id in immutable_ids) != (
+                evidence.kind is EvidenceKind.IMMUTABLE_PROBLEM
+            ):
+                raise EpistemicStateError(
+                    "problem evidence membership and immutable kind must match"
+                )
         blocked = {ClaimStatus.REJECTED, ClaimStatus.CONTRADICTED}
         established = {ClaimStatus.SUPPORTED, ClaimStatus.VERIFIED}
         for claim in self.claims:
@@ -742,36 +1057,39 @@ class EpistemicState:
                 raise EpistemicStateError("claim references an unknown premise")
             if not set(claim.evidence_ids) <= evidence_ids:
                 raise EpistemicStateError("claim references unknown evidence")
+            for evidence_id in claim.evidence_ids:
+                linked = evidence_map[evidence_id]
+                if claim.claim_id not in set(linked.supports) | set(linked.contradicts):
+                    raise EpistemicStateError("claim and evidence links must be bidirectional")
             if not set(claim.contradictions) <= claim_ids:
                 raise EpistemicStateError("claim references an unknown contradiction")
             for other in claim.contradictions:
                 if claim.claim_id not in claim_map[other].contradictions:
                     raise EpistemicStateError("claim contradictions must be symmetric")
             if claim.status in established and any(
-                claim_map[premise].status not in established
-                for premise in claim.premises
+                claim_map[premise].status not in established for premise in claim.premises
             ):
                 raise EpistemicStateError(
                     "supported or verified claim depends on an unestablished premise"
                 )
             if claim.status in established and any(
-                claim_map[other].status in established
-                for other in claim.contradictions
+                claim_map[other].status in established for other in claim.contradictions
             ):
                 raise EpistemicStateError(
                     "mutually contradictory claims cannot both be established"
                 )
+        for evidence in self.evidence:
+            for claim_id in (*evidence.supports, *evidence.contradicts):
+                if evidence.evidence_id not in claim_map[claim_id].evidence_ids:
+                    raise EpistemicStateError("evidence and claim links must be bidirectional")
         self._validate_claim_dag(claim_map)
         for hypothesis in self.hypotheses:
             if not set(hypothesis.claim_ids) <= claim_ids:
                 raise EpistemicStateError("hypothesis references an unknown claim")
             if hypothesis.status is HypothesisStatus.FAVORED and any(
-                claim_map[claim_id].status not in established
-                for claim_id in hypothesis.claim_ids
+                claim_map[claim_id].status not in established for claim_id in hypothesis.claim_ids
             ):
-                raise EpistemicStateError(
-                    "favored hypothesis depends on an unestablished claim"
-                )
+                raise EpistemicStateError("favored hypothesis depends on an unestablished claim")
         for operation in self.operations:
             if not set(operation.affected_claim_ids) <= claim_ids:
                 raise EpistemicStateError("operation references an unknown claim")
@@ -793,9 +1111,30 @@ class EpistemicState:
                 not claim_map[claim_id].answer_relevant
                 for claim_id in self.accepted_answer.claim_ids
             ):
+                raise EpistemicStateError("answer depends on a claim not marked answer-relevant")
+            dependency_claims = self._claim_ancestors(
+                claim_map,
+                self.accepted_answer.claim_ids,
+            )
+            required_evidence = {
+                evidence_id
+                for claim_id in dependency_claims
+                for evidence_id in claim_map[claim_id].evidence_ids
+            }
+            if set(self.accepted_answer.evidence_ids) != required_evidence:
                 raise EpistemicStateError(
-                    "answer depends on a claim not marked answer-relevant"
+                    "answer evidence must exactly cover transitive claim dependencies"
                 )
+            for evidence_id in required_evidence:
+                evidence = evidence_map[evidence_id]
+                if not evidence.is_fresh(self.accepted_answer.accepted_at):
+                    raise EpistemicStateError(
+                        "answer depends on stale or not-yet-observed evidence"
+                    )
+                if set(evidence.contradicts) & dependency_claims:
+                    raise EpistemicStateError(
+                        "answer depends on a claim with unresolved contradictory evidence"
+                    )
 
     @staticmethod
     def _validate_claim_dag(claim_map: Mapping[str, ClaimRecord]) -> None:
@@ -817,9 +1156,7 @@ class EpistemicState:
             visit(claim_id)
 
     @staticmethod
-    def _claim_descendants(
-        claim_map: Mapping[str, ClaimRecord], claim_id: str
-    ) -> tuple[str, ...]:
+    def _claim_descendants(claim_map: Mapping[str, ClaimRecord], claim_id: str) -> tuple[str, ...]:
         if claim_id not in claim_map:
             raise EpistemicStateError(f"claim does not exist: {claim_id}")
         reverse: dict[str, list[str]] = {key: [] for key in claim_map}
@@ -838,6 +1175,23 @@ class EpistemicState:
             descendants.add(current)
             pending.extend(sorted(reverse[current], reverse=True))
         return tuple(sorted(descendants))
+
+    @staticmethod
+    def _claim_ancestors(
+        claim_map: Mapping[str, ClaimRecord],
+        claim_ids: Iterable[str],
+    ) -> set[str]:
+        ancestors: set[str] = set()
+        pending = list(claim_ids)
+        while pending:
+            current = pending.pop()
+            if current in ancestors:
+                continue
+            if current not in claim_map:
+                raise EpistemicStateError("answer references an unknown claim")
+            ancestors.add(current)
+            pending.extend(claim_map[current].premises)
+        return ancestors
 
     def claim_descendants(self, claim_id: str) -> tuple[str, ...]:
         """Return every transitive dependent of a claim in stable order."""
@@ -943,9 +1297,7 @@ class EpistemicState:
         problem_with_evidence = replace(
             problem,
             immutable_evidence_ids=tuple(
-                item.evidence_id
-                for item in items
-                if item.kind is EvidenceKind.IMMUTABLE_PROBLEM
+                item.evidence_id for item in items if item.kind is EvidenceKind.IMMUTABLE_PROBLEM
             ),
         )
         return cls._build(
@@ -1072,9 +1424,7 @@ class EpistemicTransaction:
         if not isinstance(status, ClaimStatus):
             raise EpistemicStateError("claim invalidation status must be a ClaimStatus")
         if status not in {ClaimStatus.REJECTED, ClaimStatus.CONTRADICTED}:
-            raise EpistemicStateError(
-                "claim invalidation status must be rejected or contradicted"
-            )
+            raise EpistemicStateError("claim invalidation status must be rejected or contradicted")
         target = self._claims.get(claim_id)
         if target is None:
             raise EpistemicStateError(f"claim does not exist: {claim_id}")
@@ -1157,9 +1507,15 @@ class EpistemicTransaction:
         self._open()
         if not isinstance(budget, ComputeBudgetState):
             raise TypeError("budget must be a ComputeBudgetState")
-        if budget.total != self.base.budget.total or budget.tool_calls_total != self.base.budget.tool_calls_total:
+        if (
+            budget.total != self.base.budget.total
+            or budget.tool_calls_total != self.base.budget.tool_calls_total
+        ):
             raise EpistemicStateError("transaction cannot change preregistered budget caps")
-        if budget.used < self.base.budget.used or budget.tool_calls_used < self.base.budget.tool_calls_used:
+        if (
+            budget.used < self.base.budget.used
+            or budget.tool_calls_used < self.base.budget.tool_calls_used
+        ):
             raise EpistemicStateError("transaction cannot refund consumed budget")
         self._budget = budget
         return self
@@ -1256,9 +1612,7 @@ class EpistemicStateMachine:
             self._current = candidate
             return candidate
 
-    async def commit_async(
-        self, transaction: EpistemicTransaction
-    ) -> EpistemicState:
+    async def commit_async(self, transaction: EpistemicTransaction) -> EpistemicState:
         """Commit on a worker thread so durable fsync never blocks the event loop."""
 
         import asyncio
@@ -1278,7 +1632,11 @@ __all__ = [
     "EpistemicStatePersistence",
     "EpistemicTransaction",
     "EvidenceKind",
+    "EvidenceProvenance",
+    "EvidencePurpose",
     "EvidenceRecord",
+    "EvidenceScope",
+    "EvidenceVerification",
     "HypothesisRecord",
     "HypothesisStatus",
     "OperationKind",

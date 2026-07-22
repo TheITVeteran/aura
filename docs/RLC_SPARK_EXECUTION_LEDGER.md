@@ -46,6 +46,10 @@ midpoint planning estimate is 62.4%. These percentages measure the work ledger,
 not intelligence or release quality. Failed gates add explicit repair records
 rather than being hidden by changing a checkbox.
 
+After CP321, the published total is record 382: 84-351 forecast records remain,
+checkpoint-count completion is 52.1%-82.0%, and the midpoint planning estimate
+is 63.7%. This remains workload accounting, not a capability score.
+
 ## Code-grounded baseline and ownership
 
 The four-slice static audit covered the neural core, epistemic/verifier paths,
@@ -53,8 +57,8 @@ training/proof surfaces, and the selected live/full-mind path. It read the
 entire Spark source and traced callers rather than crediting class names. The
 baseline below is exhaustive over SPARK-001 through SPARK-072:
 
-- `ACCEPTED`: SPARK-001, SPARK-005, SPARK-007, SPARK-011.
-- `PARTIAL`: SPARK-003, SPARK-008, SPARK-010, SPARK-012,
+- `ACCEPTED`: SPARK-001, SPARK-005, SPARK-007, SPARK-008, SPARK-011.
+- `PARTIAL`: SPARK-003, SPARK-010, SPARK-012,
   SPARK-014, SPARK-021, SPARK-022, SPARK-023, SPARK-024, SPARK-025,
   SPARK-026, SPARK-027, SPARK-035, SPARK-039, SPARK-040, SPARK-041,
   SPARK-042, SPARK-052, SPARK-053, SPARK-054, SPARK-055, SPARK-056,
@@ -162,9 +166,21 @@ before those dependencies close is not admissible.
   transitive, atomic, operation-receipted, budgeted, and revokes affected
   hypotheses and answers. Evidence semantics and durable recovery remain owned
   by SPARK-008 and SPARK-011 rather than being implied here.
-- [ ] **SPARK-008 - Evidence ledger.** Bind every tool result, retrieval,
+- [x] **SPARK-008 - Evidence ledger.** Bind every tool result, retrieval,
   calculation, proof, simulation, and observation to provenance, freshness,
   scope, content digest, and the claims it can actually support.
+  Accepted at CP321: epistemic-state schema v2 binds every evidence record to
+  typed producer/version/invocation/receipt provenance, explicit verification
+  class, episode/objective/claim scope, purpose, content digest, and bounded
+  validity time. Independent verification requires a distinct verifier identity
+  and receipt; memory and unverified context cannot acquire claim authority.
+  Claim/evidence links are exact and bidirectional. Answer acceptance requires
+  fresh evidence for the complete transitive premise closure and rejects omitted,
+  future, stale, or unresolved counterevidence. The governed journal persists
+  these fields inside the same hash-chained transactional state. Focused state
+  and crash-recovery contracts passed 37/37; the integrated RLC/latent/GWT/
+  controller gate passed 767/767. This is a structural evidence-integrity result,
+  not calibrated uncertainty, live state causality, or a capability-gain claim.
 - [ ] **SPARK-009 - Calibrated uncertainty.** Maintain claim-level epistemic
   uncertainty from measured signals rather than verbal confidence; report
   calibration error and abstain outside validated support.
@@ -423,3 +439,5 @@ learning signal. Checkpoints 309-313 repaired diagnosis, admission, the separate
 answer-channel curriculum, and a source-bound detached preflight path. Those are
 real engineering gains, but they do not satisfy SPARK-069 or any later
 capability checkpoint until a fresh exact-source run produces accepted evidence.
+CP321 adds a tested epistemic evidence firewall; it does not change that negative
+capability verdict.

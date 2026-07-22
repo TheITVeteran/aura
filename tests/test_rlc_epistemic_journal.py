@@ -1,4 +1,5 @@
 """Crash recovery contracts for the RLC epistemic write-ahead journal."""
+
 from __future__ import annotations
 
 import hashlib
@@ -20,7 +21,11 @@ from core.brain.llm.latent_cortex.epistemic_state import (
     EpistemicState,
     EpistemicStateMachine,
     EvidenceKind,
+    EvidenceProvenance,
+    EvidencePurpose,
     EvidenceRecord,
+    EvidenceScope,
+    EvidenceVerification,
     ProbabilityInterval,
     ProblemFrame,
     text_sha256,
@@ -34,9 +39,10 @@ def interval() -> ProbabilityInterval:
 
 def genesis(*, objective: str = "Recover the exact epistemic state.") -> EpistemicState:
     summary = "Immutable problem observation"
+    problem = ProblemFrame.create(objective)
     return EpistemicState.genesis(
         episode_id="episode.journal",
-        problem=ProblemFrame.create(objective),
+        problem=problem,
         budget=ComputeBudgetState(total=100.0, tool_calls_total=4),
         evidence=(
             EvidenceRecord(
@@ -44,9 +50,20 @@ def genesis(*, objective: str = "Recover the exact epistemic state.") -> Epistem
                 EvidenceKind.IMMUTABLE_PROBLEM,
                 summary,
                 text_sha256(summary),
-                "unit_test",
+                EvidenceProvenance(
+                    "unit_test",
+                    "v1",
+                    text_sha256("invocation:problem"),
+                    text_sha256("receipt:problem"),
+                    EvidenceVerification.SOURCE_BOUND,
+                ),
+                EvidenceScope(
+                    "episode.journal",
+                    problem.objective_sha256,
+                    (),
+                    EvidencePurpose.IMMUTABLE_PROBLEM,
+                ),
                 1.0,
-                receipt_sha256=text_sha256("receipt:problem"),
             ),
         ),
     )
@@ -226,7 +243,19 @@ def test_rehashed_forgery_cannot_break_chain_or_rewrite_history(tmp_path: Path):
             EvidenceKind.OBSERVATION,
             summary,
             text_sha256(summary),
-            "unit_test",
+            EvidenceProvenance(
+                "unit_test",
+                "v1",
+                text_sha256("invocation:transient"),
+                text_sha256("receipt:transient"),
+                EvidenceVerification.SOURCE_BOUND,
+            ),
+            EvidenceScope(
+                "episode.journal",
+                initial.problem.objective_sha256,
+                (),
+                EvidencePurpose.CONTEXT_ONLY,
+            ),
             2.0,
         )
     )
