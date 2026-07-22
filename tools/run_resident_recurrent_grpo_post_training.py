@@ -116,6 +116,17 @@ def _resolved(path: Path, *, must_exist: bool = True) -> Path:
     return resolved
 
 
+def _python_launcher_path() -> Path:
+    """Preserve virtualenv launchers instead of resolving to the base Python."""
+
+    candidate = Path(sys.executable)
+    if not candidate.is_absolute():
+        candidate = (Path.cwd() / candidate).absolute()
+    if not candidate.exists() or not os.access(candidate, os.X_OK):
+        _fail("python_launcher_missing")
+    return candidate
+
+
 def _binding(path: Path) -> dict[str, Any]:
     resolved = _resolved(path)
     if not resolved.is_file():
@@ -690,7 +701,7 @@ class ControllerRun:
     def campaign_command(self) -> list[str]:
         spec = self.config["directional"]
         return [
-            str(Path(sys.executable).resolve(strict=True)),
+            str(_python_launcher_path()),
             str(REPO_ROOT / "tools/run_latent_cortex_paired_campaign.py"),
             "--campaign-dir",
             str(_resolved(Path(str(self.config["directional_campaign"])), must_exist=False)),
@@ -945,7 +956,7 @@ def _launchd_payload(config_path: Path, config: Mapping[str, Any]) -> bytes:
     if not _LABEL.fullmatch(label):
         _fail("launch_label_invalid")
     root = _resolved(Path(str(config["output_root"])), must_exist=False)
-    python = Path(sys.executable).resolve(strict=True)
+    python = _python_launcher_path()
     tool = Path(__file__).resolve(strict=True)
     payload = {
         "Label": label,

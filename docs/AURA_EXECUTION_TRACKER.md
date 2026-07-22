@@ -23711,3 +23711,37 @@ CP286, regenerate and verify the CP285 post-training config from the fixed
 controller source, install or run the controller so it waits for training and
 launches freeze/directional proof automatically, and continue hardening while
 the resident training emits calibration or optimizer evidence.
+
+## Checkpoint 2026-07-21-287: Post-Training LaunchAgent Preserves the Virtualenv
+
+Installing the CP285 post-training controller exposed a second launch-path
+blocker. Launchd started the controller through `/usr/bin/caffeinate`, but the
+payload had resolved `.venv/bin/python` to the underlying Homebrew Python
+binary. That interpreter did not have Aura's virtualenv packages, so the
+controller failed immediately on `ModuleNotFoundError: No module named
+'cryptography'` before it could wait for training or launch the downstream
+proof stages.
+
+The post-training controller now preserves the Python launcher path exactly
+instead of resolving it to the base interpreter. The same helper is used for
+the later directional campaign command, so the post-training controller and
+the proof campaign workers inherit the virtualenv environment consistently.
+Regression tests create a symlinked fake `.venv/bin/python` and assert both
+the LaunchAgent payload and the directional command keep that launcher path.
+
+CP285 detached training remains alive while this source fix is made. Current
+status reports supervisor PID `24346`, child PID `24359`, `state=running`,
+and no terminal receipt. The baseline has advanced to 8/36 with running
+accuracy still `0.000`; this is early diagnostic progress only, not a result.
+
+Validation is clean: `tests/test_resident_recurrent_grpo_post_training.py`
+passes 9/9, bytecode compilation passes for the controller and test,
+`make lint` passes, and `git diff --check` passes. The pre-fix LaunchAgent
+install is not accepted as operational; the post-training config and
+LaunchAgent must be regenerated from this checkpoint.
+
+This is total checkpoint record 348. The forecast remains 394-661 total
+records, now approximately 46-313 records after this checkpoint. Next: publish
+CP287, regenerate and verify the CP285 post-training config with the preserved
+venv launcher, reinstall the LaunchAgent, confirm it stays alive or reaches the
+expected wait stage, and continue hardening while training proceeds.

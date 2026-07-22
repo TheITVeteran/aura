@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import plistlib
+import sys
 from pathlib import Path
 
 import pytest
@@ -92,8 +93,12 @@ def test_config_binds_nonclaiming_six_arm_directional_contract(isolated_repo):
     )
 
 
-def test_directional_command_runs_the_full_stack_profile(isolated_repo):
+def test_directional_command_runs_the_full_stack_profile(isolated_repo, monkeypatch):
     root, contract_path, contract = isolated_repo
+    venv_python = root / ".venv" / "bin" / "python"
+    venv_python.parent.mkdir(parents=True)
+    venv_python.symlink_to(Path(sys.executable))
+    monkeypatch.setattr(post.sys, "executable", str(venv_python))
     config = post.build_config(
         contract_path=contract_path,
         output_root=root / "artifacts/cp259/post-training",
@@ -104,6 +109,7 @@ def test_directional_command_runs_the_full_stack_profile(isolated_repo):
 
     command = post.ControllerRun(config, contract).campaign_command()
 
+    assert command[0] == str(venv_python)
     profile_index = command.index("--rlc-profile") + 1
     assert command[profile_index] == "resident_full_stack"
 
@@ -227,8 +233,14 @@ def test_controller_journal_detects_tampering(isolated_repo):
         post.ControllerRun(config, contract)
 
 
-def test_launchd_contract_restarts_only_unexpected_nonzero_exit(isolated_repo):
+def test_launchd_contract_restarts_only_unexpected_nonzero_exit(
+    isolated_repo, monkeypatch
+):
     root, contract_path, _contract_value = isolated_repo
+    venv_python = root / ".venv" / "bin" / "python"
+    venv_python.parent.mkdir(parents=True)
+    venv_python.symlink_to(Path(sys.executable))
+    monkeypatch.setattr(post.sys, "executable", str(venv_python))
     config = post.build_config(
         contract_path=contract_path,
         output_root=root / "artifacts/cp259/post-training",
@@ -244,6 +256,7 @@ def test_launchd_contract_restarts_only_unexpected_nonzero_exit(isolated_repo):
     assert payload["KeepAlive"] == {"SuccessfulExit": False}
     assert payload["ThrottleInterval"] == 30
     assert payload["ProgramArguments"][0:2] == ["/usr/bin/caffeinate", "-i"]
+    assert payload["ProgramArguments"][2] == str(venv_python)
 
 
 def test_external_custody_request_cannot_self_certify(isolated_repo):
