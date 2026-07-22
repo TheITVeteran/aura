@@ -23330,3 +23330,32 @@ passes. This is total checkpoint record 337. The forecast remains 394-661 total
 records, now approximately 57-324 records after this checkpoint. Next: publish
 CP276, rebuild the installed app from the new commit, and continue monitoring
 CP273.
+
+## Checkpoint 2026-07-21-277: GRPO Held-Out Evaluation Progress Receipts
+
+The resident-32B CP273 GRPO proof run exposed a different kind of reliability
+gap: the detached child remained alive with stable heartbeats and the 32B model
+loaded, but the trainer emitted no task-level progress during the long
+pre-training held-out recurrent baseline. On a large resident model, a
+36-prompt recurrent baseline can be long enough that silence looks like a
+stalled proof harness even when the process is still doing work.
+
+Held-out evaluation now emits bounded progress receipts for both standard and
+recurrent decode modes. Baseline and periodic eval passes print the labeled
+task count and running accuracy at the first task, every fourth task by
+default, and the final task. This does not alter sampling, rewards, adapter
+updates, or scoring; it only makes future long resident evaluations observable
+while preserving the final reports as the source of record.
+
+Validation is clean: `tests/test_train_grpo_contract.py` passes all 17 tests,
+the focused progress regression passes, and bytecode compilation passes for
+`tools/train_grpo.py` and `tests/test_train_grpo_contract.py`. The live CP273
+child remains a frozen old-source process, so this checkpoint improves future
+runs only; it does not inject logs into the already-running baseline and does
+not claim a reasoning gain or frontier proof.
+
+This is total checkpoint record 338. The forecast remains 394-661 total
+records, now approximately 56-323 records after this checkpoint. Next: publish
+CP277, rebuild the installed app from the new commit, continue watching CP273
+for the first real baseline/calibration artifact, and only relaunch under this
+observability fix if the old-source run fails or has to be superseded.

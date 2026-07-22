@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
+import types
 from dataclasses import dataclass, field
 
 import pytest
@@ -27,6 +29,7 @@ from tools.train_grpo import (
     _record_recurrent_step_failure,
     _stable_seed,
     completion_logprob,
+    evaluate_heldout,
     sample_recurrent_group,
 )
 
@@ -346,3 +349,67 @@ def test_empty_text_completion_without_eos_fails_explicitly():
 
     with pytest.raises(RuntimeError, match="no EOS token"):
         completion_logprob(object(), Tokenizer(), "prompt", "", adapters_on=False)
+
+
+def test_heldout_evaluation_emits_bounded_progress(capsys, monkeypatch):
+    class Response:
+        text = "FINAL_ANSWER true"
+
+    def fake_stream_generate(*_args, **_kwargs):
+        yield Response()
+
+    class LoRALinear:
+        pass
+
+    mlx_lm = types.ModuleType("mlx_lm")
+    mlx_lm.stream_generate = fake_stream_generate
+    mlx_lm_tuner = types.ModuleType("mlx_lm.tuner")
+    mlx_lm_lora = types.ModuleType("mlx_lm.tuner.lora")
+    mlx_lm_lora.LoRALinear = LoRALinear
+    monkeypatch.setitem(
+        sys.modules,
+        "mlx_lm",
+        mlx_lm,
+    )
+    monkeypatch.setitem(sys.modules, "mlx_lm.tuner", mlx_lm_tuner)
+    monkeypatch.setitem(sys.modules, "mlx_lm.tuner.lora", mlx_lm_lora)
+
+    class Task:
+        domain = "logic"
+        depth = 2
+        knowledge = "parametric"
+        grader = "exact"
+        expected = True
+
+        def __init__(self, task_id: str, correct: bool = True) -> None:
+            self.task_id = task_id
+            self.prompt = "solve"
+            self.correct = correct
+
+        def grade(self, _text: str) -> dict[str, bool]:
+            return {"correct": self.correct}
+
+    class Tokenizer:
+        @staticmethod
+        def apply_chat_template(messages, **_kwargs):
+            return messages[0]["content"]
+
+    tasks = [Task(f"t-{index}", correct=index != 1) for index in range(5)]
+
+    report = evaluate_heldout(
+        object(),
+        Tokenizer(),
+        tasks,
+        max_tokens=8,
+        envelope=None,
+        adapters_on=False,
+        progress_label="baseline-standard",
+        progress_every=2,
+    )
+
+    out = capsys.readouterr().out
+    assert "[baseline-standard] 1/5 running=1.000" in out
+    assert "[baseline-standard] 2/5 running=0.500" in out
+    assert "[baseline-standard] 4/5 running=0.750" in out
+    assert "[baseline-standard] 5/5 running=0.800" in out
+    assert report["overall"] == pytest.approx(0.8)

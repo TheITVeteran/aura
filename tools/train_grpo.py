@@ -737,6 +737,8 @@ def evaluate_heldout(
     max_tokens,
     envelope,
     adapters_on: bool,
+    progress_label: str = "",
+    progress_every: int = 4,
 ):
     """Greedy held-out accuracy by depth with explicit adapter exposure."""
     from mlx_lm import stream_generate
@@ -751,8 +753,10 @@ def evaluate_heldout(
         if adapters_on
         else nullcontext()
     )
+    total = len(tasks)
+    correct_so_far = 0
     with scope:
-        for task in tasks:
+        for index, task in enumerate(tasks, start=1):
             pieces: list[str] = []
             for response in stream_generate(
                 model,
@@ -762,9 +766,21 @@ def evaluate_heldout(
             ):
                 pieces.append(response.text)
             verdict = task.grade("".join(pieces))
-            results.append((task, bool(verdict["correct"])))
+            correct = bool(verdict["correct"])
+            results.append((task, correct))
+            correct_so_far += int(correct)
             if envelope is not None:
                 envelope.reclaim(force=True)
+            if progress_label and (
+                index == total
+                or index == 1
+                or index % max(1, progress_every) == 0
+            ):
+                print(
+                    f"[{progress_label}] {index}/{total} "
+                    f"running={correct_so_far / max(1, index):.3f}",
+                    flush=True,
+                )
     report = scaling_report(results)
     report["adapters_on"] = adapters_on
     report["execution_mode"] = "standard"
@@ -781,6 +797,8 @@ def evaluate_recurrent_heldout(
     envelope,
     adapters_on: bool,
     seed: int,
+    progress_label: str = "",
+    progress_every: int = 4,
 ):
     """Greedy held-out accuracy through the exact fixed RLC graph."""
 
@@ -808,6 +826,8 @@ def evaluate_recurrent_heldout(
     )
     results = []
     receipts: list[dict[str, Any]] = []
+    total = len(tasks)
+    correct_so_far = 0
     for index, task in enumerate(tasks):
         mx.random.seed(_stable_seed(seed, "recurrent_eval", index, task.task_id))
         scope = nullcontext() if adapters_on else recurrence_adapter_disabled()
@@ -822,7 +842,9 @@ def evaluate_recurrent_heldout(
                 f"recurrent held-out task {task.task_id} failed: {result.reason}"
             )
         verdict = task.grade(result.text)
-        results.append((task, bool(verdict["correct"])))
+        correct = bool(verdict["correct"])
+        results.append((task, correct))
+        correct_so_far += int(correct)
         receipts.append(
             {
                 "task_id": task.task_id,
@@ -835,6 +857,17 @@ def evaluate_recurrent_heldout(
         )
         if envelope is not None:
             envelope.reclaim(force=True)
+        completed = index + 1
+        if progress_label and (
+            completed == total
+            or completed == 1
+            or completed % max(1, progress_every) == 0
+        ):
+            print(
+                f"[{progress_label}] {completed}/{total} "
+                f"running={correct_so_far / max(1, completed):.3f}",
+                flush=True,
+            )
     report = scaling_report(results)
     report["adapters_on"] = adapters_on
     report["execution_mode"] = "recurrent"
@@ -1297,6 +1330,7 @@ def main() -> int:
                     max_tokens=args.max_tokens,
                     envelope=envelope,
                     adapters_on=False,
+                    progress_label="baseline-standard",
                 )
                 baseline_role = "frozen_pretraining_baseline"
             else:
@@ -1309,6 +1343,7 @@ def main() -> int:
                     envelope=envelope,
                     adapters_on=False,
                     seed=_stable_seed(args.seed, "baseline"),
+                    progress_label="baseline-recurrent",
                 )
                 baseline_role = "frozen_base_recurrent_baseline"
             baseline_eval["step"] = 0
@@ -1639,6 +1674,7 @@ def main() -> int:
                             max_tokens=args.max_tokens,
                             envelope=envelope,
                             adapters_on=True,
+                            progress_label=f"eval-standard-{step}",
                         )
                         report_role = "adapter_standard_decode"
                     else:
@@ -1651,6 +1687,7 @@ def main() -> int:
                             envelope=envelope,
                             adapters_on=True,
                             seed=_stable_seed(args.seed, "eval", step),
+                            progress_label=f"eval-recurrent-{step}",
                         )
                         report_role = "adapter_recurrent_decode"
                     report["step"] = step
