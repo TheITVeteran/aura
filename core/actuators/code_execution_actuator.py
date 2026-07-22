@@ -7,7 +7,50 @@ Ensures safety by validating AST for banned imports/functions.
 import ast
 import hashlib
 from typing import Any
-from core.actuators.actuator_registry import BaseActuator, ActuatorResult
+
+from core.actuators.actuator_registry import ActuatorResult, BaseActuator
+
+_BANNED_MODULES = {
+    "ctypes", "importlib", "os", "pathlib", "pty", "shutil", "subprocess", "sys",
+}
+_BANNED_NETWORK_MODULES = {"socket", "urllib", "requests", "httpx", "http"}
+_BANNED_CALLS = {
+    "__import__", "compile", "eval", "exec", "globals", "input", "locals", "open", "vars",
+}
+_BANNED_ATTR_CALLS = {"system", "popen", "spawn", "remove", "unlink", "rmdir"}
+
+
+def code_is_ast_safe(code: Any, *, network_access: bool = False) -> bool:
+    """Shared AST safety gate for synthesized code.
+
+    Rejects banned imports (filesystem/process/interpreter, plus network unless
+    explicitly allowed) and dangerous call names. Used by both the code-execution
+    actuator and the sandbox operator so no execution path skips the check.
+    """
+    if not isinstance(code, str):
+        return False
+    try:
+        tree = ast.parse(code)
+    except (SyntaxError, ValueError, TypeError, MemoryError):
+        return False
+    banned = set(_BANNED_MODULES)
+    if not network_access:
+        banned |= _BANNED_NETWORK_MODULES
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            if any(n.name.split(".")[0] in banned for n in node.names):
+                return False
+        elif isinstance(node, ast.ImportFrom):
+            if node.module and node.module.split(".")[0] in banned:
+                return False
+            if any(n.name.split(".")[0] in banned for n in node.names):
+                return False
+        elif isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name) and node.func.id in _BANNED_CALLS:
+                return False
+            if isinstance(node.func, ast.Attribute) and node.func.attr in _BANNED_ATTR_CALLS:
+                return False
+    return True
 
 
 class CodeExecutionActuator(BaseActuator):
@@ -26,62 +69,9 @@ class CodeExecutionActuator(BaseActuator):
     def validate_params(self, params: dict[str, Any]) -> bool:
         if not isinstance(params, dict) or "code" not in params:
             return False
-        code = params["code"]
-        if not isinstance(code, str):
-            return False
-
-        # Parse AST to check imports and safety
-        try:
-            tree = ast.parse(code)
-        except (SyntaxError, ValueError, TypeError, MemoryError):
-            return False  # Syntax error in code
-
-        banned_modules = {
-            "ctypes",
-            "importlib",
-            "os",
-            "pathlib",
-            "pty",
-            "shutil",
-            "subprocess",
-            "sys",
-        }
-
-        # If network_access parameter is False or omitted, ban network imports
-        network_access = bool(params.get("network_access", False))
-        if not network_access:
-            banned_modules.update({"socket", "urllib", "requests", "httpx", "http"})
-
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                for name in node.names:
-                    if name.name.split('.')[0] in banned_modules:
-                        return False
-            elif isinstance(node, ast.ImportFrom):
-                if node.module and node.module.split('.')[0] in banned_modules:
-                    return False
-                for name in node.names:
-                    if name.name.split('.')[0] in banned_modules:
-                        return False
-            elif isinstance(node, ast.Call):
-                if isinstance(node.func, ast.Name):
-                    if node.func.id in (
-                        "__import__",
-                        "compile",
-                        "eval",
-                        "exec",
-                        "globals",
-                        "input",
-                        "locals",
-                        "open",
-                        "vars",
-                    ):
-                        return False
-                if isinstance(node.func, ast.Attribute):
-                    if node.func.attr in ("system", "popen", "spawn", "remove", "unlink", "rmdir"):
-                        return False
-
-        return True
+        return code_is_ast_safe(
+            params["code"], network_access=bool(params.get("network_access", False))
+        )
 
     def execute(self, params: dict[str, Any]) -> ActuatorResult:
         if not params.get("_aura_authorized"):
