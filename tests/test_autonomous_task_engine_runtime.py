@@ -507,7 +507,12 @@ async def test_task_engine_think_tool_has_deterministic_empty_llm_fallback():
 
 
 @pytest.mark.asyncio
-async def test_task_engine_verifier_uses_nonempty_result_when_llm_verdict_blank():
+async def test_task_engine_verifier_fails_closed_on_blank_llm_verdict():
+    """CP126 6671cd3d: a blank verifier verdict is an OUTAGE, not a pass.
+
+    Treating "nothing came back" as success let unrelated or failure output
+    satisfy arbitrary success criteria. A verifier that produced no verdict
+    fails the step closed."""
     llm = SimpleNamespace(think=AsyncCallRecorder(return_value=""))
     kernel = SimpleNamespace(organs={"llm": SimpleNamespace(get_instance=lambda: llm)})
     engine = AutonomousTaskEngine(kernel)
@@ -521,7 +526,7 @@ async def test_task_engine_verifier_uses_nonempty_result_when_llm_verdict_blank(
 
     result = await engine._verify_step(step, "Investigated the failure and listed next checks.")
 
-    assert result is True
+    assert result is False
     llm.think.assert_awaited()
 
 
@@ -546,6 +551,11 @@ async def test_task_engine_records_execution_repair_pressure(monkeypatch):
     engine._verify_step = AsyncCallRecorder(side_effect=[False, True])
     engine._get_alternative_approach = AsyncCallRecorder(
         return_value={"command": "pytest tests/test_runtime_service_access.py -q"}
+    )
+    # CP126 96a878ce: retry args are re-screened by the safety policy before
+    # they replace approved args. A benign pytest command is allowed.
+    engine._safety_registry = SimpleNamespace(
+        is_allowed=AsyncCallRecorder(return_value=True)
     )
 
     step = TaskStep(
@@ -872,3 +882,83 @@ async def test_task_engine_universal_fallbacks():
     assert len(plan_social.steps) == 1
     assert plan_social.steps[0].tool == "social_post"
     assert "neuroscience" in plan_social.steps[0].args["content"]
+
+
+# ── CP126 security-authority contracts ─────────────────────────────────────
+
+
+def test_shadow_mode_simulates_all_side_effecting_tools():
+    """CP126 8cdd4a4e: shadow mode is fail-closed — only read-only tools run
+    for real; shell/browser/computer-use/unknown tools are simulated."""
+    engine = AutonomousTaskEngine.__new__(AutonomousTaskEngine)
+    for tool in ("sovereign_terminal", "computer_use", "browser_open",
+                 "run_python", "write_file", "social_post", "delete_file",
+                 "some_unknown_capability"):
+        assert engine._is_read_only_tool(tool) is False, tool
+    for tool in ("read_file", "recall_memory", "web_search", "clock",
+                 "get_status", "list_files"):
+        assert engine._is_read_only_tool(tool) is True, tool
+
+
+def test_tool_result_is_failure_catches_plain_string_failures():
+    """CP126 07b8b173: default adapters return failures as ordinary strings;
+    the engine must recognize them as failures, not non-empty successes."""
+    engine = AutonomousTaskEngine.__new__(AutonomousTaskEngine)
+    assert engine._tool_result_is_failure("Search failed: timeout") is True
+    assert engine._tool_result_is_failure("Error: file not found") is True
+    assert engine._tool_result_is_failure({"ok": False}) is True
+    assert engine._tool_result_is_failure({"exit_code": 1}) is True
+    assert engine._tool_result_is_failure("") is True
+    assert engine._tool_result_is_failure(None) is True
+    # A genuine long answer that merely mentions "error" is NOT a failure.
+    assert engine._tool_result_is_failure(
+        "The function handles the divide-by-zero error gracefully by "
+        "returning None, and the remaining forty test cases all pass "
+        "cleanly with the expected numeric results across the board."
+    ) is False
+
+
+@pytest.mark.asyncio
+async def test_verify_step_rejects_string_failure_results():
+    engine = AutonomousTaskEngine.__new__(AutonomousTaskEngine)
+    step = TaskStep(
+        step_id="s1", description="search", tool="web_search",
+        args={}, success_criterion="any result",
+    )
+    # "any result" is a trivial criterion the old code passed on non-empty
+    # text — a failure string must still fail.
+    assert await engine._verify_step(step, "Search failed") is False
+
+
+def test_all_succeeded_excludes_skipped_and_pending():
+    """CP126 325e0935: a plan with skipped/pending steps is not 'succeeded'."""
+    done = TaskStep(step_id="a", description="d", tool="t", args={},
+                    success_criterion="c")
+    done.status = StepStatus.SUCCEEDED
+    skipped = TaskStep(step_id="b", description="d", tool="t", args={},
+                       success_criterion="c")
+    skipped.status = StepStatus.SKIPPED
+
+    all_done = TaskPlan(plan_id="p1", goal="g", steps=[done], trace_id="t")
+    assert all_done.all_succeeded is True
+
+    with_skip = TaskPlan(plan_id="p2", goal="g", steps=[done, skipped],
+                         trace_id="t")
+    assert with_skip.all_complete is True      # nothing left to run
+    assert with_skip.all_succeeded is False     # but the goal was not achieved
+
+
+@pytest.mark.asyncio
+async def test_alternative_retry_args_are_re_screened_by_safety():
+    """CP126 96a878ce: model-generated retry args go back through the safety
+    policy before they can replace approved ones."""
+    engine = AutonomousTaskEngine.__new__(AutonomousTaskEngine)
+    engine._safety_registry = SimpleNamespace(
+        is_allowed=AsyncCallRecorder(return_value=False)
+    )
+    step = TaskStep(step_id="s1", description="d", tool="sovereign_terminal",
+                    args={"command": "ls"}, success_criterion="c")
+    ok = await engine._alternative_args_are_safe(
+        step, {"command": "rm -rf / --no-preserve-root"}
+    )
+    assert ok is False

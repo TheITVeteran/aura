@@ -148,6 +148,18 @@ class TaskPlan:
         return all(s.status in (StepStatus.SUCCEEDED, StepStatus.SKIPPED) for s in self.steps)
 
     @property
+    def all_succeeded(self) -> bool:
+        """Every step actually SUCCEEDED — skipped/pending do not count.
+
+        ``all_complete`` treats a SKIPPED step as done, which is right for
+        "no more work to do" but wrong for "the goal was achieved": a plan
+        that skipped its load-bearing step did not succeed.
+        """
+        return bool(self.steps) and all(
+            s.status == StepStatus.SUCCEEDED for s in self.steps
+        )
+
+    @property
     def any_failed(self) -> bool:
         return any(s.status == StepStatus.FAILED for s in self.steps)
 
@@ -362,7 +374,9 @@ class AutonomousTaskEngine:
                 "plans": [plan.to_runtime_dict() for plan in self._active_plans.values()],
             }
             atomic_write_json(str(self._persist_path), payload)
-        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+        except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            # OSError included: a full/read-only/permission-denied disk is a
+            # normal failure the caller must survive, not a crash mid-plan.
             record_degradation("autonomous_task_engine", exc)
             logger.debug("TaskEngine: active plan persistence skipped: %s", exc)
 
@@ -395,7 +409,9 @@ class AutonomousTaskEngine:
             if not self._persist_path.exists():
                 return
             raw = json.loads(self._persist_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, TypeError, ValueError) as exc:
+        except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+            # OSError included: a permission/IO error reading the plan file
+            # must degrade to "no restored plans", never crash init.
             record_degradation("autonomous_task_engine", exc)
             logger.debug("TaskEngine: persisted active plan load skipped: %s", exc)
             return
@@ -487,7 +503,13 @@ class AutonomousTaskEngine:
                 )
 
         # ── Shadow Mode Check (Simulation) ──
-        if is_shadow and tool_name in ["run_python", "write_file", "social_post"]:
+        # Shadow mode is FAIL-CLOSED: only tools proven side-effect-free run
+        # for real; everything else is simulated. The old denylist named
+        # three tools (run_python, write_file, social_post) and let shell,
+        # computer-use, browser, OS, rollback, and any unknown
+        # capability-engine tool execute real side effects during a dry run —
+        # the exact thing shadow mode exists to prevent.
+        if is_shadow and not self._is_read_only_tool(tool_name):
             logger.info("TaskEngine: [SHADOW MODE] Simulating execution of '%s'", tool_name)
             return f"[SHADOW_SUCCESS] Simulated {tool_name} with args {args}"
 
@@ -519,6 +541,34 @@ class AutonomousTaskEngine:
 
         raise RuntimeError(f"Tool '{tool_name}' not found in registry or orchestrator")
 
+    # Tools that only READ state and can safely run during a shadow (dry-run)
+    # plan. Anything not on this allowlist is simulated. Keep this tight: a
+    # tool belongs here only if it provably cannot mutate the world, the
+    # filesystem, the network, or another agent.
+    _READ_ONLY_TOOLS = frozenset({
+        "read_file",
+        "recall_memory",
+        "web_search",
+        "clock",
+        "get_time",
+        "list_files",
+        "read_memory",
+    })
+
+    def _is_read_only_tool(self, tool_name: str) -> bool:
+        name = str(tool_name or "").strip().lower()
+        if name in self._READ_ONLY_TOOLS:
+            return True
+        # Conservative name-shape allowance for obviously-read verbs, still
+        # excluding anything that writes/executes/posts/deletes.
+        read_prefixes = ("read_", "get_", "list_", "search_", "recall_", "fetch_")
+        write_markers = ("write", "exec", "run", "post", "delete", "remove",
+                         "shell", "terminal", "browser", "computer", "install",
+                         "send", "create", "update", "modify", "rollback")
+        if any(marker in name for marker in write_markers):
+            return False
+        return name.startswith(read_prefixes)
+
     # ── Public interface ──────────────────────────────────────────────────────
 
     def register_tool(self, name: str, fn: Callable) -> None:
@@ -549,8 +599,11 @@ class AutonomousTaskEngine:
         is_shadow: bool = False,
     ) -> TaskResult:
         """Logic for decomposing a goal and executing the plan."""
-        requested_plan_id = f"plan_{int(time.time())}"
         trace_id = uuid.uuid4().hex[:8]
+        # A uuid suffix makes the id unique: deriving it from int(time.time())
+        # alone meant two goals started in the same second shared plan id,
+        # step ids, approval events, persistence slots, and cleanup keys.
+        requested_plan_id = f"plan_{int(time.time())}_{trace_id}"
         logger.info(
             "TaskEngine: starting goal '%s' (requested_plan=%s) [trace=%s]",
             goal[:50],
@@ -559,7 +612,11 @@ class AutonomousTaskEngine:
         )
 
         # 0. Safety Check: Is this goal/skill allowed?
-        if not await self._safety_registry.is_allowed(goal[:50]):
+        # The FULL goal is evaluated — truncating to 50 chars let a
+        # disallowed instruction placed after character 50 slip past the
+        # goal-level policy entirely (the log line is still truncated only
+        # for readability).
+        if not await self._safety_registry.is_allowed(goal):
             logger.warning("TaskEngine: Goal '%s' blocked by SafetyRegistry", goal[:50])
             return TaskResult(
                 plan_id=requested_plan_id,
@@ -1246,6 +1303,41 @@ Respond ONLY with a JSON array, no other text:
 
     def _can_run_in_parallel(self, step: TaskStep) -> bool:
         return step.parallel_safe and step.tool in self.SAFE_PARALLEL_TOOLS
+
+    # Failure phrases the default tool adapters return as ORDINARY strings
+    # ("Search failed", "Write failed", "Error: ...") — the verifier's
+    # non-empty/trivial criteria would otherwise accept these as success.
+    _TOOL_FAILURE_MARKERS = (
+        "failed", "error:", "[error]", "exception", "traceback",
+        "permission denied", "not found", "could not", "unable to",
+        "timed out", "timeout", "refused",
+    )
+
+    def _tool_result_is_failure(self, result: Any) -> bool:
+        """True when a tool result signals failure, even as a plain string.
+
+        Structured results are checked by their explicit flags; string
+        results are screened for the failure phrases the default adapters
+        return in lieu of raising.
+        """
+        if result is None:
+            return True
+        if isinstance(result, dict):
+            if result.get("ok") is False or result.get("verified") is False:
+                return True
+            if result.get("error"):
+                return True
+            code = result.get("exit_code", result.get("return_code"))
+            return code not in (None, 0)
+        text = str(result).strip().lower()
+        if not text:
+            return True
+        # Only treat a SHORT marker-led string as failure — a long answer that
+        # merely mentions "error" in passing is not a tool failure.
+        if len(text) <= 200:
+            return any(text.startswith(m) or f" {m}" in text[:60]
+                       for m in self._TOOL_FAILURE_MARKERS)
+        return False
 
     def _looks_technical_fact(self, content: str) -> bool:
         lowered = str(content or "").lower()
@@ -2159,8 +2251,10 @@ Respond ONLY with a JSON array, no other text:
         on_progress: Callable | None,
     ) -> None:
         """Execute all steps, respecting dependencies and handling failures."""
-        # Final safety check before execution
-        if not await self._safety_registry.is_allowed(plan.goal[:50]):
+        # Final safety check before execution — the FULL goal, so a
+        # disallowed suffix cannot survive to execution time (same bypass as
+        # the admission check).
+        if not await self._safety_registry.is_allowed(plan.goal):
             plan.status = "failed"
             self._persist_plan_state(plan)
             logger.error(
@@ -2436,6 +2530,19 @@ Respond ONLY with a JSON array, no other text:
                             )
                             self._persist_plan_state(plan)
                             break
+                        # Model-generated replacement args are re-screened
+                        # through the goal safety policy before they replace
+                        # the approved ones — a retry must not smuggle a
+                        # disallowed command/path/url into an already-approved
+                        # step.
+                        if not await self._alternative_args_are_safe(step, new_args):
+                            step.error = "alternative args blocked by safety policy"
+                            logger.warning(
+                                "TaskEngine: alternative args for '%s' blocked by safety; not retrying.",
+                                step.description[:40],
+                            )
+                            self._persist_plan_state(plan)
+                            break
                         step.args = new_args
                         self._record_coding_execution(
                             "record_execution_repair",
@@ -2474,7 +2581,16 @@ Respond ONLY with a JSON array, no other text:
                     logger.debug("Failed to record timeout failure: %s", res_err)
 
                 self._persist_plan_state(plan)
-            except (RuntimeError, asyncio.CancelledError, AttributeError) as e:
+            except asyncio.CancelledError:
+                # Shutdown/caller cancellation must abort the plan, not be
+                # laundered into another retry-and-fallback cycle that
+                # eventually synthesizes a "result" nobody asked to finish.
+                logger.info(
+                    "TaskEngine: step '%s' cancelled; aborting plan.",
+                    step.description[:40],
+                )
+                raise
+            except (RuntimeError, AttributeError) as e:
                 record_degradation(
                     "autonomous_task_engine",
                     e,
@@ -2531,6 +2647,13 @@ Respond ONLY with a JSON array, no other text:
         tool ran — we check if it produced the expected outcome.
         """
         if not result:
+            return False
+
+        # A tool result that ANNOUNCES its own failure (even as a plain
+        # string like "Search failed") never satisfies a success criterion,
+        # however trivial. This closes the gap where non-empty failure text
+        # passed the "non-empty" / "any result" criteria.
+        if self._tool_result_is_failure(result):
             return False
 
         result_str = str(result)[:1000] if result else ""
@@ -2600,15 +2723,58 @@ Respond ONLY with a JSON array, no other text:
                 timeout=15.0,
             )
             if not str(raw or "").strip():
-                return bool(result_str.strip())
+                # Blank verifier output is NOT a pass: an empty verdict is a
+                # verifier outage, and treating "nothing came back" as success
+                # let unrelated or failure output satisfy arbitrary criteria.
+                logger.warning(
+                    "Verification returned no verdict for %s; failing closed.",
+                    step.description[:40],
+                )
+                return False
             verdict = raw.strip().upper()
             passed = verdict.startswith("YES")
             logger.debug("Verification: %s → %s", step.description[:40], verdict[:50])
             return passed
-        except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:
+        except asyncio.CancelledError:
+            # Cancellation is shutdown/caller intent, never a verification
+            # outcome — propagate it rather than converting it into a pass.
+            raise
+        except (RuntimeError, TimeoutError, AttributeError) as e:
+            # Verifier exception or timeout: FAIL CLOSED. Assuming pass here
+            # let every verifier outage certify arbitrary output as correct.
             record_degradation("autonomous_task_engine", e)
-            logger.debug("Verification LLM call failed: %s. Assuming pass.", e)
-            return bool(result_str.strip())
+            logger.warning(
+                "Verification LLM call failed: %s. Failing closed (unverified).", e
+            )
+            return False
+
+    async def _alternative_args_are_safe(self, step: TaskStep, new_args: dict) -> bool:
+        """Re-screen model-generated retry args through the goal safety policy.
+
+        The values a verification-failure retry substitutes (command, code,
+        path, filename, url, content, …) are exactly the fields that carry
+        side-effect authority. Approving the original step never approved
+        these, so each string value is checked before it can be adopted.
+        """
+        try:
+            if not isinstance(new_args, dict):
+                return False
+            for key, value in new_args.items():
+                if not isinstance(value, str) or not value.strip():
+                    continue
+                probe = f"{step.tool} {key}: {value}"
+                if not await self._safety_registry.is_allowed(probe):
+                    return False
+            return True
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            # Fail closed: a safety probe that cannot run does not license the
+            # substitution.
+            record_degradation(
+                "autonomous_task_engine",
+                exc,
+                action="rejected retry args because the safety probe could not run",
+            )
+            return False
 
     async def _get_alternative_approach(self, step: TaskStep) -> dict | None:
         """Ask LLM to suggest alternative args after verification failure."""
@@ -2665,13 +2831,37 @@ Respond ONLY with a JSON array, no other text:
         for step in to_rollback:
             logger.info("TaskEngine: rolling back '%s'", step.description[:40])
             try:
-                # Issue ATE-003: Pass rollback_args instead of empty dict
-                await self._invoke_tool(
+                # Rollback runs under the SAME plan token and shadow flag as
+                # the plan it undoes: without them a shadow (dry-run) plan
+                # could fire a real rollback side effect, and a real rollback
+                # could run without the plan's scoped authority.
+                rollback_result = await self._invoke_tool(
                     step.rollback_action,
                     step.rollback_args,
+                    token_id=plan.token_id,
+                    is_shadow=plan.is_shadow,
                     origin=self._context_origin(plan.context),
                 )
+                # A rollback that returned a failure value did not restore
+                # state — do not mark the step ROLLED_BACK on a bare
+                # non-exception, or the ledger claims a restore that never
+                # happened.
+                if self._tool_result_is_failure(rollback_result):
+                    logger.error(
+                        "Rollback for '%s' returned failure: %s",
+                        step.description[:40],
+                        str(rollback_result)[:120],
+                    )
+                    record_degradation(
+                        "autonomous_task_engine",
+                        RuntimeError("rollback_returned_failure"),
+                        severity="error",
+                        action="left step NOT marked rolled-back after failed rollback",
+                    )
+                    continue
                 step.status = StepStatus.ROLLED_BACK
+            except asyncio.CancelledError:
+                raise
             except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation("autonomous_task_engine", e)
                 logger.warning("Rollback failed for step '%s': %s", step.description[:40], e)
@@ -2682,7 +2872,15 @@ Respond ONLY with a JSON array, no other text:
         """Use LLM to synthesize a natural language summary of what was accomplished."""
         plan.completed_at = time.time()
         succeeded_steps = plan.succeeded_steps  # Initialize succeeded_steps here
-        plan.status = "succeeded" if plan.all_complete and not plan.any_failed else "partial"
+        # "succeeded" requires EVERY step to have actually succeeded — a plan
+        # with skipped, pending, or safety-aborted steps is at most "partial",
+        # and a plan already marked failed/aborted keeps that verdict.
+        if plan.status in ("failed", "aborted", "rejected"):
+            pass  # a terminal failure verdict is never upgraded by synthesis
+        elif plan.all_succeeded and not plan.any_failed:
+            plan.status = "succeeded"
+        else:
+            plan.status = "partial"
 
         # Build evidence from step results
         evidence = []
@@ -2720,7 +2918,9 @@ Respond ONLY with a JSON array, no other text:
             if not str(summary or "").strip():
                 raise ValueError("LLM returned empty response for result synthesis")
             plan.final_result = str(summary).strip()
-        except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError, ValueError):
+        except asyncio.CancelledError:
+            raise
+        except (RuntimeError, TimeoutError, AttributeError, ValueError):
             n_done = len(succeeded_steps)
             n_total = len(plan.steps)
             summary = f"Completed {n_done}/{n_total} steps toward '{plan.goal}'. " + (
