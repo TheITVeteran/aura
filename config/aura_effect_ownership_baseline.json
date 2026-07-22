@@ -196,7 +196,7 @@
       "callee": "core.runtime.atomic_writer.atomic_write_text",
       "canonical_owner": false,
       "category": "direct_atomic_file_write",
-      "count": 1,
+      "count": 2,
       "path": "core/actuators/actuator_synthesis.py",
       "scope": "<module>.ActuatorSynthesizer.persist_actuator"
     },
@@ -231,14 +231,6 @@
       "count": 1,
       "path": "core/adaptation/abstraction_engine.py",
       "scope": "<module>.AbstractionEngine.increment_application_counts"
-    },
-    {
-      "callee": "core.runtime.atomic_writer.atomic_write_text",
-      "canonical_owner": false,
-      "category": "direct_atomic_file_write",
-      "count": 1,
-      "path": "core/adaptation/adaptive_immunity.py",
-      "scope": "<module>.AdaptiveImmuneSystem._save_state"
     },
     {
       "callee": "core.runtime.atomic_writer.atomic_write_text",
@@ -1305,6 +1297,46 @@
       "scope": "<module>.LoRATrainer._write_training_data"
     },
     {
+      "callee": "core.runtime.atomic_writer.atomic_write_bytes",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/learning/grpo_training_state.py",
+      "scope": "<module>._write_safetensors"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.durable_unlink",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/learning/grpo_training_state.py",
+      "scope": "<module>._write_safetensors"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.atomic_write_bytes",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/learning/grpo_training_state.py",
+      "scope": "<module>.save_grpo_checkpoint"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.atomic_write_text",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/learning/grpo_training_state.py",
+      "scope": "<module>.save_grpo_checkpoint"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.ensure_private_directory",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 3,
+      "path": "core/learning/grpo_training_state.py",
+      "scope": "<module>.save_grpo_checkpoint"
+    },
+    {
       "callee": "core.runtime.atomic_writer.atomic_write_text",
       "canonical_owner": false,
       "category": "direct_atomic_file_write",
@@ -1359,6 +1391,30 @@
       "count": 1,
       "path": "core/learning/preference_trainer.py",
       "scope": "<module>.export_preference_splits"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.atomic_write_bytes",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/learning/recurrence_checkpoint_migration.py",
+      "scope": "<module>._copy_bound"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.atomic_write_bytes",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/learning/recurrence_checkpoint_migration.py",
+      "scope": "<module>.prepare_migration"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.ensure_private_directory",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/learning/recurrence_checkpoint_migration.py",
+      "scope": "<module>.prepare_migration"
     },
     {
       "callee": "core.runtime.atomic_writer.atomic_write_bytes",
@@ -2599,6 +2655,14 @@
       "count": 1,
       "path": "core/actuators/artifact_builder.py",
       "scope": "<module>._write"
+    },
+    {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/adaptation/adaptive_immunity.py",
+      "scope": "<module>.AdaptiveImmuneSystem._save_state"
     },
     {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().append_text",
@@ -6966,7 +7030,7 @@
       "category": "raw_file_mutation",
       "count": 1,
       "path": "core/brain/llm/mlx_client.py",
-      "scope": "<module>.MLXLocalClient._spawn_worker_blocking"
+      "scope": "<module>._open_spawn_lock_file"
     },
     {
       "callee": "_MLX_RUNTIME_PROBE_CACHE_PATH.parent.mkdir",
@@ -8593,6 +8657,14 @@
       "scope": "<module>._atomic_torch_save"
     },
     {
+      "callee": "target.parent.mkdir",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/adaptive_halting.py",
+      "scope": "<module>.HaltingHead.save"
+    },
+    {
       "callee": "self.artifact_dir.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -8689,6 +8761,46 @@
       "scope": "<module>.DomainSpecialistTrainer.train_domain"
     },
     {
+      "callee": "self.run_dir.mkdir",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/durable_run.py",
+      "scope": "<module>.DurableRun.__init__"
+    },
+    {
+      "callee": "stale.unlink",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/durable_run.py",
+      "scope": "<module>.DurableRun._prune"
+    },
+    {
+      "callee": "manifest_tmp.write_text",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/durable_run.py",
+      "scope": "<module>.DurableRun.save"
+    },
+    {
+      "callee": "os.replace",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 2,
+      "path": "core/learning/durable_run.py",
+      "scope": "<module>.DurableRun.save"
+    },
+    {
+      "callee": "tmp.write_text",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/durable_run.py",
+      "scope": "<module>.DurableRun.save"
+    },
+    {
       "callee": "self.artifact_dir.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -8759,6 +8871,22 @@
       "count": 1,
       "path": "core/learning/genuine_learning_pipeline.py",
       "scope": "<module>.LoRATrainer.restore_rollback_snapshot"
+    },
+    {
+      "callee": "shutil.rmtree",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/grpo_training_state.py",
+      "scope": "<module>._prune_generations"
+    },
+    {
+      "callee": "shutil.rmtree",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/grpo_training_state.py",
+      "scope": "<module>.save_grpo_checkpoint"
     },
     {
       "callee": "<pathlib.Path>.mkdir",
@@ -10775,6 +10903,30 @@
       "count": 1,
       "path": "core/runtime/receipts.py",
       "scope": "<module>.ReceiptStore._initialize_high_volume_ledger"
+    },
+    {
+      "callee": "os.open",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/runtime/resource_stage_guard.py",
+      "scope": "<module>._read_canonical"
+    },
+    {
+      "callee": "destination.unlink",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/runtime/resource_stage_guard.py",
+      "scope": "<module>._write_create_once"
+    },
+    {
+      "callee": "os.open",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/runtime/resource_stage_guard.py",
+      "scope": "<module>._write_create_once"
     },
     {
       "callee": "home.mkdir",
@@ -13298,6 +13450,14 @@
     },
     {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 2,
+      "path": "core/runtime/mlx_memory_guard.py",
+      "scope": "<module>.host_pressure"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
       "canonical_owner": true,
       "category": "subprocess_gateway",
       "count": 1,
@@ -13765,6 +13925,14 @@
       "canonical_owner": false,
       "category": "will_decision",
       "count": 1,
+      "path": "core/actuators/actuator_synthesis.py",
+      "scope": "<module>.ActuatorSynthesizer._governance_approve_reload"
+    },
+    {
+      "callee": "core.will.get_will().decide",
+      "canonical_owner": false,
+      "category": "will_decision",
+      "count": 1,
       "path": "core/adaptation/adaptive_immunity.py",
       "scope": "<module>.AdaptiveImmuneSystem._authorize_protected_action"
     },
@@ -13815,6 +13983,14 @@
       "count": 1,
       "path": "core/autonomy/self_modification.py",
       "scope": "<module>.AutonomousSelfModification.propose"
+    },
+    {
+      "callee": "core.governance.will.get_will().decide",
+      "canonical_owner": false,
+      "category": "will_decision",
+      "count": 1,
+      "path": "core/brain/verifier_curriculum.py",
+      "scope": "<module>.VerifierCurriculumLoop._authorized"
     },
     {
       "callee": "<will_decision>.decide",
@@ -14046,6 +14222,14 @@
       "category": "will_decision",
       "count": 1,
       "path": "core/volition.py",
+      "scope": "<module>.VolitionEngine._authorize_selected_goal"
+    },
+    {
+      "callee": "core.will.get_will().decide",
+      "canonical_owner": false,
+      "category": "will_decision",
+      "count": 1,
+      "path": "core/volition.py",
       "scope": "<module>.VolitionEngine._check_soul_drives"
     },
     {
@@ -14082,6 +14266,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "f637514f5f611fabe09de68250a3304e4e87667956d60f3a2b5d9b78e30cbda5",
+  "inventory_sha256": "3a34ad21521d1d8ee992f4e6e409ddd16eebd844c0271d913c0fb28ebfd0671d",
   "schema_version": 1
 }

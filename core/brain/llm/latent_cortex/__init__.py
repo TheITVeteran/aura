@@ -22,6 +22,10 @@ from core.brain.llm.latent_cortex.types import (
     RecurrenceConfig,
     WorkspaceConfig,
 )
+from core.brain.llm.latent_cortex.virtual_quanta import (
+    VirtualComputeQuantum,
+    VirtualComputeQuantaLedger,
+)
 
 __all__ = [
     "BranchConfig",
@@ -32,5 +36,7 @@ __all__ = [
     "LatentOptConfig",
     "LatentReasoningResult",
     "RecurrenceConfig",
+    "VirtualComputeQuantum",
+    "VirtualComputeQuantaLedger",
     "WorkspaceConfig",
 ]
