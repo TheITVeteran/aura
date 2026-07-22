@@ -392,6 +392,191 @@ def cmd_triage(args: argparse.Namespace) -> int:
     return 0
 
 
+REVIEW_COMMIT = "b7bc66f2c87e6a24cd7b8280db6912714b5700c1"
+
+
+def _file_at_commit(path: str, commit: str) -> list[str] | None:
+    try:
+        proc = subprocess.run(
+            ["git", "show", f"{commit}:{path}"],
+            cwd=str(ROOT), capture_output=True, text=True, timeout=30, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.splitlines()
+
+
+def _normalize(line: str) -> str:
+    return " ".join(line.split())
+
+
+def _has_contiguous_run(current_lines: list[str], cited: list[str]) -> bool:
+    """True when the cited lines still appear as a consecutive run."""
+    if not cited:
+        return False
+    if len(cited) == 1:
+        return cited[0] in current_lines
+    first = cited[0]
+    for index, line in enumerate(current_lines):
+        if line != first:
+            continue
+        window = current_lines[index : index + len(cited)]
+        if window == cited:
+            return True
+    return False
+
+
+def cmd_sweep(args: argparse.Namespace) -> int:
+    """Per-finding evidence check against current source.
+
+    For every finding in a file that has CHANGED since the review, pull the
+    exact lines the reviewer cited from the review commit and look for them
+    in the current file. This does not prove a fix is correct, but it
+    separates two very different situations that file-level triage cannot:
+
+      still_present    the cited defect lines survive verbatim -> OPEN
+      span_changed     the cited lines are gone -> plausibly addressed,
+                       needs a human/agent read before it can be recorded
+
+    Findings whose file is byte-identical to the review are reported as
+    untouched without any git work.
+    """
+    inventory_path = Path(args.inventory)
+    ledger = load_ledger(Path(args.ledger))
+    recorded = {f for f, e in ledger.items() if e.get("status") in VALID_STATUSES}
+
+    # Re-read the inventory with evidence_lines, which load_inventory drops.
+    per_file: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    file_hash: dict[str, str] = {}
+    opener = gzip.open if inventory_path.suffix == ".gz" else open
+    with opener(inventory_path, "rt") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            record = json.loads(line)
+            path = record["file"]
+            file_hash[path] = record.get("file_sha256", "")
+            for finding in record.get("findings", []):
+                per_file[path].append(
+                    {
+                        "finding_id": finding["finding_id"],
+                        "severity": finding.get("severity", "unknown"),
+                        "title": finding.get("title", ""),
+                        "evidence_lines": finding.get("evidence_lines", []),
+                    }
+                )
+
+    counts: Counter = Counter()
+    still_present: list[tuple[str, str, str, str]] = []
+    span_changed: list[tuple[str, str, str, str]] = []
+
+    targets = sorted(per_file)
+    if args.file:
+        targets = [t for t in targets if t in set(args.file)]
+
+    for path in targets:
+        if path.startswith(("archive/", "artifacts/")):
+            continue
+        target = ROOT / path
+        current_hash = _sha256_file(target)
+        if not current_hash:
+            counts["file_missing"] += len(per_file[path])
+            continue
+        if current_hash == file_hash[path]:
+            counts["untouched"] += len(per_file[path])
+            continue
+
+        original = _file_at_commit(path, args.review_commit)
+        if original is None:
+            counts["no_review_blob"] += len(per_file[path])
+            continue
+        try:
+            current_text = target.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            counts["file_missing"] += len(per_file[path])
+            continue
+        current_lines_norm = [_normalize(line) for line in current_text.splitlines()]
+        current_norm = set(current_lines_norm)
+
+        for finding in per_file[path]:
+            fid = finding["finding_id"]
+            if fid in recorded:
+                counts["recorded_closed"] += 1
+                continue
+            lines = [n for n in finding["evidence_lines"] if isinstance(n, int)]
+            # Sample the cited lines; substantive ones only (skip blanks and
+            # bare punctuation, which match everywhere).
+            cited: list[str] = []
+            for number in lines[: args.max_lines]:
+                if 1 <= number <= len(original):
+                    text = _normalize(original[number - 1])
+                    if len(text) >= args.min_line_chars:
+                        cited.append(text)
+            if not cited:
+                counts["no_usable_evidence"] += 1
+                continue
+            # Contiguity matters far more than membership. A fix usually
+            # leaves structural lines ("def foo(", a common guard) intact, so
+            # counting individual survivors massively over-reports "open".
+            # Require the cited lines to survive AS A CONSECUTIVE RUN in the
+            # current file: that is what "this exact code is unchanged" means.
+            surviving = sum(1 for text in cited if text in current_norm)
+            ratio = surviving / len(cited)
+            if ratio >= args.present_ratio and len(cited) >= 2:
+                if not _has_contiguous_run(current_lines_norm, cited):
+                    ratio = 0.0
+            row = (path, fid, finding["severity"], finding["title"])
+            if ratio >= args.present_ratio:
+                counts["still_present"] += 1
+                still_present.append(row)
+            else:
+                counts["span_changed"] += 1
+                span_changed.append(row)
+
+    print("CP126 per-finding sweep")
+    print("=" * 70)
+    for key in (
+        "recorded_closed", "untouched", "still_present", "span_changed",
+        "no_usable_evidence", "no_review_blob", "file_missing",
+    ):
+        if counts.get(key):
+            print(f"  {key:<20} {counts[key]:>6}")
+    print()
+    print("  still_present = the reviewer's exact lines survive -> OPEN")
+    print("  span_changed  = those lines are gone -> plausibly addressed,")
+    print("                  still requires a read before recording closure")
+
+    if args.list_changed:
+        print()
+        print(f"  span_changed criticals (top {args.limit}):")
+        for path, fid, sev, title in [r for r in span_changed if r[2] == "critical"][: args.limit]:
+            print(f"    {fid[-8:]}  {path}")
+            print(f"              {title[:78]}")
+    if args.list_present:
+        print()
+        print(f"  still_present criticals (top {args.limit}):")
+        for path, fid, sev, title in [r for r in still_present if r[2] == "critical"][: args.limit]:
+            print(f"    {fid[-8:]}  {path}")
+            print(f"              {title[:78]}")
+    if args.out:
+        Path(args.out).write_text(
+            json.dumps(
+                {
+                    "still_present": [list(r) for r in still_present],
+                    "span_changed": [list(r) for r in span_changed],
+                    "counts": dict(counts),
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        print(f"\n  wrote {args.out}")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -434,6 +619,20 @@ def main() -> int:
     triage.add_argument("--ledger", default=common_ledger)
     triage.add_argument("--inventory", default=common_inventory)
     triage.set_defaults(func=cmd_triage)
+
+    sweep = sub.add_parser("sweep", help="Per-finding evidence check vs current source.")
+    sweep.add_argument("--file", action="append", default=[], help="Limit to these files.")
+    sweep.add_argument("--review-commit", default=REVIEW_COMMIT)
+    sweep.add_argument("--max-lines", type=int, default=6)
+    sweep.add_argument("--min-line-chars", type=int, default=12)
+    sweep.add_argument("--present-ratio", type=float, default=0.5)
+    sweep.add_argument("--list-changed", action="store_true")
+    sweep.add_argument("--list-present", action="store_true")
+    sweep.add_argument("--limit", type=int, default=25)
+    sweep.add_argument("--out", default="")
+    sweep.add_argument("--ledger", default=common_ledger)
+    sweep.add_argument("--inventory", default=common_inventory)
+    sweep.set_defaults(func=cmd_sweep)
 
     args = parser.parse_args()
     return int(args.func(args))
