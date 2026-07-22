@@ -23745,3 +23745,38 @@ records, now approximately 46-313 records after this checkpoint. Next: publish
 CP287, regenerate and verify the CP285 post-training config with the preserved
 venv launcher, reinstall the LaunchAgent, confirm it stays alive or reaches the
 expected wait stage, and continue hardening while training proceeds.
+
+## Checkpoint 2026-07-21-288: CP285 Post-Training Controller Installed and Waiting
+
+The CP285 post-training config was regenerated from pushed source commit
+`be573e0a43a40f36a048cd7697bb01785c2572d2` after CP287. The verified config
+digest is `c2ce7c3037d6f9d3111eac1c0db119af8b72bfefff215396a1865a9e55bd7a26`,
+and it binds contract
+`b81fe15f680bfd5c1c45308befa9c30183a838243cff9bee5aff05d6670f8852`,
+`rlc_profile=resident_full_stack`, and nonclaiming directional proof policy.
+
+The fixed LaunchAgent install succeeded with launch receipt
+`a8579fa1a495b30d27c0962c08a6b3af37cd091f05ee54c76dffb4e57601590d` and plist
+hash `32dd03dba8cb6f487e43543dfce9e87531e96e9974a6b8196b020358f0947281`.
+`launchctl print` shows the agent running under
+`/Users/bryan/.aura/live-source/.venv/bin/python`, not the resolved Homebrew
+interpreter. The current controller state is
+`exclusive_model_owner_admission`, status `waiting`: it sees CP285 training as
+the active model owner and only ~21.3 GiB available against its 40 GiB minimum.
+That is the intended non-contention behavior while the detached trainer is
+still alive.
+
+CP285 training remains nonterminal with supervisor PID `24346`, child PID
+`24359`, and running baseline progress at 8/36 with accuracy `0.000`. No
+calibration, optimizer update, no-signal halt, or frontier-gain result exists
+yet. The old import-error traces remain in `controller.log` from the pre-CP287
+failed install, but the current state/events prove the fixed controller started
+and is waiting.
+
+This is total checkpoint record 349. The forecast remains 394-661 total
+records, now approximately 45-312 records after this checkpoint. Next: continue
+watching CP285 for calibration/optimizer/no-signal evidence, then let the
+controller freeze and run the nonclaiming full-stack directional proof if
+training completes; in parallel, build the remaining mechanism-attribution
+execution so the CP284 ablation profiles are actually run and independently
+scored before any full-stack frontier claim.
