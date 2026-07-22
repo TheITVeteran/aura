@@ -222,7 +222,8 @@ def test_trainer_group_uses_tokenizer_and_distinct_bound_seeds():
 
         @staticmethod
         def apply_chat_template(messages, **_kwargs):
-            assert messages[0]["content"] == "solve"
+            assert messages[0]["content"].endswith("\n\nsolve")
+            assert "FINAL_ANSWER: {JSON object}" in messages[0]["content"]
             return "rendered"
 
         @staticmethod

@@ -20,15 +20,18 @@ from tools.train_grpo import (
     GRPO_DATASET_SCHEMA,
     _assert_exact_adapter_keys,
     _build_task_split,
+    _calibration_admission_report,
     _calibration_token_budget,
     _dataset_payload,
     _advantage_report_with_verifier_rate,
+    _answer_contract_instruction,
     _answer_channel_report_from_verdicts,
     _load_execution_spec,
     _point_estimate_delta,
     _publish_adapter_snapshot,
     _publish_immutable_bytes,
     _record_recurrent_step_failure,
+    _render,
     _signal_admission_report,
     _shape_recurrent_rewards_from_ce_trails,
     _should_halt_for_no_learning_signal,
@@ -104,6 +107,34 @@ def test_grpo_rejects_an_unbound_task_registry():
         )
 
 
+def test_render_adds_contract_scaffold_without_answer_value_leakage():
+    class Tokenizer:
+        @staticmethod
+        def apply_chat_template(messages, **_kwargs):
+            return messages[0]["content"]
+
+    task = _Task(
+        "contract",
+        prompt="Find the node.",
+        expected={"node": 9, "trace": [1, 2, 9]},
+    )
+
+    rendered = _render(Tokenizer(), task)
+
+    assert rendered.endswith("Find the node.")
+    assert "FINAL_ANSWER: {JSON object}" in rendered
+    assert "node, trace" in rendered
+    assert "9" not in rendered
+    assert "[1, 2, 9]" not in rendered
+
+
+def test_answer_contract_instruction_tolerates_non_mapping_expected():
+    instruction = _answer_contract_instruction(_Task("plain", expected=True))
+
+    assert "FINAL_ANSWER: {JSON object}" in instruction
+    assert "Use exactly these JSON keys" not in instruction
+
+
 def test_adapter_resume_requires_the_exact_trainable_keyset():
     expected = {"a.lora_a": object(), "a.lora_b": object()}
     _assert_exact_adapter_keys(expected, dict(expected))
@@ -125,6 +156,55 @@ def test_calibration_cannot_reintroduce_a_short_reasoning_budget():
     assert _calibration_token_budget(320, 320) == 320
     with pytest.raises(ValueError, match="must equal training"):
         _calibration_token_budget(320, 128)
+
+
+def test_recurrent_calibration_requires_measured_learnable_signal():
+    calibration = {
+        "learnable": [],
+        "unexplored": ["khop@2", "khop@4"],
+        "partial": True,
+        "probes": [{"pass_rate": 0.0}],
+        "answer_channel": {
+            "completions": 4,
+            "parseable": 0,
+            "unparseable": 4,
+            "correct": 0,
+            "parseable_fraction": 0.0,
+        },
+    }
+
+    admitted = _calibration_admission_report(
+        calibration,
+        allow_unexplored_frontier=False,
+    )
+
+    assert admitted["training_admitted"] is False
+    assert admitted["reason"] == "answer_channel_blocked"
+    assert "before resident GRPO" in admitted["required_next_gate"]
+
+
+def test_standard_calibration_can_keep_exploring_unmeasured_cells():
+    calibration = {
+        "learnable": [],
+        "unexplored": ["logic@2"],
+        "partial": True,
+        "probes": [{"pass_rate": 0.0}],
+        "answer_channel": {
+            "completions": 4,
+            "parseable": 4,
+            "unparseable": 0,
+            "correct": 0,
+            "parseable_fraction": 1.0,
+        },
+    }
+
+    admitted = _calibration_admission_report(
+        calibration,
+        allow_unexplored_frontier=True,
+    )
+
+    assert admitted["training_admitted"] is True
+    assert admitted["reason"] == "unexplored_frontier_allowed"
 
 
 def test_training_halts_when_grpo_has_no_learning_signal():

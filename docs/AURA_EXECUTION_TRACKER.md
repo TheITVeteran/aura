@@ -24492,3 +24492,46 @@ records, now approximately 24-291 records after this checkpoint. Next: run the
 broader non-MLX trainer/proof slice, commit and push CP309, then build the next
 bounded RLC training gate around parseability admission and discriminative
 trajectory credit before launching another resident multi-hour run.
+
+## Checkpoint 2026-07-22-310: Resident GRPO Requires Parseable Calibration Before Long Training
+
+The CP305 blocker exposed a second trainer-admission gap: warm-start calibration
+left unmeasured cells as `unexplored`, and the resident recurrent run treated
+that as enough permission to spend the multi-hour training budget even though
+every measured probe had pass rate 0.00 and no measured learnable cell existed.
+That optimism is acceptable for cheap local exploration, but it is too weak for
+resident-32B proof training where the next step must be evidence-bound.
+
+The trainer now emits `aura.grpo_calibration_admission.v1` after calibration.
+Standard/non-recurrent training may still admit an unexplored frontier when that
+is explicitly allowed, but recurrent resident training requires a measured
+learnable cell before it starts. If calibration is partial, all measured cells
+are zero-pass, or probe outputs rarely enter the verifier answer channel, the
+run halts before optimizer work with `calibration_not_admitted` and a
+`required_next_gate` naming the missing repair.
+
+Calibration probes now carry the same answer-channel receipt used by training
+groups: completions, parseable count, unparseable count, correct count,
+parseable fraction, correct fraction, and grade-reason counts. The aggregate
+calibration receipt can therefore distinguish "no measured reward variance"
+from "answer channel blocked" before another resident run is launched.
+
+The training prompt also gained an answer-safe contract scaffold. It tells the
+model to finish with one terminal `FINAL_ANSWER: {JSON object}` line, optionally
+names the expected JSON keys, and explicitly does not reveal expected values.
+This is a serving/training-channel instruction, not a post-hoc edit of model
+output, and keeps GRPO focused on reasoning once the answer channel is
+parseable.
+
+Validation: `tests/test_train_grpo_contract.py` and `tests/test_grpo.py` pass
+48/48, `tests/test_recurrent_grpo.py` passes 11/11, bytecode compilation passes
+for the trainer and affected tests, `git diff --check` passes, and `make lint`
+passes. This does not relaunch resident training and does not claim a reasoning
+gain; it prevents the CP305 no-signal pattern from consuming another long run
+without first proving parseable, discriminative training evidence.
+
+This is total checkpoint record 371. The forecast remains 394-661 total
+records, now approximately 23-290 records after this checkpoint. Next: commit
+and push CP310, then design the next RLC proof attempt around a small
+parseability/trajectory-credit preflight before any detached resident-32B
+multi-hour run.

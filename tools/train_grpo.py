@@ -304,6 +304,65 @@ def _signal_admission_report(
     return report
 
 
+def _calibration_admission_report(
+    calibration: Mapping[str, Any],
+    *,
+    allow_unexplored_frontier: bool,
+) -> dict[str, Any]:
+    """Decide whether calibration found enough signal to spend training budget."""
+
+    learnable = list(calibration.get("learnable") or [])
+    unexplored = list(calibration.get("unexplored") or [])
+    probes = list(calibration.get("probes") or [])
+    answer_channel = calibration.get("answer_channel")
+    parseable_fraction = 0.0
+    if isinstance(answer_channel, Mapping):
+        parseable_fraction = float(answer_channel.get("parseable_fraction") or 0.0)
+    if learnable:
+        return {
+            "schema": "aura.grpo_calibration_admission.v1",
+            "training_admitted": True,
+            "reason": "measured_learnable_cells",
+            "learnable_cells": learnable,
+            "allow_unexplored_frontier": bool(allow_unexplored_frontier),
+        }
+    if allow_unexplored_frontier and unexplored:
+        return {
+            "schema": "aura.grpo_calibration_admission.v1",
+            "training_admitted": True,
+            "reason": "unexplored_frontier_allowed",
+            "unexplored_cells": unexplored,
+            "allow_unexplored_frontier": True,
+        }
+    if probes and parseable_fraction < 0.25:
+        diagnosis = "answer_channel_blocked"
+        next_gate = (
+            "repair recurrent decode contract or pretrain the answer channel "
+            "before resident GRPO"
+        )
+    elif bool(calibration.get("partial")) and unexplored:
+        diagnosis = "partial_calibration_without_measured_learnable_cell"
+        next_gate = (
+            "increase calibration coverage or reduce cell space until at least "
+            "one measured cell has reward variance"
+        )
+    else:
+        diagnosis = "no_measured_learnable_cell"
+        next_gate = (
+            "redesign curriculum difficulty, verifier, or trajectory credit "
+            "before launching training"
+        )
+    return {
+        "schema": "aura.grpo_calibration_admission.v1",
+        "training_admitted": False,
+        "reason": diagnosis,
+        "required_next_gate": next_gate,
+        "allow_unexplored_frontier": bool(allow_unexplored_frontier),
+        "measured_probes": len(probes),
+        "parseable_fraction": round(parseable_fraction, 4),
+    }
+
+
 def _calibration_token_budget(max_tokens: int, requested: int) -> int:
     if requested not in (0, max_tokens):
         raise ValueError(
@@ -741,13 +800,31 @@ def _publish_recurrent_adapter_bundle(
 
 
 def _render(tokenizer, task) -> str:
-    content = task.prompt
+    content = _answer_contract_instruction(task) + "\n\n" + task.prompt
     if _COT_PREAMBLE:
         content = _COT_PREAMBLE + "\n\n" + content
     return tokenizer.apply_chat_template(
         [{"role": "user", "content": content}],
         add_generation_prompt=True,
         tokenize=False,
+    )
+
+
+def _answer_contract_instruction(task: Any) -> str:
+    """Serving-side answer-channel scaffold without leaking answer values."""
+
+    keys = []
+    try:
+        expected = task.expected
+    except (AttributeError, TypeError, ValueError):
+        expected = None
+    if isinstance(expected, Mapping):
+        keys = sorted(str(key) for key in expected)
+    key_text = f" Use exactly these JSON keys: {', '.join(keys)}." if keys else ""
+    return (
+        "Solve the task, then end with exactly one final line in this form: "
+        "FINAL_ANSWER: {JSON object}. Do not write anything after that line."
+        f"{key_text}"
     )
 
 
@@ -1697,9 +1774,14 @@ def main() -> int:
                         max_tokens=cal_tokens,
                         seed=decision_seed,
                     )
+                grade_verdicts = [
+                    probe.grade(completion) for completion in completions
+                ]
+                answer_channel = _answer_channel_report_from_verdicts(
+                    grade_verdicts
+                )
                 rate = sum(
-                    int(bool(probe.grade(completion)["correct"]))
-                    for completion in completions
+                    int(bool(verdict["correct"])) for verdict in grade_verdicts
                 ) / len(completions)
                 probes.append(
                     {
@@ -1709,6 +1791,7 @@ def main() -> int:
                         "task_id": probe.task_id,
                         "seed": decision_seed,
                         "pass_rate": round(rate, 6),
+                        "answer_channel": answer_channel,
                     }
                 )
                 print(
@@ -1734,10 +1817,15 @@ def main() -> int:
                 "expected_probes": expected_probes,
                 "partial": len(probes) < expected_probes,
             }
-            print(f"[calibrate] {calibration}", flush=True)
-            training_allowed = bool(
-                calibration.get("learnable") or calibration.get("unexplored")
+            calibration["answer_channel"] = _merge_answer_channel_reports(
+                [{"answer_channel": probe["answer_channel"]} for probe in probes]
             )
+            calibration["admission"] = _calibration_admission_report(
+                calibration,
+                allow_unexplored_frontier=execution_spec is None,
+            )
+            print(f"[calibrate] {calibration}", flush=True)
+            training_allowed = bool(calibration["admission"]["training_admitted"])
 
         # Step zero is durable only after the true frozen baseline and any
         # calibration are complete. A restart cannot silently recompute them
@@ -1763,7 +1851,14 @@ def main() -> int:
         for signum in previous_handlers:
             signal.signal(signum, request_stop)
 
-        halt_reason = "no_reachable_frontier" if not training_allowed else "max_steps"
+        halt_reason = (
+            "calibration_not_admitted"
+            if calibration
+            and not bool(calibration.get("admission", {}).get("training_admitted"))
+            else "no_reachable_frontier"
+            if not training_allowed
+            else "max_steps"
+        )
         active_recurrent_step: dict[str, Any] | None = None
         try:
             while training_allowed and step < args.max_steps:
