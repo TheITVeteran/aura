@@ -23060,3 +23060,44 @@ checkpoint. Next: publish CP267, monitor CP259 through its first durable
 calibration/training checkpoint without contending for the resident model, and
 continue read-only analysis plus low-compute fixes outside the frozen training
 source set. Final long soaks remain deferred.
+
+## Checkpoint 2026-07-21-268: Required Chat-Lane Admission And Reliability Precision
+
+The desktop CognitiveEngine route no longer invokes the mind while the
+resident inference worker is conclusively cold. The live 16:24-16:28 failures
+showed `worker_not_alive`, `init_not_complete`, and `lane_cold`, but the route
+skipped its existing inference-gate warmup because desktop-required requests
+disable ordinary chat fastpaths. CognitiveEngine consequently returned no
+thought and the user saw a generic full-mind reasoning failure even though no
+reasoning turn had started. A required-desktop admission barrier now waits on
+the inference gate's existing singleflight, preserves a bounded reasoning
+budget, and rechecks the authoritative lane before invoking CognitiveEngine.
+Warmup timeout or temporary recovery returns a distinct `conversation_warming`
+contract with `engine_think_invoked=false`; hard local-runtime failure remains
+explicitly unavailable. Neither case is counted as failed answer quality.
+
+Two reliability-gate false positives found by the connected desktop suite are
+also closed. “Will you remember this conversation tomorrow?” is a future-recall
+question, not an explicit memory-write command, so a truthful continuity answer
+no longer fails for lacking a memory-pin receipt. The ungrounded-person detector
+also no longer interprets the ordinary discourse opener “Mostly, I...” as a
+named person being addressed; live self-reflection repair can therefore retain
+its grounded attention statement instead of collapsing to a generic thread
+repair.
+
+Thirty-nine desktop `api_chat` cases passed after the admission change; the one
+additional mixed identity/future-memory failure they exposed was repaired and
+its focused route proof passes. The first complete chat-reliability pass then
+ran 181 tests successfully and exposed the discourse-opener false positive;
+that exact regression and four connected admission, identity, and continuity
+proofs pass after repair. The final clean replay passes all 176 cases in
+`test_chat_reliability_proof.py` in 183.89 seconds. Focused Ruff, bytecode
+compilation, and diff checks are green.
+
+This is total checkpoint record 329. It closes the demonstrated cold-lane
+misclassification and two reliability-gate precision defects, not the complete
+mixed-turn live campaign in CP264. The forecast remains 394-661 total records,
+now approximately 65-332 records after this checkpoint. CP259's detached
+resident-32B process remains the sole model owner with advancing heartbeats and
+zero restarts; no calibration, optimizer, gain, or frontier credit is awarded
+until terminal artifacts exist. Final long soaks remain deferred.

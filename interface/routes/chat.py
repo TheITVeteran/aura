@@ -9526,9 +9526,15 @@ def _conversation_lane_user_message(
         logger.debug("Mood prefix unavailable for degraded reply: %s", exc)
 
     if status_override == "warming_timeout":
-        return f"{_mood_prefix}the live answer lane exceeded its warm-up budget. I logged the degraded turn and preserved the conversation context."
+        return (
+            f"{_mood_prefix}the live answer lane exceeded its warm-up budget before "
+            "a reasoning turn began. I did not misclassify that boot delay as a failed answer."
+        )
     if status_override == "warming_failed":
-        return f"{_mood_prefix}warm-up failed before a coherent answer formed. I logged the lane failure and preserved the current turn."
+        return (
+            f"{_mood_prefix}the live answer lane could not finish preparing before "
+            "a reasoning turn began. I recorded the readiness failure separately from Aura's answer quality."
+        )
     if timed_out:
         return f"{_mood_prefix}that answer took too long to finish cleanly. I logged the timeout and preserved the turn context."
     if _conversation_lane_is_standby(lane):
@@ -18983,6 +18989,102 @@ async def api_chat(
                         desktop_required_search_evidence.get("query"),
                         desktop_required_search_evidence.get("result"),
                     )
+
+        # A desktop-required turn must not enter CognitiveEngine while its
+        # resident inference lane is conclusively cold.  Before this barrier,
+        # direct engine invocation saw worker_not_alive/init_not_complete and
+        # the route later reported a generic full-mind reasoning failure.  The
+        # existing inference-gate singleflight is the owner of boot/recovery;
+        # wait on it once, preserving enough wall-clock budget for the actual
+        # turn, and keep readiness failure distinct from answer failure.
+        if (
+            not is_benchmark
+            and desktop_requires_cognitive_engine
+            and not bool(lane.get("conversation_ready", False))
+        ):
+            gate = ServiceContainer.get("inference_gate", default=None)
+            admission_reason = ""
+            admission_override = "warming_failed"
+            hard_lane_failure = False
+            if gate is None or not hasattr(gate, "ensure_foreground_ready"):
+                admission_reason = "foreground_lane_unavailable"
+                hard_lane_failure = True
+            else:
+                admission_budget = min(
+                    180.0,
+                    _remaining_foreground_budget(
+                        reserve=_DESKTOP_COGNITIVE_MIN_REQUIRED_BUDGET_S
+                        + _DESKTOP_COGNITIVE_RESPONSE_RESERVE_S
+                    ),
+                )
+                try:
+                    lane = dict(
+                        await gate.ensure_foreground_ready(
+                            timeout=max(1.0, admission_budget)
+                        )
+                        or {}
+                    )
+                except TimeoutError:
+                    admission_reason = "foreground_warmup_timeout"
+                    admission_override = "warming_timeout"
+                    lane = _mark_conversation_lane_state(
+                        admission_reason,
+                        state="warming",
+                    )
+                except _CHAT_RECOVERABLE_ERRORS as admission_exc:
+                    record_degradation("chat.conversation_lane_admission", admission_exc)
+                    admission_reason = str(admission_exc or "foreground_warmup_failed")
+                    hard_lane_failure = admission_reason.startswith(
+                        ("mlx_runtime_unavailable:", "local_runtime_unavailable:")
+                    ) or admission_reason in {
+                        "foreground_lane_unavailable",
+                        "runtime_shutdown",
+                    }
+                    lane = _mark_conversation_lane_state(
+                        admission_reason,
+                        state="failed" if hard_lane_failure else "recovering",
+                    )
+
+            if admission_reason:
+                _live_turn_trace.update(
+                    {
+                        "response_path": "required_cognitive_lane_admission",
+                        "cognitive_lane_admitted": False,
+                        "cognitive_lane_admission_reason": admission_reason[:240],
+                    }
+                )
+                status = (
+                    "conversation_unavailable"
+                    if hard_lane_failure
+                    else "conversation_warming"
+                )
+                response_text = _conversation_lane_user_message(
+                    lane,
+                    status_override=admission_override,
+                )
+                logger.warning(
+                    "Required desktop CognitiveEngine turn was not admitted before generation: %s",
+                    admission_reason,
+                )
+                return JSONResponse(
+                    {
+                        "response": response_text,
+                        "status": status,
+                        "reason": admission_reason,
+                        "conversation_lane": lane,
+                        "response_confidence": "not_generated",
+                        "live_turn_contract": _live_turn_contract(
+                            lane_status=lane,
+                            response_confidence="not_generated",
+                            status=status,
+                            reply_source="required_cognitive_lane_admission",
+                        ),
+                    },
+                    status_code=503 if is_benchmark else 200,
+                    headers={"Retry-After": "2"},
+                )
+            _live_turn_trace["cognitive_lane_admitted"] = True
+
         try:
             if not is_benchmark:
                 await _preserve_large_user_paste(_semantic_user_message)

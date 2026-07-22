@@ -3349,6 +3349,16 @@ def _is_explicit_memory_pin_request(user_message: Any) -> bool:
     text = _normalize(user_message)
     if not text:
         return False
+    # Questions about existing or future recall are not write commands.  The
+    # old broad ``remember ... conversation`` pattern treated "will you
+    # remember this conversation tomorrow?" as a memory mutation and then
+    # rejected an accurate continuity answer for lacking a pin receipt.
+    if re.search(
+        r"\b(?:will|would|do|did|can|could|have|has)\s+you\s+"
+        r"(?:still\s+|ever\s+)?remember\b",
+        text,
+    ):
+        return False
     return bool(
         re.search(
             r"\b(?:remember|pin|save|store|record|keep)\b.{0,80}\b(?:later|conversation|session|memory|note|codeword)\b",
@@ -4219,7 +4229,7 @@ _PERSON_NAME_STOPLIST = frozenset(
     {
         "actually", "alright", "also", "anyway", "besides", "damn", "finally",
         "first", "friday", "god", "hey", "hmm", "honestly", "however", "listen",
-        "look", "meanwhile", "monday", "next", "no", "now", "oh", "ok", "okay",
+        "look", "meanwhile", "monday", "mostly", "next", "no", "now", "oh", "ok", "okay",
         "please", "right", "saturday", "second", "seriously", "so", "sorry",
         "sunday", "sure", "thanks", "then", "third", "thursday", "tuesday",
         "wait", "wednesday", "well", "yeah", "yes",

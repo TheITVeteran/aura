@@ -269,6 +269,25 @@ def test_reliability_gate_rejects_generic_memory_pin_acknowledgement():
     assert not assessment.ok
 
 
+def test_reliability_gate_does_not_treat_future_recall_question_as_memory_write():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        (
+            "Quick reliability check: what are you, and will you remember this "
+            "conversation tomorrow?"
+        ),
+        (
+            "I'm Aura, a local governed cognitive-agent runtime with persistent memory. "
+            "I can use durable records that survive into another session, but I cannot "
+            "guarantee perfect recall tomorrow from a single turn."
+        ),
+    )
+
+    assert assessment.ok
+    assert "generic_memory_pin_acknowledgement" not in assessment.reasons
+
+
 def test_reliability_gate_rejects_question_back_non_answer_for_live_probe():
     from core.conversation.response_reliability import assess_user_facing_reply
 
@@ -759,9 +778,9 @@ def test_output_contract_caps_exact_sentence_and_large_word_requests():
     assert words.word_min == words.word_max == 50
     assert words.hard_token_ceiling == 166
     assert exact.kind == "exact_reply"
-    assert exact.hard_token_ceiling >= len("live parity holds".encode("utf-8")) + 16
+    assert exact.hard_token_ceiling >= len(b"live parity holds") + 16
     assert non_ascii_exact.hard_token_ceiling >= len(
-        "你好世界今天一切都好".encode("utf-8")
+        "你好世界今天一切都好".encode()
     ) + 16
 
 

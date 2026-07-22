@@ -4355,6 +4355,18 @@ async def test_api_chat_desktop_required_presence_check_uses_cognitive_engine(mo
                 metadata=_bound_live_mind_controls_metadata(),
             )
 
+    class _FakeGate:
+        async def ensure_foreground_ready(self, *_args, **_kwargs):
+            calls.append({"inference_gate": "admitted"})
+            return {
+                "conversation_ready": True,
+                "state": "ready",
+                "desired_model": "Cortex (32B)",
+                "desired_endpoint": "Cortex",
+                "foreground_endpoint": "Cortex",
+                "background_endpoint": "Brainstem",
+            }
+
     class _FakeKernelInterface:
         def is_ready(self):
             return True
@@ -4369,6 +4381,8 @@ async def test_api_chat_desktop_required_presence_check_uses_cognitive_engine(mo
     def _fake_get(name, default=None):
         if name == "cognitive_engine":
             return _FakeCognitiveEngine()
+        if name == "inference_gate":
+            return _FakeGate()
         return default
 
     monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
@@ -4424,7 +4438,102 @@ async def test_api_chat_desktop_required_presence_check_uses_cognitive_engine(mo
     assert payload["live_turn_contract"]["engine_think_invoked"] is True
     assert payload["live_turn_contract"]["live_mind_controls_bound"] is True
     assert payload["live_turn_contract"]["full_mind_path"] is True
-    assert [call["cognitive_engine"] for call in calls] == ["called"]
+    assert calls[0] == {"inference_gate": "admitted"}
+    assert [
+        call["cognitive_engine"]
+        for call in calls
+        if "cognitive_engine" in call
+    ] == ["called"]
+
+
+@pytest.mark.asyncio
+async def test_api_chat_desktop_cold_lane_timeout_is_not_reported_as_failed_reasoning(
+    monkeypatch,
+):
+    from interface import server as server_module
+    from interface.routes import chat as chat_routes
+
+    calls = []
+
+    class _FakeGate:
+        async def ensure_foreground_ready(self, *_args, **_kwargs):
+            calls.append("warmup")
+            raise TimeoutError("worker still loading")
+
+    class _FakeCognitiveEngine:
+        async def think(self, *_args, **_kwargs):
+            calls.append("think")
+            raise AssertionError("a conclusively cold lane must not enter CognitiveEngine")
+
+    def _fake_get(name, default=None):
+        if name == "inference_gate":
+            return _FakeGate()
+        if name == "cognitive_engine":
+            return _FakeCognitiveEngine()
+        return default
+
+    cold_lane = {
+        "conversation_ready": False,
+        "state": "cold",
+        "last_failure_reason": "worker_not_alive,init_not_complete,lane_cold",
+        "readiness_blockers": ["worker_not_alive", "init_not_complete", "lane_cold"],
+        "desired_model": "Cortex (32B)",
+        "desired_endpoint": "Cortex",
+        "foreground_endpoint": None,
+        "background_endpoint": "Brainstem",
+    }
+    monkeypatch.setattr(
+        chat_routes,
+        "_collect_conversation_lane_status",
+        lambda: dict(cold_lane),
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_mark_conversation_lane_state",
+        lambda reason, state="warming": dict(
+            cold_lane,
+            state=state,
+            last_failure_reason=reason,
+            warmup_attempted=True,
+        ),
+    )
+    monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(_fake_get))
+    monkeypatch.setattr(
+        chat_routes,
+        "_restore_owner_session_from_request",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_runtime_kernel_available", lambda: True)
+    monkeypatch.setattr(chat_routes, "_runtime_cognitive_engine_available", lambda: True)
+    monkeypatch.setattr(chat_routes, "_runtime_memory_available", lambda: True)
+    monkeypatch.setattr(chat_routes, "_runtime_tool_governance_available", lambda: True)
+    monkeypatch.setattr(chat_routes, "_runtime_substrate_voice_available", lambda: True)
+    monkeypatch.setattr(chat_routes, "_runtime_inference_available", lambda *a, **k: False)
+
+    response = await server_module.api_chat(
+        server_module.ChatRequest(message="Are you with me?"),
+        SimpleNamespace(
+            headers={
+                "X-Aura-Surface": "desktop-ui",
+                "X-Aura-Require-CognitiveEngine": "true",
+            },
+            client=SimpleNamespace(host="test"),
+        ),
+        None,
+        None,
+    )
+
+    payload = json.loads(response.body)
+    assert response.status_code == 200
+    assert payload["status"] == "conversation_warming"
+    assert payload["reason"] == "foreground_warmup_timeout"
+    assert payload["response_confidence"] == "not_generated"
+    assert payload["live_turn_contract"]["engine_think_invoked"] is False
+    assert payload["live_turn_contract"]["full_mind_path"] is False
+    assert "failed closed instead of sending an ungrounded answer" not in payload["response"]
+    assert "boot delay" in payload["response"]
+    assert calls == ["warmup"]
 
 
 @pytest.mark.asyncio
