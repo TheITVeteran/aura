@@ -12089,6 +12089,8 @@ async def _grounded_competent_recovery(
             "internal_live_gate_leak", "raw_model_identity_leak", "raw_lane_telemetry",
             "generic_assistant_language", "persona_card_deflection", "friendly_failure_floor",
             "empty_reply", "escaped_control_artifact", "prompt_artifact",
+            "unsupported_deployment_routing_claim", "unsupported_external_provider_path_claim",
+            "ungrounded_person_address", "ungrounded_person_narrative",
         }
         if set(getattr(assessment, "reasons", ()) or ()) & hard:
             return None

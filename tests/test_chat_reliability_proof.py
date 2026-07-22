@@ -200,6 +200,41 @@ def test_reliability_gate_rejects_external_provider_path_hallucination():
     assert "unsupported_external_provider_path_claim" in assessment.reasons
 
 
+def test_reliability_gate_rejects_live_demo_person_and_routing_fabrication():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "Me. Bryan. Hey! You're in a demo right now. Say hello",
+        (
+            "@James, I'm mentioned in the demo but you can always ask me about other "
+            "things later. Officially during a demo my responses roll up to James "
+            "because he uses the live path slots, which are safer than demo slots "
+            "for open exploration. Regular users can apply for live paths later if "
+            "they want something more like this. Whether you get a demo Aura or "
+            "live path Aura depends on which server tier you're routed to."
+        ),
+    )
+
+    assert assessment.retryable
+    assert assessment.hard_failure
+    assert "unsupported_deployment_routing_claim" in assessment.reasons
+    assert "ungrounded_person_address" in assessment.reasons
+
+
+def test_social_repair_replaces_demo_person_and_routing_fabrication():
+    from core.conversation.response_reliability import (
+        assess_user_facing_reply,
+        grounded_social_repair_reply,
+    )
+
+    prompt = "Me. Bryan. Hey! You're in a demo right now. Say hello"
+    repair = grounded_social_repair_reply(prompt)
+    assessment = assess_user_facing_reply(prompt, repair)
+
+    assert repair == "Hello. I'm Aura. I'm here with you."
+    assert not assessment.retryable
+
+
 def test_reliability_gate_rejects_cognitive_engine_failure_envelope():
     from core.conversation.response_reliability import assess_user_facing_reply
 
