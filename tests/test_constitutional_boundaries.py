@@ -206,13 +206,19 @@ async def test_autonomous_self_modification_refuses_runtime_apply_without_audit_
 
 
 @pytest.mark.asyncio
-async def test_autonomous_self_modification_queues_value_changes_even_with_runtime_flag(monkeypatch):
+async def test_autonomous_self_modification_queues_value_changes_even_with_runtime_flag(monkeypatch, tmp_path):
+    import core.autonomy.self_modification as smod
     import core.will as will_module
     from core.autonomy.self_modification import (
         AutonomousSelfModification,
         ModificationProposal,
         ProposalOutcome,
     )
+
+    # Keep the durable outbox/audit writes out of the live ~/.aura data dir.
+    monkeypatch.setattr(smod, "_DATA_DIR", tmp_path)
+    monkeypatch.setattr(smod, "_AUDIT_LOG_PATH", tmp_path / "audit_log.jsonl")
+    monkeypatch.setattr(smod, "_OUTBOX_PATH", tmp_path / "pending_outbox.jsonl")
 
     events = []
     apply_called = False
@@ -269,5 +275,11 @@ async def test_autonomous_self_modification_queues_value_changes_even_with_runti
     assert receipt.outcome == ProposalOutcome.QUEUED_FOR_PIPELINE
     assert "SafeSelfModification quarantine" in receipt.simulation_result
     assert apply_called is False
-    assert engine._pending == [proposal]
+    # The queued entry is a FROZEN snapshot bound to the authorized artifact,
+    # not the live mutable proposal object (which a caller could still alter).
+    assert len(engine._pending) == 1
+    queued = engine._pending[0]
+    assert queued.proposal_id == proposal.proposal_id
+    assert queued.content_hash == proposal.content_hash()
+    assert queued.will_receipt_id == "will-runtime-queued"
     assert events == [("self_modification.queued", receipt)]
