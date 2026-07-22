@@ -3869,6 +3869,52 @@ def _mlx_worker_loop(
                 )
                 proof_evaluation_contract = bool(job.get("proof_evaluation_contract", False))
                 operator_evidence_contract = bool(job.get("operator_evidence_contract", False))
+
+                # These four contracts select MUTUALLY EXCLUSIVE prompt
+                # builders, sampling regimes, validators and output
+                # normalizers. Nothing rejected a job that asserted several at
+                # once: the if/elif ladder below simply took whichever branch
+                # came first, so a contradictory contract silently resolved by
+                # source order and the caller received output shaped by a
+                # contract it had not selected. An ambiguous contract is a
+                # caller defect and is refused with its own correlated error.
+                _selected_contracts = [
+                    name
+                    for name, active in (
+                        ("strict_answer_contract", strict_answer_contract),
+                        ("strict_value_contract", strict_value_contract),
+                        ("proof_evaluation_contract", proof_evaluation_contract),
+                        ("operator_evidence_contract", operator_evidence_contract),
+                    )
+                    if active
+                ]
+                if len(_selected_contracts) > 1:
+                    _record_mlx_degradation(
+                        ValueError(
+                            "ambiguous_output_contract:" + ",".join(_selected_contracts)
+                        ),
+                        action="refused generation because the job asserted multiple exclusive output contracts",
+                        severity="error",
+                    )
+                    logger.error(
+                        "🛑 [WORKER] Job %s asserted %d mutually exclusive output "
+                        "contracts (%s); refusing rather than resolving by source order.",
+                        job.get("id"),
+                        len(_selected_contracts),
+                        ", ".join(_selected_contracts),
+                    )
+                    ipc_writer.put(
+                        {
+                            "id": job.get("id"),
+                            "action": "generate",
+                            "status": "error",
+                            "message": (
+                                "ambiguous_output_contract:"
+                                + ",".join(_selected_contracts)
+                            ),
+                        }
+                    )
+                    continue
                 # disable_prompt_cache = bool(job.get("disable_prompt_cache", False)) or strict_answer_contract
                 prompt_cache_bypass = _job_requires_prompt_cache_bypass(job)
                 disable_prompt_cache = bool(job.get("disable_prompt_cache", False)) or prompt_cache_bypass

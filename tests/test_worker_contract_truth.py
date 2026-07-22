@@ -141,3 +141,40 @@ class TestOperatorEvidenceModelMerit:
         body = _OPERATOR_EVIDENCE_PREFIX.lower()
         for term in ("objective", "governed", "tool", "receipt", "trace", "stop", "personhood"):
             assert term in body
+
+
+class TestExclusiveOutputContracts:
+    """A job may not assert several mutually exclusive output contracts.
+
+    strict_answer / strict_value / proof_evaluation / operator_evidence each
+    select a different prompt builder, sampling regime, validator and output
+    normalizer. Nothing rejected a job that set more than one, so the if/elif
+    ladder resolved the contradiction by SOURCE ORDER and the caller received
+    output shaped by a contract it had not selected.
+    """
+
+    def _worker_source(self) -> str:
+        return open("core/brain/llm/mlx_worker.py", encoding="utf-8").read()
+
+    def test_ambiguous_contract_is_refused(self):
+        source = self._worker_source()
+        assert "ambiguous_output_contract:" in source
+        assert "refused generation because the job asserted multiple exclusive output contracts" in source
+
+    def test_all_four_exclusive_contracts_are_checked(self):
+        source = self._worker_source()
+        block = source.split("_selected_contracts = [", 1)[1][:600]
+        for name in (
+            "strict_answer_contract",
+            "strict_value_contract",
+            "proof_evaluation_contract",
+            "operator_evidence_contract",
+        ):
+            assert name in block, name
+
+    def test_refusal_is_correlated_to_the_request(self):
+        source = self._worker_source()
+        block = source.split("ambiguous_output_contract:", 1)[1][:900]
+        # The caller must be able to resolve its own future.
+        assert '"id": job.get("id")' in block
+        assert '"status": "error"' in block
