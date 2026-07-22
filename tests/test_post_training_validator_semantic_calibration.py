@@ -13,6 +13,24 @@ from core.adaptation.post_training_validator import (
 )
 
 
+def _passing_validation(adapter_path):
+    """A passing ValidationResult bound to this adapter.
+
+    CP126: promotion is now bound to the evidence that justified it, so a
+    test exercising the activation path must supply that evidence.
+    """
+    from core.adaptation.post_training_validator import ValidationResult
+
+    return ValidationResult(
+        passed=True,
+        pass_rate=1.0,
+        total_probes=1,
+        passed_probes=1,
+        failed_probes=0,
+        adapter_path=str(adapter_path),
+    )
+
+
 @pytest.mark.asyncio
 async def test_post_training_validator_uses_semantic_self_report_calibration():
     validator = PostTrainingValidator(model_path="unused")
@@ -115,7 +133,9 @@ async def test_adapter_promotion_and_restore_use_atomic_symlink_swap(
         validation_log_dir=tmp_path / "logs",
     )
 
-    assert await validator.promote_adapter(str(new_adapter)) is True
+    assert await validator.promote_adapter(
+        str(new_adapter), validation=_passing_validation(new_adapter)
+    ) is True
     assert active_link.resolve() == new_adapter.resolve()
     assert (adapter_root / "_previous_active").resolve() == old_adapter.resolve()
 
@@ -144,5 +164,7 @@ async def test_adapter_promotion_refuses_non_symlink_active_path(
         validation_log_dir=tmp_path / "logs",
     )
 
-    assert await validator.promote_adapter(str(new_adapter)) is False
+    assert await validator.promote_adapter(
+        str(new_adapter), validation=_passing_validation(new_adapter)
+    ) is False
     assert active_link.read_text(encoding="utf-8") == "do not overwrite"

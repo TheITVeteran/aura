@@ -149,7 +149,10 @@ class NightlyLoRATrainer:
                 "✅ Nightly LoRA: Identity validation PASSED (%.1f%%). Promoting adapter.",
                 result.pass_rate * 100,
             )
-            promoted = await validator.promote_adapter(adapter_path)
+            # Promotion is bound to THIS validation result: the activation
+            # path no longer accepts a bare path, so weights cannot be made
+            # live without the passing evidence that justified it.
+            promoted = await validator.promote_adapter(adapter_path, validation=result)
             if not promoted:
                 logger.error("❌ Nightly LoRA: Adapter promotion failed after passing validation.")
         else:

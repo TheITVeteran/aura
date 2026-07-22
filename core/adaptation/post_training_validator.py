@@ -878,6 +878,83 @@ class PostTrainingValidator:
 
     # ── Adapter Management ───────────────────────────────────────────────────
 
+    def _contained_adapter_path(self, adapter_path: str) -> Path | None:
+        """Resolve an adapter path and require it to live under a managed root.
+
+        Both quarantine (shutil.move) and promotion (symlink retarget) act on
+        a caller- or manifest-supplied path. Unconfined, those are an
+        arbitrary filesystem relocation and an arbitrary activation. Resolving
+        first also pins symlinks: a link inside the adapter root could
+        otherwise redirect the operation anywhere on disk.
+        """
+        try:
+            resolved = Path(adapter_path).expanduser().resolve()
+        except (OSError, RuntimeError, ValueError):
+            return None
+        roots = []
+        for root in (self.adapter_base_dir, self.quarantine_dir):
+            try:
+                roots.append(Path(root).expanduser().resolve())
+            except (OSError, RuntimeError, ValueError):
+                continue
+        for root in roots:
+            try:
+                resolved.relative_to(root)
+                return resolved
+            except ValueError:
+                continue
+        return None
+
+    def _promotion_is_authorized(
+        self,
+        adapter_path: Path,
+        validation: "ValidationResult | None",
+    ) -> bool:
+        """Promotion requires a PASSING result for THIS adapter.
+
+        promote_adapter is what puts trained weights in front of the user. It
+        previously accepted any existing path, so a caller could activate
+        weights that were never validated — or that had just FAILED
+        validation — with no signal at all. The result must exist, must have
+        passed, and must name this same adapter.
+        """
+        if validation is None:
+            logger.error(
+                "Refusing to promote %s: no ValidationResult supplied. Promotion "
+                "must be bound to a passing validation of this exact adapter.",
+                adapter_path,
+            )
+            return False
+        if not getattr(validation, "passed", False):
+            logger.error(
+                "Refusing to promote %s: validation did not pass (%s/%s probes, "
+                "critical failures: %s).",
+                adapter_path,
+                getattr(validation, "passed_probes", "?"),
+                getattr(validation, "total_probes", "?"),
+                list(getattr(validation, "critical_failures", []))[:4],
+            )
+            return False
+        claimed = str(getattr(validation, "adapter_path", "") or "").strip()
+        if claimed:
+            try:
+                if Path(claimed).expanduser().resolve() != adapter_path:
+                    logger.error(
+                        "Refusing to promote %s: the supplied ValidationResult "
+                        "certifies a DIFFERENT adapter (%s).",
+                        adapter_path,
+                        claimed,
+                    )
+                    return False
+            except (OSError, RuntimeError, ValueError):
+                logger.error(
+                    "Refusing to promote %s: validation adapter_path %r is unresolvable.",
+                    adapter_path,
+                    claimed,
+                )
+                return False
+        return True
+
     async def quarantine_adapter(self, adapter_path: str, reason: str = "") -> Path:
         """
         Move a failed adapter to quarantine and restore the previous adapter.
@@ -889,7 +966,19 @@ class PostTrainingValidator:
         Returns:
             Path to the quarantined adapter location.
         """
-        adapter_path_obj = Path(adapter_path)
+        # CONTAINMENT FIRST. shutil.move on an unconfined path is an
+        # arbitrary filesystem relocation: quarantine is invoked on failure
+        # paths that can carry a caller- or manifest-supplied path, and a
+        # symlink inside the adapter root could redirect the move to
+        # anything. Resolve, then require the real path to live under the
+        # adapter root before touching it.
+        adapter_path_obj = self._contained_adapter_path(adapter_path)
+        if adapter_path_obj is None:
+            logger.error(
+                "Refusing to quarantine a path outside the adapter root: %s",
+                adapter_path,
+            )
+            return self.quarantine_dir
         if not await asyncio.to_thread(adapter_path_obj.exists):
             logger.warning(
                 "Cannot quarantine — adapter path does not exist: %s", adapter_path
@@ -969,8 +1058,29 @@ class PostTrainingValidator:
                     source="adaptation.post_training_validator.backup_adapter",
                 )
             except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
-                record_degradation("post_training_validator", exc)
-                logger.warning("Could not back up previous adapter ref: %s", exc)
+                # ROLLBACK IS THE POINT. If the previous active target cannot
+                # be preserved, replacing the active symlink anyway destroys
+                # the only reference _restore_previous_adapter can roll back
+                # to — so a bad promotion would become unrecoverable while the
+                # failure was merely logged as a warning. Refuse the
+                # promotion instead; the current adapter keeps serving.
+                record_degradation(
+                    "post_training_validator",
+                    exc,
+                    severity="critical",
+                    action=(
+                        "refused adapter promotion because the previous active "
+                        "target could not be backed up (no rollback point)"
+                    ),
+                )
+                logger.error(
+                    "Refusing promotion: could not back up previous adapter ref "
+                    "(%s). Rollback would be impossible.",
+                    exc,
+                )
+                raise RuntimeError(
+                    "adapter_promotion_blocked_no_rollback_point"
+                ) from exc
         gateway.replace_symlink(
             active_link,
             adapter_path,
@@ -978,7 +1088,12 @@ class PostTrainingValidator:
         )
         return previous_target
 
-    async def promote_adapter(self, adapter_path: str) -> bool:
+    async def promote_adapter(
+        self,
+        adapter_path: str,
+        *,
+        validation: "ValidationResult | None" = None,
+    ) -> bool:
         """
         Promote a validated adapter as the active adapter.
 
@@ -986,15 +1101,28 @@ class PostTrainingValidator:
 
         Args:
             adapter_path: Path to the validated adapter.
+            validation: The PASSING ValidationResult for this exact adapter.
+                Required — promotion is what puts trained weights in front of
+                the user, and this entry point previously accepted any
+                existing path, so a caller could activate weights that had
+                never been validated at all.
 
         Returns:
             True if promotion succeeded, False otherwise.
         """
-        adapter_path_obj = Path(adapter_path)
+        adapter_path_obj = self._contained_adapter_path(adapter_path)
+        if adapter_path_obj is None:
+            logger.error(
+                "Refusing to promote a path outside the adapter root: %s", adapter_path
+            )
+            return False
         active_link = ACTIVE_ADAPTER_LINK
 
         if not await asyncio.to_thread(adapter_path_obj.exists):
             logger.error("Cannot promote — adapter does not exist: %s", adapter_path)
+            return False
+
+        if not self._promotion_is_authorized(adapter_path_obj, validation):
             return False
 
         try:
