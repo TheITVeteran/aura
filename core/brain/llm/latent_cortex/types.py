@@ -309,6 +309,10 @@ class CortexConfig:
     # bootstrap state: duplicate programs still collapse, but no empirical
     # relationship is invented before independently graded paired outcomes.
     branch_correlation_evidence: dict[str, Any] | None = None
+    # Independently graded generator/critic outcomes, keyed to the exact
+    # function identities. The worker validates this before the critic can
+    # influence recurrence; None is an honest unmeasured bootstrap.
+    critic_blind_spot_evidence: dict[str, Any] | None = None
 
     def validate(self) -> list[str]:
         """Return a list of human-readable violations (empty ⇒ valid)."""
@@ -750,6 +754,8 @@ class EpisodeReceipt:
     verifier_preflight: dict[str, Any] = field(default_factory=dict)
     blind_review: dict[str, Any] = field(default_factory=dict)
     decoy_verification: dict[str, Any] = field(default_factory=dict)
+    critic_identity: dict[str, Any] = field(default_factory=dict)
+    shared_blind_spots: dict[str, Any] = field(default_factory=dict)
     # Fresh-context virtual-width proof. Exact hidden-state contents stay
     # private; commitments and cache-discipline counters prove that every
     # candidate existed before cross-branch exposure.
@@ -996,6 +1002,8 @@ class EpisodeReceipt:
             "verifier_preflight": dict(self.verifier_preflight),
             "blind_review": dict(self.blind_review),
             "decoy_verification": dict(self.decoy_verification),
+            "critic_identity": dict(self.critic_identity),
+            "shared_blind_spots": dict(self.shared_blind_spots),
             "branch_isolation": dict(self.branch_isolation),
             "selected_branch": self.selected_branch,
             "exchanges": self.exchanges,

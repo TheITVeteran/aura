@@ -25481,3 +25481,49 @@ count completion is approximately 53.8%-84.5%, with a midpoint planning
 estimate of 65.7%. Next: publish CP333, then implement SPARK-020 disjoint critic
 function identity and shared-blind-spot measurement. Final multi-hour soaks
 remain deferred until every shorter gate is green.
+
+## Checkpoint 2026-07-22-334: Critic Authority Requires a Different Function
+
+The live RLC task critic is now machine-checkably distinct from the resident
+generator before it can influence recurrence. Its receipt binds a complete
+declared source closure, exact file hashes, parsed import graph, forbidden
+neural-runtime dependency audit, class identity, and runtime state audit. The
+critic may hold only four bounded data fields, carries no callable, tensor, or
+model state, and has zero trainable parameters. The other side of the receipt
+binds the resident generator's path commitment, logical and stored parameter
+counts, worker source, adapter stack, tokenizer, quantization, and explicit
+identity gaps. The service reconstructs the source and generator identity
+independently; changed source, adapter identity, parameter count, runtime state,
+or receipt digest is rejected.
+
+Shared blind spots now have a governed durable evidence path instead of a
+claim. Unique task/candidate outcomes are keyed to the exact critic and
+generator functions plus independent grader and receipt commitments. The
+snapshot commits to the checked sample set and distinct grader identities,
+reconstructs all four confusion-matrix cells, and reports false acceptance
+among generator errors with a 95% Wilson interval. It requires 24 checked
+samples, eight generator errors, and two graders before becoming `measured`.
+A powered upper bound above 0.35 removes the critic callable before
+`engine.reason`; the service also refuses to count an episode if the admitted
+critic was not causally used. Fresh deployments remain explicitly
+`bootstrap_unmeasured` and continue through the live decoy gates without
+inventing reliability evidence.
+
+Validation: focused identity, evidence, durable-ledger, causal-revocation,
+blind-review, task-verifier, and service contracts pass 116/116 in 61.36
+seconds. The final fixed-snapshot RLC, latent-cortex, global-workspace, GWT, and
+execution-controller ownership gate passes 895/895 in 462.49 seconds. Focused
+Ruff, bytecode compilation, and `git diff --check` pass.
+
+SPARK-020 closes at the mechanism level. This proves an independently
+implemented zero-parameter critic and a live residual-measurement/revocation
+path. It does not claim the currently unpowered live ledger has established a
+low shared-blind-spot rate, resident-32B task improvement, positive interaction,
+or frontier gain; the capability verdict remains negative/no-signal.
+
+This is total checkpoint record 395. The revised forecast remains 466-733 total
+records, now approximately 71-338 records after this checkpoint. Checkpoint-
+count completion is approximately 53.9%-84.8%, with a midpoint planning
+estimate of 65.9%. Next: publish CP334, then implement SPARK-021 bounded causal
+branch exchange with provenance and lesion/swap proof. Final multi-hour soaks
+remain deferred until every shorter gate is green.

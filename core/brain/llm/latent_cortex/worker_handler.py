@@ -61,6 +61,7 @@ _CONFIG_KEYS = {
     "coda_frac",
     "collapse_cos_threshold",
     "branch_correlation_evidence",
+    "critic_blind_spot_evidence",
     "comm_slot",
     "convergence_eps",
     "decode_max_tokens",
@@ -269,6 +270,7 @@ def config_from_job(job_config: dict[str, Any] | None) -> CortexConfig:
         probe_cache_enabled=_typed_value(raw, "probe_cache", True, bool),
         halting=raw.get("halting"),
         branch_correlation_evidence=raw.get("branch_correlation_evidence"),
+        critic_blind_spot_evidence=raw.get("critic_blind_spot_evidence"),
     )
     problems = cfg.validate()
     if problems:
@@ -483,6 +485,15 @@ def handle_latent_reason(
                 "status": "error",
                 "message": f"latent_reason operation authority rejected: {exc}",
             }
+    if worker_identity is None:
+        from core.brain.llm.latent_cortex.runtime_identity import build_worker_identity
+
+        worker_identity = build_worker_identity(
+            model,
+            model_path=model_path,
+            worker_boot_id=uuid.uuid4().hex,
+            worker_source_path=Path(__file__).resolve().parents[1] / "mlx_worker.py",
+        )
     engine = LatentCortexEngine(
         model,
         tokenizer,
@@ -508,6 +519,9 @@ def handle_latent_reason(
     # trajectory converged prettier. Tokenizer required: verification reads
     # decoded probe text.
     task_verifier = None
+    critic_identity: dict[str, Any] = {}
+    shared_blind_spots: dict[str, Any] = {}
+    verifier_unavailable_reason = ""
     verifier_requested = bool(job.get("verifier_guidance")) or response_contract is not None
     if verifier_requested and tokenizer is None:
         # A REQUESTED verifier that cannot be built must not vanish. Without
@@ -528,6 +542,7 @@ def handle_latent_reason(
             "Latent episode requested verifier guidance but no tokenizer is "
             "available; the episode runs UNVERIFIED and the receipt records it."
         )
+        verifier_unavailable_reason = "tokenizer_unavailable"
     if verifier_requested and tokenizer is not None:
         from core.brain.llm.latent_cortex.task_verifiers import (
             _ANSWER_FACET_HINTS,
@@ -563,11 +578,59 @@ def handle_latent_reason(
                     if isinstance(content, str) and content.strip():
                         objective = content
                         break
-        task_verifier = EpisodeTaskVerifier(
+        candidate_verifier = EpisodeTaskVerifier(
             objective,
             facet_reliability=facet_reliability,
             response_contract=str(response_contract or ""),
         )
+        try:
+            from core.brain.llm.latent_cortex.critic_identity import (
+                build_critic_identity,
+                build_shared_blind_spot_evidence,
+                validate_critic_identity,
+                validate_shared_blind_spot_evidence,
+            )
+
+            critic_identity = build_critic_identity(
+                candidate_verifier,
+                worker_identity=worker_identity,
+            )
+            critic_identity = validate_critic_identity(
+                critic_identity,
+                worker_identity=worker_identity,
+            )
+            generator_sha = critic_identity["generator_identity"]["function_sha256"]
+            critic_sha = critic_identity["critic_function_sha256"]
+            evidence = config.critic_blind_spot_evidence
+            if evidence is None:
+                evidence = build_shared_blind_spot_evidence(
+                    bucket=f"{str(job.get('domain', 'general'))[:120]}|runtime",
+                    generator_function_sha256=generator_sha,
+                    critic_function_sha256=critic_sha,
+                    checked_outcomes=[],
+                )
+            shared_blind_spots = validate_shared_blind_spot_evidence(
+                evidence,
+                generator_function_sha256=generator_sha,
+                critic_function_sha256=critic_sha,
+            )
+            if shared_blind_spots["critic_reliability_admitted"] is not True:
+                raise ValueError("shared_blind_spot_upper_bound_exceeded")
+            task_verifier = candidate_verifier
+        except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            verifier_unavailable_reason = f"critic_identity_or_reliability_unproven:{exc}"
+            from core.runtime.errors import record_degradation
+
+            record_degradation(
+                "latent_cortex.critic",
+                exc,
+                severity="error",
+                action=(
+                    "ran the latent episode without critic authority because "
+                    "function separation or shared-blind-spot evidence failed"
+                ),
+            )
+            logger.error("Latent critic authority rejected: %s", exc)
     result = engine.reason(
         prompt=prompt if isinstance(prompt, str) else None,
         messages=episode_messages,
@@ -598,21 +661,23 @@ def handle_latent_reason(
     elif verifier_requested:
         # Legible in the receipt: downstream must be able to tell "no verifier
         # was wanted" from "a verifier was wanted and could not be built".
-        result.receipt.verifier_guidance = {
-            "requested": True,
-            "available": False,
-            "reason": "tokenizer_unavailable",
-        }
-    if worker_identity is None:
-        from core.brain.llm.latent_cortex.runtime_identity import build_worker_identity
-
-        worker_identity = build_worker_identity(
-            model,
-            model_path=model_path,
-            worker_boot_id=uuid.uuid4().hex,
-            worker_source_path=Path(__file__).resolve().parents[1] / "mlx_worker.py",
-        )
+        if tokenizer is None:
+            result.receipt.verifier_guidance = {
+                "requested": True,
+                "available": False,
+                "reason": "tokenizer_unavailable",
+            }
+        else:
+            result.receipt.verifier_guidance = {
+                "requested": True,
+                "available": False,
+                "reason": verifier_unavailable_reason or "critic_unavailable",
+            }
     receipt = result.receipt
+    receipt.critic_identity = dict(critic_identity)
+    receipt.shared_blind_spots = dict(shared_blind_spots)
+    if verifier_requested and task_verifier is None:
+        receipt.flag("critic_authority_unproven")
     receipt.runtime_operation_authority = dict(operation_authority or {})
     receipt.worker_boot_id = str(worker_identity.get("worker_boot_id") or "")
     receipt.worker_pid = int(worker_identity.get("worker_pid") or 0)

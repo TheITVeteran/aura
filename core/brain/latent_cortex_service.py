@@ -307,6 +307,7 @@ class LatentCortexService:
         receipt: Any,
         config: dict[str, Any],
         runtime_controls: dict[str, Any] | None = None,
+        expected_worker_identity: dict[str, Any] | None = None,
     ) -> list[str]:
         if not isinstance(receipt, dict):
             return ["receipt_not_mapping"]
@@ -539,6 +540,37 @@ class LatentCortexService:
         from core.brain.llm.latent_cortex.runtime_identity import worker_identity_errors
 
         errors.extend(worker_identity_errors(receipt))
+        if config.get("critic_blind_spot_evidence") is not None:
+            try:
+                from core.brain.llm.latent_cortex.critic_identity import (
+                    validate_critic_identity,
+                    validate_shared_blind_spot_evidence,
+                )
+
+                identity = validate_critic_identity(
+                    receipt.get("critic_identity"),
+                    worker_identity=(expected_worker_identity or receipt),
+                )
+                blind_spots = validate_shared_blind_spot_evidence(
+                    receipt.get("shared_blind_spots"),
+                    generator_function_sha256=identity["generator_identity"][
+                        "function_sha256"
+                    ],
+                    critic_function_sha256=identity["critic_function_sha256"],
+                )
+                if blind_spots != config.get("critic_blind_spot_evidence"):
+                    raise ValueError("worker critic evidence differs from service snapshot")
+                if blind_spots["critic_reliability_admitted"] is not True:
+                    raise ValueError("critic reliability gate did not admit authority")
+                guidance = receipt.get("verifier_guidance")
+                if (
+                    not isinstance(guidance, dict)
+                    or guidance.get("requested") is not True
+                    or guidance.get("available") is not True
+                ):
+                    raise ValueError("admitted critic was not causally used")
+            except (ImportError, OSError, RuntimeError, TypeError, ValueError):
+                errors.append("disjoint_critic_authority_unproven")
         controls = dict(runtime_controls or {})
         if controls:
             expected_alpha = controls.get("clean_user_surface_steering_alpha")
@@ -1611,6 +1643,57 @@ class LatentCortexService:
             config["branch_correlation_evidence"] = None
         if allocation_profile == "resident_32b_interactive_full_stack_v2":
             try:
+                from core.brain.llm.latent_cortex.critic_identity import (
+                    build_critic_source_identity,
+                    build_generator_function_identity,
+                    get_critic_blind_spot_ledger,
+                )
+                from core.brain.llm.latent_cortex.execution_controller import (
+                    context_bucket,
+                )
+
+                generator_identity = build_generator_function_identity(worker_identity)
+                critic_source = build_critic_source_identity()
+                critic_ledger = get_critic_blind_spot_ledger()
+                critic_bucket = (
+                    str(controller_decision.get("bucket") or "")
+                    if controller_decision is not None
+                    else context_bucket(
+                        self._visible_objective(question, messages),
+                        domain,
+                        stakes,
+                        uncertainty,
+                    )
+                )
+                config["critic_blind_spot_evidence"] = critic_ledger.evidence(
+                    bucket=critic_bucket,
+                    generator_function_sha256=generator_identity["function_sha256"],
+                    critic_function_sha256=critic_source["source_closure_sha256"],
+                )
+                self._last_allocation["critic_blind_spots"] = {
+                    **critic_ledger.status(),
+                    "bucket": critic_bucket,
+                    "evidence_state": config["critic_blind_spot_evidence"][
+                        "evidence_state"
+                    ],
+                    "critic_reliability_admitted": config[
+                        "critic_blind_spot_evidence"
+                    ]["critic_reliability_admitted"],
+                }
+            except (
+                ImportError,
+                AttributeError,
+                OSError,
+                RuntimeError,
+                TypeError,
+                ValueError,
+            ) as exc:
+                logger.error("Critic identity/evidence unavailable: %s", exc)
+                return self._record_failure(
+                    f"critic_identity_evidence_unavailable:{type(exc).__name__}"
+                )
+        if allocation_profile == "resident_32b_interactive_full_stack_v2":
+            try:
                 requested_decode_tokens = int(config.get("decode_max_tokens") or 256)
             except (TypeError, ValueError, OverflowError):
                 return self._record_failure("invalid_decode_token_override")
@@ -2111,6 +2194,7 @@ class LatentCortexService:
                 raw_receipt,
                 config,
                 runtime_controls,
+                worker_identity,
             )
             if not contract_errors:
                 quality_receipt = evaluate_latent_output(

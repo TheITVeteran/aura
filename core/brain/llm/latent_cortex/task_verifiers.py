@@ -349,6 +349,8 @@ class EpisodeTaskVerifier:
         if not evaluations:
             return {
                 "schema": TASK_VERIFIER_SCHEMA,
+                "requested": True,
+                "available": True,
                 "evaluations": 0,
                 "response_contract_required": bool(self.response_contract),
                 "response_contract_satisfied": False,
@@ -374,6 +376,8 @@ class EpisodeTaskVerifier:
         ]
         return {
             "schema": TASK_VERIFIER_SCHEMA,
+            "requested": True,
+            "available": True,
             "evaluations": len(evaluations),
             "score_trail": [row["score"] for row in evaluations[:32]],
             "best_score": best["score"],

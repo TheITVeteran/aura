@@ -98,6 +98,10 @@ After CP333, the published total is record 394: 72-339 forecast records remain,
 checkpoint-count completion is 53.8%-84.5%, and the midpoint planning estimate
 is 65.7%.
 
+After CP334, the published total is record 395: 71-338 forecast records remain,
+checkpoint-count completion is 53.9%-84.8%, and the midpoint planning estimate
+is 65.9%.
+
 ## Code-grounded baseline and ownership
 
 The four-slice static audit covered the neural core, epistemic/verifier paths,
@@ -107,7 +111,7 @@ baseline below is exhaustive over SPARK-001 through SPARK-072:
 
 - `ACCEPTED`: SPARK-001, SPARK-005, SPARK-006, SPARK-007, SPARK-008, SPARK-009,
   SPARK-010, SPARK-011, SPARK-012, SPARK-014, SPARK-015, SPARK-016,
-  SPARK-017, SPARK-018, SPARK-019.
+  SPARK-017, SPARK-018, SPARK-019, SPARK-020.
 - `PARTIAL`: SPARK-003,
   SPARK-021, SPARK-022, SPARK-023, SPARK-024, SPARK-025,
   SPARK-026, SPARK-027, SPARK-035, SPARK-039, SPARK-040, SPARK-041,
@@ -115,7 +119,6 @@ baseline below is exhaustive over SPARK-001 through SPARK-072:
   SPARK-056, SPARK-058, SPARK-060, SPARK-062, SPARK-063, SPARK-065, SPARK-066,
   SPARK-067.
 - `MISSING`: SPARK-002,
-  SPARK-020,
   SPARK-028, SPARK-029, SPARK-030, SPARK-031, SPARK-032, SPARK-033,
   SPARK-034, SPARK-036, SPARK-037, SPARK-038, SPARK-043, SPARK-044,
   SPARK-045, SPARK-046, SPARK-047, SPARK-048, SPARK-049, SPARK-050,
@@ -463,9 +466,34 @@ before those dependencies close is not admissible.
   is recorded in CP333 below. This closes decoy balancing for the live reviewer
   boundary, not domain-general critic validity or function/weight independence;
   those remain SPARK-020.
-- [ ] **SPARK-020 - Disjoint critic function.** Provide a separately trained or
-  independently implemented critic whose weight/function identity is proved
-  distinct from the generator; measure shared-blind-spot residuals.
+- [x] **SPARK-020 - Disjoint critic function.** CP334 makes the worker's
+  deterministic symbolic critic prove its identity before it can affect a
+  recurrent decision. The receipt commits to the complete declared source
+  closure, exact per-file hashes, parsed import graph, forbidden neural-runtime
+  dependency audit, class identity, and a runtime object-state audit. Only the
+  four bounded data fields are admitted; callable/tensor/model state is rejected
+  and the critic has exactly zero trainable parameters. That identity is bound
+  against the resident generator's model-path commitment, logical and stored
+  parameter counts, worker source, adapter stack, tokenizer, quantization, and
+  known identity gaps. The service independently reconstructs both sides.
+
+  A governed durable ledger now accepts unique independently checked
+  task/candidate outcomes keyed to those exact generator and critic functions.
+  Its snapshot binds the checked sample set and distinct grader identities,
+  reconstructs all four confusion-matrix cells, and reports the generator-error
+  shared-blind-spot rate with a 95% Wilson interval. It requires 24 checked
+  samples, eight generator errors, and two distinct graders before reporting a
+  measured state. A powered upper bound above 0.35 causally revokes critic
+  authority. Before power, the receipt says `bootstrap_unmeasured`; live decoy
+  gates still apply, but no low residual is invented. Worker and service reject
+  identity, sample, aggregate, function-binding, or authority tampering.
+
+  Focused identity, evidence, ledger, causal-revocation, blind-review,
+  task-verifier, and service contracts pass 116/116. The final fixed-snapshot
+  RLC/GWT/execution-controller ownership gate passes 895/895. This closes the
+  disjoint implementation and live residual-meter mechanism, not a claim that
+  the currently empty live ledger has measured a low shared-blind-spot rate,
+  and not a resident-32B intelligence or frontier result.
 - [ ] **SPARK-021 - Causal branch exchange.** Exchange bounded summaries only at
   declared synchronization points, preserve branch provenance, prevent early
   answer leakage, and lesion/swap roles to prove differentiated labor.
@@ -725,17 +753,21 @@ review policy service-verifiable; it does not change the negative capability
 verdict.
 CP333 closes decoy-balanced verifier admission and contains critic failures;
 it does not change the negative capability verdict.
+CP334 closes pre-causal critic/generator function separation and installs the
+durable shared-blind-spot meter and reliability gate; its live evidence state
+is still honestly unpowered and it does not change the negative capability
+verdict.
 
-Validation: focused decoy, blind-review, selection, preflight, service, probe-
-cache, and bytecode contracts pass 32/32. The broader engine/branch/wiring set
-passes 193/193 in 100.60 seconds, and the affected RLC integration slice passes
-219/219 in 113.40 seconds. Final fixed-snapshot ownership-gate evidence is
-882/882 in 453.65 seconds. Strict focused Ruff, bytecode compilation, and
+Validation: focused critic identity, aggregate reconstruction, durable ledger,
+causal revocation, blind-review, task-verifier, and service contracts pass
+116/116 in 61.36 seconds. Final fixed-snapshot RLC, latent-cortex,
+global-workspace, GWT, and execution-controller ownership evidence is 895/895
+in 462.49 seconds. Strict focused Ruff, bytecode compilation, and
 `git diff --check` pass. No resident 32B campaign was run, and the negative
 frontier verdict is unchanged.
 
-This is total checkpoint record 394. The revised forecast remains 466-733 total
-records, now approximately 72-339 records after this checkpoint. Checkpoint-
-count completion is approximately 53.8%-84.5%, with a midpoint planning
-estimate of 65.7%. Next: publish CP333, then implement and prove a critic whose
-function identity is disjoint from the generator for SPARK-020.
+This is total checkpoint record 395. The revised forecast remains 466-733 total
+records, now approximately 71-338 records after this checkpoint. Checkpoint-
+count completion is approximately 53.9%-84.8%, with a midpoint planning
+estimate of 65.9%. Next: publish CP334, then implement bounded, provenance-
+preserving causal branch exchange and its lesion/swap proof for SPARK-021.
