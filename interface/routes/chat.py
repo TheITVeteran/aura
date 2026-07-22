@@ -3036,6 +3036,41 @@ def _extract_topic_tokens(text: str) -> set[str]:
     return tokens
 
 
+_ACTION_ANCHOR_TOPIC_PRIORITY = {
+    "app",
+    "browser",
+    "calendar",
+    "desktop",
+    "document",
+    "email",
+    "export",
+    "file",
+    "folder",
+    "note",
+    "notes",
+    "pdf",
+    "terminal",
+    "window",
+}
+
+
+def _select_anchor_topic_tokens(text: str, *, limit: int = 2) -> list[str]:
+    """Pick user-visible nouns/effects before generic action verbs."""
+
+    tokens = _extract_topic_tokens(text)
+    if not tokens:
+        return []
+    preferred = sorted(
+        (token for token in tokens if token in _ACTION_ANCHOR_TOPIC_PRIORITY),
+        key=lambda token: (0, token),
+    )
+    rest = sorted(
+        (token for token in tokens if token not in _ACTION_ANCHOR_TOPIC_PRIORITY),
+        key=lambda token: (-len(token), token),
+    )
+    return (preferred + rest)[: max(1, int(limit))]
+
+
 def _has_local_choice_antecedent(user_message: str) -> bool:
     """Distinguish a self-contained choice from a conversational pronoun.
 
@@ -10629,11 +10664,9 @@ def _build_stateful_voice_reflex(frame: dict[str, Any], user_message: str = "") 
     system dumping telemetry.  Never expose raw internal state names,
     attention focus strings, or mood enum values.
     """
-    import random
-
     mood = str(frame.get("mood") or "").strip().lower()
     attention = _sanitize_attention_focus(str(frame.get("attention_focus") or ""))
-    user_topics = sorted(_extract_topic_tokens(user_message), key=len, reverse=True)[:2]
+    user_topics = _select_anchor_topic_tokens(user_message)
 
     # Map internal mood labels to natural phrasing
     _mood_phrases = {
@@ -10644,11 +10677,10 @@ def _build_stateful_voice_reflex(frame: dict[str, Any], user_message: str = "") 
         "pressed": "I'm a little pressed, but I'm still with you.",
         "warm": "I'm in a good place — let me think on that.",
     }
-    opener = _mood_phrases.get(mood, random.choice([
-        "I lost the thread on that answer.",
-        "That reply drifted away from your actual question.",
-        "I caught a bad answer before letting it stand.",
-    ]))
+    opener = _mood_phrases.get(
+        mood,
+        _build_degraded_live_reply(frame, user_message, reason="filtered_draft"),
+    )
 
     parts = [opener]
     if user_topics:
@@ -10660,6 +10692,51 @@ def _build_stateful_voice_reflex(frame: dict[str, Any], user_message: str = "") 
         parts.append(f"Right now I'm focused on {attention}.")
 
     return " ".join(parts)
+
+
+def _build_degraded_live_reply(
+    frame: dict[str, Any],
+    user_message: str = "",
+    *,
+    reason: str = "degraded_turn",
+) -> str:
+    """Compose the true last-resort reply from state and request evidence.
+
+    This is intentionally not a tree of canned answers. It only appears after
+    generated recovery and narrower grounded repairs failed. The text must be
+    honest that the turn is degraded, but still stay attached to what the user
+    actually asked instead of pretending a normal free-form answer exists.
+    """
+
+    topics = _select_anchor_topic_tokens(user_message)
+    attention = _sanitize_attention_focus(str(frame.get("attention_focus") or ""))
+    action = str(frame.get("dominant_action") or "").strip().lower()
+
+    if topics:
+        if len(topics) == 1:
+            anchor = f"your question about {topics[0]}"
+        else:
+            anchor = f"your question about {topics[0]} and {topics[1]}"
+    elif attention:
+        anchor = f"the part of this turn focused on {attention}"
+    else:
+        anchor = "this exact turn"
+
+    if reason == "repeated_reflex":
+        state_clause = "my last recovery shape started repeating"
+    elif reason == "desktop_cognitive_engine_repair_failed":
+        state_clause = "the desktop-required repair path did not produce a clean answer"
+    else:
+        state_clause = "the answer path did not produce a clean enough draft"
+
+    next_action = "stay bounded to that anchor"
+    if action and action not in {"unknown", "none", "rest"}:
+        next_action = f"{action} from that anchor"
+
+    return _apply_aura_voice_shaping(
+        f"{state_clause}, so I should not treat a synthetic fallback as my real answer. "
+        f"The grounded anchor is {anchor}; I need to {next_action} rather than inventing around it."
+    )
 
 
 def _build_subjective_self_reflex(frame: dict[str, Any], user_message: str = "") -> str:
@@ -13435,14 +13512,7 @@ async def _stabilize_user_facing_reply(
     # if even the reflex is looping.
     reflex = _call_stateful_voice_reflex(frame, user_message)
     if _is_actionably_stale_response(user_message, reflex):
-        # Even the reflex is repeating — use a simple honest fallback
-        import random
-        reflex = random.choice([
-            "I'm here, and I want to answer with the thread intact.",
-            "I need a beat to gather the real answer, but I'm still with you.",
-            "I want to give you a real answer, not a recycled one. I'm gathering it cleanly.",
-            "The clean answer is taking shape. I'm staying with your actual question.",
-        ])
+        reflex = _build_degraded_live_reply(frame, user_message, reason="repeated_reflex")
     _record_recent_response(reflex, user_message)
     return reflex
 
@@ -13848,9 +13918,12 @@ async def _repair_final_degraded_reply(
     ):
         return reflex, reflex_stale, reflex_same_diff, reflex_off_topic, reflex_off_topic_reason, True
 
-    honest_failure = (
-        "This live turn failed the final reliability checks, so I should not reuse "
-        "an older answer as if it answered you."
+    honest_failure = _build_degraded_live_reply(
+        _build_aura_expression_frame(user_message),
+        user_message,
+        reason=reflex_off_topic_reason
+        or reflex_semantic_reason
+        or "unrepaired_degraded_turn",
     )
     return honest_failure, False, False, True, reflex_off_topic_reason or reflex_semantic_reason or "unrepaired_degraded_turn", True
 

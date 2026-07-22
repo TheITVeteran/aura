@@ -24112,3 +24112,38 @@ the installed Aura.app bundle against this tracker commit, continue watching
 CP294 for real recurrent proof evidence, and proceed with live chat/action
 semantic-review items that do not edit CP294-bound proof sources while the run
 is active.
+
+## Checkpoint 2026-07-21-298: Last-Resort Chat Fallbacks Become Evidence-Bound, Not Random Stock Lines
+
+The user's preference was folded into the general chat contract: hard fallbacks
+remain available only after generated recovery, narrower grounded repairs, and
+safe original-model surfacing fail, but the last resort can no longer rotate
+through random stock phrases such as "I need a beat" or "the clean answer is
+taking shape." That path now composes a degraded live reply from the current
+expression frame and the actual user-topic anchor, and it explicitly says the
+turn is degraded rather than presenting a synthetic floor as Aura's normal
+free-form answer.
+
+The same anchor selector is shared by the stateful voice reflex and the degraded
+live floor. It prioritizes user-visible objects and effects such as Notes, PDF,
+desktop, browser, file, terminal, and document before generic action verbs, so
+action failures stay attached to what the user asked Aura to do. The normal
+stabilizer path still prefers generated Aura-voiced repair and then the
+original Cortex text when safe; the deterministic floor exists only for the
+unrepaired/degraded edge.
+
+Validation after reconciling two upstream MLX memory-admission commits: the
+expanded chat/recovery/emergency-override cluster passes 220/220, including the
+known live transcript failures, grounded competent recovery, the new emergency
+override suite, and new tests that make `random.choice` fail if the voice
+reflex tries to choose from stock fallback variants. Bytecode compilation
+passes for `interface/routes/chat.py`, `tests/test_feedback_audit_fixes.py`,
+`core/brain/llm/emergency_override.py`, and `tests/test_emergency_override.py`;
+`make lint` passes; and `git diff --check` passes.
+
+This is total checkpoint record 359. The forecast remains 394-661 total
+records, now approximately 35-302 records after this checkpoint. Next: commit
+and push CP298, rebuild `/Applications/Aura.app` if the commit makes the bundle
+stale, keep CP294 running until it produces a real recurrent proof receipt, and
+continue bounded live chat/action semantic-review hardening that does not edit
+the active CP294 proof sources.

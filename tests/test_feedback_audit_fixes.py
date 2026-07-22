@@ -1636,6 +1636,45 @@ def test_stateful_voice_reflex_stays_in_aura_voice():
     assert "How can I help" not in reply
 
 
+def test_stateful_voice_reflex_unknown_mood_is_not_random_stock_fallback(monkeypatch):
+    from interface.routes import chat as chat_module
+
+    def _fail_random_choice(_items):
+        raise AssertionError("voice reflex should not choose from stock fallback variants")
+
+    monkeypatch.setattr("random.choice", _fail_random_choice)
+
+    reply = chat_module._build_stateful_voice_reflex(
+        {
+            "mood": "unknown",
+            "attention_focus": "",
+            "dominant_action": "answer",
+        },
+        "Can you open Notes and write Hello?",
+    )
+
+    assert "synthetic fallback" in reply
+    assert "note" in reply.lower()
+    assert "hello" in reply.lower()
+
+
+def test_degraded_live_reply_is_grounded_in_user_topic():
+    from interface.routes.chat import _build_degraded_live_reply
+
+    reply = _build_degraded_live_reply(
+        {
+            "attention_focus": "",
+            "dominant_action": "verify",
+        },
+        "Why did the desktop task fail in Notes?",
+        reason="repeated_reflex",
+    )
+
+    assert "synthetic fallback" in reply
+    assert "notes" in reply.lower() or "desktop" in reply.lower()
+    assert "verify" in reply.lower()
+
+
 def test_sanitize_attention_focus_blocks_symbolic_scene_leak():
     from interface.routes.chat import _sanitize_attention_focus
 
