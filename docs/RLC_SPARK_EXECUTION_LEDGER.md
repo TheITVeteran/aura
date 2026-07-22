@@ -50,6 +50,10 @@ After CP321, the published total is record 382: 84-351 forecast records remain,
 checkpoint-count completion is 52.1%-82.0%, and the midpoint planning estimate
 is 63.7%. This remains workload accounting, not a capability score.
 
+After CP322, the published total is record 383: 83-350 forecast records remain,
+checkpoint-count completion is 52.3%-82.2%, and the midpoint planning estimate
+is 63.9%.
+
 ## Code-grounded baseline and ownership
 
 The four-slice static audit covered the neural core, epistemic/verifier paths,
@@ -57,14 +61,15 @@ training/proof surfaces, and the selected live/full-mind path. It read the
 entire Spark source and traced callers rather than crediting class names. The
 baseline below is exhaustive over SPARK-001 through SPARK-072:
 
-- `ACCEPTED`: SPARK-001, SPARK-005, SPARK-007, SPARK-008, SPARK-011.
+- `ACCEPTED`: SPARK-001, SPARK-005, SPARK-007, SPARK-008, SPARK-009,
+  SPARK-011.
 - `PARTIAL`: SPARK-003, SPARK-010, SPARK-012,
   SPARK-014, SPARK-021, SPARK-022, SPARK-023, SPARK-024, SPARK-025,
   SPARK-026, SPARK-027, SPARK-035, SPARK-039, SPARK-040, SPARK-041,
   SPARK-042, SPARK-052, SPARK-053, SPARK-054, SPARK-055, SPARK-056,
   SPARK-058, SPARK-060, SPARK-062, SPARK-063, SPARK-065, SPARK-066,
   SPARK-067.
-- `MISSING`: SPARK-002, SPARK-006, SPARK-009,
+- `MISSING`: SPARK-002, SPARK-006,
   SPARK-015, SPARK-016, SPARK-017, SPARK-018, SPARK-019, SPARK-020,
   SPARK-028, SPARK-029, SPARK-030, SPARK-031, SPARK-032, SPARK-033,
   SPARK-034, SPARK-036, SPARK-037, SPARK-038, SPARK-043, SPARK-044,
@@ -181,9 +186,25 @@ before those dependencies close is not admissible.
   and crash-recovery contracts passed 37/37; the integrated RLC/latent/GWT/
   controller gate passed 767/767. This is a structural evidence-integrity result,
   not calibrated uncertainty, live state causality, or a capability-gain claim.
-- [ ] **SPARK-009 - Calibrated uncertainty.** Maintain claim-level epistemic
+- [x] **SPARK-009 - Calibrated uncertainty.** Maintain claim-level epistemic
   uncertainty from measured signals rather than verbal confidence; report
   calibration error and abstain outside validated support.
+  Accepted at CP322: immutable, domain- and estimator-specific calibration
+  profiles are fit only from independently graded held-out outcomes with unique
+  prediction/outcome receipts and pinned dataset/split digests. Profiles report
+  Brier score, constant-predictor baseline, ECE, MCE, reliability bins, Wilson
+  bounds, admission failures, and expiration. Claim intervals are recomputed
+  from the registered profile and measured signal evidence; sparse bins,
+  profile drift/failure, low lower bounds, future evidence, and expired profiles
+  force explicit abstention. Exact confidence requires independently verified
+  proof or calculation evidence. Established claims cannot remain uncalibrated,
+  and answer confidence equals the weakest transitive dependency rather than a
+  generated number. Profiles and decisions live in the same canonical,
+  hash-chained transaction and cannot be rewritten during recovery. Focused
+  calibration/state/journal contracts passed 50/50; the integrated RLC/latent/
+  GWT/controller gate passed 780/780. External trust-root authenticity, live
+  state causality, hypothesis-distribution calibration, and frontier gains remain
+  separate checkpoints.
 - [ ] **SPARK-010 - Cognitive operation history.** Record which operators were
   attempted, their inputs, costs, evidence gained, affected claims, and outcome
   so recurrence cannot unknowingly repeat failed work.
@@ -441,3 +462,5 @@ real engineering gains, but they do not satisfy SPARK-069 or any later
 capability checkpoint until a fresh exact-source run produces accepted evidence.
 CP321 adds a tested epistemic evidence firewall; it does not change that negative
 capability verdict.
+CP322 adds measured claim calibration and enforced abstention; it likewise does
+not change the negative capability verdict.

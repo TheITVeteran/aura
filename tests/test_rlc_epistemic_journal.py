@@ -9,6 +9,11 @@ from pathlib import Path
 
 import pytest
 
+from core.brain.llm.latent_cortex.epistemic_calibration import (
+    CalibrationObservation,
+    CalibrationPolicy,
+    CalibrationProfile,
+)
 from core.brain.llm.latent_cortex.epistemic_journal import (
     EPISTEMIC_JOURNAL_SCHEMA,
     EpistemicJournalError,
@@ -34,7 +39,43 @@ from core.runtime.file_write_gateway import FileWriteGateway
 
 
 def interval() -> ProbabilityInterval:
-    return ProbabilityInterval(0.4, 0.5, 0.6, "test_interval", 1)
+    return ProbabilityInterval(0.4, 0.5, 0.6, "uncalibrated_test_interval", 0)
+
+
+def calibration_profile() -> CalibrationProfile:
+    rows = tuple(
+        CalibrationObservation(
+            observation_id=f"journal.obs.{index}",
+            domain="general",
+            predicted_probability=0.1 if index < 2 else 0.9,
+            outcome=index >= 2,
+            prediction_receipt_sha256=text_sha256(f"journal.prediction:{index}"),
+            outcome_receipt_sha256=text_sha256(f"journal.outcome:{index}"),
+            outcome_verifier_id="journal_exact_grader",
+            outcome_verifier_version="v1",
+            observed_at=float(index + 1),
+        )
+        for index in range(4)
+    )
+    return CalibrationProfile.fit(
+        profile_id="cal.journal.v1",
+        estimator_id="journal_claim_head",
+        estimator_version="v1",
+        domain="general",
+        dataset_sha256=text_sha256("journal-dataset"),
+        split_manifest_sha256=text_sha256("journal-split"),
+        trained_at=10.0,
+        expires_at=100.0,
+        observations=rows,
+        policy=CalibrationPolicy(
+            bins=2,
+            min_samples=4,
+            min_bin_samples=2,
+            max_brier=0.1,
+            max_ece=0.11,
+            support_lower_bound=0.5,
+        ),
+    )
 
 
 def genesis(*, objective: str = "Recover the exact epistemic state.") -> EpistemicState:
@@ -111,6 +152,39 @@ def test_journal_initializes_recovers_and_continues_exact_state(tmp_path: Path):
         "claim.first",
         "claim.second",
     }
+
+
+def test_journal_persists_calibration_and_rejects_history_rewrite(tmp_path: Path):
+    path = tmp_path / "calibration.jsonl"
+    initial = genesis()
+    journal = EpistemicStateJournal(path)
+    machine = EpistemicStateMachine(initial, persistence=journal)
+    tx = machine.begin()
+    tx.add_calibration(calibration_profile())
+    committed = machine.commit(tx)
+    assert committed.calibrations[0].profile_id == "cal.journal.v1"
+
+    recovered = EpistemicStateMachine(initial, persistence=EpistemicStateJournal(path))
+    assert recovered.snapshot() == committed
+
+    candidate = EpistemicState._build(
+        episode_id=committed.episode_id,
+        version=committed.version + 1,
+        parent_sha256=committed.state_sha256,
+        problem=committed.problem,
+        calibrations=(),
+        evidence=committed.evidence,
+        hypotheses=committed.hypotheses,
+        claims=committed.claims,
+        operations=committed.operations,
+        budget=committed.budget,
+        accepted_answer=committed.accepted_answer,
+    )
+    with pytest.raises(
+        EpistemicJournalError,
+        match="journal_calibration_history_rewritten",
+    ):
+        journal.append(expected_base=committed, candidate=candidate)
 
 
 @pytest.mark.asyncio
@@ -265,6 +339,7 @@ def test_rehashed_forgery_cannot_break_chain_or_rewrite_history(tmp_path: Path):
         version=base_state.version + 1,
         parent_sha256=base_state.state_sha256,
         problem=base_state.problem,
+        calibrations=base_state.calibrations,
         evidence=(base_state.evidence[0],),
         hypotheses=base_state.hypotheses,
         claims=base_state.claims,

@@ -1,4 +1,5 @@
 """Crash-consistent write-ahead journal for the RLC epistemic state."""
+
 from __future__ import annotations
 
 import hashlib
@@ -127,9 +128,7 @@ def _strict_json_loads(payload: bytes) -> Any:
         _fail("journal_entry_json_invalid")
 
 
-def _entry_bytes(
-    *, sequence: int, previous_entry_sha256: str, state: EpistemicState
-) -> bytes:
+def _entry_bytes(*, sequence: int, previous_entry_sha256: str, state: EpistemicState) -> bytes:
     base = {
         "schema": EPISTEMIC_JOURNAL_SCHEMA,
         "sequence": sequence,
@@ -162,6 +161,8 @@ def _validate_transition(previous: EpistemicState, current: EpistemicState) -> N
     def by_id(items: tuple[Any, ...], attribute: str) -> dict[str, Any]:
         return {getattr(item, attribute): item for item in items}
 
+    previous_calibrations = by_id(previous.calibrations, "profile_id")
+    current_calibrations = by_id(current.calibrations, "profile_id")
     previous_evidence = by_id(previous.evidence, "evidence_id")
     current_evidence = by_id(current.evidence, "evidence_id")
     previous_operations = by_id(previous.operations, "operation_id")
@@ -172,10 +173,17 @@ def _validate_transition(previous: EpistemicState, current: EpistemicState) -> N
     current_hypotheses = by_id(current.hypotheses, "hypothesis_id")
 
     for old, new, code in (
+        (
+            previous_calibrations,
+            current_calibrations,
+            "journal_calibration_history_rewritten",
+        ),
         (previous_evidence, current_evidence, "journal_evidence_history_rewritten"),
         (previous_operations, current_operations, "journal_operation_history_rewritten"),
     ):
-        if any(identifier not in new or new[identifier] != item for identifier, item in old.items()):
+        if any(
+            identifier not in new or new[identifier] != item for identifier, item in old.items()
+        ):
             _fail(code)
     if not set(previous_claims) <= set(current_claims):
         _fail("journal_claim_history_deleted")
@@ -193,9 +201,7 @@ def _validate_transition(previous: EpistemicState, current: EpistemicState) -> N
     ):
         _fail("journal_operation_base_mismatch")
     revised_claims = {
-        claim_id
-        for claim_id, claim in previous_claims.items()
-        if current_claims[claim_id] != claim
+        claim_id for claim_id, claim in previous_claims.items() if current_claims[claim_id] != claim
     }
     covered_claims = {
         claim_id
@@ -432,6 +438,7 @@ class EpistemicStateJournal:
                     size_bytes=current.size_bytes + len(line),
                     repaired_torn_tail_bytes=current.repaired_torn_tail_bytes,
                 )
+
 
 __all__ = [
     "EPISTEMIC_JOURNAL_SCHEMA",

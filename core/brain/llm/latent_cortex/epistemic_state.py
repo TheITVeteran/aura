@@ -19,12 +19,19 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Any, Protocol
 
-EPISTEMIC_STATE_SCHEMA = "aura.rlc.epistemic_state.v2"
+from core.brain.llm.latent_cortex.epistemic_calibration import (
+    MAX_CALIBRATION_OBSERVATIONS,
+    CalibrationEstimate,
+    CalibrationProfile,
+)
+
+EPISTEMIC_STATE_SCHEMA = "aura.rlc.epistemic_state.v3"
 
 MAX_OBJECTIVE_CHARS = 16_384
 MAX_TEXT_CHARS = 8_192
 MAX_SUMMARY_CHARS = 2_048
 MAX_CONSTRAINTS = 128
+MAX_CALIBRATIONS = 32
 MAX_EVIDENCE = 256
 MAX_HYPOTHESES = 64
 MAX_CLAIMS = 512
@@ -78,6 +85,12 @@ class EvidencePurpose(StrEnum):
     IMMUTABLE_PROBLEM = "immutable_problem"
     CLAIM_TEST = "claim_test"
     CONTEXT_ONLY = "context_only"
+
+
+class UncertaintyBasis(StrEnum):
+    UNCALIBRATED = "uncalibrated"
+    EMPIRICAL = "empirical"
+    EXACT = "exact"
 
 
 class ClaimStatus(StrEnum):
@@ -233,6 +246,14 @@ class ProbabilityInterval:
     upper: float
     method: str
     evidence_count: int
+    basis: UncertaintyBasis = UncertaintyBasis.UNCALIBRATED
+    raw_probability: float | None = None
+    calibration_id: str = ""
+    calibration_sha256: str = ""
+    signal_evidence_ids: tuple[str, ...] = ()
+    evaluated_at: float | None = None
+    abstain: bool = True
+    abstention_reason: str = "uncalibrated"
 
     def __post_init__(self) -> None:
         lower = _unit(self.lower, name="uncertainty.lower")
@@ -242,13 +263,139 @@ class ProbabilityInterval:
             raise EpistemicStateError("uncertainty interval must satisfy lower <= point <= upper")
         if not isinstance(self.evidence_count, int) or isinstance(self.evidence_count, bool):
             raise EpistemicStateError("uncertainty.evidence_count must be an integer")
-        if not 0 <= self.evidence_count <= MAX_EVIDENCE:
+        if not 0 <= self.evidence_count <= MAX_CALIBRATION_OBSERVATIONS:
             raise EpistemicStateError("uncertainty.evidence_count is out of bounds")
         object.__setattr__(self, "lower", lower)
         object.__setattr__(self, "point", point)
         object.__setattr__(self, "upper", upper)
         object.__setattr__(
             self, "method", _strict_text(self.method, name="uncertainty.method", limit=96)
+        )
+        if not isinstance(self.basis, UncertaintyBasis):
+            raise EpistemicStateError("uncertainty.basis must be an UncertaintyBasis")
+        object.__setattr__(
+            self,
+            "signal_evidence_ids",
+            _bounded_ids(
+                self.signal_evidence_ids,
+                name="uncertainty signal evidence",
+            ),
+        )
+        if not isinstance(self.abstain, bool):
+            raise EpistemicStateError("uncertainty.abstain must be boolean")
+        reason = _strict_text(
+            self.abstention_reason,
+            name="uncertainty.abstention_reason",
+            limit=512,
+            empty=True,
+        )
+        object.__setattr__(self, "abstention_reason", reason)
+        if self.basis is UncertaintyBasis.UNCALIBRATED:
+            if any(
+                (
+                    self.evidence_count != 0,
+                    self.raw_probability is not None,
+                    bool(self.calibration_id),
+                    bool(self.calibration_sha256),
+                    bool(self.signal_evidence_ids),
+                    self.evaluated_at is not None,
+                    not self.abstain,
+                    not reason,
+                )
+            ):
+                raise EpistemicStateError(
+                    "uncalibrated uncertainty must remain an explicit abstention"
+                )
+        elif self.basis is UncertaintyBasis.EMPIRICAL:
+            if self.raw_probability is None or self.evaluated_at is None:
+                raise EpistemicStateError(
+                    "empirical uncertainty requires raw probability and evaluation time"
+                )
+            object.__setattr__(
+                self,
+                "raw_probability",
+                _unit(self.raw_probability, name="uncertainty.raw_probability"),
+            )
+            object.__setattr__(
+                self,
+                "calibration_id",
+                _strict_id(self.calibration_id, name="uncertainty.calibration_id"),
+            )
+            _strict_digest(
+                self.calibration_sha256,
+                name="uncertainty.calibration_sha256",
+            )
+            if not self.signal_evidence_ids:
+                raise EpistemicStateError("empirical uncertainty requires measured signal evidence")
+            object.__setattr__(
+                self,
+                "evaluated_at",
+                _nonnegative(self.evaluated_at, name="uncertainty.evaluated_at"),
+            )
+            if self.abstain != bool(reason):
+                raise EpistemicStateError("empirical abstention and reason must agree")
+        else:
+            if (lower, point, upper) != (1.0, 1.0, 1.0):
+                raise EpistemicStateError("exact uncertainty must equal one")
+            if self.raw_probability != 1.0 or self.evaluated_at is None:
+                raise EpistemicStateError("exact uncertainty requires a measured exact evaluation")
+            if self.calibration_id or self.calibration_sha256:
+                raise EpistemicStateError("exact uncertainty cannot reference an empirical profile")
+            if not self.signal_evidence_ids or self.evidence_count != len(self.signal_evidence_ids):
+                raise EpistemicStateError("exact uncertainty requires counted signal evidence")
+            object.__setattr__(
+                self,
+                "evaluated_at",
+                _nonnegative(self.evaluated_at, name="uncertainty.evaluated_at"),
+            )
+            if self.abstain or reason:
+                raise EpistemicStateError("exact uncertainty cannot abstain")
+
+    @classmethod
+    def from_calibration_estimate(
+        cls,
+        estimate: CalibrationEstimate,
+        *,
+        signal_evidence_ids: Iterable[str],
+    ) -> ProbabilityInterval:
+        if not isinstance(estimate, CalibrationEstimate):
+            raise TypeError("estimate must be a CalibrationEstimate")
+        return cls(
+            lower=estimate.lower,
+            point=estimate.point,
+            upper=estimate.upper,
+            method=f"empirical_reliability_bin_{estimate.bin_index}",
+            evidence_count=estimate.sample_count,
+            basis=UncertaintyBasis.EMPIRICAL,
+            raw_probability=estimate.raw_probability,
+            calibration_id=estimate.profile_id,
+            calibration_sha256=estimate.profile_sha256,
+            signal_evidence_ids=tuple(signal_evidence_ids),
+            evaluated_at=estimate.evaluated_at,
+            abstain=not estimate.supported,
+            abstention_reason=estimate.abstention_reason,
+        )
+
+    @classmethod
+    def exact(
+        cls,
+        *,
+        signal_evidence_ids: Iterable[str],
+        evaluated_at: float,
+    ) -> ProbabilityInterval:
+        evidence_ids = tuple(signal_evidence_ids)
+        return cls(
+            lower=1.0,
+            point=1.0,
+            upper=1.0,
+            method="independently_verified_exact_evidence",
+            evidence_count=len(evidence_ids),
+            basis=UncertaintyBasis.EXACT,
+            raw_probability=1.0,
+            signal_evidence_ids=evidence_ids,
+            evaluated_at=evaluated_at,
+            abstain=False,
+            abstention_reason="",
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -258,13 +405,56 @@ class ProbabilityInterval:
             "upper": self.upper,
             "method": self.method,
             "evidence_count": self.evidence_count,
+            "basis": self.basis.value,
+            "raw_probability": self.raw_probability,
+            "calibration_id": self.calibration_id,
+            "calibration_sha256": self.calibration_sha256,
+            "signal_evidence_ids": list(self.signal_evidence_ids),
+            "evaluated_at": self.evaluated_at,
+            "abstain": self.abstain,
+            "abstention_reason": self.abstention_reason,
         }
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> ProbabilityInterval:
-        fields = {"lower", "point", "upper", "method", "evidence_count"}
+        fields = {
+            "lower",
+            "point",
+            "upper",
+            "method",
+            "evidence_count",
+            "basis",
+            "raw_probability",
+            "calibration_id",
+            "calibration_sha256",
+            "signal_evidence_ids",
+            "evaluated_at",
+            "abstain",
+            "abstention_reason",
+        }
         _exact_fields(data, fields, name="uncertainty")
-        return cls(**{key: data[key] for key in fields})
+        return cls(
+            lower=data["lower"],
+            point=data["point"],
+            upper=data["upper"],
+            method=data["method"],
+            evidence_count=data["evidence_count"],
+            basis=_wire_enum(
+                UncertaintyBasis,
+                data["basis"],
+                name="uncertainty.basis",
+            ),
+            raw_probability=data["raw_probability"],
+            calibration_id=data["calibration_id"],
+            calibration_sha256=data["calibration_sha256"],
+            signal_evidence_ids=_wire_list(
+                data["signal_evidence_ids"],
+                name="uncertainty.signal_evidence_ids",
+            ),
+            evaluated_at=data["evaluated_at"],
+            abstain=data["abstain"],
+            abstention_reason=data["abstention_reason"],
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -619,6 +809,7 @@ class ClaimRecord:
     contradictions: tuple[str, ...] = ()
     failure_condition: str = ""
     answer_relevant: bool = False
+    domain: str = "general"
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "claim_id", _strict_id(self.claim_id, name="claim_id"))
@@ -648,6 +839,11 @@ class ClaimRecord:
         )
         if not isinstance(self.answer_relevant, bool):
             raise EpistemicStateError("claim.answer_relevant must be boolean")
+        object.__setattr__(
+            self,
+            "domain",
+            _strict_id(self.domain, name="claim.domain"),
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -660,6 +856,7 @@ class ClaimRecord:
             "contradictions": list(self.contradictions),
             "failure_condition": self.failure_condition,
             "answer_relevant": self.answer_relevant,
+            "domain": self.domain,
         }
 
     @classmethod
@@ -674,6 +871,7 @@ class ClaimRecord:
             "contradictions",
             "failure_condition",
             "answer_relevant",
+            "domain",
         }
         _exact_fields(data, fields, name="claim")
         return cls(
@@ -689,6 +887,7 @@ class ClaimRecord:
             ),
             failure_condition=data["failure_condition"],
             answer_relevant=data["answer_relevant"],
+            domain=data["domain"],
         )
 
 
@@ -950,6 +1149,7 @@ class EpistemicState:
     version: int
     parent_sha256: str
     problem: ProblemFrame
+    calibrations: tuple[CalibrationProfile, ...]
     evidence: tuple[EvidenceRecord, ...]
     hypotheses: tuple[HypothesisRecord, ...]
     claims: tuple[ClaimRecord, ...]
@@ -973,6 +1173,17 @@ class EpistemicState:
             self.budget, ComputeBudgetState
         ):
             raise EpistemicStateError("state problem/budget types are invalid")
+        object.__setattr__(
+            self,
+            "calibrations",
+            _unique_by_id(
+                self.calibrations,
+                expected_type=CalibrationProfile,
+                attr="profile_id",
+                limit=MAX_CALIBRATIONS,
+                name="calibrations",
+            ),
+        )
         object.__setattr__(
             self,
             "evidence",
@@ -1029,6 +1240,7 @@ class EpistemicState:
     def _validate_references(self) -> None:
         claim_map = {item.claim_id: item for item in self.claims}
         evidence_map = {item.evidence_id: item for item in self.evidence}
+        calibration_map = {item.profile_id: item for item in self.calibrations}
         evidence_ids = set(evidence_map)
         claim_ids = set(claim_map)
         immutable_ids = set(self.problem.immutable_evidence_ids)
@@ -1077,6 +1289,18 @@ class EpistemicState:
             ):
                 raise EpistemicStateError(
                     "mutually contradictory claims cannot both be established"
+                )
+            self._validate_claim_uncertainty(
+                claim,
+                evidence_map=evidence_map,
+                calibration_map=calibration_map,
+            )
+            if claim.status in established and (
+                claim.uncertainty.basis is UncertaintyBasis.UNCALIBRATED
+                or claim.uncertainty.abstain
+            ):
+                raise EpistemicStateError(
+                    "supported or verified claim lacks validated uncertainty support"
                 )
         for evidence in self.evidence:
             for claim_id in (*evidence.supports, *evidence.contradicts):
@@ -1135,6 +1359,81 @@ class EpistemicState:
                     raise EpistemicStateError(
                         "answer depends on a claim with unresolved contradictory evidence"
                     )
+            uncertainty_claims = [claim_map[claim_id] for claim_id in dependency_claims]
+            weakest = min(
+                uncertainty_claims,
+                key=lambda claim: (
+                    claim.uncertainty.lower,
+                    claim.uncertainty.point,
+                    claim.uncertainty.upper,
+                    claim.claim_id,
+                ),
+            ).uncertainty
+            if self.accepted_answer.confidence != weakest:
+                raise EpistemicStateError(
+                    "answer confidence must equal its weakest calibrated dependency"
+                )
+            for claim in uncertainty_claims:
+                uncertainty = claim.uncertainty
+                if uncertainty.evaluated_at is None or (
+                    uncertainty.evaluated_at > self.accepted_answer.accepted_at
+                ):
+                    raise EpistemicStateError("answer predates its claim uncertainty measurement")
+                if uncertainty.basis is UncertaintyBasis.EMPIRICAL:
+                    profile = calibration_map[uncertainty.calibration_id]
+                    if self.accepted_answer.accepted_at > profile.expires_at:
+                        raise EpistemicStateError(
+                            "answer depends on an expired calibration profile"
+                        )
+
+    @staticmethod
+    def _validate_claim_uncertainty(
+        claim: ClaimRecord,
+        *,
+        evidence_map: Mapping[str, EvidenceRecord],
+        calibration_map: Mapping[str, CalibrationProfile],
+    ) -> None:
+        uncertainty = claim.uncertainty
+        if uncertainty.basis is UncertaintyBasis.UNCALIBRATED:
+            return
+        signal_ids = set(uncertainty.signal_evidence_ids)
+        if not signal_ids <= set(claim.evidence_ids):
+            raise EpistemicStateError("claim uncertainty references evidence outside the claim")
+        for evidence_id in signal_ids:
+            evidence = evidence_map[evidence_id]
+            if claim.claim_id not in evidence.supports:
+                raise EpistemicStateError("claim uncertainty signal does not support the claim")
+            if uncertainty.evaluated_at is None or not evidence.is_fresh(uncertainty.evaluated_at):
+                raise EpistemicStateError("claim uncertainty uses stale or future signal evidence")
+        if uncertainty.basis is UncertaintyBasis.EXACT:
+            for evidence_id in signal_ids:
+                evidence = evidence_map[evidence_id]
+                if evidence.kind not in {
+                    EvidenceKind.CALCULATION,
+                    EvidenceKind.PROOF,
+                } or (evidence.provenance.verification is not EvidenceVerification.INDEPENDENT):
+                    raise EpistemicStateError(
+                        "exact uncertainty requires independently verified proof or calculation evidence"
+                    )
+            return
+        profile = calibration_map.get(uncertainty.calibration_id)
+        if profile is None:
+            raise EpistemicStateError("claim uncertainty references an unknown calibration profile")
+        if profile.profile_sha256 != uncertainty.calibration_sha256:
+            raise EpistemicStateError("claim calibration profile digest mismatch")
+        if profile.domain != claim.domain:
+            raise EpistemicStateError("claim calibration profile domain mismatch")
+        expected = ProbabilityInterval.from_calibration_estimate(
+            profile.estimate(
+                uncertainty.raw_probability,
+                evaluated_at=uncertainty.evaluated_at,
+            ),
+            signal_evidence_ids=uncertainty.signal_evidence_ids,
+        )
+        if uncertainty != expected:
+            raise EpistemicStateError(
+                "claim uncertainty does not match its measured calibration profile"
+            )
 
     @staticmethod
     def _validate_claim_dag(claim_map: Mapping[str, ClaimRecord]) -> None:
@@ -1208,6 +1507,7 @@ class EpistemicState:
             "version": self.version,
             "parent_sha256": self.parent_sha256,
             "problem": self.problem.to_dict(),
+            "calibrations": [item.to_dict() for item in self.calibrations],
             "evidence": [item.to_dict() for item in self.evidence],
             "hypotheses": [item.to_dict() for item in self.hypotheses],
             "claims": [item.to_dict() for item in self.claims],
@@ -1230,6 +1530,7 @@ class EpistemicState:
             "version",
             "parent_sha256",
             "problem",
+            "calibrations",
             "evidence",
             "hypotheses",
             "claims",
@@ -1248,6 +1549,13 @@ class EpistemicState:
             version=data["version"],
             parent_sha256=data["parent_sha256"],
             problem=ProblemFrame.from_dict(data["problem"]),
+            calibrations=tuple(
+                CalibrationProfile.from_dict(item)
+                for item in _wire_list(
+                    data["calibrations"],
+                    name="state.calibrations",
+                )
+            ),
             evidence=tuple(
                 EvidenceRecord.from_dict(item)
                 for item in _wire_list(data["evidence"], name="state.evidence")
@@ -1291,6 +1599,7 @@ class EpistemicState:
         episode_id: str,
         problem: ProblemFrame,
         budget: ComputeBudgetState,
+        calibrations: Iterable[CalibrationProfile] = (),
         evidence: Iterable[EvidenceRecord] = (),
     ) -> EpistemicState:
         items = tuple(evidence)
@@ -1305,6 +1614,7 @@ class EpistemicState:
             version=0,
             parent_sha256="",
             problem=problem_with_evidence,
+            calibrations=tuple(calibrations),
             evidence=items,
             hypotheses=(),
             claims=(),
@@ -1323,6 +1633,13 @@ class EpistemicState:
                 attr="evidence_id",
                 limit=MAX_EVIDENCE,
                 name="evidence",
+            ),
+            "calibrations": _unique_by_id(
+                values["calibrations"],
+                expected_type=CalibrationProfile,
+                attr="profile_id",
+                limit=MAX_CALIBRATIONS,
+                name="calibrations",
             ),
             "hypotheses": _unique_by_id(
                 values["hypotheses"],
@@ -1365,6 +1682,7 @@ class EpistemicTransaction:
         if not isinstance(base, EpistemicState):
             raise TypeError("base must be an EpistemicState")
         self.base = base
+        self._calibrations = {item.profile_id: item for item in base.calibrations}
         self._evidence = {item.evidence_id: item for item in base.evidence}
         self._hypotheses = {item.hypothesis_id: item for item in base.hypotheses}
         self._claims = {item.claim_id: item for item in base.claims}
@@ -1389,6 +1707,21 @@ class EpistemicTransaction:
         if not isinstance(evidence, EvidenceRecord):
             raise TypeError("evidence must be an EvidenceRecord")
         self._insert(self._evidence, evidence.evidence_id, evidence, name="evidence")
+        return self
+
+    def add_calibration(
+        self,
+        calibration: CalibrationProfile,
+    ) -> EpistemicTransaction:
+        self._open()
+        if not isinstance(calibration, CalibrationProfile):
+            raise TypeError("calibration must be a CalibrationProfile")
+        self._insert(
+            self._calibrations,
+            calibration.profile_id,
+            calibration,
+            name="calibration",
+        )
         return self
 
     def add_claim(self, claim: ClaimRecord) -> EpistemicTransaction:
@@ -1534,6 +1867,7 @@ class EpistemicTransaction:
             version=self.base.version + 1,
             parent_sha256=self.base.state_sha256,
             problem=self.base.problem,
+            calibrations=tuple(self._calibrations.values()),
             evidence=tuple(self._evidence.values()),
             hypotheses=tuple(self._hypotheses.values()),
             claims=tuple(self._claims.values()),
@@ -1622,6 +1956,7 @@ class EpistemicStateMachine:
 
 __all__ = [
     "AcceptedAnswer",
+    "CalibrationProfile",
     "ClaimRecord",
     "ClaimStatus",
     "ComputeBudgetState",
@@ -1645,6 +1980,7 @@ __all__ = [
     "ProbabilityInterval",
     "ProblemFrame",
     "StaleEpistemicTransactionError",
+    "UncertaintyBasis",
     "canonical_sha256",
     "text_sha256",
 ]

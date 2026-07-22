@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import copy
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 
 import pytest
 
+from core.brain.llm.latent_cortex.epistemic_calibration import (
+    CalibrationObservation,
+    CalibrationPolicy,
+    CalibrationProfile,
+)
 from core.brain.llm.latent_cortex.epistemic_state import (
     AcceptedAnswer,
     ClaimRecord,
@@ -29,6 +34,7 @@ from core.brain.llm.latent_cortex.epistemic_state import (
     ProbabilityInterval,
     ProblemFrame,
     StaleEpistemicTransactionError,
+    UncertaintyBasis,
     text_sha256,
 )
 
@@ -42,8 +48,66 @@ def interval(point: float = 0.5) -> ProbabilityInterval:
         lower=max(0.0, point - 0.1),
         point=point,
         upper=min(1.0, point + 0.1),
-        method="test_wilson",
-        evidence_count=1,
+        method="uncalibrated_test_interval",
+        evidence_count=0,
+    )
+
+
+def exact_interval(*evidence_ids: str, evaluated_at: float = 2.0) -> ProbabilityInterval:
+    return ProbabilityInterval.exact(
+        signal_evidence_ids=evidence_ids,
+        evaluated_at=evaluated_at,
+    )
+
+
+def calibration_profile() -> CalibrationProfile:
+    rows = []
+    for index in range(40):
+        high = index >= 20
+        rows.append(
+            CalibrationObservation(
+                observation_id=f"state.obs.{index:03d}",
+                domain="general",
+                predicted_probability=0.9 if high else 0.1,
+                outcome=index < 2 if not high else index < 38,
+                prediction_receipt_sha256=text_sha256(f"state.prediction:{index}"),
+                outcome_receipt_sha256=text_sha256(f"state.outcome:{index}"),
+                outcome_verifier_id="heldout_exact_grader",
+                outcome_verifier_version="v3",
+                observed_at=float(index + 1),
+            )
+        )
+    return CalibrationProfile.fit(
+        profile_id="cal.general.v1",
+        estimator_id="rlc_claim_head",
+        estimator_version="adapter.42",
+        domain="general",
+        dataset_sha256=text_sha256("state-heldout-dataset"),
+        split_manifest_sha256=text_sha256("state-heldout-split"),
+        trained_at=100.0,
+        expires_at=1_000.0,
+        observations=rows,
+        policy=CalibrationPolicy(
+            bins=5,
+            min_samples=40,
+            min_bin_samples=12,
+            max_brier=0.2,
+            max_ece=0.1,
+            support_lower_bound=0.7,
+        ),
+    )
+
+
+def empirical_interval(
+    profile: CalibrationProfile,
+    evidence_id: str,
+    *,
+    raw_probability: float = 0.9,
+    evaluated_at: float = 200.0,
+) -> ProbabilityInterval:
+    return ProbabilityInterval.from_calibration_estimate(
+        profile.estimate(raw_probability, evaluated_at=evaluated_at),
+        signal_evidence_ids=(evidence_id,),
     )
 
 
@@ -137,17 +201,24 @@ def test_genesis_is_canonical_deeply_immutable_and_content_addressed():
 def test_transaction_commits_typed_claim_hypothesis_evidence_operation_and_answer():
     machine = EpistemicStateMachine(genesis())
     tx = machine.begin()
+    health_uncertainty = exact_interval("ev.health")
     tx.add_claim(
         ClaimRecord(
             claim_id="claim.root",
             text="The health gate passed.",
             status=ClaimStatus.VERIFIED,
-            uncertainty=interval(0.9),
+            uncertainty=health_uncertainty,
             evidence_ids=("ev.health",),
             answer_relevant=True,
         )
     )
-    tx.add_evidence(evidence("ev.health", supports=("claim.root",)))
+    tx.add_evidence(
+        evidence(
+            "ev.health",
+            supports=("claim.root",),
+            verification=EvidenceVerification.INDEPENDENT,
+        )
+    )
     tx.add_hypothesis(
         HypothesisRecord(
             hypothesis_id="hyp.safe",
@@ -183,7 +254,7 @@ def test_transaction_commits_typed_claim_hypothesis_evidence_operation_and_answe
             text_sha256=text_sha256(answer_text),
             claim_ids=("claim.root",),
             evidence_ids=("ev.health",),
-            confidence=interval(0.85),
+            confidence=health_uncertainty,
             accepted_at=2.0,
         )
     )
@@ -306,12 +377,25 @@ def test_answer_cannot_depend_on_rejected_claim():
 def test_claim_invalidation_revokes_descendants_hypothesis_and_answer_atomically():
     machine = EpistemicStateMachine(genesis())
     setup = machine.begin()
+    for claim_id in ("root", "child", "grandchild", "independent"):
+        setup.add_evidence(
+            evidence(
+                f"ev.{claim_id}",
+                supports=(f"claim.{claim_id}",),
+                verification=EvidenceVerification.INDEPENDENT,
+            )
+        )
+    root_uncertainty = exact_interval("ev.root")
+    child_uncertainty = exact_interval("ev.child")
+    grandchild_uncertainty = exact_interval("ev.grandchild")
+    independent_uncertainty = exact_interval("ev.independent")
     setup.add_claim(
         ClaimRecord(
             "claim.root",
             "Root",
             ClaimStatus.VERIFIED,
-            interval(0.9),
+            root_uncertainty,
+            evidence_ids=("ev.root",),
             answer_relevant=True,
         )
     )
@@ -320,8 +404,9 @@ def test_claim_invalidation_revokes_descendants_hypothesis_and_answer_atomically
             "claim.child",
             "Child",
             ClaimStatus.SUPPORTED,
-            interval(0.8),
+            child_uncertainty,
             premises=("claim.root",),
+            evidence_ids=("ev.child",),
             answer_relevant=True,
         )
     )
@@ -330,8 +415,9 @@ def test_claim_invalidation_revokes_descendants_hypothesis_and_answer_atomically
             "claim.grandchild",
             "Grandchild",
             ClaimStatus.VERIFIED,
-            interval(0.8),
+            grandchild_uncertainty,
             premises=("claim.child",),
+            evidence_ids=("ev.grandchild",),
             answer_relevant=True,
         )
     )
@@ -340,7 +426,8 @@ def test_claim_invalidation_revokes_descendants_hypothesis_and_answer_atomically
             "claim.independent",
             "Independent",
             ClaimStatus.SUPPORTED,
-            interval(0.7),
+            independent_uncertainty,
+            evidence_ids=("ev.independent",),
         )
     )
     setup.add_hypothesis(
@@ -357,8 +444,8 @@ def test_claim_invalidation_revokes_descendants_hypothesis_and_answer_atomically
             "Grandchild",
             text_sha256("Grandchild"),
             ("claim.grandchild",),
-            (),
-            interval(0.8),
+            ("ev.child", "ev.grandchild", "ev.root"),
+            child_uncertainty,
             2.0,
         )
     )
@@ -732,16 +819,25 @@ def test_answer_requires_fresh_transitive_evidence_closure():
         evidence(
             "ev.root",
             supports=("claim.root",),
+            verification=EvidenceVerification.INDEPENDENT,
             expires_at=10.0,
         )
     )
-    tx.add_evidence(evidence("ev.child", supports=("claim.child",)))
+    tx.add_evidence(
+        evidence(
+            "ev.child",
+            supports=("claim.child",),
+            verification=EvidenceVerification.INDEPENDENT,
+        )
+    )
+    root_uncertainty = exact_interval("ev.root")
+    child_uncertainty = exact_interval("ev.child")
     tx.add_claim(
         ClaimRecord(
             "claim.root",
             "Root",
             ClaimStatus.VERIFIED,
-            interval(0.9),
+            root_uncertainty,
             evidence_ids=("ev.root",),
         )
     )
@@ -750,7 +846,7 @@ def test_answer_requires_fresh_transitive_evidence_closure():
             "claim.child",
             "Child",
             ClaimStatus.SUPPORTED,
-            interval(0.8),
+            child_uncertainty,
             premises=("claim.root",),
             evidence_ids=("ev.child",),
             answer_relevant=True,
@@ -762,7 +858,7 @@ def test_answer_requires_fresh_transitive_evidence_closure():
             text_sha256("Child"),
             ("claim.child",),
             ("ev.child",),
-            interval(0.8),
+            child_uncertainty,
             2.0,
         )
     )
@@ -775,7 +871,7 @@ def test_answer_requires_fresh_transitive_evidence_closure():
             text_sha256("Child"),
             ("claim.child",),
             ("ev.child", "ev.root"),
-            interval(0.8),
+            child_uncertainty,
             11.0,
         )
     )
@@ -788,7 +884,7 @@ def test_answer_requires_fresh_transitive_evidence_closure():
             text_sha256("Child"),
             ("claim.child",),
             ("ev.child", "ev.root"),
-            interval(0.8),
+            child_uncertainty,
             2.0,
         )
     )
@@ -799,6 +895,7 @@ def test_answer_rejects_future_or_unresolved_counterevidence():
     future = evidence(
         "ev.future",
         supports=("claim.future",),
+        verification=EvidenceVerification.INDEPENDENT,
         observed_at=5.0,
     )
     assert not future.is_fresh(4.0)
@@ -812,7 +909,7 @@ def test_answer_rejects_future_or_unresolved_counterevidence():
             "claim.future",
             "Future",
             ClaimStatus.VERIFIED,
-            interval(0.9),
+            exact_interval("ev.future", evaluated_at=5.0),
             evidence_ids=("ev.future",),
             answer_relevant=True,
         )
@@ -823,7 +920,7 @@ def test_answer_rejects_future_or_unresolved_counterevidence():
             text_sha256("Future"),
             ("claim.future",),
             ("ev.future",),
-            interval(0.9),
+            exact_interval("ev.future", evaluated_at=5.0),
             4.0,
         )
     )
@@ -833,13 +930,21 @@ def test_answer_rejects_future_or_unresolved_counterevidence():
     machine = EpistemicStateMachine(genesis())
     tx = machine.begin()
     tx.add_evidence(evidence("ev.counter", contradicts=("claim.a",)))
+    tx.add_evidence(
+        evidence(
+            "ev.support",
+            supports=("claim.a",),
+            verification=EvidenceVerification.INDEPENDENT,
+        )
+    )
+    support_uncertainty = exact_interval("ev.support")
     tx.add_claim(
         ClaimRecord(
             "claim.a",
             "A",
             ClaimStatus.VERIFIED,
-            interval(0.8),
-            evidence_ids=("ev.counter",),
+            support_uncertainty,
+            evidence_ids=("ev.counter", "ev.support"),
             answer_relevant=True,
         )
     )
@@ -848,12 +953,202 @@ def test_answer_rejects_future_or_unresolved_counterevidence():
             "A",
             text_sha256("A"),
             ("claim.a",),
-            ("ev.counter",),
-            interval(0.8),
+            ("ev.counter", "ev.support"),
+            support_uncertainty,
             2.0,
         )
     )
     with pytest.raises(EpistemicStateError, match="contradictory evidence"):
+        machine.commit(tx)
+
+
+def test_empirical_claim_uncertainty_is_recomputed_from_registered_profile():
+    fitted = calibration_profile()
+    machine = EpistemicStateMachine(genesis())
+    tx = machine.begin()
+    tx.add_calibration(fitted)
+    tx.add_evidence(evidence("ev.signal", supports=("claim.empirical",)))
+    uncertainty = empirical_interval(fitted, "ev.signal")
+    tx.add_claim(
+        ClaimRecord(
+            "claim.empirical",
+            "Empirically supported",
+            ClaimStatus.SUPPORTED,
+            uncertainty,
+            evidence_ids=("ev.signal",),
+            answer_relevant=True,
+        )
+    )
+    tx.accept_answer(
+        AcceptedAnswer(
+            "Empirically supported",
+            text_sha256("Empirically supported"),
+            ("claim.empirical",),
+            ("ev.signal",),
+            uncertainty,
+            200.0,
+        )
+    )
+    state = machine.commit(tx)
+    assert state.claims[0].uncertainty.basis is UncertaintyBasis.EMPIRICAL
+    assert state.claims[0].uncertainty.lower > 0.7
+    assert EpistemicState.from_canonical_json(state.to_canonical_json()) == state
+
+
+def test_established_claims_cannot_bypass_or_forge_calibration():
+    machine = EpistemicStateMachine(genesis())
+    tx = machine.begin()
+    tx.add_claim(
+        ClaimRecord(
+            "claim.uncalibrated",
+            "Unsupported confidence",
+            ClaimStatus.SUPPORTED,
+            interval(0.95),
+        )
+    )
+    with pytest.raises(EpistemicStateError, match="validated uncertainty support"):
+        machine.commit(tx)
+
+    fitted = calibration_profile()
+    machine = EpistemicStateMachine(genesis())
+    tx = machine.begin()
+    tx.add_calibration(fitted)
+    tx.add_evidence(evidence("ev.signal", supports=("claim.forged",)))
+    forged = replace(
+        empirical_interval(fitted, "ev.signal"),
+        calibration_sha256="f" * 64,
+    )
+    tx.add_claim(
+        ClaimRecord(
+            "claim.forged",
+            "Forged profile",
+            ClaimStatus.SUPPORTED,
+            forged,
+            evidence_ids=("ev.signal",),
+        )
+    )
+    with pytest.raises(EpistemicStateError, match="digest mismatch"):
+        machine.commit(tx)
+
+
+def test_sparse_low_support_and_wrong_domain_calibration_force_abstention():
+    fitted = calibration_profile()
+    machine = EpistemicStateMachine(genesis())
+    tx = machine.begin()
+    tx.add_calibration(fitted)
+    tx.add_evidence(evidence("ev.low", supports=("claim.low",)))
+    low = empirical_interval(fitted, "ev.low", raw_probability=0.1)
+    assert low.abstain is True
+    tx.add_claim(
+        ClaimRecord(
+            "claim.low",
+            "Low support",
+            ClaimStatus.SUPPORTED,
+            low,
+            evidence_ids=("ev.low",),
+        )
+    )
+    with pytest.raises(EpistemicStateError, match="validated uncertainty support"):
+        machine.commit(tx)
+
+    machine = EpistemicStateMachine(genesis())
+    tx = machine.begin()
+    tx.add_calibration(fitted)
+    tx.add_evidence(evidence("ev.domain", supports=("claim.domain",)))
+    tx.add_claim(
+        ClaimRecord(
+            "claim.domain",
+            "Wrong domain",
+            ClaimStatus.SUPPORTED,
+            empirical_interval(fitted, "ev.domain"),
+            evidence_ids=("ev.domain",),
+            domain="medical",
+        )
+    )
+    with pytest.raises(EpistemicStateError, match="domain mismatch"):
+        machine.commit(tx)
+
+
+def test_exact_confidence_requires_independent_exact_evidence():
+    machine = EpistemicStateMachine(genesis())
+    tx = machine.begin()
+    tx.add_evidence(evidence("ev.sourcebound", supports=("claim.exact",)))
+    tx.add_claim(
+        ClaimRecord(
+            "claim.exact",
+            "Not independently checked",
+            ClaimStatus.VERIFIED,
+            exact_interval("ev.sourcebound"),
+            evidence_ids=("ev.sourcebound",),
+        )
+    )
+    with pytest.raises(EpistemicStateError, match="independently verified"):
+        machine.commit(tx)
+
+    machine = EpistemicStateMachine(genesis())
+    tx = machine.begin()
+    tx.add_evidence(
+        evidence(
+            "ev.observation",
+            supports=("claim.exact",),
+            kind=EvidenceKind.OBSERVATION,
+            verification=EvidenceVerification.INDEPENDENT,
+        )
+    )
+    tx.add_claim(
+        ClaimRecord(
+            "claim.exact",
+            "Not exact evidence",
+            ClaimStatus.VERIFIED,
+            exact_interval("ev.observation"),
+            evidence_ids=("ev.observation",),
+        )
+    )
+    with pytest.raises(EpistemicStateError, match="proof or calculation"):
+        machine.commit(tx)
+
+
+def test_answer_rejects_expired_profile_and_inflated_confidence():
+    fitted = calibration_profile()
+    machine = EpistemicStateMachine(genesis())
+    tx = machine.begin()
+    tx.add_calibration(fitted)
+    tx.add_evidence(evidence("ev.signal", supports=("claim.empirical",)))
+    uncertainty = empirical_interval(fitted, "ev.signal")
+    tx.add_claim(
+        ClaimRecord(
+            "claim.empirical",
+            "Empirically supported",
+            ClaimStatus.SUPPORTED,
+            uncertainty,
+            evidence_ids=("ev.signal",),
+            answer_relevant=True,
+        )
+    )
+    tx.accept_answer(
+        AcceptedAnswer(
+            "Empirically supported",
+            text_sha256("Empirically supported"),
+            ("claim.empirical",),
+            ("ev.signal",),
+            exact_interval("ev.signal", evaluated_at=200.0),
+            200.0,
+        )
+    )
+    with pytest.raises(EpistemicStateError, match="weakest calibrated"):
+        machine.commit(tx)
+
+    tx.accept_answer(
+        AcceptedAnswer(
+            "Empirically supported",
+            text_sha256("Empirically supported"),
+            ("claim.empirical",),
+            ("ev.signal",),
+            uncertainty,
+            1_001.0,
+        )
+    )
+    with pytest.raises(EpistemicStateError, match="expired calibration"):
         machine.commit(tx)
 
 
