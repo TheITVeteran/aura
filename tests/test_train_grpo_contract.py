@@ -476,6 +476,7 @@ def test_heldout_evaluation_emits_bounded_progress(capsys, monkeypatch):
     assert "[baseline-standard] 4/5 running=0.750" in out
     assert "[baseline-standard] 5/5 running=0.800" in out
     assert report["overall"] == pytest.approx(0.8)
+    assert report["score_reasons"] == {"correct": 4, "incorrect": 1}
 
 
 def test_recurrent_heldout_uses_contract_aware_decode(monkeypatch):
@@ -560,3 +561,12 @@ def test_recurrent_heldout_uses_contract_aware_decode(monkeypatch):
     assert captured_configs[0].decode_contract == "final_answer_v1"
     assert captured_configs[0].decode_contract_grace_tokens == 8
     assert report["episode_receipts"][0]["decode_termination"] == "contract_complete"
+    assert report["episode_receipts"][0]["score_reason"] == "correct"
+    assert report["episode_receipts"][0]["contract"] == {
+        "marker_count": 1,
+        "complete": True,
+        "valid": True,
+        "reason": "complete",
+    }
+    assert report["score_reasons"] == {"correct": 1}
+    assert report["contract_reasons"] == {"complete": 1}

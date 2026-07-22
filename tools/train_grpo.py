@@ -42,6 +42,7 @@ import re
 import signal
 import sys
 import time
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from contextlib import nullcontext
 from pathlib import Path
@@ -627,6 +628,12 @@ def _task_prompt_tokens(tokenizer, task) -> list[int]:
     return tokens
 
 
+def _grade_reason(verdict: Mapping[str, Any]) -> str:
+    if isinstance(verdict.get("reason"), str) and verdict["reason"]:
+        return str(verdict["reason"])
+    return "correct" if bool(verdict.get("correct")) else "incorrect"
+
+
 def sample_recurrent_group(
     model,
     tokenizer,
@@ -829,6 +836,7 @@ def evaluate_heldout(
     )
     total = len(tasks)
     correct_so_far = 0
+    reasons: Counter[str] = Counter()
     with scope:
         for index, task in enumerate(tasks, start=1):
             pieces: list[str] = []
@@ -841,6 +849,7 @@ def evaluate_heldout(
                 pieces.append(response.text)
             verdict = task.grade("".join(pieces))
             correct = bool(verdict["correct"])
+            reasons[_grade_reason(verdict)] += 1
             results.append((task, correct))
             correct_so_far += int(correct)
             if envelope is not None:
@@ -858,6 +867,7 @@ def evaluate_heldout(
     report = scaling_report(results)
     report["adapters_on"] = adapters_on
     report["execution_mode"] = "standard"
+    report["score_reasons"] = dict(sorted(reasons.items()))
     return report
 
 
@@ -902,6 +912,8 @@ def evaluate_recurrent_heldout(
     )
     results = []
     receipts: list[dict[str, Any]] = []
+    reasons: Counter[str] = Counter()
+    contract_reasons: Counter[str] = Counter()
     total = len(tasks)
     correct_so_far = 0
     for index, task in enumerate(tasks):
@@ -919,6 +931,15 @@ def evaluate_recurrent_heldout(
             )
         verdict = task.grade(result.text)
         correct = bool(verdict["correct"])
+        reason = _grade_reason(verdict)
+        reasons[reason] += 1
+        from core.brain.llm.latent_cortex.answer_contract import (
+            contract_answer_state,
+        )
+
+        contract_state = contract_answer_state(result.text)
+        contract_reason = str(contract_state.get("reason") or "unknown")
+        contract_reasons[contract_reason] += 1
         results.append((task, correct))
         correct_so_far += int(correct)
         receipts.append(
@@ -929,6 +950,13 @@ def evaluate_recurrent_heldout(
                 "decode_termination": result.receipt.decode_termination,
                 "output_tokens": len(result.tokens),
                 "correct": bool(verdict["correct"]),
+                "score_reason": reason,
+                "contract": {
+                    "marker_count": int(contract_state.get("marker_count") or 0),
+                    "complete": bool(contract_state.get("complete")),
+                    "valid": bool(contract_state.get("valid")),
+                    "reason": contract_reason,
+                },
             }
         )
         if envelope is not None:
@@ -949,6 +977,8 @@ def evaluate_recurrent_heldout(
     report["execution_mode"] = "recurrent"
     report["execution_spec_sha256"] = spec.sha256
     report["episode_receipts"] = receipts
+    report["score_reasons"] = dict(sorted(reasons.items()))
+    report["contract_reasons"] = dict(sorted(contract_reasons.items()))
     return report
 
 

@@ -23940,3 +23940,38 @@ This is total checkpoint record 353. The forecast remains 394-661 total
 records, now approximately 41-308 records after this checkpoint. Next: monitor
 CP291 for corrected baseline/calibration/no-signal evidence, and continue
 building missing RLC infrastructure that the actual system inspection exposes.
+
+## Checkpoint 2026-07-21-293: Held-Out Evaluator Emits Non-Leaking Failure Diagnostics
+
+The recurrent proof path still had an operational blind spot: a zero score did
+not explain whether Aura failed by reasoning to the wrong value, omitting the
+terminal `FINAL_ANSWER` marker, leaving the JSON object open, violating the
+contract, or being cut off by decode limits. That makes frontier-gain work too
+slow and too easy to misread because every failure collapses into the same
+aggregate accuracy number.
+
+The standard and recurrent held-out evaluators now emit `score_reasons`
+aggregates. Recurrent held-out evaluation also records per-episode contract
+diagnostics derived from the public answer-contract analyzer: marker count,
+contract completion, strict parser validity, and contract reason. The receipts
+do not include verifier expected answers; they expose only candidate-output
+parse/contract state and the public score reason. This preserves blinded
+scoring while making failure modes actionable enough to build the next missing
+system rather than guessing.
+
+Regression coverage asserts standard held-out reason aggregation and recurrent
+contract diagnostics without loading a resident model. Validation is clean:
+the combined trainer, recurrent GRPO, and resident preregistration suites pass
+38/38; bytecode compilation passes for the changed trainer and tests; `make
+lint` passes; and `git diff --check` passes.
+
+Because CP291 was launched before this evaluator diagnostics checkpoint, it is
+now also diagnostic-only for claim purposes. The next claim-eligible run must
+be a fresh preregistration bound to this trainer source or later. This is the
+cost of being honest about the proof surface: better to retire a short-lived
+run than let a stale measurement decide the project direction.
+
+This is total checkpoint record 354. The forecast remains 394-661 total
+records, now approximately 40-307 records after this checkpoint. Next: publish
+CP293, retire CP291, freeze the replacement corrected+diagnostic resident proof
+contract, launch that run and controller, then continue RLC system inspection.
