@@ -52,11 +52,13 @@ def test_web_fetch_validation():
     """Verify domain allowlist validation in WebFetchActuator."""
     actuator = get_actuator_registry().get_actuator("web_fetch")
     
-    # Valid allowlisted domains
+    # Valid allowlisted domains (HTTPS required — CP126 7b92dcc2)
     assert actuator.validate_params({"url": "https://wikipedia.org/wiki/Artificial_intelligence"}) is True
     assert actuator.validate_params({"url": "https://github.com/youngbryan97/aura"}) is True
-    assert actuator.validate_params({"url": "http://python.org"}) is True
-    
+    assert actuator.validate_params({"url": "https://python.org"}) is True
+
+    # Plain HTTP is refused now that an exact-HTTPS policy is enforced.
+    assert actuator.validate_params({"url": "http://python.org"}) is False
     # Non-allowlisted domain
     assert actuator.validate_params({"url": "https://malicious-site.com"}) is False
     # Invalid URL format

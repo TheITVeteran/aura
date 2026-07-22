@@ -75,8 +75,12 @@ def _ip_is_public(ip_text: str) -> bool:
     )
 
 
-def validate_fetch_url(url: Any) -> tuple[str | None, str]:
-    """Exact-HTTPS + allowlist + resolved-IP SSRF policy. Returns (url, error)."""
+def validate_fetch_url_static(url: Any) -> tuple[str | None, str]:
+    """Static URL policy (no network): scheme, userinfo, host, allowlist.
+
+    Kept network-free so it is safe to use as a cheap ``validate_params``
+    predicate. The resolved-IP SSRF check runs separately at fetch time.
+    """
     if not isinstance(url, str) or not url.strip():
         return None, "url is missing"
     parsed = urllib.parse.urlparse(url.strip())
@@ -92,6 +96,17 @@ def validate_fetch_url(url: Any) -> tuple[str | None, str]:
     allowed = _allowed_fetch_domains()
     if not any(host == d or host.endswith("." + d) for d in allowed):
         return None, f"host '{host}' is not in the fetch allowlist"
+    return url.strip(), ""
+
+
+def validate_fetch_url(url: Any) -> tuple[str | None, str]:
+    """Full fetch policy: static checks + resolved-IP SSRF guard (does DNS)."""
+    validated, err = validate_fetch_url_static(url)
+    if validated is None:
+        return None, err
+    parsed = urllib.parse.urlparse(validated)
+    host = (parsed.hostname or "").lower()
+    scheme = parsed.scheme.lower()
     # Bind the allowlisted name to its resolved addresses — reject if ANY
     # resolves to a non-public target (defeats DNS rebinding to internal hosts).
     try:
@@ -104,7 +119,7 @@ def validate_fetch_url(url: Any) -> tuple[str | None, str]:
     for addr in addrs:
         if not _ip_is_public(addr):
             return None, f"host '{host}' resolves to a non-public address ({addr})"
-    return url.strip(), ""
+    return validated, ""
 
 
 class WebSearchActuator(BaseActuator):
@@ -181,7 +196,8 @@ class WebFetchActuator(BaseActuator):
     def validate_params(self, params: dict[str, Any]) -> bool:
         if not isinstance(params, dict) or "url" not in params:
             return False
-        validated, _err = validate_fetch_url(params["url"])
+        # Static predicate only — the resolved-IP SSRF check runs at fetch time.
+        validated, _err = validate_fetch_url_static(params["url"])
         return validated is not None
 
     def execute(self, params: dict[str, Any]) -> ActuatorResult:
