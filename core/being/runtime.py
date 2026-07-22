@@ -349,11 +349,16 @@ class BeingRuntime:
             and context.get("foreground_continuity_state")
         )
         explicit_foreground_desktop_tool = bool(
-            domain_name == "tool_execution"
+            domain_name in {"tool_execution", "environment_action", "external_action", "state_mutation"}
             and context.get("desktop_execution_contract")
             and context.get("foreground_request")
             and context.get("user_explicitly_authorized")
             and context.get("user_visible_desktop_action")
+            and (
+                domain_name == "tool_execution"
+                or context.get("local_desktop_action")
+                or context.get("desktop_task_owned_by")
+            )
             and context.get("verification_required")
         )
         consequential = domain_name in {

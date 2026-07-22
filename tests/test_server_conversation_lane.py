@@ -13937,6 +13937,23 @@ def test_aura_now_welfare_recovery_yields_to_explicit_owner_desktop_action():
     )
     assert "welfare_recovery_required_before_action" in generic_mutation["defers"]
 
+    desktop_mutation = runtime.action_policy(
+        now,
+        domain="state_mutation",
+        priority=0.9,
+        context={
+            **contract,
+            "local_desktop_action": True,
+            "desktop_task_owned_by": "chat.desktop_objective",
+            "route": "chat.desktop_objective",
+        },
+    )
+    assert desktop_mutation["defers"] == []
+    assert desktop_mutation["outcome"] != "defer"
+    assert any(
+        c.startswith("foreground_desktop_note:welfare") for c in desktop_mutation["constraints"]
+    )
+
     from core.governance.recovery_authority import build_internal_recovery_context
 
     recovery = runtime.action_policy(

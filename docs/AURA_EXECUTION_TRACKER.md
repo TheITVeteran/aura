@@ -24397,3 +24397,33 @@ This is total checkpoint record 367. The forecast remains 394-661 total
 records, now approximately 27-294 records after this checkpoint. Next: commit
 and push CP306, rebuild `/Applications/Aura.app`, poll CP305 for first verdict
 movement, then continue the non-MLX chat/action reliability closeout.
+
+## Checkpoint 2026-07-21-307: Foreground Desktop Contracts Survive State-Mutation Mislabeling
+
+The live `Will AuraNow defer` spam showed a bounded owner desktop action reaching
+the policy layer as `domain=state_mutation source=unknown` with all desktop
+context flags false, producing `welfare_recovery_required_before_action` instead
+of a constrained action. A previous fix allowed explicit desktop tool execution
+to yield through welfare recovery pressure, but that protection did not cover
+the broader state-mutation label used by some upstream wrappers.
+
+BeingRuntime now recognizes a complete foreground desktop execution contract
+across `tool_execution`, `environment_action`, `external_action`, and
+`state_mutation`. For broad labels outside `tool_execution`, the contract must
+also prove local desktop ownership through `local_desktop_action` or
+`desktop_task_owned_by`, preserving the existing hard line against generic state
+mutation, self-modification, and unbounded compute. The outcome is still
+constrained and receipted; this is not an unchecked bypass.
+
+Validation: the AuraNow welfare-recovery desktop regression now covers both the
+original `tool_execution` path and the reproduced `state_mutation` shape; generic
+unknown state mutation still defers. CapabilityEngine pressure regressions still
+pass for soft desktop pressure, critical pressure, and unbounded desktop work.
+Bytecode compilation passes, `git diff --check` passes, and `make lint` passes.
+CP305 remains detached and alive; baseline recurrent has reached 16/36 with
+running accuracy still 0.000, so no reasoning-gain claim is made.
+
+This is total checkpoint record 368. The forecast remains 394-661 total
+records, now approximately 26-293 records after this checkpoint. Next: commit
+and push CP307, rebuild `/Applications/Aura.app`, then continue chat/action
+reliability closeout while CP305 runs.
