@@ -1260,6 +1260,7 @@ class LatentCortexService:
         # separation on graded outcomes in this context bucket; explores
         # sparsely; never touches explicit operator overrides.
         controller_decision: dict[str, Any] | None = None
+        action_policy_evidence: dict[str, Any] | None = None
         if foreground_request and _controller_accepts_overrides(config_overrides):
             try:
                 from core.brain.llm.latent_cortex.execution_controller import (
@@ -1276,6 +1277,24 @@ class LatentCortexService:
                     stakes=stakes,
                     uncertainty=uncertainty,
                 )
+                snapshot_builder = getattr(
+                    controller,
+                    "action_evidence_snapshot",
+                    None,
+                )
+                if callable(snapshot_builder):
+                    action_policy_evidence = snapshot_builder(
+                        bucket=str(controller_decision["bucket"])
+                    )
+                else:
+                    from core.brain.llm.latent_cortex.value_of_computation import (
+                        build_evidence_snapshot,
+                    )
+
+                    action_policy_evidence = build_evidence_snapshot(
+                        bucket=str(controller_decision["bucket"]),
+                        cells={},
+                    )
                 if controller_decision["arm"] != "base":
                     config = controller.apply_arm(
                         controller_decision["arm"],
@@ -1300,6 +1319,7 @@ class LatentCortexService:
             ) as exc:
                 logger.debug("Execution controller unavailable: %s", exc)
                 controller_decision = None
+                action_policy_evidence = None
         if allocation_profile == "resident_32b_interactive_full_stack_v2":
             try:
                 requested_decode_tokens = int(config.get("decode_max_tokens") or 256)
@@ -1446,6 +1466,7 @@ class LatentCortexService:
         operation_lease = None
         operation_authority: dict[str, Any] | None = None
         operation_cost_receipt: dict[str, Any] = {}
+        action_transitions: list[dict[str, Any]] = []
 
         async def complete_runtime_operation(
             outcome: Any,
@@ -1465,6 +1486,10 @@ class LatentCortexService:
 
             terminal_outcome = outcome
             terminal_failure = failure_code
+            journal_action_transitions: tuple[dict[str, Any], ...] = tuple(
+                action_transitions
+            )
+            action_costs: tuple[float, ...] = ()
             try:
                 cost, operation_cost_receipt = measured_operation_cost(
                     worker_receipt,
@@ -1479,6 +1504,39 @@ class LatentCortexService:
                     "basis": "invalid_worker_compute_receipt",
                     "error_type": type(exc).__name__,
                 }
+                journal_action_transitions = ()
+            if journal_action_transitions:
+                remaining_state_budget = max(
+                    0.0,
+                    operation_lease.state.budget.total
+                    - operation_lease.state.budget.used,
+                )
+                mutable_action_costs = [
+                    float(row["metrics"]["cost"]) * remaining_state_budget
+                    for row in journal_action_transitions
+                ]
+                action_cost_total = math.fsum(mutable_action_costs)
+                rounding_tolerance = max(1e-10, remaining_state_budget * 1e-7)
+                if action_cost_total > cost + rounding_tolerance:
+                    terminal_outcome = OperationOutcome.FAILED
+                    terminal_failure = "compute_receipt_invalid"
+                    operation_cost_receipt["action_cost_error"] = (
+                        "action_transition_cost_exceeds_worker_total"
+                    )
+                    journal_action_transitions = ()
+                    mutable_action_costs = []
+                elif action_cost_total > cost and mutable_action_costs:
+                    mutable_action_costs[-1] = max(
+                        0.0,
+                        mutable_action_costs[-1] - (action_cost_total - cost),
+                    )
+                action_costs = tuple(mutable_action_costs)
+                operation_cost_receipt["action_state_cost"] = round(
+                    math.fsum(action_costs), 12
+                )
+                operation_cost_receipt["action_operation_count"] = len(
+                    journal_action_transitions
+                )
             if terminal_outcome is not OperationOutcome.SUCCEEDED and not terminal_failure:
                 terminal_failure = "worker_operation_failed"
             detail = (
@@ -1489,6 +1547,8 @@ class LatentCortexService:
                 operation_lease.complete,
                 outcome=terminal_outcome,
                 cost=cost,
+                action_transitions=journal_action_transitions,
+                action_costs=action_costs,
                 failure_code=terminal_failure,
                 detail=detail,
             )
@@ -1533,6 +1593,7 @@ class LatentCortexService:
                         decision=controller_decision,
                         config=config,
                         budget=budget,
+                        action_policy_evidence=action_policy_evidence,
                         root=Path(DATA_DIR)
                         / "latent_cortex"
                         / "epistemic_runtime",
@@ -1604,6 +1665,7 @@ class LatentCortexService:
                     # identifiable workspace slots inside the episode.
                     cognitive_context=cognitive_context,
                     operation_authority=operation_authority,
+                    action_policy_evidence=action_policy_evidence,
                     # Foreground resident episodes select branches and accept
                     # latent-opt proposals by deterministic task-typed checks
                     # (arithmetic recomputation, code syntax, facet coverage,
@@ -1666,6 +1728,110 @@ class LatentCortexService:
             return self._record_failure("invalid_client_response")
         raw_receipt = result.get("receipt")
         result_receipt = dict(raw_receipt) if isinstance(raw_receipt, dict) else {}
+        action_policy_matches = action_policy_evidence is None
+        if action_policy_evidence is not None:
+            try:
+                from core.brain.llm.latent_cortex.epistemic_state import (
+                    OperationKind,
+                )
+                from core.brain.llm.latent_cortex.value_of_computation import (
+                    validate_action_trace_row,
+                )
+
+                policy_receipt = result_receipt.get("value_of_computation")
+                raw_trace = result_receipt.get("cognitive_action_trace")
+                policy_fields = {
+                    "schema",
+                    "bucket",
+                    "snapshot_sha256",
+                    "active",
+                    "executors",
+                    "actions_selected",
+                    "checked_transitions",
+                    "selected_actions",
+                }
+                if (
+                    not isinstance(policy_receipt, dict)
+                    or set(policy_receipt) != policy_fields
+                    or policy_receipt.get("schema")
+                    != action_policy_evidence["schema"]
+                    or policy_receipt.get("snapshot_sha256")
+                    != action_policy_evidence["snapshot_sha256"]
+                    or policy_receipt.get("bucket")
+                    != action_policy_evidence["bucket"]
+                    or policy_receipt.get("active") is not True
+                    or not isinstance(raw_trace, list)
+                    or not raw_trace
+                    or policy_receipt.get("actions_selected") != len(raw_trace)
+                ):
+                    raise ValueError("worker action policy receipt is incomplete")
+                raw_executors = policy_receipt.get("executors")
+                if (
+                    not isinstance(raw_executors, list)
+                    or not raw_executors
+                    or len(raw_executors) > len(OperationKind)
+                ):
+                    raise ValueError("worker action executor inventory is invalid")
+                try:
+                    executors = tuple(OperationKind(item) for item in raw_executors)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        "worker action executor inventory is invalid"
+                    ) from exc
+                if (
+                    len(set(executors)) != len(executors)
+                    or OperationKind.EXECUTE in executors
+                ):
+                    raise ValueError("worker action executor inventory is invalid")
+                for row in raw_trace:
+                    validated_row = validate_action_trace_row(
+                        row,
+                        evidence_snapshot=action_policy_evidence,
+                        executors=executors,
+                    )
+                    decision = validated_row["decision"]
+                    transition = validated_row["transition"]
+                    if (
+                        transition["snapshot_sha256"]
+                        != action_policy_evidence["snapshot_sha256"]
+                        or transition["bucket"] != action_policy_evidence["bucket"]
+                        or decision["snapshot_sha256"]
+                        != action_policy_evidence["snapshot_sha256"]
+                        or decision["bucket"] != action_policy_evidence["bucket"]
+                    ):
+                        raise ValueError("worker action transition authority differs")
+                    action_transitions.append(transition)
+                selected_actions = [row["action"] for row in action_transitions]
+                checked_transitions = sum(
+                    int(row["checked"]) for row in action_transitions
+                )
+                if (
+                    policy_receipt.get("selected_actions") != selected_actions
+                    or policy_receipt.get("checked_transitions")
+                    != checked_transitions
+                ):
+                    raise ValueError("worker action policy summary differs from trace")
+                action_policy_matches = True
+            except (ImportError, TypeError, ValueError):
+                action_transitions.clear()
+                action_policy_matches = False
+        contract_errors: list[str] = []
+        quality_receipt: dict[str, Any] | None = None
+        if result.get("ok") is True:
+            contract_errors = self._receipt_contract_errors(
+                raw_receipt,
+                config,
+                runtime_controls,
+            )
+            if not contract_errors:
+                quality_receipt = evaluate_latent_output(
+                    result.get("text"),
+                    generated_tokens=result_receipt.get("decode_generated_tokens"),
+                    termination=result_receipt.get("decode_termination"),
+                    objective=self._visible_objective(question, messages),
+                )
+                result_receipt["output_quality"] = quality_receipt
+                result["receipt"] = result_receipt
         if operation_lease is not None:
             from core.brain.llm.latent_cortex.epistemic_state import (
                 OperationOutcome,
@@ -1673,7 +1839,14 @@ class LatentCortexService:
 
             worker_authority = result_receipt.get("runtime_operation_authority")
             authority_matches = worker_authority == operation_authority
-            worker_succeeded = result.get("ok") is True and authority_matches
+            worker_succeeded = (
+                result.get("ok") is True
+                and authority_matches
+                and action_policy_matches
+                and not contract_errors
+                and quality_receipt is not None
+                and quality_receipt.get("passed") is True
+            )
             try:
                 operation_receipt = await complete_runtime_operation(
                     (
@@ -1688,7 +1861,21 @@ class LatentCortexService:
                         else (
                             "operation_authority_mismatch"
                             if not authority_matches
-                            else "worker_operation_failed"
+                            else (
+                                "action_policy_receipt_mismatch"
+                                if result.get("ok") is True
+                                and not action_policy_matches
+                                else (
+                                    "worker_receipt_contract_failed"
+                                    if contract_errors
+                                    else (
+                                        "output_quality_failed"
+                                        if quality_receipt is not None
+                                        and quality_receipt.get("passed") is not True
+                                        else "worker_operation_failed"
+                                    )
+                                )
+                            )
                         )
                     ),
                 )
@@ -1721,6 +1908,13 @@ class LatentCortexService:
                 failed["receipt"] = result_receipt
                 self._last_failure_receipt = result_receipt
                 return failed
+            if result.get("ok") is True and not action_policy_matches:
+                reason = "runtime_action_policy_receipt_mismatch"
+                failed = dict(result)
+                failed.update(self._record_failure(reason))
+                failed["receipt"] = result_receipt
+                self._last_failure_receipt = result_receipt
+                return failed
         if epistemic_state is not None:
             epistemic_state_receipt = {
                 "schema": epistemic_state.schema,
@@ -1742,11 +1936,6 @@ class LatentCortexService:
         raw_progress = result.get("progress")
         self._last_progress = dict(raw_progress) if isinstance(raw_progress, dict) else {}
         if result.get("ok"):
-            contract_errors = self._receipt_contract_errors(
-                raw_receipt,
-                config,
-                runtime_controls,
-            )
             if contract_errors:
                 reason = "receipt_contract_failed:" + ",".join(contract_errors)
                 record_degradation(
@@ -1760,16 +1949,12 @@ class LatentCortexService:
                 failed["receipt"] = result_receipt
                 self._last_failure_receipt = result_receipt
                 return failed
-            quality_receipt = evaluate_latent_output(
-                result.get("text"),
-                generated_tokens=result_receipt.get("decode_generated_tokens"),
-                termination=result_receipt.get("decode_termination"),
-                objective=self._visible_objective(question, messages),
-            )
-            result_receipt["output_quality"] = quality_receipt
-            result["receipt"] = result_receipt
-            if quality_receipt.get("passed") is not True:
-                reasons = quality_receipt.get("reasons")
+            if quality_receipt is None or quality_receipt.get("passed") is not True:
+                reasons = (
+                    quality_receipt.get("reasons")
+                    if quality_receipt is not None
+                    else ["missing_quality_receipt"]
+                )
                 reason = "output_quality_failed:" + ",".join(
                     str(item) for item in reasons or ["unknown"]
                 )
@@ -1815,6 +2000,16 @@ class LatentCortexService:
                         checked=outcome_checked,
                         wall_clock_s=time.monotonic() - started,
                     )
+                    checked_action_transitions = [
+                        row for row in action_transitions if row["checked"] is True
+                    ]
+                    action_outcomes_recorded = (
+                        get_execution_controller().record_action_transitions(
+                            checked_action_transitions
+                        )
+                        if checked_action_transitions
+                        else False
+                    )
                     result_receipt["execution_controller"] = {
                         **controller_decision,
                         "outcome_recorded": outcome_recorded,
@@ -1823,6 +2018,10 @@ class LatentCortexService:
                             outcome_passed if outcome_checked else None
                         ),
                         "outcome_reason": outcome_reason,
+                        "action_transitions_checked": len(
+                            checked_action_transitions
+                        ),
+                        "action_outcomes_recorded": action_outcomes_recorded,
                     }
                     result["receipt"] = result_receipt
                 except (

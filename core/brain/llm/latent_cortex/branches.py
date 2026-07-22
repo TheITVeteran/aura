@@ -32,6 +32,7 @@ from core.brain.llm.latent_cortex.recurrence import (
     WindowRunner,
     recurrence_step,
     relative_residual,
+    rms_match,
 )
 from core.brain.llm.latent_cortex.types import BranchConfig, ComputeBudget, RecurrenceConfig
 from core.brain.llm.latent_cortex.workspace import LatentWorkspace, per_position_rms
@@ -347,6 +348,104 @@ class BranchEnsemble:
             if self.revert_branch_to_savepoint(branch):
                 reverted += 1
         return reverted
+
+    def inject_control(self, control, *, strength: float = 0.12) -> int:
+        """Causally write one bounded operator vector into each live workspace."""
+
+        import mlx.core as mx
+
+        if (
+            isinstance(strength, bool)
+            or not isinstance(strength, (int, float))
+            or not 0.0 < float(strength) <= 0.5
+        ):
+            raise ValueError("control strength must be inside (0, 0.5]")
+        changed = 0
+        for branch in self.active():
+            z = branch.z
+            vector = mx.reshape(control, (1, 1, int(z.shape[-1])))
+            slot = min(int(self.config.comm_slot), int(z.shape[1]) - 1)
+            prior = z[:, slot : slot + 1, :]
+            blended = (1.0 - float(strength)) * prior + float(strength) * vector
+            blended = rms_match(blended, prior, self.recurrence.rms_clip_ratio)
+            branch.z = mx.concatenate(
+                [z[:, :slot, :], blended, z[:, slot + 1 :, :]],
+                axis=1,
+            )
+            branch.workspace.update(branch.z)
+            changed += 1
+        if changed:
+            mx.eval(*[branch.z for branch in self.active()])
+        return changed
+
+    def compress_state(self, *, strength: float = 0.25) -> int:
+        """Fold global branch summaries into comm slots without erasing detail."""
+
+        import mlx.core as mx
+
+        if (
+            isinstance(strength, bool)
+            or not isinstance(strength, (int, float))
+            or not 0.0 < float(strength) <= 0.5
+        ):
+            raise ValueError("compression strength must be inside (0, 0.5]")
+        live = self.active()
+        if not live:
+            return 0
+        summaries = [branch.workspace.summary() for branch in live]
+        global_summary = sum(summaries) / len(summaries)
+        for branch in live:
+            z = branch.z
+            slot = min(int(self.config.comm_slot), int(z.shape[1]) - 1)
+            prior = z[:, slot : slot + 1, :]
+            compressed = (
+                (1.0 - float(strength)) * prior
+                + float(strength) * global_summary
+            )
+            compressed = rms_match(
+                compressed,
+                prior,
+                self.recurrence.rms_clip_ratio,
+            )
+            branch.z = mx.concatenate(
+                [z[:, :slot, :], compressed, z[:, slot + 1 :, :]],
+                axis=1,
+            )
+            branch.workspace.update(branch.z)
+        mx.eval(*[branch.z for branch in live])
+        return len(live)
+
+    def disagreement(self) -> float:
+        """Mean pairwise cosine distance between active branch summaries."""
+
+        import mlx.core as mx
+
+        live = self.active()
+        if len(live) < 2:
+            return 0.0
+        distances: list[float] = []
+        for left_index, left in enumerate(live):
+            left_summary = left.workspace.summary()
+            for right in live[left_index + 1 :]:
+                right_summary = right.workspace.summary()
+                cosine = float(
+                    mx.sum(left_summary * right_summary)
+                    / mx.maximum(
+                        mx.linalg.norm(left_summary)
+                        * mx.linalg.norm(right_summary),
+                        1e-6,
+                    )
+                )
+                distances.append(max(0.0, min(1.0, 0.5 * (1.0 - cosine))))
+        return sum(distances) / max(1, len(distances))
+
+    def halt_all(self, reason: str) -> int:
+        """Stop every live branch through the same best-state finalizer."""
+
+        live = list(self.active())
+        for branch in live:
+            self._halt(branch, reason)
+        return len(live)
 
     def _halt(self, branch: BranchState, reason: str) -> None:
         """Halt one branch, shipping the best state when it beats the last."""

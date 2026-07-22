@@ -825,6 +825,11 @@ class EpisodeReceipt:
     # schedule program executed (exchange/savepoint/verify_probe outcomes,
     # probe scores, backtracks). Empty for plain window programs.
     bytecode_events: list[dict[str, Any]] = field(default_factory=list)
+    # Per-recurrence cognitive-operator decisions. This contains only public
+    # scalar state signals, measured progress/cost, and action receipts; it
+    # never contains private reasoning text or hidden-state tensors.
+    value_of_computation: dict[str, Any] = field(default_factory=dict)
+    cognitive_action_trace: list[dict[str, Any]] = field(default_factory=list)
     # Latent interpretability/safety telemetry (telemetry.LatentTelemetry).
     latent_telemetry: dict[str, Any] = field(default_factory=dict)
     # Decode-probe memoization evidence (probe_cache.DecodeProbeCache).
@@ -1010,6 +1015,10 @@ class EpisodeReceipt:
             "escape": dict(self.escape),
             "halting": dict(self.halting),
             "bytecode_events": [dict(row) for row in self.bytecode_events],
+            "value_of_computation": dict(self.value_of_computation),
+            "cognitive_action_trace": [
+                dict(row) for row in self.cognitive_action_trace
+            ],
             "latent_telemetry": dict(self.latent_telemetry),
             "probe_cache": dict(self.probe_cache),
             "decode_temperature": self.decode_temperature,

@@ -429,6 +429,36 @@ def handle_latent_reason(
                     "message": "latent_reason non-memory context carries reserved fields",
                 }
     operation_authority = job.get("operation_authority")
+    action_policy_evidence = job.get("action_policy_evidence")
+    if action_policy_evidence is None and isinstance(operation_authority, dict):
+        try:
+            from core.brain.llm.latent_cortex.value_of_computation import (
+                build_evidence_snapshot,
+            )
+
+            action_policy_evidence = build_evidence_snapshot(
+                bucket=str(operation_authority.get("controller_bucket") or ""),
+                cells={},
+            )
+        except (ImportError, TypeError, ValueError) as exc:
+            return {
+                "status": "error",
+                "message": f"latent_reason action policy rejected: {exc}",
+            }
+    if action_policy_evidence is not None:
+        try:
+            from core.brain.llm.latent_cortex.value_of_computation import (
+                validate_evidence_snapshot,
+            )
+
+            action_policy_evidence = validate_evidence_snapshot(
+                action_policy_evidence
+            )
+        except (ImportError, TypeError, ValueError) as exc:
+            return {
+                "status": "error",
+                "message": f"latent_reason action policy rejected: {exc}",
+            }
     if operation_authority is not None:
         try:
             from core.brain.llm.latent_cortex.epistemic_runtime import (
@@ -442,6 +472,7 @@ def handle_latent_reason(
                 config=dict(job.get("config") or {}),
                 budget=dict(job.get("budget") or {}),
                 cognitive_context=cognitive_context,
+                action_policy_evidence=action_policy_evidence,
             )
         except (ImportError, TypeError, ValueError) as exc:
             return {
@@ -540,6 +571,7 @@ def handle_latent_reason(
         domain=str(job.get("domain", "general")),
         verifier=task_verifier,
         cognitive_context=cognitive_context,
+        action_policy_evidence=action_policy_evidence,
         cancel_check=cancel_check,
         progress=progress,
     )
@@ -609,6 +641,7 @@ def handle_latent_reason(
         runtime_controls=job.get("runtime_controls"),
         cognitive_context=cognitive_context,
         operation_authority=operation_authority,
+        action_policy_evidence=action_policy_evidence,
         response_contract=response_contract,
     )
     body = result.to_dict()

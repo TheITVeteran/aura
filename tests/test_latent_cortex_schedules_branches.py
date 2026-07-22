@@ -390,6 +390,35 @@ def test_branches_step_exchange_and_halt(tiny_model):
     assert all(b["halt_reason"] for b in receipt["branches"])
 
 
+def test_cognitive_operator_primitives_mutate_only_live_bounded_state(tiny_model):
+    cache = _prefill(tiny_model)
+    ensemble, _, _ = _ensemble(tiny_model, cache, n_branches=2)
+    before = [branch.z for branch in ensemble.branches]
+    control = mx.ones((1, 1, int(before[0].shape[-1])))
+
+    assert ensemble.inject_control(control) == 2
+    for prior, branch in zip(before, ensemble.branches, strict=True):
+        slot = ensemble.config.comm_slot
+        assert bool(mx.allclose(branch.z[:, :slot, :], prior[:, :slot, :]))
+        assert bool(mx.allclose(branch.z[:, slot + 1 :, :], prior[:, slot + 1 :, :]))
+        assert not bool(mx.allclose(branch.z[:, slot : slot + 1, :], prior[:, slot : slot + 1, :]))
+
+    disagreement = ensemble.disagreement()
+    assert 0.0 <= disagreement <= 1.0
+    before_compression = [branch.z for branch in ensemble.branches]
+    assert ensemble.compress_state() == 2
+    assert any(
+        not bool(mx.allclose(prior, branch.z))
+        for prior, branch in zip(before_compression, ensemble.branches, strict=True)
+    )
+    assert ensemble.halt_all("value_controller_answer") == 2
+    assert ensemble.all_halted()
+    assert all(
+        branch.halt_reason.startswith("value_controller_answer")
+        for branch in ensemble.branches
+    )
+
+
 def test_step_score_observes_candidate_state_not_committed_predecessor(tiny_model):
     cache = _prefill(tiny_model)
     ensemble, runner, budget = _ensemble(tiny_model, cache, n_branches=1)

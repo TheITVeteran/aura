@@ -5,13 +5,17 @@ graded verified outcomes, sparse exploration, bounded arm deltas, durable
 ledger with corrupt-line tolerance, and a kill switch tests default to.
 """
 
+from core.brain.latent_cortex_service import _controller_outcome
+from core.brain.llm.latent_cortex.epistemic_state import OperationKind
 from core.brain.llm.latent_cortex.execution_controller import (
-    ARMS,
     ExecutionController,
     context_bucket,
     controller_enabled,
 )
-from core.brain.latent_cortex_service import _controller_outcome
+from core.brain.llm.latent_cortex.value_of_computation import (
+    ACTION_TRANSITION_SCHEMA,
+    transition_reward,
+)
 
 
 def _controller(tmp_path):
@@ -258,6 +262,72 @@ def test_unchecked_and_fractional_scores_cannot_create_wilson_evidence(tmp_path)
         objective="q", domain="general", stakes=0.5, uncertainty=0.5
     )
     assert decision["mode"] != "exploit"
+
+
+def test_checked_action_transitions_persist_and_restore_as_policy_evidence(tmp_path):
+    root = tmp_path / "controller"
+    controller = ExecutionController(root=root)
+    bucket = "general|none|short|s:mid|u:mid"
+    rows = []
+    for index in range(8):
+        rows.append(
+            {
+                "schema": ACTION_TRANSITION_SCHEMA,
+                "bucket": bucket,
+                "snapshot_sha256": "a" * 64,
+                "decision_sha256": f"{index + 1:064x}",
+                "step_index": index,
+                "action": OperationKind.FALSIFY.value,
+                "mode": "bootstrap",
+                "outcome": "completed",
+                "checked": True,
+                "metrics": transition_reward(
+                    verified_delta=0.4,
+                    information_gain=0.2,
+                    diversity_gain=0.1,
+                    unsupported_confidence=0.0,
+                    cost=0.1,
+                ),
+            }
+        )
+    assert controller.record_action_transitions(rows) is True
+    snapshot = controller.action_evidence_snapshot(bucket=bucket)
+    assert snapshot["cells"]["falsify"]["n"] == 8
+
+    restored = ExecutionController(root=root)
+    restored_snapshot = restored.action_evidence_snapshot(bucket=bucket)
+    assert restored_snapshot == snapshot
+    cell = next(
+        item
+        for item in restored.status()["action_cells"]
+        if item["action"] == "falsify"
+    )
+    assert cell["measured"] is True
+
+
+def test_unchecked_or_malformed_action_transition_never_enters_learning(tmp_path):
+    controller = ExecutionController(root=tmp_path / "controller")
+    transition = {
+        "schema": ACTION_TRANSITION_SCHEMA,
+        "bucket": "b",
+        "snapshot_sha256": "a" * 64,
+        "decision_sha256": "b" * 64,
+        "step_index": 0,
+        "action": "compare",
+        "mode": "bootstrap",
+        "outcome": "completed",
+        "checked": False,
+        "metrics": transition_reward(
+            verified_delta=0.0,
+            information_gain=0.1,
+            diversity_gain=0.1,
+            unsupported_confidence=0.0,
+            cost=0.1,
+        ),
+    }
+    assert controller.record_action_transitions([transition]) is False
+    assert controller.status()["action_cells"] == []
+    assert not controller.action_ledger_path.exists()
 
 
 def test_live_candidate_scores_are_not_task_ground_truth():

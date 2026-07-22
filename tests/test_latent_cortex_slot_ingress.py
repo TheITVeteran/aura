@@ -269,6 +269,9 @@ def test_worker_recomputes_and_echoes_runtime_operation_authority(
         ProblemFrame,
         text_sha256,
     )
+    from core.brain.llm.latent_cortex.value_of_computation import (
+        build_evidence_snapshot,
+    )
     from core.brain.llm.latent_cortex.worker_handler import handle_latent_reason
 
     objective = "compare two bounded recovery designs"
@@ -298,6 +301,10 @@ def test_worker_recomputes_and_echoes_runtime_operation_authority(
         "decode_max_tokens": 6,
     }
     budget = {"max_layer_apps": 200_000, "wall_clock_s": 30.0}
+    action_policy = build_evidence_snapshot(
+        bucket="unit|compare|short|s:mid|u:mid",
+        cells={},
+    )
     lease = RuntimeOperationLease.begin(
         genesis=genesis,
         state=state,
@@ -310,6 +317,7 @@ def test_worker_recomputes_and_echoes_runtime_operation_authority(
         },
         config=config,
         budget=budget,
+        action_policy_evidence=action_policy,
         root=tmp_path / "runtime",
         started_at=10.0,
     )
@@ -319,6 +327,7 @@ def test_worker_recomputes_and_echoes_runtime_operation_authority(
         "config": config,
         "budget": budget,
         "operation_authority": lease.authority,
+        "action_policy_evidence": action_policy,
     }
 
     body = handle_latent_reason(
@@ -329,6 +338,10 @@ def test_worker_recomputes_and_echoes_runtime_operation_authority(
     )
     assert body["status"] == "ok", body
     assert body["receipt"]["runtime_operation_authority"] == lease.authority
+    assert (
+        body["receipt"]["value_of_computation"]["snapshot_sha256"]
+        == action_policy["snapshot_sha256"]
+    )
 
     tampered = {**job, "config": {**config, "max_steps": 3}}
     rejected = handle_latent_reason(

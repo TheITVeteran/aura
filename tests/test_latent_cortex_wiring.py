@@ -92,6 +92,7 @@ def _identity_receipt_for_request(request, **overrides):
             runtime_controls=request.get("runtime_controls"),
             cognitive_context=request.get("cognitive_context"),
             operation_authority=request.get("operation_authority"),
+            action_policy_evidence=request.get("action_policy_evidence"),
             response_contract=request.get("response_contract"),
         )
     )
@@ -379,6 +380,13 @@ def test_handler_runs_full_episode_on_tiny_model(monkeypatch, tmp_path):
     assert body["status"] == "ok", body
     assert body["receipt"]["params_unchanged"] is True
     assert body["receipt"]["steps_taken"] >= 2
+    policy = body["receipt"]["value_of_computation"]
+    trace = body["receipt"]["cognitive_action_trace"]
+    assert policy["active"] is True
+    assert policy["actions_selected"] == len(trace) >= 2
+    assert policy["actions_selected"] <= 4
+    assert "execute" not in policy["executors"]
+    assert all(row["decision"]["action"] in policy["executors"] for row in trace)
     assert body["requires_cache_clear"] is False
 
 
@@ -514,6 +522,9 @@ async def test_client_preserves_runtime_operation_authority_on_worker_wire(
         ProblemFrame,
         text_sha256,
     )
+    from core.brain.llm.latent_cortex.value_of_computation import (
+        build_evidence_snapshot,
+    )
 
     objective = "reason with a state-bound operation"
     genesis = EpistemicState.genesis(
@@ -536,6 +547,10 @@ async def test_client_preserves_runtime_operation_authority_on_worker_wire(
     state = EpistemicTransaction(genesis).add_operation(memory).commit()
     config = {"decode_max_tokens": 16, "n_branches": 2}
     budget = {"max_layer_apps": 1000, "wall_clock_s": 30.0}
+    action_policy = build_evidence_snapshot(
+        bucket="unit|none|short|s:mid|u:mid",
+        cells={},
+    )
     lease = RuntimeOperationLease.begin(
         genesis=genesis,
         state=state,
@@ -548,6 +563,7 @@ async def test_client_preserves_runtime_operation_authority_on_worker_wire(
         },
         config=config,
         budget=budget,
+        action_policy_evidence=action_policy,
         root=tmp_path / "runtime",
         started_at=10.0,
     )
@@ -569,12 +585,14 @@ async def test_client_preserves_runtime_operation_authority_on_worker_wire(
             config=config,
             budget=budget,
             operation_authority=lease.authority,
+            action_policy_evidence=action_policy,
             timeout_s=5.0,
             foreground_request=False,
         )
     )
     request = await asyncio.to_thread(client._req_q.get, True, 2.0)
     assert request["operation_authority"] == lease.authority
+    assert request["action_policy_evidence"] == action_policy
     mlx_client._set_shared_future_result(
         client._pending_generations[request["id"]],
         {

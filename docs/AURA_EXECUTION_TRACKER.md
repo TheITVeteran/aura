@@ -25155,3 +25155,70 @@ count completion is approximately 52.8%-83.0%, with a midpoint planning
 estimate of 64.6%. Next: publish CP326, then implement the complete
 value-of-computation policy and make each per-recurrence action change the same
 state before resident causal ablations.
+
+## Checkpoint 2026-07-22-327: Recurrent Compute Chooses Its Next Cognitive Action
+
+The recurrent engine now makes a value-of-computation decision before every
+schedule window from one bounded state signal: neural and policy step counts,
+active and total branches, residual and verifier movement, branch disagreement,
+uncertainty, remaining compute, memory/evidence availability, verifier and
+savepoint availability, execution authority, answer verification, irreducible
+uncertainty, and the exact prior action sequence. The policy selects from the
+full Spark vocabulary: DECOMPOSE, BLIND_RESOLVE, BRANCH, SEARCH_MEMORY,
+RETRIEVE_EVIDENCE, EXECUTE, SIMULATE, FALSIFY, CHECK_ASSUMPTION,
+REGENERATE_FROM_PREFIX, FORMALIZE, COMPARE, BACKTRACK, COMPRESS_STATE, ANSWER,
+and ABSTAIN. Feasibility is derived from a declared executor inventory and live
+state preconditions. The resident MLX worker deliberately does not advertise
+external EXECUTE authority.
+
+Selected neural actions inject bounded, RMS-matched operator controls into live
+communication slots before recurrence. BRANCH runs the active workspaces;
+COMPARE performs a declared exchange; BACKTRACK restores a savepoint;
+COMPRESS_STATE writes an ensemble summary; ANSWER and ABSTAIN halt through the
+same best-state finalizer. A hard neural floor prevents compare, compression, or
+termination from ending an episode before its minimum recurrent work. Verified,
+budget, and irreducible-uncertainty stops remain distinct. Pending attractor
+escape probations are finalized at every episode exit; an unproven escape stays
+`unresolved` in branch detail and is honestly classified as failed at the
+episode boundary.
+
+The controller restores only checked transition evidence from an append-only
+action journal. After eight checked trials, expected gain uses a conservative
+held-out lower bound and cost uses an upper bound; sparse cells are explicitly
+named bootstrap exploration. Every decision and transition is content-addressed
+and reconstructed by the service from public sufficient statistics. The service
+independently recomputes before/after metrics, distinguishes an observed
+verifier probe from the accepted post-rollback score, and rejects undeclared
+executors, malformed traces, duplicate inventory entries, or worker claims of
+external execution.
+
+Each selected action is committed as its own immutable cognitive operation in
+the canonical epistemic transaction. Child action costs are exact fractions of
+measured worker layer-app use; the enclosing operation receives only the
+remaining episode overhead, so the ledger conserves cost without double charge.
+The entire action batch and enclosing terminal outcome commit atomically.
+Contract-invalid or visibly unusable worker output now fails the enclosing
+operation rather than first recording a false success.
+
+Validation: the fixed-snapshot integrated RLC, latent-cortex, GWT, and
+execution-controller gate passes 854/854 in 438.07 seconds after repairing the
+escape-finalization receipt defect it exposed. The gate includes real tiny-Qwen2
+execution, tensor-level action causality, request-identity and authority binding,
+service reconstruction, exact cost conservation, malformed-batch atomicity, and
+journal replay. Focused Ruff, bytecode compilation, and `git diff --check` pass.
+
+SPARK-051 advances from `MISSING` to substantive `PARTIAL`, but is not accepted.
+SEARCH_MEMORY and RETRIEVE_EVIDENCE currently steer over already admitted
+context rather than invoking a new governed retrieval; EXECUTE remains an
+external orchestration responsibility; not every action has enough independent
+checked outcomes for calibrated selection; principled stop/abstain still needs
+Aura-generated visible language and external orchestration; and resident-32B
+causal ablations remain open. No frontier or intelligence gain is claimed.
+
+This is total checkpoint record 388. The revised forecast remains 466-733 total
+records, now approximately 78-345 records after this checkpoint. Checkpoint-
+count completion is approximately 52.9%-83.3%, with a midpoint planning
+estimate of 64.7%. Next: publish CP327, then close fresh-context branch
+isolation and distinct executable operator policies before resident integration
+and lesion proof. Final multi-hour soaks remain deferred until every shorter
+gate is green.

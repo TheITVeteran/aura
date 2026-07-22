@@ -56,6 +56,7 @@ _AUTHORITY_FIELDS = {
     "decision_sha256",
     "config_sha256",
     "budget_sha256",
+    "action_policy_sha256",
     "controller_schema",
     "controller_bucket",
     "controller_arm",
@@ -140,11 +141,23 @@ def runtime_operation_payload(
     decision: Mapping[str, Any],
     config: Mapping[str, Any],
     budget: Mapping[str, Any],
+    action_policy_evidence: Mapping[str, Any],
 ) -> dict[str, Any]:
     if not isinstance(state, EpistemicState):
         raise TypeError("state must be an EpistemicState")
-    if not isinstance(config, Mapping) or not isinstance(budget, Mapping):
-        raise EpistemicStateError("runtime operation config and budget must be objects")
+    if (
+        not isinstance(config, Mapping)
+        or not isinstance(budget, Mapping)
+        or not isinstance(action_policy_evidence, Mapping)
+    ):
+        raise EpistemicStateError(
+            "runtime operation config, budget, and action policy must be objects"
+        )
+    from core.brain.llm.latent_cortex.value_of_computation import (
+        validate_evidence_snapshot,
+    )
+
+    normalized_action_policy = validate_evidence_snapshot(action_policy_evidence)
     normalized_decision = _normalized_decision(decision)
     normalized_config = dict(config)
     normalized_budget = dict(budget)
@@ -153,6 +166,7 @@ def runtime_operation_payload(
         "decision_sha256": canonical_sha256(normalized_decision),
         "config_sha256": canonical_sha256(normalized_config),
         "budget_sha256": canonical_sha256(normalized_budget),
+        "action_policy_sha256": normalized_action_policy["snapshot_sha256"],
         "controller": normalized_decision,
     }
 
@@ -165,6 +179,7 @@ def validate_runtime_operation_authority(
     config: Mapping[str, Any],
     budget: Mapping[str, Any],
     cognitive_context: list | None,
+    action_policy_evidence: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Validate the worker-wire authority without trusting service objects."""
 
@@ -182,6 +197,7 @@ def validate_runtime_operation_authority(
         "decision_sha256",
         "config_sha256",
         "budget_sha256",
+        "action_policy_sha256",
     ):
         if not _is_digest(normalized.get(name)):
             raise EpistemicStateError(f"runtime operation authority {name} is invalid")
@@ -246,6 +262,24 @@ def validate_runtime_operation_authority(
         raise EpistemicStateError("runtime operation config digest mismatches")
     if canonical_sha256(dict(budget)) != normalized["budget_sha256"]:
         raise EpistemicStateError("runtime operation budget digest mismatches")
+    from core.brain.llm.latent_cortex.value_of_computation import (
+        build_evidence_snapshot,
+        validate_evidence_snapshot,
+    )
+
+    normalized_action_policy = validate_evidence_snapshot(
+        action_policy_evidence
+        if action_policy_evidence is not None
+        else build_evidence_snapshot(
+            bucket=normalized["controller_bucket"],
+            cells={},
+        )
+    )
+    if (
+        normalized_action_policy["snapshot_sha256"]
+        != normalized["action_policy_sha256"]
+    ):
+        raise EpistemicStateError("runtime operation action policy digest mismatches")
     decision = {
         "schema": normalized["controller_schema"],
         "bucket": normalized["controller_bucket"],
@@ -262,6 +296,7 @@ def validate_runtime_operation_authority(
         "decision_sha256": normalized["decision_sha256"],
         "config_sha256": normalized["config_sha256"],
         "budget_sha256": normalized["budget_sha256"],
+        "action_policy_sha256": normalized["action_policy_sha256"],
         "controller": decision,
     }
     if canonical_sha256(payload) != normalized["input_payload_sha256"]:
@@ -322,6 +357,7 @@ class RuntimeOperationLease:
     authority: dict[str, Any]
     _completed: bool = False
     _terminal: OperationRecord | None = None
+    _action_operations: tuple[OperationRecord, ...] = ()
 
     @classmethod
     def begin(
@@ -332,6 +368,7 @@ class RuntimeOperationLease:
         decision: Mapping[str, Any],
         config: Mapping[str, Any],
         budget: Mapping[str, Any],
+        action_policy_evidence: Mapping[str, Any] | None = None,
         root: str | Path,
         started_at: float | None = None,
     ) -> RuntimeOperationLease:
@@ -356,12 +393,30 @@ class RuntimeOperationLease:
         ):
             raise EpistemicStateError("runtime operation state does not extend genesis")
         normalized_decision = _normalized_decision(decision)
+        from core.brain.llm.latent_cortex.value_of_computation import (
+            build_evidence_snapshot,
+            validate_evidence_snapshot,
+        )
+
+        normalized_action_policy = validate_evidence_snapshot(
+            action_policy_evidence
+            if action_policy_evidence is not None
+            else build_evidence_snapshot(
+                bucket=normalized_decision["bucket"],
+                cells={},
+            )
+        )
+        if normalized_action_policy["bucket"] != normalized_decision["bucket"]:
+            raise EpistemicStateError(
+                "runtime operation action policy belongs to another context bucket"
+            )
         kind = operation_kind_for_decision(normalized_decision, config)
         payload = runtime_operation_payload(
             state=state,
             decision=normalized_decision,
             config=config,
             budget=budget,
+            action_policy_evidence=normalized_action_policy,
         )
         input_payload_sha256 = canonical_sha256(payload)
         input_claim_ids = tuple(claim.claim_id for claim in state.claims)
@@ -456,6 +511,7 @@ class RuntimeOperationLease:
             "decision_sha256": payload["decision_sha256"],
             "config_sha256": payload["config_sha256"],
             "budget_sha256": payload["budget_sha256"],
+            "action_policy_sha256": payload["action_policy_sha256"],
             "controller_schema": normalized_decision["schema"],
             "controller_bucket": normalized_decision["bucket"],
             "controller_arm": normalized_decision["arm"],
@@ -482,6 +538,8 @@ class RuntimeOperationLease:
         *,
         outcome: OperationOutcome,
         cost: float,
+        action_transitions: tuple[Mapping[str, Any], ...] = (),
+        action_costs: tuple[float, ...] = (),
         failure_code: str = "",
         detail: str = "",
         completed_at: float | None = None,
@@ -495,6 +553,31 @@ class RuntimeOperationLease:
             raise EpistemicStateError("runtime operation cost is invalid")
         if measured_cost > self.state.budget.total - self.state.budget.used + 1e-12:
             raise EpistemicStateError("runtime operation cost exceeds remaining budget")
+        if not isinstance(action_transitions, tuple) or not isinstance(action_costs, tuple):
+            raise EpistemicStateError("runtime action transitions and costs must be tuples")
+        if len(action_transitions) != len(action_costs):
+            raise EpistemicStateError("runtime action transition cost count differs")
+        from core.brain.llm.latent_cortex.value_of_computation import (
+            validate_action_transition,
+        )
+
+        try:
+            normalized_transitions = tuple(
+                validate_action_transition(row, require_checked=False)
+                for row in action_transitions
+            )
+        except (TypeError, ValueError) as exc:
+            raise EpistemicStateError("runtime action transition is invalid") from exc
+        normalized_action_costs = tuple(float(item) for item in action_costs)
+        if any(
+            not math.isfinite(item) or item < 0.0
+            for item in normalized_action_costs
+        ):
+            raise EpistemicStateError("runtime action cost is invalid")
+        action_cost_total = math.fsum(normalized_action_costs)
+        if action_cost_total > measured_cost + 1e-12:
+            raise EpistemicStateError("runtime action costs exceed measured operation cost")
+        wrapper_cost = max(0.0, measured_cost - action_cost_total)
         finished = time.time() if completed_at is None else float(completed_at)
         if not math.isfinite(finished) or finished < self.intent.started_at:
             raise EpistemicStateError("runtime operation completion time is invalid")
@@ -511,7 +594,7 @@ class RuntimeOperationLease:
             kind=self.intent.kind,
             outcome=outcome,
             input_state_sha256=self.state.state_sha256,
-            cost=measured_cost,
+            cost=wrapper_cost,
             operator_id=self.intent.operator_id,
             operator_version=self.intent.operator_version,
             input_payload_sha256=self.intent.input_payload_sha256,
@@ -524,7 +607,47 @@ class RuntimeOperationLease:
             failure_code=failure_code,
             detail=detail,
         )
-        candidate = EpistemicTransaction(self.state).add_operation(terminal).commit()
+        action_operations: list[OperationRecord] = []
+        failed_outcome_markers = ("refused", "unavailable", "nonfinite")
+        for index, (transition, action_cost) in enumerate(
+            zip(normalized_transitions, normalized_action_costs, strict=True)
+        ):
+            transition_outcome = transition["outcome"]
+            action_failed = any(
+                marker in transition_outcome for marker in failed_outcome_markers
+            )
+            action_operations.append(
+                OperationRecord.create(
+                    operation_id=(
+                        f"rlc-action-{transition['decision_sha256'][:20]}-{index:03d}"
+                    ),
+                    kind=OperationKind(transition["action"]),
+                    outcome=(
+                        OperationOutcome.FAILED
+                        if action_failed
+                        else OperationOutcome.SUCCEEDED
+                    ),
+                    input_state_sha256=self.state.state_sha256,
+                    cost=action_cost,
+                    operator_id="value_of_computation",
+                    operator_version="v1",
+                    input_payload_sha256=transition["decision_sha256"],
+                    started_at=self.intent.started_at,
+                    completed_at=finished,
+                    input_claim_ids=self.intent.input_claim_ids,
+                    input_hypothesis_ids=self.intent.input_hypothesis_ids,
+                    input_evidence_ids=self.intent.input_evidence_ids,
+                    failure_code="action_execution_failed" if action_failed else "",
+                    detail=(
+                        f"step={transition['step_index']}; mode={transition['mode']}; "
+                        f"outcome={transition_outcome}; checked={transition['checked']}"
+                    ),
+                )
+            )
+        transaction = EpistemicTransaction(self.state).add_operation(terminal)
+        for action_operation in action_operations:
+            transaction.add_operation(action_operation)
+        candidate = transaction.commit()
         with local_internal_governed_scope(
             "rlc_runtime_operation", domain="state_mutation"
         ):
@@ -532,6 +655,7 @@ class RuntimeOperationLease:
         self.state = candidate
         self._completed = True
         self._terminal = terminal
+        self._action_operations = tuple(action_operations)
         return candidate
 
     def to_receipt(self) -> dict[str, Any]:
@@ -541,6 +665,9 @@ class RuntimeOperationLease:
             "authority": dict(self.authority),
             "intent": self.intent.to_dict(),
             "terminal": self._terminal.to_dict() if self._terminal is not None else None,
+            "action_operations": [
+                operation.to_dict() for operation in self._action_operations
+            ],
             "completed": self._completed,
             "current_state_sha256": self.state.state_sha256,
             "current_state_version": self.state.version,

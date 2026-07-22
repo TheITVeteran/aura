@@ -30,11 +30,17 @@ from __future__ import annotations
 import json
 import logging
 import math
-import os
 import re
 import time
 from pathlib import Path
 from typing import Any
+
+from core.brain.llm.latent_cortex.epistemic_state import OperationKind
+from core.brain.llm.latent_cortex.value_of_computation import (
+    ActionEvidence,
+    build_evidence_snapshot,
+    validate_action_transition,
+)
 
 logger = logging.getLogger("Aura.LatentCortex.ExecutionController")
 
@@ -122,10 +128,13 @@ class ExecutionController:
                 root = Path("data/latent_cortex/controller")
         self.root = Path(root)
         self.ledger_path = self.root / "outcomes.jsonl"
+        self.action_ledger_path = self.root / "action_transitions.jsonl"
         self._cells: dict[tuple[str, str], dict[str, float]] = {}
+        self._action_cells: dict[tuple[str, OperationKind], ActionEvidence] = {}
         self._episodes_seen = 0
         self._restore_errors = 0
         self._restore()
+        self._restore_action_transitions()
 
     # ── State ────────────────────────────────────────────────────────────
     def _restore(self) -> None:
@@ -171,6 +180,33 @@ class ExecutionController:
         cell["successes"] += int(bool(row.get("success")))
         self._episodes_seen += 1
 
+    def _restore_action_transitions(self) -> None:
+        try:
+            if not self.action_ledger_path.exists():
+                return
+            with open(self.action_ledger_path, encoding="utf-8") as handle:
+                for line in handle:
+                    try:
+                        self._fold_action_transition(json.loads(line))
+                    except (json.JSONDecodeError, TypeError, ValueError, KeyError):
+                        self._restore_errors += 1
+        except OSError as exc:
+            self._restore_errors += 1
+            logger.warning(
+                "Controller action ledger unreadable - bootstrap-only: %s",
+                exc,
+            )
+
+    def _fold_action_transition(self, row: dict[str, Any]) -> None:
+        transition = validate_action_transition(row)
+        key = (transition["bucket"], OperationKind(transition["action"]))
+        current = self._action_cells.get(key, ActionEvidence())
+        metrics = transition["metrics"]
+        self._action_cells[key] = current.append(
+            gain=float(metrics["gain"]),
+            cost=float(metrics["cost"]),
+        )
+
     def _append(self, row: dict[str, Any]) -> bool:
         try:
             from core.governance_context import local_internal_governed_scope
@@ -186,6 +222,30 @@ class ExecutionController:
             return True
         except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
             logger.debug("Controller outcome not persisted: %s", exc)
+            return False
+
+    def _append_action_transitions(self, rows: list[dict[str, Any]]) -> bool:
+        if not rows:
+            return True
+        try:
+            from core.governance_context import local_internal_governed_scope
+            from core.runtime.file_write_gateway import get_file_write_gateway
+
+            payload = "".join(
+                json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n"
+                for row in rows
+            )
+            with local_internal_governed_scope(
+                "latent_value_of_computation", domain="state_mutation"
+            ):
+                get_file_write_gateway().append_text(
+                    self.action_ledger_path,
+                    payload,
+                    source="latent_value_of_computation",
+                )
+            return True
+        except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            logger.debug("Controller action transitions not persisted: %s", exc)
             return False
 
     # ── Decisions ────────────────────────────────────────────────────────
@@ -348,6 +408,35 @@ class ExecutionController:
         self._fold(row)
         return True
 
+    def action_evidence_snapshot(self, *, bucket: str) -> dict[str, Any]:
+        """Freeze measured per-action evidence for one worker episode."""
+
+        return build_evidence_snapshot(
+            bucket=bucket,
+            cells={
+                action: cell
+                for (cell_bucket, action), cell in self._action_cells.items()
+                if cell_bucket == bucket
+            },
+        )
+
+    def record_action_transitions(self, rows: list[dict[str, Any]]) -> bool:
+        """Persist a checked worker trace atomically before it can train policy."""
+
+        if not isinstance(rows, list) or len(rows) > 256:
+            return False
+        normalized: list[dict[str, Any]] = []
+        try:
+            for row in rows:
+                normalized.append(validate_action_transition(row))
+        except (TypeError, ValueError):
+            return False
+        if not self._append_action_transitions(normalized):
+            return False
+        for row in normalized:
+            self._fold_action_transition(row)
+        return True
+
     def status(self) -> dict[str, Any]:
         return {
             "schema": EXECUTION_CONTROLLER_SCHEMA,
@@ -367,6 +456,17 @@ class ExecutionController:
                 for (bucket, arm), cell in sorted(self._cells.items())
             ][:200],
             "episodes_seen": self._episodes_seen,
+            "action_cells": [
+                {
+                    "bucket": bucket,
+                    "action": action.value,
+                    **cell.estimate(),
+                }
+                for (bucket, action), cell in sorted(
+                    self._action_cells.items(),
+                    key=lambda item: (item[0][0], item[0][1].value),
+                )
+            ][:400],
             "restore_errors": self._restore_errors,
         }
 

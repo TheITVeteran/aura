@@ -4669,6 +4669,7 @@ class MLXLocalClient:
         facet_reliability: dict[str, float] | None = None,
         cognitive_context: list | None = None,
         operation_authority: dict[str, Any] | None = None,
+        action_policy_evidence: dict[str, Any] | None = None,
         response_contract: str | None = None,
     ) -> dict[str, Any]:
         """Run a Recursive Latent Cortex episode on the RESIDENT worker model.
@@ -4754,6 +4755,18 @@ class MLXLocalClient:
         wire_config = dict(config or {})
         wire_budget = dict(budget or {})
         wire_runtime_controls = dict(runtime_controls or {})
+        wire_action_policy_evidence: dict[str, Any] | None = None
+        if action_policy_evidence is not None:
+            try:
+                from core.brain.llm.latent_cortex.value_of_computation import (
+                    validate_evidence_snapshot,
+                )
+
+                wire_action_policy_evidence = validate_evidence_snapshot(
+                    action_policy_evidence
+                )
+            except (ImportError, TypeError, ValueError):
+                return {**base, "reason": "invalid_action_policy_evidence"}
         wire_operation_authority: dict[str, Any] | None = None
         if operation_authority is not None:
             try:
@@ -4768,6 +4781,7 @@ class MLXLocalClient:
                     config=wire_config,
                     budget=wire_budget,
                     cognitive_context=wire_cognitive_context,
+                    action_policy_evidence=wire_action_policy_evidence,
                 )
             except (ImportError, TypeError, ValueError):
                 return {**base, "reason": "invalid_runtime_operation_authority"}
@@ -4809,6 +4823,7 @@ class MLXLocalClient:
                 ),
                 cognitive_context=wire_cognitive_context,
                 operation_authority=wire_operation_authority,
+                action_policy_evidence=wire_action_policy_evidence,
                 response_contract=response_contract,
             )
         except (TypeError, ValueError, OverflowError):
@@ -4921,6 +4936,8 @@ class MLXLocalClient:
                 job["cognitive_context"] = wire_cognitive_context
             if wire_operation_authority is not None:
                 job["operation_authority"] = wire_operation_authority
+            if wire_action_policy_evidence is not None:
+                job["action_policy_evidence"] = wire_action_policy_evidence
             if response_contract is not None:
                 job["response_contract"] = response_contract
 

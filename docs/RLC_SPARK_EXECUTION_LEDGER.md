@@ -70,6 +70,10 @@ After CP326, the published total is record 387: 79-346 forecast records remain,
 checkpoint-count completion is 52.8%-83.0%, and the midpoint planning estimate
 is 64.6%.
 
+After CP327, the published total is record 388: 78-345 forecast records remain,
+checkpoint-count completion is 52.9%-83.3%, and the midpoint planning estimate
+is 64.7%.
+
 ## Code-grounded baseline and ownership
 
 The four-slice static audit covered the neural core, epistemic/verifier paths,
@@ -83,14 +87,14 @@ baseline below is exhaustive over SPARK-001 through SPARK-072:
   SPARK-014, SPARK-021, SPARK-022, SPARK-023, SPARK-024, SPARK-025,
   SPARK-026, SPARK-027, SPARK-035, SPARK-039, SPARK-040, SPARK-041,
   SPARK-042, SPARK-052, SPARK-053, SPARK-054, SPARK-055, SPARK-056,
-  SPARK-058, SPARK-060, SPARK-062, SPARK-063, SPARK-065, SPARK-066,
+  SPARK-051, SPARK-058, SPARK-060, SPARK-062, SPARK-063, SPARK-065, SPARK-066,
   SPARK-067.
 - `MISSING`: SPARK-002,
   SPARK-015, SPARK-016, SPARK-017, SPARK-018, SPARK-019, SPARK-020,
   SPARK-028, SPARK-029, SPARK-030, SPARK-031, SPARK-032, SPARK-033,
   SPARK-034, SPARK-036, SPARK-037, SPARK-038, SPARK-043, SPARK-044,
   SPARK-045, SPARK-046, SPARK-047, SPARK-048, SPARK-049, SPARK-050,
-  SPARK-051, SPARK-057, SPARK-059, SPARK-061, SPARK-064, SPARK-068.
+  SPARK-057, SPARK-059, SPARK-061, SPARK-064, SPARK-068.
 - `EVIDENCE`: SPARK-004, SPARK-013, SPARK-070, SPARK-071.
 - `BLOCKED`: SPARK-069 is blocked on a successful source-bound admission
   preflight; SPARK-072 is blocked on the frontier-certificate verdict.
@@ -430,8 +434,25 @@ before those dependencies close is not admissible.
   cost.
   CP326 makes the existing bounded execution-arm decision a state-admitted,
   costed, durable live operation and removes the decode-override bypass. This
-  remains `PARTIAL`: the controller does not yet choose the complete action
-  vocabulary at every recurrence from calibrated expected gain per cost.
+  remains `PARTIAL`. CP327 adds the exact sixteen-action vocabulary and makes a
+  deterministic value-of-computation decision before every recurrent window.
+  Each decision binds the complete cognitive state signal, declared executor
+  inventory, immutable evidence snapshot, gain/cost estimates, reason, and
+  state transition. A hard neural floor prevents compare/stop actions from
+  consuming an episode before recurrence. Measured cells use held-out lower
+  gain and upper cost bounds; sparse cells are explicitly bootstrap exploration,
+  never mislabeled as calibrated evidence. The selected action changes the live
+  branch workspaces or halt state and is independently reconstructed by the
+  service. Every action becomes an atomic child operation in the canonical
+  journal without double-charging the enclosing episode. The worker cannot
+  claim external EXECUTE authority, and unavailable actions fail closed.
+
+  SPARK-051 is not accepted yet: SEARCH_MEMORY and RETRIEVE_EVIDENCE currently
+  direct attention over already admitted context rather than initiating a new
+  governed fetch; EXECUTE still requires an external orchestration executor;
+  several actions need independently distinguishable semantics and sufficient
+  checked outcomes to leave bootstrap mode; and resident/live causal ablations
+  have not established calibrated value or capability gain.
 - [ ] **SPARK-052 - Adaptive breadth/depth/tool routing.** Scale recurrence,
   branch count, lookahead, tools, and verifier effort from difficulty,
   uncertainty, stakes, body pressure, deadlines, and resource admission while
@@ -550,3 +571,20 @@ CP325 closes the selective-memory ingress and its context-only authority chain;
 it does not change the negative capability verdict.
 CP326 closes durable live cognitive-operation history and admission; it does
 not change the negative capability verdict.
+CP327 makes the full action vocabulary causal inside recurrent execution and
+persists checked outcomes; it does not change the negative capability verdict.
+
+Validation: the fixed-snapshot integrated RLC, latent-cortex, GWT, and
+execution-controller gate passes 854/854 in 438.07 seconds. This includes the
+real tiny-Qwen2 worker path, tensor-level operator causality, service-side policy
+reconstruction, exact cost conservation, journal recovery, malformed-batch
+atomicity, and escape-finalization honesty. Focused Ruff, bytecode compilation,
+and `git diff --check` pass. No resident 32B campaign was run, and the negative
+frontier verdict is unchanged.
+
+This is total checkpoint record 388. The revised forecast remains 466-733 total
+records, now approximately 78-345 records after this checkpoint. Checkpoint-
+count completion is approximately 52.9%-83.3%, with a midpoint planning
+estimate of 64.7%. Next: publish CP327, then close fresh-context branch
+isolation and distinct executable operator policies before resident integration
+and lesion proof.

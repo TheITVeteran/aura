@@ -29,6 +29,7 @@ from core.brain.llm.latent_cortex.capability_canaries import (
     CapabilityCanaries,
     compare_canaries,
 )
+from core.brain.llm.latent_cortex.epistemic_state import OperationKind
 from core.brain.llm.latent_cortex.escape import EscapeConfig
 from core.brain.llm.latent_cortex.fast_weights import EpisodicFastWeights
 from core.brain.llm.latent_cortex.governance import CheckpointInvariant
@@ -42,6 +43,14 @@ from core.brain.llm.latent_cortex.types import (
     CortexConfig,
     EpisodeReceipt,
     LatentReasoningResult,
+)
+from core.brain.llm.latent_cortex.value_of_computation import (
+    ACTION_TRANSITION_SCHEMA,
+    CognitiveStateSignal,
+    ValueOfComputationPolicy,
+    build_evidence_snapshot,
+    transition_reward,
+    validate_evidence_snapshot,
 )
 from core.brain.llm.latent_cortex.workspace import per_position_rms
 from core.runtime.errors import record_degradation
@@ -81,6 +90,17 @@ _NEWLINE_RESAMPLE_ATTEMPTS = 4
 # fails the product gate as a terminal fragment (CP110 live evidence).
 _SENTENCE_GRACE_TOKENS = 48
 _SENTENCE_TERMINALS = (".", "!", "?", ".\n", "!\n", "?\n")
+
+_ACTION_CONTROL_TEXT: dict[OperationKind, str] = {
+    OperationKind.DECOMPOSE: "Separate the problem into explicit dependencies and subproblems.",
+    OperationKind.SEARCH_MEMORY: "Inspect relevant remembered context as evidence, not authority.",
+    OperationKind.RETRIEVE_EVIDENCE: "Identify and use the most discriminating available evidence.",
+    OperationKind.SIMULATE: "Run a concrete counterfactual simulation and inspect consequences.",
+    OperationKind.FALSIFY: "Try to disprove the leading answer with the strongest counterexample.",
+    OperationKind.CHECK_ASSUMPTION: "Test the weakest load-bearing assumption before continuing.",
+    OperationKind.REGENERATE_FROM_PREFIX: "Preserve valid premises and derive a new continuation.",
+    OperationKind.FORMALIZE: "Translate the key relation into explicit formal constraints.",
+}
 
 # Guard classes the engine treats as "latent phase failed, fall back honest".
 _LATENT_PHASE_ERRORS = (
@@ -410,6 +430,68 @@ class LatentCortexEngine:
             mx.eval(pooled)
             seeds.append((item["source"], pooled))
         return seeds
+
+    def _embed_action_controls(self) -> dict[OperationKind, object]:
+        """Embed each neural cognitive operator once per episode."""
+
+        rows = self._embed_cognitive_context(
+            [
+                {"source": action.value, "text": instruction}
+                for action, instruction in _ACTION_CONTROL_TEXT.items()
+            ]
+        )
+        return {OperationKind(source): vector for source, vector in rows}
+
+    @staticmethod
+    def _mean_latest_residual(ensemble: BranchEnsemble) -> float:
+        values = [
+            branch.halting.residual_trail[-1]
+            for branch in ensemble.branches
+            if branch.halting.residual_trail
+        ]
+        if not values:
+            return 1.0
+        return max(0.0, min(1.0, sum(values) / len(values)))
+
+    @staticmethod
+    def _policy_uncertainty(bucket: str) -> float:
+        if "|u:high" in bucket:
+            return 0.8
+        if "|u:low" in bucket:
+            return 0.2
+        return 0.5
+
+    @staticmethod
+    def _action_executors(
+        *,
+        has_controls: bool,
+        has_verifier: bool,
+    ) -> tuple[OperationKind, ...]:
+        executors = {
+            OperationKind.BLIND_RESOLVE,
+            OperationKind.BRANCH,
+            OperationKind.COMPARE,
+            OperationKind.BACKTRACK,
+            OperationKind.COMPRESS_STATE,
+            OperationKind.ANSWER,
+            OperationKind.ABSTAIN,
+        }
+        if has_controls:
+            executors.update(
+                {
+                    OperationKind.DECOMPOSE,
+                    OperationKind.SEARCH_MEMORY,
+                    OperationKind.RETRIEVE_EVIDENCE,
+                    OperationKind.SIMULATE,
+                    OperationKind.REGENERATE_FROM_PREFIX,
+                    OperationKind.FORMALIZE,
+                }
+            )
+            if has_verifier:
+                executors.update(
+                    {OperationKind.FALSIFY, OperationKind.CHECK_ASSUMPTION}
+                )
+        return tuple(action for action in OperationKind if action in executors)
 
     def _eos_ids(self) -> set[int]:
         if self.tokenizer is None:
@@ -861,6 +943,7 @@ class LatentCortexEngine:
         ablate_slot: int | None = None,
         ablate_mode: str = "zero",
         cognitive_context: list | None = None,
+        action_policy_evidence: dict[str, Any] | None = None,
         cancel_check: Callable[[], bool] | None = None,
         progress: Callable[[dict], None] | None = None,
         capture_decode_logprobs: bool = False,
@@ -887,6 +970,20 @@ class LatentCortexEngine:
             if not 1 <= decode_max_tokens <= 8192:
                 raise ValueError("decode_max_tokens override outside [1, 8192]")
         context_items = self._validate_cognitive_context(cognitive_context)
+        policy_evidence = validate_evidence_snapshot(
+            action_policy_evidence
+            if action_policy_evidence is not None
+            else build_evidence_snapshot(
+                bucket=f"{str(domain or 'general')[:24]}|none|short|s:mid|u:mid",
+                cells={},
+            )
+        )
+        receipt.value_of_computation = {
+            "schema": policy_evidence["schema"],
+            "bucket": policy_evidence["bucket"],
+            "snapshot_sha256": policy_evidence["snapshot_sha256"],
+            "active": True,
+        }
         tokens = self._encode(prompt, messages, token_ids)
         encoded_tokens = json.dumps(tokens, separators=(",", ":"), allow_nan=False).encode(
             "ascii"
@@ -930,6 +1027,7 @@ class LatentCortexEngine:
                     ablate_slot=ablate_slot,
                     ablate_mode=ablate_mode,
                     cognitive_context_items=context_items,
+                    action_policy_evidence=policy_evidence,
                     cancel_check=cancel_check,
                     progress=progress,
                     episode_started=episode_started,
@@ -1116,6 +1214,7 @@ class LatentCortexEngine:
         ablate_slot: int | None = None,
         ablate_mode: str = "zero",
         cognitive_context_items: list[dict] | None = None,
+        action_policy_evidence: dict[str, Any],
         cancel_check: Callable[[], bool] | None = None,
         progress: Callable[[dict], None] | None = None,
         episode_started: float | None = None,
@@ -1275,6 +1374,28 @@ class LatentCortexEngine:
         recurrence_budget_limited = False
         bytecode_events: list[dict[str, Any]] = []
         last_probe_scores: dict[int, float] = {}
+        value_policy = ValueOfComputationPolicy(action_policy_evidence)
+        action_controls = self._embed_action_controls()
+        context_sources = {
+            str(item.get("source") or "") for item in (cognitive_context_items or [])
+        }
+        has_memory = any(
+            item.get("context_role") == "memory_observation"
+            for item in (cognitive_context_items or [])
+        )
+        has_evidence = any(
+            source == "world_model" or source.startswith("evidence")
+            for source in context_sources
+        )
+        action_executors = self._action_executors(
+            has_controls=bool(action_controls),
+            has_verifier=verifier is not None and self.tokenizer is not None,
+        )
+        selected_actions: list[OperationKind] = []
+        action_index = 0
+        previous_residual = 1.0
+        previous_verifier_score: float | None = None
+        ensemble.savepoint_all()
         for op_index, op in enumerate(schedule.ops):
             op_kind = getattr(op, "kind", "window")
             if op_kind == "exchange":
@@ -1365,18 +1486,251 @@ class LatentCortexEngine:
             for _ in range(op.repeats):
                 if ensemble.all_halted() or budget.exhausted:
                     break
-                admitted = ensemble.step_all(
-                    runner,
-                    cache,
-                    op.start,
-                    op.end,
-                    budget=budget,
-                    alpha_override=op.alpha,
-                    reserve_layer_apps=safety_reserve,
-                )
-                if not admitted:
-                    recurrence_budget_limited = True
+                if action_index >= self.config.recurrence.max_steps:
+                    ensemble.halt_all("value_controller_action_budget")
+                    receipt.flag("value_controller_action_budget")
                     break
+                before_residual = self._mean_latest_residual(ensemble)
+                before_disagreement = ensemble.disagreement()
+                remaining_fraction = (
+                    budget.remaining_layer_apps / max(1, budget.max_layer_apps)
+                )
+                state_signal = CognitiveStateSignal(
+                    step_index=min(action_index, self.config.recurrence.max_steps),
+                    max_steps=self.config.recurrence.max_steps,
+                    neural_steps=max(
+                        (branch.steps for branch in ensemble.branches),
+                        default=0,
+                    ),
+                    min_neural_steps=self.config.recurrence.min_steps,
+                    active_branches=len(ensemble.active()),
+                    total_branches=len(ensemble.branches),
+                    residual=before_residual,
+                    residual_delta=max(
+                        -1.0,
+                        min(1.0, previous_residual - before_residual),
+                    ),
+                    verifier_score=previous_verifier_score,
+                    verifier_delta=None,
+                    disagreement=before_disagreement,
+                    uncertainty=self._policy_uncertainty(value_policy.bucket),
+                    budget_remaining_fraction=max(
+                        0.0,
+                        min(1.0, remaining_fraction),
+                    ),
+                    has_memory=has_memory,
+                    has_evidence=has_evidence,
+                    has_verifier=verifier is not None and self.tokenizer is not None,
+                    has_savepoint=any(
+                        branch.savepoint is not None for branch in ensemble.branches
+                    ),
+                    can_execute=False,
+                    answer_verified=(
+                        previous_verifier_score is not None
+                        and previous_verifier_score >= 1.0 - 1e-9
+                    ),
+                    irreducible_uncertainty=(
+                        action_index + 1 >= self.config.recurrence.max_steps
+                        and previous_verifier_score is not None
+                        and previous_verifier_score <= 1e-9
+                        and not has_memory
+                        and not has_evidence
+                    ),
+                    previously_selected=tuple(selected_actions),
+                )
+                decision = value_policy.choose(
+                    state_signal,
+                    executors=action_executors,
+                )
+                action = OperationKind(decision["action"])
+                spent_before = int(budget.spent_layer_apps)
+                outcome = "completed"
+                affected_branches = 0
+                probe_score: float | None = None
+                accepted_verifier_score = previous_verifier_score
+
+                if action is OperationKind.REGENERATE_FROM_PREFIX:
+                    affected_branches += ensemble.revert_all_to_savepoint()
+                if action in _ACTION_CONTROL_TEXT:
+                    affected_branches += ensemble.inject_control(
+                        action_controls[action]
+                    )
+                if action in {
+                    OperationKind.DECOMPOSE,
+                    OperationKind.BLIND_RESOLVE,
+                    OperationKind.BRANCH,
+                    OperationKind.SEARCH_MEMORY,
+                    OperationKind.RETRIEVE_EVIDENCE,
+                    OperationKind.SIMULATE,
+                    OperationKind.FALSIFY,
+                    OperationKind.CHECK_ASSUMPTION,
+                    OperationKind.REGENERATE_FROM_PREFIX,
+                    OperationKind.FORMALIZE,
+                }:
+                    admitted = ensemble.step_all(
+                        runner,
+                        cache,
+                        op.start,
+                        op.end,
+                        budget=budget,
+                        alpha_override=op.alpha,
+                        reserve_layer_apps=safety_reserve,
+                    )
+                    if not admitted:
+                        recurrence_budget_limited = True
+                        outcome = "budget_refused"
+                elif action is OperationKind.COMPARE:
+                    affected_branches = int(ensemble.exchange_now())
+                    outcome = (
+                        "branches_compared" if affected_branches else "comparison_unavailable"
+                    )
+                elif action is OperationKind.BACKTRACK:
+                    affected_branches = ensemble.revert_all_to_savepoint()
+                    outcome = (
+                        "state_restored" if affected_branches else "savepoint_unavailable"
+                    )
+                elif action is OperationKind.COMPRESS_STATE:
+                    affected_branches = ensemble.compress_state()
+                    outcome = "state_compressed"
+                elif action is OperationKind.ANSWER:
+                    affected_branches = ensemble.halt_all("value_controller_answer")
+                    outcome = "answer_selected"
+                elif action is OperationKind.ABSTAIN:
+                    affected_branches = ensemble.halt_all("value_controller_abstain")
+                    outcome = "abstention_selected"
+
+                if (
+                    not recurrence_budget_limited
+                    and action
+                    in {
+                        OperationKind.FALSIFY,
+                        OperationKind.CHECK_ASSUMPTION,
+                        OperationKind.COMPARE,
+                    }
+                    and verifier is not None
+                    and self.tokenizer is not None
+                ):
+                    probe_cost = self._verifier_probe_layer_apps(bridge_tokens)
+                    if probe_cost + safety_reserve <= budget.remaining_layer_apps:
+                        candidates = ensemble.active() or list(ensemble.branches)
+                        target = min(
+                            candidates,
+                            key=lambda branch: (
+                                branch.halting.residual_trail[-1]
+                                if branch.halting.residual_trail
+                                else float("inf")
+                            ),
+                        )
+                        probe = self._decode_probe(
+                            target,
+                            cache,
+                            runner,
+                            budget,
+                            bridge_tokens=bridge_tokens,
+                        )
+                        probe_score = float(verifier(self.tokenizer.decode(probe)))
+                        if not math.isfinite(probe_score):
+                            probe_score = None
+                            outcome = "verifier_nonfinite"
+                        elif (
+                            previous_verifier_score is not None
+                            and probe_score < previous_verifier_score - 1e-9
+                        ):
+                            reverted = ensemble.revert_all_to_savepoint()
+                            outcome = f"verifier_regression_reverted_{reverted}"
+                        else:
+                            accepted_verifier_score = probe_score
+                            if (
+                                previous_verifier_score is None
+                                or probe_score > previous_verifier_score
+                            ):
+                                ensemble.savepoint_all()
+                                outcome = "verified_progress_saved"
+                    else:
+                        outcome = "verifier_probe_budget_refused"
+
+                after_residual = self._mean_latest_residual(ensemble)
+                after_disagreement = ensemble.disagreement()
+                checked = (
+                    previous_verifier_score is not None and probe_score is not None
+                )
+                verified_delta = (
+                    probe_score - previous_verifier_score if checked else 0.0
+                )
+                before_uncertainty = max(
+                    before_residual,
+                    before_disagreement,
+                    1.0 - previous_verifier_score
+                    if previous_verifier_score is not None
+                    else 1.0,
+                )
+                after_uncertainty = max(
+                    after_residual,
+                    after_disagreement,
+                    1.0 - probe_score if probe_score is not None else before_uncertainty,
+                )
+                cost_fraction = max(
+                    0.0,
+                    min(
+                        1.0,
+                        (int(budget.spent_layer_apps) - spent_before)
+                        / max(1, budget.max_layer_apps),
+                    ),
+                )
+                metrics = transition_reward(
+                    verified_delta=max(-1.0, min(1.0, verified_delta)),
+                    information_gain=max(
+                        -1.0,
+                        min(1.0, before_uncertainty - after_uncertainty),
+                    ),
+                    diversity_gain=max(
+                        -1.0,
+                        min(1.0, after_disagreement - before_disagreement),
+                    ),
+                    unsupported_confidence=(
+                        max(0.0, min(1.0, -verified_delta)) if checked else 0.0
+                    ),
+                    cost=cost_fraction,
+                )
+                transition = {
+                    "schema": ACTION_TRANSITION_SCHEMA,
+                    "bucket": value_policy.bucket,
+                    "snapshot_sha256": action_policy_evidence["snapshot_sha256"],
+                    "decision_sha256": decision["decision_sha256"],
+                    "step_index": action_index,
+                    "action": action.value,
+                    "mode": decision["mode"],
+                    "outcome": outcome,
+                    "checked": checked,
+                    "metrics": metrics,
+                }
+                receipt.cognitive_action_trace.append(
+                    {
+                        "decision": decision,
+                        "transition": transition,
+                        "state_signal": state_signal.to_dict(),
+                        "state_before": {
+                            "residual": round(before_residual, 8),
+                            "disagreement": round(before_disagreement, 8),
+                            "verifier_score": previous_verifier_score,
+                            "budget_remaining_fraction": round(
+                                state_signal.budget_remaining_fraction,
+                                8,
+                            ),
+                        },
+                        "state_after": {
+                            "residual": round(after_residual, 8),
+                            "disagreement": round(after_disagreement, 8),
+                            "verifier_score": accepted_verifier_score,
+                            "observed_verifier_score": probe_score,
+                        },
+                        "affected_branches": affected_branches,
+                    }
+                )
+                selected_actions.append(action)
+                action_index += 1
+                previous_residual = before_residual
+                previous_verifier_score = accepted_verifier_score
                 stage_started = self._stage_checkpoint(
                     receipt=receipt,
                     budget=budget,
@@ -1390,11 +1744,28 @@ class LatentCortexEngine:
                         default=0,
                     ),
                     exchanges=ensemble.exchanges,
+                    cognitive_action=action.value,
+                    cognitive_actions=action_index,
                 )
+                if recurrence_budget_limited:
+                    break
             if recurrence_budget_limited:
                 break
         if bytecode_events:
             receipt.bytecode_events = bytecode_events
+        receipt.value_of_computation.update(
+            {
+                "executors": [action.value for action in action_executors],
+                "actions_selected": len(receipt.cognitive_action_trace),
+                "checked_transitions": sum(
+                    int(row["transition"]["checked"])
+                    for row in receipt.cognitive_action_trace
+                ),
+                "selected_actions": [
+                    action.value for action in selected_actions
+                ],
+            }
+        )
         for branch in ensemble.branches:
             if not branch.halted:
                 final, reverted = branch.halting.final_state(branch.z)
@@ -1408,6 +1779,8 @@ class LatentCortexEngine:
                     if budget.exhausted
                     else "schedule_complete"
                 ) + ("_reverted" if reverted else "")
+            if branch.escape is not None:
+                branch.escape.finalize()
 
         receipt.exchanges = ensemble.exchanges
 
@@ -1479,7 +1852,7 @@ class LatentCortexEngine:
                 outcomes = {a.outcome for a in branch.escape.attempts}
                 if "retained" in outcomes:
                     receipt.flag("attractor_escape_retained")
-                if "failed" in outcomes:
+                if outcomes & {"failed", "unresolved"}:
                     receipt.flag("attractor_escape_failed")
         receipt.escape = escape_receipts
         halting_mode = str((self.config.halting or {}).get("mode", "residual"))
