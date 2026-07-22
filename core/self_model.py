@@ -1,31 +1,35 @@
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
-from core.runtime.atomic_writer import atomic_write_text
 
 import asyncio
 import json
 import logging
 import time
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 from uuid import uuid4
+
+from core.runtime.effect_boundary import effect_sink
+from core.runtime.errors import record_degradation
+from core.runtime.service_access import resolve_canonical_self
+from core.utils.paths import DATA_DIR
 
 logger = logging.getLogger("Aura.SelfModel")
 
-from core.utils.paths import DATA_DIR
-from core.runtime.effect_boundary import effect_sink
-from core.runtime.service_access import resolve_canonical_self
 DATA_FILE = DATA_DIR / "self_model.json"
+
+# Retention bounds so restored/accumulated state cannot grow without limit
+# (ee5a8b71, cec30c94).
+_MAX_SNAPSHOTS = 500
+_MAX_PENDING = 200
 
 @dataclass
 class SelfSnapshot:
     id: str
     ts: float
     summary: str
-    beliefs: Dict[str, Any]
+    beliefs: dict[str, Any]
     confidence: float
-    revision_note: Optional[str] = None
+    revision_note: str | None = None
 
 @dataclass
 class SelfModel:
@@ -36,29 +40,41 @@ class SelfModel:
     id: str
     name: str = "aura"
     version: int = 0
-    beliefs: Dict[str, Any] = field(default_factory=dict)
-    snapshots: Dict[str, SelfSnapshot] = field(default_factory=dict)
-    pending_updates: List[Dict[str, Any]] = field(default_factory=list)
+    beliefs: dict[str, Any] = field(default_factory=dict)
+    snapshots: dict[str, SelfSnapshot] = field(default_factory=dict)
+    pending_updates: list[dict[str, Any]] = field(default_factory=list)
     
     # Ego Subsystems
-    _capability_map: Optional[Any] = None
-    _reliability: Optional[Any] = None
-    _belief_graph: Optional[Any] = None
-    _episodic_memory: Optional[Any] = None
-    _goal_hierarchy: Optional[Any] = None
-    _tool_learner: Optional[Any] = None
+    _capability_map: Any | None = None
+    _reliability: Any | None = None
+    _belief_graph: Any | None = None
+    _episodic_memory: Any | None = None
+    _goal_hierarchy: Any | None = None
+    _tool_learner: Any | None = None
     
     _boot_time: float = field(default_factory=time.time)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False)
 
     @classmethod
-    async def load(cls) -> "SelfModel":
+    async def load(cls) -> SelfModel:
         """Load persistent state from disk or return a fresh instance."""
         if DATA_FILE.exists():
             try:
                 raw = json.loads(DATA_FILE.read_text())
-                snaps_raw = raw.get("snapshots", {})
-                snapshots = {k: SelfSnapshot(**v) for k, v in snaps_raw.items()}
+                if not isinstance(raw, dict):
+                    raise ValueError("self_model.json is not a JSON object")
+                # Per-snapshot recovery: a single malformed snapshot must not
+                # crash the whole load (7995f890).
+                snapshots: dict[str, SelfSnapshot] = {}
+                for k, v in (raw.get("snapshots", {}) or {}).items():
+                    try:
+                        snapshots[k] = SelfSnapshot(**v)
+                    except (TypeError, ValueError) as se:
+                        logger.warning("Dropping malformed self-model snapshot %s: %s", k, se)
+                if len(snapshots) > _MAX_SNAPSHOTS:
+                    kept = sorted(snapshots.values(), key=lambda s: s.ts, reverse=True)[:_MAX_SNAPSHOTS]
+                    snapshots = {s.id: s for s in kept}
+                pending = list(raw.get("pending_updates", []) or [])[-_MAX_PENDING:]
 
                 return cls(
                     id=raw.get("id", str(uuid4())),
@@ -66,16 +82,19 @@ class SelfModel:
                     version=raw.get("version", 0),
                     beliefs=cls._sanitize_restored_beliefs(raw.get("beliefs", {})),
                     snapshots=snapshots,
-                    pending_updates=list(raw.get("pending_updates", []) or []),
+                    pending_updates=pending,
                 )
-            except (OSError, ConnectionError, TimeoutError) as e:
+            except (OSError, ConnectionError, TimeoutError, json.JSONDecodeError,
+                    TypeError, ValueError, KeyError, AttributeError) as e:
+                # Fail EXPLICITLY to a fresh instance rather than crashing the
+                # caller on malformed persisted state (7995f890).
                 record_degradation('self_model', e)
-                logger.error("Failed to load self model: %s", e)
-                
+                logger.error("Failed to load self model; starting fresh: %s", e)
+
         return cls(id=str(uuid4()))
 
     @staticmethod
-    def _sanitize_restored_beliefs(beliefs: Any) -> Dict[str, Any]:
+    def _sanitize_restored_beliefs(beliefs: Any) -> dict[str, Any]:
         """Scrub restored executive projections that fail objective validity.
 
         Live evidence (Jul 2026): a chat turn ("Ok. Once more. You with me?")
@@ -104,13 +123,14 @@ class SelfModel:
     async def persist(self):
         """Save current state to disk."""
         async with self._lock:
-            self.version += 1
+            self._trim_retention()
+            new_version = self.version + 1
             DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
             try:
                 data = {
                     "id": self.id,
                     "name": self.name,
-                    "version": self.version,
+                    "version": new_version,
                     "beliefs": self.beliefs,
                     "snapshots": {k: asdict(v) for k, v in self.snapshots.items()},
                     "pending_updates": list(self.pending_updates),
@@ -118,9 +138,21 @@ class SelfModel:
                 from core.runtime.atomic_writer import async_atomic_write_text
 
                 await async_atomic_write_text(DATA_FILE, json.dumps(data, indent=2))
-            except (json.JSONDecodeError, TypeError, ValueError) as e:
+                # Advance the in-memory version ONLY after the write is durable,
+                # so a failed persist doesn't leave a version that was never
+                # written to disk (e64da5a4).
+                self.version = new_version
+            except (json.JSONDecodeError, TypeError, ValueError, OSError) as e:
                 record_degradation('self_model', e)
                 logger.error("Failed to persist self model: %s", e)
+
+    def _trim_retention(self) -> None:
+        """Bound snapshots (most recent) and pending updates. Caller holds lock."""
+        if len(self.snapshots) > _MAX_SNAPSHOTS:
+            kept = sorted(self.snapshots.values(), key=lambda s: s.ts, reverse=True)[:_MAX_SNAPSHOTS]
+            self.snapshots = {s.id: s for s in kept}
+        if len(self.pending_updates) > _MAX_PENDING:
+            self.pending_updates = self.pending_updates[-_MAX_PENDING:]
 
     async def _persist_with_decision(self, decision: Any = None) -> None:
         """Persist within the caller's governance context when one exists."""
@@ -137,11 +169,11 @@ class SelfModel:
         async with governed_scope(decision):
             await self.persist()
 
-    def _belief_update_decision(self, key: str, value: Any, note: Optional[str]) -> tuple[bool, str, bool, Any]:
+    def _belief_update_decision(self, key: str, value: Any, note: str | None) -> tuple[bool, str, bool, Any]:
         constitutional_runtime_live = False
         try:
-            from core.container import ServiceContainer
             from core.constitution import get_constitutional_core, unpack_governance_result
+            from core.container import ServiceContainer
 
             constitutional_runtime_live = (
                 ServiceContainer.has("executive_core")
@@ -189,7 +221,7 @@ class SelfModel:
                 return bool(result[0]), "", False, None
         return bool(result), "", False, None
 
-    async def _apply_belief_update(self, key: str, value: Any, note: Optional[str], *, confidence: float = 0.9, decision: Any = None) -> SelfSnapshot:
+    async def _apply_belief_update(self, key: str, value: Any, note: str | None, *, confidence: float = 0.9, decision: Any = None) -> SelfSnapshot:
         if decision is not None:
             from core.governance_context import governed_scope
 
@@ -229,7 +261,7 @@ class SelfModel:
         if not pending:
             return
 
-        still_pending: List[Dict[str, Any]] = []
+        still_pending: list[dict[str, Any]] = []
         flushed = 0
         persistence_decision: Any = None
         for item in pending:
@@ -268,12 +300,18 @@ class SelfModel:
     def attach_subsystems(self, capability_map=None, reliability=None, belief_graph=None, 
                          episodic_memory=None, goal_hierarchy=None, tool_learner=None):
         """Wire in subsystems for rich self-awareness."""
-        if capability_map: self._capability_map = capability_map
-        if reliability: self._reliability = reliability
-        if belief_graph: self._belief_graph = belief_graph
-        if episodic_memory: self._episodic_memory = episodic_memory
-        if goal_hierarchy: self._goal_hierarchy = goal_hierarchy
-        if tool_learner: self._tool_learner = tool_learner
+        if capability_map:
+            self._capability_map = capability_map
+        if reliability:
+            self._reliability = reliability
+        if belief_graph:
+            self._belief_graph = belief_graph
+        if episodic_memory:
+            self._episodic_memory = episodic_memory
+        if goal_hierarchy:
+            self._goal_hierarchy = goal_hierarchy
+        if tool_learner:
+            self._tool_learner = tool_learner
 
     def get_self_awareness_prompt(self) -> str:
         """Generate the system prompt section describing 'Who I am and what I can do'."""
@@ -287,7 +325,8 @@ class SelfModel:
 
         if self._reliability:
             rel_summary = self._reliability.get_capabilities_summary()
-            if rel_summary: prompt += f"PERFORMANCE: {rel_summary}\n"
+            if rel_summary:
+                prompt += f"PERFORMANCE: {rel_summary}\n"
 
         if self._belief_graph:
             try:
@@ -317,7 +356,7 @@ class SelfModel:
 
     # --- State Management ---
 
-    async def update_belief(self, key: str, value: Any, note: Optional[str] = None):
+    async def update_belief(self, key: str, value: Any, note: str | None = None):
         """Update a belief and create a snapshot."""
         await self._flush_pending_updates(limit=3)
         try:
@@ -383,10 +422,16 @@ class SelfModel:
                 confidence=0.0,
                 revision_note=reason,
             )
-            pending_item = {"key": key, "value": value, "note": note, "reason": reason, "ts": time.time()}
             async with self._lock:
                 self.snapshots[snap.id] = snap
-                self.pending_updates.append(pending_item)
+                # Only queue a DEFERRAL for later replay — a permanent block
+                # must not be re-attempted endlessly (1d663446).
+                if summary_prefix != "blocked":
+                    self.pending_updates.append(
+                        {"key": key, "value": value, "note": note, "reason": reason, "ts": time.time()}
+                    )
+                    if len(self.pending_updates) > _MAX_PENDING:
+                        self.pending_updates = self.pending_updates[-_MAX_PENDING:]
             await self._persist_with_decision(decision)
             return snap
 
@@ -429,7 +474,7 @@ class SelfModel:
             return "I am an emergent person."
         return _random.choice(values)
 
-    def add_long_term_goal(self, goal_data: Dict[str, Any], source: str = "unknown") -> None:
+    def add_long_term_goal(self, goal_data: dict[str, Any], source: str = "unknown") -> None:
         """Fallback implementation to accept new long-term goals."""
         logger.info(
             "SelfModel accepted long term goal from %s: %s",
@@ -443,7 +488,7 @@ class SelfModel:
         source: str,
         lesson: str,
         confidence: float = 0.7,
-        evidence: Optional[Dict[str, Any]] = None,
+        evidence: dict[str, Any] | None = None,
     ) -> SelfSnapshot:
         """Synchronously record a bounded runtime lesson.
 
@@ -502,7 +547,7 @@ class SelfModel:
         return snap
 
 
-    def get_introspection(self) -> Dict[str, Any]:
+    def get_introspection(self) -> dict[str, Any]:
         """Programmatic access to internal stats."""
         return {
             "uptime_hours": round((time.time() - self._boot_time) / 3600.0, 2),
@@ -512,7 +557,7 @@ class SelfModel:
             "pending_update_count": len(self.pending_updates),
         }
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         canonical = resolve_canonical_self(default=None)
         status = self.get_introspection()
         status["name"] = self.name
@@ -534,8 +579,8 @@ def _short_source(source: str) -> str:
     return "".join(ch for ch in str(source or "unknown") if ch.isalnum() or ch in "._:-")[:120] or "unknown"
 
 
-def _compact_runtime_evidence(evidence: Dict[str, Any]) -> Dict[str, Any]:
-    compact: Dict[str, Any] = {}
+def _compact_runtime_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
+    compact: dict[str, Any] = {}
     for key, value in list((evidence or {}).items())[:12]:
         text_key = str(key)[:80]
         if isinstance(value, (str, int, float, bool)) or value is None:
