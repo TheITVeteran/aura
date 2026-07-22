@@ -13,6 +13,7 @@ import os
 import queue
 import re
 import subprocess
+import stat
 import sys
 import threading as _threading
 import time
@@ -69,6 +70,67 @@ _MODEL_LOAD_BACKGROUND_ADMISSION_TIMEOUT_FLAG = declare(
     description="Maximum background wait for the canonical model-load lease",
     owner="core.brain.llm.mlx_client",
 )
+
+
+_HEAVY_LANE_NAME_TOKENS = ("32b", "72b", "zenith", "solver", "cortex")
+
+
+def _model_is_heavy_lane(model_path: str | None) -> bool:
+    """True when a path names one of the big resident lanes.
+
+    Measured first: get_model_artifact_profile reads the artifact's own
+    config/weight index and derives a parameter count, so a renamed or
+    aliased checkpoint is still classified by what it IS. The historical
+    name tokens are unioned in rather than replaced — this predicate gates
+    memory admission, and for a safety guard the fail-safe direction is to
+    over-include. A profile that cannot be read falls back to the tokens
+    alone, which is exactly the old behaviour.
+    """
+    path = str(model_path or "")
+    if not path:
+        return False
+    measured = False
+    try:
+        from core.brain.llm.model_artifact_profile import model_is_heavy
+
+        measured = bool(model_is_heavy(path))
+    except (ImportError, AttributeError, OSError, RuntimeError, ValueError, TypeError) as exc:
+        _record_mlx_degradation(
+            exc,
+            action="model artifact profile unavailable; lane class fell back to naming",
+            severity="debug",
+        )
+    lowered = os.path.basename(path).lower()
+    named = any(token in lowered for token in _HEAVY_LANE_NAME_TOKENS)
+    return measured or named
+
+
+_DEEP_SOLVER_NAME_TOKENS = ("72b", "solver")
+
+
+def _model_is_deep_solver_lane(model_path: str | None) -> bool:
+    """True for the optional local deep Solver lane (the 72B class).
+
+    Same measured-first, union-with-naming rule as _model_is_heavy_lane: the
+    artifact's own parameter count is the authority, and the historical name
+    tokens are kept so a rename can only ever ADD caution, never remove it.
+    """
+    path = str(model_path or "")
+    if not path:
+        return False
+    measured = False
+    try:
+        from core.brain.llm.model_artifact_profile import model_size_class
+
+        measured = model_size_class(path) == "72b"
+    except (ImportError, AttributeError, OSError, RuntimeError, ValueError, TypeError) as exc:
+        _record_mlx_degradation(
+            exc,
+            action="model artifact profile unavailable; solver class fell back to naming",
+            severity="debug",
+        )
+    lowered = os.path.basename(path).lower()
+    return measured or any(token in lowered for token in _DEEP_SOLVER_NAME_TOKENS)
 
 
 def _model_path_is_deep_solver(model_path: str | None) -> bool:
@@ -1103,6 +1165,50 @@ def _shutdown_blocks_model_work(model_path: str, *, action: str) -> bool:
     return True
 
 
+def _open_spawn_lock_file(lock_file_path: str):
+    """Open the spawn lock as a verified regular file we own.
+
+    CP126 cb05a61b. The lock lived at a fixed path under the user's home and
+    was opened with O_CREAT|O_WRONLY and no O_NOFOLLOW, then wrapped in write
+    mode — which TRUNCATES whatever the path resolves to. Any other component
+    running as the same user could replace mlx_spawn.lock with a symlink and
+    have a worker spawn destroy an unrelated writable file.
+
+    O_NOFOLLOW refuses a symlink at the final component; the fstat checks
+    then confirm we are holding a regular file we own, with no extra hard
+    links pointing at it. Opened r+ rather than w: a lock file is held, never
+    written, so there is nothing to truncate.
+    """
+    flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        lock_fd = os.open(lock_file_path, flags, 0o600)
+    except OSError as exc:
+        # ELOOP/EMLINK here means the path IS a symlink: a tampering signal,
+        # not a transient error.
+        raise RuntimeError(
+            f"mlx_spawn_lock_unsafe:{lock_file_path}:{exc.__class__.__name__}"
+        ) from exc
+    try:
+        st = os.fstat(lock_fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise RuntimeError(f"mlx_spawn_lock_not_regular_file:{lock_file_path}")
+        if st.st_uid != os.getuid():
+            raise RuntimeError(
+                f"mlx_spawn_lock_foreign_owner:{lock_file_path}:uid={st.st_uid}"
+            )
+        if st.st_nlink != 1:
+            raise RuntimeError(
+                f"mlx_spawn_lock_hardlinked:{lock_file_path}:links={st.st_nlink}"
+            )
+        if st.st_mode & 0o077:
+            # Group/other permissions on a lock another user could then hold.
+            os.fchmod(lock_fd, 0o600)
+    except Exception:
+        os.close(lock_fd)
+        raise
+    return os.fdopen(lock_fd, "r+")
+
+
 def _acquire_spawn_file_lock(lock_file: Any, *, model_path: str) -> None:
     """Acquire the cross-process spawn lock with timeout and shutdown polling."""
 
@@ -2027,6 +2133,16 @@ def _normalize_probe_detail(stdout: str, stderr: str, returncode: int) -> str:
     return f"exit_{returncode}"
 
 
+# How long a real probe success may bridge a CURRENT enumeration crash, and
+# how many consecutive spawns it may cover. A crash that outlives this is not
+# a driver glitch; it is a broken runtime, and spawning onto it wastes a
+# 20-40GB load and strands the lane anyway.
+_LKG_PROBE_WINDOW_S = _finite_env_float(
+    "AURA_MLX_LKG_PROBE_WINDOW_S", 300.0, minimum=0.0
+)
+_LKG_PROBE_MAX_CONSECUTIVE = 2
+
+
 def _probe_mlx_runtime(force: bool = False) -> tuple[bool, str]:
     force = force or os.getenv("AURA_FORCE_MLX_RUNTIME_PROBE", "0") == "1"
     now = time.time()
@@ -2108,21 +2224,57 @@ def _probe_mlx_runtime(force: bool = False) -> tuple[bool, str]:
             detail = f"probe_exception:{type(exc).__name__}"
             break
 
-    # [STABILITY v57] Grace Fallback: if the probe just crashed with metal_device_enumeration_crash,
-    # but we have a "last known good" status within the last 30 minutes, we bypass the block.
-    # This prevents the "RuntimeError: mlx_runtime_probe_failed" cascade from stranding
-    # the 32B model due to a transient driver glitch.
+    # [STABILITY v57] Grace Fallback for a TRANSIENT enumeration crash.
+    #
+    # CP126 5f02bc9d. This used to accept any in-memory success younger than
+    # 30 minutes, with no bound on how many times it could fire. The probe we
+    # just ran said the selected runtime is broken RIGHT NOW — and the retry
+    # above already gave it a second chance — so a half-hour-old success was
+    # being allowed to certify a currently-failing Metal stack indefinitely,
+    # spawn after spawn, with nothing louder than a log line.
+    #
+    # It stays a bridge over a driver glitch, but a bounded one: a short
+    # window anchored to the last REAL success (LKG never refreshes the
+    # cache, so it cannot extend itself), a cap on consecutive uses, and a
+    # degradation record every time, because spawning a 20-40GB worker onto
+    # an unconfirmed runtime is a risk someone should be able to see.
     if not ok and detail == "metal_device_enumeration_crash":
         with _MLX_RUNTIME_PROBE_LOCK:
             cached_ok = _MLX_RUNTIME_PROBE.get("ok")
             cached_at = float(_MLX_RUNTIME_PROBE.get("checked_at", 0.0) or 0.0)
-            if cached_ok and (time.time() - cached_at) < 1800.0:
-                logger.warning(
-                    "♻️ [MLX] Runtime probe encountered enumeration crash, but using LKG (last known good) "
-                    "status from %.0fs ago to allow lane spawn.",
-                    time.time() - cached_at,
-                )
-                return True, "lkg_fallback_after_enumeration_crash"
+            age_s = time.time() - cached_at
+            lkg_uses = int(_MLX_RUNTIME_PROBE.get("lkg_uses", 0) or 0)
+            within_window = bool(cached_ok) and age_s < _LKG_PROBE_WINDOW_S
+            budget_left = lkg_uses < _LKG_PROBE_MAX_CONSECUTIVE
+            if within_window and budget_left:
+                _MLX_RUNTIME_PROBE["lkg_uses"] = lkg_uses + 1
+        if within_window and budget_left:
+            _record_mlx_degradation(
+                RuntimeError(
+                    f"metal_device_enumeration_crash bridged by last-known-good "
+                    f"status from {age_s:.0f}s ago "
+                    f"(use {lkg_uses + 1}/{_LKG_PROBE_MAX_CONSECUTIVE})"
+                ),
+                action="allowed worker spawn on an unconfirmed MLX runtime",
+                severity="warning",
+            )
+            logger.warning(
+                "♻️ [MLX] Runtime probe hit an enumeration crash; bridging with a "
+                "last-known-good status from %.0fs ago (use %d/%d).",
+                age_s, lkg_uses + 1, _LKG_PROBE_MAX_CONSECUTIVE,
+            )
+            return True, "lkg_fallback_after_enumeration_crash"
+        if cached_ok:
+            # The bridge is out: either the last real success aged out or the
+            # crash has repeated past the point where "transient" is credible.
+            _record_mlx_degradation(
+                RuntimeError(
+                    f"metal_device_enumeration_crash not bridged: "
+                    f"lkg_age={age_s:.0f}s uses={lkg_uses}"
+                ),
+                action="refused worker spawn until a live runtime probe succeeds",
+                severity="error",
+            )
 
     with _MLX_RUNTIME_PROBE_LOCK:
         _MLX_RUNTIME_PROBE.update(
@@ -2130,6 +2282,10 @@ def _probe_mlx_runtime(force: bool = False) -> tuple[bool, str]:
                 "ok": ok,
                 "detail": detail,
                 "checked_at": time.time(),
+                # A probe that actually ran resets the bridge: consecutive
+                # means consecutive, and a confirmed-good runtime has earned
+                # its grace back.
+                "lkg_uses": 0 if ok else int(_MLX_RUNTIME_PROBE.get("lkg_uses", 0) or 0),
             }
         )
     _store_probe_cache_to_disk(ok, detail)
@@ -2181,6 +2337,12 @@ class MLXLocalClient:
         self._last_progress_at = 0.0
         self._last_token_progress_at = 0.0
         self._latent_progress_by_request: dict[str, dict[str, Any]] = {}
+        # Explicit drop accounting for the latent progress channel: state that
+        # was refused (uncorrelated id) and state that aged out (window
+        # eviction) are different failures and are counted separately.
+        self._latent_progress_dropped_unknown = 0
+        self._latent_progress_evicted = 0
+        self._latent_progress_drop_reported = False
         self._last_ready_at = 0.0
         self._last_generation_completed_at = 0.0
         self._last_user_facing_completed_at = 0.0
@@ -2251,8 +2413,22 @@ class MLXLocalClient:
         self._current_request_seq = 0
 
     def _is_primary_or_deep_lane(self) -> bool:
-        lowered = os.path.basename(self.model_path).lower()
-        return any(token in lowered for token in ("32b", "72b", "zenith", "solver", "cortex"))
+        """Whether this lane is one of the big resident models.
+
+        CP126 24aaa654. This was decided purely by searching the path for
+        "32b"/"72b"/"zenith"/"solver"/"cortex", and it gates the memory
+        guards that stand between a 20-40GB allocation and jetsam. A renamed,
+        aliased or nonstandard checkpoint therefore walked straight past
+        them, while an unrelated path containing one of those tokens was
+        treated as heavy.
+
+        Measured artifact evidence (parameter count from the model's own
+        config/index) is the authority. The name tokens are kept as a UNION,
+        never a replacement: for a safety guard the fail-safe direction is to
+        over-include, so a model that either measures heavy or is named heavy
+        is treated as heavy.
+        """
+        return _model_is_heavy_lane(self.model_path)
 
     def _is_primary_lane(self) -> bool:
         """The serving cortex lane specifically — deep/solver excluded."""
@@ -2438,6 +2614,20 @@ class MLXLocalClient:
     def _mark_progress(self) -> None:
         self._last_progress_at = time.time()
 
+    def latent_progress_counters(self) -> dict[str, int]:
+        """Drop accounting for the latent progress channel.
+
+        Exposed so a refused stream is visible to health surfaces rather than
+        only to whoever reads the logs: dropped_unknown counts progress for
+        request ids this client never issued (a broken or hostile child),
+        evicted counts entries aged out of the bounded window (normal churn).
+        """
+        return {
+            "tracked": len(self._latent_progress_by_request),
+            "dropped_unknown": self._latent_progress_dropped_unknown,
+            "evicted": self._latent_progress_evicted,
+        }
+
     def _record_latent_progress(self, response: dict[str, Any]) -> None:
         """Retain bounded parent-side evidence for the active latent stage."""
 
@@ -2452,6 +2642,20 @@ class MLXLocalClient:
             and request_id != self._current_request_id
             and request_id not in self._latent_progress_by_request
         ):
+            # Counted, not merely ignored: a child streaming ids the parent
+            # never issued is either broken or compromised, and a silent drop
+            # makes that indistinguishable from a healthy stream.
+            self._latent_progress_dropped_unknown += 1
+            if not self._latent_progress_drop_reported:
+                self._latent_progress_drop_reported = True
+                _record_mlx_degradation(
+                    RuntimeError(
+                        f"latent progress for unknown request id {request_id!r} "
+                        f"from {os.path.basename(self.model_path)}"
+                    ),
+                    action="dropped uncorrelated latent progress from the worker",
+                    severity="warning",
+                )
             return
         allowed = {
             "stage",
@@ -2492,6 +2696,7 @@ class MLXLocalClient:
                 ),
             )[: len(self._latent_progress_by_request) - 64]:
                 self._latent_progress_by_request.pop(stale_id, None)
+                self._latent_progress_evicted += 1
 
     def _rebase_after_system_sleep(self) -> float:
         """Rebase active wall-clock anchors after host sleep/wake.
@@ -2829,12 +3034,11 @@ class MLXLocalClient:
         still arriving (worker is alive, just slow) was the #1 cause of
         'cortex died and never came back'.  As long as heartbeats arrive,
         the worker is alive — let it finish."""
-        lowered = os.path.basename(self.model_path).lower()
-        if "72b" in lowered or "solver" in lowered:
+        if _model_is_deep_solver_lane(self.model_path):
             if foreground_request and during_generation:
                 return 45.0
             return 90.0 if during_generation else 45.0
-        if "32b" in lowered or "cortex" in lowered or "zenith" in lowered:
+        if _model_is_heavy_lane(self.model_path):
             if foreground_request and during_generation:
                 return 45.0  # was 22s — too aggressive with recurrent depth
             return 60.0 if during_generation else 30.0
@@ -2857,8 +3061,7 @@ class MLXLocalClient:
             os.environ.get("AURA_FIRST_TOKEN_PRESSURE_ADAPT", "1")
         ).strip().lower() not in {"1", "true", "yes", "on"}:
             return 1.0, ""
-        lowered = os.path.basename(self.model_path).lower()
-        if not any(t in lowered for t in ("32b", "72b", "cortex", "zenith", "solver")):
+        if not _model_is_heavy_lane(self.model_path):
             return 1.0, ""
         try:
             snapshot = get_memory_pressure_snapshot()
@@ -2889,7 +3092,6 @@ class MLXLocalClient:
         return f":memory={snapshot.level}" if snapshot.warning else ""
 
     def _first_token_sla(self, *, foreground_request: bool = False) -> float:
-        lowered = os.path.basename(self.model_path).lower()
         prompt_chars = max(0, int(getattr(self, "_current_request_prompt_chars", 0) or 0))
         # Prompt eval dominates first-token latency on the 32B/72B lanes.
         # Recent live traces showed ~5.3k-token prompts taking 66-76s before
@@ -2916,7 +3118,7 @@ class MLXLocalClient:
         # _last_generation_completed_at is zero until a real generation has
         # finished; we use that as the cold-start signal.
         is_cold_start = float(getattr(self, "_last_generation_completed_at", 0.0) or 0.0) <= 0.0
-        if "72b" in lowered or "solver" in lowered:
+        if _model_is_deep_solver_lane(self.model_path):
             if foreground_request:
                 base = 52.0 if is_cold_start else 32.0
                 return _with_prompt_eval_headroom(
@@ -2926,7 +3128,7 @@ class MLXLocalClient:
                     cap_s=115.0,
                 )
             return 30.0
-        if "32b" in lowered or "cortex" in lowered or "zenith" in lowered:
+        if _model_is_heavy_lane(self.model_path):
             # [RESILIENCE] Recurrent depth 2x loops means prompt eval takes
             # significantly longer.  These SLAs must accommodate that without
             # killing the cortex.  Cold-start can legitimately need 90s for
@@ -2963,10 +3165,9 @@ class MLXLocalClient:
         envelope so the caller still has time to recover or use another lane.
         """
 
-        lowered = os.path.basename(self.model_path).lower()
-        if "72b" in lowered or "solver" in lowered:
+        if _model_is_deep_solver_lane(self.model_path):
             default = 165.0 if foreground_request else 120.0
-        elif "32b" in lowered or "cortex" in lowered or "zenith" in lowered:
+        elif _model_is_heavy_lane(self.model_path):
             default = 120.0 if foreground_request else 90.0
         else:
             default = 30.0 if foreground_request else 20.0
@@ -3077,11 +3278,10 @@ class MLXLocalClient:
         return timer
 
     def _token_stall_after(self, *, foreground_request: bool = False) -> float:
-        lowered = os.path.basename(self.model_path).lower()
         stretch, _ = self._pressure_adaptive_stretch()
-        if "72b" in lowered or "solver" in lowered:
+        if _model_is_deep_solver_lane(self.model_path):
             return (18.0 if foreground_request else 25.0) * stretch
-        if "32b" in lowered or "cortex" in lowered or "zenith" in lowered:
+        if _model_is_heavy_lane(self.model_path):
             # [RESILIENCE] Reverted from 10s — recurrent depth can cause
             # legitimate pauses between tokens during the recurrent block
             # computation. Sized up with the 2026-06-11 first-token
@@ -4184,6 +4384,59 @@ class MLXLocalClient:
     def expert_adapter_resident(self) -> str | None:
         return getattr(self, "_expert_adapter_path", None)
 
+    def _init_receipt_errors(self, res: dict[str, Any]) -> list[str]:
+        """Every reason this init receipt must NOT be trusted as READY.
+
+        Checks the exact model/worker identity and the recurrent-depth
+        invariants the lane declares it needs. Returns an empty list only when
+        the receipt positively establishes both.
+        """
+        errors: list[str] = []
+
+        identity = res.get("worker_identity")
+        try:
+            from core.brain.llm.latent_cortex.runtime_identity import (
+                worker_identity_errors,
+            )
+
+            errors.extend(worker_identity_errors(identity))
+        except ImportError as exc:
+            # No validator means no proof of identity. Absence of a check is
+            # not a passed check.
+            _record_mlx_degradation(
+                exc,
+                action="worker identity validator unavailable during handshake",
+                severity="error",
+            )
+            errors.append("worker_identity_validator_unavailable")
+
+        # The worker must be serving the model THIS client asked for.
+        if isinstance(identity, dict):
+            reported_path = str(identity.get("worker_model_path") or "")
+            if reported_path and _real_model_path(reported_path) != _real_model_path(
+                self.model_path
+            ):
+                errors.append("worker_model_path_mismatch")
+
+        # Recurrence: if this lane requires depth, the receipt must prove it.
+        required_loops = _expected_recurrent_loops_from_model_path(self.model_path)
+        recurrent_status = res.get("recurrent_depth")
+        if required_loops > 1:
+            if not isinstance(recurrent_status, dict):
+                errors.append("missing_recurrent_depth_receipt")
+            else:
+                if not bool(recurrent_status.get("active")):
+                    errors.append("recurrent_depth_inactive")
+                reported_loops = recurrent_status.get("loops")
+                if (
+                    isinstance(reported_loops, int)
+                    and reported_loops != required_loops
+                ):
+                    errors.append(
+                        f"recurrent_depth_mismatch:{reported_loops}!={required_loops}"
+                    )
+        return errors
+
     def get_worker_identity_snapshot(self) -> dict[str, Any]:
         """Return immutable identity evidence for resident-scale policy decisions."""
 
@@ -5082,8 +5335,8 @@ class MLXLocalClient:
         lock_dir = Path.home() / ".aura" / "run"
         lock_dir.mkdir(parents=True, exist_ok=True)
         lock_file_path = str(lock_dir / "mlx_spawn.lock")
-        lock_fd = os.open(lock_file_path, os.O_CREAT | os.O_WRONLY, 0o600)
-        with os.fdopen(lock_fd, "w") as lock_file:
+        lock_file = _open_spawn_lock_file(lock_file_path)
+        with lock_file:
             try:
                 logger.info("🔒 [MLX] Acquiring process-level spawn lock...")
                 _acquire_spawn_file_lock(lock_file, model_path=self.model_path)
@@ -5322,10 +5575,10 @@ class MLXLocalClient:
                             return
                     audit = ServiceContainer.get("subsystem_audit", default=None)
                     if audit:
-                        is_heavy = any(
-                            k in self.model_path.lower() for k in ["72b", "32b", "zenith"]
+                        tier_name = (
+                            "mlx_heavy" if _model_is_heavy_lane(self.model_path)
+                            else "mlx_light"
                         )
-                        tier_name = "mlx_heavy" if is_heavy else "mlx_light"
                         audit.heartbeat(tier_name)
                     continue
                 if status in {"progress", "token"}:
@@ -5969,6 +6222,33 @@ class MLXLocalClient:
                 try:
                     res = await _await_shared_future(fut, timeout_s=handshake_timeout)
                     if res.get("status") == "ok":
+                        # READINESS IS EARNED, NOT ANNOUNCED. CP126 34c42774:
+                        # any dict with status=ok used to set init_done,
+                        # heartbeats and lane=ready, and only THEN copy the
+                        # recurrence receipt and worker identity. A worker
+                        # that never reported recurrence, or reported a
+                        # malformed identity, was already serving by the time
+                        # anyone looked. The invariants are checked first and
+                        # the handshake fails if they do not hold — which
+                        # feeds the existing one-shot retry.
+                        readiness_errors = self._init_receipt_errors(res)
+                        if readiness_errors:
+                            _record_mlx_degradation(
+                                ValueError(
+                                    "init_receipt_invalid:" + ",".join(readiness_errors)
+                                ),
+                                action="refused READY on an unvalidated worker init receipt",
+                                severity="error",
+                            )
+                            self._init_done = False
+                            self._worker_identity = {}
+                            self._recurrent_depth_status = {}
+                            self._set_lane_state(
+                                "failed", "init_receipt_invalid",
+                            )
+                            if handshake_attempt == 0:
+                                continue
+                            return False
                         self._init_done = True
                         self._last_heartbeat = time.time()
                         self._last_ready_at = self._last_heartbeat
@@ -6910,7 +7190,11 @@ class MLXLocalClient:
         deadline = kwargs.get("deadline")
         if not isinstance(deadline, Deadline):
             timeout_s = _coerce_timeout_seconds(kwargs.pop("timeout", None))
-            is_heavy = any(k in self.model_path.lower() for k in ["72b", "32b", "zenith"])
+            # CP126 24aaa654: a request budget inferred from path substrings
+            # gave renamed or aliased resident checkpoints a 60s deadline
+            # meant for small models, and handed unrelated paths containing
+            # "32b" an inflated one. Measured artifact evidence decides.
+            is_heavy = _model_is_heavy_lane(self.model_path)
             deadline = get_deadline(timeout_s if timeout_s is not None else (240.0 if is_heavy else 60.0))
             kwargs["deadline"] = deadline
         init_timeout, soft_init_timeout = self._request_scoped_init_timeout(
