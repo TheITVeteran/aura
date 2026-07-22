@@ -24041,3 +24041,46 @@ This is total checkpoint record 356. The forecast remains 394-661 total
 records, now approximately 38-305 records after this checkpoint. Next: leave
 CP294 running, poll it for diagnostic evidence, and continue bounded RLC/system
 hardening that does not restart or compete with the resident proof run.
+
+## Checkpoint 2026-07-21-296: Notes/PDF Demo Task Keeps Exact User Text and Installed App Is Fresh
+
+The live demo failure around “open Notes, write `Hello. I’m Aura`, export as a
+PDF” was reduced to the current source contract rather than patched as a canned
+chat reply. Current `desktop_task` already derives an effectful primitive plan
+for the request and the chat bridge already rejects desktop success unless
+positive step counts and verified receipts are present. The remaining quality
+bug was in literal transcription: phrasing like “a note that says, `...`”
+treated the comma after `says` as note content. The literal-body parser now
+treats that comma as syntax, so the staged clipboard body and PDF body preserve
+the user-authored text exactly.
+
+Regression coverage now checks both the literal extraction case and the full
+Notes/PDF request class: nonzero steps, Notes focus, clipboard staging,
+keyboard paste, PDF rendering on the Desktop root, and no broad OS automation
+escalation when verified primitives cover the objective. Adjacent live-path
+checks were rerun: low-phi telemetry still does not block bounded desktop
+capability, high-cost self-preservation still fails closed when the metabolic
+guard is unavailable, and desktop chat handoff still propagates explicit owner
+desktop-action authority.
+
+The installed `/Applications/Aura.app` bundle was also rebuilt after the commit.
+`make app-check` now reports `FRESH: bundle=daa3f10c66 head=daa3f10c66`, so the
+Applications-launched app is aligned with the pushed source. `closeout-rubric`
+passed all 20 criteria. A full `closeout-audit` source-ledger run was started
+but stopped before completion because it was an oversized scan to run beside the
+resident CP294 proof process; its partial output is not used as evidence.
+
+Validation: the focused desktop-task literal/full-plan tests pass 8/8;
+capability self-preservation policy regressions pass 2/2; desktop chat handoff
+tests pass 3/3; bytecode compilation passes for `core/skills/desktop_task.py`
+and `tests/test_desktop_task_skill.py`; `make lint` passes; `git diff --check`
+passes; `make app-check` passes; `make closeout-rubric` passes.
+
+This is total checkpoint record 357. The forecast remains 394-661 total
+records, now approximately 37-304 records after this checkpoint. Next: keep
+CP294 running until a real recurrent-training/proof verdict exists, avoid
+editing CP294-bound proof sources mid-run, and continue bounded hardening on
+live chat/action reliability and the remaining semantic-review backlog. Hard
+fallback trees remain a last-resort guardrail only; normal recovery should keep
+moving upstream into grounded state, context, planning, and verified receipts so
+Aura can answer and act in her own words.
