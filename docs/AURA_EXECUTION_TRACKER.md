@@ -24084,3 +24084,31 @@ live chat/action reliability and the remaining semantic-review backlog. Hard
 fallback trees remain a last-resort guardrail only; normal recovery should keep
 moving upstream into grounded state, context, planning, and verified receipts so
 Aura can answer and act in her own words.
+
+## Checkpoint 2026-07-21-297: Grounded Recovery Rejects Known Bad Live Draft Classes
+
+The chat recovery path was tightened without turning Aura into a tree of canned
+responses. The one-shot grounded recovery still asks the live inference gate for
+a fresh, natural reply when a draft degrades; the change is only in acceptance:
+known transcript-breaking reasons that the reliability layer already marks as
+hard failures can no longer pass through that recovery window.
+
+Specifically, grounded recovery now rejects regenerated drafts flagged as
+`unprovoked_rebuke`, `unsupported_runtime_limits_claim`, or
+`cognitive_engine_failure_envelope`, in addition to the existing internal-leak,
+generic-assistant, deployment-routing, and ungrounded-person failures. This
+closes the class where recovery could produce the same “settle down/grow up,”
+fake runtime-limit, or fail-closed self-narration behaviors that caused the user
+to distrust the live chat path in the first place.
+
+Validation: `tests/test_grounded_competent_recovery.py` plus the live transcript
+failure reliability parametrization pass 14/14; bytecode compilation passes for
+`interface/routes/chat.py` and `tests/test_grounded_competent_recovery.py`;
+`make lint` passes; and `git diff --check` passes.
+
+This is total checkpoint record 358. The forecast remains 394-661 total
+records, now approximately 36-303 records after this checkpoint. Next: refresh
+the installed Aura.app bundle against this tracker commit, continue watching
+CP294 for real recurrent proof evidence, and proceed with live chat/action
+semantic-review items that do not edit CP294-bound proof sources while the run
+is active.
