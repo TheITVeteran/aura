@@ -5519,6 +5519,34 @@ header {
     overflow: visible;
 }
 
+.thought-tag-btn,
+.thought-card-tail,
+.thought-card-actions {
+    min-width: 0;
+    max-width: 100%;
+    flex-wrap: wrap;
+}
+
+.thought-chan {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    overflow-wrap: anywhere;
+    line-height: 1.35;
+}
+
+.thought-detail-grid {
+    grid-template-columns: minmax(8ch, max-content) minmax(0, 1fr);
+}
+
+.thought-detail-key,
+.thought-detail-val,
+.thought-sev,
+.input-hint {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+}
+
 .aurora-bg,
 .cosmos {
     contain: layout paint;

@@ -24427,3 +24427,26 @@ This is total checkpoint record 368. The forecast remains 394-661 total
 records, now approximately 26-293 records after this checkpoint. Next: commit
 and push CP307, rebuild `/Applications/Aura.app`, then continue chat/action
 reliability closeout while CP305 runs.
+
+## Checkpoint 2026-07-21-308: Neural Card Metadata Wraps Instead Of Clipping
+
+The chat composer and message bodies were already protected against fixed-height
+clipping, but the neural stream still had single-line ellipsis rules on channel
+metadata and compact card controls. That means long neural sources, warning
+labels, or detail values could visually truncate even when the underlying message
+body was preserved.
+
+The late long-form transcript safety cascade now covers neural card metadata:
+channel labels, card tails, action controls, severity pills, input hints, and
+detail grids wrap within their container instead of forcing ellipsis or overflow.
+The detail grid keeps a stable key/value layout with `minmax()` tracks so long
+values stay readable without resizing the card unpredictably.
+
+Validation: the existing desktop chat/neural no-clipping contract now asserts
+the metadata wrapping rules, and the focused runtime polish test passes. `git
+diff --check` passes and `make lint` passes.
+
+This is total checkpoint record 369. The forecast remains 394-661 total
+records, now approximately 25-292 records after this checkpoint. Next: commit
+and push CP308, rebuild `/Applications/Aura.app`, poll CP305, then continue
+runtime/chat/action reliability closeout.

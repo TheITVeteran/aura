@@ -922,6 +922,10 @@ def test_desktop_chat_and_neural_cards_do_not_clip_long_text():
     assert ".msg {\n    flex: 0 0 auto;\n    height: auto;\n    max-height: none;\n    overflow: visible;\n}" in aura_css
     assert ".msg-content {\n    min-width: 0;\n    max-width: min(76ch, 100%);" in aura_css
     assert ".thought-card {\n    height: auto;\n    max-height: none;\n    overflow: visible;\n}" in aura_css
+    assert ".thought-tag-btn,\n.thought-card-tail,\n.thought-card-actions" in aura_css
+    assert ".thought-chan {\n    white-space: normal;\n    overflow: visible;\n    text-overflow: clip;" in aura_css
+    assert ".thought-detail-grid {\n    grid-template-columns: minmax(8ch, max-content) minmax(0, 1fr);" in aura_css
+    assert ".thought-detail-key,\n.thought-detail-val,\n.thought-sev,\n.input-hint" in aura_css
     assert ".thought-block.expanded {\n    max-height: none;\n    height: auto;" in aura_css
     assert "max-height: 600px" not in aura_css
 
