@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import math
 import random
 import re
@@ -533,8 +534,6 @@ def _load_execution_spec(mode: str, path: str | None):
         return None
     if not path:
         raise ValueError("recurrent mode requires --execution-spec")
-    import json
-
     from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec
 
     spec_path = Path(path).expanduser().resolve(strict=True)
@@ -567,6 +566,7 @@ def sample_recurrent_group(
     """Bounded behavior-policy completions from the fixed recurrent graph."""
 
     from core.learning.recurrent_grpo import (
+        RecurrentSamplingAdmissionError,
         RecurrentSamplingConfig,
         sample_recurrent_completion,
     )
@@ -575,17 +575,39 @@ def sample_recurrent_group(
     sampling = RecurrentSamplingConfig(max_tokens=max_tokens)
     samples = []
     completions: list[str] = []
-    for index in range(size):
-        sample = sample_recurrent_completion(
-            model,
-            prompt_tokens,
-            spec=spec,
-            seed=_stable_seed(seed, "recurrent_completion", index),
-            sampling=sampling,
-            tokenizer=tokenizer,
-        )
+    rejected_receipts: list[dict[str, Any]] = []
+    max_attempts = max(size + 2, size * 4)
+    for attempt in range(max_attempts):
+        if len(samples) >= size:
+            break
+        try:
+            sample = sample_recurrent_completion(
+                model,
+                prompt_tokens,
+                spec=spec,
+                seed=_stable_seed(seed, "recurrent_completion", attempt),
+                sampling=sampling,
+                tokenizer=tokenizer,
+            )
+        except RecurrentSamplingAdmissionError as exc:
+            receipt = exc.sample.receipt()
+            receipt["rejected_attempt"] = attempt
+            rejected_receipts.append(receipt)
+            continue
         samples.append(sample)
         completions.append(tokenizer.decode(list(sample.tokens)))
+    if len(samples) < size:
+        payload = {
+            "schema": "aura.recurrent_group_sampling_exhausted.v1",
+            "requested": int(size),
+            "admitted": len(samples),
+            "attempts": int(max_attempts),
+            "rejected": rejected_receipts,
+        }
+        raise RuntimeError(
+            "recurrent group sampling exhausted admissible cached completions: "
+            + json.dumps(payload, separators=(",", ":"), sort_keys=True)[:2000]
+        )
     return prompt_tokens, samples, completions
 
 

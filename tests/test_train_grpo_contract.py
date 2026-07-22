@@ -27,6 +27,7 @@ from tools.train_grpo import (
     _record_recurrent_step_failure,
     _stable_seed,
     completion_logprob,
+    sample_recurrent_group,
 )
 
 
@@ -166,6 +167,118 @@ def test_recurrent_failure_receipt_is_immutable_and_latest_is_bound(tmp_path):
     assert payload["error"]["type"] == "RuntimeError"
     assert latest["receipt"] == str(receipt.relative_to(tmp_path))
     assert latest["receipt_sha256"] == hashlib.sha256(receipt.read_bytes()).hexdigest()
+
+
+def test_recurrent_group_resamples_inadmissible_cached_behavior(monkeypatch):
+    from core.learning import recurrent_grpo
+    from core.learning.recurrent_grpo import RecurrentSamplingAdmissionError
+
+    class Tokenizer:
+        eos_token_id = None
+
+        @staticmethod
+        def apply_chat_template(messages, **_kwargs):
+            return messages[0]["content"]
+
+        @staticmethod
+        def encode(text, **_kwargs):
+            return [1, 2, 3]
+
+        @staticmethod
+        def decode(tokens):
+            return ",".join(str(token) for token in tokens)
+
+    class FakeRejectedSample:
+        max_abs_logprob_drift = 8.8
+        mean_abs_logprob_drift = 0.03
+        clipped_token_fraction = 0.01
+
+        @staticmethod
+        def receipt():
+            return {"schema": "test.rejected"}
+
+    class FakeAdmittedSample:
+        behavior_admitted = True
+
+        def __init__(self, seed):
+            self.seed = seed
+            self.tokens = (seed % 7, seed % 11)
+
+    calls = []
+
+    def fake_sample_completion(_model, _prompt, **kwargs):
+        calls.append(kwargs["seed"])
+        if len(calls) == 1:
+            raise RecurrentSamplingAdmissionError(FakeRejectedSample())
+        return FakeAdmittedSample(kwargs["seed"])
+
+    monkeypatch.setattr(
+        recurrent_grpo,
+        "sample_recurrent_completion",
+        fake_sample_completion,
+    )
+
+    _prompt, samples, completions = sample_recurrent_group(
+        object(),
+        Tokenizer(),
+        _Task("resample", prompt="solve"),
+        spec=object(),
+        size=2,
+        max_tokens=8,
+        seed=17,
+    )
+
+    assert len(calls) == 3
+    assert len(samples) == len(completions) == 2
+    assert all(sample.behavior_admitted for sample in samples)
+
+
+def test_recurrent_group_exhaustion_reports_rejected_receipts(monkeypatch):
+    from core.learning import recurrent_grpo
+    from core.learning.recurrent_grpo import RecurrentSamplingAdmissionError
+
+    class Tokenizer:
+        @staticmethod
+        def apply_chat_template(messages, **_kwargs):
+            return messages[0]["content"]
+
+        @staticmethod
+        def encode(text, **_kwargs):
+            return [1, 2, 3]
+
+        @staticmethod
+        def decode(tokens):
+            return ",".join(str(token) for token in tokens)
+
+    class FakeRejectedSample:
+        max_abs_logprob_drift = 9.0
+        mean_abs_logprob_drift = 0.04
+        clipped_token_fraction = 0.02
+
+        @staticmethod
+        def receipt():
+            return {"schema": "test.rejected", "reason": "ppo_drift"}
+
+    def always_reject(*_args, **_kwargs):
+        raise RecurrentSamplingAdmissionError(FakeRejectedSample())
+
+    monkeypatch.setattr(recurrent_grpo, "sample_recurrent_completion", always_reject)
+
+    with pytest.raises(RuntimeError, match="sampling exhausted") as captured:
+        sample_recurrent_group(
+            object(),
+            Tokenizer(),
+            _Task("exhaust", prompt="solve"),
+            spec=object(),
+            size=2,
+            max_tokens=8,
+            seed=17,
+        )
+
+    message = str(captured.value)
+    assert "aura.recurrent_group_sampling_exhausted.v1" in message
+    assert '"admitted":0' in message
+    assert '"requested":2' in message
 
 
 def test_adapter_snapshot_is_atomically_published_as_real_safetensors(tmp_path):

@@ -23140,3 +23140,35 @@ admission: max=8.724697 mean=0.029001 clipped=0.003125`. The correct next
 bounded task is to repair the recurrent sampling/admission/resampling path and
 relaunch from the durable checkpoint or a new preregistered attempt without
 claiming frontier gains.
+
+## Checkpoint 2026-07-21-270: Recurrent GRPO Sampling Admission Resilience
+
+The CP259 resident-32B recurrent GRPO run failed correctly at step 2, but the
+failure exposed an overly brittle trainer behavior. The recurrent PPO admission
+bound itself was doing the right thing: one cached recurrent completion
+terminated at the token limit and replayed with an excessive max log-prob drift
+of 8.724697 against the 4.0 admission bound. The trainer then treated that
+single inadmissible sampled candidate as a terminal run failure rather than a
+candidate rejection.
+
+The recurrent group sampler now keeps the exact PPO admission thresholds and
+resamples inadmissible cached completions within a bounded attempt budget
+(`max(size + 2, size * 4)`). Rejected cached candidates are not optimized
+through; if the sampler cannot assemble a full admitted group it fails closed
+with a structured `aura.recurrent_group_sampling_exhausted.v1` payload binding
+requested/admitted counts, attempts, and rejected receipts. The fix also moves
+`json` to module scope so the exhausted-path receipt is actually publishable.
+
+Validation is clean without touching the resident model: recurrent resampling
+and exhaustion unit contracts pass, the existing trainer-group recurrent seed
+contract passes, the complete GRPO contract file passes, and bytecode
+compilation passes for the touched trainer/test modules. Focused command:
+`17 passed in 10.98s`.
+
+This is total checkpoint record 331. It removes one recurrent training blocker
+but does not claim a successful relaunch, held-out gain, frontier-level
+reasoning, or live 32B certificate. The forecast remains 394-661 total records,
+now approximately 63-330 records after this checkpoint. Next: publish CP270,
+launch a fresh detached resident-32B recurrent GRPO attempt from this repaired
+source, then continue with admission/curriculum fixes if the next terminal
+artifact exposes another real blocker.
