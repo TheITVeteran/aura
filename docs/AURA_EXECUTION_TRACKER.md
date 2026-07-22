@@ -25025,3 +25025,50 @@ count completion is approximately 52.4%-82.4%, with a midpoint planning
 estimate of 64.1%. Next: publish CP323, then continue the same state authority
 through selective memory and cognitive-operation/value-of-computation control
 before live resident wiring and causal ablations.
+
+## Checkpoint 2026-07-22-324: Failed Cognitive Work Cannot Disappear Or Repeat Silently
+
+Epistemic-state schema v5 turns operation telemetry into immutable cognitive
+history. Every terminal attempt records operator identity and version, canonical
+payload digest and typed claim/hypothesis/evidence inputs, stable attempt
+signature, exact parent state, start and completion times, affected claims and
+hypotheses, gained evidence, actual compute cost, outcome, failure code, retry
+parent, and bounded diagnostic detail. Failed, cancelled, and unknown outcomes
+require a machine-readable failure code; successful outcomes cannot carry one.
+
+The attempt signature deliberately excludes the changing state-version hash, so
+the same operator and inputs remain identifiable across recurrent passes. A
+state may contain only one retry lineage for that signature. Duplicate roots,
+orphan retries, changed-input retries disguised as the same attempt, overlapping
+execution, forks, cycles, retries after success, and chains beyond three attempts
+fail closed. A typed admission query returns whether work is new, requires an
+explicit latest-parent retry, is already complete, names a stale parent, or has
+exhausted its retry budget.
+
+Reference, lineage, and cost checks run before transaction mutation. Failed
+admission leaves the transaction reusable. `add_operation()` atomically charges
+its declared cost, and state publication requires total compute usage to equal
+the exact sum of immutable operation costs; callers cannot inject or refund
+compute outside history. The durable journal replays full failed/unknown history
+and therefore reconstructs the same retry decision after process recovery.
+
+Validation: focused calibration/state/journal contracts pass 71/71. The final
+fixed-snapshot RLC, latent-cortex, GWT, and execution-controller gate passes
+801/801 in 403.44 seconds. Focused Ruff and `git diff --check` pass. Adversarial
+contracts cover signature tampering, missing failure classifications, reversed
+time, unknown inputs, duplicate roots, orphan/stale/changed-input/overlapping
+retries, forks, post-success retry, retry exhaustion, cost escape, and durable
+recovery.
+
+SPARK-010 remains `PARTIAL`, not accepted: the state-side authority is complete,
+but the live recurrent controller does not yet persist operation intent/outcome
+or consult admission before execution. That causal wiring remains owned by
+SPARK-013 and SPARK-065-068. No resident model was loaded, and no capability gain
+is claimed.
+
+This is total checkpoint record 385. The revised forecast remains 466-733 total
+records, now approximately 81-348 records after this checkpoint. Checkpoint-
+count completion is approximately 52.5%-82.6%, with a midpoint planning
+estimate of 64.2%. Next: publish CP324, then implement the selective memory
+bridge and value-of-computation authority in this same state before live
+resident integration and causal ablations.

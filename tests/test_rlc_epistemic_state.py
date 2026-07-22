@@ -182,6 +182,37 @@ def genesis() -> EpistemicState:
     )
 
 
+def operation_record(
+    operation_id: str,
+    input_state_sha256: str,
+    *,
+    kind: OperationKind = OperationKind.COMPARE,
+    outcome: OperationOutcome = OperationOutcome.SUCCEEDED,
+    cost: float = 0.0,
+    input_payload_sha256: str | None = None,
+    started_at: float = 10.0,
+    completed_at: float = 11.0,
+    failure_code: str = "",
+    **kwargs,
+) -> OperationRecord:
+    return OperationRecord.create(
+        operation_id=operation_id,
+        kind=kind,
+        outcome=outcome,
+        input_state_sha256=input_state_sha256,
+        cost=cost,
+        operator_id="unit_test_operator",
+        operator_version="v1",
+        input_payload_sha256=input_payload_sha256 or text_sha256(f"operation-input:{operation_id}"),
+        started_at=started_at,
+        completed_at=completed_at,
+        failure_code=(
+            failure_code or ("test_failure" if outcome is not OperationOutcome.SUCCEEDED else "")
+        ),
+        **kwargs,
+    )
+
+
 def test_genesis_is_canonical_deeply_immutable_and_content_addressed():
     state = genesis()
     assert state.version == 0 and state.parent_sha256 == ""
@@ -233,11 +264,11 @@ def test_transaction_commits_typed_claim_hypothesis_evidence_operation_and_answe
         )
     )
     tx.add_operation(
-        OperationRecord(
+        operation_record(
             operation_id="op.verify",
+            input_state_sha256=tx.base.state_sha256,
             kind=OperationKind.CHECK_ASSUMPTION,
             outcome=OperationOutcome.SUCCEEDED,
-            input_state_sha256=tx.base.state_sha256,
             cost=3.0,
             affected_claim_ids=("claim.root",),
             evidence_gained=("ev.health",),
@@ -463,6 +494,8 @@ def test_claim_invalidation_revokes_descendants_hypothesis_and_answer_atomically
     affected = tx.invalidate_claim(
         "claim.root",
         operation_id="op.invalidate.root",
+        started_at=10.0,
+        completed_at=11.0,
         status=ClaimStatus.CONTRADICTED,
         cost=2.0,
     )
@@ -611,6 +644,8 @@ def test_portfolio_revision_is_atomic_budgeted_and_operation_receipted():
             HypothesisRecord("hyp.three", "Three", interval(0.2), HypothesisStatus.MINORITY),
         ),
         operation_id="op.portfolio.revise",
+        started_at=10.0,
+        completed_at=11.0,
         cost=2.5,
     )
     assert changed == ("hyp.one", "hyp.three", "hyp.two")
@@ -634,11 +669,15 @@ def test_failed_portfolio_revision_leaves_transaction_usable():
         tx.revise_hypothesis_portfolio(
             (HypothesisRecord("hyp.one", "One", interval(1.0), HypothesisStatus.UNRESOLVED),),
             operation_id="op.too-expensive",
+            started_at=10.0,
+            completed_at=11.0,
             cost=101.0,
         )
     tx.revise_hypothesis_portfolio(
         (HypothesisRecord("hyp.one", "One", interval(1.0), HypothesisStatus.UNRESOLVED),),
         operation_id="op.valid",
+        started_at=10.0,
+        completed_at=11.0,
         cost=1.0,
     )
     state = machine.commit(tx)
@@ -660,6 +699,8 @@ def test_portfolio_revision_cannot_delete_or_rewrite_hypothesis_identity():
         tx.revise_hypothesis_portfolio(
             (HypothesisRecord("hyp.one", "One", interval(1.0), HypothesisStatus.FAVORED),),
             operation_id="op.delete",
+            started_at=10.0,
+            completed_at=11.0,
         )
     with pytest.raises(EpistemicStateError, match="cannot rewrite hypothesis identity"):
         tx.revise_hypothesis_portfolio(
@@ -668,6 +709,8 @@ def test_portfolio_revision_cannot_delete_or_rewrite_hypothesis_identity():
                 HypothesisRecord("hyp.two", "Two", interval(0.4), HypothesisStatus.ACTIVE),
             ),
             operation_id="op.rewrite",
+            started_at=10.0,
+            completed_at=11.0,
         )
     assert tx.commit().hypotheses == machine.snapshot().hypotheses
 
@@ -712,16 +755,16 @@ def test_refuted_hypothesis_revival_requires_refuting_claim_to_be_reopened():
                 ),
             ),
             operation_id="op.revive.invalid",
+            started_at=10.0,
+            completed_at=11.0,
         )
 
     tx.replace_claim(ClaimRecord("claim.refuting", "Refuting", ClaimStatus.PROPOSED, interval()))
     tx.add_operation(
-        OperationRecord(
+        operation_record(
             "op.reopen.claim",
-            OperationKind.BACKTRACK,
-            OperationOutcome.SUCCEEDED,
             tx.base.state_sha256,
-            0.0,
+            kind=OperationKind.BACKTRACK,
             affected_claim_ids=("claim.refuting",),
         )
     )
@@ -736,6 +779,8 @@ def test_refuted_hypothesis_revival_requires_refuting_claim_to_be_reopened():
             ),
         ),
         operation_id="op.revive.valid",
+        started_at=12.0,
+        completed_at=13.0,
     )
     state = machine.commit(tx)
     assert state.hypotheses[0].status is HypothesisStatus.UNRESOLVED
@@ -747,18 +792,288 @@ def test_refuted_hypothesis_revival_requires_refuting_claim_to_be_reopened():
 
 def test_operation_cannot_reference_unknown_hypothesis():
     tx = EpistemicStateMachine(genesis()).begin()
-    tx.add_operation(
-        OperationRecord(
-            "op.unknown.hypothesis",
-            OperationKind.COMPARE,
-            OperationOutcome.SUCCEEDED,
-            tx.base.state_sha256,
-            0.0,
-            affected_hypothesis_ids=("hyp.missing",),
-        )
-    )
     with pytest.raises(EpistemicStateError, match="unknown hypothesis"):
-        tx.commit()
+        tx.add_operation(
+            operation_record(
+                "op.unknown.hypothesis",
+                tx.base.state_sha256,
+                affected_hypothesis_ids=("hyp.missing",),
+            )
+        )
+    assert tx.commit().operations == ()
+
+
+def test_operation_record_binds_identity_inputs_timing_outcome_and_round_trips():
+    base = genesis()
+    record = operation_record(
+        "op.typed",
+        base.state_sha256,
+        kind=OperationKind.FALSIFY,
+        outcome=OperationOutcome.FAILED,
+        cost=1.5,
+        input_payload_sha256=text_sha256("typed-payload"),
+        input_claim_ids=(),
+        input_evidence_ids=("ev.problem",),
+        started_at=20.0,
+        completed_at=21.5,
+        failure_code="counterexample_not_found",
+        detail="No counterexample within the bounded search.",
+    )
+    assert OperationRecord.from_dict(record.to_dict()) == record
+    assert record.operator_id == "unit_test_operator"
+    assert record.input_evidence_ids == ("ev.problem",)
+    assert record.failure_code == "counterexample_not_found"
+
+    with pytest.raises(EpistemicStateError, match="attempt digest"):
+        replace(record, attempt_sha256="0" * 64)
+    with pytest.raises(EpistemicStateError, match="requires a failure code"):
+        OperationRecord.create(
+            operation_id="op.failed.no-code",
+            kind=OperationKind.COMPARE,
+            outcome=OperationOutcome.FAILED,
+            input_state_sha256=base.state_sha256,
+            cost=0.0,
+            operator_id="unit_test_operator",
+            operator_version="v1",
+            input_payload_sha256=text_sha256("failed-no-code"),
+            started_at=1.0,
+            completed_at=2.0,
+        )
+    with pytest.raises(EpistemicStateError, match="cannot carry a failure code"):
+        operation_record(
+            "op.success.with-code",
+            base.state_sha256,
+            failure_code="impossible_failure",
+        )
+    with pytest.raises(EpistemicStateError, match="completed before"):
+        operation_record(
+            "op.reverse-time",
+            base.state_sha256,
+            started_at=3.0,
+            completed_at=2.0,
+        )
+
+
+def test_operation_admission_requires_explicit_bounded_retry_lineage():
+    machine = EpistemicStateMachine(genesis())
+    payload = text_sha256("same-falsification-input")
+    root_tx = machine.begin()
+    root = operation_record(
+        "op.attempt.1",
+        root_tx.base.state_sha256,
+        outcome=OperationOutcome.FAILED,
+        cost=1.0,
+        input_payload_sha256=payload,
+        started_at=10.0,
+        completed_at=11.0,
+        failure_code="transient_solver_failure",
+    )
+    assert root_tx.base.operation_admission(root.attempt_sha256).allowed is True
+    root_tx.add_operation(root)
+    after_root = machine.commit(root_tx)
+    denied = after_root.operation_admission(root.attempt_sha256)
+    assert denied.allowed is False
+    assert denied.reason == "explicit_retry_link_required"
+    assert denied.retry_of_operation_id == root.operation_id
+
+    duplicate_tx = machine.begin()
+    duplicate = operation_record(
+        "op.duplicate.root",
+        duplicate_tx.base.state_sha256,
+        outcome=OperationOutcome.FAILED,
+        input_payload_sha256=payload,
+        started_at=12.0,
+        completed_at=13.0,
+    )
+    with pytest.raises(EpistemicStateError, match="explicit retry lineage"):
+        duplicate_tx.add_operation(duplicate)
+
+    changed_input = operation_record(
+        "op.retry.changed-input",
+        duplicate_tx.base.state_sha256,
+        outcome=OperationOutcome.FAILED,
+        input_payload_sha256=text_sha256("different-input"),
+        started_at=12.0,
+        completed_at=13.0,
+        retry_of_operation_id=root.operation_id,
+    )
+    with pytest.raises(EpistemicStateError, match="changes canonical inputs"):
+        duplicate_tx.add_operation(changed_input)
+    early_retry = operation_record(
+        "op.retry.overlap",
+        duplicate_tx.base.state_sha256,
+        outcome=OperationOutcome.FAILED,
+        input_payload_sha256=payload,
+        started_at=10.5,
+        completed_at=12.0,
+        retry_of_operation_id=root.operation_id,
+    )
+    with pytest.raises(EpistemicStateError, match="before its parent completed"):
+        duplicate_tx.add_operation(early_retry)
+    orphan_retry = operation_record(
+        "op.retry.orphan",
+        duplicate_tx.base.state_sha256,
+        outcome=OperationOutcome.UNKNOWN,
+        input_payload_sha256=payload,
+        started_at=12.0,
+        completed_at=13.0,
+        retry_of_operation_id="op.missing",
+        failure_code="interrupted_before_receipt",
+    )
+    with pytest.raises(EpistemicStateError, match="unknown attempt"):
+        duplicate_tx.add_operation(orphan_retry)
+
+    retry = operation_record(
+        "op.attempt.2",
+        duplicate_tx.base.state_sha256,
+        outcome=OperationOutcome.FAILED,
+        cost=1.0,
+        input_payload_sha256=payload,
+        started_at=12.0,
+        completed_at=13.0,
+        retry_of_operation_id=root.operation_id,
+        failure_code="transient_solver_failure",
+    )
+    assert after_root.operation_admission(
+        retry.attempt_sha256,
+        retry_of_operation_id=root.operation_id,
+    ).allowed
+    duplicate_tx.add_operation(retry)
+    after_retry = machine.commit(duplicate_tx)
+    stale = after_retry.operation_admission(
+        retry.attempt_sha256,
+        retry_of_operation_id=root.operation_id,
+    )
+    assert stale.allowed is False and stale.reason == "stale_retry_parent"
+
+    final_tx = machine.begin()
+    final = operation_record(
+        "op.attempt.3",
+        final_tx.base.state_sha256,
+        outcome=OperationOutcome.SUCCEEDED,
+        cost=1.0,
+        input_payload_sha256=payload,
+        started_at=14.0,
+        completed_at=15.0,
+        retry_of_operation_id=retry.operation_id,
+    )
+    final_tx.add_operation(final)
+    completed = machine.commit(final_tx)
+    assert [item.operation_id for item in completed.operation_attempts(final.attempt_sha256)] == [
+        "op.attempt.1",
+        "op.attempt.2",
+        "op.attempt.3",
+    ]
+    admission = completed.operation_admission(final.attempt_sha256)
+    assert admission.allowed is False
+    assert admission.reason == "operation_already_succeeded"
+    assert completed.budget.used == 3.0
+    post_success_tx = machine.begin()
+    post_success = operation_record(
+        "op.attempt.after-success",
+        post_success_tx.base.state_sha256,
+        outcome=OperationOutcome.FAILED,
+        input_payload_sha256=payload,
+        started_at=16.0,
+        completed_at=17.0,
+        retry_of_operation_id=final.operation_id,
+    )
+    with pytest.raises(EpistemicStateError, match="successful operation cannot be retried"):
+        post_success_tx.add_operation(post_success)
+
+
+def test_operation_retry_budget_and_forks_fail_before_transaction_mutation():
+    machine = EpistemicStateMachine(genesis())
+    payload = text_sha256("bounded-retry-input")
+    parent_id = ""
+    completed_at = 10.0
+    for index in range(1, 4):
+        tx = machine.begin()
+        operation = operation_record(
+            f"op.bounded.{index}",
+            tx.base.state_sha256,
+            outcome=OperationOutcome.FAILED,
+            input_payload_sha256=payload,
+            started_at=completed_at,
+            completed_at=completed_at + 1.0,
+            retry_of_operation_id=parent_id,
+        )
+        tx.add_operation(operation)
+        machine.commit(tx)
+        parent_id = operation.operation_id
+        completed_at += 2.0
+
+    state = machine.snapshot()
+    admission = state.operation_admission(
+        state.operations[0].attempt_sha256,
+        retry_of_operation_id=parent_id,
+    )
+    assert admission.allowed is False
+    assert admission.reason == "operation_retry_budget_exhausted"
+    tx = machine.begin()
+    fourth = operation_record(
+        "op.bounded.4",
+        tx.base.state_sha256,
+        outcome=OperationOutcome.FAILED,
+        input_payload_sha256=payload,
+        started_at=completed_at,
+        completed_at=completed_at + 1.0,
+        retry_of_operation_id=parent_id,
+    )
+    with pytest.raises(EpistemicStateError, match="retry budget"):
+        tx.add_operation(fourth)
+    assert tx.commit().operations == state.operations
+
+    fork_machine = EpistemicStateMachine(genesis())
+    first_tx = fork_machine.begin()
+    root = operation_record(
+        "op.fork.root",
+        first_tx.base.state_sha256,
+        outcome=OperationOutcome.FAILED,
+        input_payload_sha256=text_sha256("fork-input"),
+    )
+    first_tx.add_operation(root)
+    fork_machine.commit(first_tx)
+    fork_tx = fork_machine.begin()
+    first_retry = operation_record(
+        "op.fork.a",
+        fork_tx.base.state_sha256,
+        outcome=OperationOutcome.FAILED,
+        input_payload_sha256=text_sha256("fork-input"),
+        started_at=12.0,
+        completed_at=13.0,
+        retry_of_operation_id=root.operation_id,
+    )
+    fork_tx.add_operation(first_retry)
+    fork = operation_record(
+        "op.fork.b",
+        fork_tx.base.state_sha256,
+        outcome=OperationOutcome.FAILED,
+        input_payload_sha256=text_sha256("fork-input"),
+        started_at=12.0,
+        completed_at=13.0,
+        retry_of_operation_id=root.operation_id,
+    )
+    with pytest.raises(EpistemicStateError, match="forks"):
+        fork_tx.add_operation(fork)
+    forked_state = fork_machine.commit(fork_tx)
+    assert forked_state.operation_attempts(first_retry.attempt_sha256)[-1].operation_id == (
+        "op.fork.a"
+    )
+
+
+def test_operation_inputs_and_compute_cost_cannot_escape_the_ledger():
+    tx = EpistemicStateMachine(genesis()).begin()
+    unknown_input = operation_record(
+        "op.unknown.input",
+        tx.base.state_sha256,
+        input_claim_ids=("claim.missing",),
+    )
+    with pytest.raises(EpistemicStateError, match="unknown claim"):
+        tx.add_operation(unknown_input)
+    with pytest.raises(EpistemicStateError, match="outside operation history"):
+        tx.set_budget(ComputeBudgetState(total=100.0, used=1.0, tool_calls_total=4))
+    assert tx.commit().budget.used == 0.0
 
 
 def test_unestablished_premises_cannot_retain_supported_descendants_or_favored_hypotheses():
@@ -874,12 +1189,9 @@ def test_claim_replacement_requires_successful_operation_receipt():
     tx = machine.begin()
     tx.replace_claim(ClaimRecord("claim.one", "Revised", ClaimStatus.PROPOSED, interval()))
     tx.add_operation(
-        OperationRecord(
+        operation_record(
             "op.revise",
-            OperationKind.COMPARE,
-            OperationOutcome.SUCCEEDED,
             tx.base.state_sha256,
-            0.0,
             affected_claim_ids=("claim.one",),
         )
     )
@@ -896,9 +1208,17 @@ def test_failed_invalidation_does_not_partially_mutate_transaction():
         tx.invalidate_claim(
             "claim.one",
             operation_id="op.too-expensive",
+            started_at=10.0,
+            completed_at=11.0,
             cost=101.0,
         )
-    tx.invalidate_claim("claim.one", operation_id="op.valid", cost=1.0)
+    tx.invalidate_claim(
+        "claim.one",
+        operation_id="op.valid",
+        started_at=10.0,
+        completed_at=11.0,
+        cost=1.0,
+    )
     state = machine.commit(tx)
     assert state.operations[0].operation_id == "op.valid"
     assert state.budget.used == 1.0
@@ -922,21 +1242,31 @@ def test_budget_caps_are_monotonic_and_cannot_be_changed_by_transaction():
         tx.set_budget(ComputeBudgetState(total=200.0, tool_calls_total=4))
     machine = EpistemicStateMachine(genesis())
     advanced = machine.begin()
-    advanced.set_budget(ComputeBudgetState(total=100.0, used=4.0, tool_calls_total=4))
+    advanced.add_operation(operation_record("op.consume", advanced.base.state_sha256, cost=4.0))
+    advanced.set_budget(
+        ComputeBudgetState(
+            total=100.0,
+            used=4.0,
+            tool_calls_total=4,
+            tool_calls_used=1,
+        )
+    )
     machine.commit(advanced)
     with pytest.raises(EpistemicStateError, match="cannot refund"):
-        machine.begin().set_budget(ComputeBudgetState(total=100.0, used=3.0, tool_calls_total=4))
+        machine.begin().set_budget(
+            ComputeBudgetState(total=100.0, used=4.0, tool_calls_total=4, tool_calls_used=0)
+        )
 
 
 def test_operation_must_bind_transaction_base_hash():
     tx = EpistemicStateMachine(genesis()).begin()
     with pytest.raises(EpistemicStateError, match="input hash"):
         tx.add_operation(
-            OperationRecord(
+            operation_record(
                 operation_id="op.wrong",
+                input_state_sha256="f" * 64,
                 kind=OperationKind.COMPARE,
                 outcome=OperationOutcome.UNKNOWN,
-                input_state_sha256="f" * 64,
                 cost=1.0,
             )
         )

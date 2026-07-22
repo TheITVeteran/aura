@@ -47,6 +47,39 @@ def interval() -> ProbabilityInterval:
     return ProbabilityInterval(0.4, 0.5, 0.6, "uncalibrated_test_interval", 0)
 
 
+def operation_record(
+    operation_id: str,
+    input_state_sha256: str,
+    *,
+    outcome: OperationOutcome = OperationOutcome.SUCCEEDED,
+    cost: float = 0.0,
+    input_payload_sha256: str | None = None,
+    started_at: float = 10.0,
+    completed_at: float = 11.0,
+    retry_of_operation_id: str = "",
+    failure_code: str = "",
+    affected_hypothesis_ids=(),
+) -> OperationRecord:
+    return OperationRecord.create(
+        operation_id=operation_id,
+        kind=OperationKind.COMPARE,
+        outcome=outcome,
+        input_state_sha256=input_state_sha256,
+        cost=cost,
+        operator_id="journal_test_operator",
+        operator_version="v1",
+        input_payload_sha256=input_payload_sha256
+        or text_sha256(f"journal-operation:{operation_id}"),
+        started_at=started_at,
+        completed_at=completed_at,
+        retry_of_operation_id=retry_of_operation_id,
+        failure_code=(
+            failure_code or ("journal_failure" if outcome is not OperationOutcome.SUCCEEDED else "")
+        ),
+        affected_hypothesis_ids=affected_hypothesis_ids,
+    )
+
+
 def calibration_profile() -> CalibrationProfile:
     rows = tuple(
         CalibrationObservation(
@@ -159,6 +192,30 @@ def test_journal_initializes_recovers_and_continues_exact_state(tmp_path: Path):
     }
 
 
+def test_journal_recovers_complete_failed_operation_history_and_admission(tmp_path: Path):
+    path = tmp_path / "operation-history.jsonl"
+    initial = genesis()
+    machine = EpistemicStateMachine(initial, persistence=EpistemicStateJournal(path))
+    tx = machine.begin()
+    operation = operation_record(
+        "op.failed",
+        tx.base.state_sha256,
+        outcome=OperationOutcome.FAILED,
+        cost=2.0,
+        input_payload_sha256=text_sha256("durable-operation-input"),
+        failure_code="bounded_solver_timeout",
+    )
+    tx.add_operation(operation)
+    committed = machine.commit(tx)
+    recovered = EpistemicStateMachine(initial, persistence=EpistemicStateJournal(path)).snapshot()
+    assert recovered == committed
+    assert recovered.operations == (operation,)
+    admission = recovered.operation_admission(operation.attempt_sha256)
+    assert admission.allowed is False
+    assert admission.reason == "explicit_retry_link_required"
+    assert admission.retry_of_operation_id == operation.operation_id
+
+
 def test_journal_persists_calibration_and_rejects_history_rewrite(tmp_path: Path):
     path = tmp_path / "calibration.jsonl"
     initial = genesis()
@@ -239,12 +296,9 @@ def test_journal_rejects_hypothesis_revision_without_successful_operation(tmp_pa
         hypotheses=(revised,),
         claims=base.claims,
         operations=(
-            OperationRecord(
+            operation_record(
                 "op.revise.hypothesis",
-                OperationKind.COMPARE,
-                OperationOutcome.SUCCEEDED,
                 base.state_sha256,
-                0.0,
                 affected_hypothesis_ids=("hyp.one",),
             ),
         ),

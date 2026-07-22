@@ -25,7 +25,7 @@ from core.brain.llm.latent_cortex.epistemic_calibration import (
     CalibrationProfile,
 )
 
-EPISTEMIC_STATE_SCHEMA = "aura.rlc.epistemic_state.v4"
+EPISTEMIC_STATE_SCHEMA = "aura.rlc.epistemic_state.v5"
 
 MAX_OBJECTIVE_CHARS = 16_384
 MAX_TEXT_CHARS = 8_192
@@ -37,6 +37,7 @@ MAX_HYPOTHESES = 64
 MAX_CLAIMS = 512
 MAX_OPERATIONS = 512
 MAX_REFS = 128
+MAX_OPERATION_ATTEMPTS = 3
 MIN_HYPOTHESIS_MASS = 0.02
 MAX_MINORITY_MASS = 0.25
 FAVORED_HYPOTHESIS_MASS = 0.50
@@ -947,15 +948,56 @@ class HypothesisRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class OperationAdmission:
+    allowed: bool
+    reason: str
+    attempt_sha256: str
+    prior_attempt_count: int
+    retry_of_operation_id: str = ""
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.allowed, bool):
+            raise EpistemicStateError("operation admission allowed must be boolean")
+        object.__setattr__(self, "reason", _strict_id(self.reason, name="admission.reason"))
+        _strict_digest(self.attempt_sha256, name="admission.attempt_sha256")
+        if (
+            not isinstance(self.prior_attempt_count, int)
+            or isinstance(self.prior_attempt_count, bool)
+            or not 0 <= self.prior_attempt_count <= MAX_OPERATION_ATTEMPTS
+        ):
+            raise EpistemicStateError("operation admission attempt count is out of bounds")
+        if self.retry_of_operation_id:
+            object.__setattr__(
+                self,
+                "retry_of_operation_id",
+                _strict_id(
+                    self.retry_of_operation_id,
+                    name="admission.retry_of_operation_id",
+                ),
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class OperationRecord:
     operation_id: str
     kind: OperationKind
     outcome: OperationOutcome
     input_state_sha256: str
     cost: float
+    operator_id: str
+    operator_version: str
+    input_payload_sha256: str
+    attempt_sha256: str
+    started_at: float
+    completed_at: float
+    input_claim_ids: tuple[str, ...] = ()
+    input_hypothesis_ids: tuple[str, ...] = ()
+    input_evidence_ids: tuple[str, ...] = ()
     affected_claim_ids: tuple[str, ...] = ()
     affected_hypothesis_ids: tuple[str, ...] = ()
     evidence_gained: tuple[str, ...] = ()
+    retry_of_operation_id: str = ""
+    failure_code: str = ""
     detail: str = ""
 
     def __post_init__(self) -> None:
@@ -966,6 +1008,40 @@ class OperationRecord:
             raise EpistemicStateError("operation kind/outcome use invalid enums")
         _strict_digest(self.input_state_sha256, name="operation.input_state_sha256")
         object.__setattr__(self, "cost", _nonnegative(self.cost, name="operation.cost"))
+        object.__setattr__(
+            self,
+            "operator_id",
+            _strict_id(self.operator_id, name="operation.operator_id"),
+        )
+        object.__setattr__(
+            self,
+            "operator_version",
+            _strict_id(self.operator_version, name="operation.operator_version"),
+        )
+        _strict_digest(self.input_payload_sha256, name="operation.input_payload_sha256")
+        object.__setattr__(
+            self,
+            "input_claim_ids",
+            _bounded_ids(
+                self.input_claim_ids,
+                name="operation input claims",
+                limit=MAX_CLAIMS,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "input_hypothesis_ids",
+            _bounded_ids(
+                self.input_hypothesis_ids,
+                name="operation input hypotheses",
+                limit=MAX_HYPOTHESES,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "input_evidence_ids",
+            _bounded_ids(self.input_evidence_ids, name="operation input evidence"),
+        )
         object.__setattr__(
             self,
             "affected_claim_ids",
@@ -987,6 +1063,47 @@ class OperationRecord:
         object.__setattr__(
             self, "evidence_gained", _bounded_ids(self.evidence_gained, name="operation evidence")
         )
+        started = _nonnegative(self.started_at, name="operation.started_at")
+        completed = _nonnegative(self.completed_at, name="operation.completed_at")
+        if completed < started:
+            raise EpistemicStateError("operation completed before it started")
+        object.__setattr__(self, "started_at", started)
+        object.__setattr__(self, "completed_at", completed)
+        expected_attempt = self.compute_attempt_sha256(
+            kind=self.kind,
+            operator_id=self.operator_id,
+            operator_version=self.operator_version,
+            input_payload_sha256=self.input_payload_sha256,
+            input_claim_ids=self.input_claim_ids,
+            input_hypothesis_ids=self.input_hypothesis_ids,
+            input_evidence_ids=self.input_evidence_ids,
+        )
+        if _strict_digest(self.attempt_sha256, name="operation.attempt_sha256") != expected_attempt:
+            raise EpistemicStateError("operation attempt digest does not match canonical inputs")
+        if self.retry_of_operation_id:
+            object.__setattr__(
+                self,
+                "retry_of_operation_id",
+                _strict_id(
+                    self.retry_of_operation_id,
+                    name="operation.retry_of_operation_id",
+                ),
+            )
+            if self.retry_of_operation_id == self.operation_id:
+                raise EpistemicStateError("operation cannot retry itself")
+        failure_code = _strict_text(
+            self.failure_code,
+            name="operation.failure_code",
+            limit=96,
+            empty=True,
+        )
+        if failure_code and not _ID_RE.fullmatch(failure_code):
+            raise EpistemicStateError("operation.failure_code is not a bounded identifier")
+        object.__setattr__(self, "failure_code", failure_code)
+        if self.outcome is OperationOutcome.SUCCEEDED and failure_code:
+            raise EpistemicStateError("successful operation cannot carry a failure code")
+        if self.outcome is not OperationOutcome.SUCCEEDED and not failure_code:
+            raise EpistemicStateError("unsuccessful operation requires a failure code")
         object.__setattr__(
             self,
             "detail",
@@ -1000,11 +1117,128 @@ class OperationRecord:
             "outcome": self.outcome.value,
             "input_state_sha256": self.input_state_sha256,
             "cost": self.cost,
+            "operator_id": self.operator_id,
+            "operator_version": self.operator_version,
+            "input_payload_sha256": self.input_payload_sha256,
+            "attempt_sha256": self.attempt_sha256,
+            "started_at": self.started_at,
+            "completed_at": self.completed_at,
+            "input_claim_ids": list(self.input_claim_ids),
+            "input_hypothesis_ids": list(self.input_hypothesis_ids),
+            "input_evidence_ids": list(self.input_evidence_ids),
             "affected_claim_ids": list(self.affected_claim_ids),
             "affected_hypothesis_ids": list(self.affected_hypothesis_ids),
             "evidence_gained": list(self.evidence_gained),
+            "retry_of_operation_id": self.retry_of_operation_id,
+            "failure_code": self.failure_code,
             "detail": self.detail,
         }
+
+    @staticmethod
+    def compute_attempt_sha256(
+        *,
+        kind: OperationKind,
+        operator_id: str,
+        operator_version: str,
+        input_payload_sha256: str,
+        input_claim_ids: Iterable[str] = (),
+        input_hypothesis_ids: Iterable[str] = (),
+        input_evidence_ids: Iterable[str] = (),
+    ) -> str:
+        if not isinstance(kind, OperationKind):
+            raise EpistemicStateError("operation attempt kind must be an OperationKind")
+        normalized_operator_id = _strict_id(operator_id, name="operation.operator_id")
+        normalized_operator_version = _strict_id(
+            operator_version,
+            name="operation.operator_version",
+        )
+        normalized_payload = _strict_digest(
+            input_payload_sha256,
+            name="operation.input_payload_sha256",
+        )
+        return canonical_sha256(
+            {
+                "kind": kind.value,
+                "operator_id": normalized_operator_id,
+                "operator_version": normalized_operator_version,
+                "input_payload_sha256": normalized_payload,
+                "input_claim_ids": list(
+                    _bounded_ids(
+                        input_claim_ids,
+                        name="operation input claims",
+                        limit=MAX_CLAIMS,
+                    )
+                ),
+                "input_hypothesis_ids": list(
+                    _bounded_ids(
+                        input_hypothesis_ids,
+                        name="operation input hypotheses",
+                        limit=MAX_HYPOTHESES,
+                    )
+                ),
+                "input_evidence_ids": list(
+                    _bounded_ids(input_evidence_ids, name="operation input evidence")
+                ),
+            }
+        )
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        operation_id: str,
+        kind: OperationKind,
+        outcome: OperationOutcome,
+        input_state_sha256: str,
+        cost: float,
+        operator_id: str,
+        operator_version: str,
+        input_payload_sha256: str,
+        started_at: float,
+        completed_at: float,
+        input_claim_ids: Iterable[str] = (),
+        input_hypothesis_ids: Iterable[str] = (),
+        input_evidence_ids: Iterable[str] = (),
+        affected_claim_ids: Iterable[str] = (),
+        affected_hypothesis_ids: Iterable[str] = (),
+        evidence_gained: Iterable[str] = (),
+        retry_of_operation_id: str = "",
+        failure_code: str = "",
+        detail: str = "",
+    ) -> OperationRecord:
+        input_claim_ids_tuple = tuple(input_claim_ids)
+        input_hypothesis_ids_tuple = tuple(input_hypothesis_ids)
+        input_evidence_ids_tuple = tuple(input_evidence_ids)
+        return cls(
+            operation_id=operation_id,
+            kind=kind,
+            outcome=outcome,
+            input_state_sha256=input_state_sha256,
+            cost=cost,
+            operator_id=operator_id,
+            operator_version=operator_version,
+            input_payload_sha256=input_payload_sha256,
+            attempt_sha256=cls.compute_attempt_sha256(
+                kind=kind,
+                operator_id=operator_id,
+                operator_version=operator_version,
+                input_payload_sha256=input_payload_sha256,
+                input_claim_ids=input_claim_ids_tuple,
+                input_hypothesis_ids=input_hypothesis_ids_tuple,
+                input_evidence_ids=input_evidence_ids_tuple,
+            ),
+            started_at=started_at,
+            completed_at=completed_at,
+            input_claim_ids=input_claim_ids_tuple,
+            input_hypothesis_ids=input_hypothesis_ids_tuple,
+            input_evidence_ids=input_evidence_ids_tuple,
+            affected_claim_ids=tuple(affected_claim_ids),
+            affected_hypothesis_ids=tuple(affected_hypothesis_ids),
+            evidence_gained=tuple(evidence_gained),
+            retry_of_operation_id=retry_of_operation_id,
+            failure_code=failure_code,
+            detail=detail,
+        )
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> OperationRecord:
@@ -1014,9 +1248,20 @@ class OperationRecord:
             "outcome",
             "input_state_sha256",
             "cost",
+            "operator_id",
+            "operator_version",
+            "input_payload_sha256",
+            "attempt_sha256",
+            "started_at",
+            "completed_at",
+            "input_claim_ids",
+            "input_hypothesis_ids",
+            "input_evidence_ids",
             "affected_claim_ids",
             "affected_hypothesis_ids",
             "evidence_gained",
+            "retry_of_operation_id",
+            "failure_code",
             "detail",
         }
         _exact_fields(data, fields, name="operation")
@@ -1030,6 +1275,24 @@ class OperationRecord:
             ),
             input_state_sha256=data["input_state_sha256"],
             cost=data["cost"],
+            operator_id=data["operator_id"],
+            operator_version=data["operator_version"],
+            input_payload_sha256=data["input_payload_sha256"],
+            attempt_sha256=data["attempt_sha256"],
+            started_at=data["started_at"],
+            completed_at=data["completed_at"],
+            input_claim_ids=_wire_list(
+                data["input_claim_ids"],
+                name="operation.input_claim_ids",
+            ),
+            input_hypothesis_ids=_wire_list(
+                data["input_hypothesis_ids"],
+                name="operation.input_hypothesis_ids",
+            ),
+            input_evidence_ids=_wire_list(
+                data["input_evidence_ids"],
+                name="operation.input_evidence_ids",
+            ),
             affected_claim_ids=_wire_list(
                 data["affected_claim_ids"],
                 name="operation.affected_claim_ids",
@@ -1042,6 +1305,8 @@ class OperationRecord:
                 data["evidence_gained"],
                 name="operation.evidence_gained",
             ),
+            retry_of_operation_id=data["retry_of_operation_id"],
+            failure_code=data["failure_code"],
             detail=data["detail"],
         )
 
@@ -1337,12 +1602,27 @@ class EpistemicState:
         self._validate_hypothesis_portfolio(self.hypotheses, claim_map=claim_map)
         hypothesis_ids = {item.hypothesis_id for item in self.hypotheses}
         for operation in self.operations:
+            if not set(operation.input_claim_ids) <= claim_ids:
+                raise EpistemicStateError("operation input references an unknown claim")
+            if not set(operation.input_hypothesis_ids) <= hypothesis_ids:
+                raise EpistemicStateError("operation input references an unknown hypothesis")
+            if not set(operation.input_evidence_ids) <= evidence_ids:
+                raise EpistemicStateError("operation input references unknown evidence")
             if not set(operation.affected_claim_ids) <= claim_ids:
                 raise EpistemicStateError("operation references an unknown claim")
             if not set(operation.affected_hypothesis_ids) <= hypothesis_ids:
                 raise EpistemicStateError("operation references an unknown hypothesis")
             if not set(operation.evidence_gained) <= evidence_ids:
                 raise EpistemicStateError("operation references unknown evidence")
+        self._validate_operation_history(self.operations)
+        operation_cost = math.fsum(operation.cost for operation in self.operations)
+        if not math.isclose(
+            operation_cost,
+            self.budget.used,
+            rel_tol=0.0,
+            abs_tol=1e-9,
+        ):
+            raise EpistemicStateError("compute budget usage does not equal recorded operation cost")
         if self.accepted_answer is not None:
             if not set(self.accepted_answer.claim_ids) <= claim_ids:
                 raise EpistemicStateError("answer references an unknown claim")
@@ -1486,6 +1766,147 @@ class EpistemicState:
                 raise EpistemicStateError(
                     "favored hypothesis must be the unique highest-mass hypothesis"
                 )
+
+    @staticmethod
+    def _validate_operation_history(operations: Iterable[OperationRecord]) -> None:
+        history = tuple(operations)
+        if not history:
+            return
+        operation_map = {operation.operation_id: operation for operation in history}
+        children: dict[str, str] = {}
+        groups: dict[str, list[OperationRecord]] = {}
+        for operation in history:
+            groups.setdefault(operation.attempt_sha256, []).append(operation)
+            if not operation.retry_of_operation_id:
+                continue
+            parent = operation_map.get(operation.retry_of_operation_id)
+            if parent is None:
+                raise EpistemicStateError("operation retry references an unknown attempt")
+            if parent.attempt_sha256 != operation.attempt_sha256:
+                raise EpistemicStateError("operation retry changes canonical inputs")
+            if parent.outcome is OperationOutcome.SUCCEEDED:
+                raise EpistemicStateError("successful operation cannot be retried")
+            if operation.started_at < parent.completed_at:
+                raise EpistemicStateError("operation retry started before its parent completed")
+            if parent.operation_id in children:
+                raise EpistemicStateError("operation retry history forks from one attempt")
+            children[parent.operation_id] = operation.operation_id
+
+        for attempts in groups.values():
+            roots = [attempt for attempt in attempts if not attempt.retry_of_operation_id]
+            if len(roots) != 1:
+                raise EpistemicStateError("repeated operation requires one explicit retry lineage")
+            visited: set[str] = set()
+            current = roots[0]
+            while current is not None:
+                if current.operation_id in visited:
+                    raise EpistemicStateError("operation retry history contains a cycle")
+                visited.add(current.operation_id)
+                child_id = children.get(current.operation_id)
+                current = operation_map[child_id] if child_id is not None else None
+            if len(visited) != len(attempts):
+                raise EpistemicStateError("repeated operation requires one explicit retry lineage")
+            if len(visited) > MAX_OPERATION_ATTEMPTS:
+                raise EpistemicStateError("operation retry budget is exhausted")
+
+    def operation_attempts(self, attempt_sha256: str) -> tuple[OperationRecord, ...]:
+        """Return one canonical retry lineage in execution order."""
+
+        attempt_sha256 = _strict_digest(
+            attempt_sha256,
+            name="operation attempt query",
+        )
+        matching = {
+            operation.operation_id: operation
+            for operation in self.operations
+            if operation.attempt_sha256 == attempt_sha256
+        }
+        if not matching:
+            return ()
+        roots = [
+            operation for operation in matching.values() if not operation.retry_of_operation_id
+        ]
+        if len(roots) != 1:
+            raise EpistemicStateError("operation history has no unique retry root")
+        child_by_parent = {
+            operation.retry_of_operation_id: operation
+            for operation in matching.values()
+            if operation.retry_of_operation_id
+        }
+        ordered = []
+        current = roots[0]
+        while current is not None:
+            ordered.append(current)
+            current = child_by_parent.get(current.operation_id)
+        if len(ordered) != len(matching):
+            raise EpistemicStateError("operation history is not one retry lineage")
+        return tuple(ordered)
+
+    def operation_admission(
+        self,
+        attempt_sha256: str,
+        *,
+        retry_of_operation_id: str = "",
+    ) -> OperationAdmission:
+        """Decide whether a new or explicitly linked retry may be recorded."""
+
+        attempt_sha256 = _strict_digest(
+            attempt_sha256,
+            name="operation admission attempt",
+        )
+        if retry_of_operation_id:
+            retry_of_operation_id = _strict_id(
+                retry_of_operation_id,
+                name="operation admission retry parent",
+            )
+        attempts = self.operation_attempts(attempt_sha256)
+        if not attempts:
+            return OperationAdmission(
+                allowed=not retry_of_operation_id,
+                reason=("new_operation" if not retry_of_operation_id else "retry_parent_unknown"),
+                attempt_sha256=attempt_sha256,
+                prior_attempt_count=0,
+            )
+        latest = attempts[-1]
+        if latest.outcome is OperationOutcome.SUCCEEDED:
+            return OperationAdmission(
+                allowed=False,
+                reason="operation_already_succeeded",
+                attempt_sha256=attempt_sha256,
+                prior_attempt_count=len(attempts),
+                retry_of_operation_id=latest.operation_id,
+            )
+        if len(attempts) >= MAX_OPERATION_ATTEMPTS:
+            return OperationAdmission(
+                allowed=False,
+                reason="operation_retry_budget_exhausted",
+                attempt_sha256=attempt_sha256,
+                prior_attempt_count=len(attempts),
+                retry_of_operation_id=latest.operation_id,
+            )
+        if not retry_of_operation_id:
+            return OperationAdmission(
+                allowed=False,
+                reason="explicit_retry_link_required",
+                attempt_sha256=attempt_sha256,
+                prior_attempt_count=len(attempts),
+                retry_of_operation_id=latest.operation_id,
+            )
+        if retry_of_operation_id != latest.operation_id:
+            return OperationAdmission(
+                allowed=False,
+                reason="stale_retry_parent",
+                attempt_sha256=attempt_sha256,
+                prior_attempt_count=len(attempts),
+                retry_of_operation_id=latest.operation_id,
+            )
+        return OperationAdmission(
+            allowed=True,
+            reason="explicit_retry_admitted",
+            attempt_sha256=attempt_sha256,
+            prior_attempt_count=len(attempts),
+            retry_of_operation_id=latest.operation_id,
+        )
 
     @staticmethod
     def _validate_claim_uncertainty(
@@ -1804,6 +2225,39 @@ class EpistemicTransaction:
             raise EpistemicStateError(f"{name} identifier already exists: {key}")
         target[key] = value
 
+    def _validated_operation_budget(
+        self,
+        operation: OperationRecord,
+        *,
+        claim_ids: Iterable[str] | None = None,
+        hypothesis_ids: Iterable[str] | None = None,
+        evidence_ids: Iterable[str] | None = None,
+        budget_error: str = "operation exceeds compute budget",
+    ) -> float:
+        if operation.input_state_sha256 != self.base.state_sha256:
+            raise EpistemicStateError("operation input hash does not match transaction base")
+        if operation.operation_id in self._operations:
+            raise EpistemicStateError(
+                f"operation identifier already exists: {operation.operation_id}"
+            )
+        known_claims = set(self._claims if claim_ids is None else claim_ids)
+        known_hypotheses = set(self._hypotheses if hypothesis_ids is None else hypothesis_ids)
+        known_evidence = set(self._evidence if evidence_ids is None else evidence_ids)
+        if not set((*operation.input_claim_ids, *operation.affected_claim_ids)) <= known_claims:
+            raise EpistemicStateError("operation references an unknown claim")
+        if (
+            not set((*operation.input_hypothesis_ids, *operation.affected_hypothesis_ids))
+            <= known_hypotheses
+        ):
+            raise EpistemicStateError("operation references an unknown hypothesis")
+        if not set((*operation.input_evidence_ids, *operation.evidence_gained)) <= known_evidence:
+            raise EpistemicStateError("operation references unknown evidence")
+        EpistemicState._validate_operation_history((*self._operations.values(), operation))
+        next_used = self._budget.used + operation.cost
+        if next_used > self._budget.total:
+            raise EpistemicStateError(budget_error)
+        return next_used
+
     def add_evidence(self, evidence: EvidenceRecord) -> EpistemicTransaction:
         self._open()
         if not isinstance(evidence, EvidenceRecord):
@@ -1848,8 +2302,12 @@ class EpistemicTransaction:
         claim_id: str,
         *,
         operation_id: str,
+        started_at: float,
+        completed_at: float,
         status: ClaimStatus = ClaimStatus.REJECTED,
         cost: float = 0.0,
+        operator_id: str = "epistemic_transaction",
+        operator_version: str = "v1",
         detail: str = "",
     ) -> tuple[str, ...]:
         """Invalidate a claim, its descendants, hypotheses, and accepted answer."""
@@ -1892,7 +2350,7 @@ class EpistemicTransaction:
                 )
                 affected_hypothesis_ids.append(hypothesis_id)
         affected_hypothesis_ids_tuple = tuple(sorted(affected_hypothesis_ids))
-        operation = OperationRecord(
+        operation = OperationRecord.create(
             operation_id=operation_id,
             kind=(
                 OperationKind.FALSIFY
@@ -1902,17 +2360,26 @@ class EpistemicTransaction:
             outcome=OperationOutcome.SUCCEEDED,
             input_state_sha256=self.base.state_sha256,
             cost=cost,
+            operator_id=operator_id,
+            operator_version=operator_version,
+            input_payload_sha256=canonical_sha256(
+                {
+                    "claim_id": claim_id,
+                    "status": status.value,
+                }
+            ),
+            started_at=started_at,
+            completed_at=completed_at,
+            input_claim_ids=(claim_id,),
             affected_claim_ids=affected,
             affected_hypothesis_ids=affected_hypothesis_ids_tuple,
             detail=detail or f"invalidated {claim_id} and its dependent claims",
         )
-        if operation.operation_id in self._operations:
-            raise EpistemicStateError(
-                f"operation identifier already exists: {operation.operation_id}"
-            )
-        next_used = self._budget.used + operation.cost
-        if next_used > self._budget.total:
-            raise EpistemicStateError("claim invalidation exceeds compute budget")
+        next_used = self._validated_operation_budget(
+            operation,
+            hypothesis_ids=revised_hypotheses,
+            budget_error="claim invalidation exceeds compute budget",
+        )
         answer = self._accepted_answer
         if answer is not None and affected_set.intersection(answer.claim_ids):
             answer = None
@@ -1942,8 +2409,13 @@ class EpistemicTransaction:
         replacements: Iterable[HypothesisRecord],
         *,
         operation_id: str,
+        started_at: float,
+        completed_at: float,
+        input_evidence_ids: Iterable[str] = (),
         evidence_gained: Iterable[str] = (),
         cost: float = 0.0,
+        operator_id: str = "epistemic_transaction",
+        operator_version: str = "v1",
         detail: str = "",
     ) -> tuple[str, ...]:
         """Atomically revise the complete weighted hypothesis portfolio."""
@@ -1995,23 +2467,33 @@ class EpistemicTransaction:
             proposed,
             claim_map=self._claims,
         )
-        operation = OperationRecord(
+        input_evidence_ids_tuple = tuple(input_evidence_ids)
+        operation = OperationRecord.create(
             operation_id=operation_id,
             kind=OperationKind.COMPARE,
             outcome=OperationOutcome.SUCCEEDED,
             input_state_sha256=self.base.state_sha256,
             cost=cost,
+            operator_id=operator_id,
+            operator_version=operator_version,
+            input_payload_sha256=canonical_sha256(
+                {
+                    "portfolio": [item.to_dict() for item in proposed],
+                }
+            ),
+            started_at=started_at,
+            completed_at=completed_at,
+            input_hypothesis_ids=tuple(self._hypotheses),
+            input_evidence_ids=input_evidence_ids_tuple,
             affected_hypothesis_ids=changed,
             evidence_gained=tuple(evidence_gained),
             detail=detail or "revised weighted hypothesis portfolio",
         )
-        if operation.operation_id in self._operations:
-            raise EpistemicStateError(
-                f"operation identifier already exists: {operation.operation_id}"
-            )
-        next_used = self._budget.used + operation.cost
-        if next_used > self._budget.total:
-            raise EpistemicStateError("portfolio revision exceeds compute budget")
+        next_used = self._validated_operation_budget(
+            operation,
+            hypothesis_ids=proposed_map,
+            budget_error="portfolio revision exceeds compute budget",
+        )
 
         self._hypotheses = proposed_map
         self._operations[operation.operation_id] = operation
@@ -2023,9 +2505,9 @@ class EpistemicTransaction:
         self._open()
         if not isinstance(operation, OperationRecord):
             raise TypeError("operation must be an OperationRecord")
-        if operation.input_state_sha256 != self.base.state_sha256:
-            raise EpistemicStateError("operation input hash does not match transaction base")
-        self._insert(self._operations, operation.operation_id, operation, name="operation")
+        next_used = self._validated_operation_budget(operation)
+        self._operations[operation.operation_id] = operation
+        self._budget = replace(self._budget, used=next_used)
         return self
 
     def set_budget(self, budget: ComputeBudgetState) -> EpistemicTransaction:
@@ -2037,10 +2519,11 @@ class EpistemicTransaction:
             or budget.tool_calls_total != self.base.budget.tool_calls_total
         ):
             raise EpistemicStateError("transaction cannot change preregistered budget caps")
-        if (
-            budget.used < self.base.budget.used
-            or budget.tool_calls_used < self.base.budget.tool_calls_used
-        ):
+        if budget.used != self._budget.used:
+            raise EpistemicStateError(
+                "transaction cannot change compute usage outside operation history"
+            )
+        if budget.tool_calls_used < self.base.budget.tool_calls_used:
             raise EpistemicStateError("transaction cannot refund consumed budget")
         self._budget = budget
         return self
@@ -2179,6 +2662,7 @@ __all__ = [
     "HypothesisRecord",
     "HypothesisStatus",
     "OperationKind",
+    "OperationAdmission",
     "OperationOutcome",
     "OperationRecord",
     "ProbabilityInterval",

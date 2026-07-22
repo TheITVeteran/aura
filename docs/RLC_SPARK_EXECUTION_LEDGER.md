@@ -58,6 +58,10 @@ After CP323, the published total is record 384: 82-349 forecast records remain,
 checkpoint-count completion is 52.4%-82.4%, and the midpoint planning estimate
 is 64.1%.
 
+After CP324, the published total is record 385: 81-348 forecast records remain,
+checkpoint-count completion is 52.5%-82.6%, and the midpoint planning estimate
+is 64.2%.
+
 ## Code-grounded baseline and ownership
 
 The four-slice static audit covered the neural core, epistemic/verifier paths,
@@ -226,6 +230,20 @@ before those dependencies close is not admissible.
 - [ ] **SPARK-010 - Cognitive operation history.** Record which operators were
   attempted, their inputs, costs, evidence gained, affected claims, and outcome
   so recurrence cannot unknowingly repeat failed work.
+  State authority completed at CP324, live acceptance still open: schema v5
+  records immutable operator/version identity, canonical payload and referenced
+  inputs, attempt signature, parent state, start/completion time, affected
+  claims/hypotheses, gained evidence, actual cost, outcome, failure code, and
+  explicit retry parent. Attempt signatures remain stable across state versions.
+  Duplicate roots, orphan/stale/changed-input/overlapping retries, retry forks,
+  retries after success, and chains beyond three attempts fail before mutation.
+  A typed admission query reports new, explicit-retry-required, stale-parent,
+  already-succeeded, or retry-exhausted decisions. Compute use must exactly equal
+  immutable operation costs, and journal replay preserves failed/unknown work.
+  Focused contracts pass 71/71 and the integrated gate passes 801/801. This item
+  remains unchecked until the live recurrent controller persists operation
+  intent/outcome and consults admission before execution; that causal consumer
+  is owned by SPARK-013 and SPARK-065-068.
 - [x] **SPARK-011 - Transactional state revision.** Apply revisions atomically,
   hash lineage, reject malformed/stale updates, invalidate descendants, and
   recover the last verified state after interruption.
@@ -484,3 +502,5 @@ CP322 adds measured claim calibration and enforced abstention; it likewise does
 not change the negative capability verdict.
 CP323 adds a durable weighted hypothesis portfolio with protected alternatives;
 it likewise does not change the negative capability verdict.
+CP324 completes the durable operation-history authority but not its live
+controller consumer; it does not change the negative capability verdict.
