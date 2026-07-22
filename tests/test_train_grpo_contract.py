@@ -27,11 +27,13 @@ from tools.train_grpo import (
     _publish_adapter_snapshot,
     _publish_immutable_bytes,
     _record_recurrent_step_failure,
+    _should_halt_for_no_learning_signal,
     _stable_seed,
     completion_logprob,
     evaluate_heldout,
     sample_recurrent_group,
 )
+from core.learning.grpo import GRPOConfig, GRPOTelemetry, group_advantages
 
 
 @dataclass(frozen=True)
@@ -117,6 +119,27 @@ def test_calibration_cannot_reintroduce_a_short_reasoning_budget():
     assert _calibration_token_budget(320, 320) == 320
     with pytest.raises(ValueError, match="must equal training"):
         _calibration_token_budget(320, 128)
+
+
+def test_training_halts_when_grpo_has_no_learning_signal():
+    telemetry = GRPOTelemetry()
+    config = GRPOConfig(group_size=4, max_degenerate_fraction=0.5)
+    for _ in range(3):
+        telemetry.observe(group_advantages([0.0, 0.0, 0.0, 0.0]))
+
+    assert (
+        _should_halt_for_no_learning_signal(telemetry, config, min_groups=4)
+        is None
+    )
+
+    telemetry.observe(group_advantages([0.0, 0.0, 0.0, 0.0]))
+    verdict = _should_halt_for_no_learning_signal(
+        telemetry, config, min_groups=4
+    )
+
+    assert verdict is not None
+    assert verdict["learning_signal"] is False
+    assert "too_hard" in verdict["diagnosis"]
 
 
 def test_execution_mode_requires_and_strictly_loads_recurrent_spec(tmp_path):

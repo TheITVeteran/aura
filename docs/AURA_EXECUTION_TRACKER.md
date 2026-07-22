@@ -23433,3 +23433,42 @@ records, now approximately 54-321 records after this checkpoint. Next: publish
 CP279, then inspect CP273 for a terminal receipt and decide whether to
 supersede it with the fair-calibration trainer plus any answer-extraction or
 curriculum repairs still needed for a real positive interaction proof.
+
+## Checkpoint 2026-07-21-280: GRPO No-Signal Halt and RLC Gap Finding
+
+CP273's durable checkpoints reached step 4 with `optimizer_updates=0` and four
+all-wrong degenerate groups. That is not a slow training run; it is an RL loop
+with no gradients. The old trainer could keep burning resident-32B time after
+that evidence because the no-learning verdict was only produced at final
+receipt time.
+
+`tools/train_grpo.py` now has a trainer-level no-signal halt. After
+`--min-signal-groups` graded groups, the run asks `GRPOTelemetry.verdict`; if
+the degenerate fraction is over the configured threshold, it checkpoints,
+prints a specific diagnosis, and terminates as `no_learning_signal`. This keeps
+the artifact honest and pushes the pipeline toward the next needed strategy
+instead of mistaking wall-clock duration for progress. The default threshold is
+8 groups, so a few unlucky early groups do not abort a run prematurely.
+
+The broader RLC inspection also found a real scope gap. The current recurrent
+GRPO proof path tests the fixed recurrent graph with `latent_opt_mode=disabled`
+and `fast_weights_mode=disabled`, while live Aura's RLC stack has latent
+optimization, fast weights, execution-controller arms, branch exchange,
+schedule search, and answer-contract early stop as separate mechanisms. That
+means a positive recurrent-GRPO result would prove a narrower tissue object,
+not the full live RLC capability stack. The tracker therefore keeps a new open
+RLC item: build a certified full-stack training/evaluation protocol that can
+include fast weights and latent optimization under equal-compute, equal-info,
+erasure/canary, and ablation controls before claiming frontier-level live RLC
+gain.
+
+Validation is clean: `tests/test_train_grpo_contract.py` and `tests/test_grpo.py`
+pass together, and bytecode compilation passes for the touched trainer/test.
+This checkpoint does not claim a reasoning gain; it prevents another no-gradient
+resident run from consuming hours without an actionable stop receipt.
+
+This is total checkpoint record 341. The forecast remains 394-661 total
+records, now approximately 53-320 records after this checkpoint. Next: publish
+CP280, then design the bootstrap/full-stack RLC proof path: easier
+recurrence-native supervised bridge, trajectory/CE credit use, fast-weight
+ablation arms, and fresh held-out frontier tasks with independent verification.

@@ -162,6 +162,24 @@ def _point_estimate_delta(
     return round(float(final["overall"]) - float(baseline["overall"]), 6)
 
 
+def _should_halt_for_no_learning_signal(
+    telemetry: GRPOTelemetry,
+    config: GRPOConfig,
+    *,
+    min_groups: int,
+) -> dict[str, Any] | None:
+    """Return the no-signal verdict once RL has enough evidence to stop."""
+
+    if type(min_groups) is not int or min_groups < 1:
+        raise ValueError("min_groups must be positive")
+    if telemetry.groups < min_groups:
+        return None
+    verdict = telemetry.verdict(config)
+    if verdict.get("learning_signal") is False:
+        return verdict
+    return None
+
+
 def _calibration_token_budget(max_tokens: int, requested: int) -> int:
     if requested not in (0, max_tokens):
         raise ValueError(
@@ -917,6 +935,15 @@ def main() -> int:
     parser.add_argument("--eval-every", type=int, default=50)
     parser.add_argument("--checkpoint-every", type=int, default=25)
     parser.add_argument("--checkpoint-keep", type=int, default=3)
+    parser.add_argument(
+        "--min-signal-groups",
+        type=int,
+        default=8,
+        help=(
+            "minimum graded groups before a degenerate-run verdict can halt "
+            "training as no_learning_signal"
+        ),
+    )
     parser.add_argument("--calibrate", action="store_true",
                         help="measure pass rates before training to skip dead cells")
     parser.add_argument("--calibrate-samples", type=int, default=2)
@@ -946,6 +973,7 @@ def main() -> int:
         "eval_every",
         "checkpoint_every",
         "checkpoint_keep",
+        "min_signal_groups",
         "calibrate_samples",
         "calibrate_group",
     ):
@@ -1098,6 +1126,7 @@ def main() -> int:
             "max_steps": args.max_steps,
             "eval_every": args.eval_every,
             "checkpoint_every": args.checkpoint_every,
+            "min_signal_groups": args.min_signal_groups,
             "calibrate": args.calibrate,
             "calibrate_samples": args.calibrate_samples,
             "calibrate_group": args.calibrate_group,
@@ -1656,6 +1685,11 @@ def main() -> int:
                 )
                 step = step_number
                 last_step_kind = step_kind
+                no_signal = _should_halt_for_no_learning_signal(
+                    telemetry,
+                    config,
+                    min_groups=args.min_signal_groups,
+                )
                 if active_recurrent_step is not None:
                     active_recurrent_step["phase"] = "post_update_evaluation"
 
@@ -1708,6 +1742,16 @@ def main() -> int:
                     )
                 if step % args.checkpoint_every == 0:
                     checkpoint_path = checkpoint_now()
+                if no_signal is not None:
+                    training_allowed = False
+                    halt_reason = "no_learning_signal"
+                    checkpoint_path = checkpoint_now()
+                    print(
+                        "[halt] no learning signal after "
+                        f"{no_signal['groups']} groups: {no_signal['diagnosis']}",
+                        flush=True,
+                    )
+                    break
                 if not curriculum.report()["has_reachable_frontier"]:
                     training_allowed = False
                     halt_reason = "frontier_exhausted"
