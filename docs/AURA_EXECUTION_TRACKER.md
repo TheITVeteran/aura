@@ -23900,3 +23900,43 @@ CP291, stop the stale CP285 detached trainer/controller so it does not consume
 the resident 32B slot, launch CP291 detached under caffeinate protection, build
 its post-training controller from the pushed source, and continue system-level
 RLC inspection while the corrected run proceeds.
+
+## Checkpoint 2026-07-21-292: CP291 Corrected Proof Run Launched and Controller Installed
+
+The stale CP285 run was retired from proof use after CP290 because it had
+already loaded the old recurrent held-out evaluator. Its detached supervisor
+accepted an authenticated stop request and wrote a contained stopped receipt
+with `returncode=-15`, `containment_verified=true`, `process_group_empty=true`,
+and `lineage_empty=true`. The CP285 post-training LaunchAgent was also booted
+out so it cannot consume the resident model or launch stale proof stages.
+
+The corrected CP291 resident-32B recurrent-GRPO training run is now detached:
+supervisor PID `97575`, child PID `97588`, run directory
+`artifacts/closeout/latent_cortex/cp291_resident_32b_recurrent_grpo/detached-training`,
+plan digest `a0bccb3574725612903e4897e524d232976897f3a68504525cebab5b15897acb`,
+and command digest
+`8ef1e946d64e30dc711f22f9aea79698f0fbc92428d33b183cab55e639036171`.
+The first log lines show the expected 288/36 task split, resident MLX memory
+envelope, and 24 adapted projections.
+
+The CP291 post-training controller was prepared, verified, and installed as
+LaunchAgent `com.aura.resident-32b-recurrent-grpo-cp291.post-training`.
+Verified config digest:
+`8e7a35f37d662a55a4405186802beaa4007c035fc2fcf118cfb647d490d76497`.
+Launch receipt digest:
+`2860c63c9885a58ce01ed15e2300d88978e245650873a1e72d40e0d6a35cf1cf`.
+`launchctl print` shows the controller running under
+`/Users/bryan/.aura/live-source/.venv/bin/python`; controller state reports
+stage `exclusive_model_owner_admission`, status `waiting`, PID `63251`, and
+~20.8 GiB available against the 40 GiB admission floor. That is expected while
+CP291 training owns the resident 32B model.
+
+No reasoning-gain verdict exists yet. The next meaningful signals are CP291's
+contract-aware recurrent baseline, calibration, optimizer updates, eval-96
+reports, final held-out result, then the controller's freeze, full-stack
+directional campaign, mechanism-attribution ablations, and independent replay.
+
+This is total checkpoint record 353. The forecast remains 394-661 total
+records, now approximately 41-308 records after this checkpoint. Next: monitor
+CP291 for corrected baseline/calibration/no-signal evidence, and continue
+building missing RLC infrastructure that the actual system inspection exposes.
