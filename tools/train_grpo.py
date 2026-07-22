@@ -892,6 +892,8 @@ def evaluate_recurrent_heldout(
         sampling=RecurrentSamplingConfig(max_tokens=max_tokens),
     )
     config.decode_temperature = 0.0
+    config.decode_contract = "final_answer_v1"
+    config.decode_contract_grace_tokens = max_tokens
     engine = LatentCortexEngine(
         model,
         tokenizer=tokenizer,

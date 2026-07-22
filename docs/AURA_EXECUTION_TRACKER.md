@@ -23824,3 +23824,43 @@ CP289, regenerate and verify the source-bound CP285 post-training config from
 the new controller source, reinstall the LaunchAgent so it will execute the
 mechanism campaigns after training, and then continue from the next missing RLC
 system piece rather than waiting idly on the trainer.
+
+## Checkpoint 2026-07-21-290: Recurrent Held-Out Evaluation Uses the Live Answer Contract
+
+Inspection moved from the GRPO trainer wrapper into the actual recurrent
+evaluation path. The live latent worker already activates `final_answer_v1`
+contract-aware decoding whenever a public response contract is supplied, but
+the recurrent GRPO held-out evaluator called `LatentCortexEngine` directly
+with raw token IDs and left `decode_contract="none"`. That made the proof path
+measure a different serving policy than the live RLC worker: a model could
+complete the required `FINAL_ANSWER` JSON and then continue until it broke
+terminality, or fail to receive the grace budget needed to finish the contract.
+
+`evaluate_recurrent_heldout()` now enables the same `final_answer_v1` decode
+contract and sets the contract grace budget equal to the task token budget.
+The verifier remains strict: no answer is rewritten, no schema is loosened, and
+incorrect values still fail. The change only aligns recurrent held-out
+decoding with the production contract-completion rule that already existed in
+the live worker.
+
+A regression test stubs the latent engine instead of loading a model and
+asserts that recurrent held-out evaluation constructs the engine with
+`decode_contract="final_answer_v1"`, `decode_contract_grace_tokens=max_tokens`,
+and records a `contract_complete` episode receipt when the model returns a
+valid terminal answer.
+
+Validation is clean: `tests/test_train_grpo_contract.py` passes 21/21; the
+combined trainer, recurrent GRPO, and resident preregistration suites pass
+38/38; bytecode compilation passes for `tools/train_grpo.py` and its tests;
+`make lint` passes; and `git diff --check` passes. CP285 training was launched
+before this fix and its contract binds the old `tools/train_grpo.py` hash, so
+that run is now diagnostic evidence only. A definitive resident-32B
+frontier-gain proof must use a fresh preregistration and detached run bound to
+this checkpoint or later.
+
+This is total checkpoint record 351. The forecast remains 394-661 total
+records, now approximately 43-310 records after this checkpoint. Next: publish
+CP290, retire CP285 from claim-eligible proof use, generate a fresh resident
+32B recurrent-GRPO preregistration from the corrected trainer source, and
+continue inspecting the actual RLC systems for missing architecture rather than
+only trainer parameters.

@@ -33,6 +33,7 @@ from tools.train_grpo import (
     _task_gold_answer_text,
     completion_logprob,
     evaluate_heldout,
+    evaluate_recurrent_heldout,
     sample_recurrent_group,
 )
 from core.learning.grpo import GRPOConfig, GRPOTelemetry, group_advantages
@@ -475,3 +476,87 @@ def test_heldout_evaluation_emits_bounded_progress(capsys, monkeypatch):
     assert "[baseline-standard] 4/5 running=0.750" in out
     assert "[baseline-standard] 5/5 running=0.800" in out
     assert report["overall"] == pytest.approx(0.8)
+
+
+def test_recurrent_heldout_uses_contract_aware_decode(monkeypatch):
+    captured_configs = []
+
+    class Random:
+        @staticmethod
+        def seed(_seed):
+            return None
+
+    mlx = types.ModuleType("mlx")
+    mlx_core = types.ModuleType("mlx.core")
+    mlx_core.random = Random()
+    monkeypatch.setitem(sys.modules, "mlx", mlx)
+    monkeypatch.setitem(sys.modules, "mlx.core", mlx_core)
+
+    class FakeEngine:
+        def __init__(self, _model, *, tokenizer, config, schedule_library):
+            assert tokenizer is not None
+            assert schedule_library is None
+            captured_configs.append(config)
+
+        def reason(self, **kwargs):
+            assert kwargs["decode_max_tokens"] == 8
+            assert kwargs["decode_sentence_grace_tokens"] == 0
+            return types.SimpleNamespace(
+                ok=True,
+                reason="",
+                text='FINAL_ANSWER: {"value":1}',
+                tokens=[1, 2, 3],
+                receipt=types.SimpleNamespace(
+                    selected_branch=0,
+                    steps_taken=3,
+                    decode_termination="contract_complete",
+                ),
+            )
+
+    import core.brain.llm.latent_cortex.engine as engine_module
+
+    monkeypatch.setattr(engine_module, "LatentCortexEngine", FakeEngine)
+
+    class Tokenizer:
+        @staticmethod
+        def apply_chat_template(messages, **_kwargs):
+            return messages[0]["content"]
+
+        @staticmethod
+        def encode(_text):
+            return [1, 2, 3]
+
+    class Task:
+        task_id = "contract-task"
+        prompt = "solve"
+        domain = "logic"
+        depth = 2
+        knowledge = "parametric"
+        grader = "exact_json"
+        expected = {"value": 1}
+
+        @staticmethod
+        def grade(text):
+            return {"correct": text == 'FINAL_ANSWER: {"value":1}'}
+
+    spec = RLCExecutionSpec(
+        n_slots=4,
+        branch_roles=("constructive_solution", "critical_audit"),
+        recurrent_steps=3,
+    )
+
+    report = evaluate_recurrent_heldout(
+        object(),
+        Tokenizer(),
+        [Task()],
+        spec=spec,
+        max_tokens=8,
+        envelope=None,
+        adapters_on=False,
+        seed=12,
+    )
+
+    assert report["overall"] == pytest.approx(1.0)
+    assert captured_configs[0].decode_contract == "final_answer_v1"
+    assert captured_configs[0].decode_contract_grace_tokens == 8
+    assert report["episode_receipts"][0]["decode_termination"] == "contract_complete"
