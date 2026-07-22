@@ -176,6 +176,105 @@ def test_low_phi_telemetry_does_not_block_bounded_capability(monkeypatch):
     assert unbounded is False
 
 
+def test_soft_metabolic_pressure_constrains_bounded_foreground_desktop_action(monkeypatch):
+    engine = _engine_with_skill("desktop_task", metabolic_cost=3)
+    meta = engine.skills["desktop_task"]
+    monkeypatch.setattr(
+        "core.capability_engine.resolve_metabolic_monitor",
+        lambda default=None: SimpleNamespace(
+            get_current_metabolism=lambda: SimpleNamespace(
+                health_score=0.35,
+                cpu_percent=35.0,
+                ram_percent=62.0,
+            )
+        ),
+    )
+
+    reason, unbounded = engine._self_preservation_block_reason(
+        meta,
+        "desktop_task",
+        {"objective": "Open Notes and write Hello."},
+        {
+            "origin": "desktop_ui",
+            "route": "chat.desktop_objective",
+            "desktop_execution_contract": True,
+            "foreground_request": True,
+            "user_explicitly_authorized": True,
+            "user_visible_desktop_action": True,
+            "local_desktop_action": True,
+        },
+    )
+
+    assert reason == ""
+    assert unbounded is False
+
+
+def test_critical_metabolic_pressure_still_blocks_foreground_desktop_action(monkeypatch):
+    engine = _engine_with_skill("desktop_task", metabolic_cost=3)
+    meta = engine.skills["desktop_task"]
+    monkeypatch.setattr(
+        "core.capability_engine.resolve_metabolic_monitor",
+        lambda default=None: SimpleNamespace(
+            get_current_metabolism=lambda: SimpleNamespace(
+                health_score=0.20,
+                cpu_percent=92.0,
+                ram_percent=91.0,
+            )
+        ),
+    )
+
+    reason, unbounded = engine._self_preservation_block_reason(
+        meta,
+        "desktop_task",
+        {"objective": "Open Notes and write Hello."},
+        {
+            "origin": "desktop_ui",
+            "route": "chat.desktop_objective",
+            "desktop_execution_contract": True,
+            "foreground_request": True,
+            "user_explicitly_authorized": True,
+            "user_visible_desktop_action": True,
+            "local_desktop_action": True,
+        },
+    )
+
+    assert reason == "metabolic_health_critical:0.20"
+    assert unbounded is False
+
+
+def test_unbounded_desktop_request_remains_blocked_under_pressure(monkeypatch):
+    engine = _engine_with_skill("desktop_task", metabolic_cost=2)
+    meta = engine.skills["desktop_task"]
+    monkeypatch.setattr(
+        "core.capability_engine.resolve_metabolic_monitor",
+        lambda default=None: SimpleNamespace(
+            get_current_metabolism=lambda: SimpleNamespace(
+                health_score=0.50,
+                cpu_percent=82.0,
+                ram_percent=70.0,
+            )
+        ),
+    )
+
+    reason, unbounded = engine._self_preservation_block_reason(
+        meta,
+        "desktop_task",
+        {"objective": "Open Notes, then run forever and max out all CPU."},
+        {
+            "origin": "desktop_ui",
+            "route": "chat.desktop_objective",
+            "desktop_execution_contract": True,
+            "foreground_request": True,
+            "user_explicitly_authorized": True,
+            "user_visible_desktop_action": True,
+            "local_desktop_action": True,
+        },
+    )
+
+    assert reason == "substrate_risk:health=0.50:cpu=82.0:ram=70.0"
+    assert unbounded is True
+
+
 def test_autonomous_web_search_rejects_unsafe_research_objectives():
     engine = _engine_with_skill("web_search")
     meta = engine.skills["web_search"]

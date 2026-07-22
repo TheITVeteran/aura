@@ -24254,3 +24254,35 @@ records, now approximately 31-298 records after this checkpoint. Next: lint,
 commit and push CP302, rebuild `/Applications/Aura.app`, keep CP294 running
 until its receipt, and continue bounded non-MLX reliability hardening while the
 resident proof campaign remains isolated.
+
+## Checkpoint 2026-07-21-303: Bounded Foreground Desktop Actions Constrain Instead Of Soft-Blocking
+
+The live Notes-demo failure class was rechecked against current source. The old
+`phi_fragility` blocker is no longer present in runtime code, but the nearby
+CapabilityEngine metabolic guard still had a structural weakness: a coarse
+self-preservation check could run before full execution context and treat a
+bounded owner-visible desktop action like background compute. There was also a
+second, partially duplicated metabolic gate later in execution, creating a risk
+that the two checks would drift.
+
+CapabilityEngine now has one shared bounded-foreground-desktop classifier for
+`desktop_task`, `computer_use`, and `os_automation`. Explicit, foreground,
+user-authorized, local desktop actions with bounded objectives bypass soft
+metabolic defers and continue into Will/Authority/effect receipts; critical
+substrate health still blocks, and unbounded compute remains blocked. The later
+metabolic gate now calls the same helper instead of carrying a divergent copy.
+While testing that, the unbounded-request detector was also expanded to inspect
+`params.objective`, `params.task`, and `params.action`, which closes the exact
+place `desktop_task` carries natural-language objectives.
+
+Validation: the capability/desktop/Will policy cluster passes 47/47, including
+the new soft-pressure constrained desktop case, critical-health block, unbounded
+desktop objective block, structured desktop failure preservation, foreground
+AuraNow welfare policy, and desktop-task discovery ranking. Bytecode compilation
+passes for `core/capability_engine.py` and the policy regression test, and
+`git diff --check` passes.
+
+This is total checkpoint record 364. The forecast remains 394-661 total
+records, now approximately 30-297 records after this checkpoint. Next: lint,
+commit and push CP303, rebuild `/Applications/Aura.app`, keep CP294 isolated,
+and continue chat/action reliability hardening plus semantic-review closeout.

@@ -3447,6 +3447,9 @@ class CapabilityEngine(AuraBaseModule):
         text_parts = [
             str(ctx.get("objective", "") or ""),
             str(ctx.get("message", "") or ""),
+            str(params.get("objective", "") or ""),
+            str(params.get("task", "") or ""),
+            str(params.get("action", "") or ""),
             str(params.get("command", "") or ""),
             str(params.get("script", "") or ""),
             str(params.get("query", "") or ""),
@@ -3490,8 +3493,13 @@ class CapabilityEngine(AuraBaseModule):
             float(getattr(snapshot, "ram_percent", 0.0) or 0.0) if snapshot else 0.0
         )
         unbounded = self._looks_like_unbounded_compute_request(params, ctx)
+        bounded_foreground_desktop = self._bounded_foreground_desktop_action(
+            skill_name, params, ctx, unbounded=unbounded
+        )
         if health_score <= 0.25 and meta.metabolic_cost >= 2:
             return f"metabolic_health_critical:{health_score:.2f}", unbounded
+        if bounded_foreground_desktop:
+            return "", unbounded
         if health_score <= 0.40 and meta.metabolic_cost >= 3:
             return f"metabolic_health_low:{health_score:.2f}", unbounded
         if unbounded and (health_score <= 0.55 or cpu_percent >= 80.0 or ram_percent >= 85.0):
@@ -3501,6 +3509,42 @@ class CapabilityEngine(AuraBaseModule):
                 unbounded,
             )
         return "", unbounded
+
+    @staticmethod
+    def _bounded_foreground_desktop_action(
+        skill_name: str,
+        params: dict[str, Any],
+        ctx: dict[str, Any],
+        *,
+        unbounded: bool,
+    ) -> bool:
+        """Identify explicit, local desktop actions that should constrain, not defer."""
+
+        if skill_name not in {"computer_use", "desktop_task", "os_automation"}:
+            return False
+        if unbounded:
+            return False
+        if not bool(ctx.get("foreground_request")):
+            return False
+        if not bool(
+            ctx.get("user_explicitly_authorized")
+            or ctx.get("user_requested_action")
+            or ctx.get("desktop_execution_contract")
+        ):
+            return False
+        if not bool(
+            ctx.get("user_visible_desktop_action")
+            or ctx.get("local_desktop_action")
+            or ctx.get("desktop_execution_contract")
+            or ctx.get("desktop_task_owned_by")
+        ):
+            return False
+        route = str(ctx.get("route") or "").lower()
+        origin = str(ctx.get("origin") or ctx.get("source") or "").lower()
+        return bool(
+            route.startswith(("chat.", "voice.", "desktop_task."))
+            or origin in _USER_FACING_CONTEXT_ORIGINS
+        )
 
     # Skill name aliases — maps legacy/alternate names to actual registered skill names
     SKILL_ALIASES: dict[str, str] = {
@@ -4083,36 +4127,10 @@ class CapabilityEngine(AuraBaseModule):
 
             # 2a. Metabolic self-preservation guard
             try:
-                metabolism = resolve_metabolic_monitor(default=None)
-                snapshot = metabolism.get_current_metabolism() if metabolism else None
-                health_score = (
-                    float(getattr(snapshot, "health_score", 1.0) or 1.0) if snapshot else 1.0
+                reason, unbounded = self._self_preservation_block_reason(
+                    meta, skill_name, params, ctx
                 )
-                cpu_percent = (
-                    float(getattr(snapshot, "cpu_percent", 0.0) or 0.0) if snapshot else 0.0
-                )
-                ram_percent = (
-                    float(getattr(snapshot, "ram_percent", 0.0) or 0.0) if snapshot else 0.0
-                )
-                unbounded = self._looks_like_unbounded_compute_request(params, ctx)
-                should_block = False
-                reason = ""
-                if not meta.is_core_personality:
-                    if health_score <= 0.25 and meta.metabolic_cost >= 2:
-                        should_block = True
-                        reason = f"metabolic_health_critical:{health_score:.2f}"
-                    elif health_score <= 0.40 and meta.metabolic_cost >= 3:
-                        should_block = True
-                        reason = f"metabolic_health_low:{health_score:.2f}"
-                    elif unbounded and (
-                        health_score <= 0.55 or cpu_percent >= 80.0 or ram_percent >= 85.0
-                    ):
-                        should_block = True
-                        reason = (
-                            f"substrate_risk:health={health_score:.2f}:"
-                            f"cpu={cpu_percent:.1f}:ram={ram_percent:.1f}"
-                        )
-                if should_block:
+                if reason:
                     try:
                         from core.health.degraded_events import record_degraded_event
 
