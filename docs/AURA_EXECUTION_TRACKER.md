@@ -23472,3 +23472,36 @@ records, now approximately 53-320 records after this checkpoint. Next: publish
 CP280, then design the bootstrap/full-stack RLC proof path: easier
 recurrence-native supervised bridge, trajectory/CE credit use, fast-weight
 ablation arms, and fresh held-out frontier tasks with independent verification.
+
+## Checkpoint 2026-07-21-281: Diagnostic Training Terminals Feed the Proof Controller
+
+The CP280 trainer halt created a necessary downstream contract: a resident
+training run that exits with `no_learning_signal` is a valid scientific
+diagnostic, not a successful adapter and not an infrastructure crash. The
+post-training controller previously accepted only detached return code 0 and
+only admitted `max_steps` recurrent-GRPO completions, so a future honest
+no-signal halt would have been flattened into generic detached failure and
+lost the useful diagnosis.
+
+`tools/run_resident_recurrent_grpo_post_training.py` now accepts training
+return code 3 only as a diagnostic terminal. It reads the GRPO receipt,
+requires `termination.reason == no_learning_signal`, verifies that no causal
+or reasoning gain is being claimed, records the failure points, and writes the
+normal final verdict with `directional_evidence=None`. Successful proof still
+requires return code 0, `max_steps`, an admissible recurrent-GRPO identity,
+adapter freeze, directional factorial evidence, and external custody before
+any frontier or release claim can become true.
+
+Validation is clean: `tests/test_resident_recurrent_grpo_post_training.py`,
+`tests/test_train_grpo_contract.py`, and `tests/test_grpo.py` pass together
+with 45 tests, bytecode compilation passes for the touched controller/trainer
+files, `make lint` passes, and `git diff --check` passes. This closes the
+coordination gap between honest no-gradient detection and the broader proof
+pipeline.
+
+This is total checkpoint record 342. The forecast remains 394-661 total
+records, now approximately 52-319 records after this checkpoint. Next: publish
+CP281, then continue the full-stack RLC proof design and implementation:
+bootstrap the cortex into a learnable band, expose trajectory credit where it
+is already measured, and add certified fast-weight/latent-opt ablation arms
+before rerunning resident-32B proof work.

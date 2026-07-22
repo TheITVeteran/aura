@@ -131,6 +131,33 @@ def test_training_completion_rejects_wall_clock_and_partial_runs(isolated_repo):
             post._validate_training_completion(candidate, contract)
 
 
+def test_training_no_signal_stop_is_a_diagnostic_not_claim():
+    receipt = {
+        "termination": {
+            "reason": "no_learning_signal",
+            "completed_budget": False,
+        },
+        "learning_signal": {
+            "learning_signal": False,
+            "diagnosis": "tasks_too_hard: no gradients",
+        },
+        "verdict": {
+            "had_signal": False,
+            "causal_gain_proven": False,
+        },
+    }
+
+    assert post._training_diagnostic_failure(receipt) == [
+        "training:no_learning_signal",
+        "diagnosis:tasks_too_hard: no gradients",
+    ]
+
+    claimed = dict(receipt)
+    claimed["verdict"] = {**receipt["verdict"], "causal_gain_proven": True}
+    with pytest.raises(post.PostTrainingError, match="diagnostic_claims"):
+        post._training_diagnostic_failure(claimed)
+
+
 def test_detached_terminal_requires_empty_contained_lineage():
     receipt = {
         "returncode": 0,
@@ -150,6 +177,11 @@ def test_detached_terminal_requires_empty_contained_lineage():
     assert post._validate_detached_terminal(
         status, role="training", allowed_returncodes=frozenset({0})
     ) == receipt
+
+    status["receipt"] = {**receipt, "returncode": 3}
+    assert post._validate_detached_terminal(
+        status, role="training", allowed_returncodes=frozenset({0, 3})
+    )["returncode"] == 3
 
     status["receipt"] = {**receipt, "lineage_empty": False}
     with pytest.raises(

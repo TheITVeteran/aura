@@ -364,6 +364,34 @@ def _validate_training_completion(
         _fail("training_completion_not_admissible")
 
 
+def _training_diagnostic_failure(
+    grpo_receipt: Mapping[str, Any],
+) -> list[str] | None:
+    """Classify an intentional nonclaiming training stop, if present."""
+
+    termination = grpo_receipt.get("termination")
+    verdict = grpo_receipt.get("verdict")
+    learning_signal = grpo_receipt.get("learning_signal")
+    if (
+        not isinstance(termination, Mapping)
+        or not isinstance(verdict, Mapping)
+        or not isinstance(learning_signal, Mapping)
+    ):
+        return None
+    reason = str(termination.get("reason") or "")
+    if reason != "no_learning_signal":
+        return None
+    if (
+        termination.get("completed_budget") is not False
+        or verdict.get("had_signal") is not False
+        or verdict.get("causal_gain_proven") is not False
+        or learning_signal.get("learning_signal") is not False
+    ):
+        _fail("training_diagnostic_claims_invalid")
+    diagnosis = str(learning_signal.get("diagnosis") or "unknown")
+    return [f"training:{reason}", f"diagnosis:{diagnosis}"]
+
+
 def _cmdline_script(cmdline: Sequence[str]) -> str:
     parts = [str(part) for part in cmdline if str(part)]
     if not parts:
@@ -840,9 +868,27 @@ class ControllerRun:
             role="training",
         )
         training_receipt = _validate_detached_terminal(
-            training_status, role="training", allowed_returncodes=frozenset({0})
+            training_status, role="training", allowed_returncodes=frozenset({0, 3})
         )
         self.event("completed", {"receipt_sha256": training_receipt["receipt_sha256"]})
+        if training_receipt.get("returncode") == 3:
+            self.set_stage("training_diagnostic_terminal")
+            output = _resolved(Path(str(self.config["training_output"])))
+            grpo_receipt = _strict_json(output / "grpo_receipt.json")
+            failure_points = _training_diagnostic_failure(grpo_receipt)
+            if failure_points is None:
+                _fail("training_diagnostic_not_admissible")
+            self.event(
+                "blocked",
+                {
+                    "receipt_sha256": training_receipt["receipt_sha256"],
+                    "failure_points": failure_points,
+                },
+            )
+            return self.final_verdict(
+                directional_evidence=None,
+                failure_points=failure_points,
+            )
 
         self.set_stage("training_admission")
         admission = self.admit_training(training_receipt)
