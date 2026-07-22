@@ -24703,3 +24703,42 @@ records, now approximately 90-357 records after this checkpoint. Next: publish
 this transaction-integrity checkpoint, finish the four-slice code audit and
 ownership map, then repair verifier/learning truth semantics before expanding
 the unified epistemic state.
+
+## Checkpoint 2026-07-22-316: Spark Baseline Audit Is Exhaustive And Live-Path Grounded
+
+`docs/RLC_SPARK_EXECUTION_LEDGER.md` now contains the completed four-slice
+code-grounded baseline for all 72 Spark checkpoints. Every identifier appears
+exactly once in an accepted, partial, missing, evidence, or blocked set, and
+every range has named implementation and live-integration owners. SPARK-001 is
+checked only now, after the source mapping, acceptance contracts, exhaustive
+status map, ownership map, and main tracker reconciliation all exist.
+
+The audit confirms a narrow but important positive fact: selected resident RLC
+turns perform real causal neural recurrence and decode from the refined latent
+state. It also records why this is not yet a unified or recurrence-trained live
+substrate: the trained adapter is not loaded into resident projections; weight
+integrity has no live digest producer; serving identity validation is
+incomplete; four slots generally admit one organ context; Will authorizes the
+current action before RLC rehearsal; tools and independent verifiers remain
+outside the episode; durable learning is unscheduled; and decisive mechanism
+receipts are absent from public health/UI proof.
+
+The core audit additionally found candidate-state scoring, transactional
+rollback, and identity-halting defects repaired in CP315. The verifier audit
+found invalid Wilson-success accounting, unconditional episode success,
+fail-open self-improvement, unchecked-answer memory admission, permissive math
+substring grading, and a source-ranker update that can saturate. The training
+audit preserves the negative evidence: the preregistered 1.5B full RLC arm
+scored 8/72 versus vanilla 21/72, and the latest resident campaign produced no
+optimizer updates or accepted causal gain. None of those results is hidden by
+the new architecture plan.
+
+Validation: the status map covers SPARK-001 through SPARK-072 without duplicate
+credit, the static live-path audit changed no runtime files, and the ledger
+retains the conditional `WOW Signal` gate. This audit is a requirements and
+wiring checkpoint, not empirical capability evidence.
+
+This is total checkpoint record 377. The revised forecast remains 466-733 total
+records, now approximately 89-356 records after this checkpoint. Next: repair
+the verifier and learning truth-semantics cluster, then implement the strict
+epistemic state that the branch, verifier, repair, and learning paths will share.

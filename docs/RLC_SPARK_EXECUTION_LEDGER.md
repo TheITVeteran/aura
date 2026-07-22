@@ -46,9 +46,85 @@ midpoint planning estimate is 62.4%. These percentages measure the work ledger,
 not intelligence or release quality. Failed gates add explicit repair records
 rather than being hidden by changing a checkbox.
 
+## Code-grounded baseline and ownership
+
+The four-slice static audit covered the neural core, epistemic/verifier paths,
+training/proof surfaces, and the selected live/full-mind path. It read the
+entire Spark source and traced callers rather than crediting class names. The
+baseline below is exhaustive over SPARK-001 through SPARK-072:
+
+- `ACCEPTED`: SPARK-001.
+- `PARTIAL`: SPARK-003, SPARK-008, SPARK-010, SPARK-011, SPARK-012,
+  SPARK-014, SPARK-021, SPARK-022, SPARK-023, SPARK-024, SPARK-025,
+  SPARK-026, SPARK-027, SPARK-035, SPARK-039, SPARK-040, SPARK-041,
+  SPARK-042, SPARK-052, SPARK-053, SPARK-054, SPARK-055, SPARK-056,
+  SPARK-058, SPARK-060, SPARK-062, SPARK-063, SPARK-065, SPARK-066,
+  SPARK-067.
+- `MISSING`: SPARK-002, SPARK-005, SPARK-006, SPARK-007, SPARK-009,
+  SPARK-015, SPARK-016, SPARK-017, SPARK-018, SPARK-019, SPARK-020,
+  SPARK-028, SPARK-029, SPARK-030, SPARK-031, SPARK-032, SPARK-033,
+  SPARK-034, SPARK-036, SPARK-037, SPARK-038, SPARK-043, SPARK-044,
+  SPARK-045, SPARK-046, SPARK-047, SPARK-048, SPARK-049, SPARK-050,
+  SPARK-051, SPARK-057, SPARK-059, SPARK-061, SPARK-064, SPARK-068.
+- `EVIDENCE`: SPARK-004, SPARK-013, SPARK-070, SPARK-071.
+- `BLOCKED`: SPARK-069 is blocked on a successful source-bound admission
+  preflight; SPARK-072 is blocked on the frontier-certificate verdict.
+
+Every identifier appears exactly once in that map. `PARTIAL` means substantive
+code exists but the named acceptance contract is not closed. It does not count
+as half a checkbox.
+
+| Checkpoints | Primary implementation owners | Live integration owners |
+|---|---|---|
+| SPARK-001-004, SPARK-069-072 | `docs/RLC_SPARK_EXECUTION_LEDGER.md`, `tools/prepare_resident_recurrent_grpo_campaign.py`, `core/brain/llm/latent_cortex/frontier_certification.py`, proof/lab tools | installed-app resident worker, sealed artifact and external-verifier paths |
+| SPARK-005-013 | new strict state module under `core/brain/llm/latent_cortex/`, epistemic firewall, memory/evidence stores | `core/brain/cognitive_ingress.py`, memory consolidation, full-mind receipt |
+| SPARK-014-022 | `branches.py`, `workspace.py`, branch operators and diversity/correlation modules | latent engine, compute ledger, GWT coupling |
+| SPARK-023-038 | `engine.py`, `recurrence.py`, `schedules.py`, `escape.py`, HLA/state-tree/search/quanta modules | resident MLX worker/client and `latent_cortex_service.py` |
+| SPARK-039-050 | unified verifier mesh, `task_verifiers.py`, exact reasoning tools, process/generative critics | in-episode RLC controller and governed tool receipts |
+| SPARK-051-054 | value-of-computation controller, compute/evidence ledgers | service allocation, body/allostasis, Will, user-facing response synthesis |
+| SPARK-055-064 | fast weights, recurrence adapter, replay/consolidation, `tools/train_grpo.py` and proof trainers | worker adapter loader, scheduled learning transaction, runtime integrity producer |
+| SPARK-065-068 | cognitive ingress, RLC-GWT coupling, self/body/memory bridges | response generation, action executor, Will re-decision, health/API/UI receipts |
+
+### Static audit verdict
+
+The selected RLC path is real neural computation: resident hidden states enter a
+latent workspace, repeatedly traverse shared middle transformer layers under KV
+rewind, and the winning state is persisted into decode. The following prevent a
+claim of one unified, recurrence-trained, live Aura runtime:
+
+1. The recurrence-native adapter implementation has no resident worker loader
+   or live projection attachment; the active generic depth loop is not proof of
+   trained RLC tissue.
+2. `weight_integrity` has a schema and consumers but no live digest producer.
+   Routine success and public full-mind proof do not yet require a proven
+   verdict, active recurrence adapter, or adapter artifact digest.
+3. Runtime identity inventories more than it validates: adapter weights,
+   tokenizer, quantization, and unresolved identity gaps are not all compared
+   against pinned expectations.
+4. The four-slot resident profile reserves communication/free slots and can
+   admit only one ordered organ context, so memory/reference can crowd out
+   goals, self, affect, body, Will, and GWT.
+5. RLC enters GWT after reasoning, but current action execution asks Will before
+   RLC rehearsal and does not require a new authorization when rehearsal changes
+   the risk/effect model.
+6. Tools, symbolic engines, independent critics, disagreement localization, and
+   targeted evidence acquisition are outside the recurrent episode. Selecting
+   RLC can also bypass the ordinary reasoning amplifier/composer.
+7. Fast-weight consolidation produces proposals but is not a scheduled,
+   interference-gated durable-learning transaction. RLC proof lineage is not
+   retained with normal memory consolidation.
+8. Public health/UI receipts omit decisive mechanism, integrity, identity,
+   cognitive-slot, telemetry, and workspace-outcome fields.
+
+The dependency order is therefore integrity and live adapter identity, full
+epistemic state, independent hypotheses, recurrent correction/HLA, verifier and
+local repair, adaptive control, verified learning, whole-organism re-decision,
+then the powered resident proof. Training a stale or disconnected treatment
+before those dependencies close is not admissible.
+
 ## A. Contract, baseline, and literature
 
-- [ ] **SPARK-001 - Canonical requirements ledger.** Map every distinct Spark
+- [x] **SPARK-001 - Canonical requirements ledger.** Map every distinct Spark
   mechanism, limit, training objective, live seam, and falsification gate to an
   owner and acceptance contract; reconcile it with the main Aura tracker.
 - [ ] **SPARK-002 - Primary-literature dossier.** Replace placeholder citations
