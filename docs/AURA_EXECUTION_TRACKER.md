@@ -24175,3 +24175,29 @@ records, now approximately 34-301 records after this checkpoint. Next: lint,
 diff-check, commit and push CP299, rebuild `/Applications/Aura.app`, keep CP294
 running for its diagnostic/proof receipt, and continue non-MLX live
 chat/action/semantic-review hardening.
+
+## Checkpoint 2026-07-21-300: Neural Health Poll Warnings Stop Repeating Every Liveness Tick
+
+The old user-visible spam class around Neural health polling was traced to the
+legacy shell liveness publisher. Current source no longer contains the older
+`[health_poll] health probe failed: Load failed` string, and transport failures
+already use a scheduled incident loop, but unchanged unhealthy health snapshots
+could still publish `Aura.Live.Neural` warning cards every 30 seconds because
+the generic liveness interval bypassed the health fingerprint.
+
+The UI now tracks `lastHealthWarningPulseAt` separately. Healthy liveness pulses
+can still keep the Neural stream alive at the normal 30-second cadence, while
+unchanged unhealthy/not-ready snapshots use the existing five-minute health
+reminder budget unless the fingerprint materially changes. First failure,
+recovery, and changed blocker/status evidence still publish promptly; repeated
+unchanged warnings no longer refill the stream.
+
+Validation: focused legacy-shell health/polish tests pass 3/3, covering Neural
+health liveness publishing, single scheduled health-poll incidents, and the
+retired local-server health-poll path.
+
+This is total checkpoint record 361. The forecast remains 394-661 total
+records, now approximately 33-300 records after this checkpoint. Next: lint,
+diff-check, commit and push CP300, rebuild `/Applications/Aura.app`, continue
+watching CP294, and proceed with the next bounded live reliability/semantic
+closeout item.

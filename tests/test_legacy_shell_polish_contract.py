@@ -149,9 +149,14 @@ def test_legacy_shell_neural_feed_receives_health_liveness_pulses():
 
     assert "lastNeuralPulseAt" in js
     assert "lastSemanticThoughtAt" in js
+    assert "lastHealthWarningPulseAt" in js
     assert "NEURAL_LIVENESS_PULSE_MS = 30000" in js
+    assert "HEALTH_POLL_REMINDER_MS = 5 * 60 * 1000" in js
     assert "function queueNeuralLivenessCard" in js
     assert "function publishHealthNeuralPulse" in js
+    assert "const interval = strictHealthy ? NEURAL_LIVENESS_PULSE_MS : HEALTH_POLL_REMINDER_MS;" in js
+    assert "warningReminderDue = !strictHealthy" in js
+    assert "if (!strictHealthy) state.lastHealthWarningPulseAt = now;" in js
     assert "function conversationPayloadReady" in js
     assert "conversationPayloadReady(payload, blockers)" in js
     assert "lane.conversation_ready === true || payload.conversation_ready === true" not in js

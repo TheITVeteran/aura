@@ -56,6 +56,7 @@ const state = {
     lastNeuralPulseAt: 0,
     lastSemanticThoughtAt: 0,
     lastHealthSnapshotFingerprint: null,
+    lastHealthWarningPulseAt: 0,
     conversationReady: false,
     conversationLane: null,
     runtimeHealthy: false,
@@ -2537,13 +2538,17 @@ function publishHealthNeuralPulse(payload, source = 'health_poll') {
     if (!payload || typeof payload !== 'object') return;
     const fingerprint = healthPulseFingerprint(payload);
     const changed = fingerprint !== state.lastHealthSnapshotFingerprint;
-    const staleFeed = Date.now() - Math.max(Number(state.lastSemanticThoughtAt || 0), Number(state.lastNeuralPulseAt || 0)) > NEURAL_LIVENESS_PULSE_MS;
-    if (!changed && !staleFeed) return;
+    const now = Date.now();
+    const blockers = runtimeHealthBlockers(payload);
+    const strictHealthy = payloadRuntimeHealthy(payload) && blockers.length === 0;
+    const interval = strictHealthy ? NEURAL_LIVENESS_PULSE_MS : HEALTH_POLL_REMINDER_MS;
+    const staleFeed = now - Math.max(Number(state.lastSemanticThoughtAt || 0), Number(state.lastNeuralPulseAt || 0)) > interval;
+    const warningReminderDue = !strictHealthy && now - Number(state.lastHealthWarningPulseAt || 0) >= HEALTH_POLL_REMINDER_MS;
+    if (!changed && !staleFeed && !warningReminderDue) return;
     state.lastHealthSnapshotFingerprint = fingerprint;
 
     const lane = payload.conversation_lane || {};
     const boot = payload.boot || {};
-    const blockers = runtimeHealthBlockers(payload);
     const probeText = payload.runtime_probe_healthy === true ? 'probes pass' : 'probes blocked';
     const conversationText = conversationPayloadReady(payload, blockers)
         ? 'conversation ready'
@@ -2563,10 +2568,10 @@ function publishHealthNeuralPulse(payload, source = 'health_poll') {
     const proofText = payload.proof_readiness_healthy === false || integrity.proof_readiness === false
         ? `; proof integrity degraded${proofDetails.length ? `: ${proofDetails.slice(0, 2).join(' | ')}` : ''}`
         : '';
-    const strictHealthy = payloadRuntimeHealthy(payload) && blockers.length === 0;
     const statusText = String(
         strictHealthy ? (payload.status || boot.status || 'healthy') : 'not_ready'
     ).replace(/_/g, ' ');
+    if (!strictHealthy) state.lastHealthWarningPulseAt = now;
     queueNeuralLivenessCard(
         `[${source}] health=${statusText}; ${probeText}; ${conversationText}${blockerText}${proofText}`,
         {
