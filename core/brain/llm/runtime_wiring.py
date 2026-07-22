@@ -28,26 +28,6 @@ _SOFT_RUNTIME_FAILURES = (
     ValueError,
 )
 
-_USER_FACING_ORIGINS = frozenset(
-    {
-        "user",
-        "voice",
-        "admin",
-        "api",
-        "desktop",
-        "desktop-ui",
-        "gui",
-        "ws",
-        "websocket",
-        "direct",
-        "external",
-        "native-shell",
-        "audit",
-        "simulate",
-        "test",
-    }
-)
-
 _MEMORY_HYDRATION_REQUEST_RE = re.compile(
     r"\b(?:"
     r"remember|recall|memory|memories|memor(?:y|ies)|earlier|previous|last time|"
@@ -81,11 +61,6 @@ def _record_runtime_wiring_degradation(
     )
 
 
-def _origin_tokens(origin: str | None) -> set[str]:
-    normalized = str(origin or "").strip().lower().replace("-", "_")
-    return {token for token in normalized.split("_") if token}
-
-
 def _env_float(name: str, default: float) -> float:
     try:
         return float(os.environ.get(name, default))
@@ -107,7 +82,45 @@ def _should_hydrate_runtime_memory(objective: str, origin: str | None) -> bool:
 
 
 def is_user_facing_origin(origin: str | None) -> bool:
-    return bool(_origin_tokens(origin) & _USER_FACING_ORIGINS)
+    """Delegate to the canonical foreground-origin classifier.
+
+    This module carried a third, naive copy of the rule: it split the origin
+    on separators and returned True if ANY token intersected a public set
+    containing "api", "admin", "external", "audit", "simulate" and "test".
+    A composite label could therefore self-declare user-facing authority —
+    "test_generator" and "audit"/"simulate" were classified as real user
+    traffic, which drives live-state resolution, response-contract
+    construction, and memory hydration. The same naive rule also MISSED
+    "native-shell", a genuinely user-facing desktop origin, because no token
+    matched.
+
+    core.goals.objective_lifecycle is the single source of truth: exact
+    membership plus prefix anchoring ("desktop_", "voice_", "api_", ...), so
+    "desktop_task" and "chat_api" still qualify while "test_generator" and
+    "background_ui" do not.
+    """
+    from core.goals.objective_lifecycle import is_foreground_objective_origin
+
+    return bool(is_foreground_objective_origin(origin))
+
+
+# Turn boundaries in the flattened transcript are literal text, so these
+# markers appearing INSIDE message content can forge a boundary and reassign
+# authorship of everything that follows.
+_ROLE_MARKER_RE = re.compile(
+    r"(?im)^[ \t]*(?:user|human|aura|assistant|system)[ \t]*:",
+)
+_CHAT_CONTROL_TOKEN_RE = re.compile(
+    r"(?i)<\|(?:im_start|im_end|endoftext|eot_id)\|>",
+)
+
+
+def _neutralize_role_markers(content: str) -> str:
+    """Defuse embedded role labels and chat-control tokens in message text."""
+    cleaned = _CHAT_CONTROL_TOKEN_RE.sub("", str(content or ""))
+    # Zero-width word joiner after the label keeps the text readable to a
+    # human while removing its line-anchored "new turn" shape.
+    return _ROLE_MARKER_RE.sub(lambda m: m.group(0).replace(":", "⁠:"), cleaned)
 
 
 def _objective_from_messages(messages: list[dict[str, Any]] | None) -> str:
@@ -131,13 +144,27 @@ def _coerce_prompt_from_messages(messages: list[dict[str, Any]] | None) -> tuple
 
     for msg in messages:
         if not isinstance(msg, dict):
-            convo_parts.append(str(msg))
+            # A non-mapping item has no role to trust. Stringifying it into
+            # the transcript let arbitrary objects contribute unattributed
+            # text; it is skipped rather than silently promoted.
+            _record_runtime_wiring_degradation(
+                TypeError(f"non_mapping_message:{type(msg).__name__}"),
+                stage="message_coercion",
+                action="dropped a non-mapping message instead of stringifying it into the prompt",
+            )
             continue
 
         role = str(msg.get("role", "") or "").strip().lower()
         content = str(msg.get("content", "") or "").strip()
         if not content:
             continue
+
+        # Flattening roles into "User:"/"Aura:" lines means the ONLY thing
+        # separating turns is literal text, so content that itself contains
+        # those labels or chat-control tokens can forge a turn boundary and
+        # reassign authorship of everything after it. Neutralize the markers
+        # inside content before it becomes a labeled line.
+        content = _neutralize_role_markers(content)
 
         if role == "system":
             system_parts.append(content)
@@ -146,7 +173,8 @@ def _coerce_prompt_from_messages(messages: list[dict[str, Any]] | None) -> tuple
         elif role in {"assistant", "aura"}:
             convo_parts.append(f"Aura: {content}")
         else:
-            convo_parts.append(f"[{role or 'message'}]: {content}")
+            # Unknown roles are rendered without an authority-bearing label.
+            convo_parts.append(f"[unverified {role or 'message'}]: {content}")
 
     prompt = "\n".join(convo_parts).strip()
     system_prompt = "\n\n".join(system_parts).strip() or None
