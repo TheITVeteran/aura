@@ -52,6 +52,7 @@ into her control state, not a phenomenal one. The report boundary of
 """
 from __future__ import annotations
 
+import asyncio
 import enum
 import json
 import logging
@@ -71,6 +72,27 @@ logger = logging.getLogger("Aura.Allostasis")
 
 _SUBSYSTEM = "allostasis"
 _STATE_SCHEMA_VERSION = 1
+# Ledger events held across a failed write. Bounds the retry queue so an
+# unwritable disk cannot grow memory without limit.
+_MAX_PENDING_EVENTS = 4096
+# A vitals sample older than this cannot describe the body NOW. The metabolic
+# cycle pulses every 60 s, so three missed pulses means the feed is broken.
+_INGEST_STALE_AFTER_S = 195.0
+# One full pulse interval of grace before the first sample is expected.
+_BOOT_GRACE_S = 90.0
+# A vitals read that takes longer than this is a broken provider, not a
+# slow one: the whole pulse budget is 60 s.
+_SNAPSHOT_TIMEOUT_S = 20.0
+# The longest interval a single sample may be credited with. Beyond this the
+# body was not observed (host sleep, a stalled pulse loop) and strain is
+# decayed but never invented. Four metabolic pulses.
+_MAX_ATTRIBUTABLE_GAP_S = 240.0
+# Issuer namespace for ledger identifiers. The forecast ledger is durable and
+# append-only across restarts, so an ID must be unique across every process
+# that ever wrote to it — not merely within this one. A per-process issuer
+# prefix plus a full-width uuid4 makes cross-process collision impossible in
+# practice, where a 40-bit suffix alone did not.
+_ISSUER = uuid.uuid4().hex[:8]
 
 _BOUNDARY_ERRORS = (
     AttributeError,
@@ -147,11 +169,86 @@ class MannKendall:
         return self.p_value <= alpha
 
 
-def mann_kendall(values: list[float]) -> MannKendall:
+def _rank_autocorrelations(values: list[float]) -> list[float]:
+    """Lag-k autocorrelation of the RANKS of a series, k = 1 … n-3.
+
+    Ranks rather than levels because Mann–Kendall is itself a rank test: the
+    dependence that inflates S is dependence in the ordering.
+    """
+    n = len(values)
+    order = sorted(range(n), key=lambda i: values[i])
+    ranks = [0.0] * n
+    # MIDRANKS. Breaking ties by position invents an ordering the data does
+    # not have: a perfectly flat series would receive ranks 1…n and look
+    # strongly autocorrelated, inflating the variance correction on exactly
+    # the series that carries no trend information at all. Tied values share
+    # the mean of the ranks they span, matching the tie handling in the
+    # Mann-Kendall variance itself.
+    position = 0
+    while position < n:
+        end = position
+        while end + 1 < n and values[order[end + 1]] == values[order[position]]:
+            end += 1
+        midrank = (position + end) / 2.0 + 1.0
+        for index in order[position:end + 1]:
+            ranks[index] = midrank
+        position = end + 1
+    mean = sum(ranks) / n
+    centred = [r - mean for r in ranks]
+    denom = sum(c * c for c in centred)
+    if denom <= 0.0:
+        return []
+    out: list[float] = []
+    for k in range(1, max(1, n - 2)):
+        num = sum(centred[i] * centred[i + k] for i in range(n - k))
+        out.append(num / denom)
+    return out
+
+
+def _hamed_rao_correction(values: list[float]) -> float:
+    """Variance inflation factor for a serially correlated series.
+
+    Hamed & Rao (1998). Runtime vitals are sampled every 60 s and are strongly
+    autocorrelated — memory now is memory a minute ago plus a little. The
+    textbook Var(S) assumes independence, so on dense telemetry it is far too
+    small and ordinary noise clears the significance bar routinely. The
+    correction scales Var(S) by
+
+        n/n* = 1 + 2/(n(n-1)(n-2)) · Σₖ (n-k)(n-k-1)(n-k-2) ρₖ
+
+    over the autocorrelations that are themselves significant at 5%.
+    """
+    n = len(values)
+    if n < 4:
+        return 1.0
+    rho = _rank_autocorrelations(values)
+    if not rho:
+        return 1.0
+    bound = 1.96 / math.sqrt(n)
+    total = 0.0
+    for k, r in enumerate(rho, start=1):
+        if abs(r) <= bound:
+            continue  # indistinguishable from independence
+        span = n - k
+        if span < 3:
+            continue
+        total += span * (span - 1) * (span - 2) * r
+    factor = 1.0 + (2.0 / (n * (n - 1) * (n - 2))) * total
+    # A correction that drives the variance to zero would manufacture
+    # certainty; negative dependence can legitimately shrink it, but not
+    # below a tenth of the independent-sample variance.
+    return _clamp(factor, 0.1, 50.0)
+
+
+def mann_kendall(values: list[float], *, correct_autocorrelation: bool = True) -> MannKendall:
     """Tie-corrected Mann–Kendall test for a monotonic trend.
 
     Var(S) = [n(n−1)(2n+5) − Σⱼ tⱼ(tⱼ−1)(2tⱼ+5)] / 18 over tie groups of size tⱼ,
     with the standard continuity correction on Z.
+
+    On serially correlated data the variance is additionally inflated by the
+    Hamed–Rao factor; pass ``correct_autocorrelation=False`` for the classical
+    independent-sample test.
     """
     n = len(values)
     if n < 3:
@@ -170,6 +267,8 @@ def mann_kendall(values: list[float]) -> MannKendall:
         counts[v] = counts.get(v, 0) + 1
     tie_term = sum(t * (t - 1) * (2 * t + 5) for t in counts.values() if t > 1)
     var_s = (n * (n - 1) * (2 * n + 5) - tie_term) / 18.0
+    if correct_autocorrelation:
+        var_s *= _hamed_rao_correction(values)
     if var_s <= 0.0:
         # All values identical: no evidence of trend.
         return MannKendall(s=s, var_s=0.0, z=0.0, p_value=1.0, n=n)
@@ -259,14 +358,60 @@ def robust_sigma(values: list[float]) -> float:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _env_float(name: str, default: float) -> float:
+    """Read a finite float from the environment, or fall back to the default.
+
+    float() happily accepts "nan" and "inf". A NaN threshold makes every
+    comparison against it False (nothing is ever amber or red), and an
+    infinite one makes a red line unreachable — both silently disable the
+    protection the value configures.
+    """
     raw = os.getenv(name, "")
     if not raw:
         return default
     try:
-        return float(raw)
+        value = float(raw)
     except ValueError:
         logger.warning("Ignoring malformed %s=%r", name, raw)
         return default
+    if not math.isfinite(value):
+        logger.warning("Ignoring non-finite %s=%r", name, raw)
+        return default
+    return value
+
+
+def _positive_float(name: str, value: Any) -> float:
+    """A finite value strictly greater than zero, or a clear error."""
+    number = float(value)
+    if not math.isfinite(number) or number <= 0.0:
+        raise ValueError(f"allostasis: {name} must be a finite positive number, got {value!r}")
+    return number
+
+
+def _nonnegative_float(name: str, value: Any) -> float:
+    number = float(value)
+    if not math.isfinite(number) or number < 0.0:
+        raise ValueError(f"allostasis: {name} must be a finite non-negative number, got {value!r}")
+    return number
+
+
+def _positive_int(name: str, value: Any) -> int:
+    number = int(value)
+    if number <= 0:
+        raise ValueError(f"allostasis: {name} must be a positive integer, got {value!r}")
+    return number
+
+
+def _unit_interval(name: str, value: Any) -> float:
+    """A probability-like constant in (0, 1).
+
+    alpha at 0 admits nothing and at 1 admits everything; a coverage target
+    outside the interval can never be met, so the calibration feedback loop
+    would chase a target it cannot reach.
+    """
+    number = float(value)
+    if not math.isfinite(number) or not 0.0 < number < 1.0:
+        raise ValueError(f"allostasis: {name} must lie strictly between 0 and 1, got {value!r}")
+    return number
 
 
 @dataclass(frozen=True)
@@ -281,6 +426,32 @@ class VitalSpec:
     setpoint: float          # allostatic-load baseline: strain accrues above this
     forecastable: bool = True
     min_meaningful_slope: float = 0.0   # per second; below this, trends are noise
+
+    def __post_init__(self) -> None:
+        """Reject a spec that cannot express a trajectory.
+
+        setpoint < amber < red is what makes "rising toward a limit" mean
+        anything: load accrues above setpoint and is normalized by
+        (red - setpoint), and a forecast is the crossing of amber then red.
+        Inverted or non-finite thresholds produced negative strain spans and
+        red lines that could never be crossed, with no error anywhere.
+        """
+        for field_name in ("amber", "red", "setpoint", "min_meaningful_slope"):
+            value = getattr(self, field_name)
+            if not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+                raise ValueError(
+                    f"VitalSpec {self.key!r}: {field_name} must be finite, got {value!r}"
+                )
+        if not self.setpoint < self.amber < self.red:
+            raise ValueError(
+                f"VitalSpec {self.key!r}: requires setpoint < amber < red, got "
+                f"{self.setpoint} < {self.amber} < {self.red}"
+            )
+        if self.min_meaningful_slope < 0.0:
+            raise ValueError(
+                f"VitalSpec {self.key!r}: min_meaningful_slope must be >= 0, "
+                f"got {self.min_meaningful_slope}"
+            )
 
 
 def default_vital_specs() -> tuple[VitalSpec, ...]:
@@ -367,6 +538,7 @@ class RegimeEvent:
 class ForecastOutcome(enum.StrEnum):
     HIT = "hit"                    # crossed inside the stated band
     MISS_EARLY = "miss_early"      # crossed before the band opened
+    MISS_LATE = "miss_late"        # crossed after the band closed
     FALSE_ALARM = "false_alarm"    # band expired, no crossing, no excuse
     INTERVENED = "intervened"      # no crossing, but regulation fired after issue
     SUPERSEDED = "superseded"      # regime changed / process restarted under it
@@ -400,6 +572,11 @@ class Forecast:
     p_value: float
     widen_factor: float
     first_eta_unix: float
+    # The band AS ISSUED. Revisions may move the operational band, but a
+    # forecast is only falsifiable if it is scored against what it said
+    # at issue time — otherwise the claim moves with the evidence.
+    first_eta_lower_unix: float = 0.0
+    first_eta_upper_unix: float = 0.0
     revisions: int = 0
     last_revised_at: float = 0.0
     status: str = "open"         # "open" | ForecastOutcome value
@@ -426,6 +603,8 @@ class Forecast:
             "p_value": self.p_value,
             "widen_factor": round(self.widen_factor, 3),
             "first_eta_unix": round(self.first_eta_unix, 3),
+            "first_eta_lower_unix": round(self.first_eta_lower_unix, 3),
+            "first_eta_upper_unix": round(self.first_eta_upper_unix, 3),
             "revisions": self.revisions,
             "last_revised_at": round(self.last_revised_at, 3),
             "status": self.status,
@@ -441,6 +620,7 @@ class _VitalCalibration:
 
     hits: int = 0
     miss_early: int = 0
+    miss_late: int = 0
     false_alarms: int = 0
     intervened: int = 0
     superseded: int = 0
@@ -448,8 +628,12 @@ class _VitalCalibration:
     @property
     def scored(self) -> int:
         """Outcomes that count toward interval coverage (interventions and
-        supersessions are excluded: the world changed under the forecast)."""
-        return self.hits + self.miss_early + self.false_alarms
+        supersessions are excluded: the world changed under the forecast).
+
+        MISS_LATE counts. A crossing after the deadline is a failed
+        forecast, and omitting it from the denominator would let late
+        crossings quietly improve coverage."""
+        return self.hits + self.miss_early + self.miss_late + self.false_alarms
 
     @property
     def coverage(self) -> Optional[float]:
@@ -469,6 +653,7 @@ class _VitalCalibration:
         return {
             "hits": self.hits,
             "miss_early": self.miss_early,
+            "miss_late": self.miss_late,
             "false_alarms": self.false_alarms,
             "intervened": self.intervened,
             "superseded": self.superseded,
@@ -479,7 +664,7 @@ class _VitalCalibration:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "_VitalCalibration":
         out = cls()
-        for key in ("hits", "miss_early", "false_alarms", "intervened", "superseded"):
+        for key in ("hits", "miss_early", "miss_late", "false_alarms", "intervened", "superseded"):
             try:
                 setattr(out, key, max(0, int(data.get(key, 0))))
             except (TypeError, ValueError):
@@ -572,25 +757,42 @@ class AllostasisEngine:
         self._state_path = self._dir / "state.json"
         self._dir_ready = False
 
-        self._history_maxlen = int(history_maxlen)
-        self._trend_window_s = float(trend_window_s)
-        self._min_trend_samples = max(3, int(min_trend_samples))
-        self._alpha = significance_alpha if significance_alpha is not None else _env_float(
-            "AURA_ALLOSTASIS_ALPHA", 0.05)
-        self._horizon_s = forecast_horizon_s if forecast_horizon_s is not None else _env_float(
-            "AURA_ALLOSTASIS_HORIZON_S", 6 * 3600.0)
-        self._conserve_horizon_s = float(conserve_horizon_s)
-        self._protect_horizon_s = float(protect_horizon_s)
-        self._release_hysteresis_s = float(release_hysteresis_s)
-        self._resolution_grace_s = float(resolution_grace_s)
-        self._target_coverage = float(target_coverage)
-        self._eta_cap_s = float(eta_cap_s)
+        self._history_maxlen = _positive_int("history_maxlen", history_maxlen)
+        self._trend_window_s = _positive_float("trend_window_s", trend_window_s)
+        self._min_trend_samples = max(3, _positive_int("min_trend_samples", min_trend_samples))
+        self._alpha = _unit_interval(
+            "significance_alpha",
+            significance_alpha if significance_alpha is not None
+            else _env_float("AURA_ALLOSTASIS_ALPHA", 0.05),
+        )
+        self._horizon_s = _positive_float(
+            "forecast_horizon_s",
+            forecast_horizon_s if forecast_horizon_s is not None
+            else _env_float("AURA_ALLOSTASIS_HORIZON_S", 6 * 3600.0),
+        )
+        self._conserve_horizon_s = _positive_float("conserve_horizon_s", conserve_horizon_s)
+        self._protect_horizon_s = _positive_float("protect_horizon_s", protect_horizon_s)
+        # PROTECTING is the closer horizon by construction; inverted, the
+        # engine would jump straight past its own conserving stage.
+        if self._protect_horizon_s > self._conserve_horizon_s:
+            raise ValueError(
+                "allostasis: protect_horizon_s must be <= conserve_horizon_s "
+                f"({self._protect_horizon_s} > {self._conserve_horizon_s})"
+            )
+        self._release_hysteresis_s = _nonnegative_float(
+            "release_hysteresis_s", release_hysteresis_s)
+        self._resolution_grace_s = _nonnegative_float(
+            "resolution_grace_s", resolution_grace_s)
+        self._target_coverage = _unit_interval("target_coverage", target_coverage)
+        self._eta_cap_s = _positive_float("eta_cap_s", eta_cap_s)
 
         self._series: dict[str, deque[tuple[float, float]]] = {
             key: deque(maxlen=self._history_maxlen) for key in self._specs
         }
         self._cusum: dict[str, _CusumState] = {key: _CusumState() for key in self._specs}
-        self._regime_id: dict[str, str] = {key: f"boot-{uuid.uuid4().hex[:8]}" for key in self._specs}
+        self._regime_id: dict[str, str] = {
+            key: f"boot-{_ISSUER}-{uuid.uuid4().hex}" for key in self._specs
+        }
         self._regime_started_at: dict[str, float] = {}
         self._regime_events_total = 0
 
@@ -601,12 +803,19 @@ class AllostasisEngine:
         self._load_tau_s = _env_float("AURA_ALLOSTASIS_LOAD_TAU_S", 3600.0)
         self._last_ingest_at: Optional[float] = None
         self._ingest_count = 0
+        self._created_at = self._now()
+        # Vitals whose stale red-line reading has already been reported, so a
+        # per-pulse tier evaluation cannot turn one lost sensor into a storm.
+        self._stale_breach_reported: set[str] = set()
 
         self._tier = AllostasisTier.SETTLED
         self._tier_reason = "no samples yet"
         self._tier_changed_at = 0.0
         self._tier_release_eligible_since: Optional[float] = None
         self._interventions: deque[dict[str, Any]] = deque(maxlen=64)
+        # Vital that drove the most recent tier evaluation, or None when the
+        # driver is the composite allostatic load (no single vital).
+        self._tier_driver_vital: Optional[str] = None
 
         self._felt: dict[str, Any] = {
             "anticipatory_pressure": 0.0,
@@ -620,8 +829,36 @@ class AllostasisEngine:
         self._restore_persisted_state()
 
     # ── liveness / registration ─────────────────────────────────────────────
+    def readiness(self) -> dict[str, Any]:
+        """Why this engine is (or is not) ready, as evidence rather than a bit.
+
+        Readiness previously meant only that the kill switch was off, so a
+        pulse loop that had died — or never started — still reported a
+        healthy predictive organ. An engine that is not being fed cannot
+        forecast, and saying otherwise is the failure mode the health
+        contract exists to catch.
+        """
+        with self._lock:
+            last = self._last_ingest_at
+            samples = sum(len(series) for series in self._series.values())
+        now = self._now()
+        age_s = None if last is None else max(0.0, now - last)
+        fresh = age_s is not None and age_s <= _INGEST_STALE_AFTER_S
+        # Before the first pulse the engine is starting, not broken: the
+        # metabolic cycle feeds it within one 60 s pulse.
+        booting = last is None and (now - self._created_at) <= _BOOT_GRACE_S
+        return {
+            "ready": bool(not self._disabled and (fresh or booting)),
+            "enabled": not self._disabled,
+            "booting": booting,
+            "samples": samples,
+            "last_ingest_age_s": None if age_s is None else round(age_s, 3),
+            "stale_after_s": _INGEST_STALE_AFTER_S,
+            "ingest_count": self._ingest_count,
+        }
+
     def is_ready(self) -> bool:
-        return not self._disabled
+        return bool(self.readiness()["ready"])
 
     @property
     def enabled(self) -> bool:
@@ -647,6 +884,48 @@ class AllostasisEngine:
             for vital, stats in calibration.items():
                 if isinstance(stats, dict) and vital in self._specs:
                     self._calibration[vital] = _VitalCalibration.from_dict(stats)
+        # Chronic strain and the tier it justified are evidence, not scratch
+        # state: a restart that silently zeroes them reports a calm body it
+        # has no measurement for. Both are restored under validation, and the
+        # tier is restored only as far as the restored load actually supports.
+        saved_load = data.get("allostatic_load", {})
+        if isinstance(saved_load, dict):
+            for vital, raw in saved_load.items():
+                if vital not in self._specs:
+                    continue
+                value = _finite(raw, default=float("nan"))
+                if math.isnan(value) or value < 0.0:
+                    continue
+                self._load_raw[vital] = value
+        # Decay the restored strain across the downtime rather than crediting
+        # the body with strain it did not carry while the process was dead.
+        saved_at = _finite(data.get("saved_at"), default=float("nan"))
+        if not math.isnan(saved_at):
+            downtime = max(0.0, self._now() - saved_at)
+            if downtime > 0.0:
+                decay = math.exp(-downtime / max(1.0, self._load_tau_s))
+                for vital in self._load_raw:
+                    self._load_raw[vital] *= decay
+        saved_tier = str(data.get("tier", "") or "").upper()
+        restored_tier = getattr(AllostasisTier, saved_tier, None)
+        if isinstance(restored_tier, AllostasisTier):
+            # Never restore ABOVE what the decayed load justifies — the
+            # forecasts that drove a higher tier were superseded by restart.
+            load = self._composite_load()
+            ceiling = (
+                AllostasisTier.PROTECTING if load >= 0.85
+                else AllostasisTier.CONSERVING if load >= 0.60
+                else AllostasisTier.VIGILANT if load >= 0.30
+                else AllostasisTier.SETTLED
+            )
+            self._tier = min(restored_tier, ceiling)
+            if self._tier != AllostasisTier.SETTLED:
+                self._tier_reason = (
+                    f"restored from persisted state (load {load:.2f} after downtime decay)"
+                )
+        total = data.get("regime_events_total")
+        if isinstance(total, int) and total >= 0:
+            self._regime_events_total = total
         # Open forecasts from a previous process are moot after a restart:
         # the body they described no longer exists. Resolve them honestly.
         stale = data.get("open_forecasts", [])
@@ -658,6 +937,16 @@ class AllostasisEngine:
                 vital = str(raw.get("vital", ""))
                 fc_id = str(raw.get("forecast_id", ""))
                 if not vital or not fc_id:
+                    continue
+                if vital not in self._specs:
+                    # Corrupt or stale-schema state must not conjure a
+                    # calibration series for a vital this engine never
+                    # measures; that pollutes status and coverage forever.
+                    record_degradation(
+                        _SUBSYSTEM,
+                        ValueError(f"persisted forecast names unknown vital {vital!r}"),
+                        action="stale forecast dropped at restore",
+                    )
                     continue
                 self._calibration.setdefault(vital, _VitalCalibration()).superseded += 1
                 self._pending_events.append({
@@ -679,9 +968,15 @@ class AllostasisEngine:
             "saved_at": round(self._now(), 3),
         }
 
-    async def _persist(self, events: list[dict[str, Any]], *, save_state: bool) -> None:
+    async def _persist(self, events: list[dict[str, Any]], *, save_state: bool) -> bool:
+        """Write ledger events and (optionally) the state snapshot.
+
+        Returns True when the events reached the ledger. A False return means
+        the caller still owns those events and must requeue them: dropping
+        them silently is how issued/resolved/regime/tier history disappeared.
+        """
         if not events and not save_state:
-            return
+            return True
         try:
             from core.governance_context import local_internal_governed_scope
             from core.runtime.file_write_gateway import get_file_write_gateway
@@ -691,11 +986,13 @@ class AllostasisEngine:
                 if not self._dir_ready:
                     await gateway.ensure_directory_async(self._dir, source="core.autonomic.allostasis")
                     self._dir_ready = True
+                events_written = not events
                 if events:
                     lines = "".join(json.dumps(e, sort_keys=True, default=str) + "\n" for e in events)
                     await gateway.append_text_async(
                         self._events_path, lines, source="allostasis_forecast_ledger",
                     )
+                    events_written = True
                 if save_state:
                     with self._lock:
                         payload = self._state_payload()
@@ -707,6 +1004,8 @@ class AllostasisEngine:
                     )
         except _BOUNDARY_ERRORS as exc:
             record_degradation(_SUBSYSTEM, exc, action="allostasis ledger write skipped this pulse")
+            return False
+        return events_written
 
     # ── ingestion ───────────────────────────────────────────────────────────
     def ingest(self, snapshot: dict[str, Any], *, at: float | None = None) -> AllostasisReading:
@@ -742,13 +1041,20 @@ class AllostasisEngine:
                 if series and now <= series[-1][0]:
                     continue  # non-monotonic timestamp: drop, never reorder
                 series.append((now, value))
+                self._stale_breach_reported.discard(key)
                 self._regime_started_at.setdefault(key, now)
                 event = self._cusum_update(key, spec, value, now)
                 if event is not None:
                     new_regimes.append(event.regime_id)
                     self._pending_events.append(event.to_dict())
-                if dt > 0:
-                    self._accrue_load(key, spec, value, dt)
+                # Per-vital interval: a vital that skipped snapshots must not
+                # be credited with the whole global gap at its newest value.
+                prev_at, prev_value = (
+                    series[-2] if len(series) >= 2 else (None, None)
+                )
+                vital_dt = dt if prev_at is None else max(0.0, now - prev_at)
+                if vital_dt > 0:
+                    self._accrue_load(key, spec, value, vital_dt, previous=prev_value)
 
             resolved.extend(self._resolve_due_forecasts(now, snapshot))
             new_forecasts.extend(self._refresh_forecasts(now))
@@ -838,7 +1144,7 @@ class AllostasisEngine:
             return None
         direction = "up" if state.pos >= self.CUSUM_H_SIGMA else "down"
         magnitude = state.pos if direction == "up" else state.neg
-        regime_id = f"{key}-{uuid.uuid4().hex[:8]}"
+        regime_id = f"{key}-{_ISSUER}-{uuid.uuid4().hex}"
         self._regime_id[key] = regime_id
         self._regime_started_at[key] = now
         self._regime_events_total += 1
@@ -851,7 +1157,7 @@ class AllostasisEngine:
             fc = self._open_forecasts.pop((key, threshold_name), None)
             if fc is None:
                 continue
-            intervention = self._intervention_since(fc.issued_at)
+            intervention = self._intervention_since(fc.issued_at, vital=fc.vital)
             if intervention is not None and direction == "down":
                 self._finalize_forecast(
                     fc, ForecastOutcome.INTERVENED, now,
@@ -870,13 +1176,35 @@ class AllostasisEngine:
                            magnitude_sigma=magnitude, regime_id=regime_id)
 
     # ── allostatic load ─────────────────────────────────────────────────────
-    def _accrue_load(self, key: str, spec: VitalSpec, value: float, dt: float) -> None:
+    def _accrue_load(
+        self,
+        key: str,
+        spec: VitalSpec,
+        value: float,
+        dt: float,
+        *,
+        previous: Optional[float] = None,
+    ) -> None:
+        """Integrate strain over the interval this sample actually covers.
+
+        Decay always applies across the full interval — chronic load fades in
+        real time whether or not we were watching. Accrual does not: an
+        interval longer than the engine can account for (sleep, a stalled
+        pulse loop) was not observed, and inventing strain for it is the
+        difference between a measurement and a guess.
+        """
         decay = math.exp(-dt / max(1.0, self._load_tau_s))
         prior = self._load_raw.get(key, 0.0) * decay
         span = max(1e-9, spec.red - spec.setpoint)
+        accrual_dt = min(dt, _MAX_ATTRIBUTABLE_GAP_S)
         excess = max(0.0, (value - spec.setpoint) / span)
+        if previous is not None and math.isfinite(previous):
+            # Trapezoid: the interval spans previous → current, so credit the
+            # mean excess rather than pinning the whole span to the endpoint.
+            prior_excess = max(0.0, (previous - spec.setpoint) / span)
+            excess = 0.5 * (excess + prior_excess)
         # Raw load is "seconds spent fully red-equivalent", decayed.
-        self._load_raw[key] = prior + excess * dt
+        self._load_raw[key] = prior + excess * accrual_dt
 
     def _load_normalized(self, key: str) -> float:
         # 1 − e^(−load/τ_load): ~0.63 after running red for one full τ.
@@ -900,24 +1228,24 @@ class AllostasisEngine:
     # ── forecasting ─────────────────────────────────────────────────────────
     def _refresh_forecasts(self, now: float) -> list[str]:
         issued: list[str] = []
+        # MULTIPLE COMPARISONS. Every pulse tests each forecastable vital
+        # against two thresholds. Judging each at alpha independently means
+        # the family-wise false-alarm rate grows with the number of vitals,
+        # so a quiet system still produces forecasts at a steady rate. The
+        # per-pulse family is collected first and admitted under
+        # Benjamini-Hochberg, which controls the false DISCOVERY rate while
+        # keeping power for genuine trends.
+        trends = self._trend_pass(now)
+        admitted_p = self._admissible_p_value(trends)
         for key, spec in self._specs.items():
-            if not spec.forecastable:
+            trend = trends.get(key)
+            if trend is None:
                 continue
-            window = [(t, v) for (t, v) in self._regime_series(key)
-                      if t >= now - self._trend_window_s]
-            if len(window) < self._min_trend_samples:
-                continue
-            times = [t for (t, _) in window]
-            values = [v for (_, v) in window]
-            mk = mann_kendall(values)
-            estimate = sen_slope(times, values)
-            if estimate is None:
-                continue
-            current = values[-1]
+            mk, estimate, current = trend
             for threshold_name, threshold in (("amber", spec.amber), ("red", spec.red)):
                 fc_key = (key, threshold_name)
                 credible = (
-                    mk.significant(self._alpha)
+                    mk.p_value <= admitted_p
                     and estimate.slope > max(0.0, spec.min_meaningful_slope)
                     and current < threshold
                 )
@@ -954,7 +1282,7 @@ class AllostasisEngine:
                     existing.last_revised_at = now
                     continue
                 forecast = Forecast(
-                    forecast_id=f"fc-{uuid.uuid4().hex[:10]}",
+                    forecast_id=f"fc-{_ISSUER}-{uuid.uuid4().hex}",
                     vital=key,
                     threshold_name=threshold_name,
                     threshold_value=threshold,
@@ -971,6 +1299,8 @@ class AllostasisEngine:
                     p_value=mk.p_value,
                     widen_factor=widen,
                     first_eta_unix=eta_mid,
+                    first_eta_lower_unix=eta_lower,
+                    first_eta_upper_unix=eta_upper,
                 )
                 self._open_forecasts[fc_key] = forecast
                 issued.append(forecast.forecast_id)
@@ -984,6 +1314,73 @@ class AllostasisEngine:
                 )
         return issued
 
+    def _peak_since(self, vital: str, since_unix: float) -> float:
+        """Highest value this vital reached in the samples taken since a time.
+
+        The history deque is the only record of what happened between pulses,
+        so it is the evidence a forecast is scored against. NaN when the
+        vital has no sample in the window at all.
+        """
+        series = self._series.get(vital)
+        if not series:
+            return float("nan")
+        peak = float("nan")
+        for at, value in reversed(series):
+            if at < since_unix:
+                break
+            if math.isnan(peak) or value > peak:
+                peak = value
+        return peak
+
+    def _trend_pass(
+        self, now: float,
+    ) -> dict[str, tuple[MannKendall, SenSlopeEstimate, float]]:
+        """Trend statistics for every testable vital, computed once per pulse.
+
+        Mann-Kendall is O(n²) in the window length, so the family-wide
+        false-discovery threshold and the issuance loop share ONE pass rather
+        than each recomputing it.
+        """
+        trends: dict[str, tuple[MannKendall, SenSlopeEstimate, float]] = {}
+        for key, spec in self._specs.items():
+            if not spec.forecastable:
+                continue
+            window = [(t, v) for (t, v) in self._regime_series(key)
+                      if t >= now - self._trend_window_s]
+            if len(window) < self._min_trend_samples:
+                continue
+            times = [t for (t, _) in window]
+            values = [v for (_, v) in window]
+            estimate = sen_slope(times, values)
+            if estimate is None:
+                continue
+            trends[key] = (mann_kendall(values), estimate, values[-1])
+        return trends
+
+    def _admissible_p_value(
+        self, trends: dict[str, tuple[MannKendall, SenSlopeEstimate, float]],
+    ) -> float:
+        """The largest p-value admissible under Benjamini-Hochberg at alpha.
+
+        Returns alpha when only one test is in play (BH reduces to it), and 0
+        when nothing survives — no candidate can then be issued.
+        """
+        family: list[float] = []
+        for key, (mk, _estimate, current) in trends.items():
+            spec = self._specs[key]
+            for _name, threshold in (("amber", spec.amber), ("red", spec.red)):
+                if current < threshold:
+                    family.append(mk.p_value)
+        family.sort()
+        m = len(family)
+        if m <= 1:
+            return self._alpha
+        threshold = 0.0
+        for rank, p in enumerate(family, start=1):
+            if p <= (rank / m) * self._alpha:
+                threshold = p
+        return threshold
+
     def _resolve_due_forecasts(self, now: float, snapshot: dict[str, Any]) -> list[str]:
         resolved: list[str] = []
         for fc_key in list(self._open_forecasts.keys()):
@@ -991,24 +1388,51 @@ class AllostasisEngine:
             vital, _threshold_name = fc_key
             raw = snapshot.get(vital, None)
             value = _finite(raw, default=float("nan")) if raw is not None else float("nan")
-            crossed = (not math.isnan(value)) and value >= fc.threshold_value
+            # BETWEEN-SAMPLE CROSSINGS. Scoring only the instantaneous value
+            # means a threshold that was crossed and recovered between two
+            # 60 s pulses is invisible: the forecast that correctly predicted
+            # it is then recorded as a false alarm. The high-water mark over
+            # the samples taken since the forecast was issued is what the
+            # forecast actually claimed — that the vital would REACH the line.
+            peak_since_issue = self._peak_since(vital, fc.issued_at)
+            observed_peak = max(
+                v for v in (value, peak_since_issue) if not math.isnan(v)
+            ) if not (math.isnan(value) and math.isnan(peak_since_issue)) else float("nan")
+            crossed = (not math.isnan(observed_peak)) and observed_peak >= fc.threshold_value
+            scored_upper_open = fc.first_eta_upper_unix or fc.eta_upper_unix
             if crossed:
                 del self._open_forecasts[fc_key]
-                if now < fc.eta_lower_unix - self._resolution_grace_s:
+                # SCORE THE PREREGISTERED BAND. Revisions move the operational
+                # band while preserving forecast_id, so scoring the live band
+                # graded the forecast against a claim edited after the fact —
+                # the prediction moved with the evidence and could not fail.
+                scored_lower = fc.first_eta_lower_unix or fc.eta_lower_unix
+                scored_upper = fc.first_eta_upper_unix or fc.eta_upper_unix
+                if now < scored_lower - self._resolution_grace_s:
                     outcome = ForecastOutcome.MISS_EARLY
-                    note = f"crossed {_fmt_eta(fc.eta_lower_unix - now)} before band"
+                    note = f"crossed {_fmt_eta(scored_lower - now)} before issued band"
+                elif now > scored_upper + self._resolution_grace_s:
+                    # A crossing after the deadline is a failed forecast. This
+                    # branch runs BEFORE the expiry branch below, so without
+                    # this check every not-too-early crossing scored as a HIT
+                    # no matter how late it arrived.
+                    outcome = ForecastOutcome.MISS_LATE
+                    note = f"crossed {_fmt_eta(now - scored_upper)} after issued band"
                 else:
                     outcome = ForecastOutcome.HIT
-                    note = "crossed inside band"
+                    note = "crossed inside issued band"
                 fc.crossed_at = now
                 self._finalize_forecast(fc, outcome, now, note=note)
                 resolved.append(fc.forecast_id)
                 continue
-            if now <= fc.eta_upper_unix + self._resolution_grace_s:
+            # The DEADLINE is the issued one too. Revisions could otherwise
+            # push eta_upper forward indefinitely, keeping a failing forecast
+            # permanently "open" and deferring judgment forever.
+            if now <= scored_upper_open + self._resolution_grace_s:
                 continue
             # Deadline passed without a crossing.
             del self._open_forecasts[fc_key]
-            intervention = self._intervention_since(fc.issued_at)
+            intervention = self._intervention_since(fc.issued_at, vital=fc.vital)
             if intervention is not None:
                 outcome = ForecastOutcome.INTERVENED
                 note = f"no crossing after {intervention['action']}"
@@ -1030,6 +1454,8 @@ class AllostasisEngine:
             book.hits += 1
         elif outcome is ForecastOutcome.MISS_EARLY:
             book.miss_early += 1
+        elif outcome is ForecastOutcome.MISS_LATE:
+            book.miss_late += 1
         elif outcome is ForecastOutcome.FALSE_ALARM:
             book.false_alarms += 1
         elif outcome is ForecastOutcome.INTERVENED:
@@ -1045,10 +1471,29 @@ class AllostasisEngine:
             book.coverage if book.coverage is not None else "n/a",
         )
 
-    def _intervention_since(self, since_unix: float) -> Optional[dict[str, Any]]:
+    def _intervention_since(
+        self, since_unix: float, *, vital: str | None = None
+    ) -> Optional[dict[str, Any]]:
+        """Most recent intervention after ``since_unix``, optionally for VITAL.
+
+        This returned the newest GLOBAL tier change after issue with no
+        matching, so an escalation triggered by an unrelated vital relabelled
+        this forecast INTERVENED. Because intervened outcomes are also
+        excluded from the coverage denominator, that converted misses into
+        removals from calibration — the forecast could not be wrong. An
+        intervention must now name the same vital to excuse it.
+        """
         for item in reversed(self._interventions):
-            if item["at_unix"] >= since_unix:
-                return item
+            if item["at_unix"] < since_unix:
+                continue
+            item_vital = str(item.get("vital") or "")
+            if vital is not None and item_vital and item_vital != vital:
+                # Attributed to a DIFFERENT vital — this forecast has no claim
+                # on it. Unattributed (composite/load-driven) escalations have
+                # no single driver and remain eligible, but they can never
+                # launder one vital's miss with another vital's response.
+                continue
+            return item
         return None
 
     # ── tier policy ─────────────────────────────────────────────────────────
@@ -1063,27 +1508,74 @@ class AllostasisEngine:
                 nearest, nearest_eta = fc, eta_s
         return nearest, nearest_eta
 
-    def _current_breach(self) -> Optional[str]:
+    def _vital_is_fresh(self, key: str, now: float) -> bool:
+        """True when this vital's newest sample still describes the body now.
+
+        A vital that stops appearing in the snapshot keeps its last value
+        forever, so a breach recorded once stayed authoritative for tier,
+        felt pressure and narrative indefinitely — the engine reporting a
+        red line it could no longer see.
+        """
+        series = self._series.get(key)
+        if not series:
+            return False
+        return (now - series[-1][0]) <= _INGEST_STALE_AFTER_S
+
+    def _current_breach(self, now: Optional[float] = None) -> Optional[str]:
+        at = self._now() if now is None else now
+        stale_breach: Optional[str] = None
         for key, spec in self._specs.items():
             series = self._series[key]
-            if series and series[-1][1] >= spec.red:
+            if not series or series[-1][1] < spec.red:
+                continue
+            if self._vital_is_fresh(key, at):
                 return key
+            stale_breach = stale_breach or key
+        if stale_breach is not None:
+            # The measurement expired, not the danger: we no longer know. That
+            # is a degradation of the sense, reported as such rather than
+            # silently held as a live breach or silently dropped. Reported
+            # once per episode — this runs on every tier evaluation, and a
+            # record per pulse would bury the signal it is trying to raise.
+            if stale_breach not in self._stale_breach_reported:
+                self._stale_breach_reported.add(stale_breach)
+                record_degradation(
+                    _SUBSYSTEM,
+                    RuntimeError(
+                        f"vital {stale_breach!r} was past its red line but has not "
+                        f"reported for over {_INGEST_STALE_AFTER_S:.0f}s"
+                    ),
+                    action="stale breach retired; vital no longer observable",
+                )
         return None
 
     def _target_tier(self, now: float) -> tuple[AllostasisTier, str]:
-        breach = self._current_breach()
+        """Choose the tier, recording WHICH vital drove the choice.
+
+        The driver is what makes a later intervention attributable: a breach
+        names its own vital, a forecast-driven escalation names the vital it
+        forecasts, and a load-driven escalation has no single driver and is
+        recorded as composite (None).
+        """
+        breach = self._current_breach(now)
         load = self._composite_load()
-        _nearest, eta_s = self._nearest_crisis(now)
+        nearest, eta_s = self._nearest_crisis(now)
         if breach is not None:
+            self._tier_driver_vital = breach
             return AllostasisTier.PROTECTING, f"{breach} is already past its red line"
         if eta_s is not None and eta_s <= self._protect_horizon_s:
+            self._tier_driver_vital = getattr(nearest, "vital", None)
             return AllostasisTier.PROTECTING, f"red-line crossing forecast in {_fmt_eta(eta_s)}"
         if load >= 0.85:
+            self._tier_driver_vital = None
             return AllostasisTier.PROTECTING, f"allostatic load critical ({load:.2f})"
         if eta_s is not None and eta_s <= self._conserve_horizon_s:
+            self._tier_driver_vital = getattr(nearest, "vital", None)
             return AllostasisTier.CONSERVING, f"red-line crossing forecast in {_fmt_eta(eta_s)}"
         if load >= 0.60:
+            self._tier_driver_vital = None
             return AllostasisTier.CONSERVING, f"allostatic load elevated ({load:.2f})"
+        self._tier_driver_vital = None
         if self._open_forecasts or load >= 0.30:
             return AllostasisTier.VIGILANT, (
                 f"{len(self._open_forecasts)} open forecast(s), load {load:.2f}")
@@ -1127,10 +1619,16 @@ class AllostasisEngine:
         }
         self._pending_events.append(event)
         if new >= AllostasisTier.CONSERVING and new > old:
+            # ATTRIBUTION. Interventions carried no vital at all, so any later
+            # escalation could be credited to any open forecast. Record the
+            # vital that drove the tier change when one is identifiable; a
+            # load-driven (composite) escalation genuinely has no single
+            # driver and is recorded as global.
             self._interventions.append({
                 "at_unix": now,
                 "action": f"entered {new.name.lower()} ({reason})",
                 "tier": new.name.lower(),
+                "vital": self._tier_driver_vital,
             })
         logger.log(
             logging.WARNING if new >= AllostasisTier.CONSERVING else logging.INFO,
@@ -1147,7 +1645,7 @@ class AllostasisEngine:
             urgency = _clamp(1.0 - (eta_s / max(1.0, self._conserve_horizon_s)))
             if nearest is not None and nearest.band_open:
                 urgency *= 0.5  # slope CI touches zero: honest discount
-        if self._current_breach() is not None:
+        if self._current_breach(now) is not None:
             urgency = 1.0
         self._felt = {
             "anticipatory_pressure": round(_clamp(0.65 * urgency + 0.35 * load), 4),
@@ -1187,7 +1685,22 @@ class AllostasisEngine:
         try:
             from core.runtime.runtime_pressure import get_unified_runtime_pressure
 
-            snapshot = get_unified_runtime_pressure().runtime_pressure_snapshot()
+            # The pressure provider walks the process tree and reads host
+            # counters — real blocking work. On the loop it stalls every other
+            # task precisely when the host is loaded, which is when this pulse
+            # matters most. Bounded so a wedged provider cannot wedge the loop.
+            snapshot = await asyncio.wait_for(
+                asyncio.to_thread(
+                    get_unified_runtime_pressure().runtime_pressure_snapshot
+                ),
+                timeout=_SNAPSHOT_TIMEOUT_S,
+            )
+        except asyncio.TimeoutError as exc:
+            record_degradation(
+                _SUBSYSTEM, exc,
+                action=f"vitals snapshot exceeded {_SNAPSHOT_TIMEOUT_S:.0f}s; pulse skipped",
+            )
+            return None
         except _BOUNDARY_ERRORS as exc:
             record_degradation(_SUBSYSTEM, exc, action="vitals snapshot unavailable; pulse skipped")
             return None
@@ -1203,25 +1716,78 @@ class AllostasisEngine:
 
         if tier_after > tier_before and tier_after >= AllostasisTier.PROTECTING:
             self._raise_protecting(tier_reason, reading)
+        elif tier_before >= AllostasisTier.PROTECTING > tier_after:
+            # The alarm was raised on this channel; the all-clear belongs on it
+            # too. Consumers gating on existential_threat had no event that
+            # ended the emergency.
+            self._clear_protecting(tier_reason, reading)
         if tier_after != tier_before:
             self._publish_state_change(tier_before, tier_after, tier_reason, reading)
 
         save_state = bool(events) or (self._ingest_count % 10 == 0)
-        await self._persist(events, save_state=save_state)
+        if not await self._persist(events, save_state=save_state) and events:
+            self._requeue_unpersisted(events)
         return reading
 
-    def _raise_protecting(self, reason: str, reading: AllostasisReading) -> None:
-        try:
+    def _requeue_unpersisted(self, events: list[dict[str, Any]]) -> None:
+        """Take failed events back so the next pulse retries them.
+
+        Bounded: an unwritable ledger must not grow the queue without limit.
+        When the backlog exceeds the cap the OLDEST events are dropped and the
+        loss is recorded, because a silent gap in an append-only forecast
+        ledger is indistinguishable from a clean history.
+        """
+        with self._lock:
+            self._pending_events[:0] = events
+            overflow = len(self._pending_events) - _MAX_PENDING_EVENTS
+            if overflow > 0:
+                del self._pending_events[:overflow]
+        if overflow > 0:
             record_degradation(
                 _SUBSYSTEM,
-                RuntimeError(f"allostasis entered PROTECTING: {reason}"),
-                action="anticipatory protection engaged before threshold breach",
-                severity="warning",
+                RuntimeError(
+                    f"allostasis ledger backlog exceeded {_MAX_PENDING_EVENTS}; "
+                    f"dropped {overflow} oldest event(s)"
+                ),
+                action="forecast ledger has a recorded gap",
             )
-        except _BOUNDARY_ERRORS as exc:
-            logger.warning("Could not record PROTECTING degradation: %s", exc)
+
+    def _raise_protecting(self, reason: str, reading: AllostasisReading) -> None:
+        # PROTECTING is the engine WORKING, not the engine failing. This used
+        # to synthesize a RuntimeError and feed the global degradation and
+        # resilience systems, so every successful anticipation registered as a
+        # fault — inflating the degradation record with the system's own
+        # correct behaviour and, for fail-closed subsystems, escalating it.
+        # Anticipatory protection is logged as the designed transition it is.
+        logger.warning(
+            "🛡️ [Allostasis] anticipatory protection engaged (designed tier "
+            "transition, not a fault): %s",
+            reason,
+        )
         try:
             from core.event_bus import get_event_bus
+
+            # CONFIDENCE CONTRACT. This publishes on the same channel as real
+            # emergencies, so a statistical forecast must carry the evidence
+            # that qualifies it: which forecast, its p-value, the interval it
+            # committed to, and the empirical coverage of past forecasts for
+            # that vital. Without those a threshold projection was
+            # indistinguishable from an observed crisis.
+            nearest, _eta = self._nearest_crisis(time.time())
+            confidence: dict[str, Any] = {"forecast_id": None}
+            if nearest is not None:
+                book = self._calibration.get(nearest.vital)
+                confidence = {
+                    "forecast_id": nearest.forecast_id,
+                    "vital": nearest.vital,
+                    "p_value": nearest.p_value,
+                    "eta_lower_unix": nearest.first_eta_lower_unix or nearest.eta_lower_unix,
+                    "eta_upper_unix": nearest.first_eta_upper_unix or nearest.eta_upper_unix,
+                    "widen_factor": nearest.widen_factor,
+                    "revisions": nearest.revisions,
+                    "empirical_coverage": (book.coverage if book else None),
+                    "scored_forecasts": (book.scored if book else 0),
+                }
 
             get_event_bus().publish_threadsafe(
                 "existential_threat",
@@ -1230,12 +1796,43 @@ class AllostasisEngine:
                     "source": "AllostasisEngine",
                     "severity": "WARNING",
                     "anticipatory": True,
+                    "observed": False,
                     "nearest_crisis_eta_s": reading.nearest_crisis_eta_s,
+                    "confidence": confidence,
                 },
             )
             logger.warning("🚨 [Allostasis] anticipatory imperative published: %s", reason)
         except _BOUNDARY_ERRORS as exc:
+            # A publish FAILURE is a real degradation — unlike the tier change.
             record_degradation(_SUBSYSTEM, exc, action="existential-threat publish failed")
+
+    def _clear_protecting(self, reason: str, reading: AllostasisReading) -> None:
+        """Publish the recovery event that ends an anticipatory emergency."""
+        logger.info(
+            "🌤️ [Allostasis] anticipatory protection released: %s", reason,
+        )
+        try:
+            from core.event_bus import get_event_bus
+
+            get_event_bus().publish_threadsafe(
+                "existential_threat",
+                {
+                    "imperative": f"RESOLVED: {self.narrative()}",
+                    "source": "AllostasisEngine",
+                    "severity": "INFO",
+                    "anticipatory": True,
+                    "observed": False,
+                    "resolved": True,
+                    "nearest_crisis_eta_s": reading.nearest_crisis_eta_s,
+                    "reason": reason,
+                },
+            )
+        except _BOUNDARY_ERRORS as exc:
+            # Failing to clear leaves consumers latched in an emergency they
+            # cannot exit, so this is a real degradation.
+            record_degradation(
+                _SUBSYSTEM, exc, action="existential-threat recovery publish failed",
+            )
 
     def _publish_state_change(
         self,
@@ -1291,8 +1888,60 @@ class AllostasisEngine:
                     f"I am {tier}."
                 )
             if load >= 0.30:
-                return f"No crisis forecast, but I have been running hot (load {load:.2f}). I am {tier}."
-            return f"My vitals are stable on every measured trajectory. I am {tier}."
+                return (
+                    f"No crisis forecast, but this process has been running hot "
+                    f"(load {load:.2f}){self._observation_caveat(now)}. I am {tier}."
+                )
+            # "Stable on every measured trajectory" was returned even with zero
+            # samples, stale samples, or too few points to test a trend — a
+            # claim of universal stability backed by no measurement at all.
+            measured, total, stale = self._observation_census(now)
+            if measured == 0:
+                return (
+                    f"I have no current vitals for this process — nothing is being "
+                    f"measured, so I can say nothing about my trajectory. I am {tier}."
+                )
+            if measured < total or stale:
+                return (
+                    f"No trajectory toward a limit in the {measured} of {total} vitals "
+                    f"I can currently see for this process"
+                    f"{self._observation_caveat(now)}. I am {tier}."
+                )
+            return (
+                f"No trajectory toward a limit in any of the {total} vitals I measure "
+                f"for this process{self._observation_caveat(now)}. I am {tier}."
+            )
+
+    def _observation_census(self, now: float) -> tuple[int, int, bool]:
+        """(fresh vitals, configured vitals, any stale-but-present vital)."""
+        total = len(self._specs)
+        fresh = 0
+        stale = False
+        for key in self._specs:
+            series = self._series.get(key)
+            if not series:
+                continue
+            if self._vital_is_fresh(key, now):
+                fresh += 1
+            else:
+                stale = True
+        return fresh, total, stale
+
+    def _observation_caveat(self, now: float) -> str:
+        """The scope and freshness that qualify any claim made above.
+
+        These are host-process counters read at a point in time, not a body.
+        The narrative is spoken in the first person, so the boundary has to
+        travel WITH the sentence rather than live in a docstring the reader
+        of the sentence never sees.
+        """
+        last = self._last_ingest_at
+        if last is None:
+            return " (no reading yet)"
+        age = max(0.0, now - last)
+        if age > _INGEST_STALE_AFTER_S:
+            return f" (last reading {_fmt_eta(age)} ago — stale)"
+        return f" (read {_fmt_eta(age)} ago)"
 
     def status(self) -> dict[str, Any]:
         with self._lock:
@@ -1360,23 +2009,61 @@ def _fmt_eta(seconds: float) -> str:
 
 _engine: Optional[AllostasisEngine] = None
 _engine_lock = threading.Lock()
+# Set when a test retires the process engine: the container still holds the
+# retired instance, so the next engine built here must take the slot over
+# rather than adopt what is in it.
+_container_slot_disowned = False
 
 
 def get_allostasis_engine() -> AllostasisEngine:
-    global _engine
+    """The one allostasis engine, container-first.
+
+    The getter used to construct a local engine unconditionally while
+    registration skipped an already-occupied container slot. Callers reaching
+    the service through the container and callers using this getter could
+    then hold DIFFERENT engines — two bodies, two histories, two tiers, each
+    convinced it was the one being regulated. The container is authoritative:
+    an engine already registered there IS the engine.
+    """
+    global _engine, _container_slot_disowned
     if _engine is None:
         with _engine_lock:
             if _engine is None:
-                _engine = AllostasisEngine()
-                _register_in_container(_engine)
+                existing = None if _container_slot_disowned else _engine_from_container()
+                if existing is not None:
+                    _engine = existing
+                else:
+                    _engine = AllostasisEngine()
+                    _register_in_container(_engine, replace=_container_slot_disowned)
+                    _container_slot_disowned = False
     return _engine
 
 
-def _register_in_container(engine: AllostasisEngine) -> None:
+def _engine_from_container() -> Optional[AllostasisEngine]:
+    """The container's engine, if it already owns one."""
     try:
         from core.container import ServiceContainer
 
         if not ServiceContainer.has(AllostasisEngine.SERVICE_NAME):
+            return None
+        get = getattr(ServiceContainer, "get", None)
+        if not callable(get):
+            return None
+        existing = get(AllostasisEngine.SERVICE_NAME)
+        return existing if isinstance(existing, AllostasisEngine) else None
+    except _BOUNDARY_ERRORS as exc:
+        record_degradation(
+            _SUBSYSTEM, exc,
+            action="container lookup skipped; using local engine", severity="debug",
+        )
+        return None
+
+
+def _register_in_container(engine: AllostasisEngine, *, replace: bool = False) -> None:
+    try:
+        from core.container import ServiceContainer
+
+        if replace or not ServiceContainer.has(AllostasisEngine.SERVICE_NAME):
             reg = getattr(ServiceContainer, "register_instance", None)
             if callable(reg):
                 reg(AllostasisEngine.SERVICE_NAME, engine,
@@ -1386,8 +2073,20 @@ def _register_in_container(engine: AllostasisEngine) -> None:
 
 
 def reset_allostasis_engine_for_test() -> None:
-    global _engine
-    _engine = None
+    """Drop the process engine and disown the container slot.
+
+    Clearing only the module global left the retired engine registered, so
+    the next getter call adopted it right back. ServiceContainer has no
+    per-service removal (only a whole-registry clear, which would take down
+    every other service a test depends on), so the slot is instead marked for
+    takeover: the next engine built here REPLACES the registration rather
+    than deferring to it. Taken under the same lock the getter uses, so a
+    concurrent construction cannot interleave.
+    """
+    global _engine, _container_slot_disowned
+    with _engine_lock:
+        _engine = None
+        _container_slot_disowned = True
 
 
 __all__ = [
