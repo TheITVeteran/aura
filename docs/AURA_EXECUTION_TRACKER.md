@@ -23505,3 +23505,33 @@ CP281, then continue the full-stack RLC proof design and implementation:
 bootstrap the cortex into a learnable band, expose trajectory credit where it
 is already measured, and add certified fast-weight/latent-opt ablation arms
 before rerunning resident-32B proof work.
+
+## Checkpoint 2026-07-21-282: CP273 Stopped After No-Gradient Evidence
+
+The old-source CP273 resident-32B recurrent-GRPO run was inspected after CP281.
+It had advanced to durable checkpoint step 6 with `optimizer_updates=0`,
+`last_step_kind=degenerate_group`, telemetry `groups=6`, `degenerate=6`,
+`all_wrong=6`, `all_correct=0`, `uniform_partial=0`, and `reward_sum=0.0`.
+There was no held-out history and no adapter update. Under the CP280/CP281
+contracts this is a `no_learning_signal` diagnostic, not a candidate proof.
+
+The run was stopped through the supervised detached-control path rather than a
+raw process kill. `tools/run_detached_step.py stop` accepted the authenticated
+socket request, and follow-up status reported `terminal=true`, `state=stopped`,
+`supervisor_alive=false`, `child_state=dead`, `containment_verified=true`,
+`process_group_empty=true`, and `lineage_empty=true`. The detached receipt
+hash is `8c732d9d48d8460765778681a5b9c62acff2bf2fe95c9ba75369ba24c4becb6d`.
+The child return code was `-9` after stop escalation from SIGTERM, so the
+artifact is preserved as negative/diagnostic evidence and the resident host is
+freed for the corrected pipeline.
+
+This does not prove frontier reasoning gains. It proves the opposite for this
+specific old-source run: the tested setup produced no optimizer signal before
+it was retired. The actionable conclusion is to rerun only after the corrected
+fair calibration, no-signal halt, diagnostic-controller route, and the next
+full-stack RLC bootstrap/proof improvements are in place.
+
+This is total checkpoint record 343. The forecast remains 394-661 total
+records, now approximately 51-318 records after this checkpoint. Next: publish
+CP282, then continue building the missing full-stack RLC proof path rather than
+relaunching the same narrow no-gradient experiment.
