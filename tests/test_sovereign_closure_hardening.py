@@ -79,14 +79,22 @@ async def test_volition_engine_cooldown_registry(
         {"objective": "Verify system health", "origin": "intrinsic_duty"},
     ]
 
+    # CP126: selection no longer registers the cooldown. Recording it at
+    # selection time meant a goal that was never authorized or executed still
+    # suppressed its own retry, so a broken initiative path went silently
+    # dormant. The cooldown is committed once the concrete action is admitted
+    # (_commit_goal_effects), which is what tick() does after Will approval.
     selected = engine._select_and_parse_goal(potential_goals)
     assert selected is not None
     objective = selected["objective"]
+    assert objective not in engine._goal_cooldowns
+    engine._commit_goal_effects(selected)
     assert objective in engine._goal_cooldowns
 
     selected_again = engine._select_and_parse_goal(potential_goals)
     assert selected_again is not None
     assert selected_again["objective"] != objective
+    engine._commit_goal_effects(selected_again)
     assert selected_again["objective"] in engine._goal_cooldowns
 
     selected_third = engine._select_and_parse_goal(potential_goals)

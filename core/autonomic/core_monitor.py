@@ -1,5 +1,6 @@
 import asyncio
 import gc
+import inspect
 import logging
 import time
 from typing import Any, Dict
@@ -29,7 +30,10 @@ class AutonomicCore:
         self.running = False
         self._task = None
         self.uptime_start = time.time()
-        self._last_defrag_time = 0.0  # Cooldown to avoid defrag spam
+        # Monotonic: wall-clock cooldowns let a clock rollback block defrag
+        # indefinitely and a forward jump fire it immediately.
+        self._last_defrag_monotonic = 0.0
+        self._snapkv_gap_reported = False
         
         # Restoration Phase Integration
         from .survival_driver import SurvivalDriver
@@ -37,19 +41,47 @@ class AutonomicCore:
         self.survival_status = {}
         
     async def start(self):
-        """Boot the unified autonomic heartbeat."""
+        """Boot the unified autonomic heartbeat (idempotent)."""
+        # Single-owner guard. start() previously set running=True and created
+        # a task unconditionally, so a repeated or concurrent start produced
+        # DUPLICATE survival loops — two heartbeats independently running GC,
+        # defrag, recovery and model swaps against the same orchestrator. A
+        # failure inside create_task also left running=True with no loop,
+        # advertising a heartbeat that did not exist.
+        if self.running and self._task is not None and not self._task.done():
+            logger.debug("Autonomic Core already running; ignoring duplicate start().")
+            return
+        try:
+            self._task = get_task_tracker().create_task(
+                self._heartbeat_loop(),
+                name="autonomic_core.heartbeat",
+            )
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            self.running = False
+            self._task = None
+            record_degradation('core_monitor', exc)
+            logger.error("Autonomic Core heartbeat failed to start: %s", exc)
+            raise
         self.running = True
-        self._task = get_task_tracker().create_task(
-            self._heartbeat_loop(),
-            name="autonomic_core.heartbeat",
-        )
         logger.info("🛡️ Autonomic Core online. Unified survival heartbeat started.")
-        
+
     async def stop(self):
-        """Shutdown the autonomic heartbeat."""
+        """Shutdown the autonomic heartbeat and prove termination."""
         self.running = False
-        if self._task:
-            self._task.cancel()
+        task, self._task = self._task, None
+        if task is None:
+            return
+        task.cancel()
+        # Join it: stop() used to return while the loop could still be inside
+        # GC, defrag, or a model swap, so shutdown raced live resource
+        # mutation and liveness could never prove the heartbeat had ended.
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=15.0)
+        except (asyncio.CancelledError, asyncio.TimeoutError, TimeoutError):
+            pass
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            record_degradation('core_monitor', exc)
+            logger.debug("Autonomic heartbeat join reported: %s", exc)
             
     async def _heartbeat_loop(self):
         """Single loop for all background survival checks."""
@@ -86,14 +118,28 @@ class AutonomicCore:
             # 1. Critical Existential Threat — auto-recovery (Zero-Touch)
             if mem.percent >= self.critical_ram_percent or disk.percent > 98.0:
                 logger.critical("Critical resource pressure (RAM: %s%%, Disk: %s%%). Auto-recovery.", mem.percent, disk.percent)
+                # The MOST severe tier must not leave memory_pressure reading
+                # False from an earlier healthy sample: only the 94-96%
+                # throttle branch used to set it, so at 96-100% every consumer
+                # of orchestrator.status.memory_pressure saw "no pressure"
+                # precisely when pressure was worst.
+                if self.orchestrator:
+                    self.orchestrator.status.memory_pressure = True
                 gc.collect()
                 await self._substrate_defrag()
+                # The documented 98% tier is "emergency purge / model unload".
+                # _unload_llm existed but was never called from here, so the
+                # single largest reclaimable allocation (the resident model)
+                # was never released at the tier that promised it.
+                await self._unload_llm()
                 await self._auto_cognitive_recovery()
                 await self._emit_status("CRITICAL: Auto-recovery triggered at %.0f%% RAM" % mem.percent)
 
             # 2. Hard Cleanup Needed
             elif mem.percent >= self.cleanup_ram_percent:
                 logger.warning("High RAM (%s%%). Running aggressive garbage collection.", mem.percent)
+                if self.orchestrator:
+                    self.orchestrator.status.memory_pressure = True
                 gc.collect()
                 await self._substrate_defrag()
                 await self._emit_status("Memory load high. Optimizing...")
@@ -108,10 +154,10 @@ class AutonomicCore:
                 if self.orchestrator:
                     self.orchestrator.status.memory_pressure = False
                 # Defrag at most once every 5 minutes to avoid churn
-                if (now - self._last_defrag_time) > 300.0:
+                if (time.monotonic() - self._last_defrag_monotonic) > 300.0:
                     logger.info("Substrate Defrag: RAM at %.1f%%. Consolidating caches.", mem.percent)
                     await self._substrate_defrag()
-                    self._last_defrag_time = now
+                    self._last_defrag_monotonic = time.monotonic()
 
             else:
                 if self.orchestrator:
@@ -138,17 +184,46 @@ class AutonomicCore:
                 record_degradation('core_monitor', e)
                 logger.debug("Substrate Defrag: MLX cache clear skipped: %s", e)
 
-            # 2. SnapKV eviction — compress the KV cache
+            # 2. SnapKV pressure probe.
+            #
+            # HONEST ACTION ACCOUNTING: this branch used to log "SnapKV
+            # eviction triggered" while calling nothing that frees memory —
+            # the advertised defrag stage was a pure no-op, so a defrag under
+            # pressure reported work it had not done. The evictor exposes
+            # calculate_eviction_targets() (a computation) and
+            # get_compressed_context(context, ...) (compresses a string the
+            # CALLER supplies); neither releases memory when invoked here
+            # without a live KV context. The pressure signal is still useful,
+            # so it is recorded as an unmet capability rather than claimed as
+            # a completed eviction.
             try:
                 from core.container import ServiceContainer
                 evictor = ServiceContainer.get("snap_kv_evictor", default=None)
-                if evictor and hasattr(evictor, 'get_compressed_context'):
+                if evictor and hasattr(evictor, "check_memory_pressure"):
                     current_gb = psutil.virtual_memory().used / (1024 ** 3)
                     if evictor.check_memory_pressure(current_gb):
-                        logger.info("Substrate Defrag: SnapKV eviction triggered at %.1fGB.", current_gb)
+                        if not self._snapkv_gap_reported:
+                            self._snapkv_gap_reported = True
+                            record_degradation(
+                                'core_monitor',
+                                RuntimeError(
+                                    "snapkv_evictor_exposes_no_standalone_eviction"
+                                ),
+                                severity="warning",
+                                action=(
+                                    "reported SnapKV pressure without claiming an "
+                                    "eviction; defrag relies on MLX cache clear, "
+                                    "episodic compaction and GC"
+                                ),
+                            )
+                        logger.info(
+                            "Substrate Defrag: SnapKV reports pressure at %.1fGB "
+                            "(no standalone eviction available; other stages proceed).",
+                            current_gb,
+                        )
             except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('core_monitor', e)
-                logger.debug("Substrate Defrag: SnapKV eviction skipped: %s", e)
+                logger.debug("Substrate Defrag: SnapKV pressure probe skipped: %s", e)
 
             # 3. Episodic memory compaction: compress weak episodes into semantic
             # summaries instead of just deleting them. Preserves knowledge while
@@ -223,10 +298,18 @@ class AutonomicCore:
             if idle_seconds < IDLE_THRESHOLD:
                 return
 
-            # Only swap if the 32B is actually loaded
+            # Only swap if the 32B is actually loaded.
             from core.container import ServiceContainer
             mlx_client = ServiceContainer.get("mlx_client", default=None)
-            if not mlx_client or not hasattr(mlx_client, 'is_alive') or not mlx_client.is_alive():
+            if not mlx_client or not hasattr(mlx_client, 'is_alive'):
+                return
+            # is_alive may be async. Calling it bare returned a COROUTINE,
+            # which is always truthy — so the "model is loaded" check passed
+            # unconditionally (and leaked an un-awaited coroutine each pass).
+            alive = mlx_client.is_alive()
+            if inspect.isawaitable(alive):
+                alive = await alive
+            if not alive:
                 return
 
             # Check if we already swapped (avoid re-triggering)
@@ -245,7 +328,20 @@ class AutonomicCore:
                 idle_seconds, ram_pct,
             )
 
-            await mlx_client.reboot_worker(reason="idle_budget_swap")
+            # UNLOAD, not reboot. The docstring promises the 32B is unloaded
+            # to reclaim ~15GB, but reboot_worker RESTARTS the same worker on
+            # the same model — which reloads those weights rather than
+            # releasing them, so the advertised reclamation never happened.
+            # Prefer a real unload and fall back to reboot only if this client
+            # exposes no unload path.
+            if hasattr(mlx_client, "unload"):
+                await mlx_client.unload()
+            else:
+                logger.warning(
+                    "Idle model swap: mlx_client exposes no unload(); falling back to "
+                    "reboot_worker, which does NOT reclaim the model's memory."
+                )
+                await mlx_client.reboot_worker(reason="idle_budget_swap")
             import gc
             gc.collect()
 
@@ -274,7 +370,25 @@ class AutonomicCore:
                 record_degradation('core_monitor', bs_err)
                 logger.debug("Brainstem warmup after idle swap skipped: %s", bs_err)
 
+            # The swap itself completed — the cortex was unloaded and its
+            # memory reclaimed — so the flag is set to stop re-triggering.
+            # Brainstem warmup is a separate best-effort step, and the status
+            # emitted below states plainly when it did not establish
+            # readiness, so "hibernated" is never an unqualified claim of a
+            # ready replacement lane. A deferred warmup is still recorded so
+            # the incomplete swap is visible in health rather than only in a
+            # log line.
             self._idle_swap_done = True
+            if not brainstem_ready:
+                record_degradation(
+                    'core_monitor',
+                    RuntimeError("idle_swap_left_no_warm_conversation_lane"),
+                    severity="warning",
+                    action=(
+                        "unloaded the cortex for the idle budget but no brainstem "
+                        "lane warmed; the next foreground turn pays a cold start"
+                    ),
+                )
             if brainstem_ready:
                 await self._emit_status("Cortex hibernated (idle). Brainstem active.")
             else:
@@ -333,8 +447,14 @@ class AutonomicCore:
             logger.debug("Survival check error: %s", e)
 
     def get_survival_report(self) -> Dict[str, Any]:
-        """Provides the latest survival metrics."""
-        return self.survival_status
+        """Provides the latest survival metrics (a copy).
+
+        The live dictionary was returned by reference, so any consumer
+        could rewrite the monitor's own survival evidence — and every
+        later reader, including the display, would see the altered
+        values as though they had been measured.
+        """
+        return dict(self.survival_status or {})
 
     async def _emit_status(self, message: str) -> None:
         """Publish a status message to the event bus."""
