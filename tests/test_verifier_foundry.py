@@ -8,6 +8,7 @@ never softened by weighting; and the ledger is tamper-evident.
 from __future__ import annotations
 
 import asyncio
+import json
 
 import pytest
 
@@ -149,8 +150,21 @@ def test_seed_admission_is_revocable_by_evidence(foundry):
 # Folding weights: measured reliability, hard gate untouched
 # ─────────────────────────────────────────────────────────────────────────────
 
-def test_unmeasured_verifiers_keep_neutral_weight(foundry):
-    assert foundry.weight_for("brand_new", "factual") == 1.0
+def test_unmeasured_verifiers_get_a_skeptical_prior(foundry):
+    """CP126 7e75a9dc: an unmeasured verifier is not a trusted one. Full
+    weight (1.0) let a brand-new or uncalibrated verifier move soft scores
+    as much as a proven-good one before earning any evidence. The prior is
+    skeptical — below a proven verifier, above the bad-verifier floor."""
+    weight = foundry.weight_for("brand_new", "factual")
+    assert weight == foundry._UNMEASURED_WEIGHT
+    assert foundry._WEIGHT_FLOOR < weight < 1.0
+
+
+def test_measured_good_verifier_outweighs_an_unmeasured_one(foundry):
+    _feed(foundry, verifier="proven", domain="factual", n=100, correct_rate=0.98)
+    assert foundry.weight_for("proven", "factual") > foundry.weight_for(
+        "brand_new", "factual"
+    )
 
 
 def test_measured_bad_verifier_is_downweighted_but_floored(foundry):
@@ -321,3 +335,97 @@ def test_record_win_legacy_behavior_without_foundry(tmp_path, monkeypatch):
     )
     assert rsi.record_win("capital of France?", "factual", answer="Paris",
                           confidence=0.9, mode="deep", verified=True) is True
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CP126 integrity contracts (batch: reliability-ledger integrity)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_reliability_returns_a_detached_snapshot(foundry):
+    """CP126 de9120a8: mutating the returned cell must not corrupt governance."""
+    _feed(foundry, verifier="v", domain="factual", n=20, correct_rate=1.0)
+    cell = foundry.reliability("v", "factual")
+    graded_before = cell.graded
+    cell.graded = 999_999
+    cell.false_passes = 999_999
+    fresh = foundry.reliability("v", "factual")
+    assert fresh.graded == graded_before
+    assert fresh.false_passes == 0
+
+
+def test_status_never_mutates_governance(foundry, monkeypatch):
+    """CP126 83704590: a status poll must not append a revoke_seed event."""
+    appended: list[str] = []
+    original = foundry._append_event
+
+    def _spy(kind, body):
+        appended.append(kind)
+        return original(kind, body)
+
+    monkeypatch.setattr(foundry, "_append_event", _spy)
+    for _ in range(5):
+        foundry.status()
+    assert "revoke_seed" not in appended
+
+
+def test_graded_verdict_leaves_pending_order(foundry):
+    """CP126 e6c5be38: a graded id must not linger in pending_verdicts."""
+    vid = foundry.record_verdict(verifier="v", domain="factual",
+                                 hard_pass=True, score=0.9, checked=True)
+    assert vid in foundry.pending_verdicts()
+    foundry.grade_verdict(vid, truth_pass=True, source="test")
+    assert vid not in foundry.pending_verdicts()
+
+
+def test_closed_foundry_refuses_new_events(foundry):
+    """CP126 84f49ec3: a closed foundry must not fold undurable events."""
+    foundry.close()
+    assert foundry.is_alive() is False
+    assert foundry.record_verdict(verifier="v", domain="factual",
+                                  hard_pass=True, score=0.9, checked=True) == ""
+    assert foundry.grade_verdict("vd-anything", truth_pass=True, source="t") is False
+
+
+def test_weak_verifier_is_not_hidden_by_a_strong_one(tmp_path):
+    """CP126 976f4296: pooled accuracy must not let a high-volume accurate
+    verifier swamp a low-accuracy one in the same domain."""
+    f = VerifierFoundry(root=tmp_path / "pool", clock=FakeClock())
+    try:
+        # A large accurate verifier and a smaller clearly-weak one, same domain.
+        _feed(f, verifier="strong", domain="planning", n=200, correct_rate=0.99)
+        _feed(f, verifier="weak", domain="planning", n=40, correct_rate=0.55)
+        graded, acc_lb, _fp = f._domain_evidence("planning")
+        # The weak member drags the reported accuracy below the pooled value.
+        pooled = wilson_lower_bound(
+            int(200 * 0.99) + int(40 * 0.55), 240
+        )
+        assert acc_lb <= pooled
+    finally:
+        f.close()
+
+
+def test_restore_rejects_a_forged_event_body(tmp_path):
+    """CP126 dd0abfde: a tampered events.jsonl line must not fold into live
+    reliability state — the audit chain gates restore."""
+    root = tmp_path / "tamper"
+    first = VerifierFoundry(root=root, clock=FakeClock())
+    _feed(first, verifier="v", domain="factual", n=10, correct_rate=1.0)
+    first.close()
+
+    events = root / "events.jsonl"
+    forged = {
+        "event": "verdict", "event_id": "vf-forged00", "verifier": "ghost",
+        "domain": "factual", "hard_pass": True, "score": 0.9,
+        "timestamp": 1.0,
+    }
+    with events.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(forged, sort_keys=True) + "\n")
+
+    reopened = VerifierFoundry(root=root, clock=FakeClock())
+    try:
+        # The forged verdict was never in the audit chain, so it is excluded.
+        assert reopened.reliability("ghost", "factual").recorded == 0
+        assert reopened._restore_errors >= 1
+    finally:
+        reopened.close()

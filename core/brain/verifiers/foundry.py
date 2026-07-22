@@ -127,6 +127,26 @@ class ReliabilityCell:
     def brier(self) -> float:
         return self.brier_sum / self.graded if self.graded else 1.0
 
+    def snapshot(self) -> "ReliabilityCell":
+        """A detached copy for callers.
+
+        ``reliability()`` used to return the LIVE cell; any caller could then
+        mutate graded/correct/passes/false_passes directly, bypassing the
+        lock, the event log, and the audit chain — corrupting governance
+        state with no receipt. Observers get a copy instead.
+        """
+        return ReliabilityCell(
+            verifier=self.verifier,
+            domain=self.domain,
+            recorded=self.recorded,
+            graded=self.graded,
+            correct=self.correct,
+            passes=self.passes,
+            false_passes=self.false_passes,
+            false_fails=self.false_fails,
+            brier_sum=self.brier_sum,
+        )
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "verifier": self.verifier,
@@ -181,6 +201,7 @@ class VerifierFoundry:
                                         name="verifier-foundry-ledger", daemon=True)
         self._writer_started = False
         self._writer_running = True
+        self._closed = False
         self._restore()
 
     # ── storage plumbing ─────────────────────────────────────────────────
@@ -198,6 +219,11 @@ class VerifierFoundry:
                                action="foundry root could not be created")
 
     def _append_event(self, kind: str, body: dict[str, Any]) -> None:
+        # A closed foundry has no live writer thread. Folding and queueing an
+        # event here would mutate reliability state that will never be made
+        # durable — a silent divergence between memory and the ledger.
+        if self._closed:
+            raise RuntimeError("verifier_foundry_closed")
         body = dict(body)
         body["event"] = kind
         body["event_id"] = body.get("event_id") or f"vf-{uuid.uuid4().hex[:12]}"
@@ -252,6 +278,8 @@ class VerifierFoundry:
             return self._pending_writes <= 0
 
     def close(self) -> None:
+        with self._lock:
+            self._closed = True
         self.flush_ledger()
         if self._writer_started and self._writer.is_alive():
             self._queue.put(None)
@@ -267,16 +295,96 @@ class VerifierFoundry:
             record_degradation("verifier_foundry", exc, severity="critical",
                                action="foundry ledger unreadable; starting empty")
             return
+        # AUDIT-CHAIN FIRST. Folding raw event bodies straight into live
+        # reliability state let any edited, deleted, injected, reordered, or
+        # replayed line poison governance — the chain verification was
+        # optional and separate. We verify the chain against the on-disk
+        # bodies and fold ONLY chain-confirmed events, in chain order.
+        parsed: dict[str, dict[str, Any]] = {}
+        line_order: list[str] = []
         for line in raw.splitlines():
             line = line.strip()
             if not line:
                 continue
             try:
-                self._fold(json.loads(line))
-            except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+                event = json.loads(line)
+            except (json.JSONDecodeError, TypeError, ValueError) as exc:
                 self._restore_errors += 1
                 record_degradation("verifier_foundry", exc, severity="warning",
                                    action="skipped corrupt foundry event line")
+                continue
+            if not isinstance(event, dict):
+                self._restore_errors += 1
+                continue
+            eid = str(event.get("event_id", ""))
+            if not eid:
+                self._restore_errors += 1
+                continue
+            parsed[eid] = event
+            line_order.append(eid)
+
+        verified_ids = self._chain_verified_event_ids(parsed)
+        if verified_ids is None:
+            # The chain itself could not be read/verified: fold nothing and
+            # surface it, rather than trusting unverifiable bodies.
+            record_degradation(
+                "verifier_foundry",
+                RuntimeError("foundry audit chain unverifiable at restore"),
+                severity="critical",
+                action="started with empty reliability state; ledger not trusted",
+            )
+            return
+        seen: set[str] = set()
+        for eid in line_order:
+            if eid not in verified_ids or eid in seen:
+                # Unverified body OR a duplicate id: not admissible evidence.
+                if eid not in verified_ids:
+                    self._restore_errors += 1
+                continue
+            seen.add(eid)
+            try:
+                self._fold(parsed[eid])
+            except (KeyError, TypeError, ValueError) as exc:
+                self._restore_errors += 1
+                record_degradation("verifier_foundry", exc, severity="warning",
+                                   action="skipped malformed verified foundry event")
+
+    def _chain_verified_event_ids(
+        self, bodies: dict[str, dict[str, Any]]
+    ) -> set[str] | None:
+        """Return the event ids whose on-disk body matches the audit chain.
+
+        None means the chain could not be verified at all (treat everything
+        as untrusted). A verified-but-mismatched body is simply excluded.
+        """
+        # The body_loader is called once per record the CHAIN contains, so it
+        # doubles as the authoritative set of chain-present ids. An event in
+        # events.jsonl that the chain never asks about was injected after the
+        # fact and is not in the chain — membership, not absence-of-problem,
+        # is what makes a body admissible.
+        chain_ids: set[str] = set()
+
+        def _loader(rid: str, kind: str) -> dict[str, Any] | None:
+            chain_ids.add(str(rid))
+            return bodies.get(rid)
+
+        try:
+            ok, problems = self._chain.verify(body_loader=_loader)
+        except (OSError, RuntimeError, ValueError) as exc:
+            record_degradation("verifier_foundry", exc, severity="critical",
+                               action="foundry audit-chain verification raised")
+            return None
+        bad_ids = {
+            str(problem.get("receipt_id", ""))
+            for problem in problems
+            if str(problem.get("receipt_id", ""))
+        }
+        if not ok and not bad_ids:
+            # Chain broken with no attributable receipt (e.g. a broken link):
+            # trust nothing.
+            return None
+        # Verified = present in the chain AND not flagged as a problem.
+        return {eid for eid in bodies if eid in chain_ids and eid not in bad_ids}
 
     _MAX_PENDING = 5000
 
@@ -303,6 +411,14 @@ class VerifierFoundry:
             verdict = self._pending.pop(vid, None)
             if verdict is None:
                 return
+            # Keep pending_order consistent with _pending: leaving the graded
+            # id in the order list made pending_verdicts() return stale ids
+            # indefinitely (until unrelated capacity eviction) and allowed a
+            # duplicate grade to be processed differently after the first pop.
+            try:
+                self._pending_order.remove(vid)
+            except ValueError:
+                pass
             truth = bool(event.get("truth_pass"))
             cell = self._cell(verdict["verifier"], verdict["domain"])
             cell.graded += 1
@@ -338,6 +454,8 @@ class VerifierFoundry:
             return ""
         verdict_id = f"vd-{uuid.uuid4().hex[:12]}"
         with self._lock:
+            if self._closed:
+                return ""
             self._append_event("verdict", {
                 "verdict_id": verdict_id,
                 "verifier": str(verifier or "?"),
@@ -355,7 +473,7 @@ class VerifierFoundry:
         ``source`` names the ground-truth channel (audit, prediction
         resolution, action outcome, human)."""
         with self._lock:
-            if verdict_id not in self._pending:
+            if self._closed or verdict_id not in self._pending:
                 return False
             self._append_event("grade", {
                 "verdict_id": verdict_id,
@@ -373,27 +491,52 @@ class VerifierFoundry:
 
     # ── reliability and folding weights ──────────────────────────────────
     def reliability(self, verifier: str, domain: str) -> ReliabilityCell:
+        # A DETACHED snapshot: the live cell must never leave the lock, or a
+        # caller can mutate durable reliability state with no audit receipt.
         with self._lock:
-            return self._cell(verifier, domain)
+            return self._cell(verifier, domain).snapshot()
 
     _WEIGHT_FLOOR = 0.25
 
+    # An unmeasured verifier is not a trusted one. Giving it full weight
+    # (1.0) was an OPTIMISTIC prior that let an uncalibrated or brand-new
+    # verifier materially move soft scores before it had earned any evidence.
+    # A skeptical prior weights it below a proven-good verifier until it has
+    # graded evidence of its own, without silencing it entirely.
+    _UNMEASURED_WEIGHT = 0.5
+
     def weight_for(self, verifier: str, domain: str) -> float:
-        """Soft-score folding weight. Unmeasured verifiers stay neutral (1.0)
-        so behavior is unchanged until evidence exists; measured ones are
-        weighted by their pessimistic accuracy, floored so a bad verifier is
-        muted, never inverted. The HARD gate is never weighted."""
+        """Soft-score folding weight. Unmeasured verifiers get a SKEPTICAL
+        prior (below a proven verifier, above the bad-verifier floor);
+        measured ones are weighted by their pessimistic accuracy, floored so
+        a bad verifier is muted, never inverted. The HARD gate is never
+        weighted."""
         with self._lock:
             cell = self._cells.get((verifier, domain))
-        if cell is None or cell.graded < 10:
-            return 1.0
-        return max(self._WEIGHT_FLOOR, cell.accuracy_lb())
+            graded = cell.graded if cell is not None else 0
+            acc_lb = cell.accuracy_lb() if cell is not None else 0.0
+        if cell is None or graded < 10:
+            return self._UNMEASURED_WEIGHT
+        return max(self._WEIGHT_FLOOR, acc_lb)
 
     # ── the admission gate ───────────────────────────────────────────────
+    # A verifier needs at least this many graded verdicts before its own
+    # accuracy floor is held against it — below it, one weak cell is noise,
+    # not evidence of a weak verifier.
+    _MIN_CELL_GRADED_FOR_FLOOR = 10
+
     def _domain_evidence(self, domain: str) -> tuple[int, float, float]:
         """Aggregate graded evidence across every verifier in a domain,
         scored by the WEAKEST relevant false-pass bound (a chain of checkers
-        is only as trustworthy as the leakiest one actually used)."""
+        is only as trustworthy as the leakiest one actually used).
+
+        The accuracy returned is the MINIMUM of the pooled lower bound and
+        the worst individually-measured verifier's lower bound. Pooling alone
+        let a high-volume accurate verifier swamp a low-accuracy one — the
+        domain read admitted, its weak member unnoticed — while the false-
+        pass bound already used the worst cell. Accuracy now uses the worst
+        cell too, so the two bounds are consistent.
+        """
         with self._lock:
             cells = [c for (v, d), c in self._cells.items()
                      if d == domain and c.graded > 0]
@@ -401,28 +544,42 @@ class VerifierFoundry:
             return 0, 0.0, 1.0
         graded = sum(c.graded for c in cells)
         correct = sum(c.correct for c in cells)
+        pooled_acc = wilson_lower_bound(correct, graded)
         worst_fp = max(c.false_pass_ub() for c in cells)
-        return graded, wilson_lower_bound(correct, graded), worst_fp
+        measured = [c for c in cells if c.graded >= self._MIN_CELL_GRADED_FOR_FLOOR]
+        worst_acc = min((c.accuracy_lb() for c in measured), default=pooled_acc)
+        return graded, min(pooled_acc, worst_acc), worst_fp
 
-    def domain_admitted(self, domain: str) -> AdmissionDecision:
-        """May verifier-clean wins in this domain become training data?"""
-        domain = str(domain or "").strip().lower()
+    def _evaluate_admission(
+        self, domain: str, *, allow_revoke: bool
+    ) -> AdmissionDecision:
+        """Evaluate admission. Only writes durable state when allow_revoke.
+
+        ``status()`` and other observers call with allow_revoke=False so a
+        nominal read can never append a revoke_seed event and mutate durable
+        governance (or block on ledger I/O). The admission GATE calls with
+        allow_revoke=True so the measurement ratchet still fires — but a
+        pending revocation is still REPORTED as not-admitted either way, so
+        an observer and the gate agree on the verdict.
+        """
         graded, acc_lb, fp_ub = self._domain_evidence(domain)
 
         if domain in SEED_ADMITTED_DOMAINS and domain not in self._revoked_seeds:
             # seeds are admitted by construction — but measured evidence can
             # revoke them (the ratchet works on measurement, not faith)
-            if graded >= int(_ADMIT_MIN_GRADED_FLAG.value()) and (
-                    fp_ub > float(_ADMIT_MAX_FALSE_PASS_FLAG.value()) * 2):
-                with self._lock:
-                    self._append_event("revoke_seed", {
-                        "domain": domain,
-                        "false_pass_ub": round(fp_ub, 4),
-                        "graded": graded,
-                    })
-                logger.warning("Foundry: seed admission REVOKED for %r "
-                               "(false-pass UB %.3f over %d graded)",
-                               domain, fp_ub, graded)
+            revocable = graded >= int(_ADMIT_MIN_GRADED_FLAG.value()) and (
+                fp_ub > float(_ADMIT_MAX_FALSE_PASS_FLAG.value()) * 2)
+            if revocable:
+                if allow_revoke:
+                    with self._lock:
+                        self._append_event("revoke_seed", {
+                            "domain": domain,
+                            "false_pass_ub": round(fp_ub, 4),
+                            "graded": graded,
+                        })
+                    logger.warning("Foundry: seed admission REVOKED for %r "
+                                   "(false-pass UB %.3f over %d graded)",
+                                   domain, fp_ub, graded)
                 return AdmissionDecision(domain, False,
                                          "seed_revoked_by_evidence",
                                          {"false_pass_ub": fp_ub, "graded": graded})
@@ -447,6 +604,21 @@ class VerifierFoundry:
                                   "accuracy_lb": round(acc_lb, 4),
                                   "false_pass_ub": round(fp_ub, 4)})
 
+    def domain_admitted(self, domain: str) -> AdmissionDecision:
+        """May verifier-clean wins in this domain become training data?
+
+        This is the GATE, so it applies the measurement ratchet (a seed can
+        be revoked by durable evidence). Observers must use
+        :meth:`domain_admitted_readonly`.
+        """
+        domain = str(domain or "").strip().lower()
+        return self._evaluate_admission(domain, allow_revoke=True)
+
+    def domain_admitted_readonly(self, domain: str) -> AdmissionDecision:
+        """Same verdict as the gate, but never mutates governance state."""
+        domain = str(domain or "").strip().lower()
+        return self._evaluate_admission(domain, allow_revoke=False)
+
     # ── observability ────────────────────────────────────────────────────
     def status(self) -> dict[str, Any]:
         with self._lock:
@@ -459,19 +631,31 @@ class VerifierFoundry:
             "cells": cells,
             "pending_verdicts": pending,
             "restore_errors": self._restore_errors,
-            "admissions": {d: self.domain_admitted(d).admitted for d in domains},
+            # READ-ONLY: a status poll must never mutate durable governance.
+            "admissions": {
+                d: self.domain_admitted_readonly(d).admitted for d in domains
+            },
             "chain_head": self._chain.head_hash(),
             "chain_length": self._chain.length(),
             "root": str(self.root),
         }
 
     def is_alive(self) -> bool:
-        if not self.events_path.parent.is_dir():
+        if self._closed or not self.events_path.parent.is_dir():
             return False
-        if not self._writer_started or self._writer.is_alive():
+        if not self._writer_started:
+            # No writes yet: nothing has failed, so it is alive if it can
+            # persist — the audit chain must itself be healthy, not merely
+            # the directory present.
+            chain_ok = getattr(self._chain, "is_healthy", None)
+            return bool(chain_ok()) if callable(chain_ok) else True
+        if self._writer.is_alive():
             return True
-        with self._pending_writes_lock:
-            return self._pending_writes <= 0
+        # The writer thread was started and is now DEAD. A dead writer cannot
+        # consume the queue, so pending or future events stall forever —
+        # reporting "alive" because pending happens to be zero hid exactly
+        # that failure. A started-then-dead writer is not alive.
+        return False
 
     def verify_ledger(self) -> tuple[bool, list[dict[str, Any]]]:
         self.flush_ledger()
