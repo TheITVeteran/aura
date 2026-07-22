@@ -27,8 +27,10 @@ from tools.train_grpo import (
     _publish_adapter_snapshot,
     _publish_immutable_bytes,
     _record_recurrent_step_failure,
+    _shape_recurrent_rewards_from_ce_trails,
     _should_halt_for_no_learning_signal,
     _stable_seed,
+    _task_gold_answer_text,
     completion_logprob,
     evaluate_heldout,
     sample_recurrent_group,
@@ -140,6 +142,43 @@ def test_training_halts_when_grpo_has_no_learning_signal():
     assert verdict is not None
     assert verdict["learning_signal"] is False
     assert "too_hard" in verdict["diagnosis"]
+
+
+def test_recurrent_trajectory_credit_preserves_verifier_rewards():
+    verifier = [0.0, 0.0, 0.0]
+    shaped = _shape_recurrent_rewards_from_ce_trails(
+        verifier,
+        [
+            [2.2, 1.1, 0.3],
+            [1.5, 1.5, 1.5],
+            [0.3, 1.1, 2.2],
+        ],
+        shaping_weight=0.25,
+    )
+    report = group_advantages(shaped["shaped_rewards"])
+
+    assert report["degenerate"] is False
+    assert shaped["rows"][0]["final_reward"] == 0.0
+    assert shaped["rows"][0]["shaping"] > 0.0
+    assert shaped["rows"][2]["shaping"] < 0.0
+    assert len(shaped["ce_trails"]) == 3
+    assert len(shaped["score_trails"]) == 3
+
+
+def test_task_gold_answer_text_prefers_bound_answer_contract():
+    class RecurrenceStyle:
+        answer = 'FINAL_ANSWER: {"node":3}'
+
+        @property
+        def expected(self):
+            raise AssertionError("answer text should be the training contract")
+
+    class VerifiableStyle:
+        answer = None
+        expected = {"value": 1}
+
+    assert _task_gold_answer_text(RecurrenceStyle()) == 'FINAL_ANSWER: {"node":3}'
+    assert _task_gold_answer_text(VerifiableStyle()) == 'FINAL_ANSWER: {"value":1}'
 
 
 def test_execution_mode_requires_and_strictly_loads_recurrent_spec(tmp_path):

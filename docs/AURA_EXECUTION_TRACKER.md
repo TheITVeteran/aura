@@ -23535,3 +23535,51 @@ This is total checkpoint record 343. The forecast remains 394-661 total
 records, now approximately 51-318 records after this checkpoint. Next: publish
 CP282, then continue building the missing full-stack RLC proof path rather than
 relaunching the same narrow no-gradient experiment.
+
+## Checkpoint 2026-07-21-283: Recurrent GRPO Gets Gold-Answer Trajectory Credit
+
+CP273 proved that the fixed resident recurrent-GRPO path could spend real 32B
+time sampling and grading while producing no optimizer signal: every sampled
+group was all-wrong, so final-verifier-only GRPO correctly emitted zero
+advantages. That diagnosis was honest, but it also exposed a missing piece in
+the system being tested. A recurrent cortex can move its latent state toward
+the correct answer before the sampled decode still misses; final-only rewards
+discard that sub-threshold evidence and make recurrence-native learning much
+harder than it needs to be.
+
+`recurrence_native_objective_v2` now exposes
+`live_path_branch_answer_ce_trail`, which measures the verifier's canonical
+gold answer cross-entropy after each recurrent step for the selected branch on
+the same live recurrent graph used by exact-adjoint training. `train_grpo.py`
+can now enable `--trajectory-credit`: when a recurrent group would otherwise be
+degenerate, it tokenizes the task's bound correct answer, converts the branch
+CE trails to bounded step scores, and uses existing trajectory-shaped rewards
+to recover a group-relative training signal. The receipt preserves both
+surfaces: original `verifier_rewards` and `verifier_advantage_report` remain
+separate from the effective shaped rewards, CE trails, score trails, and
+trajectory-credit rows. The verifier remains dominant because shaping is
+bounded below 0.5 and is only a credit-assignment bridge, not a replacement
+reward model.
+
+Future resident-32B preregistration now enables trajectory credit by default
+and binds its shaping weight into the frozen command/protocol. This does not
+claim frontier gains and does not close the larger full-stack RLC gap from
+CP280; latent optimization, fast weights, execution-controller arms, and
+full-stack ablations still need certified equal-compute proof before live RLC
+claims can cover them. It does retire the specific no-gradient failure mode
+where all-wrong recurrent groups hide measurable movement toward the verifier
+answer.
+
+Validation is clean: `tests/test_train_grpo_contract.py`,
+`tests/test_recurrent_grpo.py`, and
+`tests/test_resident_recurrent_grpo_preregistration.py` pass together with
+37 tests; `tests/test_grpo.py` and `tests/test_rotation_and_trajectory_credit.py`
+pass together with 31 tests; touched bytecode compilation passes; `make lint`
+passes; and `git diff --check` passes.
+
+This is total checkpoint record 344. The forecast remains 394-661 total
+records, now approximately 50-317 records after this checkpoint. Next: publish
+CP283, then build the remaining full-stack RLC proof pieces: explicit
+fast-weight/latent-opt training arms, equal-compute ablations, live 32B
+post-training proof launch, and independently scored frontier comparison
+before any frontier-level reasoning claim is allowed.

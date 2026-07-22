@@ -73,6 +73,8 @@ TRAINING_PARAMETERS: Mapping[str, Any] = {
     "max_tokens": 320,
     "kl_coefficient": 0.02,
     "format_credit": 0.0,
+    "trajectory_credit": True,
+    "trajectory_shaping_weight": 0.25,
     "lora_rank": 8,
     "lora_targets": "o_proj,v_proj,q_proj",
     "lora_layers": 8,
@@ -247,6 +249,7 @@ def _training_argv(
         ("max_tokens", "--max-tokens"),
         ("kl_coefficient", "--kl-coefficient"),
         ("format_credit", "--format-credit"),
+        ("trajectory_shaping_weight", "--trajectory-shaping-weight"),
         ("lora_rank", "--lora-rank"),
         ("lora_targets", "--lora-targets"),
         ("lora_layers", "--lora-layers"),
@@ -267,6 +270,8 @@ def _training_argv(
         argv.extend((flag, str(params[key])))
     if params["calibrate"]:
         argv.append("--calibrate")
+    if params["trajectory_credit"]:
+        argv.append("--trajectory-credit")
     if params["cot"]:
         argv.append("--cot")
     return argv

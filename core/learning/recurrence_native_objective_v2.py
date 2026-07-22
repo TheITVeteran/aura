@@ -624,6 +624,78 @@ def live_path_forward(
     )
 
 
+def live_path_branch_answer_ce_trail(
+    model: Any,
+    prompt_tokens: Sequence[int],
+    answer_tokens: Sequence[int],
+    *,
+    spec: RLCExecutionSpec,
+    branch_index: int,
+    bridge_tokens: Sequence[int] = (),
+) -> list[float]:
+    """Answer CE after each recurrent step for one live-path branch.
+
+    GRPO's final verifier can mark an entire sampled group wrong, leaving
+    zero group-relative advantage. For recurrence-native training, that wastes
+    the most important early signal: which internal state trajectories moved
+    toward the known correct answer before the sampled decode missed. This
+    function measures that signal on the same live recurrent graph used by the
+    exact-adjoint objective. It is telemetry/credit assignment only; it does
+    not replace the external verifier.
+    """
+
+    import mlx.core as mx
+    import mlx.nn as nn
+
+    prepared = _prepare_live_path(
+        model,
+        prompt_tokens,
+        answer_tokens,
+        spec=spec,
+        bridge_tokens=bridge_tokens,
+    )
+    if (
+        type(branch_index) is not int
+        or not 0 <= branch_index < len(prepared.states)
+    ):
+        raise ValueError("branch_index is outside the live-path branch set")
+
+    targets = mx.array(list(answer_tokens))[None, :]
+    states = list(prepared.states)
+    trail: list[float] = []
+    for step in range(spec.recurrent_steps):
+        states = _checkpointed_recurrent_transition(
+            model,
+            prepared.prompts_at_window,
+            states,
+            prepared.anchors,
+            spec,
+            step,
+            prepared.prelude_end,
+            prepared.coda_start,
+        )
+        logits = _persist_and_score(
+            model,
+            prepared.prompt_embeddings,
+            prepared.seeds[branch_index],
+            states[branch_index],
+            prepared.tail_embeddings,
+            bridge_count=prepared.bridge_count,
+            answer_count=prepared.answer_count,
+            prelude_end=prepared.prelude_end,
+            coda_start=prepared.coda_start,
+        )
+        losses = nn.losses.cross_entropy(
+            logits.astype(mx.float32), targets, reduction="none"
+        )
+        value = mx.mean(losses)
+        mx.eval(value)
+        trail.append(float(value))
+        del logits, losses, value
+        mx.clear_cache()
+    return trail
+
+
 def branch_mean_answer_loss(forward: LivePathForward, answer_tokens: Sequence[int]) -> Any:
     """Mean answer CE: every role must remain competent, not only an oracle arm."""
 
@@ -959,6 +1031,7 @@ __all__ = [
     "depth_curriculum_loss_v2",
     "detached_monotonicity_penalty",
     "exact_adjoint_live_path_value_and_grad",
+    "live_path_branch_answer_ce_trail",
     "live_path_forward",
     "live_path_loss",
 ]

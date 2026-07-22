@@ -20,6 +20,7 @@ from core.brain.llm.latent_cortex.execution_spec import (  # noqa: E402
 )
 from core.learning.recurrence_native_objective_v2 import (  # noqa: E402
     LivePathForward,
+    live_path_branch_answer_ce_trail,
 )
 from core.learning.recurrent_grpo import (  # noqa: E402
     RecurrentGroupClipAdmissionError,
@@ -253,6 +254,33 @@ def test_trainer_group_uses_tokenizer_and_distinct_bound_seeds():
     assert completions == [
         " ".join(str(token) for token in sample.tokens) for sample in samples
     ]
+
+
+def test_live_path_branch_answer_ce_trail_scores_each_recurrent_step():
+    model = _prepared(seed=949)
+    spec = _spec(
+        depth=3,
+        branch_roles=("constructive_solution", "critical_audit"),
+    )
+
+    trail = live_path_branch_answer_ce_trail(
+        model,
+        [5, 9, 17],
+        [7, 11],
+        spec=spec,
+        branch_index=1,
+    )
+
+    assert len(trail) == 3
+    assert all(math.isfinite(value) and value >= 0.0 for value in trail)
+    with pytest.raises(ValueError, match="branch_index"):
+        live_path_branch_answer_ce_trail(
+            model,
+            [5, 9, 17],
+            [7, 11],
+            spec=spec,
+            branch_index=2,
+        )
 
 
 def test_sampled_verifier_update_improves_preference_without_base_drift():

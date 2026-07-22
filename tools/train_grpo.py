@@ -57,6 +57,8 @@ from core.learning.grpo import (  # noqa: E402
     grpo_loss,
     reward_from_verdict,
     sequence_token_logprobs,
+    step_scores_from_ce,
+    trajectory_shaped_rewards,
 )
 from core.learning.grpo_training_state import (  # noqa: E402
     GRPOCheckpointError,
@@ -187,6 +189,60 @@ def _calibration_token_budget(max_tokens: int, requested: int) -> int:
             "probe truncates reasoning and corrupts learnability"
         )
     return max_tokens
+
+
+def _task_gold_answer_text(task: Any) -> str:
+    """Canonical text whose tokens represent the verifier's correct answer."""
+
+    answer = getattr(task, "answer", None)
+    if isinstance(answer, str) and answer.strip():
+        return answer.strip()
+    expected = getattr(task, "expected", None)
+    if callable(expected):
+        expected = expected()
+    if isinstance(expected, (dict, list)):
+        return "FINAL_ANSWER: " + json.dumps(
+            expected,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        )
+    if expected is not None:
+        return f"FINAL_ANSWER: {expected}"
+    raise ValueError("task does not expose a canonical verifier answer")
+
+
+def _tokenize_gold_answer(tokenizer: Any, task: Any) -> list[int]:
+    answer_text = _task_gold_answer_text(task)
+    tokens = list(tokenizer.encode(answer_text, add_special_tokens=False))
+    if not tokens or any(type(token) is not int or token < 0 for token in tokens):
+        raise RuntimeError("canonical verifier answer produced invalid tokens")
+    return tokens
+
+
+def _shape_recurrent_rewards_from_ce_trails(
+    rewards: Sequence[float],
+    ce_trails: Sequence[Sequence[float]],
+    *,
+    shaping_weight: float,
+) -> dict[str, Any]:
+    """Bounded recurrent credit with verifier rewards preserved separately."""
+
+    score_trails = [step_scores_from_ce(trail) for trail in ce_trails]
+    shaped = trajectory_shaped_rewards(
+        rewards,
+        score_trails,
+        shaping_weight=shaping_weight,
+    )
+    return {
+        **shaped,
+        "ce_trails": [
+            [round(float(value), 6) for value in trail] for trail in ce_trails
+        ],
+        "score_trails": [
+            [round(float(value), 6) for value in trail] for trail in score_trails
+        ],
+    }
 
 
 def _build_task_split(
@@ -927,6 +983,20 @@ def main() -> int:
     parser.add_argument("--max-tokens", type=int, default=256)
     parser.add_argument("--kl-coefficient", type=float, default=0.04)
     parser.add_argument("--format-credit", type=float, default=0.0)
+    parser.add_argument(
+        "--trajectory-credit",
+        action="store_true",
+        help=(
+            "in recurrent mode, use bounded gold-answer CE trajectory credit "
+            "when final verifier rewards would otherwise be no-signal"
+        ),
+    )
+    parser.add_argument(
+        "--trajectory-shaping-weight",
+        type=float,
+        default=0.25,
+        help="bounded trajectory credit weight; verifier reward remains dominant",
+    )
     parser.add_argument("--lora-rank", type=int, default=16)
     parser.add_argument("--lora-targets", default="o_proj,v_proj,q_proj")
     parser.add_argument("--lora-layers", type=int, default=24)
@@ -993,6 +1063,10 @@ def main() -> int:
         parser.error("--learning-rate must be inside (0, 1]")
     if not 0.0 <= args.format_credit <= 0.2:
         parser.error("--format-credit must be inside [0, 0.2]")
+    if not 0.0 <= args.trajectory_shaping_weight <= 0.49:
+        parser.error("--trajectory-shaping-weight must be inside [0, 0.49]")
+    if args.trajectory_credit and args.execution_mode != "recurrent":
+        parser.error("--trajectory-credit only applies to recurrent mode")
     if _ADAPTER_ID_RE.fullmatch(args.adapter_id) is None:
         parser.error("--adapter-id must be a stable identifier")
     try:
@@ -1119,6 +1193,8 @@ def main() -> int:
             "max_tokens": args.max_tokens,
             "kl_coefficient": args.kl_coefficient,
             "format_credit": args.format_credit,
+            "trajectory_credit": args.trajectory_credit,
+            "trajectory_shaping_weight": args.trajectory_shaping_weight,
             "lora_rank": args.lora_rank,
             "lora_targets": args.lora_targets,
             "lora_layers": args.lora_layers,
@@ -1564,9 +1640,46 @@ def main() -> int:
                     )
                     for text in completions
                 ]
-                advantage_report = group_advantages(
+                verifier_advantage_report = group_advantages(
                     rewards, clip=config.advantage_clip
                 )
+                effective_rewards = list(rewards)
+                trajectory_credit_receipt: dict[str, Any] | None = None
+                advantage_report = verifier_advantage_report
+                if (
+                    args.trajectory_credit
+                    and execution_spec is not None
+                    and recurrent_samples is not None
+                    and verifier_advantage_report["degenerate"]
+                ):
+                    from core.learning.recurrence_native_objective_v2 import (
+                        live_path_branch_answer_ce_trail,
+                    )
+
+                    active_recurrent_step["phase"] = "trajectory_credit"
+                    answer_tokens = _tokenize_gold_answer(tokenizer, task)
+                    ce_trails = [
+                        live_path_branch_answer_ce_trail(
+                            model,
+                            prompt,
+                            answer_tokens,
+                            spec=execution_spec,
+                            branch_index=sample.branch_index,
+                        )
+                        for sample in recurrent_samples
+                    ]
+                    trajectory_credit_receipt = _shape_recurrent_rewards_from_ce_trails(
+                        rewards,
+                        ce_trails,
+                        shaping_weight=args.trajectory_shaping_weight,
+                    )
+                    effective_rewards = [
+                        float(value)
+                        for value in trajectory_credit_receipt["shaped_rewards"]
+                    ]
+                    advantage_report = group_advantages(
+                        effective_rewards, clip=config.advantage_clip
+                    )
                 loss_value: float | None = None
                 step_kind = "degenerate_group"
                 update_receipt: dict[str, Any] | None = None
@@ -1627,7 +1740,7 @@ def main() -> int:
                                 model,
                                 prompt,
                                 recurrent_samples,
-                                rewards,
+                                effective_rewards,
                                 spec=execution_spec,
                                 config=recurrent_config,
                             )
@@ -1663,7 +1776,10 @@ def main() -> int:
                             "samples": [
                                 sample.receipt() for sample in recurrent_samples
                             ],
-                            "rewards": [float(value) for value in rewards],
+                            "rewards": [float(value) for value in effective_rewards],
+                            "verifier_rewards": [float(value) for value in rewards],
+                            "verifier_advantage_report": verifier_advantage_report,
+                            "trajectory_credit": trajectory_credit_receipt,
                             "advantage_report": advantage_report,
                             "step_kind": step_kind,
                             "update": update_receipt,

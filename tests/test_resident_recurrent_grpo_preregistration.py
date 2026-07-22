@@ -34,6 +34,8 @@ def test_preregistration_binds_broad_training_and_powered_evaluation():
     assert contract["training"]["dataset"]["train_tasks"] == 288
     assert contract["training"]["dataset"]["holdout_tasks"] == 36
     assert contract["training"]["dataset"]["train_holdout_id_overlap"] == 0
+    assert contract["training"]["parameters"]["trajectory_credit"] is True
+    assert "--trajectory-credit" in contract["training"]["argv"]
     assert contract["evaluation"]["powered_confirmatory"]["task_count"] == 2877
     assert contract["evaluation"]["powered_confirmatory"]["cell_count"] == 17262
     assert receipt["claim_eligible"] is False
