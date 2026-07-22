@@ -25,7 +25,7 @@ from core.brain.llm.latent_cortex.epistemic_calibration import (
     CalibrationProfile,
 )
 
-EPISTEMIC_STATE_SCHEMA = "aura.rlc.epistemic_state.v3"
+EPISTEMIC_STATE_SCHEMA = "aura.rlc.epistemic_state.v4"
 
 MAX_OBJECTIVE_CHARS = 16_384
 MAX_TEXT_CHARS = 8_192
@@ -37,6 +37,10 @@ MAX_HYPOTHESES = 64
 MAX_CLAIMS = 512
 MAX_OPERATIONS = 512
 MAX_REFS = 128
+MIN_HYPOTHESIS_MASS = 0.02
+MAX_MINORITY_MASS = 0.25
+FAVORED_HYPOTHESIS_MASS = 0.50
+PORTFOLIO_SUM_TOLERANCE = 1e-9
 
 _ID_RE = re.compile(r"[A-Za-z][A-Za-z0-9_.:-]{0,95}\Z")
 _DIGEST_RE = re.compile(r"[0-9a-f]{64}\Z")
@@ -950,6 +954,7 @@ class OperationRecord:
     input_state_sha256: str
     cost: float
     affected_claim_ids: tuple[str, ...] = ()
+    affected_hypothesis_ids: tuple[str, ...] = ()
     evidence_gained: tuple[str, ...] = ()
     detail: str = ""
 
@@ -971,6 +976,15 @@ class OperationRecord:
             ),
         )
         object.__setattr__(
+            self,
+            "affected_hypothesis_ids",
+            _bounded_ids(
+                self.affected_hypothesis_ids,
+                name="operation affected hypotheses",
+                limit=MAX_HYPOTHESES,
+            ),
+        )
+        object.__setattr__(
             self, "evidence_gained", _bounded_ids(self.evidence_gained, name="operation evidence")
         )
         object.__setattr__(
@@ -987,6 +1001,7 @@ class OperationRecord:
             "input_state_sha256": self.input_state_sha256,
             "cost": self.cost,
             "affected_claim_ids": list(self.affected_claim_ids),
+            "affected_hypothesis_ids": list(self.affected_hypothesis_ids),
             "evidence_gained": list(self.evidence_gained),
             "detail": self.detail,
         }
@@ -1000,6 +1015,7 @@ class OperationRecord:
             "input_state_sha256",
             "cost",
             "affected_claim_ids",
+            "affected_hypothesis_ids",
             "evidence_gained",
             "detail",
         }
@@ -1017,6 +1033,10 @@ class OperationRecord:
             affected_claim_ids=_wire_list(
                 data["affected_claim_ids"],
                 name="operation.affected_claim_ids",
+            ),
+            affected_hypothesis_ids=_wire_list(
+                data["affected_hypothesis_ids"],
+                name="operation.affected_hypothesis_ids",
             ),
             evidence_gained=_wire_list(
                 data["evidence_gained"],
@@ -1314,9 +1334,13 @@ class EpistemicState:
                 claim_map[claim_id].status not in established for claim_id in hypothesis.claim_ids
             ):
                 raise EpistemicStateError("favored hypothesis depends on an unestablished claim")
+        self._validate_hypothesis_portfolio(self.hypotheses, claim_map=claim_map)
+        hypothesis_ids = {item.hypothesis_id for item in self.hypotheses}
         for operation in self.operations:
             if not set(operation.affected_claim_ids) <= claim_ids:
                 raise EpistemicStateError("operation references an unknown claim")
+            if not set(operation.affected_hypothesis_ids) <= hypothesis_ids:
+                raise EpistemicStateError("operation references an unknown hypothesis")
             if not set(operation.evidence_gained) <= evidence_ids:
                 raise EpistemicStateError("operation references unknown evidence")
         if self.accepted_answer is not None:
@@ -1385,6 +1409,83 @@ class EpistemicState:
                         raise EpistemicStateError(
                             "answer depends on an expired calibration profile"
                         )
+
+    @staticmethod
+    def _validate_hypothesis_portfolio(
+        hypotheses: Iterable[HypothesisRecord],
+        *,
+        claim_map: Mapping[str, ClaimRecord],
+    ) -> None:
+        portfolio = tuple(hypotheses)
+        if not portfolio:
+            return
+
+        blocked = {ClaimStatus.REJECTED, ClaimStatus.CONTRADICTED}
+        known_claim_ids = set(claim_map)
+        live = []
+        favored = []
+        for hypothesis in portfolio:
+            if not set(hypothesis.claim_ids) <= known_claim_ids:
+                raise EpistemicStateError("hypothesis references an unknown claim")
+            if hypothesis.status is HypothesisStatus.REFUTED:
+                if (
+                    hypothesis.posterior.lower != 0.0
+                    or hypothesis.posterior.point != 0.0
+                    or hypothesis.posterior.upper != 0.0
+                ):
+                    raise EpistemicStateError("refuted hypothesis must have zero posterior mass")
+                if not any(
+                    claim_map[claim_id].status in blocked for claim_id in hypothesis.claim_ids
+                ):
+                    raise EpistemicStateError(
+                        "refuted hypothesis requires a rejected or contradicted claim"
+                    )
+                continue
+            live.append(hypothesis)
+            if hypothesis.status is HypothesisStatus.FAVORED:
+                favored.append(hypothesis)
+            if hypothesis.status is HypothesisStatus.MINORITY and (
+                hypothesis.posterior.point <= 0.0 or hypothesis.posterior.point > MAX_MINORITY_MASS
+            ):
+                raise EpistemicStateError(
+                    "minority hypothesis posterior must be positive and at most "
+                    f"{MAX_MINORITY_MASS}"
+                )
+
+        if not live:
+            return
+        total = math.fsum(hypothesis.posterior.point for hypothesis in live)
+        if not math.isclose(
+            total,
+            1.0,
+            rel_tol=0.0,
+            abs_tol=PORTFOLIO_SUM_TOLERANCE,
+        ):
+            raise EpistemicStateError(
+                f"non-refuted hypothesis posterior mass must sum to one, got {total:.12g}"
+            )
+        if len(live) > 1 and any(
+            hypothesis.posterior.point < MIN_HYPOTHESIS_MASS for hypothesis in live
+        ):
+            raise EpistemicStateError(
+                "live hypothesis posterior fell below the protected minority floor"
+            )
+        if len(favored) > 1:
+            raise EpistemicStateError("hypothesis portfolio cannot contain multiple favorites")
+        if favored:
+            winner = favored[0]
+            if winner.posterior.point < FAVORED_HYPOTHESIS_MASS:
+                raise EpistemicStateError(
+                    "favored hypothesis posterior is below the favored threshold"
+                )
+            if any(
+                other.hypothesis_id != winner.hypothesis_id
+                and other.posterior.point >= winner.posterior.point
+                for other in live
+            ):
+                raise EpistemicStateError(
+                    "favored hypothesis must be the unique highest-mass hypothesis"
+                )
 
     @staticmethod
     def _validate_claim_uncertainty(
@@ -1690,6 +1791,7 @@ class EpistemicTransaction:
         self._budget = base.budget
         self._accepted_answer = base.accepted_answer
         self._replaced_claim_ids: set[str] = set()
+        self._replaced_hypothesis_ids: set[str] = set()
         self._closed = False
 
     def _open(self) -> None:
@@ -1766,27 +1868,6 @@ class EpistemicTransaction:
 
         descendants = EpistemicState._claim_descendants(self._claims, claim_id)
         affected = tuple(sorted((claim_id, *descendants)))
-        operation = OperationRecord(
-            operation_id=operation_id,
-            kind=(
-                OperationKind.FALSIFY
-                if status is ClaimStatus.CONTRADICTED
-                else OperationKind.BACKTRACK
-            ),
-            outcome=OperationOutcome.SUCCEEDED,
-            input_state_sha256=self.base.state_sha256,
-            cost=cost,
-            affected_claim_ids=affected,
-            detail=detail or f"invalidated {claim_id} and its dependent claims",
-        )
-        if operation.operation_id in self._operations:
-            raise EpistemicStateError(
-                f"operation identifier already exists: {operation.operation_id}"
-            )
-        next_used = self._budget.used + operation.cost
-        if next_used > self._budget.total:
-            raise EpistemicStateError("claim invalidation exceeds compute budget")
-
         revised_claims = dict(self._claims)
         revised_claims[claim_id] = replace(target, status=status)
         blocked = {ClaimStatus.REJECTED, ClaimStatus.CONTRADICTED}
@@ -1799,15 +1880,39 @@ class EpistemicTransaction:
                 )
         revised_hypotheses = dict(self._hypotheses)
         affected_set = set(affected)
+        affected_hypothesis_ids = []
         for hypothesis_id, hypothesis in revised_hypotheses.items():
-            if (
-                affected_set.intersection(hypothesis.claim_ids)
-                and hypothesis.status is not HypothesisStatus.REFUTED
-            ):
+            if affected_set.intersection(hypothesis.claim_ids) and hypothesis.status not in {
+                HypothesisStatus.REFUTED,
+                HypothesisStatus.UNRESOLVED,
+            }:
                 revised_hypotheses[hypothesis_id] = replace(
                     hypothesis,
                     status=HypothesisStatus.UNRESOLVED,
                 )
+                affected_hypothesis_ids.append(hypothesis_id)
+        affected_hypothesis_ids_tuple = tuple(sorted(affected_hypothesis_ids))
+        operation = OperationRecord(
+            operation_id=operation_id,
+            kind=(
+                OperationKind.FALSIFY
+                if status is ClaimStatus.CONTRADICTED
+                else OperationKind.BACKTRACK
+            ),
+            outcome=OperationOutcome.SUCCEEDED,
+            input_state_sha256=self.base.state_sha256,
+            cost=cost,
+            affected_claim_ids=affected,
+            affected_hypothesis_ids=affected_hypothesis_ids_tuple,
+            detail=detail or f"invalidated {claim_id} and its dependent claims",
+        )
+        if operation.operation_id in self._operations:
+            raise EpistemicStateError(
+                f"operation identifier already exists: {operation.operation_id}"
+            )
+        next_used = self._budget.used + operation.cost
+        if next_used > self._budget.total:
+            raise EpistemicStateError("claim invalidation exceeds compute budget")
         answer = self._accepted_answer
         if answer is not None and affected_set.intersection(answer.claim_ids):
             answer = None
@@ -1818,14 +1923,101 @@ class EpistemicTransaction:
         self._budget = replace(self._budget, used=next_used)
         self._accepted_answer = answer
         self._replaced_claim_ids.update(affected)
+        self._replaced_hypothesis_ids.update(affected_hypothesis_ids_tuple)
         return affected
 
     def add_hypothesis(self, hypothesis: HypothesisRecord) -> EpistemicTransaction:
         self._open()
         if not isinstance(hypothesis, HypothesisRecord):
             raise TypeError("hypothesis must be a HypothesisRecord")
+        if self.base.hypotheses:
+            raise EpistemicStateError(
+                "existing hypothesis portfolio must be changed through complete revision"
+            )
         self._insert(self._hypotheses, hypothesis.hypothesis_id, hypothesis, name="hypothesis")
         return self
+
+    def revise_hypothesis_portfolio(
+        self,
+        replacements: Iterable[HypothesisRecord],
+        *,
+        operation_id: str,
+        evidence_gained: Iterable[str] = (),
+        cost: float = 0.0,
+        detail: str = "",
+    ) -> tuple[str, ...]:
+        """Atomically revise the complete weighted hypothesis portfolio."""
+
+        self._open()
+        proposed = _unique_by_id(
+            replacements,
+            expected_type=HypothesisRecord,
+            attr="hypothesis_id",
+            limit=MAX_HYPOTHESES,
+            name="hypotheses",
+        )
+        proposed_map = {item.hypothesis_id: item for item in proposed}
+        missing = sorted(set(self._hypotheses) - set(proposed_map))
+        if missing:
+            raise EpistemicStateError(f"portfolio revision cannot delete hypotheses: {missing}")
+        for hypothesis_id, previous in self._hypotheses.items():
+            replacement = proposed_map[hypothesis_id]
+            if (
+                replacement.statement != previous.statement
+                or replacement.claim_ids != previous.claim_ids
+            ):
+                raise EpistemicStateError(
+                    "portfolio revision cannot rewrite hypothesis identity or claim scope"
+                )
+            if (
+                previous.status is HypothesisStatus.REFUTED
+                and replacement.status is not HypothesisStatus.REFUTED
+                and any(
+                    self._claims[claim_id].status
+                    in {ClaimStatus.REJECTED, ClaimStatus.CONTRADICTED}
+                    for claim_id in replacement.claim_ids
+                )
+            ):
+                raise EpistemicStateError(
+                    "portfolio revision cannot revive a hypothesis while its refuting claim is blocked"
+                )
+
+        changed = tuple(
+            sorted(
+                hypothesis_id
+                for hypothesis_id, hypothesis in proposed_map.items()
+                if self._hypotheses.get(hypothesis_id) != hypothesis
+            )
+        )
+        if not changed:
+            raise EpistemicStateError("portfolio revision did not change any hypothesis")
+        EpistemicState._validate_hypothesis_portfolio(
+            proposed,
+            claim_map=self._claims,
+        )
+        operation = OperationRecord(
+            operation_id=operation_id,
+            kind=OperationKind.COMPARE,
+            outcome=OperationOutcome.SUCCEEDED,
+            input_state_sha256=self.base.state_sha256,
+            cost=cost,
+            affected_hypothesis_ids=changed,
+            evidence_gained=tuple(evidence_gained),
+            detail=detail or "revised weighted hypothesis portfolio",
+        )
+        if operation.operation_id in self._operations:
+            raise EpistemicStateError(
+                f"operation identifier already exists: {operation.operation_id}"
+            )
+        next_used = self._budget.used + operation.cost
+        if next_used > self._budget.total:
+            raise EpistemicStateError("portfolio revision exceeds compute budget")
+
+        self._hypotheses = proposed_map
+        self._operations[operation.operation_id] = operation
+        self._budget = replace(self._budget, used=next_used)
+        self._replaced_hypothesis_ids.update(changed)
+        return changed
 
     def add_operation(self, operation: OperationRecord) -> EpistemicTransaction:
         self._open()
@@ -1887,6 +2079,18 @@ class EpistemicTransaction:
             missing = sorted(self._replaced_claim_ids - covered_claim_ids)
             raise EpistemicStateError(
                 f"claim revisions lack a successful operation receipt: {missing}"
+            )
+        covered_hypothesis_ids = {
+            hypothesis_id
+            for operation in candidate.operations
+            if operation.operation_id not in base_operation_ids
+            and operation.outcome is OperationOutcome.SUCCEEDED
+            for hypothesis_id in operation.affected_hypothesis_ids
+        }
+        if not self._replaced_hypothesis_ids <= covered_hypothesis_ids:
+            missing = sorted(self._replaced_hypothesis_ids - covered_hypothesis_ids)
+            raise EpistemicStateError(
+                f"hypothesis revisions lack a successful operation receipt: {missing}"
             )
         return candidate
 

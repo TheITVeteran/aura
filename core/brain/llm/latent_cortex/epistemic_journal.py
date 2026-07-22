@@ -203,6 +203,12 @@ def _validate_transition(previous: EpistemicState, current: EpistemicState) -> N
     revised_claims = {
         claim_id for claim_id, claim in previous_claims.items() if current_claims[claim_id] != claim
     }
+    revised_hypotheses = {
+        hypothesis_id
+        for hypothesis_id, hypothesis in previous_hypotheses.items()
+        if current_hypotheses[hypothesis_id] != hypothesis
+    }
+    added_hypotheses = set(current_hypotheses) - set(previous_hypotheses)
     covered_claims = {
         claim_id
         for operation in new_operations.values()
@@ -211,6 +217,16 @@ def _validate_transition(previous: EpistemicState, current: EpistemicState) -> N
     }
     if not revised_claims <= covered_claims:
         _fail("journal_claim_revision_without_operation")
+    covered_hypotheses = {
+        hypothesis_id
+        for operation in new_operations.values()
+        if operation.outcome is OperationOutcome.SUCCEEDED
+        for hypothesis_id in operation.affected_hypothesis_ids
+    }
+    if not revised_hypotheses <= covered_hypotheses:
+        _fail("journal_hypothesis_revision_without_operation")
+    if previous_hypotheses and not added_hypotheses <= covered_hypotheses:
+        _fail("journal_hypothesis_addition_without_operation")
 
 
 class EpistemicStateJournal:

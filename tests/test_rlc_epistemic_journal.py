@@ -31,6 +31,11 @@ from core.brain.llm.latent_cortex.epistemic_state import (
     EvidenceRecord,
     EvidenceScope,
     EvidenceVerification,
+    HypothesisRecord,
+    HypothesisStatus,
+    OperationKind,
+    OperationOutcome,
+    OperationRecord,
     ProbabilityInterval,
     ProblemFrame,
     text_sha256,
@@ -185,6 +190,119 @@ def test_journal_persists_calibration_and_rejects_history_rewrite(tmp_path: Path
         match="journal_calibration_history_rewritten",
     ):
         journal.append(expected_base=committed, candidate=candidate)
+
+
+def test_journal_rejects_hypothesis_revision_without_successful_operation(tmp_path: Path):
+    path = tmp_path / "hypothesis-rewrite.jsonl"
+    initial = genesis()
+    journal = EpistemicStateJournal(path)
+    machine = EpistemicStateMachine(initial, persistence=journal)
+    tx = machine.begin()
+    tx.add_hypothesis(
+        HypothesisRecord(
+            "hyp.one", "One", ProbabilityInterval(0.9, 1.0, 1.0, "test", 0), HypothesisStatus.ACTIVE
+        )
+    )
+    base = machine.commit(tx)
+    revised = HypothesisRecord(
+        "hyp.one",
+        "One",
+        ProbabilityInterval(0.9, 1.0, 1.0, "test", 0),
+        HypothesisStatus.UNRESOLVED,
+    )
+    candidate = EpistemicState._build(
+        episode_id=base.episode_id,
+        version=base.version + 1,
+        parent_sha256=base.state_sha256,
+        problem=base.problem,
+        calibrations=base.calibrations,
+        evidence=base.evidence,
+        hypotheses=(revised,),
+        claims=base.claims,
+        operations=base.operations,
+        budget=base.budget,
+        accepted_answer=base.accepted_answer,
+    )
+    with pytest.raises(
+        EpistemicJournalError,
+        match="journal_hypothesis_revision_without_operation",
+    ):
+        journal.append(expected_base=base, candidate=candidate)
+
+    covered = EpistemicState._build(
+        episode_id=base.episode_id,
+        version=base.version + 1,
+        parent_sha256=base.state_sha256,
+        problem=base.problem,
+        calibrations=base.calibrations,
+        evidence=base.evidence,
+        hypotheses=(revised,),
+        claims=base.claims,
+        operations=(
+            OperationRecord(
+                "op.revise.hypothesis",
+                OperationKind.COMPARE,
+                OperationOutcome.SUCCEEDED,
+                base.state_sha256,
+                0.0,
+                affected_hypothesis_ids=("hyp.one",),
+            ),
+        ),
+        budget=base.budget,
+        accepted_answer=base.accepted_answer,
+    )
+    journal.append(expected_base=base, candidate=covered)
+    recovered = EpistemicStateMachine(initial, persistence=EpistemicStateJournal(path))
+    assert recovered.snapshot() == covered
+
+
+def test_journal_rejects_unreceipted_addition_to_existing_portfolio(tmp_path: Path):
+    path = tmp_path / "hypothesis-addition.jsonl"
+    initial = genesis()
+    journal = EpistemicStateJournal(path)
+    machine = EpistemicStateMachine(initial, persistence=journal)
+    tx = machine.begin()
+    tx.add_hypothesis(
+        HypothesisRecord(
+            "hyp.one",
+            "One",
+            ProbabilityInterval(0.9, 1.0, 1.0, "test", 0),
+            HypothesisStatus.ACTIVE,
+        )
+    )
+    base = machine.commit(tx)
+    candidate = EpistemicState._build(
+        episode_id=base.episode_id,
+        version=base.version + 1,
+        parent_sha256=base.state_sha256,
+        problem=base.problem,
+        calibrations=base.calibrations,
+        evidence=base.evidence,
+        hypotheses=(
+            HypothesisRecord(
+                "hyp.one",
+                "One",
+                ProbabilityInterval(0.9, 1.0, 1.0, "test", 0),
+                HypothesisStatus.ACTIVE,
+            ),
+            HypothesisRecord(
+                "hyp.two",
+                "Two",
+                ProbabilityInterval(0.0, 0.0, 0.0, "test", 0),
+                HypothesisStatus.REFUTED,
+                ("claim.blocked",),
+            ),
+        ),
+        claims=(ClaimRecord("claim.blocked", "Blocked", ClaimStatus.REJECTED, interval()),),
+        operations=base.operations,
+        budget=base.budget,
+        accepted_answer=base.accepted_answer,
+    )
+    with pytest.raises(
+        EpistemicJournalError,
+        match="journal_hypothesis_addition_without_operation",
+    ):
+        journal.append(expected_base=base, candidate=candidate)
 
 
 @pytest.mark.asyncio

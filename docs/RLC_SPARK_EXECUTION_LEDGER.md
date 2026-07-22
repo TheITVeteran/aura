@@ -54,6 +54,10 @@ After CP322, the published total is record 383: 83-350 forecast records remain,
 checkpoint-count completion is 52.3%-82.2%, and the midpoint planning estimate
 is 63.9%.
 
+After CP323, the published total is record 384: 82-349 forecast records remain,
+checkpoint-count completion is 52.4%-82.4%, and the midpoint planning estimate
+is 64.1%.
+
 ## Code-grounded baseline and ownership
 
 The four-slice static audit covered the neural core, epistemic/verifier paths,
@@ -61,7 +65,7 @@ training/proof surfaces, and the selected live/full-mind path. It read the
 entire Spark source and traced callers rather than crediting class names. The
 baseline below is exhaustive over SPARK-001 through SPARK-072:
 
-- `ACCEPTED`: SPARK-001, SPARK-005, SPARK-007, SPARK-008, SPARK-009,
+- `ACCEPTED`: SPARK-001, SPARK-005, SPARK-006, SPARK-007, SPARK-008, SPARK-009,
   SPARK-011.
 - `PARTIAL`: SPARK-003, SPARK-010, SPARK-012,
   SPARK-014, SPARK-021, SPARK-022, SPARK-023, SPARK-024, SPARK-025,
@@ -69,7 +73,7 @@ baseline below is exhaustive over SPARK-001 through SPARK-072:
   SPARK-042, SPARK-052, SPARK-053, SPARK-054, SPARK-055, SPARK-056,
   SPARK-058, SPARK-060, SPARK-062, SPARK-063, SPARK-065, SPARK-066,
   SPARK-067.
-- `MISSING`: SPARK-002, SPARK-006,
+- `MISSING`: SPARK-002,
   SPARK-015, SPARK-016, SPARK-017, SPARK-018, SPARK-019, SPARK-020,
   SPARK-028, SPARK-029, SPARK-030, SPARK-031, SPARK-032, SPARK-033,
   SPARK-034, SPARK-036, SPARK-037, SPARK-038, SPARK-043, SPARK-044,
@@ -160,9 +164,23 @@ before those dependencies close is not admissible.
   authority. This credit does not include persistence, live wiring, calibrated
   uncertainty, descendant invalidation, or state-causality proof; those remain
   independently unchecked below.
-- [ ] **SPARK-006 - Hypothesis portfolio.** Preserve multiple weighted
+- [x] **SPARK-006 - Hypothesis portfolio.** Preserve multiple weighted
   hypotheses without premature collapse; support minority survival and explicit
   unresolved status.
+  Accepted at CP323: epistemic-state schema v4 treats non-refuted hypothesis
+  point estimates as one normalized portfolio, enforces a protected minority
+  floor, bounds explicit minority status, permits at most one uniquely highest
+  favored hypothesis, and retains active/unresolved alternatives. Refutation
+  requires a linked rejected/contradicted claim and a zero interval; revival is
+  forbidden while that refuting claim remains blocked. Every post-initial
+  revision or addition is a complete, atomic, budgeted comparison operation
+  naming every changed hypothesis and evidence receipt. Identity/claim-scope
+  rewrites, deletion, forged references, and unreceipted journal transitions
+  fail closed, while valid revisions recover byte-equivalently. Focused state,
+  calibration, and journal contracts pass 66/66; the integrated RLC/latent/GWT/
+  controller gate passes 796/796. Correlated-support discount, hypothesis-
+  distribution calibration, live state causality, and capability gains remain
+  separate open checkpoints.
 - [x] **SPARK-007 - Claim/dependency graph.** Represent premises, claims,
   support, contradiction, descendants, failure conditions, and answer
   dependencies with cycle and consistency checks.
@@ -464,3 +482,5 @@ CP321 adds a tested epistemic evidence firewall; it does not change that negativ
 capability verdict.
 CP322 adds measured claim calibration and enforced abstention; it likewise does
 not change the negative capability verdict.
+CP323 adds a durable weighted hypothesis portfolio with protected alternatives;
+it likewise does not change the negative capability verdict.

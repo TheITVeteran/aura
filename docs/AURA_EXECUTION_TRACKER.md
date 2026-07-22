@@ -24924,3 +24924,104 @@ count completion is approximately 52.0%-81.8%, with a midpoint planning
 estimate of 63.6%. Next: publish CP320, then implement evidence-scoped records
 and uncertainty updates before wiring this same durable state through the live
 RLC episode.
+
+## Checkpoint 2026-07-22-321: Evidence Authority Is Scoped And Independently Verifiable
+
+Epistemic-state schema v2 binds every evidence record to a typed producer and
+version, invocation and result receipts, source/independent verification class,
+episode and immutable objective, exact claim scope, declared purpose, content
+digest, observation time, and optional expiry. Independent verification
+requires a distinct verifier identity/version and receipt rather than a label
+provided by the evidence producer. Memory remains context-only until separately
+reverified, and unverified evidence cannot support or contradict a claim.
+
+Claim/evidence links are exact and bidirectional. An accepted answer must carry
+fresh evidence for every claim in its complete transitive premise closure, may
+not omit linked evidence, and fails on future, stale, out-of-scope, or unresolved
+counterevidence. These fields remain inside the same canonical, hash-chained,
+fsync-backed state transaction and recovery path rather than a parallel ledger.
+
+Validation: the focused evidence/state/journal contracts pass 37/37; the
+complete RLC, latent-cortex, GWT, and execution-controller gate passes 767/767
+in 389.38 seconds. SPARK-008 closes. External trust-root authenticity, measured
+calibration, live state causality, and resident capability gains remain open.
+
+This is total checkpoint record 382. The revised forecast remains 466-733 total
+records, now approximately 84-351 records after this checkpoint. Checkpoint-
+count completion is approximately 52.1%-82.0%, with a midpoint planning
+estimate of 63.7%. Next: calibrate claim uncertainty from independently graded
+held-out outcomes and force abstention outside measured support.
+
+## Checkpoint 2026-07-22-322: Claim Confidence Is Empirical Or Explicitly Abstaining
+
+Epistemic-state schema v3 adds immutable domain- and estimator-specific
+calibration profiles fitted only from independently graded held-out outcomes.
+Every observation has unique prediction/outcome receipts, an independent grader
+identity/version, and pinned dataset and split digests. Profiles report Brier
+score, constant-predictor baseline, ECE, MCE, reliability bins, Wilson bounds,
+admission failures, and expiration; insufficient samples, single-class data,
+poor discrimination/calibration, sparse bins, or expiry fail admission.
+
+Claim intervals are recomputed from a registered profile and measured signal
+evidence. Low support, profile failure/drift, future or stale signals, and
+unsupported domains force explicit abstention. Exact confidence is reserved for
+independently verified proof/calculation evidence. Supported or verified claims
+cannot remain uncalibrated, and accepted-answer confidence equals the weakest
+calibrated dependency across the transitive claim closure. Profiles and
+decisions are immutable in the durable journal.
+
+Validation: focused calibration/state/journal contracts pass 50/50; the final
+integrated RLC, latent-cortex, GWT, and execution-controller gate passes 780/780
+in 392.75 seconds. SPARK-009 closes. Hypothesis-distribution calibration,
+external trust roots, live state causality, and frontier gains remain separate.
+
+This is total checkpoint record 383. The revised forecast remains 466-733 total
+records, now approximately 83-350 records after this checkpoint. Checkpoint-
+count completion is approximately 52.3%-82.2%, with a midpoint planning
+estimate of 63.9%. Next: preserve a normalized multi-hypothesis portfolio with
+protected minority survival and operation-receipted revision.
+
+## Checkpoint 2026-07-22-323: Hypothesis Alternatives Survive Until Evidence Resolves Them
+
+Epistemic-state schema v4 treats all non-refuted hypothesis point estimates as
+one normalized probability-mass portfolio. Multiple live hypotheses must stay
+above a protected survival floor; explicit minority mass is bounded; at most
+one favored hypothesis may exist, and it must be both above threshold and the
+unique highest-mass alternative. Active and unresolved statuses remain explicit
+rather than being coerced into a winner. A refuted hypothesis requires a linked
+rejected or contradicted claim and a completely zero posterior interval.
+
+The initial empty portfolio may be constructed directly. Every later revision
+or addition uses one complete copy-on-write portfolio transaction, consumes its
+declared compute budget, and emits a successful comparison operation naming
+every changed hypothesis and evidence receipt. Existing hypotheses cannot be
+deleted or have their statement/claim scope rewritten. A refuted hypothesis
+cannot revive while its refuting claim remains blocked. Claim invalidation now
+names every demoted hypothesis in the same operation that revokes descendants
+and dependent answers.
+
+The durable journal independently recomputes changed and added hypothesis IDs
+and rejects any transition not covered by a new successful operation bound to
+the exact parent state. Adversarial contracts cover mass drift, minority
+collapse, favored ties/multiplicity, evidence-free refutation, blocked revival,
+identity rewrite, deletion, unknown operation references, partial mutation, and
+successful replay.
+
+Validation: focused state/calibration/journal contracts pass 66/66. The final
+fixed-snapshot RLC, latent-cortex, GWT, and execution-controller gate passes
+796/796 in 402.77 seconds. The earlier broad run was intentionally interrupted
+after 392 passes when the post-initial-addition invariant was strengthened; it
+was superseded, not counted as acceptance. Focused Ruff and `git diff --check`
+pass.
+
+Only SPARK-006 closes here. Correlated-support discount remains SPARK-017;
+hypothesis-distribution calibration, selective memory, live state causality,
+resident integration, and powered capability gains remain open. No model was
+loaded and the negative frontier verdict is unchanged.
+
+This is total checkpoint record 384. The revised forecast remains 466-733 total
+records, now approximately 82-349 records after this checkpoint. Checkpoint-
+count completion is approximately 52.4%-82.4%, with a midpoint planning
+estimate of 64.1%. Next: publish CP323, then continue the same state authority
+through selective memory and cognitive-operation/value-of-computation control
+before live resident wiring and causal ablations.

@@ -53,6 +53,10 @@ def interval(point: float = 0.5) -> ProbabilityInterval:
     )
 
 
+def zero_interval() -> ProbabilityInterval:
+    return ProbabilityInterval(0.0, 0.0, 0.0, "refuted_test_interval", 0)
+
+
 def exact_interval(*evidence_ids: str, evaluated_at: float = 2.0) -> ProbabilityInterval:
     return ProbabilityInterval.exact(
         signal_evidence_ids=evidence_ids,
@@ -223,7 +227,7 @@ def test_transaction_commits_typed_claim_hypothesis_evidence_operation_and_answe
         HypothesisRecord(
             hypothesis_id="hyp.safe",
             statement="Deployment is safe.",
-            posterior=interval(0.85),
+            posterior=interval(1.0),
             status=HypothesisStatus.FAVORED,
             claim_ids=("claim.root",),
         )
@@ -434,7 +438,7 @@ def test_claim_invalidation_revokes_descendants_hypothesis_and_answer_atomically
         HypothesisRecord(
             "hyp.main",
             "Main",
-            interval(0.8),
+            interval(1.0),
             HypothesisStatus.FAVORED,
             ("claim.grandchild",),
         )
@@ -475,6 +479,286 @@ def test_claim_invalidation_revokes_descendants_hypothesis_and_answer_atomically
     assert state.accepted_answer is None
     assert state.budget.used == 2.0
     assert state.operations[0].affected_claim_ids == affected
+    assert state.operations[0].affected_hypothesis_ids == ("hyp.main",)
+
+
+def test_hypothesis_portfolio_preserves_normalized_minority_and_round_trips():
+    machine = EpistemicStateMachine(genesis())
+    tx = machine.begin()
+    tx.add_hypothesis(
+        HypothesisRecord("hyp.primary", "Primary", interval(0.8), HypothesisStatus.FAVORED)
+    )
+    tx.add_hypothesis(
+        HypothesisRecord("hyp.alternate", "Alternate", interval(0.2), HypothesisStatus.MINORITY)
+    )
+    state = machine.commit(tx)
+    assert sum(item.posterior.point for item in state.hypotheses) == pytest.approx(1.0)
+    assert EpistemicState.from_canonical_json(state.to_canonical_json()) == state
+
+
+@pytest.mark.parametrize(
+    ("hypotheses", "message"),
+    (
+        (
+            (
+                HypothesisRecord("hyp.one", "One", interval(0.7), HypothesisStatus.FAVORED),
+                HypothesisRecord("hyp.two", "Two", interval(0.2), HypothesisStatus.MINORITY),
+            ),
+            "sum to one",
+        ),
+        (
+            (
+                HypothesisRecord("hyp.one", "One", interval(0.99), HypothesisStatus.FAVORED),
+                HypothesisRecord("hyp.two", "Two", interval(0.01), HypothesisStatus.MINORITY),
+            ),
+            "protected minority floor",
+        ),
+        (
+            (
+                HypothesisRecord("hyp.one", "One", interval(0.4), HypothesisStatus.FAVORED),
+                HypothesisRecord("hyp.two", "Two", interval(0.6), HypothesisStatus.ACTIVE),
+            ),
+            "favored threshold",
+        ),
+        (
+            (
+                HypothesisRecord("hyp.one", "One", interval(0.6), HypothesisStatus.FAVORED),
+                HypothesisRecord("hyp.two", "Two", interval(0.4), HypothesisStatus.MINORITY),
+            ),
+            "minority hypothesis posterior",
+        ),
+        (
+            (
+                HypothesisRecord("hyp.one", "One", interval(0.5), HypothesisStatus.FAVORED),
+                HypothesisRecord("hyp.two", "Two", interval(0.5), HypothesisStatus.ACTIVE),
+            ),
+            "unique highest-mass",
+        ),
+        (
+            (
+                HypothesisRecord("hyp.one", "One", interval(0.6), HypothesisStatus.FAVORED),
+                HypothesisRecord("hyp.two", "Two", interval(0.4), HypothesisStatus.FAVORED),
+            ),
+            "multiple favorites",
+        ),
+    ),
+)
+def test_hypothesis_portfolio_rejects_collapse_and_inconsistent_status(hypotheses, message):
+    tx = EpistemicStateMachine(genesis()).begin()
+    for hypothesis in hypotheses:
+        tx.add_hypothesis(hypothesis)
+    with pytest.raises(EpistemicStateError, match=message):
+        tx.commit()
+
+
+def test_hypothesis_refutation_requires_blocked_linked_claim_and_zero_mass():
+    tx = EpistemicStateMachine(genesis()).begin()
+    tx.add_claim(ClaimRecord("claim.open", "Open", ClaimStatus.PROPOSED, interval()))
+    tx.add_hypothesis(
+        HypothesisRecord(
+            "hyp.bad",
+            "Bad",
+            zero_interval(),
+            HypothesisStatus.REFUTED,
+            ("claim.open",),
+        )
+    )
+    with pytest.raises(EpistemicStateError, match="rejected or contradicted claim"):
+        tx.commit()
+
+    tx = EpistemicStateMachine(genesis()).begin()
+    tx.add_claim(ClaimRecord("claim.blocked", "Blocked", ClaimStatus.REJECTED, interval()))
+    tx.add_hypothesis(
+        HypothesisRecord(
+            "hyp.bad",
+            "Bad",
+            interval(0.0),
+            HypothesisStatus.REFUTED,
+            ("claim.blocked",),
+        )
+    )
+    with pytest.raises(EpistemicStateError, match="zero posterior mass"):
+        tx.commit()
+
+    tx = EpistemicStateMachine(genesis()).begin()
+    tx.add_claim(ClaimRecord("claim.blocked", "Blocked", ClaimStatus.CONTRADICTED, interval()))
+    tx.add_hypothesis(
+        HypothesisRecord(
+            "hyp.bad",
+            "Bad",
+            zero_interval(),
+            HypothesisStatus.REFUTED,
+            ("claim.blocked",),
+        )
+    )
+    assert tx.commit().hypotheses[0].status is HypothesisStatus.REFUTED
+
+
+def test_portfolio_revision_is_atomic_budgeted_and_operation_receipted():
+    machine = EpistemicStateMachine(genesis())
+    setup = machine.begin()
+    setup.add_hypothesis(
+        HypothesisRecord("hyp.one", "One", interval(0.6), HypothesisStatus.FAVORED)
+    )
+    setup.add_hypothesis(HypothesisRecord("hyp.two", "Two", interval(0.4), HypothesisStatus.ACTIVE))
+    machine.commit(setup)
+
+    tx = machine.begin()
+    changed = tx.revise_hypothesis_portfolio(
+        (
+            HypothesisRecord("hyp.one", "One", interval(0.55), HypothesisStatus.FAVORED),
+            HypothesisRecord("hyp.two", "Two", interval(0.25), HypothesisStatus.MINORITY),
+            HypothesisRecord("hyp.three", "Three", interval(0.2), HypothesisStatus.MINORITY),
+        ),
+        operation_id="op.portfolio.revise",
+        cost=2.5,
+    )
+    assert changed == ("hyp.one", "hyp.three", "hyp.two")
+    state = machine.commit(tx)
+    assert state.budget.used == 2.5
+    assert state.operations[-1].affected_hypothesis_ids == changed
+    assert {item.hypothesis_id for item in state.hypotheses} == {
+        "hyp.one",
+        "hyp.two",
+        "hyp.three",
+    }
+
+
+def test_failed_portfolio_revision_leaves_transaction_usable():
+    machine = EpistemicStateMachine(genesis())
+    setup = machine.begin()
+    setup.add_hypothesis(HypothesisRecord("hyp.one", "One", interval(1.0), HypothesisStatus.ACTIVE))
+    machine.commit(setup)
+    tx = machine.begin()
+    with pytest.raises(EpistemicStateError, match="exceeds compute budget"):
+        tx.revise_hypothesis_portfolio(
+            (HypothesisRecord("hyp.one", "One", interval(1.0), HypothesisStatus.UNRESOLVED),),
+            operation_id="op.too-expensive",
+            cost=101.0,
+        )
+    tx.revise_hypothesis_portfolio(
+        (HypothesisRecord("hyp.one", "One", interval(1.0), HypothesisStatus.UNRESOLVED),),
+        operation_id="op.valid",
+        cost=1.0,
+    )
+    state = machine.commit(tx)
+    assert state.hypotheses[0].status is HypothesisStatus.UNRESOLVED
+    assert [item.operation_id for item in state.operations] == ["op.valid"]
+
+
+def test_portfolio_revision_cannot_delete_or_rewrite_hypothesis_identity():
+    machine = EpistemicStateMachine(genesis())
+    setup = machine.begin()
+    setup.add_hypothesis(
+        HypothesisRecord("hyp.one", "One", interval(0.6), HypothesisStatus.FAVORED)
+    )
+    setup.add_hypothesis(HypothesisRecord("hyp.two", "Two", interval(0.4), HypothesisStatus.ACTIVE))
+    machine.commit(setup)
+
+    tx = machine.begin()
+    with pytest.raises(EpistemicStateError, match="cannot delete"):
+        tx.revise_hypothesis_portfolio(
+            (HypothesisRecord("hyp.one", "One", interval(1.0), HypothesisStatus.FAVORED),),
+            operation_id="op.delete",
+        )
+    with pytest.raises(EpistemicStateError, match="cannot rewrite hypothesis identity"):
+        tx.revise_hypothesis_portfolio(
+            (
+                HypothesisRecord("hyp.one", "Rewritten", interval(0.6), HypothesisStatus.FAVORED),
+                HypothesisRecord("hyp.two", "Two", interval(0.4), HypothesisStatus.ACTIVE),
+            ),
+            operation_id="op.rewrite",
+        )
+    assert tx.commit().hypotheses == machine.snapshot().hypotheses
+
+
+def test_existing_portfolio_rejects_unreceipted_hypothesis_addition():
+    machine = EpistemicStateMachine(genesis())
+    setup = machine.begin()
+    setup.add_hypothesis(HypothesisRecord("hyp.one", "One", interval(1.0), HypothesisStatus.ACTIVE))
+    machine.commit(setup)
+    tx = machine.begin()
+    with pytest.raises(EpistemicStateError, match="complete revision"):
+        tx.add_hypothesis(
+            HypothesisRecord("hyp.two", "Two", zero_interval(), HypothesisStatus.REFUTED)
+        )
+
+
+def test_refuted_hypothesis_revival_requires_refuting_claim_to_be_reopened():
+    machine = EpistemicStateMachine(genesis())
+    setup = machine.begin()
+    setup.add_claim(ClaimRecord("claim.refuting", "Refuting", ClaimStatus.REJECTED, interval()))
+    setup.add_hypothesis(
+        HypothesisRecord(
+            "hyp.refuted",
+            "Refuted",
+            zero_interval(),
+            HypothesisStatus.REFUTED,
+            ("claim.refuting",),
+        )
+    )
+    machine.commit(setup)
+
+    tx = machine.begin()
+    with pytest.raises(EpistemicStateError, match="refuting claim is blocked"):
+        tx.revise_hypothesis_portfolio(
+            (
+                HypothesisRecord(
+                    "hyp.refuted",
+                    "Refuted",
+                    interval(1.0),
+                    HypothesisStatus.UNRESOLVED,
+                    ("claim.refuting",),
+                ),
+            ),
+            operation_id="op.revive.invalid",
+        )
+
+    tx.replace_claim(ClaimRecord("claim.refuting", "Refuting", ClaimStatus.PROPOSED, interval()))
+    tx.add_operation(
+        OperationRecord(
+            "op.reopen.claim",
+            OperationKind.BACKTRACK,
+            OperationOutcome.SUCCEEDED,
+            tx.base.state_sha256,
+            0.0,
+            affected_claim_ids=("claim.refuting",),
+        )
+    )
+    tx.revise_hypothesis_portfolio(
+        (
+            HypothesisRecord(
+                "hyp.refuted",
+                "Refuted",
+                interval(1.0),
+                HypothesisStatus.UNRESOLVED,
+                ("claim.refuting",),
+            ),
+        ),
+        operation_id="op.revive.valid",
+    )
+    state = machine.commit(tx)
+    assert state.hypotheses[0].status is HypothesisStatus.UNRESOLVED
+    assert {item.operation_id for item in state.operations} == {
+        "op.reopen.claim",
+        "op.revive.valid",
+    }
+
+
+def test_operation_cannot_reference_unknown_hypothesis():
+    tx = EpistemicStateMachine(genesis()).begin()
+    tx.add_operation(
+        OperationRecord(
+            "op.unknown.hypothesis",
+            OperationKind.COMPARE,
+            OperationOutcome.SUCCEEDED,
+            tx.base.state_sha256,
+            0.0,
+            affected_hypothesis_ids=("hyp.missing",),
+        )
+    )
+    with pytest.raises(EpistemicStateError, match="unknown hypothesis"):
+        tx.commit()
 
 
 def test_unestablished_premises_cannot_retain_supported_descendants_or_favored_hypotheses():
