@@ -163,6 +163,56 @@ class VerifierCurriculumLoop:
                                action="cycle skipped: the Will was unavailable")
             return False, f"will_unavailable:{type(exc).__name__}"
 
+    # ── revision-gated deliberation (make extra passes safe) ─────────────
+    async def solve_with_deliberation(
+        self,
+        prompt: str,
+        task_type: str,
+        solve: "Callable[[str, str], Awaitable[str]]",
+        *,
+        max_passes: int = 3,
+    ) -> "tuple[str, Any]":
+        """Solve one task over up to ``max_passes`` INDEPENDENT attempts,
+        keeping an answer only when the monotonic revision gate says its
+        verified evidence clearly beats the one in hand.
+
+        This is the "make a second pass safe" primitive: a later attempt can
+        only replace an earlier one on strictly stronger verifier evidence,
+        so additional compute cannot regress a correct answer into a wrong
+        one — the measured failure mode of naive self-correction. Verifier
+        reliability is drawn from the Verifier Foundry so the confidence
+        bounds reflect each engine's track record.
+        """
+        from core.brain.reasoning_revision_gate import deliberate_best_of
+
+        async def _solve(_index: int) -> str:
+            return str(await solve(prompt, task_type) or "")
+
+        async def _verify(answer: str) -> Any:
+            from core.brain.verifiers.registry import verify_candidate
+
+            return await verify_candidate(answer, task_type=task_type)
+
+        def _reliability(verdict: Any) -> float:
+            try:
+                from core.runtime.service_access import optional_service
+
+                foundry = optional_service("verifier_foundry", default=None)
+                engine = str(getattr(verdict, "engine", "") or "registry")
+                if foundry is not None and hasattr(foundry, "weight_for"):
+                    return float(foundry.weight_for(engine, task_type))
+            except (ImportError, RuntimeError, AttributeError, TypeError, ValueError):
+                pass
+            return 0.5
+
+        result = await deliberate_best_of(
+            _solve, _verify,
+            max_passes=max_passes,
+            reliability_of=_reliability,
+            stop_when_verified=True,
+        )
+        return result.answer, result.verdict
+
     # ── the cycle ────────────────────────────────────────────────────────
     async def run_cycle(
         self,

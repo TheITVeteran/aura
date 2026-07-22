@@ -181,3 +181,43 @@ def test_status_surface(monkeypatch):
 
 def test_singleton_accessor():
     assert cl_mod.get_verifier_curriculum() is cl_mod.get_verifier_curriculum()
+
+
+def test_curriculum_deliberation_never_regresses_a_verified_answer(monkeypatch):
+    """solve_with_deliberation must keep a verified-correct first answer even
+    when later independent attempts are worse — the anti-regression guarantee
+    applied to the curriculum loop's own solver."""
+    import asyncio
+    from dataclasses import dataclass
+
+    import core.brain.verifiers.registry as registry
+    from core.brain.verifier_curriculum import VerifierCurriculumLoop
+
+    @dataclass
+    class _V:
+        ok: bool
+        checked: bool
+        score: float
+        engine: str = "registry"
+
+    attempts = iter(["correct", "wrong", "wrong"])
+    verdicts = {
+        "correct": _V(True, True, 0.95),
+        "wrong": _V(False, True, 0.1),
+    }
+
+    async def _solve(_prompt, _task_type):
+        return next(attempts)
+
+    async def _fake_verify(answer, *, task_type, context=None):
+        return verdicts[answer]
+
+    monkeypatch.setattr(registry, "verify_candidate", _fake_verify)
+
+    loop = VerifierCurriculumLoop()
+    answer, verdict = asyncio.run(
+        loop.solve_with_deliberation("q", "math", _solve, max_passes=3)
+    )
+
+    assert answer == "correct"
+    assert verdict.ok is True
