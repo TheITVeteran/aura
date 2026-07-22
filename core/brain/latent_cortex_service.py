@@ -828,6 +828,18 @@ class LatentCortexService:
                 )
             except (ImportError, TypeError, ValueError):
                 errors.append("structural_diversity_unproven")
+            try:
+                from core.brain.llm.latent_cortex.correlated_support import (
+                    validate_correlated_support_receipt,
+                )
+
+                validate_correlated_support_receipt(
+                    receipt.get("correlated_support"),
+                    structural_diversity=receipt.get("structural_diversity"),
+                    correlation_evidence=config.get("branch_correlation_evidence"),
+                )
+            except (ImportError, TypeError, ValueError):
+                errors.append("correlated_support_unproven")
         exchange_interval = config.get("exchange_interval")
         if (
             type(exchange_interval) is int
@@ -1501,6 +1513,48 @@ class LatentCortexService:
                 logger.debug("Execution controller unavailable: %s", exc)
                 controller_decision = None
                 action_policy_evidence = None
+        try:
+            from core.brain.llm.latent_cortex.branches import BRANCH_ROLES
+            from core.brain.llm.latent_cortex.correlated_support import (
+                get_branch_correlation_ledger,
+            )
+            from core.brain.llm.latent_cortex.execution_controller import context_bucket
+
+            branch_count = int(config.get("n_branches") or 1)
+            correlation_roles = list(BRANCH_ROLES[:branch_count])
+            correlation_bucket = (
+                str(controller_decision.get("bucket") or "")
+                if controller_decision is not None
+                else context_bucket(
+                    self._visible_objective(question, messages),
+                    domain,
+                    stakes,
+                    uncertainty,
+                )
+            )
+            correlation_ledger = get_branch_correlation_ledger()
+            config["branch_correlation_evidence"] = correlation_ledger.evidence(
+                bucket=correlation_bucket,
+                roles=correlation_roles,
+            )
+            self._last_allocation["correlated_support"] = {
+                **correlation_ledger.status(),
+                "bucket": correlation_bucket,
+                "roles": correlation_roles,
+                "evidence_state": config["branch_correlation_evidence"][
+                    "evidence_state"
+                ],
+            }
+        except (
+            ImportError,
+            AttributeError,
+            OSError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            logger.debug("Branch correlation evidence unavailable: %s", exc)
+            config["branch_correlation_evidence"] = None
         if allocation_profile == "resident_32b_interactive_full_stack_v2":
             try:
                 requested_decode_tokens = int(config.get("decode_max_tokens") or 256)

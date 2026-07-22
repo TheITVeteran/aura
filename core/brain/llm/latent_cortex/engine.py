@@ -1345,6 +1345,22 @@ class LatentCortexEngine:
             context_seeds=context_seeds,
             escape_cfg=escape_cfg,
         )
+        from core.brain.llm.latent_cortex.correlated_support import (
+            initial_exchange_weights,
+            validate_correlation_evidence,
+        )
+
+        branch_roles = [branch.role for branch in ensemble.branches]
+        correlation_evidence = validate_correlation_evidence(
+            self.config.branch_correlation_evidence,
+            roles=branch_roles,
+        )
+        ensemble.set_support_weights(
+            initial_exchange_weights(
+                roles=branch_roles,
+                correlation_evidence=correlation_evidence,
+            )
+        )
         ensemble.telemetry = telemetry if telemetry.enabled else None
         halting_head = self._resolve_halting_head()
         if halting_head is not None:
@@ -2281,6 +2297,14 @@ class LatentCortexEngine:
             )
             if receipt.structural_diversity.get("certified") is not True:
                 receipt.flag("structural_diversity_unproven")
+            from core.brain.llm.latent_cortex.correlated_support import (
+                build_correlated_support_receipt,
+            )
+
+            receipt.correlated_support = build_correlated_support_receipt(
+                structural_diversity=receipt.structural_diversity,
+                correlation_evidence=correlation_evidence,
+            )
         receipt.latent_telemetry = telemetry.to_receipt()
         if self._episode_probe_cache is not None:
             receipt.probe_cache = self._episode_probe_cache.to_receipt()

@@ -616,6 +616,34 @@ def test_exchange_blends_comm_slot_only(tiny_model):
         assert other_delta == 0, "non-comm slots must be untouched by exchange"
 
 
+def test_exchange_consensus_is_causally_discounted_by_support_weights(tiny_model):
+    def prepared():
+        cache = _prefill(tiny_model)
+        ensemble, runner, budget = _ensemble(
+            tiny_model,
+            cache,
+            n_branches=3,
+            isolation_steps=1,
+            exchange_interval=8,
+        )
+        assert ensemble.step_all(runner, cache, P_END, C_START, budget=budget)
+        for index, branch in enumerate(ensemble.branches, start=1):
+            branch.z = mx.ones_like(branch.z) * float(index)
+            branch.workspace.update(branch.z)
+        return ensemble
+
+    equal = prepared()
+    discounted = prepared()
+    discounted.set_support_weights({0: 1.0, 1: 0.2, 2: 0.2})
+
+    assert equal.exchange() is True
+    assert discounted.exchange() is True
+
+    assert not bool(
+        mx.allclose(equal.branches[0].z, discounted.branches[0].z)
+    ), "correlation weights must change the exchanged neural state"
+
+
 def test_diversity_jitter_decorrelates_parallel_branches(tiny_model):
     cache = _prefill(tiny_model)
     ensemble, runner, budget = _ensemble(tiny_model, cache, n_branches=2)

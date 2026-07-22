@@ -86,6 +86,10 @@ After CP330, the published total is record 391: 75-342 forecast records remain,
 checkpoint-count completion is 53.3%-83.9%, and the midpoint planning estimate
 is 65.2%.
 
+After CP331, the published total is record 392: 74-341 forecast records remain,
+checkpoint-count completion is 53.5%-84.1%, and the midpoint planning estimate
+is 65.4%.
+
 ## Code-grounded baseline and ownership
 
 The four-slice static audit covered the neural core, epistemic/verifier paths,
@@ -94,7 +98,8 @@ entire Spark source and traced callers rather than crediting class names. The
 baseline below is exhaustive over SPARK-001 through SPARK-072:
 
 - `ACCEPTED`: SPARK-001, SPARK-005, SPARK-006, SPARK-007, SPARK-008, SPARK-009,
-  SPARK-010, SPARK-011, SPARK-012, SPARK-014, SPARK-015, SPARK-016.
+  SPARK-010, SPARK-011, SPARK-012, SPARK-014, SPARK-015, SPARK-016,
+  SPARK-017.
 - `PARTIAL`: SPARK-003,
   SPARK-021, SPARK-022, SPARK-023, SPARK-024, SPARK-025,
   SPARK-026, SPARK-027, SPARK-035, SPARK-039, SPARK-040, SPARK-041,
@@ -102,7 +107,7 @@ baseline below is exhaustive over SPARK-001 through SPARK-072:
   SPARK-056, SPARK-058, SPARK-060, SPARK-062, SPARK-063, SPARK-065, SPARK-066,
   SPARK-067.
 - `MISSING`: SPARK-002,
-  SPARK-017, SPARK-018, SPARK-019, SPARK-020,
+  SPARK-018, SPARK-019, SPARK-020,
   SPARK-028, SPARK-029, SPARK-030, SPARK-031, SPARK-032, SPARK-033,
   SPARK-034, SPARK-036, SPARK-037, SPARK-038, SPARK-043, SPARK-044,
   SPARK-045, SPARK-046, SPARK-047, SPARK-048, SPARK-049, SPARK-050,
@@ -381,9 +386,27 @@ before those dependencies close is not admissible.
   866/866. This closes structural measurement, not empirical error-correlation
   estimation, vote weighting, or task-level gain, which remain SPARK-017 and
   later proof work.
-- [ ] **SPARK-017 - Correlated-support discount.** Estimate branch/error
-  correlation and prevent near-duplicate paths from receiving multiple votes or
-  inflated confidence.
+- [x] **SPARK-017 - Correlated-support discount.** CP331 adds an independently
+  checked, task-keyed branch-outcome ledger and pairwise error estimator. It
+  computes the binary phi coefficient, applies a 24-observation shrinkage
+  prior, ignores negative correlation for discounting, and cannot apply an
+  empirical penalty below 12 paired checked tasks. Replayed task identities,
+  incomplete role outcomes, ungraded rows, malformed estimates, and snapshot
+  tampering are rejected.
+
+  Duplicate executable programs receive fractional exchange weights
+  immediately, even before calibration. Once powered evidence exists, positive
+  error correlation also lowers each branch's support weight. Those weights are
+  installed before cross-branch exchange and change the neural consensus, not
+  merely telemetry. The final receipt combines empirical dependence with
+  CP330's structural distance, collapses duplicate support classes, reports an
+  effective independent-support count and confidence multiplier, and is exactly
+  reconstructed by the service. Candidate wording and raw state differences do
+  not create votes. Focused correlation, durability, engine, service, and causal
+  exchange tests pass 10/10; the affected integration suite passes 199/199; the
+  fixed ownership gate passes 873/873. A fresh deployment truthfully starts in
+  `bootstrap_unmeasured`; it discounts exact duplicates but does not invent
+  empirical correlation before checked outcomes accrue.
 - [ ] **SPARK-018 - Blind role-separated review.** Anonymize candidate origin,
   remove ownership/doubt framing, and prove the reviewer cannot infer which
   answer is Aura's first answer.
@@ -645,16 +668,18 @@ CP329 closes the nine-program executable cognitive-operator bank; it does not
 change the negative capability verdict.
 CP330 closes wording-independent structural support classes and exact service
 reconstruction; it does not change the negative capability verdict.
+CP331 closes causal correlated-support weighting and durable checked-outcome
+calibration; it does not change the negative capability verdict.
 
-Validation: the focused structural/operator/engine/wiring/escape contracts pass
-24/24 and the integrated affected contracts pass 191/191. The
+Validation: focused correlation/durability/engine/service/exchange contracts
+pass 10/10 and the integrated affected contracts pass 199/199. The
 fixed-snapshot integrated RLC, latent-cortex, GWT, and execution-controller gate
-passes 866/866 in 443.17 seconds. Strict new-module Ruff, focused lint, bytecode
+passes 873/873 in 451.68 seconds. Strict new-module Ruff, focused lint, bytecode
 compilation, and `git diff --check` pass. No resident 32B campaign was run, and
 the negative frontier verdict is unchanged.
 
-This is total checkpoint record 391. The revised forecast remains 466-733 total
-records, now approximately 75-342 records after this checkpoint. Checkpoint-
-count completion is approximately 53.3%-83.9%, with a midpoint planning
-estimate of 65.2%. Next: publish CP330, then estimate correlated branch support
-and prevent duplicate paths from inflating votes or confidence.
+This is total checkpoint record 392. The revised forecast remains 466-733 total
+records, now approximately 74-341 records after this checkpoint. Checkpoint-
+count completion is approximately 53.5%-84.1%, with a midpoint planning
+estimate of 65.4%. Next: publish CP331, then implement blind role-separated
+review whose evaluator cannot infer candidate ownership or first-answer origin.

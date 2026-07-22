@@ -93,6 +93,9 @@ def test_full_episode_produces_tokens_and_truthful_receipt(tiny_model):
     assert r.structural_diversity["certified"] is True
     assert r.structural_diversity["wording_counted"] is False
     assert r.structural_diversity["independent_support_count"] == 2
+    assert r.correlated_support["raw_support_count"] == 2
+    assert r.correlated_support["evidence_state"] == "bootstrap_unmeasured"
+    assert r.correlated_support["confidence_multiplier"] <= 1.0
     assert r.residual_trail, "receipt must carry the residual trail"
     assert r.halting_reason
     assert r.schedule_hash

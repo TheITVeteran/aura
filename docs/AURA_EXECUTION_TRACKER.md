@@ -25356,3 +25356,44 @@ count completion is approximately 53.3%-83.9%, with a midpoint planning
 estimate of 65.2%. Next: publish CP330, then implement correlated-support
 estimation and confidence/vote discounting for SPARK-017. Final multi-hour soaks
 remain deferred until every shorter gate is green.
+
+## Checkpoint 2026-07-22-331: Correlated Paths Stop Multiplying Confidence
+
+Aura now has a governed durable ledger for independently checked per-branch
+task outcomes and a pairwise branch-error estimator. The estimator uses binary
+phi correlation with conservative shrinkage, requires at least 12 paired checked
+tasks, rejects replayed task identities and incomplete outcome vectors, and
+cannot turn ungraded live impressions into calibration evidence.
+
+Support discounting is causal. Exact duplicate programs receive fractional
+weights before their first exchange even in bootstrap. Powered positive error
+correlation adds a further penalty, and exchange normalizes agreement by those
+weights before writing consensus back into latent state. Tests prove changing
+the support weights changes the exchanged neural state.
+
+After the episode, empirical dependence and CP330 structural similarity are
+combined into canonical branch weights, an effective independent-support count,
+and a confidence multiplier. Different prose and different raw state bytes do
+not create another vote. The service reconstructs the receipt from its own
+configuration plus the structural evidence and rejects changed counts, weights,
+dependence, confidence, or digests.
+
+Validation: focused correlation, durable-ledger, engine, service, and causal-
+exchange tests pass 10/10; the integrated affected suite passes 199/199 in
+102.46 seconds; and the fixed-snapshot RLC, latent-cortex, GWT, and execution-
+controller gate passes 873/873 in 451.68 seconds. New-module Ruff, bytecode
+compilation, and `git diff --check` pass.
+
+SPARK-017 closes at the mechanism level. The current live ledger is honestly
+`bootstrap_unmeasured` until independently checked paired outcomes accrue; exact
+duplicates are already discounted, but no empirical correlation is invented.
+This checkpoint does not claim task accuracy, resident-32B improvement, positive
+interaction, or frontier gain, so the capability verdict remains negative/no-
+signal.
+
+This is total checkpoint record 392. The revised forecast remains 466-733 total
+records, now approximately 74-341 records after this checkpoint. Checkpoint-
+count completion is approximately 53.5%-84.1%, with a midpoint planning
+estimate of 65.4%. Next: publish CP331, then implement blind role-separated
+review and prove candidate ownership cannot leak into review for SPARK-018.
+Final multi-hour soaks remain deferred until every shorter gate is green.

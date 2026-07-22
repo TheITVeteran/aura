@@ -448,6 +448,7 @@ def test_handler_runs_full_episode_on_tiny_model(monkeypatch, tmp_path):
     assert structure["certified"] is True
     assert structure["independent_support_count"] == 2
     assert structure["wording_counted"] is False
+    assert body["receipt"]["correlated_support"]["raw_support_count"] == 2
     contract_config = {
         "n_slots": 4,
         "n_branches": 2,
@@ -467,6 +468,11 @@ def test_handler_runs_full_episode_on_tiny_model(monkeypatch, tmp_path):
     tampered = copy.deepcopy(body["receipt"])
     tampered["structural_diversity"]["wording_counted"] = True
     assert "structural_diversity_unproven" in (
+        LatentCortexService._receipt_contract_errors(tampered, contract_config)
+    )
+    tampered = copy.deepcopy(body["receipt"])
+    tampered["correlated_support"]["effective_support_count"] = 1.0
+    assert "correlated_support_unproven" in (
         LatentCortexService._receipt_contract_errors(tampered, contract_config)
     )
     assert body["requires_cache_clear"] is False
@@ -1600,6 +1606,13 @@ def test_service_routes_through_client_and_records_receipt(monkeypatch):
     assert captured["config"]["n_branches"] >= 2
     assert captured["config"]["latent_opt"] is True
     assert captured["config"]["fast_weights"] is True
+    assert captured["config"]["branch_correlation_evidence"]["schema"] == (
+        "aura.rlc.branch_error_correlation.v1"
+    )
+    assert captured["config"]["branch_correlation_evidence"]["evidence_state"] in {
+        "bootstrap_unmeasured",
+        "measured",
+    }
     assert captured["budget"]["max_layer_apps"] > 0
     assert captured["runtime_controls"] == {
         "clean_user_surface_recurrent_loops": 2,

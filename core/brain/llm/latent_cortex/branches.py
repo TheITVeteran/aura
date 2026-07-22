@@ -154,6 +154,23 @@ class BranchEnsemble:
         self._rng_streams_unique = len(
             {branch.rng_stream_sha256 for branch in branches}
         ) == len(branches)
+        self._support_weights = {branch.index: 1.0 for branch in branches}
+
+    def set_support_weights(self, weights: dict[int, float]) -> None:
+        """Install bounded correlation discounts before peer exchange."""
+
+        if set(weights) != {branch.index for branch in self.branches}:
+            raise ValueError("support weights must cover every branch exactly")
+        normalized: dict[int, float] = {}
+        for index, value in weights.items():
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not 0.0 < float(value) <= 1.0
+            ):
+                raise ValueError("support weights must be inside (0, 1]")
+            normalized[index] = float(value)
+        self._support_weights = normalized
 
     # ── Construction ────────────────────────────────────────────────────
     @classmethod
@@ -684,6 +701,11 @@ class BranchEnsemble:
 
         agreements = mx.stack([_cos(s, mean) for s in summaries])  # (K,)
         weights = mx.softmax(agreements, axis=0)
+        support = mx.array(
+            [self._support_weights[branch.index] for branch in live]
+        )
+        weights = weights * support
+        weights = weights / mx.maximum(mx.sum(weights), 1e-6)
         consensus = sum(w * s for w, s in zip(weights, summaries, strict=True))
 
         gamma = float(self.config.exchange_gamma)

@@ -305,6 +305,10 @@ class CortexConfig:
     # that cannot load REFUSES the episode rather than silently reporting
     # learned allocation while running the residual rule.
     halting: dict[str, Any] | None = None
+    # Checked historical branch-error correlations. None is an explicit
+    # bootstrap state: duplicate programs still collapse, but no empirical
+    # relationship is invented before independently graded paired outcomes.
+    branch_correlation_evidence: dict[str, Any] | None = None
 
     def validate(self) -> list[str]:
         """Return a list of human-readable violations (empty ⇒ valid)."""
@@ -848,6 +852,7 @@ class EpisodeReceipt:
     # primary action/operator/isolation traces. Different prose never creates
     # another vote; causal structure has to differ across six named facets.
     structural_diversity: dict[str, Any] = field(default_factory=dict)
+    correlated_support: dict[str, Any] = field(default_factory=dict)
     # Latent interpretability/safety telemetry (telemetry.LatentTelemetry).
     latent_telemetry: dict[str, Any] = field(default_factory=dict)
     # Decode-probe memoization evidence (probe_cache.DecodeProbeCache).
@@ -1042,6 +1047,7 @@ class EpisodeReceipt:
                 dict(row) for row in self.cognitive_operator_trace
             ],
             "structural_diversity": dict(self.structural_diversity),
+            "correlated_support": dict(self.correlated_support),
             "latent_telemetry": dict(self.latent_telemetry),
             "probe_cache": dict(self.probe_cache),
             "decode_temperature": self.decode_temperature,

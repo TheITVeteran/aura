@@ -60,6 +60,7 @@ _CONFIG_KEYS = {
     "anchor_scale",
     "coda_frac",
     "collapse_cos_threshold",
+    "branch_correlation_evidence",
     "comm_slot",
     "convergence_eps",
     "decode_max_tokens",
@@ -267,6 +268,7 @@ def config_from_job(job_config: dict[str, Any] | None) -> CortexConfig:
         telemetry_enabled=_typed_value(raw, "telemetry", True, bool),
         probe_cache_enabled=_typed_value(raw, "probe_cache", True, bool),
         halting=raw.get("halting"),
+        branch_correlation_evidence=raw.get("branch_correlation_evidence"),
     )
     problems = cfg.validate()
     if problems:
