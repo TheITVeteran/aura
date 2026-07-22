@@ -23101,3 +23101,42 @@ now approximately 65-332 records after this checkpoint. CP259's detached
 resident-32B process remains the sole model owner with advancing heartbeats and
 zero restarts; no calibration, optimizer, gain, or frontier credit is awarded
 until terminal artifacts exist. Final long soaks remain deferred.
+
+## Checkpoint 2026-07-21-269: Live Demo Transcript Reliability Rejections
+
+The 2026-07-21 live desktop transcript exposed several user-visible failures
+that still passed the final chat quality gate after the cold-lane admission
+fixes: malformed lexical output (`mobililege`, `compartmentloads`), compact
+punctuation corruption (`too.many`, `sci!i`), unprovoked social rebukes on
+ordinary greeting/apology turns, and unsupported runtime-limit claims when the
+user asked whether Aura could actually execute a desktop task. The transcript
+also re-exposed a precision bug where a recall question ("what can you
+remember from this session?") was treated as a new memory-write command.
+
+The shared conversation reliability classifier now rejects those transcript
+failure classes as hard retryable failures before delivery. The lower-level
+dialogue policy corruption list recognizes the same new malformed tokens.
+Punctuation detection was narrowed after the broader suite proved two false
+positives: URLs and compact factual/name joins such as `Earth.Europa` are not
+treated as corrupted output, while malformed lowercase joins remain blocked.
+Recall questions no longer require memory-pin receipts unless the user is
+imperatively asking Aura to remember, pin, save, store, record, or keep a
+specific payload.
+
+Validation is clean: the new transcript regressions and precision cases pass
+in the focused replay (`9 passed`), bytecode compilation passes for the touched
+modules, and the broader focused chat contract suite passes all 244 selected
+tests in 277.96 seconds. This is total checkpoint record 330. It closes one
+set of demonstrated general-chat reliability defects, not the full CP264 live
+mixed-turn campaign, desktop Notes-to-PDF acceptance, or final soak. The
+forecast remains 394-661 total records, now approximately 64-331 records after
+this checkpoint.
+
+CP259 resident-32B recurrent GRPO did not produce a reasoning-gain proof during
+this interval. It reached durable checkpoints at step 0 and step 1, then failed
+closed at step 2 with a signed sampling failure receipt:
+`RecurrentSamplingAdmissionError: cached recurrent behavior failed PPO
+admission: max=8.724697 mean=0.029001 clipped=0.003125`. The correct next
+bounded task is to repair the recurrent sampling/admission/resampling path and
+relaunch from the durable checkpoint or a new preregistered attempt without
+claiming frontier gains.

@@ -178,6 +178,8 @@ _KNOWN_CORRUPT_TOKENS = {
     "brolen",
     "thlought",
     "lllot",
+    "mobililege",
+    "compartmentloads",
 }
 
 

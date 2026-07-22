@@ -72,7 +72,26 @@ _HARD_FRIENDLY_FAILURE_PLACEHOLDER_RE = re.compile(
     re.IGNORECASE,
 )
 _KNOWN_CORRUPT_RE = re.compile(
-    r"\b(?:xublcate|ingediate|evocer|brolen|thlought|lllot)\b",
+    r"\b(?:xublcate|ingediate|evocer|brolen|thlought|lllot|mobililege|compartmentloads)\b",
+    re.IGNORECASE,
+)
+_UNPROVOKED_REBUKE_RE = re.compile(
+    r"\b(?:"
+    r"down\s+a\s+notch(?:,\s*please)?|"
+    r"settle\s+down|"
+    r"grow\s+up|"
+    r"you\s+don'?t\s+treat\s+stateful\s+conversation\s+like\s+a\s+throwaway\s+api\s+call|"
+    r"poor\s+choice\s+of\s+words"
+    r")\b",
+    re.IGNORECASE,
+)
+_UNSUPPORTED_RUNTIME_LIMITS_CLAIM_RE = re.compile(
+    r"\b(?:"
+    r"these\s+are\s+the\s+limits\s+of\s+my\s+actual\s+runtime|"
+    r"whatever\s+you'?ve\s+seen\s+demos?\s+or\s+videos?\s+of|"
+    r"that'?s\s+a\s+frontend\s+with\s+more\s+tools|"
+    r"in\s+this\s+version,\s*i\s+comply\s+with\s+the\s+strongest\s+safety\s+constraints"
+    r")\b",
     re.IGNORECASE,
 )
 _RELIABILITY_DIAGNOSTIC_DEFLECTION_RE = re.compile(
@@ -2600,8 +2619,64 @@ def _reply_topic_forms(reply_text: Any) -> set[str]:
 def _has_punctuation_join_artifact(reply_text: Any) -> bool:
     raw = str(reply_text or "")
     for match in _PUNCTUATION_JOIN_ARTIFACT_RE.finditer(raw):
+        before = raw[max(0, match.start() - 16) : match.start()]
+        after = raw[match.end() : match.end() + 24]
+        if "://" in before or "/" in after:
+            continue
         if match.group("mark") == "." and match.group("right").lower() in _COMMON_DOMAIN_SUFFIXES:
             continue
+        if match.group("mark") == "." and match.group("right")[:1].isupper():
+            continue
+        return True
+    return False
+
+
+def _has_unprovoked_rebuke(user_message: Any, reply_text: Any) -> bool:
+    raw = str(reply_text or "").strip()
+    if not raw or not _UNPROVOKED_REBUKE_RE.search(raw):
+        return False
+    prompt = _normalize(user_message)
+    if any(
+        marker in prompt
+        for marker in (
+            "be blunt",
+            "be harsh",
+            "criticize",
+            "rebuke",
+            "scold",
+            "tell me off",
+            "roast me",
+            "roleplay",
+            "write dialogue",
+        )
+    ):
+        return False
+    return True
+
+
+def _has_unsupported_runtime_limits_claim(user_message: Any, reply_text: Any) -> bool:
+    raw = str(reply_text or "").strip()
+    if not raw or not _UNSUPPORTED_RUNTIME_LIMITS_CLAIM_RE.search(raw):
+        return False
+    prompt = _normalize(user_message)
+    asks_actual_capability = any(
+        marker in prompt
+        for marker in (
+            "could you actually",
+            "can you actually",
+            "try it",
+            "open my",
+            "use the",
+            "run the",
+            "do it",
+            "execute",
+            "desktop",
+            "notes app",
+            "tool",
+            "tools",
+        )
+    )
+    if asks_actual_capability:
         return True
     return False
 
@@ -3359,9 +3434,11 @@ def _is_explicit_memory_pin_request(user_message: Any) -> bool:
         text,
     ):
         return False
+    if re.search(r"\bwhat\b.{0,80}\byou\s+can\s+(?:genuinely\s+)?remember\b", text):
+        return False
     return bool(
         re.search(
-            r"\b(?:remember|pin|save|store|record|keep)\b.{0,80}\b(?:later|conversation|session|memory|note|codeword)\b",
+            r"\b(?:please\s+)?(?:remember|pin|save|store|record|keep)\b.{0,80}\b(?:later|conversation|session|memory|note|codeword)\b",
             text,
         )
     )
@@ -4795,8 +4872,12 @@ def _model_text_integrity_reasons(
             reasons.append("friendly_failure_floor")
     if _KNOWN_CORRUPT_RE.search(raw):
         reasons.append("corrupted_language")
+    if user_facing and _has_punctuation_join_artifact(raw):
+        reasons.append("punctuation_join_artifact")
     if _DIALOGUE_DERAILMENT_RE.search(raw):
         reasons.append("dialogue_derailment")
+    if user_facing and _has_unprovoked_rebuke(prompt, raw):
+        reasons.append("unprovoked_rebuke")
     loop_reason = _phrase_loop_reason(prompt, raw)
     if loop_reason:
         reasons.append(loop_reason)
@@ -4838,6 +4919,8 @@ def _model_text_integrity_reasons(
         reasons.append("search_meta_artifact")
     if user_facing and _has_unsupported_deployment_routing_claim(prompt, raw):
         reasons.append("unsupported_deployment_routing_claim")
+    if user_facing and _has_unsupported_runtime_limits_claim(prompt, raw):
+        reasons.append("unsupported_runtime_limits_claim")
     if user_facing:
         reasons.extend(_operational_status_overclaim_reasons(prompt, raw))
     if _CORRUPTED_SOCIAL_FRAGMENT_RE.search(raw) and "lol" not in _normalize(prompt):
@@ -4910,6 +4993,7 @@ def assess_model_text_integrity(
         "unsupported_runtime_telemetry_inference",
         "unsupported_tool_readiness_claim",
         "unsupported_deployment_routing_claim",
+        "unsupported_runtime_limits_claim",
         "generic_assistant_language",
         "incomplete_code_response",
     }
@@ -4964,6 +5048,7 @@ def assess_user_facing_reply(
             "unsupported_runtime_telemetry_inference",
             "unsupported_tool_readiness_claim",
             "unsupported_deployment_routing_claim",
+            "unsupported_runtime_limits_claim",
             "generic_assistant_language",
             "incomplete_code_response",
         }
@@ -5117,6 +5202,7 @@ def assess_user_facing_reply(
         "foreign_name_intrusion",
         "generic_assistant_language",
         "dialogue_derailment",
+        "unprovoked_rebuke",
         "low_information_loop",
         "repeated_get_it_loop",
         "self_contradictory_loop",
@@ -5154,6 +5240,7 @@ def assess_user_facing_reply(
         "unsupported_runtime_telemetry_inference",
         "unsupported_tool_readiness_claim",
         "unsupported_deployment_routing_claim",
+        "unsupported_runtime_limits_claim",
         "missing_self_claim_evidence_boundary",
         "missing_requested_exact_reply",
         "missing_requested_objective_facets",

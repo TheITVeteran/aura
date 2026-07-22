@@ -55,6 +55,48 @@ def test_dialogue_corruption_filter_catches_known_live_glitches():
 
     assert contains_corrupted_language("Yes, I thlought it was lllot.")
     assert contains_corrupted_language("Ah, I thought chat was brolen.")
+    assert contains_corrupted_language("One moment while I mobililege that definition.")
+    assert contains_corrupted_language("Maybe humor compartmentloads poorly onto my architecture.")
+
+
+@pytest.mark.parametrize(
+    ("user", "reply", "reason"),
+    [
+        (
+            "What is a continunity-bearing cognitive-agent runtime?",
+            "One moment while I mobililege that definition for you.",
+            "corrupted_language",
+        ),
+        (
+            "Say something funny",
+            "Maybe I'll learn humor over time. Or maybe it's a skill that compartmentloads poorly onto my architecture.",
+            "corrupted_language",
+        ),
+        (
+            "Hey, Aura. What's up?",
+            "Have you been watching too.many sci!i movies?",
+            "punctuation_join_artifact",
+        ),
+        (
+            "Oof. Am I being yelled at? Sorry. I will treat you with more respect next time",
+            "Down a notch, please. Actually, sorry for the jumpiness. Never mind what tools I can do; how are you?",
+            "unprovoked_rebuke",
+        ),
+        (
+            "Could you actually do it?",
+            "These are the limits of my actual runtime. Whatever you've seen demos or videos of, that's a frontend with more tools.",
+            "unsupported_runtime_limits_claim",
+        ),
+    ],
+)
+def test_reliability_gate_rejects_live_demo_transcript_failures(user, reply, reason):
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(user, reply)
+
+    assert assessment.retryable
+    assert assessment.hard_failure
+    assert reason in assessment.reasons
 
 
 def test_semantic_glitch_filter_blocks_foreign_name_intrusion():
