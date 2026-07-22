@@ -720,12 +720,61 @@ _DELIVERABLE_RESIDUAL_SURFACE_REASONS = frozenset(
 # with the evidence-bounded self-claim policy, and satisfies
 # _SELF_CLAIM_EVIDENCE_BOUNDARY_RE so the guard becomes self-healing instead
 # of turn-killing.
+#
+# CP126 fa3d2a13. The previous wording asserted that the description "comes
+# from my own state and self-model". That is a claim about PROVENANCE, and
+# this function has no runtime evidence for it — the draft it is amending
+# might rest on nothing of the kind. Because the amended text is then
+# re-evaluated, a fabricated evidentiary sentence was what turned a rejected
+# self-claim into accepted visible text: the salvage was manufacturing the
+# very grounding whose absence caused the rejection.
+#
+# The suffix now states only a LIMIT, which is true regardless of what the
+# draft above it says and requires no evidence to assert. It still satisfies
+# the boundary check (which looks for "functional", "not proof",
+# "phenomenal" and similar), so the guard remains self-healing without
+# inventing support for the claim it is repairing.
 _SELF_CLAIM_BOUNDARY_SUFFIX = (
-    " To be precise about what I can honestly claim: that description comes "
-    "from my own state and self-model — functional and observable in my "
-    "behavior — and it is evidence of process, not proof of phenomenal "
-    "experience."
+    " To be precise about what I can honestly claim here: this is a "
+    "functional description of how I process and behave, and it is not "
+    "proof of phenomenal experience — that is not something I can verify "
+    "from the inside."
 )
+
+
+def _terminal_contract_refusal(
+    job: dict[str, Any],
+    response_text: Any,
+    *,
+    proof_evaluation_contract: bool = False,
+    operator_evidence_contract: bool = False,
+) -> str:
+    """The terminal contract this text FAILS, or "" if it passes them all.
+
+    CP126 269ff364. Cancellation used to break out with the partial response
+    as-is, ahead of proof completeness, operator-evidence merit and the
+    capability-inventory grounding check. Those are refusals, not retries:
+    skipping them let a preempted turn deliver exactly the content the
+    normal terminal path exists to reject.
+
+    Pure and side-effect free so it can be applied on the cancellation path,
+    where retrying is not an option but refusing still is.
+    """
+    text = str(response_text or "")
+    if not text.strip():
+        return ""
+    if proof_evaluation_contract and _proof_evaluation_fragment_incomplete(text):
+        return "proof_fragment_incomplete"
+    if operator_evidence_contract:
+        if _operator_evidence_fragment_incomplete(text):
+            return "operator_evidence_fragment_incomplete"
+        if _operator_evidence_model_contribution_insufficient(text):
+            return "operator_evidence_model_contribution_insufficient"
+    if bool(job.get("capability_inventory_contract", False)):
+        grounded, _evidence = _capability_inventory_minimum_grounding(text)
+        if not grounded:
+            return "capability_inventory_ungrounded"
+    return ""
 
 
 def _salvage_exhausted_user_surface(
@@ -1273,9 +1322,22 @@ def _proof_prompt_expects_artifact(text: str) -> bool:
     return bool(_ARTIFACT_REQUEST_RE.search(str(text or "")))
 
 
+# CP126 007c5cd3. Any proof prompt NOT matched here is rewritten to demand
+# "3-6 complete sentences" and to avoid numbered lists — a shape that can
+# directly contradict the contract being evaluated. The narrower this
+# detector is, the more often the default overrides a task that did state
+# its own form, so it covers the ways a task actually declares shape:
+# exact and bounded counts, structured serialisations, code, brevity and
+# length requests, and explicit schema/format directives.
 _EXPLICIT_FORMAT_REQUEST_RE = re.compile(
-    r"(?:\bin\s+(?:one|two|a\s+single)\s+(?:word|sentence|line|number)s?\b"
-    r"|\bexactly\s+\d+\s+(?:words?|sentences?|lines?|items?|bullets?)\b"
+    r"(?:\bin\s+(?:one|two|a\s+single)\s+(?:word|sentence|line|number|paragraph)s?\b"
+    r"|\bexactly\s+\d+\s+(?:words?|sentences?|lines?|items?|bullets?|paragraphs?)\b"
+    # Bounded counts: "at most 3 sentences", "no more than 2 lines",
+    # "up to five bullets", "in 2-4 sentences".
+    r"|\b(?:at\s+most|no\s+more\s+than|fewer\s+than|less\s+than|up\s+to|within)\s+"
+    r"(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+"
+    r"(?:words?|sentences?|lines?|items?|bullets?|paragraphs?)\b"
+    r"|\bin\s+\d+\s*[-\u2013]\s*\d+\s+(?:words?|sentences?|lines?|paragraphs?)\b"
     r"|\b(?:as|in)\s+a\s+(?:markdown\s+)?table\b"
     r"|\bbullet(?:ed)?\s+(?:list|points?)\b"
     r"|\bnumbered\s+(?:list|steps?)\b"
@@ -1283,7 +1345,22 @@ _EXPLICIT_FORMAT_REQUEST_RE = re.compile(
     r"|\bonly\s+the\s+(?:number|value|answer|word)\b"
     r"|\banswer\s+with\s+(?:only|just|a\s+single)\b"
     r"|\brespond\s+with\s+(?:only|just|a\s+single)\b"
-    r"|\bformat\s*:)",
+    # Structured serialisations and code carry their own grammar; prose
+    # sentence counts are meaningless for them.
+    r"|\b(?:as|in|return|output|emit|produce|reply\s+with)\s+"
+    r"(?:valid\s+|raw\s+|pure\s+)?(?:json|jsonl|yaml|toml|xml|csv|tsv|sql|"
+    r"markdown|html|svg|diff|patch)\b"
+    r"|\b(?:code|fenced)\s+block\b"
+    r"|```"
+    # Brevity and length directives.
+    r"|\b(?:be\s+)?(?:brief|concise|terse|succinct)\b"
+    r"|\bin\s+(?:a\s+)?(?:short|single|brief)\s+(?:sentence|line|phrase|paragraph)\b"
+    r"|\bshort\s+answer\b"
+    # Explicit schema/format directives.
+    r"|\bformat\s*:"
+    r"|\bschema\s*:"
+    r"|\boutput\s+format\b"
+    r"|\bfollow(?:ing)?\s+(?:this|the)\s+(?:format|schema|template|structure)\b)",
     re.IGNORECASE,
 )
 
@@ -4675,6 +4752,36 @@ def _mlx_worker_loop(
                                                     response_text,
                                                     envelope_prefixed=strict_envelope_prefixed,
                                                 )
+                                        # TERMINAL REJECTIONS still apply. The
+                                        # pure transforms above are not the whole
+                                        # contract: a cancelled partial can still
+                                        # be an incomplete proof, an operator
+                                        # -evidence draft with no model
+                                        # contribution, or an ungrounded
+                                        # capability inventory. Retries are
+                                        # rightly skipped — the turn was
+                                        # preempted — but shipping a fragment
+                                        # the normal terminal path would have
+                                        # REFUSED is how cancellation became a
+                                        # way around the contracts.
+                                        if response_text:
+                                            cancel_refusal = _terminal_contract_refusal(
+                                                job,
+                                                response_text,
+                                                proof_evaluation_contract=proof_evaluation_contract,
+                                                operator_evidence_contract=operator_evidence_contract,
+                                            )
+                                            if cancel_refusal:
+                                                logger.warning(
+                                                    "🚫 [WORKER] Cancelled partial failed a terminal "
+                                                    "contract (%s); withholding it.",
+                                                    cancel_refusal,
+                                                )
+                                                if proof_evaluation_contract and (
+                                                    cancel_refusal == "proof_fragment_incomplete"
+                                                ):
+                                                    proof_contract_incomplete = True
+                                                response_text = ""
                                         logger.info(
                                             "✋ [WORKER] Soft-cancel honored for job seq=%d after %d tokens.",
                                             job_seq,
