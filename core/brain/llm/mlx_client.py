@@ -12,8 +12,8 @@ import multiprocessing as mp
 import os
 import queue
 import re
-import subprocess
 import stat
+import subprocess
 import sys
 import threading as _threading
 import time
@@ -172,6 +172,13 @@ _CLIENTS: dict[str, Any] = {}
 _FOREGROUND_OWNER_LOCK = _threading.Lock()
 _FOREGROUND_OWNER_NAME: str | None = None
 _FOREGROUND_OWNER_ACQUIRED_AT = 0.0
+# The budget the CURRENT holder declared for itself when it took ownership.
+# Eviction is judged against this, never against a newcomer's budget.
+_FOREGROUND_OWNER_STALE_AFTER: float | None = None
+# No foreground owner may be evicted before this, whatever anyone declares.
+# A newcomer with a 5s budget must not be able to steal a lane from a turn
+# that is legitimately still working.
+_FOREGROUND_OWNER_MIN_EVICTION_S = 30.0
 
 # [OOM FIX] Global gate: only ONE model can be loading at a time across ALL clients.
 # This prevents the 32B and 7B from loading simultaneously and exceeding GPU RAM.
@@ -1783,6 +1790,19 @@ def soft_cancel_active_generations(*, reason: str) -> list[dict[str, Any]]:
     return receipts
 
 
+def _foreground_owner_eviction_after() -> float | None:
+    """How long the CURRENT holder may hold before it may be evicted.
+
+    None when the holder declared no budget: an owner that never said how
+    long it needs is not evictable on age alone, because any number we
+    invented for it would be a guess used to cancel real work.
+    """
+    declared = _FOREGROUND_OWNER_STALE_AFTER
+    if declared is None:
+        return None
+    return max(float(declared), _FOREGROUND_OWNER_MIN_EVICTION_S)
+
+
 @contextlib.asynccontextmanager
 async def _foreground_owner_context(
     owner_name: str,
@@ -1793,6 +1813,7 @@ async def _foreground_owner_context(
 ):
     """Serialize foreground work so background model activity cannot compete with it."""
     global _FOREGROUND_OWNER_NAME, _FOREGROUND_OWNER_ACQUIRED_AT
+    global _FOREGROUND_OWNER_STALE_AFTER
 
     wait_budget = _foreground_owner_wait_budget(
         deadline,
@@ -1814,11 +1835,28 @@ async def _foreground_owner_context(
                 if holder is None:
                     _FOREGROUND_OWNER_NAME = owner_name
                     _FOREGROUND_OWNER_ACQUIRED_AT = time.time()
+                    _FOREGROUND_OWNER_STALE_AFTER = stale_after
                     owner_acquired = True
                     break
-                if stale_after is not None and holder != owner_name and holder_age > stale_after:
+                # CP126 4cb6a1a0. Eviction used to compare the holder's age
+                # against the NEWCOMER's stale_after, which is normalized from
+                # a caller-selected timeout to as little as 5 seconds. A short
+                # request could therefore declare a legitimately-working owner
+                # stale by its own budget and steal foreground authority.
+                #
+                # An owner is stale only by ITS OWN declared contract, floored
+                # so that no declared budget can make a live turn instantly
+                # evictable. A holder that declared nothing is never evicted
+                # on age alone.
+                eviction_after = _foreground_owner_eviction_after()
+                if (
+                    eviction_after is not None
+                    and holder != owner_name
+                    and holder_age > eviction_after
+                ):
                     _FOREGROUND_OWNER_NAME = None
                     _FOREGROUND_OWNER_ACQUIRED_AT = 0.0
+                    _FOREGROUND_OWNER_STALE_AFTER = None
                     cleared_holder = holder
                     cleared_holder_age = holder_age
         finally:
@@ -1871,6 +1909,7 @@ async def _foreground_owner_context(
                 if _FOREGROUND_OWNER_NAME == owner_name:
                     _FOREGROUND_OWNER_NAME = None
                     _FOREGROUND_OWNER_ACQUIRED_AT = 0.0
+                    _FOREGROUND_OWNER_STALE_AFTER = None
             finally:
                 _FOREGROUND_OWNER_LOCK.release()
         else:
@@ -1882,6 +1921,7 @@ async def _foreground_owner_context(
             if _FOREGROUND_OWNER_NAME == owner_name:
                 _FOREGROUND_OWNER_NAME = None
                 _FOREGROUND_OWNER_ACQUIRED_AT = 0.0
+                _FOREGROUND_OWNER_STALE_AFTER = None
             _record_mlx_degradation(
                 TimeoutError("foreground owner release lock timeout"),
                 action="self-cleared finished foreground ownership without the owner lock",
@@ -2315,6 +2355,9 @@ class MLXLocalClient:
         self._process: mp.Process | None = None
         self._model_lane_owner_id = f"mlx:{os.getpid()}:{_real_model_path(model_path)}"
         self._model_lane_state_lock = _threading.RLock()
+        # Partial-failure receipt for a durable owner we could not release.
+        # None means the lane holds no stranded fence.
+        self._lane_release_failure: dict[str, Any] | None = None
         self._model_lane_fencing_token = 0
         self._model_lane_terminal_receipt_id = ""
         self._mp_context = (
@@ -2557,6 +2600,50 @@ class MLXLocalClient:
                 str(self._model_lane_terminal_receipt_id or ""),
             )
 
+    def lane_recovery_required(self) -> dict[str, Any] | None:
+        """The unreleased durable owner blocking this lane, if any.
+
+        None means the lane holds no stranded fence. A dict is a partial-
+        failure receipt: it names the owner and fencing token that must be
+        released before this lane can be admitted again, so the dependency is
+        actionable rather than an unexplained admission refusal later.
+        """
+        pending = getattr(self, "_lane_release_failure", None)
+        return dict(pending) if pending else None
+
+    def _note_lane_release_failure(self, exc: BaseException, *, reason: str) -> None:
+        """Record a durable-owner release that could not be confirmed."""
+        with self._model_lane_state_lock:
+            owner_id = str(self._model_lane_owner_id or "")
+            fencing_token = int(self._model_lane_fencing_token or 0)
+        self._lane_release_failure = {
+            "owner_id": owner_id,
+            "fencing_token": fencing_token,
+            "reason": reason,
+            "error": f"{type(exc).__name__}: {exc}"[:200],
+            "at_unix": time.time(),
+        }
+        _record_mlx_degradation(
+            exc,
+            action=(
+                f"lane left FENCED: durable owner {owner_id or '<unknown>'} "
+                f"token={fencing_token} could not be released during {reason}; "
+                "admission stays blocked until it is"
+            ),
+            severity="critical",
+        )
+        self._record_degraded_event(
+            "durable_owner_release_failed",
+            detail=f"{os.path.basename(self.model_path)}:{owner_id}:token={fencing_token}",
+            severity="critical",
+            foreground_request=True,
+        )
+        self._set_lane_state("fenced", f"durable_owner_release_failed:{reason}")
+
+    def _clear_lane_release_failure(self) -> None:
+        """A confirmed release retires the fence."""
+        self._lane_release_failure = None
+
     def _release_durable_model_lane_owner_sync(self, *, reason: str) -> bool:
         """Release the exact committed owner before another worker may spawn.
 
@@ -2588,6 +2675,7 @@ class MLXLocalClient:
             unregister_model_lane_owner_adapter(owner_id)
             self._model_lane_fencing_token = 0
             self._model_lane_terminal_receipt_id = ""
+            self._clear_lane_release_failure()
             if not released:
                 # The controller also returns False for a FENCING-TOKEN
                 # MISMATCH (a newer durable owner exists) — that is not
@@ -4443,14 +4531,68 @@ class MLXLocalClient:
         identity = getattr(self, "_worker_identity", None)
         return dict(identity) if isinstance(identity, dict) else {}
 
-    @staticmethod
-    def _clean_latent_cancel_ack(response: Any) -> bool:
+    def _clean_latent_cancel_ack(
+        self,
+        response: Any,
+        *,
+        expected_request_id: str = "",
+        expected_request_sha256: str = "",
+    ) -> bool:
+        """Whether this acknowledgement proves a CLEAN cancel of THIS episode.
+
+        CP126 07d62d51. The check used to accept a reason string and a couple
+        of worker-supplied booleans, bound to nothing. Anything shaped like
+        {"message": "soft_cancelled", "receipt": {"params_unchanged": True}}
+        could therefore certify that model parameters were untouched and
+        ephemeral weights erased — for a different request, a different
+        worker, or a previous episode entirely. That certification is what
+        lets the lane keep serving without a reboot, so a stale or replayed
+        ack was a path to serving on weights nobody had proven clean.
+
+        The receipt already carries the identity needed to bind it; nothing
+        was reading it. An acknowledgement now has to name this request, this
+        payload, and this worker.
+        """
         if not isinstance(response, dict):
             return False
         reason = str(response.get("message") or response.get("reason") or "")
         receipt = response.get("receipt")
         if reason != "soft_cancelled" or not isinstance(receipt, dict):
             return False
+
+        # Bound to THIS request.
+        if expected_request_id:
+            if str(response.get("id") or "") != expected_request_id:
+                self._record_cancel_ack_rejection("request_id_mismatch")
+                return False
+        # Bound to THIS payload.
+        if expected_request_sha256:
+            if str(receipt.get("request_payload_sha256") or "") != expected_request_sha256:
+                self._record_cancel_ack_rejection("request_payload_sha256_mismatch")
+                return False
+        # Bound to THIS worker: a receipt from a previous boot describes a
+        # process whose weights are no longer the ones we are about to keep
+        # serving on.
+        identity = getattr(self, "_worker_identity", None)
+        if isinstance(identity, dict) and identity:
+            expected_boot = str(identity.get("worker_boot_id") or "")
+            if expected_boot and str(receipt.get("worker_boot_id") or "") != expected_boot:
+                self._record_cancel_ack_rejection("worker_boot_id_mismatch")
+                return False
+            expected_pid = identity.get("worker_pid")
+            if (
+                isinstance(expected_pid, int)
+                and receipt.get("worker_pid") not in (None, expected_pid)
+            ):
+                self._record_cancel_ack_rejection("worker_pid_mismatch")
+                return False
+        reported_path = str(receipt.get("worker_model_path") or "")
+        if reported_path and _real_model_path(reported_path) != _real_model_path(
+            self.model_path
+        ):
+            self._record_cancel_ack_rejection("worker_model_path_mismatch")
+            return False
+
         if receipt.get("params_unchanged") is not True:
             return False
         if (
@@ -4459,6 +4601,19 @@ class MLXLocalClient:
         ):
             return False
         return True
+
+    def _record_cancel_ack_rejection(self, why: str) -> None:
+        """An ack that failed to bind is evidence, not noise.
+
+        A worker sending unbindable cancellation receipts is either buggy or
+        replaying, and either way the lane must reboot rather than trust the
+        clean-cancel claim.
+        """
+        _record_mlx_degradation(
+            RuntimeError(f"latent_cancel_ack_unbound:{why}"),
+            action="refused a latent cancellation acknowledgement it could not bind",
+            severity="error",
+        )
 
     async def latent_reason_async(
         self,
@@ -4730,7 +4885,11 @@ class MLXLocalClient:
                     )
                 except (TimeoutError, BrokenPipeError, OSError):
                     cancel_ack = None
-                if self._clean_latent_cancel_ack(cancel_ack):
+                if self._clean_latent_cancel_ack(
+                    cancel_ack,
+                    expected_request_id=req_id,
+                    expected_request_sha256=expected_request_sha256,
+                ):
                     receipt = dict(cancel_ack.get("receipt") or {})
                     progress = dict(
                         self._latent_progress_by_request.get(req_id) or {}
@@ -5205,14 +5364,18 @@ class MLXLocalClient:
         try:
             self._release_durable_model_lane_owner_sync(reason=reason)
         except (ImportError, OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
-            _record_mlx_degradation(
-                exc,
-                action=(
-                    "kept forced-abort lane fenced because durable owner release failed; "
-                    "respawn will retry before admission"
-                ),
-                severity="critical",
-            )
+            # CP126 35eefee4. This recorded a critical degradation and then
+            # marked the lane COLD and returned success. The fencing token was
+            # NOT cleared (the release raised part-way), so later admission
+            # would be blocked by a fence nobody had been told about — a
+            # terminal recovery dependency reported as a clean abort.
+            #
+            # The abort itself did happen, so the caller is still told the
+            # generation was aborted; what changes is that the lane is left in
+            # a NAMED fenced state carrying the owner and token that must be
+            # released before this lane can serve again.
+            self._note_lane_release_failure(exc, reason=reason)
+            return True
         self._set_lane_state("cold", reason)
         return True
 
