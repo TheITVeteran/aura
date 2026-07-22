@@ -60,6 +60,33 @@ except ImportError:
 
 # ─── Model definitions ───────────────────────────────────────────────────────
 
+# Typed admission bounds for caller-supplied generation controls. These
+# values flow into paid provider requests and local decode budgets, so they
+# are validated here rather than trusted from config.
+_VALID_TIERS = {"local", "api_fast", "api_deep"}
+_MAX_OUTPUT_TOKENS = 32768
+_MAX_PROMPT_CHARS = 500_000
+
+
+def _bounded_float(value: Any, *, default: float, low: float, high: float) -> float:
+    """Finite float in [low, high]; NaN/inf/garbage fall back to default."""
+    try:
+        candidate = float(default if value is None else value)
+    except (TypeError, ValueError):
+        return default
+    if candidate != candidate or candidate in (float("inf"), float("-inf")):
+        return default
+    return max(low, min(high, candidate))
+
+
+def _bounded_int(value: Any, *, default: int, low: int, high: int) -> int:
+    try:
+        candidate = int(default if value is None else value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+    return max(low, min(high, candidate))
+
+
 GEMINI_MODELS = {
     "api_deep":  "gemini-2.0-flash",
     "api_fast":  "gemini-2.0-flash",
@@ -81,10 +108,15 @@ class APIAdapter:
     """
     name = "api_adapter"
 
+    # Bound on the cloud embedding round-trip; without it a stalled
+    # provider held the calling task indefinitely.
+    EMBED_TIMEOUT_S = 20.0
+
     def __init__(self):
         self._gemini_client     = None
         self._local_client      = None
         self._http_session      = None
+        self._last_embed_space  = ""
 
         # Capability flags (set after start())
         self.has_gemini  = False
@@ -181,6 +213,16 @@ class APIAdapter:
                 await self._http_session.close()
             finally:
                 self._http_session = None
+        # A stopped adapter must not keep ADVERTISING generation capability.
+        # stop() previously closed only the HTTP session, so has_gemini /
+        # has_local stayed true and get_status() reported a live backend for
+        # an adapter that had been shut down — routing and health both read
+        # those flags.
+        self.has_gemini = False
+        self.has_local = False
+        self._gemini_client = None
+        self._local_client = None
+        self._gemini_backoff_until = 0.0
         logger.info("APIAdapter stopped. Calls: %s | Tokens: %d",
                     self._call_count, self._total_tokens)
 
@@ -203,6 +245,17 @@ class APIAdapter:
         result_metadata = await self.generate_with_metadata(prompt, config)
         result = str(result_metadata.get("text") or "")
 
+        # An all-backend failure must NOT come back as an empty string. This
+        # is the exact error-versus-empty ambiguity the adapter layer exists
+        # to prevent: callers could not distinguish "the model produced
+        # nothing" from "every backend failed", and downstream code went on
+        # to parse, store, or serve the emptiness as a real answer.
+        if not result_metadata.get("ok", True) and not result:
+            raise RuntimeError(
+                "api_adapter_generation_failed:"
+                f"{result_metadata.get('error') or 'unknown'}"
+            )
+
         elapsed = (time.monotonic() - start) * 1000
         logger.debug("APIAdapter.generate: tier=%s purpose=%s %.1fms len=%d",
                      tier, purpose, elapsed, len(result))
@@ -219,11 +272,33 @@ class APIAdapter:
         """Generate text with truthful provider, model, and fallback provenance."""
 
         config = config or {}
-        tier = str(config.get("model_tier", "local") or "local")
-        temperature_value = config.get("temperature", 0.7)
-        temperature = float(0.7 if temperature_value is None else temperature_value)
-        max_tokens_value = config.get("max_tokens", 800)
-        max_tokens = max(1, int(800 if max_tokens_value is None else max_tokens_value))
+        # Typed, finite, bounded admission. These values came straight from
+        # caller config into provider requests: a NaN temperature, a string
+        # where a number was expected, an unbounded max_tokens, or an
+        # unknown tier could raise before routing or request pathological
+        # amounts of work from a paid backend.
+        tier = str(config.get("model_tier", "local") or "local").strip().lower()
+        if tier not in _VALID_TIERS:
+            logger.warning("APIAdapter: unknown model_tier %r; defaulting to local.", tier)
+            tier = "local"
+        temperature = _bounded_float(config.get("temperature"), default=0.7, low=0.0, high=2.0)
+        max_tokens = _bounded_int(
+            config.get("max_tokens"), default=800, low=1, high=_MAX_OUTPUT_TOKENS
+        )
+        prompt = str(prompt or "")
+        if len(prompt) > _MAX_PROMPT_CHARS:
+            logger.warning(
+                "APIAdapter: prompt of %d chars exceeds the %d-char ceiling; refusing.",
+                len(prompt),
+                _MAX_PROMPT_CHARS,
+            )
+            return {
+                "ok": False,
+                "text": "",
+                "provider": "none",
+                "model": "",
+                "error": f"prompt_too_large:{len(prompt)}",
+            }
         result = await self._route_generate_with_metadata(
             prompt,
             tier,
@@ -513,7 +588,21 @@ class APIAdapter:
                     
             self._call_count["local"] += 1
             return result
-        except (OSError, ConnectionError, TimeoutError) as e:
+        except (
+            OSError,
+            ConnectionError,
+            TimeoutError,
+            # The MLX client raises ordinary RuntimeError for model admission,
+            # decode, worker-state and lane failures, and TypeError/ValueError
+            # /AttributeError for malformed client state. Catching only the
+            # first three let those escape the fallback chain entirely, so a
+            # recoverable local failure aborted the whole request instead of
+            # failing over to cloud.
+            RuntimeError,
+            AttributeError,
+            TypeError,
+            ValueError,
+        ) as e:
             _record_api_degradation(
                 e,
                 action="incremented local error count and returned None so routing can fail over",
@@ -570,16 +659,47 @@ class APIAdapter:
 
     # ─── Embeddings ──────────────────────────────────────────────────────────
 
+    # Identifies which vector space a returned embedding belongs to. A cloud
+    # embedding and the lexical fallback are NOT comparable, so callers that
+    # persist vectors must not mix them in one index.
+    CLOUD_EMBED_SPACE = "gemini:text-embedding-004"
+    LOCAL_EMBED_SPACE = "local:bow-hash-768"
+
+    def last_embedding_space(self) -> str:
+        """Vector space of the most recent embedding (see *_EMBED_SPACE)."""
+        return getattr(self, "_last_embed_space", "")
+
     async def embed_async(self, text: str) -> list[float]:
         """Generate embeddings for text. Uses Gemini as primary, then a local shim."""
         if self.has_gemini:
             try:
-                res = self._gemini_client.models.embed_content(
-                    model="text-embedding-004",
-                    contents=text,
+                # Off-loop: models.embed_content is a SYNCHRONOUS network call.
+                # Awaiting it directly on the event loop stalled every other
+                # task for the provider's full round-trip.
+                res = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        self._gemini_client.models.embed_content,
+                        model="text-embedding-004",
+                        contents=text,
+                    ),
+                    timeout=self.EMBED_TIMEOUT_S,
                 )
+                self._last_embed_space = self.CLOUD_EMBED_SPACE
                 return res.embeddings[0].values
-            except (OSError, ConnectionError, TimeoutError) as e:
+            except (
+                OSError,
+                ConnectionError,
+                TimeoutError,
+                asyncio.TimeoutError,
+                # SDK/runtime/quota failures surface as these; omitting them
+                # made fallback reliability depend on exception-class accident.
+                RuntimeError,
+                AttributeError,
+                TypeError,
+                ValueError,
+                IndexError,
+                KeyError,
+            ) as e:
                 _record_api_degradation(
                     e,
                     severity="warning",
@@ -588,11 +708,12 @@ class APIAdapter:
                 )
                 logger.debug("Gemini embedding failed: %s", e)
 
-        # Deterministic local embedding fallback using bag-of-words hashing.
-        # Unlike random seeded vectors, this preserves semantic similarity:
-        # texts sharing words will have non-zero cosine similarity.
-        # Each word hashes to a fixed position in the 768-dim vector and adds
-        # a contribution, so keyword overlap → vector overlap → search works.
+        # Deterministic LEXICAL fallback: bag-of-words hashing. It measures
+        # token overlap only — it cannot represent synonymy, relations, or
+        # context, so it is not a semantic embedding and must not be
+        # described as one. Texts sharing literal words get non-zero cosine
+        # similarity; paraphrases with no shared tokens get zero.
+        self._last_embed_space = self.LOCAL_EMBED_SPACE
         return self._local_bow_embed(text)
 
     def embed_sync(self, text: str) -> list[float]:
@@ -687,12 +808,16 @@ class APIAdapter:
         return system_part, user_part
 
     def get_status(self) -> dict[str, Any]:
+        # Copies, not references: the live counter dicts were handed out by
+        # reference, so any consumer could mutate adapter telemetry without
+        # going through the adapter.
         return {
             "gemini":       self.has_gemini,
             "local":        self.has_local,
-            "calls":        self._call_count,
-            "errors":       self._error_count,
+            "calls":        dict(self._call_count),
+            "errors":       dict(self._error_count),
             "total_tokens": self._total_tokens,
+            "embedding_space": self._last_embed_space,
         }
 
     def get_available_tiers(self) -> list[str]:
