@@ -1777,7 +1777,7 @@ class TestIPCWriterThread(unittest.TestCase):
         mp_queue.put.assert_not_called()
 
 
-class TestMLXWorkerProgress(unittest.TestCase):
+class TestMLXWorkerProgress(unittest.IsolatedAsyncioTestCase):
     def test_worker_stall_alarm_respects_active_32b_first_token_budget(self):
         client = MLXLocalClient(model_path=QWEN32_MODEL)
         client._current_request_id = "demo-request"
@@ -1805,6 +1805,48 @@ class TestMLXWorkerProgress(unittest.TestCase):
 
         self.assertTrue(stalled)
         self.assertEqual(budget, 120.0)
+
+    async def test_response_listener_soft_cancels_confirmed_worker_loop_stall(self):
+        client = MLXLocalClient(model_path=QWEN32_MODEL)
+        client._req_q = queue.Queue()
+        client._res_q = queue.Queue()
+        client._current_request_id = "demo-request"
+        client._current_request_started_at = 100.0
+        client._current_request_seq = 7
+        client._current_first_token_at = 0.0
+        client._current_first_token_hard_ceiling_s = 120.0
+        client._cancel_seq.value = 0
+
+        listener = asyncio.create_task(client._response_listener_loop())
+        try:
+            client._res_q.put(
+                {
+                    "status": "heartbeat",
+                    "request_id": "demo-request",
+                    "job_age_s": 30.461,
+                    "loop_stalled": True,
+                }
+            )
+            await asyncio.sleep(0.25)
+            self.assertEqual(client._cancel_seq.value, 0)
+            self.assertIsNone(client._deferred_reboot_reason)
+
+            client._res_q.put(
+                {
+                    "status": "heartbeat",
+                    "request_id": "demo-request",
+                    "job_age_s": 121.0,
+                    "loop_stalled": True,
+                }
+            )
+            await asyncio.sleep(0.25)
+        finally:
+            listener.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await listener
+
+        self.assertEqual(client._cancel_seq.value, 7)
+        self.assertEqual(client._deferred_reboot_reason, "recoverable_token_progress_stalled")
 
     def test_prompt_cache_budget_disables_deep_solver_retention(self):
         self.assertEqual(_prompt_cache_entry_budget_for_model("/models/Qwen2.5-72B-Instruct-4bit"), 0)

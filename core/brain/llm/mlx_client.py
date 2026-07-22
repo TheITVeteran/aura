@@ -5234,6 +5234,9 @@ class MLXLocalClient:
                             action="worker heartbeat exceeded the active request's progress budget",
                             severity="error",
                         )
+                        self.soft_cancel_active_generation("worker_loop_stalled")
+                        if not self._deferred_reboot_reason:
+                            self._deferred_reboot_reason = "recoverable_token_progress_stalled"
                     elif not worker_reported_stall or not stalled:
                         self._worker_loop_stall_reported = False
                     if bool(res.get("ipc_broken")) and not self._worker_ipc_broken_reported:
