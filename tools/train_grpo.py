@@ -85,7 +85,7 @@ GRPO_DATASET_SCHEMA = "aura.grpo_dataset.v1"
 GRPO_PROTOCOL_SCHEMA = "aura.grpo_protocol.v3"
 RNG_STRATEGY = "stateless_sha256_step_seeded_v1"
 EXECUTION_MODES = ("standard", "recurrent")
-TASK_SOURCES = ("verifiable", "recurrence_curriculum")
+TASK_SOURCES = ("verifiable", "recurrence_curriculum", "answer_channel_curriculum")
 _ADAPTER_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 
 
@@ -486,6 +486,17 @@ def _build_task_split(
             seed=seed,
         )
         source = REPO_ROOT / "core/learning/recurrence_curriculum.py"
+    elif task_source == "answer_channel_curriculum":
+        from core.learning.answer_channel_curriculum import disjoint_task_split
+
+        train, holdout = disjoint_task_split(
+            families=domains,
+            depths=depths,
+            train_per_cell=train_per_cell,
+            holdout_per_cell=holdout_per_cell,
+            seed=seed,
+        )
+        source = REPO_ROOT / "core/learning/answer_channel_curriculum.py"
     else:
         raise ValueError(f"unsupported task source: {task_source}")
     return list(train), list(holdout), source

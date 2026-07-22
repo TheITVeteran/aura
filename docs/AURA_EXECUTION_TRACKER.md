@@ -24535,3 +24535,37 @@ records, now approximately 23-290 records after this checkpoint. Next: commit
 and push CP310, then design the next RLC proof attempt around a small
 parseability/trajectory-credit preflight before any detached resident-32B
 multi-hour run.
+
+## Checkpoint 2026-07-22-311: Answer-Channel Curriculum Is A Separate Training Source
+
+The next RLC proof attempt needs a bridge phase for verifier entry, but that
+bridge must not be confused with reasoning improvement. CP305 showed that the
+resident recurrent path can fail before reasoning is measured because completions
+do not reliably enter the strict `FINAL_ANSWER` JSON channel. Teaching that
+channel is necessary infrastructure, not evidence of frontier reasoning.
+
+A new training-only `answer_channel_curriculum` source now exists under
+`core/learning/answer_channel_curriculum.py`. It generates deterministic,
+programmatically graded tasks for JSON copying, typed boolean fields, and key
+selection, all with metadata boundary
+`format_parseability_only_not_reasoning_gain`. The tasks use the same strict
+terminal final-answer parser as the RLC frontier/recurrent tasks, so success
+means the model can enter the verifier channel, not that it solved a broad
+reasoning benchmark.
+
+`tools/train_grpo.py` now accepts `--task-source answer_channel_curriculum`
+without adding those families to `RECURRENCE_TRAINING_FAMILIES` or changing the
+frontier exclusion surface. That keeps the preflight/bridge source usable by the
+trainer while preserving the scientific boundary around recurrent reasoning
+claims.
+
+Validation: `tests/test_answer_channel_curriculum.py`,
+`tests/test_train_grpo_contract.py`, and `tests/test_grpo.py` pass 53/53,
+bytecode compilation passes for the new curriculum, trainer, and tests, `git
+diff --check` passes, and `make lint` passes. No resident training was launched
+and no reasoning-gain claim is made from this bridge source.
+
+This is total checkpoint record 372. The forecast remains 394-661 total
+records, now approximately 22-289 records after this checkpoint. Next: commit
+and push CP311, then create the bounded resident preflight command that can run
+answer-channel calibration before any multi-hour recurrent-GRPO launch.
