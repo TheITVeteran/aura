@@ -23286,3 +23286,26 @@ records, now approximately 59-326 records after this checkpoint. Next: monitor
 CP273 until the first calibration/training signal, repair the next concrete
 blocker if it fails, or freeze/fuse/evaluate only after a valid completion
 artifact exists.
+
+## Checkpoint 2026-07-21-275: Installed App Rebuilt From Current Main
+
+The Applications launcher was rebuilt after the CP273/CP274 checkpoints so the
+demo and owner-launch path no longer point at the stale signed bundle that had
+previously reported a source/bundle provenance mismatch. Command:
+`AURA_INSTALL_PATH=/Applications/Aura.app ./build_app.sh`.
+
+The installed bundle verifies on disk and satisfies its designated requirement.
+Its launch provenance binds `/Applications/Aura.app` to source root
+`/Users/bryan/.aura/live-source`, branch `main`, commit
+`7753f7040c53fe99d5d12bf2baf049c0daee3e4a`, version
+`Aura Luna v2026.4.20-Zenith`, `source_dirty=false`, and
+`source_change_count=0`. The CP273 resident GRPO process remained running after
+the rebuild with child PID 1992 and live heartbeat status, so the app rebuild
+did not disturb training.
+
+This is total checkpoint record 336. It closes the stale installed-app
+provenance issue for the current `main` commit, but it does not certify the
+runtime after a live Aura boot, desktop task completion, or GRPO gains. The
+forecast remains 394-661 total records, now approximately 58-325 records after
+this checkpoint. Next: continue monitoring CP273 and keep folding concrete
+runtime defects into bounded fixes.
