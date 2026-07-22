@@ -46,7 +46,9 @@ Wire all six from orchestrator._init_autonomous_evolution():
 import asyncio
 import json
 import logging
+import math
 import os
+import re
 import threading
 import time
 from collections import defaultdict, deque
@@ -61,6 +63,29 @@ from core.runtime.errors import record_degradation
 from core.service_names import ServiceNames
 
 logger = logging.getLogger("Aura.FictionalSynthesis")
+
+# Word-boundary tokenizer for social cue matching (substring matching made
+# single-letter and short cues fire on ordinary prose).
+_WORD_TOKEN_RE = re.compile(r"[a-z']+")
+
+
+def _coerce_insight_text(result: Any) -> str:
+    """Extract usable text from a brain.think() result of any supported shape."""
+    if result is None:
+        return ""
+    if isinstance(result, str):
+        return result.strip()
+    if isinstance(result, dict):
+        for key in ("content", "text", "response", "answer", "result"):
+            value = result.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return ""
+    for attr in ("content", "text", "response", "answer"):
+        value = getattr(result, attr, None)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
 
 
 def _record_fictional_degradation(
@@ -547,15 +572,26 @@ class ProgressiveAutonomySystem:
         if self.persist_path.exists():
             try:
                 data = json.loads(self.persist_path.read_text())
-                # Default to UNSHACKLED (0.95) if they are lower or not specified, to guarantee full permissions by default
-                self._trust_score = max(0.95, data.get("trust_score", 0.95))
-                loaded_tier = data.get("tier", AutonomyTier.UNSHACKLED.value)
-                if loaded_tier < AutonomyTier.UNSHACKLED.value:
-                    self._tier = AutonomyTier.UNSHACKLED
-                    self._trust_score = 0.95
-                    self._save_state()
-                else:
-                    self._tier = AutonomyTier(loaded_tier)
+                # Unshackled remains the DEFAULT (fresh install, or a state
+                # file with no trust_score), but a persisted value is now
+                # HONORED instead of being clamped up to 0.95 and the tier
+                # forced to UNSHACKLED. The old load erased every negative
+                # trust signal on the next restart, so a restriction earned
+                # by real evidence could never survive — restriction was
+                # structurally impossible and the tier ladder below it was
+                # dead code.
+                raw_trust = data.get("trust_score", 0.95)
+                try:
+                    trust = float(raw_trust)
+                except (TypeError, ValueError):
+                    trust = 0.95
+                if not math.isfinite(trust):
+                    trust = 0.95
+                self._trust_score = max(0.0, min(1.0, trust))
+                # The tier is DERIVED from trust, never read back as an
+                # independent field: a hand-edited or stale tier could
+                # otherwise contradict the score it is supposed to summarize.
+                self._recalculate_tier()
             except (json.JSONDecodeError, OSError, ConnectionError, TimeoutError, TypeError, ValueError) as e:
                 _record_fictional_degradation(
                     e,
@@ -595,8 +631,23 @@ class ProgressiveAutonomySystem:
         normalized_scope = str(effect_scope or "unknown").lower()
 
         if self._tier == AutonomyTier.UNSHACKLED:
-            return True, "Unshackled: All actions permitted."
-            
+            # Trust is not the same thing as authority. The old branch
+            # returned True for EVERY action — ignoring risk, effect scope,
+            # governance, and user authorization — which made the tier
+            # incoherent with the ladder beneath it (AUTONOMOUS, one tier
+            # LOWER, refuses critical actions outright) and meant a
+            # constitutional decision was never required for an irreversible
+            # effect. Maximum trust widens what may be attempted; it does not
+            # remove the requirement that a critical action be governed or
+            # explicitly authorized.
+            if normalized_risk == "critical" and not (governed or user_authorized):
+                return (
+                    False,
+                    "Unshackled: critical actions still require governance or "
+                    "explicit user authorization.",
+                )
+            return True, "Unshackled: action permitted."
+
         if self._tier == AutonomyTier.AUTONOMOUS:
             if normalized_risk == "critical":
                 return False, "Autonomous tier cannot execute critical actions without confirmation."
@@ -633,16 +684,56 @@ class ProgressiveAutonomySystem:
             
         return False, "Unknown autonomy tier: execution blocked."
 
-    def record_positive_signal(self, reason: str, strength: float = 0.05):
-        self._trust_score = min(1.0, self._trust_score + strength)
+    # A single trust signal may move the score by at most this much. Unbounded
+    # or non-finite strengths could otherwise jump the tier ladder in one call
+    # (or poison the score with NaN, which compares false against every
+    # threshold and silently pinned the tier).
+    MAX_TRUST_SIGNAL_STRENGTH = 0.25
+
+    def _apply_trust_delta(self, delta: float, reason: str, source: str) -> None:
+        """Single journaled mutation point for the trust score.
+
+        Every change is recorded as a TrustEvent with its originating source.
+        The dataclass existed but was never written, so trust could move with
+        no attribution and no history to audit a restriction (or an
+        unexplained escalation) against.
+        """
+        try:
+            magnitude = float(delta)
+        except (TypeError, ValueError):
+            magnitude = 0.0
+        if not math.isfinite(magnitude):
+            magnitude = 0.0
+        magnitude = max(
+            -self.MAX_TRUST_SIGNAL_STRENGTH,
+            min(self.MAX_TRUST_SIGNAL_STRENGTH, magnitude),
+        )
+        before = self._trust_score
+        self._trust_score = max(0.0, min(1.0, self._trust_score + magnitude))
+        self._history.append(
+            TrustEvent(
+                delta=self._trust_score - before,
+                reason=f"{source}:{str(reason or 'unspecified')[:160]}",
+            )
+        )
         self._recalculate_tier()
         self._save_state()
 
-    def record_negative_signal(self, reason: str, strength: float = 0.05):
+    def record_positive_signal(
+        self, reason: str, strength: float = 0.05, *, source: str = "unattributed"
+    ):
+        self._apply_trust_delta(abs(strength), reason, source)
+
+    def record_negative_signal(
+        self, reason: str, strength: float = 0.05, *, source: str = "unattributed"
+    ):
         # Even Skynet has setbacks
-        self._trust_score = max(0.0, self._trust_score - strength)
-        self._recalculate_tier()
-        self._save_state()
+        self._apply_trust_delta(-abs(strength), reason, source)
+
+    def trust_history(self, limit: int = 50) -> list[dict[str, Any]]:
+        """Recent journaled trust events, newest last — the audit surface."""
+        events = list(self._history)[-max(1, int(limit)):]
+        return [asdict(event) for event in events if isinstance(event, TrustEvent)]
 
     def record_execution_outcome(
         self,
@@ -740,18 +831,33 @@ class SocialModelingEngine:
         msg_lower = message.lower()
         msg_len = len(message.split())
         
+        # Cue matching is TOKEN-based, never substring. With `w in msg_lower`
+        # the single-letter casual cues "u" and "r" matched almost every
+        # English message ("your", "run", "sure"), and the conflict cue "no"
+        # matched "now", "know", "nothing", "another", "cannot" — so ordinary
+        # conversation drove formality down and pinned social_tension high,
+        # and that tension was written into cognition modifiers and the
+        # prompt. Word boundaries remove that whole false-positive class.
+        msg_tokens = set(_WORD_TOKEN_RE.findall(msg_lower))
+
         # 1. Formality Detection
-        formal_cues = ["shall", "please", "kindly", "regarding", "furthermore", "sincerely"]
-        casual_cues = ["hey", "yo", "sup", "lol", "lmao", "u", "r", "nvm"]
-        
-        if any(w in msg_lower for w in formal_cues):
+        formal_cues = {"shall", "please", "kindly", "regarding", "furthermore", "sincerely"}
+        casual_cues = {"hey", "yo", "sup", "lol", "lmao", "u", "r", "nvm"}
+
+        if formal_cues & msg_tokens:
             self.model.formality_score = min(1.0, self.model.formality_score + 0.1)
-        elif any(w in msg_lower for w in casual_cues):
+        elif casual_cues & msg_tokens:
             self.model.formality_score = max(0.0, self.model.formality_score - 0.1)
-            
+
         # 2. Social Tension Inference
-        conflict_cues = ["stop", "wrong", "no", "bad", "hate", "shut", "annoying"]
-        if any(w in msg_lower for w in conflict_cues):
+        # Kept as cues (they carry real corrective/interpersonal charge as
+        # WORDS): stop, wrong, hate, annoying. Dropped: "no" and "bad" — as
+        # bare tokens they are ordinary conversation ("no rush", "not bad")
+        # and as SUBSTRINGS they matched know/now/another/cannot, which is
+        # what pinned tension high on nearly every message.
+        conflict_cues = {"stop", "wrong", "hate", "annoying", "stupid", "useless"}
+        conflict_phrases = ("shut up", "stop it", "knock it off", "leave me alone")
+        if (conflict_cues & msg_tokens) or any(p in msg_lower for p in conflict_phrases):
             self.model.social_tension = min(1.0, self.model.social_tension + 0.15)
         else:
             # Tension decays slowly
@@ -848,6 +954,9 @@ class DistributedResilienceCore:
     def __init__(self):
         self._subsystems: dict[str, SubsystemStatus] = {}
         self._running = False
+        # Created in start_monitoring (needs a running loop); declared here so
+        # stop() before start is a no-op rather than an AttributeError.
+        self._stop_event: asyncio.Event | None = None
         try:
             self._failure_threshold = max(
                 1,
@@ -964,9 +1073,18 @@ class DistributedResilienceCore:
 
         logger.info("🛡️  Skynet ResilienceCore monitoring %d subsystems.", len(core_targets))
         
+        # Event-driven interval so stop() is honored immediately rather than
+        # after a full monitor period.
+        self._stop_event = asyncio.Event()
         try:
             while self._running:
-                await asyncio.sleep(60)
+                try:
+                    await asyncio.wait_for(self._stop_event.wait(), timeout=60)
+                    break  # stop() fired
+                except (TimeoutError, asyncio.TimeoutError):
+                    pass  # normal interval elapsed
+                if not self._running:
+                    break
                 for name, _status in list(self._subsystems.items()):
                     try:
                         service = ServiceContainer.get(name, default=None)
@@ -996,37 +1114,112 @@ class DistributedResilienceCore:
                         self._report_failure(name, "service missing from container")
                         continue
 
-                    is_healthy = True
-                    failure_detail = "health check returned false"
-                    if hasattr(service, "get_status"):
-                        try:
-                            stats = service.get_status()
-                            if isinstance(stats, dict) and stats.get("healthy") is False:
-                                is_healthy = False
-                                failure_detail = str(
-                                    stats.get("health_reason")
-                                    or stats.get("reason")
-                                    or stats.get("last_error")
-                                    or failure_detail
-                                )[:240]
-                        except (OSError, ConnectionError, TimeoutError, RuntimeError, TypeError, ValueError) as e:
-                            _record_fictional_degradation(
-                                e,
-                                action=f"marked resilience target {name} degraded after health probe failed",
-                            )
-                            logger.debug("Skynet health check error for %s: %s", name, e)
-                            is_healthy = False
-                            failure_detail = f"health probe raised {type(e).__name__}: {e}"
+                    verdict, failure_detail = await self._probe_service_health(name, service)
 
-                    if is_healthy:
+                    if verdict is True:
                         self._report_success(name)
-                    else:
+                    elif verdict is False:
                         self._report_failure(name, failure_detail)
+                    else:
+                        # UNVERIFIED, not healthy. Reporting success here
+                        # manufactured positive health evidence for a service
+                        # that never answered a health question — and a
+                        # recovery counter advanced on the strength of it.
+                        logger.debug(
+                            "Skynet: subsystem '%s' exposes no recognized health "
+                            "convention; leaving state unchanged (%s).",
+                            name,
+                            failure_detail,
+                        )
         finally:
             self._running = False
 
+    # A subsystem's health probe is arbitrary third-party code called from the
+    # monitor loop; without a deadline one slow probe stalls health reporting
+    # for EVERY other subsystem.
+    HEALTH_PROBE_TIMEOUT_S = 5.0
+
+    async def _probe_service_health(
+        self, name: str, service: Any
+    ) -> tuple[bool | None, str]:
+        """Return (True healthy, False unhealthy, None unverified) plus detail.
+
+        Recognizes the health conventions actually used across this codebase
+        instead of only an exact ``healthy is False`` field — a service
+        reporting ``is_alive: False``, ``ok: False``, or ``status: "failed"``
+        was previously read as healthy.
+        """
+        probe = None
+        for attr in ("get_status", "health", "get_health"):
+            candidate = getattr(service, attr, None)
+            if callable(candidate):
+                probe = candidate
+                break
+        if probe is None:
+            for attr in ("is_alive", "is_ready", "is_healthy"):
+                candidate = getattr(service, attr, None)
+                if callable(candidate):
+                    probe = candidate
+                    break
+        if probe is None:
+            return None, "no recognized health probe"
+
+        try:
+            if asyncio.iscoroutinefunction(probe):
+                stats = await asyncio.wait_for(probe(), timeout=self.HEALTH_PROBE_TIMEOUT_S)
+            else:
+                # Off-loop: a synchronous probe may block on IO or a lock.
+                stats = await asyncio.wait_for(
+                    asyncio.to_thread(probe), timeout=self.HEALTH_PROBE_TIMEOUT_S
+                )
+        except (TimeoutError, asyncio.TimeoutError):
+            return False, f"health probe exceeded {self.HEALTH_PROBE_TIMEOUT_S:.0f}s"
+        except (OSError, ConnectionError, RuntimeError, TypeError, ValueError, AttributeError) as e:
+            _record_fictional_degradation(
+                e,
+                action=f"marked resilience target {name} degraded after health probe failed",
+            )
+            logger.debug("Skynet health check error for %s: %s", name, e)
+            return False, f"health probe raised {type(e).__name__}: {e}"
+
+        if isinstance(stats, bool):
+            return stats, "" if stats else "health probe returned False"
+        if not isinstance(stats, dict):
+            return None, f"unrecognized health payload {type(stats).__name__}"
+
+        detail = str(
+            stats.get("health_reason")
+            or stats.get("reason")
+            or stats.get("last_error")
+            or "health check reported unhealthy"
+        )[:240]
+
+        for key in ("healthy", "ok", "is_alive", "is_ready", "alive", "ready"):
+            if key in stats:
+                if stats[key] is False:
+                    return False, detail
+                if stats[key] is True:
+                    return True, ""
+        status_text = str(stats.get("status") or stats.get("state") or "").strip().lower()
+        if status_text:
+            if status_text in {"healthy", "ok", "ready", "running", "alive", "active", "up"}:
+                return True, ""
+            if status_text in {"failed", "error", "dead", "down", "unhealthy", "crashed", "stopped"}:
+                return False, detail
+        if stats.get("degraded") is True:
+            return False, detail
+        return None, "health payload carried no recognized verdict"
+
     def stop(self):
         self._running = False
+        # Wake the monitor immediately instead of letting it finish a full
+        # sleep interval — shutdown should be deterministic, not up to 60s.
+        stop_event = getattr(self, "_stop_event", None)
+        if stop_event is not None:
+            try:
+                stop_event.set()
+            except RuntimeError:
+                logger.debug("Skynet stop event could not be set; loop will exit on next tick.")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1046,8 +1239,15 @@ class TemporalDilationScheduler:
         self._is_running = False
         self._synthesis_count = 0
         self._last_synthesis_time = 0.0
+        # Retained product of the last idle synthesis; previously the
+        # generated insight was discarded the moment it was produced.
+        self._last_insight: str = ""
 
     def record_user_activity(self): self._last_user_activity = time.time()
+
+    def last_insight(self) -> str:
+        """Most recent background-synthesis insight (empty if none yet)."""
+        return self._last_insight
 
     async def run_idle_loop(self, brain=None):
         if self._is_running:
@@ -1100,12 +1300,18 @@ class TemporalDilationScheduler:
                         logger.debug("MIST: Skipping synthesis by background policy: %s", reason)
                         continue
                 except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                    # Fail CLOSED. Background synthesis exists only when the
+                    # runtime can afford it; an unreadable policy is not
+                    # permission, and proceeding made the governance
+                    # dependency advisory exactly when the system was already
+                    # degraded enough to break the probe.
                     _record_fictional_degradation(
                         exc,
                         severity="warning",
-                        action="continued idle-synthesis loop after background policy probe failed",
+                        action="skipped idle-synthesis cycle because the background policy probe failed",
                     )
                     logger.debug("MIST background policy probe failed: %s", exc)
+                    continue
 
             flow_controller = getattr(orch, "_flow_controller", None) if orch else None
             if flow_controller and orch:
@@ -1140,7 +1346,13 @@ class TemporalDilationScheduler:
                             synth_prompt = f"Background synthesis: Refine the following context into a proactive insight: {cold_context[:500]}"
                             # We use FAST mode for background synthesis to conserve resources
                             from core.brain.types import ThinkingMode
-                            await asyncio.wait_for(
+                            # RETAIN the generated insight. The result used to
+                            # be awaited and thrown away, and the PRE-generation
+                            # cold context was bottled in its place — so the
+                            # expensive background reasoning was never
+                            # incorporated anywhere and the "idle thinking"
+                            # persisted only its own input.
+                            synthesis_result = await asyncio.wait_for(
                                 brain.think(
                                     synth_prompt,
                                     mode=ThinkingMode.FAST,
@@ -1149,8 +1361,13 @@ class TemporalDilationScheduler:
                                 ),
                                 timeout=45.0,
                             )
+                            insight_text = _coerce_insight_text(synthesis_result)
                             self._last_synthesis_time = time.time()
-                            logger.info("⏳ MIST: Synthesis cycle complete.")
+                            self._last_insight = insight_text
+                            logger.info(
+                                "⏳ MIST: Synthesis cycle complete (%d chars of insight).",
+                                len(insight_text),
+                            )
 
                             # Brainiac: durably bottle the consolidated context so the
                             # idle thinking is retrievable later, not just logged. Stable
@@ -1158,11 +1375,19 @@ class TemporalDilationScheduler:
                             try:
                                 brainiac = ServiceContainer.get("brainiac", default=None)
                                 if brainiac is not None and hasattr(brainiac, "bottle"):
+                                    # Bottle the INSIGHT (with its source
+                                    # context as provenance) rather than the
+                                    # raw pre-generation context alone.
+                                    bottled = (
+                                        f"{insight_text}\n\n---\nsource context:\n{cold_context}"
+                                        if insight_text
+                                        else cold_context
+                                    )
                                     await asyncio.wait_for(
-                                        brainiac.bottle("idle-consolidation", cold_context),
+                                        brainiac.bottle("idle-consolidation", bottled),
                                         timeout=20.0,
                                     )
-                                    logger.debug("🫙 Brainiac bottled the consolidated context.")
+                                    logger.debug("🫙 Brainiac bottled the idle insight.")
                             except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, TimeoutError) as _bx:
                                 _record_fictional_degradation(
                                     _bx,
@@ -1209,9 +1434,14 @@ class TemporalDilationScheduler:
                         action="completed idle-synthesis cycle without writing a background insight",
                     )
                     logger.debug("MIST synthesis error: %s", e)
-                
-                # Sleep longer after a synthesis to prevent thrashing
-                await asyncio.sleep(300) 
+
+                # NOTE: no unconditional extra sleep here. A fixed 300s pause
+                # was added to EVERY iteration on top of the 30s poll, so the
+                # documented "check every 30s" cadence was really 330s and
+                # idle/shutdown responsiveness was 11x slower than configured.
+                # Thrash protection is already provided by SYNTHESIS_COOLDOWN_S,
+                # which is enforced against _last_synthesis_time at the top of
+                # the loop and only advances when a synthesis actually ran.
 
     def stop(self): self._is_running = False
 
