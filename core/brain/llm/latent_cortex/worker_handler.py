@@ -110,6 +110,7 @@ _CONFIG_KEYS = {
     "halting",
     "probe_cache",
     "telemetry",
+    "update_gate",
     "verifier_accept_non_regression",
     "verifier_probe_max_tokens",
 }
@@ -268,6 +269,7 @@ def config_from_job(job_config: dict[str, Any] | None) -> CortexConfig:
         telemetry_enabled=_typed_value(raw, "telemetry", True, bool),
         probe_cache_enabled=_typed_value(raw, "probe_cache", True, bool),
         halting=raw.get("halting"),
+        update_gate=raw.get("update_gate"),
         branch_correlation_evidence=raw.get("branch_correlation_evidence"),
         critic_blind_spot_evidence=raw.get("critic_blind_spot_evidence"),
     )

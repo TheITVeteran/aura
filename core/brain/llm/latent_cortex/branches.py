@@ -51,6 +51,10 @@ from core.brain.llm.latent_cortex.recurrence import (
     rms_match,
 )
 from core.brain.llm.latent_cortex.types import BranchConfig, ComputeBudget, RecurrenceConfig
+from core.brain.llm.latent_cortex.update_gate import (
+    PASSTHROUGH,
+    UpdateGateRuntime,
+)
 from core.brain.llm.latent_cortex.workspace import (
     LatentWorkspace,
     _role_seed,
@@ -112,6 +116,8 @@ class BranchState:
     initial_hypothesis_sha256: str = ""
     recurrent_grounding_trace: list[dict[str, Any]] = field(default_factory=list)
     loop_stability_trace: list[dict[str, Any]] = field(default_factory=list)
+    update_acceptance_trace: list[dict[str, Any]] = field(default_factory=list)
+    update_gate: UpdateGateRuntime | None = None
     last_loop_delta: Any = None
 
     def to_receipt(self) -> dict[str, Any]:
@@ -421,7 +427,7 @@ class BranchEnsemble:
                 if alpha_override is not None
                 else alpha_at(self.recurrence, branch.steps)
             )
-            z_next = recurrence_step(
+            proposal = recurrence_step(
                 branch.z,
                 runner,
                 cache,
@@ -432,6 +438,43 @@ class BranchEnsemble:
                 anchor=branch.anchor,
                 alpha_override=alpha_override,
             )
+            proposal = branch.workspace.restore_context_evidence(proposal)
+            proposal_evidence_post = _tensor_sha256(
+                branch.workspace.select_slots(proposal, evidence_slots)
+            )
+            if proposal_evidence_post != evidence_pre:
+                raise RuntimeError(
+                    "sealed recurrent evidence changed in an update proposal"
+                )
+            proposal_hypothesis_post = _tensor_sha256(
+                branch.workspace.select_slots(proposal, hypothesis_slots)
+            )
+            proposal_reasoning_state = branch.workspace.select_slots(
+                proposal,
+                reasoning_slots,
+            )
+            proposal_reasoning_sha256 = _tensor_sha256(
+                proposal_reasoning_state
+            )
+            evidence_state = (
+                branch.workspace.select_slots(branch.anchor, evidence_slots)
+                if evidence_slots
+                else None
+            )
+            gate = branch.update_gate or UpdateGateRuntime(mode=PASSTHROUGH)
+            gate_decision = gate.evaluate(
+                reasoning_pre_state,
+                proposal_reasoning_state,
+                reasoning_anchor_state,
+                evidence_state=evidence_state,
+                previous_residual=(
+                    float(branch.loop_stability_trace[-1]["residual"])
+                    if continuous
+                    else None
+                ),
+                previous_delta=branch.last_loop_delta if continuous else None,
+            )
+            z_next = proposal if gate_decision.accepted else branch.z
             z_next = branch.workspace.restore_context_evidence(z_next)
             evidence_post = _tensor_sha256(
                 branch.workspace.select_slots(z_next, evidence_slots)
@@ -453,7 +496,7 @@ class BranchEnsemble:
             reasoning_post_sha256 = _tensor_sha256(reasoning_post_state)
             stability, branch.last_loop_delta = transition_metrics(
                 reasoning_pre_state,
-                reasoning_post_state,
+                proposal_reasoning_state,
                 reasoning_anchor_state,
                 alpha=effective_alpha,
                 convergence_eps=self.recurrence.convergence_eps,
@@ -471,15 +514,39 @@ class BranchEnsemble:
                     "window_start": start,
                     "window_end": end,
                     "hypothesis_pre_sha256": hypothesis_pre,
-                    "hypothesis_post_sha256": hypothesis_post,
+                    "hypothesis_post_sha256": proposal_hypothesis_post,
                     "reasoning_pre_sha256": reasoning_pre_sha256,
-                    "reasoning_post_sha256": reasoning_post_sha256,
+                    "reasoning_post_sha256": proposal_reasoning_sha256,
                     "anchor_sha256": anchor_sha256,
                     "continuous_from_previous": continuous,
-                    "disposition": "accepted",
+                    "disposition": (
+                        "accepted"
+                        if gate_decision.accepted
+                        else "quality_rejected"
+                    ),
                     "divergence_reason": "",
-                    "containment_action": "",
+                    "containment_action": (
+                        "" if gate_decision.accepted else "retain_previous"
+                    ),
                     **stability,
+                }
+            )
+            branch.update_acceptance_trace.append(
+                {
+                    "ordinal": len(branch.update_acceptance_trace),
+                    "branch_step": branch.steps,
+                    "prior_hypothesis_sha256": hypothesis_pre,
+                    "proposal_hypothesis_sha256": proposal_hypothesis_post,
+                    "admitted_hypothesis_sha256": hypothesis_post,
+                    "prior_reasoning_sha256": reasoning_pre_sha256,
+                    "proposal_reasoning_sha256": proposal_reasoning_sha256,
+                    "admitted_reasoning_sha256": reasoning_post_sha256,
+                    "probability": gate_decision.probability,
+                    "threshold": gate_decision.threshold,
+                    "accepted": gate_decision.accepted,
+                    "reason": gate_decision.reason,
+                    "features": dict(gate_decision.features),
+                    "features_sha256": gate_decision.features_sha256,
                 }
             )
             branch.recurrent_grounding_trace.append(
@@ -503,8 +570,16 @@ class BranchEnsemble:
                 element_reads=2 * committed_slots * hidden,
                 host_scalar_ops=2 * committed_slots * hidden,
             )
+            budget.charge_tensor_work(
+                "recurrent_update_acceptance",
+                element_reads=(
+                    4 * len(reasoning_slots) + len(evidence_slots)
+                )
+                * hidden,
+                host_scalar_ops=64,
+            )
             residual = relative_residual(
-                reasoning_post_state,
+                proposal_reasoning_state,
                 reasoning_pre_state,
             )
             score = (

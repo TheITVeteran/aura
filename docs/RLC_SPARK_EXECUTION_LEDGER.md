@@ -118,6 +118,10 @@ After CP338, the published total is record 399: 67-334 forecast records remain,
 checkpoint-count completion is 54.4%-85.6%, and the midpoint planning estimate
 is 66.6%.
 
+After CP339, the published total is record 400: 66-333 forecast records remain,
+checkpoint-count completion is 54.6%-85.8%, and the midpoint planning estimate
+is 66.7%.
+
 ## Code-grounded baseline and ownership
 
 The four-slice static audit covered the neural core, epistemic/verifier paths,
@@ -128,9 +132,9 @@ baseline below is exhaustive over SPARK-001 through SPARK-072:
 - `ACCEPTED`: SPARK-001, SPARK-005, SPARK-006, SPARK-007, SPARK-008, SPARK-009,
   SPARK-010, SPARK-011, SPARK-012, SPARK-014, SPARK-015, SPARK-016,
   SPARK-017, SPARK-018, SPARK-019, SPARK-020, SPARK-021, SPARK-022,
-  SPARK-023, SPARK-024.
+  SPARK-023, SPARK-024, SPARK-025.
 - `PARTIAL`: SPARK-003,
-  SPARK-025, SPARK-026, SPARK-027, SPARK-035, SPARK-039, SPARK-040, SPARK-041,
+  SPARK-026, SPARK-027, SPARK-035, SPARK-039, SPARK-040, SPARK-041,
   SPARK-042, SPARK-051, SPARK-052, SPARK-053, SPARK-054, SPARK-055,
   SPARK-056, SPARK-058, SPARK-060, SPARK-062, SPARK-063, SPARK-065, SPARK-066,
   SPARK-067.
@@ -655,9 +659,47 @@ before those dependencies close is not admissible.
   mechanics and fixed-depth train/live update parity. It does not claim every
   adaptive controller trajectory was a training trajectory, or establish a
   resident-32B capability gain.
-- [ ] **SPARK-025 - Learned accept/discard gate.** Score each latent update
+- [x] **SPARK-025 - Learned accept/discard gate.** Score each latent update
   against evidence/process quality and retain the previous state when the
   proposal is not credibly better; prove the gate changes outcomes.
+  Accepted at CP339 at the mechanism, calibration, and causal-state boundary.
+  A portable sigmoid head now scores every proposed recurrent transition from
+  thirteen bounded features covering proposal residual, fixed-anchor and
+  immutable-evidence alignment/distance changes, norm drift, contraction,
+  oscillation, and evidence availability. Training examples require unique
+  identities, boolean independently verified improvement labels, and verifier-
+  receipt SHA-256 commitments. Training and held-out calibration sets must be
+  disjoint and contain both positive and negative outcomes.
+
+  A head cannot enter learned mode unless held-out calibration has at least 32
+  examples, at least eight examples of each class, AUC >= 0.75, balanced
+  accuracy >= 0.70, Brier <= 0.25, ten-bin ECE <= 0.20, and false-accept rate <=
+  0.25. The selected threshold is at least 0.5. Its artifact commits feature
+  schema, training and calibration dataset hashes, metrics, and threshold; the
+  worker requires the exact configured file SHA-256. Publication is atomic and
+  fsync-backed. Loading is regular-file-only, no-follow, stable-inode, and
+  bounded to 1 MiB with a separately bounded expanded NPZ payload and exact
+  parameter shapes, so learned mode refuses a missing, changed, symlinked,
+  racing, oversized, expansion-heavy, malformed, uncalibrated, or unpinned
+  head. Transition-example invariants apply to direct construction as well as
+  the convenience constructor.
+
+  Runtime admission occurs before branch-state mutation. An accepted proposal
+  becomes the next hypothesis; a rejected proposal remains visible but the
+  exact prior hypothesis is retained. The receipt binds prior, proposal, and
+  admitted hypothesis/reasoning hashes, feature values/hash, calibrated
+  probability, threshold, decision, head manifest/digest, loop disposition,
+  recurrent grounding, and selected branch. The service reloads the pinned head
+  and recomputes every probability and decision after JSON transport, rejecting
+  rehashed lies. Host/tensor feature work is charged to the resource ledger.
+
+  A fitted-head tiny-Qwen causal test accepts one real transition, rejects a
+  later one, proves admitted==prior and proposal!=admitted for the rejection,
+  and changes the downstream first-logits digest relative to passthrough. The
+  default remains explicitly receipted passthrough until a resident-32B head is
+  trained and pinned. This checkpoint does not claim resident utility,
+  generalization, positive interaction, or frontier capability; those require
+  the later training and campaign gates.
 - [ ] **SPARK-026 - Learned stop/convergence gate.** Combine fixed-point
   residuals, calibrated quality, uncertainty, and expected value of additional
   compute; prove easy tasks halt earlier without harming hard-task accuracy.
@@ -929,17 +971,28 @@ disposition, and service-reconstructed certificates are now causal runtime
 contracts. This does not create a capability result; the negative capability
 verdict is unchanged.
 
-Validation: focused recurrence, multi-depth training parity, service
-reconstruction, and tamper tests pass 33/33. The affected engine, schedule,
-branch, escape, optimizer, fast-weight, probe-cache, recurrence-native, and GRPO
-suite passes 196/196. The final fixed-snapshot RLC, latent-cortex,
-recurrence/training, global-workspace, GWT, and execution-controller ownership
-gate passes 1251/1251 in 767.83 seconds. Strict focused Ruff, bytecode
-compilation, and `git diff --check` pass. No resident 32B capability campaign
-was run, and the negative frontier verdict is unchanged.
+CP339 closes the learned accept/discard mechanism and its calibrated artifact,
+runtime state-selection, accounting, and independent reconstruction contracts.
+The fitted-head causal test changes a real tiny-Qwen recurrent trajectory and
+downstream logits. No resident-32B head or capability campaign ran; default
+execution therefore remains explicit passthrough and the negative capability
+verdict is unchanged.
 
-This is total checkpoint record 399. The revised forecast remains 466-733 total
-records, now approximately 67-334 records after this checkpoint. Checkpoint-
-count completion is approximately 54.4%-85.6%, with a midpoint planning
-estimate of 66.6%. Next: publish CP338, then implement SPARK-025's learned,
-evidence-grounded accept/discard gate with causal outcome proof.
+Validation: the focused acceptance-head and causal-transition suite passes 6/6;
+the combined acceptance/service reconstruction boundary passes 7/7; and the
+affected engine, recurrence, schedule, branch, wiring, and recurrence-native
+suite passes 203/203. The first full ownership gate exposed a real evidence-
+slot/reasoning-slot shape mismatch in relative-distance extraction. The repair
+uses a pooled-vector distance when the two immutable groups have different slot
+counts, and the targeted ingress regression then passes 6/6. The captured final
+fixed-snapshot RLC, latent-cortex, recurrence/training, global-workspace, GWT,
+and execution-controller ownership gate passes 1300/1300 in 776.80 seconds.
+Strict focused Ruff, bytecode compilation, and `git diff --check` pass. No
+resident 32B capability campaign was run, and the negative frontier verdict is
+unchanged.
+
+This is total checkpoint record 400. The revised forecast remains 466-733 total
+records, now approximately 66-333 records after this checkpoint. Checkpoint-
+count completion is approximately 54.6%-85.8%, with a midpoint planning
+estimate of 66.7%. Next: publish CP339, then implement SPARK-026's calibrated
+learned stop/convergence and expected-value-of-compute gate.

@@ -33,7 +33,8 @@ seed M thought slots (mean prompt embedding + role anchors + jitter)
 slots ──prelude [0..p)──▶ Z₀ at layer p          (slot KV persists for [0..p))
 loop over schedule program π (windows within [p..c), repeats, α):
     Z̃   = Window(Zₜ)          # slots attend to prompt KV + own KV, RoPE-stable
-    Zₜ₊₁ = RMSMatch((1-αₜ)Zₜ + αₜ·RMSMatch(Z̃, A), A)
+    Uₜ   = RMSMatch((1-αₜ)Zₜ + αₜ·RMSMatch(Z̃, A), A)
+    Zₜ₊₁ = Uₜ if CalibratedAccept(Evidence, Zₜ, Uₜ, A) else Zₜ
                                                         # A: fixed post-prelude anchor
     slot KV REWOUND every pass  (only clean final pass persists)
     halting: fixed-point residual, divergence guard, overthinking revert
@@ -55,6 +56,9 @@ changes the answer — that is the causality contract.
 - **RMSMatch**: per-position RMS rescaling toward the immutable post-prelude anchor,
   ratio-clamped — keeps Z on the activation manifold the next layers expect.
 - **α-interpolation** with configurable schedule (constant / cosine decay).
+- **Calibrated update admission**: a pinned learned sigmoid scores bounded
+  evidence/anchor/dynamics features before state mutation; below-threshold
+  proposals are receipted and discarded while the exact prior state persists.
 - **Divergence guard**: NaN or norm-ratio blowout ⇒ halt, revert to best state.
 - **Fixed-point halting**: relative residual ‖Zₜ₊₁−Zₜ‖/‖Zₜ‖ < ε ⇒ converged.
 - **Overthinking guard**: track best-scoring state; revert on halt if the

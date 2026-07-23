@@ -1588,6 +1588,9 @@ class LatentCortexEngine:
         if halting_head is not None:
             for branch in ensemble.branches:
                 branch.halting.halting_head = halting_head
+        update_gate = self._resolve_update_gate()
+        for branch in ensemble.branches:
+            branch.update_gate = update_gate
         if ensemble.branches and ensemble.branches[0].workspace.context_slots:
             seeded = ensemble.branches[0].workspace.context_slots
             from core.brain.llm.latent_cortex.cognitive_context import (
@@ -2222,6 +2225,25 @@ class LatentCortexEngine:
             kv_bound=runner.kv_bound_receipt(),
             recurrent_grounding=receipt.recurrent_grounding,
         )
+        from core.brain.llm.latent_cortex.update_gate import (
+            LEARNED as LEARNED_UPDATE_GATE,
+        )
+        from core.brain.llm.latent_cortex.update_gate import (
+            build_update_gate_receipt,
+        )
+
+        receipt.update_acceptance = build_update_gate_receipt(
+            branches=list(ensemble.branches),
+            selected_branch=winner.index,
+            gate=update_gate,
+            recurrent_grounding=receipt.recurrent_grounding,
+            loop_stability=receipt.loop_stability,
+        )
+        if (
+            update_gate.mode == LEARNED_UPDATE_GATE
+            and not receipt.update_acceptance["head_was_causal"]
+        ):
+            receipt.flag("learned_update_gate_not_causal")
         escape_receipts: dict[str, Any] = {}
         for branch in ensemble.branches:
             if branch.escape is not None and branch.escape.attempts:
@@ -2828,6 +2850,34 @@ class LatentCortexEngine:
             # learned mode is not yet earning anything.
             logger.info("Learned halting head is identity-zero; policy unchanged.")
         return head
+
+    def _resolve_update_gate(self):
+        """Load the pinned calibrated per-transition admission head."""
+
+        from core.brain.llm.latent_cortex.update_gate import UpdateGateRuntime
+
+        config = self.config.update_gate
+        if not config or str(config.get("mode", "passthrough")) == "passthrough":
+            return UpdateGateRuntime.from_config(config)
+        path = Path(str(config.get("head_path", ""))).expanduser()
+        try:
+            stat = path.stat()
+        except OSError as exc:
+            raise ValueError(
+                f"learned update gate requested but head is unreadable: {path}"
+            ) from exc
+        cache_key = (
+            str(path),
+            str(config.get("head_sha256", "")),
+            stat.st_mtime_ns,
+            stat.st_size,
+        )
+        cached = getattr(self, "_update_gate_cache", None)
+        if cached is not None and cached[0] == cache_key:
+            return cached[1]
+        gate = UpdateGateRuntime.from_config(config)
+        self._update_gate_cache = (cache_key, gate)
+        return gate
 
     # ── Fast-weight helpers ─────────────────────────────────────────────
     def _enforce_fast_weight_canaries(

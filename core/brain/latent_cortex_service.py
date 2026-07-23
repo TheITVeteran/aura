@@ -781,6 +781,25 @@ class LatentCortexService:
             )
         except (ImportError, TypeError, ValueError):
             errors.append("loop_stability_unproven")
+        try:
+            from core.brain.llm.latent_cortex.update_gate import (
+                UpdateGateRuntime,
+                validate_update_gate_receipt,
+            )
+            from core.brain.llm.latent_cortex.worker_handler import config_from_job
+
+            executed_config = config_from_job(config)
+            expected_update_gate = UpdateGateRuntime.from_config(
+                executed_config.update_gate
+            )
+            validate_update_gate_receipt(
+                receipt.get("update_acceptance"),
+                expected_gate=expected_update_gate,
+                recurrent_grounding=receipt.get("recurrent_grounding"),
+                loop_stability=receipt.get("loop_stability"),
+            )
+        except (ImportError, OSError, TypeError, ValueError):
+            errors.append("update_acceptance_unproven")
         one_shot_slots = [
             row
             for row in (receipt.get("cognitive_slots") or [])

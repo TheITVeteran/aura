@@ -477,6 +477,10 @@ class CortexConfig:
     # that cannot load REFUSES the episode rather than silently reporting
     # learned allocation while running the residual rule.
     halting: dict[str, Any] | None = None
+    # Per-transition accept/discard policy. Learned mode requires a calibrated
+    # artifact and its exact SHA-256; an unreadable or changed head refuses the
+    # episode. None/passthrough preserves historical recurrence explicitly.
+    update_gate: dict[str, Any] | None = None
     # Checked historical branch-error correlations. None is an explicit
     # bootstrap state: duplicate programs still collapse, but no empirical
     # relationship is invented before independently graded paired outcomes.
@@ -718,6 +722,45 @@ class CortexConfig:
                 unknown = set(self.halting) - {"mode", "head_path", "threshold"}
                 if unknown:
                     problems.append(f"halting has unknown keys: {sorted(unknown)}")
+        if self.update_gate is not None:
+            if not isinstance(self.update_gate, dict):
+                problems.append("update_gate must be a mapping or null")
+            else:
+                mode = self.update_gate.get("mode", "passthrough")
+                if mode not in {"passthrough", "learned"}:
+                    problems.append(
+                        "update_gate.mode must be passthrough or learned"
+                    )
+                head_path = self.update_gate.get("head_path")
+                head_sha256 = self.update_gate.get("head_sha256")
+                if mode == "learned" and (
+                    not isinstance(head_path, str) or not head_path.strip()
+                ):
+                    problems.append("update_gate.learned requires head_path")
+                if mode == "learned" and (
+                    not isinstance(head_sha256, str)
+                    or len(head_sha256) != 64
+                    or any(
+                        character not in "0123456789abcdef"
+                        for character in head_sha256
+                    )
+                ):
+                    problems.append("update_gate.learned requires head_sha256")
+                if mode == "passthrough" and (
+                    head_path is not None or head_sha256 is not None
+                ):
+                    problems.append(
+                        "update_gate.passthrough cannot carry a head"
+                    )
+                unknown = set(self.update_gate) - {
+                    "mode",
+                    "head_path",
+                    "head_sha256",
+                }
+                if unknown:
+                    problems.append(
+                        f"update_gate has unknown keys: {sorted(unknown)}"
+                    )
         if self.escape is not None:
             if not isinstance(self.escape, dict):
                 problems.append("escape must be a mapping or null")
@@ -895,6 +938,9 @@ class EpisodeReceipt:
     # Public numerical evidence for fixed-anchor dynamics, finite states,
     # bounded KV positions, and the exact train/live update implementation.
     loop_stability: dict[str, Any] = field(default_factory=dict)
+    # Every recurrent proposal's calibrated admission decision, including the
+    # exact prior/proposal/admitted state commitments and learned-head identity.
+    update_acceptance: dict[str, Any] = field(default_factory=dict)
     # Optional one-shot datastore observation admitted before recurrence.
     # Empty is backward-compatible; a populated receipt is independently
     # validated by the service and bound to its immutable evidence slot.
@@ -1166,6 +1212,7 @@ class EpisodeReceipt:
             "cognitive_slots": [dict(row) for row in self.cognitive_slots],
             "recurrent_grounding": dict(self.recurrent_grounding),
             "loop_stability": dict(self.loop_stability),
+            "update_acceptance": dict(self.update_acceptance),
             "nonparametric_memory": dict(self.nonparametric_memory),
             "runtime_operation_authority": dict(
                 self.runtime_operation_authority

@@ -25752,3 +25752,73 @@ and a 66.6% midpoint planning estimate. Next: publish CP338, then implement
 SPARK-025's learned evidence/process accept-discard gate and prove its causal
 effect on retained states and outcomes. Final multi-hour soaks remain deferred
 until every shorter gate is green.
+
+## Checkpoint 2026-07-22-339: Recurrent Proposals Must Earn Admission
+
+Every recurrent proposal now passes through an explicit update-acceptance
+boundary before it can replace the branch hypothesis. The portable sigmoid head
+uses thirteen bounded features over proposal residual, immutable-anchor and
+evidence alignment/distance change, norm drift, contraction, oscillation, and
+evidence availability. Training examples require unique identities, independently
+verified boolean improvement labels, and verifier-receipt SHA-256 commitments.
+Training and calibration sets must be disjoint and each must contain enough
+positive and negative examples to make the admission metrics meaningful.
+
+Learned mode is unavailable unless held-out calibration contains at least 32
+examples and eight examples of each class, with AUC >= 0.75, balanced accuracy
+>= 0.70, Brier <= 0.25, ten-bin ECE <= 0.20, and false-accept rate <= 0.25. The
+threshold is at least 0.5. The artifact binds the exact feature schema, training
+and calibration dataset hashes, metrics, and threshold. It is published with
+atomic replace plus file and parent-directory fsync, and loaded only from a
+stable, regular, no-follow file of at most 1 MiB whose SHA-256 matches the
+configured pin. Missing, changed, racing, symlinked, oversized, malformed,
+uncalibrated, or unpinned heads fail before learned execution.
+
+The loader also bounds the expanded NPZ payload before NumPy allocation,
+requires exact member and parameter shapes, and rejects encrypted or ambiguous
+containers. Direct construction cannot bypass transition-example identity,
+feature, label-type, or verifier-receipt validation.
+
+The branch path distinguishes prior state, proposed state, and admitted state.
+An accepted proposal becomes the next hypothesis. A rejected proposal remains
+observable for diagnosis and stopping logic, but the exact prior hypothesis is
+retained. Receipts bind all three state identities, features, probability,
+threshold, decision, model manifest and digest, loop disposition, recurrent
+grounding, selected branch, and aggregate counts, including a separate causal-
+rejection count that advances only when the rejected proposal actually differs
+from the admitted state. The service independently reloads the pinned artifact
+and recomputes every probability and decision after JSON transport. Rehashing a
+changed probability, decision, transition, or model identity does not make the
+receipt valid.
+
+A fitted-head causal test on real tiny-Qwen execution accepts one transition,
+rejects a later transition, proves that rejected admission equals the exact
+prior while differing from the proposal, and produces a different downstream
+first-logits digest from explicit passthrough. Feature extraction is charged to
+the resource ledger. The first full ownership run also exposed a real runtime
+shape defect when immutable evidence and reasoning used different slot counts;
+relative distance now compares their pooled vectors in that case, and a focused
+slot-ingress regression preserves the repair.
+
+Validation: the focused head, persistence, calibration, artifact-attack, and
+causal-transition suite passes 6/6; the combined acceptance/service
+reconstruction boundary passes 7/7; and the affected engine, recurrence,
+schedule, branch, wiring, and recurrence-native suite passes 203/203. The
+repaired slot-ingress boundary
+passes 6/6. The captured final unchanged-snapshot RLC, latent-cortex,
+recurrence/training, global-workspace, GWT, and execution-controller ownership
+gate passes 1300/1300 in 776.80 seconds. Focused Ruff, bytecode compilation, and
+`git diff --check` pass.
+
+SPARK-025 closes at the mechanism, calibration, and causal-state boundary.
+Default execution remains explicitly receipted passthrough until a calibrated,
+pinned resident head exists. No resident-32B learned head or capability campaign
+ran, so this checkpoint does not establish utility, generalization,
+adapter/RLC positive interaction, or frontier capability. The capability
+verdict remains negative/no-signal.
+
+This is total checkpoint record 400. The forecast remains 466-733 total records,
+approximately 66-333 records remaining, 54.6%-85.8% checkpoint-count completion,
+and a 66.7% midpoint planning estimate. Next: publish CP339, then implement
+SPARK-026's calibrated learned stop/convergence and expected-value-of-compute
+gate. Final multi-hour soaks remain deferred until every shorter gate is green.

@@ -92,7 +92,7 @@ def build_loop_stability_receipt(
             for row in branch["transitions"]
         ),
         "all_accepted_states_anchor_bounded": all(
-            row["disposition"] == "contained_divergence"
+            row["disposition"] in {"contained_divergence", "quality_rejected"}
             or (
                 (1.0 / clip) - 1e-5
                 <= float(row["anchor_rms_ratio"])
@@ -261,8 +261,11 @@ def validate_loop_stability_receipt(
                 or row["window_end"] != grounded.get("window_end")
                 or row["hypothesis_pre_sha256"]
                 != grounded.get("hypothesis_pre_sha256")
-                or row["hypothesis_post_sha256"]
-                != grounded.get("hypothesis_post_sha256")
+                or (
+                    row["disposition"] != "quality_rejected"
+                    and row["hypothesis_post_sha256"]
+                    != grounded.get("hypothesis_post_sha256")
+                )
                 or not _is_sha256(row["hypothesis_pre_sha256"])
                 or not _is_sha256(row["hypothesis_post_sha256"])
                 or not _is_sha256(row["reasoning_pre_sha256"])
@@ -270,7 +273,7 @@ def validate_loop_stability_receipt(
                 or row["anchor_sha256"] != branch["anchor_sha256"]
                 or type(row["continuous_from_previous"]) is not bool
                 or row["disposition"]
-                not in {"accepted", "contained_divergence"}
+                not in {"accepted", "contained_divergence", "quality_rejected"}
                 or not isinstance(row["divergence_reason"], str)
                 or not isinstance(row["containment_action"], str)
                 or any(not _finite(row[name]) for name in finite_fields)
@@ -291,6 +294,12 @@ def validate_loop_stability_receipt(
             if row["disposition"] == "accepted":
                 if row["divergence_reason"] or row["containment_action"]:
                     raise ValueError("accepted transition claims containment")
+            elif row["disposition"] == "quality_rejected":
+                if (
+                    row["divergence_reason"]
+                    or row["containment_action"] != "retain_previous"
+                ):
+                    raise ValueError("quality-rejected transition is malformed")
             elif (
                 not row["divergence_reason"].startswith("diverged")
                 or (
@@ -423,7 +432,7 @@ def validate_loop_stability_receipt(
         )
     )
     all_accepted_states_anchor_bounded = all(
-        row["disposition"] == "contained_divergence"
+        row["disposition"] in {"contained_divergence", "quality_rejected"}
         or (1.0 / clip) - 1e-5
         <= float(row["anchor_rms_ratio"])
         <= clip + 1e-5

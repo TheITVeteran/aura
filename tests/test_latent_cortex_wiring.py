@@ -209,7 +209,16 @@ def _recurrent_grounding_fields(config, *, steps=1):
     from core.brain.llm.latent_cortex.recurrent_grounding import (
         build_recurrent_grounding_receipt,
     )
+    from core.brain.llm.latent_cortex.update_gate import (
+        PASSTHROUGH,
+        UpdateGateRuntime,
+        build_update_gate_receipt,
+    )
     from core.brain.llm.latent_cortex.worker_handler import config_from_job
+    from core.learning.update_acceptance import (
+        FEATURE_NAMES,
+        UPDATE_ACCEPTANCE_FEATURE_SCHEMA,
+    )
 
     executed = config_from_job(config)
     steps = min(steps, executed.recurrence.max_steps)
@@ -220,6 +229,7 @@ def _recurrent_grounding_fields(config, *, steps=1):
         initial = _digest(f"hypothesis-{index}-0")
         transitions = []
         stability = []
+        update_acceptance = []
         prior = initial
         reasoning_prior = _digest(f"reasoning-{index}-0")
         anchor_sha = _digest(f"anchor-{index}")
@@ -286,6 +296,30 @@ def _recurrent_grounding_fields(config, *, steps=1):
                     "all_finite": True,
                 }
             )
+            features = {name: 0.0 for name in FEATURE_NAMES}
+            update_acceptance.append(
+                {
+                    "ordinal": step,
+                    "branch_step": step,
+                    "prior_hypothesis_sha256": prior,
+                    "proposal_hypothesis_sha256": post,
+                    "admitted_hypothesis_sha256": post,
+                    "prior_reasoning_sha256": reasoning_prior,
+                    "proposal_reasoning_sha256": reasoning_post,
+                    "admitted_reasoning_sha256": reasoning_post,
+                    "probability": 1.0,
+                    "threshold": 0.0,
+                    "accepted": True,
+                    "reason": "passthrough",
+                    "features": features,
+                    "features_sha256": canonical_sha256(
+                        {
+                            "schema": UPDATE_ACCEPTANCE_FEATURE_SCHEMA,
+                            "values": features,
+                        }
+                    ),
+                }
+            )
             prior = post
             reasoning_prior = reasoning_post
             prior_residual = residual
@@ -301,6 +335,7 @@ def _recurrent_grounding_fields(config, *, steps=1):
                 initial_hypothesis_sha256=initial,
                 recurrent_grounding_trace=transitions,
                 loop_stability_trace=stability,
+                update_acceptance_trace=update_acceptance,
             )
         )
     receipt = build_recurrent_grounding_receipt(
@@ -356,6 +391,14 @@ def _recurrent_grounding_fields(config, *, steps=1):
         kv_bound=kv_bound,
         recurrent_grounding=receipt,
     )
+    update_gate = UpdateGateRuntime(mode=PASSTHROUGH)
+    update_acceptance_receipt = build_update_gate_receipt(
+        branches=branches,
+        selected_branch=0,
+        gate=update_gate,
+        recurrent_grounding=receipt,
+        loop_stability=loop_stability,
+    )
     return {
         "cognitive_slots": [],
         "selected_branch": 0,
@@ -363,6 +406,7 @@ def _recurrent_grounding_fields(config, *, steps=1):
         "coda_start": coda_start,
         "recurrent_grounding": receipt,
         "loop_stability": loop_stability,
+        "update_acceptance": update_acceptance_receipt,
     }
 
 
@@ -2249,6 +2293,38 @@ def test_service_reconstructs_loop_stability_and_rejects_rehashed_lies():
     )
     assert "loop_stability_unproven" in (
         LatentCortexService._receipt_contract_errors(forged_window, config)
+    )
+
+
+def test_service_reconstructs_update_gate_and_rejects_rehashed_decision_lie():
+    import json
+
+    from core.brain.llm.latent_cortex.loop_core import canonical_sha256
+
+    config = {"n_slots": 8, "n_branches": 2}
+    receipt = {
+        **_identity_receipt(),
+        "n_slots": 8,
+        "n_branches": 2,
+        **_recurrent_grounding_fields(config, steps=3),
+    }
+    receipt = json.loads(json.dumps(receipt, sort_keys=True))
+    assert "update_acceptance_unproven" not in (
+        LatentCortexService._receipt_contract_errors(receipt, config)
+    )
+
+    forged = copy.deepcopy(receipt)
+    update_gate = forged["update_acceptance"]
+    update_gate["branches"][0]["transitions"][0]["probability"] = 0.25
+    update_gate["receipt_sha256"] = canonical_sha256(
+        {
+            key: value
+            for key, value in update_gate.items()
+            if key != "receipt_sha256"
+        }
+    )
+    assert "update_acceptance_unproven" in (
+        LatentCortexService._receipt_contract_errors(forged, config)
     )
 
 
