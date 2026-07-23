@@ -16,6 +16,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from core.runtime.errors import record_degradation
 from core.runtime.resource_observation import ResourceObserver, get_resource_observer
 
 
@@ -69,7 +70,14 @@ class ViabilityState:
     @property
     def viability(self) -> float:
         parts = [self.energy, self.tool_budget, self.memory_budget, self.storage_budget, self.integrity]
-        return max(0.0, min(1.0, sum(parts) / len(parts)))
+        mean = sum(parts) / len(parts)
+        # A plain mean lets four healthy dimensions fully mask an EXHAUSTED
+        # critical one (tool/storage/memory/integrity at 0). Cap viability by
+        # the worst dimension so a critically-low resource pulls the envelope
+        # down instead of being averaged away: at min_dim=0 viability is capped
+        # at 0.3; at min_dim=1 there is no cap.
+        min_dim = min(parts)
+        return max(0.0, min(1.0, mean, 0.3 + 0.7 * min_dim))
 
 
 @dataclass(frozen=True)
@@ -102,7 +110,18 @@ class ResourceStakesLedger:
         initial: ViabilityState | None = None,
         observer: ResourceObserver | None = None,
     ) -> None:
-        self.db_path = Path(db_path or "data/resource_stakes.sqlite3")
+        # Resolve the default path against the config data dir (not the process
+        # cwd) so different launch directories share one viability history
+        # instead of forking independent ledgers.
+        if db_path is None:
+            try:
+                from core.config import config
+                default_path = config.paths.data_dir / "resource_stakes" / "stakes.sqlite3"
+            except (ImportError, AttributeError, RuntimeError):
+                default_path = Path("data/resource_stakes.sqlite3").resolve()
+            self.db_path = Path(default_path)
+        else:
+            self.db_path = Path(db_path)
         self._observer = observer
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
@@ -301,10 +320,16 @@ class ResourceStakesLedger:
         )
 
     def events(self, limit: int = 50) -> list[dict[str, object]]:
+        # Bound the LIMIT: a negative value forwarded to SQLite removes the
+        # limit entirely and can exhaust memory on a large ledger.
+        try:
+            bounded = max(1, min(1000, int(limit)))
+        except (TypeError, ValueError):
+            bounded = 50
         with sqlite3.connect(self.db_path) as conn:
             rows = conn.execute(
                 "SELECT kind, payload, created_at FROM resource_events ORDER BY id DESC LIMIT ?",
-                (int(limit),),
+                (bounded,),
             ).fetchall()
         return [
             {"kind": kind, "payload": json.loads(payload), "created_at": created_at}
@@ -351,20 +376,33 @@ class ResourceStakesLedger:
             )
 
     def _load_state(self) -> ViabilityState | None:
-        with sqlite3.connect(self.db_path) as conn:
-            row = conn.execute("SELECT payload FROM resource_state WHERE id = 1").fetchone()
-        if row is None:
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                row = conn.execute("SELECT payload FROM resource_state WHERE id = 1").fetchone()
+            if row is None:
+                return None
+            payload = json.loads(row[0])
+            if not isinstance(payload, dict):
+                raise ValueError("resource_state payload is not a mapping")
+            # Every loaded scalar passes through _clamp01 (finite + [0,1]) so a
+            # corrupt/hostile row cannot inject NaN/inf/out-of-range budgets.
+            return ViabilityState(
+                energy=_clamp01(payload.get("energy", 1.0)),
+                tool_budget=_clamp01(payload.get("tool_budget", 1.0)),
+                memory_budget=_clamp01(payload.get("memory_budget", 1.0)),
+                storage_budget=_clamp01(payload.get("storage_budget", 1.0)),
+                integrity=_clamp01(payload.get("integrity", 1.0)),
+                suspended_capabilities=tuple(
+                    str(c)[:80] for c in (payload.get("suspended_capabilities") or [])
+                    if isinstance(c, str)
+                ),
+                degradation_events=max(0, int(payload.get("degradation_events", 0) or 0)),
+            )
+        except (sqlite3.Error, json.JSONDecodeError, ValueError, TypeError, KeyError) as exc:
+            # Corrupt/incompatible persisted state must not prevent boot —
+            # quarantine to a clean default rather than propagating.
+            record_degradation("resource_stakes", exc)
             return None
-        payload = json.loads(row[0])
-        return ViabilityState(
-            energy=float(payload["energy"]),
-            tool_budget=float(payload["tool_budget"]),
-            memory_budget=float(payload["memory_budget"]),
-            storage_budget=float(payload["storage_budget"]),
-            integrity=float(payload["integrity"]),
-            suspended_capabilities=tuple(payload.get("suspended_capabilities", [])),
-            degradation_events=int(payload.get("degradation_events", 0)),
-        )
 
     def _save_state(self, state: ViabilityState) -> None:
         with sqlite3.connect(self.db_path) as conn:
@@ -399,4 +437,12 @@ def _state_dict(state: ViabilityState) -> dict[str, object]:
 
 
 def _clamp01(value: float) -> float:
-    return max(0.0, min(1.0, float(value)))
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    # Reject NaN/inf so they cannot create boundary/non-finite state or corrupt
+    # the JSON persisted payload.
+    if v != v or v in (float("inf"), float("-inf")):
+        return 0.0
+    return max(0.0, min(1.0, v))
