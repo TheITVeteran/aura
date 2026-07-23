@@ -217,13 +217,21 @@ class RecordingAsyncApplier:
         return True
 
 
+def _seam_artifact(root, name):
+    """CP126 70c50967: an adapter must be a real artifact before it may load."""
+    adapter_dir = root / name
+    adapter_dir.mkdir(parents=True, exist_ok=True)
+    (adapter_dir / "adapter_config.json").write_text("{}", encoding="utf-8")
+    return str(adapter_dir)
+
+
 @pytest.fixture
 def library(tmp_path):
     lib = ExpertLoRALibrary(manifest_path=tmp_path / "library.json", max_resident=1)
-    lib.register(LoRAAdapter(name="math-a", path=str(tmp_path / "a"),
-                             task_types={"math"}, keywords={"arithmetic"}, quality=0.8))
-    lib.register(LoRAAdapter(name="logic-b", path=str(tmp_path / "b"),
-                             task_types={"logic"}, keywords={"deduction"}, quality=0.7))
+    assert lib.register(LoRAAdapter(name="math-a", path=_seam_artifact(tmp_path, "a"),
+                                    task_types={"math"}, keywords={"arithmetic"}, quality=0.8))
+    assert lib.register(LoRAAdapter(name="logic-b", path=_seam_artifact(tmp_path, "b"),
+                                    task_types={"logic"}, keywords={"deduction"}, quality=0.7))
     return lib
 
 

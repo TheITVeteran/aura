@@ -1,6 +1,9 @@
 """Tests for the expert-LoRA library (capacity loophole: disk-resident specialists)."""
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
+
 import pytest
 
 from core.brain.expert_lora_library import ExpertLoRALibrary, LoRAAdapter
@@ -20,15 +23,33 @@ class _RecordingApplier:
         return True
 
 
+# CP126 70c50967: registration now requires an artifact that actually exists
+# and looks like an adapter, so fixtures must materialize one instead of
+# naming a path that was never on disk.
+_ARTIFACT_ROOT: Path | None = None
+
+
 @pytest.fixture
 def lib(tmp_path):
+    global _ARTIFACT_ROOT
+    _ARTIFACT_ROOT = tmp_path / "adapters"
+    _ARTIFACT_ROOT.mkdir(parents=True, exist_ok=True)
     return ExpertLoRALibrary(tmp_path / "lib.json", max_resident=2, applier=_RecordingApplier())
 
 
-def _adapter(name, task_types, keywords, quality=0.5, base_model="Qwen2.5-32B"):
+def _make_artifact(name: str) -> str:
+    root = _ARTIFACT_ROOT if _ARTIFACT_ROOT is not None else Path(tempfile.mkdtemp())
+    adapter_dir = Path(root) / name
+    adapter_dir.mkdir(parents=True, exist_ok=True)
+    (adapter_dir / "adapter_config.json").write_text("{}", encoding="utf-8")
+    return str(adapter_dir)
+
+
+def _adapter(name, task_types, keywords, quality=0.5, base_model="Qwen2.5-32B", size_mb=1.0):
     return LoRAAdapter(
-        name=name, path=f"/adapters/{name}", base_model=base_model,
+        name=name, path=_make_artifact(name), base_model=base_model,
         task_types=set(task_types), keywords=set(keywords), quality=quality,
+        size_mb=size_mb,
     )
 
 
