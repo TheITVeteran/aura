@@ -3405,7 +3405,12 @@ _MEMORY_PIN_CONFIRMATION_WORDS = {
     "noted",
     "pinned",
     "recorded",
+    # Future/base tense too — "I will remember that <content>" is a valid
+    # receipt. The payload-echo check still blocks the content-less generic
+    # "I'll remember it", so the base form is safe to accept here.
+    "remember",
     "remembered",
+    "remembering",
     "saved",
     "stored",
 }

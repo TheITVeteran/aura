@@ -794,7 +794,10 @@ def generate_offline_fallback_response(prompt: str) -> str:
     else:
         subject = "that"
 
+    # No retry-filler ("try again"/"send your message again"): the recovery-no-
+    # echo contract wants a self-contained honest statement, not an instruction
+    # to resend.
     return (
         f"I can't work through {subject} right now — my language backend is "
-        "temporarily unavailable. Please try again in a moment."
+        "temporarily unavailable on my side."
     )

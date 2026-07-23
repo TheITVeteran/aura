@@ -583,10 +583,12 @@ class InferenceGate:
 
         # Last resort: an honest terminal response. Both generation paths have
         # already failed at this point and no asynchronous continuation exists,
-        # so the text must not promise that work is still in progress.
+        # so the text must not promise that work is still in progress NOR fall
+        # back to retry-filler ("try again"/"send your message again"), which the
+        # recovery-no-echo contract forbids as non-substantive.
         return (
             "I couldn't finish generating a response just now — my language "
-            "backend hit an internal problem. Please try again in a moment."
+            "backend hit an internal problem on my side."
         )
 
     def _stabilize_user_facing_text(
