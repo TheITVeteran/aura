@@ -13,6 +13,14 @@ def _actor_without_bus() -> SensoryGateActor:
     actor.browser = None
     actor._is_active = True
     actor._shutdown_event = None
+    # CP126: authority/liveness state the real __init__ installs.
+    actor._authorized_principals = ()
+    actor._shutdown_token = ""
+    actor._used_shutdown_nonces = set()
+    actor._shutdown_reason = ""
+    actor._supervisor_pid = 0
+    actor._last_observation_ts = 0.0
+    actor._heartbeat_failures = 0
     return actor
 
 
@@ -32,9 +40,13 @@ def test_search_result_formatting_tolerates_mismatched_wikipedia_arrays():
 async def test_browse_without_browser_fails_closed():
     actor = _actor_without_bus()
 
-    result = await actor._handle_browse({"url": "https://example.com"}, "trace-1")
+    result = await actor._handle_browse({"url": "https://github.com/anthropics"}, "trace-1")
 
-    assert result == {"error": "browser_unavailable"}
+    # CP126 c8c56e76: refusals are schema'd receipts, not bare error dicts.
+    assert result["ok"] is False
+    assert result["error"] == "browser_unavailable"
+    assert result["kind"] == "browse"
+    assert result["trace_id"] == "trace-1"
 
 
 @pytest.mark.asyncio
@@ -85,6 +97,10 @@ async def test_shutdown_handler_flips_actor_state_and_event():
 
     result = await actor._handle_shutdown({}, "trace-4")
 
-    assert result == "Acknowledged"
+    # CP126 4dc9dc31: unauthenticated shutdown still works only when no
+    # supervisor token is configured, and the acknowledgement is durable.
+    assert result["ok"] is True
+    assert result["acknowledged"] is True
+    assert result["trace_id"] == "trace-4"
     assert actor._is_active is False
     assert actor._shutdown_event.is_set()

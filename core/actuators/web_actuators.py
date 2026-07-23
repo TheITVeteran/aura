@@ -11,25 +11,25 @@ and the authority/capability context is forwarded to the browser skill.
 """
 
 import asyncio
-import ipaddress
-import os
-import socket
-import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from core.actuators.actuator_registry import ActuatorResult, BaseActuator
+# CP126 3bba0f36: the URL policy now lives in core.runtime.url_policy so the
+# sensory actor (which drives a real browser) shares this exact policy instead
+# of having none. These names are re-exported for existing callers.
+from core.runtime.url_policy import (  # noqa: F401
+    DEFAULT_FETCH_ALLOWLIST as _DEFAULT_FETCH_ALLOWLIST,
+    allowed_fetch_domains as _allowed_fetch_domains,
+    ip_is_public as _ip_is_public,
+    validate_fetch_url,
+    validate_fetch_url_static,
+)
 
 _DEFAULT_BRIDGE_DEADLINE_S = 60.0
 _MAX_QUERY_CHARS = 2048
 _MIN_RESULTS = 1
 _MAX_RESULTS = 25
-
-_DEFAULT_FETCH_ALLOWLIST = {
-    "wikipedia.org", "python.org", "github.com", "pypi.org",
-    "stackoverflow.com", "w3schools.com",
-}
-
 
 def run_async_in_sync(coro, *, deadline_s: float = _DEFAULT_BRIDGE_DEADLINE_S):
     """Run a coroutine from sync code with a bounded deadline.
@@ -55,71 +55,6 @@ def _clamp_int(value: Any, default: int, low: int, high: int) -> int:
     except (TypeError, ValueError):
         return default
     return max(low, min(high, num))
-
-
-def _allowed_fetch_domains() -> set[str]:
-    extra = os.environ.get("AURA_WEB_FETCH_ALLOWLIST", "")
-    names = {p.strip().lower() for p in extra.split(",") if p.strip()}
-    return _DEFAULT_FETCH_ALLOWLIST | names
-
-
-def _ip_is_public(ip_text: str) -> bool:
-    try:
-        ip = ipaddress.ip_address(ip_text)
-    except ValueError:
-        return False
-    return not (
-        ip.is_private or ip.is_loopback or ip.is_link_local
-        or ip.is_multicast or ip.is_reserved or ip.is_unspecified
-        or ip_text == "169.254.169.254"  # cloud metadata (already link-local, explicit)
-    )
-
-
-def validate_fetch_url_static(url: Any) -> tuple[str | None, str]:
-    """Static URL policy (no network): scheme, userinfo, host, allowlist.
-
-    Kept network-free so it is safe to use as a cheap ``validate_params``
-    predicate. The resolved-IP SSRF check runs separately at fetch time.
-    """
-    if not isinstance(url, str) or not url.strip():
-        return None, "url is missing"
-    parsed = urllib.parse.urlparse(url.strip())
-    scheme = parsed.scheme.lower()
-    allow_http = str(os.environ.get("AURA_WEB_FETCH_ALLOW_HTTP", "")).strip().lower() in {"1", "true", "yes", "on"}
-    if scheme != "https" and not (allow_http and scheme == "http"):
-        return None, f"scheme '{scheme}' not allowed (https required)"
-    if parsed.username or parsed.password or "@" in (parsed.netloc or ""):
-        return None, "url must not contain credentials (userinfo)"
-    host = (parsed.hostname or "").lower()
-    if not host:
-        return None, "url has no host"
-    allowed = _allowed_fetch_domains()
-    if not any(host == d or host.endswith("." + d) for d in allowed):
-        return None, f"host '{host}' is not in the fetch allowlist"
-    return url.strip(), ""
-
-
-def validate_fetch_url(url: Any) -> tuple[str | None, str]:
-    """Full fetch policy: static checks + resolved-IP SSRF guard (does DNS)."""
-    validated, err = validate_fetch_url_static(url)
-    if validated is None:
-        return None, err
-    parsed = urllib.parse.urlparse(validated)
-    host = (parsed.hostname or "").lower()
-    scheme = parsed.scheme.lower()
-    # Bind the allowlisted name to its resolved addresses — reject if ANY
-    # resolves to a non-public target (defeats DNS rebinding to internal hosts).
-    try:
-        infos = socket.getaddrinfo(host, parsed.port or (443 if scheme == "https" else 80), proto=socket.IPPROTO_TCP)
-    except (socket.gaierror, OSError, ValueError) as exc:
-        return None, f"host '{host}' did not resolve: {exc}"
-    addrs = {info[4][0] for info in infos}
-    if not addrs:
-        return None, f"host '{host}' resolved to no addresses"
-    for addr in addrs:
-        if not _ip_is_public(addr):
-            return None, f"host '{host}' resolves to a non-public address ({addr})"
-    return validated, ""
 
 
 class WebSearchActuator(BaseActuator):
