@@ -35,6 +35,7 @@ from core.brain.llm.latent_cortex.paired_campaign import (
     build_campaign_plan,
     grade_campaign,
 )
+from tests.fixtures.latent_frontier import _trial_accounting
 from tools import run_latent_cortex_paired_campaign as campaign_runner_module
 from tools import verify_paired_campaign_evidence as verifier_module
 from tools.independent_paired_campaign_scoring import (
@@ -140,6 +141,10 @@ def _record_material(plan, tasks, cell_id, *, gain: bool = True):
         )
     else:
         text = "synthetic answer intentionally lacks the terminal marker"
+    task = task_records[definition["task_id"]]
+    resource_accounting, information_accounting = _trial_accounting(
+        task["task_payload_sha256"]
+    )
     result = {
         "arm": arm,
         "text": text,
@@ -165,8 +170,19 @@ def _record_material(plan, tasks, cell_id, *, gain: bool = True):
             if arm.startswith("adapter_")
             else None
         ),
+        "episode_receipt": (
+            {
+                "budget": {
+                    "resource_accounting": resource_accounting,
+                    "information_accounting": information_accounting,
+                }
+            }
+            if arm.endswith("_rlc")
+            else {}
+        ),
+        "resource_accounting": resource_accounting,
+        "information_accounting": information_accounting,
     }
-    task = task_records[definition["task_id"]]
     score = issuer_task.score(text).to_dict()
     verification = {
         "correct": score["correct"],

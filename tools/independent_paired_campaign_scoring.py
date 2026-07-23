@@ -25,6 +25,42 @@ CAMPAIGN_SCHEMA = "aura.latent_cortex.resident_paired_campaign.v1"
 CONTAMINATION_AUDIT_SCHEMA = "aura.latent_cortex.contamination_audit.v2"
 COMPARISON_SCHEMA = "aura.latent_cortex.exact_paired_comparison.v1"
 INTERACTION_SCHEMA = "aura.latent_cortex.exact_paired_interaction.v1"
+MODEL_PROFILE_SCHEMA = "aura.rlc.model_compute_profile.v1"
+RESOURCE_ACCOUNTING_SCHEMA = "aura.rlc.resource_accounting.v1"
+INFORMATION_ACCOUNTING_SCHEMA = "aura.rlc.information_accounting.v1"
+COMPARISON_ACCOUNTING_SCHEMA = "aura.rlc.comparison_accounting.v1"
+RESOURCE_ESTIMATOR_VERSION = "dense_decoder_gqa_structural_flops_v1"
+RESOURCE_COUNTERS = (
+    "transformer_layer_apps",
+    "attention_query_key_pairs",
+    "output_head_tokens",
+    "tensor_element_reads",
+    "tensor_element_writes",
+    "tensor_scalar_ops",
+    "verifier_calls",
+    "verifier_input_bytes",
+    "verifier_output_bytes",
+    "tool_calls",
+    "tool_input_bytes",
+    "tool_result_bytes",
+    "external_model_calls",
+    "external_model_input_tokens",
+    "external_model_output_tokens",
+    "host_scalar_ops",
+)
+NON_NEURAL_PARITY_COUNTERS = (
+    "tensor_element_reads",
+    "tensor_element_writes",
+    "verifier_calls",
+    "verifier_input_bytes",
+    "verifier_output_bytes",
+    "tool_calls",
+    "tool_input_bytes",
+    "tool_result_bytes",
+    "external_model_calls",
+    "external_model_input_tokens",
+    "external_model_output_tokens",
+)
 BOUND_CERTIFICATE_VERSION = (
     "aura.latent_cortex.exact_paired_effect_bounds.v1"
 )
@@ -566,9 +602,317 @@ def _contamination_metadata_valid(
     )
 
 
+def _resource_counter(value: Any) -> int:
+    if type(value) is not int or not 0 <= value <= 10**30:
+        _fail("independent_resource_counter_invalid")
+    return value
+
+
+def _resource_name(value: Any) -> str:
+    if (
+        not isinstance(value, str)
+        or not value
+        or value != value.strip()
+        or len(value) > 160
+    ):
+        _fail("independent_resource_name_invalid")
+    return value
+
+
+def _validate_model_profile(value: Any) -> dict[str, Any]:
+    required = {
+        "schema",
+        "estimator_version",
+        "model_type",
+        "hidden_size",
+        "intermediate_size",
+        "num_hidden_layers",
+        "num_attention_heads",
+        "num_key_value_heads",
+        "vocab_size",
+        "head_dim",
+        "dense_flops_per_token_layer",
+        "flops_per_attention_pair",
+        "flops_per_output_head_token",
+        "profile_sha256",
+    }
+    if (
+        not isinstance(value, Mapping)
+        or set(value) != required
+        or value.get("schema") != MODEL_PROFILE_SCHEMA
+        or value.get("estimator_version") != RESOURCE_ESTIMATOR_VERSION
+    ):
+        _fail("independent_model_compute_profile_invalid")
+    _resource_name(value.get("model_type"))
+    dimensions = (
+        "hidden_size",
+        "intermediate_size",
+        "num_hidden_layers",
+        "num_attention_heads",
+        "num_key_value_heads",
+        "vocab_size",
+        "head_dim",
+    )
+    if any(
+        type(value.get(name)) is not int or not 1 <= value[name] <= 10_000_000
+        for name in dimensions
+    ):
+        _fail("independent_model_compute_profile_invalid")
+    hidden = value["hidden_size"]
+    heads = value["num_attention_heads"]
+    kv_heads = value["num_key_value_heads"]
+    head_dim = value["head_dim"]
+    if hidden != heads * head_dim or kv_heads > heads:
+        _fail("independent_model_compute_profile_invalid")
+    kv_width = kv_heads * head_dim
+    expected_derived = {
+        "dense_flops_per_token_layer": (
+            2 * hidden * (hidden + kv_width + kv_width + hidden)
+            + 6 * hidden * value["intermediate_size"]
+            + 18 * hidden
+            + 4 * (hidden + 2 * kv_width)
+        ),
+        "flops_per_attention_pair": 4 * heads * head_dim,
+        "flops_per_output_head_token": 2 * hidden * value["vocab_size"] + 4 * hidden,
+    }
+    if any(value.get(name) != expected for name, expected in expected_derived.items()):
+        _fail("independent_model_compute_profile_invalid")
+    body = {key: value[key] for key in required - {"profile_sha256"}}
+    if value.get("profile_sha256") != _sha256(body):
+        _fail("independent_model_compute_profile_invalid")
+    return dict(value)
+
+
+def _validate_resource_accounting(value: Any) -> dict[str, Any]:
+    required = {
+        "schema",
+        "estimator_version",
+        "model_profile",
+        "operations",
+        "totals",
+        "estimated_flops",
+        "unknown_operations",
+        "accounting_complete",
+        "receipt_sha256",
+    }
+    if (
+        not isinstance(value, Mapping)
+        or set(value) != required
+        or value.get("schema") != RESOURCE_ACCOUNTING_SCHEMA
+        or value.get("estimator_version") != RESOURCE_ESTIMATOR_VERSION
+        or type(value.get("accounting_complete")) is not bool
+    ):
+        _fail("independent_resource_accounting_invalid")
+    body = {key: value[key] for key in required - {"receipt_sha256"}}
+    if value.get("receipt_sha256") != _sha256(body):
+        _fail("independent_resource_accounting_invalid")
+    profile = _validate_model_profile(value.get("model_profile"))
+    operations = value.get("operations")
+    unknown = value.get("unknown_operations")
+    if (
+        not isinstance(operations, Mapping)
+        or not isinstance(unknown, list)
+        or any(not isinstance(name, str) for name in operations)
+        or any(not isinstance(item, str) for item in unknown)
+        or unknown != sorted(set(unknown))
+    ):
+        _fail("independent_resource_accounting_invalid")
+    totals = {name: 0 for name in RESOURCE_COUNTERS}
+    normalized_operations: dict[str, dict[str, int]] = {}
+    for operation in sorted(operations):
+        name = _resource_name(operation)
+        counters = operations[operation]
+        if not isinstance(counters, Mapping) or set(counters) != set(RESOURCE_COUNTERS):
+            _fail("independent_resource_accounting_invalid")
+        row = {
+            counter: _resource_counter(counters[counter])
+            for counter in RESOURCE_COUNTERS
+        }
+        normalized_operations[name] = row
+        for counter in RESOURCE_COUNTERS:
+            totals[counter] = _resource_counter(totals[counter] + row[counter])
+    normalized_unknown = sorted(_resource_name(item) for item in unknown)
+    dense_flops = (
+        totals["transformer_layer_apps"]
+        * profile["dense_flops_per_token_layer"]
+        + totals["attention_query_key_pairs"] * profile["flops_per_attention_pair"]
+        + totals["output_head_tokens"] * profile["flops_per_output_head_token"]
+        + totals["tensor_scalar_ops"]
+        + totals["host_scalar_ops"]
+    )
+    rebuilt_body = {
+        "schema": RESOURCE_ACCOUNTING_SCHEMA,
+        "estimator_version": RESOURCE_ESTIMATOR_VERSION,
+        "model_profile": profile,
+        "operations": normalized_operations,
+        "totals": totals,
+        "estimated_flops": dense_flops,
+        "unknown_operations": normalized_unknown,
+        "accounting_complete": not normalized_unknown,
+    }
+    rebuilt = {**rebuilt_body, "receipt_sha256": _sha256(rebuilt_body)}
+    if not _strict_equal(dict(value), rebuilt):
+        _fail("independent_resource_accounting_invalid")
+    return rebuilt
+
+
+def _validate_information_accounting(value: Any) -> dict[str, Any]:
+    required = {
+        "schema",
+        "sources",
+        "policies",
+        "unknown_accesses",
+        "accounting_complete",
+        "source_set_sha256",
+        "receipt_sha256",
+    }
+    if (
+        not isinstance(value, Mapping)
+        or set(value) != required
+        or value.get("schema") != INFORMATION_ACCOUNTING_SCHEMA
+        or not isinstance(value.get("sources"), list)
+        or not isinstance(value.get("policies"), Mapping)
+        or not isinstance(value.get("unknown_accesses"), list)
+        or any(not isinstance(name, str) for name in value.get("policies", {}))
+        or any(
+            not isinstance(item, str) for item in value.get("unknown_accesses", [])
+        )
+    ):
+        _fail("independent_information_accounting_invalid")
+    sources: list[dict[str, Any]] = []
+    source_ids: set[str] = set()
+    for raw in value["sources"]:
+        if not isinstance(raw, Mapping) or set(raw) != {
+            "source_id",
+            "kind",
+            "content_sha256",
+            "byte_count",
+            "token_count",
+        }:
+            _fail("independent_information_accounting_invalid")
+        source_id = _resource_name(raw.get("source_id"))
+        if source_id in source_ids or not _is_sha256(raw.get("content_sha256")):
+            _fail("independent_information_accounting_invalid")
+        source_ids.add(source_id)
+        sources.append(
+            {
+                "source_id": source_id,
+                "kind": _resource_name(raw.get("kind")),
+                "content_sha256": raw["content_sha256"],
+                "byte_count": _resource_counter(raw.get("byte_count")),
+                "token_count": _resource_counter(raw.get("token_count")),
+            }
+        )
+    sources.sort(key=lambda row: (row["source_id"], row["kind"]))
+    policies: dict[str, str] = {}
+    for raw_name in sorted(value["policies"]):
+        name = _resource_name(raw_name)
+        digest = value["policies"][raw_name]
+        if not _is_sha256(digest):
+            _fail("independent_information_accounting_invalid")
+        policies[name] = digest
+    unknown = sorted({_resource_name(item) for item in value["unknown_accesses"]})
+    source_set_sha256 = _sha256({"sources": sources, "policies": policies})
+    rebuilt_body = {
+        "schema": INFORMATION_ACCOUNTING_SCHEMA,
+        "sources": sources,
+        "policies": policies,
+        "unknown_accesses": unknown,
+        "accounting_complete": not unknown,
+        "source_set_sha256": source_set_sha256,
+    }
+    rebuilt = {**rebuilt_body, "receipt_sha256": _sha256(rebuilt_body)}
+    if not _strict_equal(dict(value), rebuilt):
+        _fail("independent_information_accounting_invalid")
+    return rebuilt
+
+
+def _comparison_resource_match(left: int, right: int, tolerance: _Q) -> bool:
+    if left == right:
+        return True
+    if left == 0 or right == 0:
+        return False
+    return (
+        abs(left - right) * tolerance.denominator
+        <= max(left, right) * tolerance.numerator
+    )
+
+
+def _comparison_accounting(
+    *,
+    treatment_resource: Mapping[str, Any],
+    control_resource: Mapping[str, Any],
+    treatment_information: Mapping[str, Any],
+    control_information: Mapping[str, Any],
+    tolerance: _Q,
+    require_compute: bool,
+) -> dict[str, Any]:
+    treatment = _validate_resource_accounting(treatment_resource)
+    control = _validate_resource_accounting(control_resource)
+    treatment_info = _validate_information_accounting(treatment_information)
+    control_info = _validate_information_accounting(control_information)
+    reasons: list[str] = []
+    if not treatment["accounting_complete"]:
+        reasons.append("treatment_resource_accounting_incomplete")
+    if not control["accounting_complete"]:
+        reasons.append("control_resource_accounting_incomplete")
+    if not treatment_info["accounting_complete"]:
+        reasons.append("treatment_information_accounting_incomplete")
+    if not control_info["accounting_complete"]:
+        reasons.append("control_information_accounting_incomplete")
+    information_matched = (
+        treatment_info["source_set_sha256"] == control_info["source_set_sha256"]
+    )
+    if not information_matched:
+        reasons.append("information_or_policy_mismatch")
+    if (
+        treatment["model_profile"]["profile_sha256"]
+        != control["model_profile"]["profile_sha256"]
+    ):
+        reasons.append("compute_estimator_profile_mismatch")
+    pairs = {
+        "estimated_flops": (
+            treatment["estimated_flops"],
+            control["estimated_flops"],
+        ),
+        **{
+            name: (treatment["totals"][name], control["totals"][name])
+            for name in NON_NEURAL_PARITY_COUNTERS
+        },
+    }
+    dimensions: dict[str, dict[str, Any]] = {}
+    for name, (left, right) in pairs.items():
+        matched = _comparison_resource_match(left, right, tolerance)
+        dimensions[name] = {
+            "treatment": left,
+            "control": right,
+            "within_tolerance": matched,
+        }
+        if require_compute and not matched:
+            reasons.append(f"resource_mismatch:{name}")
+    body = {
+        "schema": COMPARISON_ACCOUNTING_SCHEMA,
+        "require_compute_parity": require_compute,
+        "tolerance_numerator": tolerance.numerator,
+        "tolerance_denominator": tolerance.denominator,
+        "treatment_resource_sha256": treatment["receipt_sha256"],
+        "control_resource_sha256": control["receipt_sha256"],
+        "treatment_information_sha256": treatment_info["receipt_sha256"],
+        "control_information_sha256": control_info["receipt_sha256"],
+        "information_matched": information_matched,
+        "resource_dimensions": dimensions,
+        "reasons": sorted(set(reasons)),
+        "admitted": not reasons,
+    }
+    return {**body, "certificate_sha256": _sha256(body)}
+
+
 @dataclass(frozen=True, slots=True)
 class _CampaignMaterial:
-    rows: dict[str, dict[str, tuple[str, bool, int]]]
+    rows: dict[
+        str,
+        dict[str, tuple[str, bool, int, dict[str, Any], dict[str, Any]]],
+    ]
     arms: tuple[str, ...]
     expected_task_count: int
     expected_cell_count: int
@@ -775,7 +1119,10 @@ def _extract_rows(
     ):
         _fail("independent_runtime_plan_identity_invalid")
 
-    rows: dict[str, dict[str, tuple[str, bool, int]]] = defaultdict(dict)
+    rows: dict[
+        str,
+        dict[str, tuple[str, bool, int, dict[str, Any], dict[str, Any]]],
+    ] = defaultdict(dict)
     seen_cells: set[str] = set()
     for record in records:
         if not isinstance(record, Mapping):
@@ -884,6 +1231,36 @@ def _extract_rows(
             or result.get("runtime_adapter_identity") is not None
         ):
             _fail("independent_base_arm_adapter_contaminated")
+        resource_accounting = _validate_resource_accounting(
+            result.get("resource_accounting")
+        )
+        information_accounting = _validate_information_accounting(
+            result.get("information_accounting")
+        )
+        if (
+            resource_accounting["accounting_complete"] is not True
+            or information_accounting["accounting_complete"] is not True
+        ):
+            _fail("independent_record_accounting_incomplete")
+        if arm.endswith("_rlc"):
+            episode_receipt = result.get("episode_receipt")
+            episode_budget = (
+                episode_receipt.get("budget")
+                if isinstance(episode_receipt, Mapping)
+                else None
+            )
+            if (
+                not isinstance(episode_budget, Mapping)
+                or not _strict_equal(
+                    episode_budget.get("resource_accounting"),
+                    resource_accounting,
+                )
+                or not _strict_equal(
+                    episode_budget.get("information_accounting"),
+                    information_accounting,
+                )
+            ):
+                _fail("independent_episode_accounting_binding_invalid")
         independent = _score_response(issuer_by_id[task_id], text)
         score_receipt = verification.get("score_receipt")
         score_reason = score_receipt.get("reason") if isinstance(
@@ -914,6 +1291,8 @@ def _extract_rows(
             domain,
             cast(bool, independent["correct"]),
             layer_apps,
+            resource_accounting,
+            information_accounting,
         )
     return _CampaignMaterial(
         rows=dict(rows),
@@ -1421,7 +1800,10 @@ def _sign_flip(values: Sequence[int]) -> tuple[_Q, dict[str, int]]:
 
 
 def _comparison(
-    rows: Mapping[str, Mapping[str, tuple[str, bool, int]]],
+    rows: Mapping[
+        str,
+        Mapping[str, tuple[str, bool, int, dict[str, Any], dict[str, Any]]],
+    ],
     *,
     treatment: str,
     control: str,
@@ -1432,14 +1814,38 @@ def _comparison(
     by_domain: dict[str, list[tuple[str, bool, bool, int, int]]] = defaultdict(
         list
     )
+    accounting_certificates: list[dict[str, Any]] = []
     for task_id in sorted(rows):
         arms = rows[task_id]
         if treatment not in arms or control not in arms:
             _fail("independent_comparison_incomplete")
-        treatment_domain, treatment_ok, treatment_cost = arms[treatment]
-        control_domain, control_ok, control_cost = arms[control]
+        (
+            treatment_domain,
+            treatment_ok,
+            treatment_cost,
+            treatment_resource,
+            treatment_information,
+        ) = arms[treatment]
+        (
+            control_domain,
+            control_ok,
+            control_cost,
+            control_resource,
+            control_information,
+        ) = arms[control]
         if treatment_domain != control_domain:
             _fail("independent_domain_drift")
+        certificate = _comparison_accounting(
+            treatment_resource=treatment_resource,
+            control_resource=control_resource,
+            treatment_information=treatment_information,
+            control_information=control_information,
+            tolerance=compute_tolerance,
+            require_compute=require_compute,
+        )
+        accounting_certificates.append(
+            {"task_id": task_id, "family": treatment_domain, **certificate}
+        )
         by_domain[treatment_domain].append(
             (task_id, treatment_ok, control_ok, treatment_cost, control_cost)
         )
@@ -1588,6 +1994,14 @@ def _comparison(
             "one_sided_exact_p": _q_payload(pooled_p),
         },
     }
+    accounting_admitted = all(
+        certificate["admitted"] for certificate in accounting_certificates
+    )
+    evidence["resource_accounting_required"] = True
+    evidence["comparison_accounting_admitted"] = accounting_admitted
+    evidence["comparison_accounting"] = accounting_certificates
+    if not accounting_admitted:
+        tier = CONJECTURE
     return {
         "experiment": f"{treatment}_vs_{control}",
         "statement": f"{treatment} improves over {control}",

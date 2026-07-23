@@ -45,6 +45,11 @@ from core.brain.llm.latent_cortex.frontier_tasks import (
     build_task_commitment,
     build_task_manifest,
 )
+from core.brain.llm.latent_cortex.resource_accounting import (
+    certify_comparison_accounting,
+    validate_information_receipt,
+    validate_resource_receipt,
+)
 
 CAMPAIGN_SCHEMA = "aura.latent_cortex.resident_paired_campaign.v1"
 GRADE_SCHEMA = "aura.latent_cortex.resident_paired_grade.v2"
@@ -427,7 +432,15 @@ def _strict_result_row(
     model_identity: Mapping[str, Any],
     adapter_identity: Mapping[str, Any],
     execution_config: Mapping[str, Any],
-) -> tuple[str, str, str, bool, int]:
+) -> tuple[
+    str,
+    str,
+    str,
+    bool,
+    int,
+    dict[str, Any],
+    dict[str, Any],
+]:
     if not isinstance(record, Mapping):
         _fail("campaign_record_invalid")
     definition = record.get("definition")
@@ -541,6 +554,39 @@ def _strict_result_row(
         _fail("campaign_record_verification_invalid")
     if type(layer_apps) is not int or layer_apps <= 0:
         _fail("campaign_record_compute_invalid")
+    try:
+        resource_accounting = validate_resource_receipt(
+            result.get("resource_accounting")
+        )
+        information_accounting = validate_information_receipt(
+            result.get("information_accounting")
+        )
+    except (TypeError, ValueError):
+        _fail("campaign_record_accounting_invalid")
+    if (
+        resource_accounting["accounting_complete"] is not True
+        or information_accounting["accounting_complete"] is not True
+    ):
+        _fail("campaign_record_accounting_incomplete")
+    if arm.endswith("_rlc"):
+        episode_receipt = result.get("episode_receipt")
+        episode_budget = (
+            episode_receipt.get("budget")
+            if isinstance(episode_receipt, Mapping)
+            else None
+        )
+        if (
+            not isinstance(episode_budget, Mapping)
+            or not _strict_json_equal(
+                episode_budget.get("resource_accounting"),
+                resource_accounting,
+            )
+            or not _strict_json_equal(
+                episode_budget.get("information_accounting"),
+                information_accounting,
+            )
+        ):
+            _fail("campaign_episode_accounting_binding_invalid")
     task = tasks_by_id.get(cast(str, task_id))
     issuer_task = issuer_tasks_by_id.get(cast(str, task_id))
     score = verification.get("score_receipt")
@@ -564,11 +610,19 @@ def _strict_result_row(
         cast(str, arm),
         cast(bool, correct),
         layer_apps,
+        resource_accounting,
+        information_accounting,
     )
 
 
 def _paired_claim(
-    rows: Mapping[str, Mapping[str, tuple[str, bool, int]]],
+    rows: Mapping[
+        str,
+        Mapping[
+            str,
+            tuple[str, bool, int, dict[str, Any], dict[str, Any]],
+        ],
+    ],
     *,
     treatment: str,
     control: str,
@@ -577,14 +631,43 @@ def _paired_claim(
     global_bound_family_count: int,
 ) -> dict[str, Any]:
     by_domain: dict[str, list[ExactPairedObservation]] = defaultdict(list)
+    accounting_certificates: list[dict[str, Any]] = []
     for task_id in sorted(rows):
         arms = rows[task_id]
         if treatment not in arms or control not in arms:
             _fail("campaign_comparison_incomplete")
-        treatment_domain, treatment_success, treatment_cost = arms[treatment]
-        control_domain, control_success, control_cost = arms[control]
+        (
+            treatment_domain,
+            treatment_success,
+            treatment_cost,
+            treatment_resource,
+            treatment_information,
+        ) = arms[treatment]
+        (
+            control_domain,
+            control_success,
+            control_cost,
+            control_resource,
+            control_information,
+        ) = arms[control]
         if treatment_domain != control_domain:
             _fail("campaign_task_domain_drift")
+        certificate = certify_comparison_accounting(
+            treatment_resource=treatment_resource,
+            control_resource=control_resource,
+            treatment_information=treatment_information,
+            control_information=control_information,
+            tolerance_numerator=compute_tolerance.numerator,
+            tolerance_denominator=compute_tolerance.denominator,
+            require_compute_parity=require_compute,
+        )
+        accounting_certificates.append(
+            {
+                "task_id": task_id,
+                "family": treatment_domain,
+                **certificate,
+            }
+        )
         by_domain[treatment_domain].append(
             ExactPairedObservation(
                 task_id=task_id,
@@ -595,7 +678,7 @@ def _paired_claim(
                 control_compute=control_cost,
             )
         )
-    return grade_exact_paired_comparison(
+    grade = grade_exact_paired_comparison(
         experiment=f"{treatment}_vs_{control}",
         statement=f"{treatment} improves over {control}",
         treatment=treatment,
@@ -605,6 +688,15 @@ def _paired_claim(
         require_compute=require_compute,
         global_bound_family_count=global_bound_family_count,
     )
+    accounting_admitted = all(
+        certificate["admitted"] for certificate in accounting_certificates
+    )
+    grade["evidence"]["resource_accounting_required"] = True
+    grade["evidence"]["comparison_accounting_admitted"] = accounting_admitted
+    grade["evidence"]["comparison_accounting"] = accounting_certificates
+    if not accounting_admitted:
+        grade["tier"] = CONJECTURE
+    return grade
 
 
 def grade_campaign(
@@ -766,10 +858,21 @@ def grade_campaign(
             ),
             arms=arms,
         )
-    rows: dict[str, dict[str, tuple[str, bool, int]]] = defaultdict(dict)
+    rows: dict[
+        str,
+        dict[str, tuple[str, bool, int, dict[str, Any], dict[str, Any]]],
+    ] = defaultdict(dict)
     observed_cell_ids: set[str] = set()
     for record in records:
-        task_id, domain, arm, correct, layer_apps = _strict_result_row(
+        (
+            task_id,
+            domain,
+            arm,
+            correct,
+            layer_apps,
+            resource_accounting,
+            information_accounting,
+        ) = _strict_result_row(
             record,
             plan=plan,
             tasks_by_id=tasks_by_id,
@@ -786,7 +889,13 @@ def grade_campaign(
             _fail("unexpected_campaign_arm")
         if arm in rows[task_id]:
             _fail("duplicate_task_arm_result")
-        rows[task_id][arm] = (domain, correct, layer_apps)
+        rows[task_id][arm] = (
+            domain,
+            correct,
+            layer_apps,
+            resource_accounting,
+            information_accounting,
+        )
     expected_cells = expected_task_count * len(arms)
     observed_cells = sum(len(task_arms) for task_arms in rows.values())
     complete = (

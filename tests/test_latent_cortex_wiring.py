@@ -15,6 +15,11 @@ from types import SimpleNamespace
 import pytest
 
 from core.brain.latent_cortex_service import LatentCortexService
+from core.brain.llm.latent_cortex.resource_accounting import (
+    ModelComputeProfile,
+    ResourceLedger,
+    build_information_receipt,
+)
 from core.brain.llm.latent_cortex.runtime_identity import (
     latent_request_payload_sha256,
 )
@@ -103,6 +108,40 @@ def _identity_receipt_for_request(request, **overrides):
     )
     receipt.update(overrides)
     return receipt
+
+
+def _accounting_fields(
+    *,
+    input_tokens_sha256: str = "7" * 64,
+    input_token_count: int = 64,
+) -> dict:
+    profile = ModelComputeProfile(
+        model_type="wiring-fixture",
+        hidden_size=8,
+        intermediate_size=16,
+        num_hidden_layers=2,
+        num_attention_heads=2,
+        num_key_value_heads=1,
+        vocab_size=64,
+        head_dim=4,
+    )
+    resource = ResourceLedger(profile).to_receipt()
+    information = build_information_receipt(
+        sources=[
+            {
+                "source_id": "rendered_model_input",
+                "kind": "model_input_tokens",
+                "content_sha256": input_tokens_sha256,
+                "byte_count": input_token_count * 2,
+                "token_count": input_token_count,
+            }
+        ],
+        policies={"tokenizer": "8" * 64, "tools": "9" * 64},
+    )
+    return {
+        "resource_accounting": resource,
+        "information_accounting": information,
+    }
 
 
 def _branch_isolation_fields(config, *, exchanges=0):
@@ -234,6 +273,9 @@ def _branch_exchange_fields(config, isolation):
             "source_elements_read": count * len(source_slots) * hidden,
             "message_elements_emitted": count * hidden,
             "consensus_elements_written": count * hidden,
+            "tensor_scalar_ops": (
+                count * hidden * (len(source_slots) + 12) + 9 * count
+            ),
             "hidden_layer_apps": 0,
         },
     }
@@ -612,6 +654,24 @@ def test_handler_runs_full_episode_on_tiny_model(monkeypatch, tmp_path):
             contract_config,
         )
     )
+    assert "resource_accounting_unproven" not in (
+        LatentCortexService._receipt_contract_errors(
+            body["receipt"],
+            contract_config,
+        )
+    )
+    assert "information_accounting_unproven" not in (
+        LatentCortexService._receipt_contract_errors(
+            body["receipt"],
+            contract_config,
+        )
+    )
+    assert "branch_exchange_resource_binding_unproven" not in (
+        LatentCortexService._receipt_contract_errors(
+            body["receipt"],
+            contract_config,
+        )
+    )
     assert "blind_or_decoy_branch_review_unproven" not in (
         LatentCortexService._receipt_contract_errors(
             body["receipt"],
@@ -626,6 +686,63 @@ def test_handler_runs_full_episode_on_tiny_model(monkeypatch, tmp_path):
     )
     tampered = copy.deepcopy(body["receipt"])
     tampered["cognitive_operator_trace"][0]["receipt_sha256"] = "0" * 64
+    assert "cognitive_operator_execution_unproven" in (
+        LatentCortexService._receipt_contract_errors(tampered, contract_config)
+    )
+    from core.brain.llm.latent_cortex.resource_accounting import (
+        ModelComputeProfile,
+        ResourceLedger,
+        build_information_receipt,
+        validate_resource_receipt,
+    )
+
+    original_information = body["receipt"]["budget"]["information_accounting"]
+    altered_sources = copy.deepcopy(original_information["sources"])
+    rendered_source = next(
+        source
+        for source in altered_sources
+        if source["source_id"] == "rendered_model_input"
+    )
+    rendered_source["content_sha256"] = "f" * 64
+    tampered = copy.deepcopy(body["receipt"])
+    tampered["budget"]["information_accounting"] = build_information_receipt(
+        sources=altered_sources,
+        policies=original_information["policies"],
+    )
+    assert "input_information_binding_unproven" in (
+        LatentCortexService._receipt_contract_errors(tampered, contract_config)
+    )
+    original_resource = validate_resource_receipt(
+        body["receipt"]["budget"]["resource_accounting"]
+    )
+
+    def without_operations(*excluded: str) -> dict:
+        ledger = ResourceLedger(
+            ModelComputeProfile.from_receipt(original_resource["model_profile"])
+        )
+        for name, counters in original_resource["operations"].items():
+            if name not in excluded:
+                ledger.charge(name, **counters)
+        for name in original_resource["unknown_operations"]:
+            ledger.mark_unknown(name)
+        return ledger.to_receipt()
+
+    tampered = copy.deepcopy(body["receipt"])
+    tampered["budget"]["resource_accounting"] = without_operations(
+        "branch_exchange"
+    )
+    assert "branch_exchange_resource_binding_unproven" in (
+        LatentCortexService._receipt_contract_errors(tampered, contract_config)
+    )
+    tampered = copy.deepcopy(body["receipt"])
+    cognitive_operations = tuple(
+        name
+        for name in original_resource["operations"]
+        if name.startswith("cognitive_operator:")
+    )
+    tampered["budget"]["resource_accounting"] = without_operations(
+        *cognitive_operations
+    )
     assert "cognitive_operator_execution_unproven" in (
         LatentCortexService._receipt_contract_errors(tampered, contract_config)
     )
@@ -1726,6 +1843,7 @@ def test_service_routes_through_client_and_records_receipt(monkeypatch):
                         "max_layer_apps": 1_000,
                         "spent_layer_apps": 100,
                         "exhausted": False,
+                        **_accounting_fields(),
                     },
                     "decode_requested_tokens": kwargs["config"]["decode_max_tokens"],
                     "decode_generated_tokens": 12,
@@ -2396,6 +2514,7 @@ def _full_success_stub_client(captured):
                         "max_layer_apps": 1_000,
                         "spent_layer_apps": 100,
                         "exhausted": False,
+                        **_accounting_fields(),
                     },
                     "decode_requested_tokens": kwargs["config"][
                         "decode_max_tokens"

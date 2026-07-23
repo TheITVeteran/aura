@@ -15,6 +15,7 @@ reporting live in core/brain/latent_cortex_service.py.
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import logging
 import math
@@ -36,6 +37,11 @@ from core.brain.llm.latent_cortex.governance import CheckpointInvariant
 from core.brain.llm.latent_cortex.latent_opt import LatentOptimizer, build_proxy_loss
 from core.brain.llm.latent_cortex.probe_cache import DecodeProbeCache
 from core.brain.llm.latent_cortex.recurrence import WindowRunner
+from core.brain.llm.latent_cortex.resource_accounting import (
+    build_information_receipt,
+    policy_sha256,
+    triangular_attention_pairs,
+)
 from core.brain.llm.latent_cortex.schedules import LayerSchedule, ScheduleLibrary
 from core.brain.llm.latent_cortex.telemetry import LatentTelemetry
 from core.brain.llm.latent_cortex.types import (
@@ -274,6 +280,135 @@ class LatentCortexEngine:
             raise ValueError("assistant answer decode bridge produced invalid tokens")
         return tokens
 
+    @staticmethod
+    def _cache_context_tokens(cache: Any, layer_index: int = 0) -> int:
+        if not cache or not 0 <= layer_index < len(cache):
+            return 0
+        item = cache[layer_index]
+        offset = getattr(item, "offset", 0) if item is not None else 0
+        return max(0, int(offset)) if type(offset) is int else 0
+
+    def _information_receipt(
+        self,
+        *,
+        encoded_tokens: bytes,
+        token_count: int,
+        context_items: list[dict[str, Any]],
+        policy_evidence: dict[str, Any],
+        verifier: Callable[[str], float] | None,
+    ) -> dict[str, Any]:
+        sources: list[dict[str, Any]] = [
+            {
+                "source_id": "rendered_model_input",
+                "kind": "model_input_tokens",
+                "content_sha256": hashlib.sha256(encoded_tokens).hexdigest(),
+                "byte_count": len(encoded_tokens),
+                "token_count": token_count,
+            }
+        ]
+        for index, item in enumerate(context_items):
+            text = str(item["text"])
+            payload = text.encode("utf-8")
+            context_tokens = 0
+            if self.tokenizer is not None:
+                try:
+                    context_tokens = len(
+                        self.tokenizer.encode(text, add_special_tokens=False)
+                    )
+                except TypeError:
+                    context_tokens = len(self.tokenizer.encode(text))
+            sources.append(
+                {
+                    "source_id": f"cognitive_context:{index}:{item['source']}",
+                    "kind": "typed_cognitive_context",
+                    "content_sha256": hashlib.sha256(payload).hexdigest(),
+                    "byte_count": len(payload),
+                    "token_count": context_tokens,
+                }
+            )
+        policy_payload = json.dumps(
+            policy_evidence, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        sources.append(
+            {
+                "source_id": "value_controller_evidence",
+                "kind": "controller_evidence",
+                "content_sha256": hashlib.sha256(policy_payload).hexdigest(),
+                "byte_count": len(policy_payload),
+                "token_count": 0,
+            }
+        )
+
+        verifier_type = type(verifier) if verifier is not None else None
+        verifier_identity = (
+            verifier
+            if verifier is not None and inspect.isroutine(verifier)
+            else verifier_type
+        )
+        verifier_source_sha256 = ""
+        if verifier_identity is not None:
+            try:
+                source_path = inspect.getsourcefile(verifier_identity)
+            except (OSError, TypeError):
+                source_path = None
+            if source_path:
+                try:
+                    verifier_source_sha256 = hashlib.sha256(
+                        Path(source_path).read_bytes()
+                    ).hexdigest()
+                except OSError:
+                    verifier_source_sha256 = "unreadable"
+        tokenizer_type = type(self.tokenizer) if self.tokenizer is not None else None
+        policies = {
+            "tokenizer": policy_sha256(
+                {
+                    "module": tokenizer_type.__module__ if tokenizer_type else "none",
+                    "qualname": tokenizer_type.__qualname__ if tokenizer_type else "none",
+                    "chat_template_sha256": hashlib.sha256(
+                        str(getattr(self.tokenizer, "chat_template", "")).encode("utf-8")
+                    ).hexdigest(),
+                }
+            ),
+            "verifier": policy_sha256(
+                {
+                    "module": (
+                        getattr(verifier_identity, "__module__", "none")
+                        if verifier_identity is not None
+                        else "none"
+                    ),
+                    "qualname": (
+                        getattr(verifier_identity, "__qualname__", "none")
+                        if verifier_identity is not None
+                        else "none"
+                    ),
+                    "source_sha256": verifier_source_sha256 or "none",
+                }
+            ),
+            "tools": policy_sha256({"policy": "no_external_tools_inside_rlc_v1"}),
+        }
+        return build_information_receipt(sources=sources, policies=policies)
+
+    @staticmethod
+    def _meter_verifier(
+        verifier: Callable[[str], float] | None,
+        budget: ComputeBudget,
+    ) -> Callable[[str], float] | None:
+        if verifier is None:
+            return None
+
+        def metered(text: str) -> float:
+            rendered = str(text)
+            result = verifier(rendered)
+            budget.charge_verifier(
+                "task_verifier",
+                input_bytes=len(rendered.encode("utf-8")),
+                output_bytes=len(repr(result).encode("ascii", errors="replace")),
+                host_scalar_ops=max(1, len(rendered)),
+            )
+            return result
+
+        return metered
+
     def _token_ends_sentence(self, token: int) -> bool:
         """True when the token's rendered text ends at a sentence boundary."""
         if self.tokenizer is None:
@@ -309,7 +444,19 @@ class LatentCortexEngine:
             raise ValueError("decode bridge tokens cannot be empty")
         if not budget.can_afford(len(tokens), self.n_layers):
             raise RuntimeError("compute budget cannot admit decode bridge")
-        budget.charge(tokens=len(tokens), layers=self.n_layers)
+        context_tokens = self._cache_context_tokens(cache)
+        budget.charge(
+            tokens=len(tokens),
+            layers=self.n_layers,
+            operation="decode_bridge",
+            attention_pairs=(
+                triangular_attention_pairs(
+                    len(tokens), context_tokens=context_tokens
+                )
+                * self.n_layers
+            ),
+            output_head_tokens=1,
+        )
         inner = self.model.model
         h = inner.embed_tokens(mx.array([tokens]))
         mask = create_attention_mask(h, cache)
@@ -521,8 +668,19 @@ class LatentCortexEngine:
 
         return [KVCache() for _ in range(self.n_layers)]
 
-    def _logits(self, h):
+    def _logits(
+        self,
+        h,
+        *,
+        budget: ComputeBudget | None = None,
+        operation: str = "output_head",
+    ):
         inner = self.model.model
+        if budget is not None:
+            budget.resource_ledger.charge(
+                operation,
+                output_head_tokens=int(h.shape[1]),
+            )
         h = inner.norm(h)
         if hasattr(self.model, "lm_head"):
             return self.model.lm_head(h)
@@ -538,7 +696,19 @@ class LatentCortexEngine:
             raise ValueError("latent episode requires at least one input token")
         if not budget.can_afford(len(tokens), self.n_layers):
             raise RuntimeError("compute budget cannot afford prompt prefill")
-        budget.charge(tokens=len(tokens), layers=self.n_layers)
+        context_tokens = self._cache_context_tokens(cache)
+        budget.charge(
+            tokens=len(tokens),
+            layers=self.n_layers,
+            operation="prompt_prefill",
+            attention_pairs=(
+                triangular_attention_pairs(
+                    len(tokens), context_tokens=context_tokens
+                )
+                * self.n_layers
+            ),
+            output_head_tokens=1,
+        )
         arr = mx.array([tokens])
         h = inner.embed_tokens(arr)
         embeddings = h
@@ -549,9 +719,25 @@ class LatentCortexEngine:
         mx.eval(logits)
         return embeddings, logits
 
-    def _sample(self, logits, temperature: float, top_p: float = 1.0) -> int:
+    def _sample(
+        self,
+        logits,
+        temperature: float,
+        top_p: float = 1.0,
+        *,
+        budget: ComputeBudget | None = None,
+    ) -> int:
         import mlx.core as mx
 
+        if budget is not None:
+            vocab = int(logits.shape[-1])
+            multiplier = 8 if temperature > 0.0 and top_p < 1.0 else 3
+            budget.charge_tensor_work(
+                "decode_sampling",
+                element_reads=vocab,
+                element_writes=vocab if temperature > 0.0 else 1,
+                host_scalar_ops=vocab * multiplier,
+            )
         if temperature and temperature > 0:
             scaled = logits / temperature
             if top_p < 1.0:
@@ -702,7 +888,7 @@ class LatentCortexEngine:
                 logits = logits.at[eos_ids].add(
                     mx.full(gathered.shape, -1e9) - gathered
                 )
-            token = self._sample(logits, temp, nucleus)
+            token = self._sample(logits, temp, nucleus, budget=budget)
             if self.tokenizer is None or newline_run < _MAX_NEWLINE_RUN:
                 return token, sample_logprob(logits, token)
             masked = logits
@@ -715,7 +901,7 @@ class LatentCortexEngine:
                     mx.full(masked.shape, -1e9),
                     masked,
                 )
-                token = self._sample(masked, temp, nucleus)
+                token = self._sample(masked, temp, nucleus, budget=budget)
             return token, sample_logprob(masked, token)
 
         # Contract-aware termination (CP180): once a single FINAL_ANSWER
@@ -795,7 +981,14 @@ class LatentCortexEngine:
             if not budget.can_afford(1, self.n_layers):
                 termination = "budget_unaffordable"
                 break
-            budget.charge(tokens=1, layers=self.n_layers)
+            context_tokens = self._cache_context_tokens(cache)
+            budget.charge(
+                tokens=1,
+                layers=self.n_layers,
+                operation="autoregressive_decode",
+                attention_pairs=max(1, context_tokens + 1) * self.n_layers,
+                output_head_tokens=1,
+            )
             h = inner.embed_tokens(mx.array([[token]]))
             mask = create_attention_mask(h, cache)
             for i, layer in enumerate(inner.layers):
@@ -864,7 +1057,7 @@ class LatentCortexEngine:
         spent_before = budget.spent_layer_apps
         snaps = _snapshot_recurrent_caches(cache, 0, self.n_layers)
         try:
-            slot_logits = self._persist_branch(branch, cache, runner)
+            slot_logits = self._persist_branch(branch, cache, runner, budget)
             if bridge_tokens:
                 slot_logits = self._apply_decode_bridge(
                     cache,
@@ -906,7 +1099,13 @@ class LatentCortexEngine:
         )
         return count * per_probe_tokens * self.n_layers
 
-    def _persist_branch(self, branch: BranchState, cache, runner: WindowRunner):
+    def _persist_branch(
+        self,
+        branch: BranchState,
+        cache,
+        runner: WindowRunner,
+        budget: ComputeBudget,
+    ):
         """Commit one branch's slots into every layer's KV (the causal step).
 
         Returns the last slot position's logits — the next-token distribution
@@ -917,7 +1116,11 @@ class LatentCortexEngine:
         runner.run(branch.workspace.seed_z, cache, 0, self.prelude_end, persist=True)
         z_fin = runner.run(branch.z, cache, self.prelude_end, self.coda_start, persist=True)
         z_out = runner.run(z_fin, cache, self.coda_start, self.n_layers, persist=True)
-        logits = self._logits(z_out[:, -1:, :])[0, -1]
+        logits = self._logits(
+            z_out[:, -1:, :],
+            budget=budget,
+            operation="persisted_workspace_output_head",
+        )[0, -1]
         mx.eval(logits)
         return logits
 
@@ -977,6 +1180,7 @@ class LatentCortexEngine:
         receipt.prelude_end = self.prelude_end
         receipt.coda_start = self.coda_start
         budget = budget or ComputeBudget()
+        budget.bind_model(self.model)
         if decode_max_tokens is not None:
             if type(decode_max_tokens) is not int:
                 raise TypeError("decode_max_tokens override must be an integer")
@@ -1003,6 +1207,16 @@ class LatentCortexEngine:
         )
         receipt.input_tokens_sha256 = hashlib.sha256(encoded_tokens).hexdigest()
         receipt.input_token_count = len(tokens)
+        budget.bind_information(
+            self._information_receipt(
+                encoded_tokens=encoded_tokens,
+                token_count=len(tokens),
+                context_items=context_items,
+                policy_evidence=policy_evidence,
+                verifier=verifier,
+            )
+        )
+        metered_verifier = self._meter_verifier(verifier, budget)
         receipt.decode_temperature = float(self.config.decode_temperature)
         receipt.decode_top_p = float(self.config.decode_top_p)
         receipt.decode_bridge_policy = self.config.decode_bridge_policy
@@ -1033,7 +1247,7 @@ class LatentCortexEngine:
                 out_tokens, receipt = self._latent_episode(
                     tokens,
                     budget,
-                    verifier,
+                    metered_verifier,
                     domain,
                     receipt,
                     decode_max_tokens,
@@ -1462,6 +1676,7 @@ class LatentCortexEngine:
                         "done": ensemble.exchange_now(
                             sync_kind="schedule_bytecode",
                             sync_id=f"schedule:{schedule.schedule_hash}:op:{op_index}",
+                            budget=budget,
                         ),
                     }
                 )
@@ -1550,7 +1765,7 @@ class LatentCortexEngine:
                     receipt.flag("value_controller_action_budget")
                     break
                 before_residual = self._mean_latest_residual(ensemble)
-                before_disagreement = ensemble.disagreement()
+                before_disagreement = ensemble.disagreement(budget=budget)
                 remaining_fraction = (
                     budget.remaining_layer_apps / max(1, budget.max_layer_apps)
                 )
@@ -1618,6 +1833,7 @@ class LatentCortexEngine:
                         action_controls[action],
                         action=action.value,
                         action_step=action_index,
+                        budget=budget,
                     )
                     cognitive_operator_trace.extend(operator_receipts)
                     affected_branches = max(
@@ -1653,6 +1869,7 @@ class LatentCortexEngine:
                         ensemble.exchange_now(
                             sync_kind="controller_compare",
                             sync_id=f"controller-action:{action_index}",
+                            budget=budget,
                         )
                     )
                     outcome = (
@@ -1664,7 +1881,7 @@ class LatentCortexEngine:
                         "state_restored" if affected_branches else "savepoint_unavailable"
                     )
                 elif action is OperationKind.COMPRESS_STATE:
-                    affected_branches = ensemble.compress_state()
+                    affected_branches = ensemble.compress_state(budget=budget)
                     outcome = "state_compressed"
                 elif action is OperationKind.ANSWER:
                     affected_branches = ensemble.halt_all("value_controller_answer")
@@ -1724,7 +1941,7 @@ class LatentCortexEngine:
                         outcome = "verifier_probe_budget_refused"
 
                 after_residual = self._mean_latest_residual(ensemble)
-                after_disagreement = ensemble.disagreement()
+                after_disagreement = ensemble.disagreement(budget=budget)
                 checked = (
                     previous_verifier_score is not None and probe_score is not None
                 )
@@ -2015,6 +2232,16 @@ class LatentCortexEngine:
                 layer_apps_per_loss=(
                     self.config.workspace.n_slots * self.n_layers
                 ),
+                scalar_ops_per_loss=(
+                    (
+                        21 * self.config.workspace.n_slots + 8
+                    )
+                    * budget.resource_ledger.profile.hidden_size
+                    + 8 * budget.resource_ledger.profile.vocab_size
+                    + 2
+                    * budget.resource_ledger.profile.hidden_size
+                    * budget.resource_ledger.profile.vocab_size
+                ),
                 reserve_layer_apps=safety_reserve,
             )
             if verifier is not None and self.tokenizer is not None:
@@ -2182,6 +2409,8 @@ class LatentCortexEngine:
                         self.config.workspace.n_slots
                         * (self.coda_start - self.prelude_end)
                     ),
+                    tokens_per_forward=self.config.workspace.n_slots,
+                    layers_per_forward=(self.coda_start - self.prelude_end),
                     reserve_layer_apps=safety_reserve,
                 )
                 stage_started = self._stage_checkpoint(
@@ -2247,7 +2476,7 @@ class LatentCortexEngine:
                 receipt.flag(f"slot_ablated:{int(ablate_slot)}:{ablate_mode}")
 
             # ── Commit the winner + decode the answer ────────────────────
-            slot_logits = self._persist_branch(winner, cache, runner)
+            slot_logits = self._persist_branch(winner, cache, runner, budget)
             receipt.first_logits_digest = _logits_digest(slot_logits)
             stage_started = self._stage_checkpoint(
                 receipt=receipt,
@@ -2754,7 +2983,15 @@ class LatentCortexEngine:
 
         if not budget.can_afford(len(probe_tokens), self.n_layers):
             raise RuntimeError("compute budget cannot afford capability canary pass")
-        budget.charge(tokens=len(probe_tokens), layers=self.n_layers)
+        budget.charge(
+            tokens=len(probe_tokens),
+            layers=self.n_layers,
+            operation="capability_canary",
+            attention_pairs=(
+                triangular_attention_pairs(len(probe_tokens)) * self.n_layers
+            ),
+            output_head_tokens=len(probe_tokens),
+        )
         inner = self.model.model
         cache = self._fresh_cache()
         h = inner.embed_tokens(mx.array([probe_tokens]))
@@ -2792,13 +3029,25 @@ class LatentCortexEngine:
         vocab = inner.embed_tokens.weight.shape[0]
         probe_tokens = mx.array([[i % int(vocab) for i in range(1, 9)]])
         if cleanup:
-            budget.charge_cleanup_overdraft(tokens=8, layers=self.n_layers)
+            budget.charge_cleanup_overdraft(
+                tokens=8,
+                layers=self.n_layers,
+                operation="fast_weight_erase_cleanup_probe",
+                attention_pairs=8 * 8 * self.n_layers,
+                output_head_tokens=8,
+            )
         else:
             if not budget.can_afford(8, self.n_layers):
                 raise RuntimeError(
                     "compute budget cannot afford fast-weight erase probe"
                 )
-            budget.charge(tokens=8, layers=self.n_layers)
+            budget.charge(
+                tokens=8,
+                layers=self.n_layers,
+                operation="fast_weight_integrity_probe",
+                attention_pairs=8 * 8 * self.n_layers,
+                output_head_tokens=8,
+            )
         h = inner.embed_tokens(probe_tokens)
         for layer in inner.layers:
             h = layer(h, None, None)

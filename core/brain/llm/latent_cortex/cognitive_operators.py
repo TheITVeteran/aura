@@ -228,12 +228,27 @@ def execute_cognitive_operator(
         "action": action,
         "action_step": action_step,
         "strength": spec.strength,
+        "n_slots": slot_count,
+        "hidden_dimension": int(z.shape[-1]),
         "changed_slots": sorted(changed),
         "protected_slots": list(protected),
         "input_sha256": input_sha256,
         "output_sha256": output_sha256,
         "anchor_sha256": _tensor_sha256(anchor),
         "control_sha256": _tensor_sha256(vector),
+        "tensor_accounting": {
+            "element_reads": (
+                2 * slot_count + 3 * len(changed) + 1
+            )
+            * int(z.shape[-1]),
+            "element_writes": (slot_count + len(changed)) * int(z.shape[-1]),
+            "tensor_scalar_ops": (
+                24 * len(changed) + 4 * slot_count + 8
+            )
+            * int(z.shape[-1]),
+            "commitment_host_ops": (3 * slot_count + 1) * int(z.shape[-1]),
+            "hidden_layer_apps": 0,
+        },
         "causal": True,
     }
     return output, {**payload, "receipt_sha256": _receipt_sha256(payload)}
@@ -249,12 +264,15 @@ def validate_operator_receipt(value: Any) -> dict[str, Any]:
         "action",
         "action_step",
         "strength",
+        "n_slots",
+        "hidden_dimension",
         "changed_slots",
         "protected_slots",
         "input_sha256",
         "output_sha256",
         "anchor_sha256",
         "control_sha256",
+        "tensor_accounting",
         "causal",
         "receipt_sha256",
     }
@@ -273,6 +291,8 @@ def validate_operator_receipt(value: Any) -> dict[str, Any]:
     if operator_for_role(role) is not operator:
         raise ValueError("cognitive operator role differs from its program")
     strength = value.get("strength")
+    n_slots = value.get("n_slots")
+    hidden_dimension = value.get("hidden_dimension")
     if (
         type(value.get("branch_index")) is not int
         or value["branch_index"] < 0
@@ -284,6 +304,10 @@ def validate_operator_receipt(value: Any) -> dict[str, Any]:
         or not isinstance(strength, (int, float))
         or not math.isfinite(float(strength))
         or not math.isclose(float(strength), spec.strength)
+        or type(n_slots) is not int
+        or n_slots < 1
+        or type(hidden_dimension) is not int
+        or hidden_dimension < 1
         or value.get("causal") is not True
     ):
         raise ValueError("cognitive operator execution metadata is invalid")
@@ -294,12 +318,28 @@ def validate_operator_receipt(value: Any) -> dict[str, Any]:
         or not changed
         or changed != sorted(set(changed))
         or any(type(index) is not int or index < 0 for index in changed)
+        or any(index >= n_slots for index in changed)
         or not isinstance(protected, list)
         or protected != sorted(set(protected))
         or any(type(index) is not int or index < 0 for index in protected)
+        or any(index >= n_slots for index in protected)
         or set(changed) & set(protected)
     ):
         raise ValueError("cognitive operator slot evidence is invalid")
+    accounting = value.get("tensor_accounting")
+    expected_accounting = {
+        "element_reads": (2 * n_slots + 3 * len(changed) + 1)
+        * hidden_dimension,
+        "element_writes": (n_slots + len(changed)) * hidden_dimension,
+        "tensor_scalar_ops": (
+            24 * len(changed) + 4 * n_slots + 8
+        )
+        * hidden_dimension,
+        "commitment_host_ops": (3 * n_slots + 1) * hidden_dimension,
+        "hidden_layer_apps": 0,
+    }
+    if accounting != expected_accounting:
+        raise ValueError("cognitive operator tensor accounting differs")
     for key in (
         "input_sha256",
         "output_sha256",

@@ -106,6 +106,10 @@ After CP335, the published total is record 396: 70-337 forecast records remain,
 checkpoint-count completion is 54.0%-85.0%, and the midpoint planning estimate
 is 66.1%.
 
+After CP336, the published total is record 397: 69-336 forecast records remain,
+checkpoint-count completion is 54.2%-85.2%, and the midpoint planning estimate
+is 66.2%.
+
 ## Code-grounded baseline and ownership
 
 The four-slice static audit covered the neural core, epistemic/verifier paths,
@@ -115,9 +119,9 @@ baseline below is exhaustive over SPARK-001 through SPARK-072:
 
 - `ACCEPTED`: SPARK-001, SPARK-005, SPARK-006, SPARK-007, SPARK-008, SPARK-009,
   SPARK-010, SPARK-011, SPARK-012, SPARK-014, SPARK-015, SPARK-016,
-  SPARK-017, SPARK-018, SPARK-019, SPARK-020, SPARK-021.
+  SPARK-017, SPARK-018, SPARK-019, SPARK-020, SPARK-021, SPARK-022.
 - `PARTIAL`: SPARK-003,
-  SPARK-022, SPARK-023, SPARK-024, SPARK-025,
+  SPARK-023, SPARK-024, SPARK-025,
   SPARK-026, SPARK-027, SPARK-035, SPARK-039, SPARK-040, SPARK-041,
   SPARK-042, SPARK-051, SPARK-052, SPARK-053, SPARK-054, SPARK-055,
   SPARK-056, SPARK-058, SPARK-060, SPARK-062, SPARK-063, SPARK-065, SPARK-066,
@@ -528,9 +532,44 @@ before those dependencies close is not admissible.
   execution and its falsification path, not broad task accuracy or frontier
   benefit. The affected engine/service/training/GRPO/identity suite passes
   312/312, and the final fixed ownership gate passes 900/900.
-- [ ] **SPARK-022 - Equal-compute virtual width.** Meter every branch, exchange,
+- [x] **SPARK-022 - Equal-compute virtual width.** Meter every branch, exchange,
   verifier, and decode operation in the same currency as controls; refuse
   comparisons with hidden compute or information advantages.
+  Accepted at CP336. A model-profile-bound structural estimator now records
+  transformer layer applications, attention query/key pairs, output-head work,
+  tensor reads/writes/scalar operations, verifier bytes/calls, tool I/O,
+  external-model tokens/calls, and host scalar work as exact non-negative
+  integer counters. Every operation is separately named and digest-bound;
+  unknown work makes the receipt incomplete. The estimator recomputes dense
+  decoder/GQA FLOPs from validated architecture fields rather than trusting a
+  caller-supplied total.
+
+  Information parity is separate and equally strict. Each arm commits the exact
+  tokenized model input, typed cognitive context, controller evidence, verifier,
+  tokenizer/decode policy, and tool-access policy. Source IDs, kinds, byte/token
+  counts, content hashes, policy hashes, and unknown accesses are normalized and
+  receipt-bound. Vanilla and recurrent arms now consume the same chat-template
+  token IDs; actual generated tokens determine decode work instead of a declared
+  maximum. Equal-compute controls accumulate complete samples until neural FLOPs
+  and every non-neural parity dimension reach the preregistered target, and fail
+  closed if the sample bound cannot do so.
+
+  Branch recurrence, bounded mailbox exchange, cognitive operators, compression,
+  disagreement/diversity, latent optimization, fast weights, verifier use,
+  sampling/voting, and cleanup all charge the same ledger. Worker results bind
+  their top-level receipts byte-for-byte to the RLC episode; the service
+  independently reconstructs live operation totals. Campaign grading, frontier
+  certification, raw artifacts, and virtual-width experiments issue per-task
+  comparison certificates and force claims to `CONJECTURE` on missing, unequal,
+  or hidden work or information. A separately implemented standard-library
+  scorer reconstructs the profiles, ledgers, information receipts, RLC binding,
+  and certificates and byte-matches the production semantic grade. Rehashed
+  inner-ledger tampering is rejected after outer commitments are recomputed.
+
+  This accepts one structural comparison currency, not hardware energy or
+  wall-time equivalence, and does not make differently funded primary arms an
+  equal-compute claim. No resident-32B capability campaign was run; task benefit,
+  positive interaction, and frontier gain remain unproven.
 
 ## D. Penultimate recurrent neural correction
 
@@ -793,18 +832,26 @@ train/live mailbox parity. The tensor role lesion/swap/restoration path proves
 that executable labor follows role programs rather than fixed branch indices,
 but no powered resident task campaign has yet established an accuracy benefit;
 the negative capability verdict is unchanged.
+CP336 closes claim-grade structural resource and information accounting. It
+also repairs the resident recurrent-GRPO execution-spec artifact omitted during
+the CP335 schema migration and makes the independent scoring kernel reconstruct
+the new accounting evidence without importing the production grader. This does
+not create a capability result; the negative capability verdict is unchanged.
 
-Validation: the affected branch, schedule, engine, worker/service, experiment,
-recurrence-native v2/v3/v4, recurrent-GRPO, trainer-contract, adapter-identity,
-structural-diversity, correlated-support, and operator suite passes 312/312 in
-111.25 seconds. The final fixed-snapshot RLC, latent-cortex, global-workspace,
-GWT, and execution-controller ownership gate passes 900/900 in 319.88 seconds.
-Strict focused Ruff, bytecode compilation, and `git diff --check` pass. No
-resident 32B capability campaign was run, and the negative frontier verdict is
-unchanged.
+Validation: focused accounting, campaign-runner, contract-decode, and experiment
+tests pass 91/91; frontier certification/admission/verifier tests pass 89/89;
+and resident recurrent-GRPO preregistration tests pass 9/9. The independent
+scoring, disk-evidence, worker-evidence, contamination, and integrity boundary
+passes 89/89. The final fixed-snapshot RLC, latent-cortex,
+recurrence/training, global-workspace, GWT, and execution-controller ownership
+gate passes 1221/1221 in 454.64 seconds. Strict focused Ruff, bytecode
+compilation, JSON parsing, and `git diff --check` pass. No resident 32B
+capability campaign was run, and the negative frontier verdict is unchanged.
 
-This is total checkpoint record 396. The revised forecast remains 466-733 total
-records, now approximately 70-337 records after this checkpoint. Checkpoint-
-count completion is approximately 54.0%-85.0%, with a midpoint planning
-estimate of 66.1%. Next: publish CP335, then implement complete same-currency
-compute and information accounting for SPARK-022.
+This is total checkpoint record 397. The revised forecast remains 466-733 total
+records, now approximately 69-336 records after this checkpoint. Checkpoint-
+count completion is approximately 54.2%-85.2%, with a midpoint planning
+estimate of 66.2%. Next: publish CP336, then implement SPARK-023 evidence-
+grounded recurrent state and audit every resident-weight, Wikipedia/RAG, Black
+Hole memory, one-shot, and governed web/tool source through retrieval, recurrent
+binding, verification, answer attribution, and memory writeback.

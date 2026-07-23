@@ -456,6 +456,8 @@ class EpisodicFastWeights:
         steps: int | None = None,
         budget: ComputeBudget | None = None,
         layer_apps_per_forward: int = 0,
+        tokens_per_forward: int = 0,
+        layers_per_forward: int = 0,
         reserve_layer_apps: int = 0,
     ) -> None:
         """Functional gradient steps on every wrapper's (U, V).
@@ -488,6 +490,20 @@ class EpisodicFastWeights:
             or reserve_layer_apps < 0
         ):
             raise ValueError("reserve_layer_apps must be a non-negative integer")
+        for name, value in (
+            ("tokens_per_forward", tokens_per_forward),
+            ("layers_per_forward", layers_per_forward),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"{name} must be a non-negative integer")
+        exact_forward_shape = (
+            tokens_per_forward > 0
+            and layers_per_forward > 0
+            and tokens_per_forward * layers_per_forward
+            == layer_apps_per_forward
+        )
+        if budget is not None and not exact_forward_shape:
+            budget.resource_ledger.mark_unknown("fast_weight_training_shape")
         if budget is not None and layer_apps_per_forward <= 0:
             raise ValueError(
                 "budgeted fast-weight optimization requires a positive forward cost"
@@ -517,7 +533,24 @@ class EpisodicFastWeights:
                 self.lifecycle.budget_exhausted = True
                 break
             if budget is not None:
-                budget.charge_layer_apps(gradient_cost)
+                if exact_forward_shape:
+                    budget.charge_training_work(
+                        "fast_weight_gradient",
+                        tokens=tokens_per_forward,
+                        layers=layers_per_forward,
+                        attention_pairs_per_forward=(
+                            tokens_per_forward
+                            * tokens_per_forward
+                            * layers_per_forward
+                        ),
+                        forward_evaluations=1,
+                        backward_evaluations=1,
+                    )
+                else:
+                    budget.charge_layer_apps(
+                        gradient_cost,
+                        operation="fast_weight_gradient",
+                    )
             self.lifecycle.optimization_attempts += 1
             value, grads = grad_fn(params)
             current_loss = float(value)
@@ -545,7 +578,24 @@ class EpisodicFastWeights:
                     self.lifecycle.budget_exhausted = True
                     break
                 if budget is not None:
-                    budget.charge_layer_apps(candidate_cost)
+                    if exact_forward_shape:
+                        budget.charge_training_work(
+                            "fast_weight_line_search",
+                            tokens=tokens_per_forward,
+                            layers=layers_per_forward,
+                            attention_pairs_per_forward=(
+                                tokens_per_forward
+                                * tokens_per_forward
+                                * layers_per_forward
+                            ),
+                            forward_evaluations=1,
+                            backward_evaluations=0,
+                        )
+                    else:
+                        budget.charge_layer_apps(
+                            candidate_cost,
+                            operation="fast_weight_line_search",
+                        )
                 candidate = [
                     parameter - step_size * direction
                     for parameter, direction in zip(params, directions, strict=True)

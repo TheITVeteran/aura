@@ -29,6 +29,11 @@ from core.brain.llm.latent_cortex.paired_campaign import (
     build_campaign_plan,
     grade_campaign,
 )
+from core.brain.llm.latent_cortex.resource_accounting import (
+    ModelComputeProfile,
+    ResourceLedger,
+    build_information_receipt,
+)
 
 MODEL_PATH = "/sealed/resident-32b"
 RUNNER_SHA256 = "c" * 64
@@ -43,6 +48,43 @@ TEST_PUBLIC_DER = Ed25519PrivateKey.from_private_bytes(
 )
 TEST_TRUST_ROOT_SHA256 = hashlib.sha256(TEST_PUBLIC_DER).hexdigest()
 TEST_POLICY_SHA256 = "f" * 64
+
+
+def _accounting(task_payload_sha256: str) -> tuple[dict, dict]:
+    profile = ModelComputeProfile(
+        model_type="paired-fixture",
+        hidden_size=8,
+        intermediate_size=16,
+        num_hidden_layers=2,
+        num_attention_heads=2,
+        num_key_value_heads=1,
+        vocab_size=64,
+        head_dim=4,
+    )
+    ledger = ResourceLedger(profile)
+    ledger.charge(
+        "fixture_arm",
+        transformer_layer_apps=10_000,
+        attention_query_key_pairs=4_000,
+        output_head_tokens=100,
+        verifier_calls=1,
+        verifier_input_bytes=256,
+        verifier_output_bytes=8,
+        host_scalar_ops=2_000,
+    )
+    information = build_information_receipt(
+        sources=[
+            {
+                "source_id": "held_out_task",
+                "kind": "task_prompt",
+                "content_sha256": task_payload_sha256,
+                "byte_count": 256,
+                "token_count": 64,
+            }
+        ],
+        policies={"decode": "1" * 64, "verifier": "2" * 64},
+    )
+    return ledger.to_receipt(), information
 
 
 def _campaign_trust():
@@ -190,6 +232,20 @@ def _records(plan, tasks, *, gain: bool = True):
             if outcomes[arm]
             else "synthetic answer intentionally lacks the terminal marker"
         )
+        task = task_records[definition["task_id"]]
+        resource_accounting, information_accounting = _accounting(
+            task["task_payload_sha256"]
+        )
+        episode_receipt = (
+            {
+                "budget": {
+                    "resource_accounting": resource_accounting,
+                    "information_accounting": information_accounting,
+                }
+            }
+            if arm.endswith("_rlc")
+            else {}
+        )
         result = {
             "arm": arm,
             "text": text,
@@ -219,8 +275,10 @@ def _records(plan, tasks, *, gain: bool = True):
                 if arm.startswith("adapter_")
                 else None
             ),
+            "episode_receipt": episode_receipt,
+            "resource_accounting": resource_accounting,
+            "information_accounting": information_accounting,
         }
-        task = task_records[definition["task_id"]]
         score = issuer_task.score(text).to_dict()
         correct = score["correct"]
         verification = {
@@ -376,6 +434,10 @@ def test_claim_grade_requires_out_of_band_pinned_contamination_root(trusted_root
         (
             lambda row: row["result"].__setitem__("layer_apps", 9_999),
             "campaign_result_commitment_mismatch",
+        ),
+        (
+            lambda row: row["result"].pop("resource_accounting"),
+            "campaign_record_accounting_invalid",
         ),
         (
             lambda row: row["result"]["runtime_model_identity"].__setitem__(

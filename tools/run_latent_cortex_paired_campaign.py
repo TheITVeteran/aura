@@ -1777,14 +1777,6 @@ def _load_adapter(model: Any, adapter_dir: Path, manifest: dict[str, Any]) -> in
     return len(originals)
 
 
-def _render_prompt(tokenizer: Any, task: PublicTaskRecord) -> str:
-    return tokenizer.apply_chat_template(
-        [{"role": "user", "content": task.prompt}],
-        add_generation_prompt=True,
-        tokenize=False,
-    )
-
-
 def _vanilla_once(
     model: Any,
     tokenizer: Any,
@@ -1792,7 +1784,8 @@ def _vanilla_once(
     *,
     max_tokens: int,
     sample_seed: int | None = None,
-) -> tuple[str, int]:
+    accounting_engine: Any,
+) -> tuple[str, int, dict[str, Any], dict[str, Any], float]:
     import mlx.core as mx
     from mlx_lm import stream_generate
 
@@ -1806,7 +1799,11 @@ def _vanilla_once(
 
         mx.random.seed(sample_seed)
         kwargs["sampler"] = make_sampler(temp=0.7, top_p=0.95)
-    rendered = _render_prompt(tokenizer, task)
+    prompt_token_ids = accounting_engine._encode(
+        None,
+        [{"role": "user", "content": task.prompt}],
+        None,
+    )
     # CP180: uniform contract-aware stop for EVERY arm that decodes through
     # this path — the moment one FINAL_ANSWER JSON object completes, more
     # tokens can only break terminality. Within the same hard cap, budget
@@ -1818,7 +1815,7 @@ def _vanilla_once(
     for response in stream_generate(
         model,
         tokenizer,
-        prompt=rendered,
+        prompt=prompt_token_ids,
         max_tokens=max_tokens + contract_grace_tokens,
         **kwargs,
     ):
@@ -1827,9 +1824,72 @@ def _vanilla_once(
         if is_contract_complete("".join(pieces)):
             break
     text = "".join(pieces)
-    prompt_tokens = len(tokenizer.encode(rendered))
+    prompt_tokens = len(prompt_token_ids)
     output_tokens = max(1, generated_tokens)
-    return text, (prompt_tokens + output_tokens) * len(model.model.layers)
+    n_layers = len(model.model.layers)
+    decode_forwards = max(0, output_tokens - 1)
+    layer_apps = (prompt_tokens + decode_forwards) * n_layers
+
+    from core.brain.llm.latent_cortex.resource_accounting import (
+        ModelComputeProfile,
+        ResourceLedger,
+        triangular_attention_pairs,
+    )
+    from core.brain.llm.latent_cortex.task_verifiers import EpisodeTaskVerifier
+    from core.brain.llm.latent_cortex.value_of_computation import (
+        build_evidence_snapshot,
+    )
+
+    profile = ModelComputeProfile.from_model(model)
+    ledger = ResourceLedger(profile)
+    ledger.charge(
+        "vanilla_prefill",
+        transformer_layer_apps=prompt_tokens * n_layers,
+        attention_query_key_pairs=(
+            triangular_attention_pairs(prompt_tokens) * n_layers
+        ),
+        output_head_tokens=1,
+    )
+    decode_pairs = sum(
+        prompt_tokens + index + 1 for index in range(decode_forwards)
+    )
+    ledger.charge(
+        "vanilla_decode",
+        transformer_layer_apps=decode_forwards * n_layers,
+        attention_query_key_pairs=decode_pairs * n_layers,
+        output_head_tokens=decode_forwards,
+        tensor_element_reads=output_tokens * profile.vocab_size,
+        tensor_element_writes=output_tokens * profile.vocab_size,
+        host_scalar_ops=output_tokens * profile.vocab_size * 8,
+    )
+    verifier = EpisodeTaskVerifier(
+        task.prompt,
+        response_contract=task.response_contract,
+    )
+    verifier_score = float(verifier(text))
+    ledger.charge(
+        "task_verifier",
+        verifier_calls=1,
+        verifier_input_bytes=len(text.encode("utf-8")),
+        verifier_output_bytes=len(repr(verifier_score).encode("ascii")),
+        host_scalar_ops=max(1, len(text)),
+    )
+    encoded_tokens = json.dumps(
+        prompt_token_ids,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("ascii")
+    information = accounting_engine._information_receipt(
+        encoded_tokens=encoded_tokens,
+        token_count=len(prompt_token_ids),
+        context_items=[],
+        policy_evidence=build_evidence_snapshot(
+            bucket=f"{str(task.domain or 'general')[:24]}|none|short|s:mid|u:mid",
+            cells={},
+        ),
+        verifier=verifier,
+    )
+    return text, layer_apps, ledger.to_receipt(), information, verifier_score
 
 
 def _majority_output(outputs: list[str]) -> str:
@@ -1853,23 +1913,77 @@ def _equal_compute(
     target_layer_apps: int,
     max_tokens: int,
     max_samples: int,
-) -> tuple[str, int, int]:
+    accounting_engine: Any,
+    target_resource: Mapping[str, Any],
+) -> tuple[str, int, int, dict[str, Any], dict[str, Any]]:
+    from core.brain.llm.latent_cortex.resource_accounting import (
+        NON_NEURAL_PARITY_COUNTERS,
+        ResourceLedger,
+        validate_resource_receipt,
+    )
+
+    try:
+        target_resource = validate_resource_receipt(target_resource)
+    except (TypeError, ValueError) as exc:
+        raise CampaignProducerError("equal-compute target accounting is invalid") from exc
+    if target_resource["accounting_complete"] is not True:
+        raise CampaignProducerError("equal-compute target accounting is incomplete")
+
     outputs: list[str] = []
+    scores: list[float] = []
+    resources: list[dict[str, Any]] = []
+    information: dict[str, Any] | None = None
     spent = 0
+    target_reached = False
     seed_base = int(task.task_payload_sha256[:16], 16)
     for sample_index in range(max_samples):
-        text, cost = _vanilla_once(
+        text, cost, resource, sample_information, verifier_score = _vanilla_once(
             model,
             tokenizer,
             task,
             max_tokens=max_tokens,
             sample_seed=(seed_base + sample_index) % (2**31 - 1),
+            accounting_engine=accounting_engine,
         )
         outputs.append(text)
+        scores.append(verifier_score)
+        resources.append(resource)
+        if information is None:
+            information = sample_information
+        elif information != sample_information:
+            raise CampaignProducerError("equal-compute information envelope drifted")
         spent += cost
-        if spent >= target_layer_apps:
+        aggregate = ResourceLedger.aggregate(resources).to_receipt()
+        target_flops = int(target_resource.get("estimated_flops") or 0)
+        if (
+            spent >= target_layer_apps
+            and int(aggregate.get("estimated_flops") or 0) >= target_flops
+            and all(
+                aggregate["totals"][name] >= target_resource["totals"][name]
+                for name in NON_NEURAL_PARITY_COUNTERS
+            )
+        ):
+            target_reached = True
             break
-    return _majority_output(outputs), spent, len(outputs)
+    if not outputs or information is None:
+        raise CampaignProducerError("equal-compute control produced no samples")
+    if not target_reached:
+        raise CampaignProducerError(
+            "equal-compute control exhausted its sample bound below the target"
+        )
+    best_score = max(scores)
+    eligible = [
+        output
+        for output, score in zip(outputs, scores, strict=True)
+        if score == best_score
+    ]
+    return (
+        _majority_output(eligible),
+        spent,
+        len(outputs),
+        ResourceLedger.aggregate(resources).to_receipt(),
+        information,
+    )
 
 
 def _make_rlc_engine(
@@ -1894,7 +2008,11 @@ def _run_rlc(
     engine: Any,
     task: PublicTaskRecord,
     args: argparse.Namespace,
-) -> tuple[str, int, dict[str, Any]]:
+) -> tuple[str, int, dict[str, Any], dict[str, Any], dict[str, Any]]:
+    from core.brain.llm.latent_cortex.resource_accounting import (
+        validate_information_receipt,
+        validate_resource_receipt,
+    )
     from core.brain.llm.latent_cortex.task_verifiers import EpisodeTaskVerifier
     from core.brain.llm.latent_cortex.types import ComputeBudget
 
@@ -1914,16 +2032,57 @@ def _run_rlc(
     receipt["verifier_guidance"] = verifier.to_receipt()
     if not result.ok:
         raise CampaignProducerError(f"latent episode failed: {result.reason}")
-    return result.text, budget.spent_layer_apps, receipt
+    try:
+        resource = validate_resource_receipt(
+            receipt["budget"]["resource_accounting"]
+        )
+        information = validate_information_receipt(
+            receipt["budget"]["information_accounting"]
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise CampaignProducerError("latent episode accounting is invalid") from exc
+    if (
+        resource["accounting_complete"] is not True
+        or information["accounting_complete"] is not True
+    ):
+        raise CampaignProducerError("latent episode accounting is incomplete")
+    return (
+        result.text,
+        budget.spent_layer_apps,
+        receipt,
+        resource,
+        information,
+    )
 
 
-def _prior_rlc_costs(journal: CampaignJournal) -> dict[tuple[str, str], int]:
-    costs: dict[tuple[str, str], int] = {}
+def _prior_rlc_costs(
+    journal: CampaignJournal,
+) -> dict[tuple[str, str], tuple[int, dict[str, Any]]]:
+    from core.brain.llm.latent_cortex.resource_accounting import (
+        validate_resource_receipt,
+    )
+
+    costs: dict[tuple[str, str], tuple[int, dict[str, Any]]] = {}
     for record in journal.result_records():
         definition = record["definition"]
         arm = definition["arm"]
         if arm in {BASE_RLC, ADAPTER_RLC}:
-            costs[(definition["task_id"], arm)] = int(record["result"]["layer_apps"])
+            try:
+                resource = validate_resource_receipt(
+                    record["result"].get("resource_accounting")
+                )
+            except (TypeError, ValueError) as exc:
+                raise CampaignProducerError(
+                    "RLC prerequisite lacks valid resource accounting"
+                ) from exc
+            if resource["accounting_complete"] is not True:
+                raise CampaignProducerError(
+                    "RLC prerequisite resource accounting is incomplete"
+                )
+            costs[(definition["task_id"], arm)] = (
+                int(record["result"]["layer_apps"]),
+                resource,
+            )
     return costs
 
 
@@ -2132,11 +2291,17 @@ def _execute_worker(
         execution_spec = (
             raw_execution_spec if isinstance(raw_execution_spec, Mapping) else None
         )
-        rlc_engine = (
-            _make_rlc_engine(model, tokenizer, args, execution_spec)
-            if arm.endswith("_rlc")
-            else None
+        # Every arm receives the same bound engine configuration so resource
+        # profiles and information-policy commitments are reconstructed from
+        # the identical resident model/runtime.  Non-RLC arms use it only for
+        # claim accounting; they do not execute latent recurrence.
+        accounting_engine = _make_rlc_engine(
+            model,
+            tokenizer,
+            args,
+            execution_spec,
         )
+        rlc_engine = accounting_engine if arm.endswith("_rlc") else None
         campaign_dir = Path(args.campaign_dir).expanduser().resolve()
         canonical_journal_path = campaign_dir / JOURNAL_FILE
         with CampaignJournal(canonical_journal_path, plan) as canonical:
@@ -2167,9 +2332,20 @@ def _execute_worker(
                 try:
                     with _deadline_alarm(args.episode_timeout, "campaign_cell"):
                         receipt: dict[str, Any] = {}
+                        resource_accounting: dict[str, Any]
+                        information_accounting: dict[str, Any]
+                        arm_verifier_score: float | None = None
                         samples = 1
                         if arm.endswith("_rlc"):
-                            text, layer_apps, receipt = _run_rlc(rlc_engine, task, args)
+                            if rlc_engine is None:
+                                raise CampaignProducerError("RLC engine is unavailable")
+                            (
+                                text,
+                                layer_apps,
+                                receipt,
+                                resource_accounting,
+                                information_accounting,
+                            ) = _run_rlc(rlc_engine, task, args)
                         elif arm.endswith("_equal_compute"):
                             source_arm = (
                                 BASE_RLC if arm == BASE_EQUAL_COMPUTE else ADAPTER_RLC
@@ -2179,20 +2355,36 @@ def _execute_worker(
                                 raise CampaignProducerError(
                                     "equal-compute prerequisite missing"
                                 )
-                            text, layer_apps, samples = _equal_compute(
+                            target_layer_apps, target_resource = target
+                            (
+                                text,
+                                layer_apps,
+                                samples,
+                                resource_accounting,
+                                information_accounting,
+                            ) = _equal_compute(
                                 model,
                                 tokenizer,
                                 task,
-                                target_layer_apps=target,
+                                target_layer_apps=target_layer_apps,
                                 max_tokens=args.decode_max_tokens,
                                 max_samples=args.equal_compute_max_samples,
+                                accounting_engine=accounting_engine,
+                                target_resource=target_resource,
                             )
                         else:
-                            text, layer_apps = _vanilla_once(
+                            (
+                                text,
+                                layer_apps,
+                                resource_accounting,
+                                information_accounting,
+                                arm_verifier_score,
+                            ) = _vanilla_once(
                                 model,
                                 tokenizer,
                                 task,
                                 max_tokens=args.decode_max_tokens,
+                                accounting_engine=accounting_engine,
                             )
                     if receipt:
                         receipt.update(worker_identity)
@@ -2220,6 +2412,9 @@ def _execute_worker(
                         "runtime_adapter_identity": actual_adapter_identity,
                         "runtime_model_identity": worker_identity,
                         "episode_receipt": receipt,
+                        "resource_accounting": resource_accounting,
+                        "information_accounting": information_accounting,
+                        "arm_verifier_score": arm_verifier_score,
                     }
                     if origin_context is not None:
                         result = origin_context["client"].record_result(

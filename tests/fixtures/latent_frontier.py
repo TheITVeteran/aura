@@ -8,6 +8,9 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from core.brain.frontier_evidence_v5 import canonical_json_bytes
+from core.brain.llm.latent_cortex.frontier_artifacts import (
+    ARTIFACT_VERIFICATION_SCHEMA,
+)
 from core.brain.llm.latent_cortex.frontier_certification import (
     INDEPENDENT_ATTESTATION_SCHEMA,
     SCHEMA,
@@ -16,12 +19,14 @@ from core.brain.llm.latent_cortex.frontier_certification import (
     evidence_payload_sha256,
     verify_frontier_gain_bundle,
 )
-from core.brain.llm.latent_cortex.frontier_artifacts import (
-    ARTIFACT_VERIFICATION_SCHEMA,
-)
 from core.brain.llm.latent_cortex.frontier_verifier import (
     TRUST_CONFIG_SCHEMA,
     verifier_implementation_sha256,
+)
+from core.brain.llm.latent_cortex.resource_accounting import (
+    ModelComputeProfile,
+    ResourceLedger,
+    build_information_receipt,
 )
 
 _VERIFIER_KEY = Ed25519PrivateKey.generate()
@@ -52,6 +57,47 @@ _TRUSTED_TASK_ISSUERS = {
         "release_sha256": _TASK_ISSUER_RELEASE,
     }
 }
+
+
+def _trial_accounting(task_payload_sha256: str) -> tuple[dict, dict]:
+    profile = ModelComputeProfile(
+        model_type="fixture-decoder",
+        hidden_size=8,
+        intermediate_size=16,
+        num_hidden_layers=2,
+        num_attention_heads=2,
+        num_key_value_heads=1,
+        vocab_size=64,
+        head_dim=4,
+    )
+    ledger = ResourceLedger(profile)
+    ledger.charge(
+        "fixture_inference",
+        transformer_layer_apps=1_000,
+        attention_query_key_pairs=400,
+        output_head_tokens=10,
+        verifier_calls=1,
+        verifier_input_bytes=128,
+        verifier_output_bytes=8,
+        host_scalar_ops=1_000,
+    )
+    information = build_information_receipt(
+        sources=[
+            {
+                "source_id": "held_out_task",
+                "kind": "task_prompt",
+                "content_sha256": task_payload_sha256,
+                "byte_count": 128,
+                "token_count": 32,
+            }
+        ],
+        policies={
+            "decode": "d" * 64,
+            "tool": "c" * 64,
+            "verifier": "a" * 64,
+        },
+    )
+    return ledger.to_receipt(), information
 
 
 def _trust_config() -> dict:
@@ -239,6 +285,13 @@ def _bundle(
     for domain in prereg["domains"]:
         for cell in range(40):
             trial_id = f"{domain}-{cell}"
+            task_payload_sha256 = canonical_sha256(["task", trial_id])
+            treatment_resource, treatment_information = _trial_accounting(
+                task_payload_sha256
+            )
+            control_resource, control_information = _trial_accounting(
+                task_payload_sha256
+            )
             trials.append(
                 {
                     "trial_id": trial_id,
@@ -250,13 +303,19 @@ def _bundle(
                     "evaluation_started_at": 1201.0 + index,
                     "verifier_blinded": True,
                     "verifier_receipt_sha256": canonical_sha256(["verifier", trial_id]),
-                    "task_payload_sha256": canonical_sha256(["task", trial_id]),
+                    "task_payload_sha256": task_payload_sha256,
                     "treatment_output_sha256": canonical_sha256(["treatment", trial_id]),
                     "control_output_sha256": canonical_sha256(["control", trial_id]),
                     "scorer_config_sha256": "f" * 64,
                     "scorer_implementation_sha256": "a" * 64,
-                    "treatment_information_sha256": "1" * 64,
-                    "control_information_sha256": "1" * 64,
+                    "treatment_information_sha256": treatment_information[
+                        "receipt_sha256"
+                    ],
+                    "control_information_sha256": control_information[
+                        "receipt_sha256"
+                    ],
+                    "treatment_information": treatment_information,
+                    "control_information": control_information,
                     "treatment_tool_policy_sha256": "c" * 64,
                     "control_tool_policy_sha256": "c" * 64,
                     "treatment_decode_policy_sha256": "d" * 64,
@@ -265,14 +324,16 @@ def _bundle(
                     "treatment_success": True,
                     "control_success": cell % 4 == 0,
                     "treatment_compute": {
-                        "estimated_flops": 1_000_000.0,
+                        "estimated_flops": treatment_resource["estimated_flops"],
                         "layer_apps": 1000,
                         "estimator_sha256": "e" * 64,
+                        "resource_accounting": treatment_resource,
                     },
                     "control_compute": {
-                        "estimated_flops": 1_000_000.0,
+                        "estimated_flops": control_resource["estimated_flops"],
                         "layer_apps": 1000,
                         "estimator_sha256": "e" * 64,
+                        "resource_accounting": control_resource,
                     },
                     "treatment_receipt": {
                         "episode_id": f"episode-{trial_id}",

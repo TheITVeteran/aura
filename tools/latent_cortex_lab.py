@@ -17,6 +17,7 @@ runs episodes through the worker action instead.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -184,6 +185,11 @@ def _run_admitted_lab(
         task_battery,
     )
     from core.brain.llm.latent_cortex.governance import checkpoint_file_fingerprint
+    from core.brain.llm.latent_cortex.resource_accounting import (
+        ModelComputeProfile,
+        ResourceLedger,
+        triangular_attention_pairs,
+    )
     from core.brain.llm.latent_cortex.types import (
         ABSOLUTE_MAX_BRANCHES,
         ABSOLUTE_MAX_SLOTS,
@@ -193,6 +199,9 @@ def _run_admitted_lab(
         LatentOptConfig,
         RecurrenceConfig,
         WorkspaceConfig,
+    )
+    from core.brain.llm.latent_cortex.value_of_computation import (
+        build_evidence_snapshot,
     )
 
     supported_experiments = {"1", "2", "3", "4", "5", "A", "R"}
@@ -292,7 +301,8 @@ def _run_admitted_lab(
         branches: int | None = None,
         fast_weights: bool = False,
         verifier_guided: bool = False,
-    ) -> tuple[bool, int]:
+        return_accounting: bool = False,
+    ):
         remaining_s = deadline - time.monotonic()
         if remaining_s <= 0.0:
             raise LabDeadlineError("lab wall-clock bound reached")
@@ -323,7 +333,14 @@ def _run_admitted_lab(
         )
         if time.monotonic() > deadline:
             raise LabDeadlineError("lab wall-clock bound reached during episode")
-        return result.ok and task.verify(result.text), budget.spent_layer_apps
+        outcome = (result.ok and task.verify(result.text), budget.spent_layer_apps)
+        if not return_accounting:
+            return outcome
+        return (
+            *outcome,
+            result.receipt.budget["resource_accounting"],
+            result.receipt.budget["information_accounting"],
+        )
 
     def solve_vanilla(task) -> tuple[bool, int]:
         """The strong control: the same checkpoint, ordinary decoding, no
@@ -332,26 +349,42 @@ def _run_admitted_lab(
         remaining_s = deadline - time.monotonic()
         if remaining_s <= 0.0:
             raise LabDeadlineError("lab wall-clock bound reached")
-        from mlx_lm import generate as mlx_generate
+        from mlx_lm import stream_generate
 
-        rendered = tokenizer.apply_chat_template(
+        information_engine = make_engine(max(steps), branches=1)
+        prompt_token_ids = information_engine._encode(
+            None,
             [{"role": "user", "content": task.prompt}],
-            add_generation_prompt=True,
-            tokenize=False,
+            None,
         )
-        text = mlx_generate(
-            model, tokenizer, prompt=rendered, max_tokens=64, verbose=False
-        )
-        prompt_tokens = len(tokenizer.encode(rendered))
+        pieces: list[str] = []
+        generated_tokens = 0
+        for response in stream_generate(
+            model,
+            tokenizer,
+            prompt=prompt_token_ids,
+            max_tokens=64,
+        ):
+            pieces.append(response.text)
+            generated_tokens = int(response.generation_tokens)
+        text = "".join(pieces)
+        prompt_tokens = len(prompt_token_ids)
         n_layers = len(model.model.layers)
-        cost = (prompt_tokens + 64) * n_layers
+        # Prefill produces the first output token; only subsequent output
+        # tokens execute an additional transformer forward pass.
+        cost = (prompt_tokens + max(0, max(1, generated_tokens) - 1)) * n_layers
         return task.verify(text), cost
 
-    def solve_branches(task, k: int) -> tuple[bool, int]:
+    def solve_branches(task, k: int):
         """Experiment-4 treatment: K latent branches, convergence-selected."""
-        return solve(task, max(steps), branches=k)
+        return solve(
+            task,
+            max(steps),
+            branches=k,
+            return_accounting=True,
+        )
 
-    def solve_sampling(task, k: int) -> tuple[bool, int]:
+    def solve_sampling(task, k: int):
         """Experiment-4 control: K-sample self-consistency at matched FLOPs.
 
         Standard recipe — sample K answers at temperature, majority-vote the
@@ -360,32 +393,90 @@ def _run_admitted_lab(
         remaining_s = deadline - time.monotonic()
         if remaining_s <= 0.0:
             raise LabDeadlineError("lab wall-clock bound reached")
-        from mlx_lm import generate as mlx_generate
+        from mlx_lm import stream_generate
         from mlx_lm.sample_utils import make_sampler
 
-        rendered = tokenizer.apply_chat_template(
+        information_engine = make_engine(max(steps), branches=k)
+        prompt_token_ids = information_engine._encode(
+            None,
             [{"role": "user", "content": task.prompt}],
-            add_generation_prompt=True,
-            tokenize=False,
+            None,
         )
         claims: list[str] = []
+        output_token_counts: list[int] = []
+        output_byte_counts: list[int] = []
         for _sample_index in range(max(1, int(k))):
             if time.monotonic() > deadline:
                 raise LabDeadlineError("lab wall-clock bound reached during sampling")
-            text = mlx_generate(
+            pieces: list[str] = []
+            generated_tokens = 0
+            for response in stream_generate(
                 model,
                 tokenizer,
-                prompt=rendered,
+                prompt=prompt_token_ids,
                 max_tokens=64,
-                verbose=False,
                 sampler=make_sampler(temp=0.8, top_p=0.95),
-            )
+            ):
+                pieces.append(response.text)
+                generated_tokens = int(response.generation_tokens)
+            text = "".join(pieces)
             claims.append(extract_final_numeric_claim(text))
+            output_token_counts.append(max(1, generated_tokens))
+            output_byte_counts.append(len(text.encode("utf-8", errors="replace")))
         voted = majority_answer(claims)
-        prompt_tokens = len(tokenizer.encode(rendered))
+        prompt_tokens = len(prompt_token_ids)
         n_layers = len(model.model.layers)
-        cost = max(1, int(k)) * (prompt_tokens + 64) * n_layers
-        return bool(voted) and voted == task.answer, cost
+        profile = ModelComputeProfile.from_model(model)
+        ledger = ResourceLedger(profile)
+        for sample_index, output_tokens in enumerate(output_token_counts):
+            ledger.charge(
+                f"sample_{sample_index}:prefill",
+                transformer_layer_apps=prompt_tokens * n_layers,
+                attention_query_key_pairs=(
+                    triangular_attention_pairs(prompt_tokens) * n_layers
+                ),
+                output_head_tokens=1,
+            )
+            decode_forwards = max(0, output_tokens - 1)
+            decode_pairs = sum(
+                prompt_tokens + index + 1 for index in range(decode_forwards)
+            )
+            ledger.charge(
+                f"sample_{sample_index}:decode",
+                transformer_layer_apps=decode_forwards * n_layers,
+                attention_query_key_pairs=decode_pairs * n_layers,
+                output_head_tokens=decode_forwards,
+                tensor_element_reads=output_tokens * profile.vocab_size,
+                tensor_element_writes=output_tokens * profile.vocab_size,
+                host_scalar_ops=output_tokens * profile.vocab_size * 8,
+            )
+        ledger.charge(
+            "majority_vote",
+            host_scalar_ops=max(1, sum(output_byte_counts) + len(claims) * 4),
+        )
+        cost = sum(
+            (prompt_tokens + max(0, output_tokens - 1)) * n_layers
+            for output_tokens in output_token_counts
+        )
+        encoded_tokens = json.dumps(
+            prompt_token_ids,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("ascii")
+        information = information_engine._information_receipt(
+            encoded_tokens=encoded_tokens,
+            token_count=len(prompt_token_ids),
+            context_items=[],
+            policy_evidence=build_evidence_snapshot(
+                bucket="general|none|short|s:mid|u:mid",
+                cells={},
+            ),
+            verifier=None,
+        )
+        assert information["sources"][0]["content_sha256"] == hashlib.sha256(
+            encoded_tokens
+        ).hexdigest()
+        return bool(voted) and voted == task.answer, cost, ledger.to_receipt(), information
 
     def solve_role_arm(task, arm: str) -> tuple[bool, int, float]:
         """One Experiment-R role, lesion, swap, or restoration arm.

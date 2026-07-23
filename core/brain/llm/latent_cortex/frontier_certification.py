@@ -9,6 +9,7 @@ import hashlib
 import json
 import math
 from collections.abc import Mapping
+from fractions import Fraction
 from typing import Any
 
 from core.brain.frontier_evidence_v5 import verify_signed_envelope
@@ -17,6 +18,11 @@ from core.brain.llm.latent_cortex.experiments import (
     PROVEN,
     PairedObservation,
     grade_paired_treatment_vs_control,
+)
+from core.brain.llm.latent_cortex.resource_accounting import (
+    certify_comparison_accounting,
+    validate_information_receipt,
+    validate_resource_receipt,
 )
 
 SCHEMA = "aura.latent_cortex.frontier_gain_bundle.v2"
@@ -224,12 +230,12 @@ def _trial_compute(
     arm: str,
     expected_estimator: str,
     reasons: list[str],
-) -> tuple[float | None, int | None]:
+) -> tuple[float | None, int | None, dict[str, Any] | None]:
     compute = trial.get(f"{arm}_compute")
     trial_id = str(trial.get("trial_id") or "unknown")
     if not isinstance(compute, dict):
         reasons.append(f"{trial_id}:{arm}_compute_missing")
-        return None, None
+        return None, None, None
     flops = compute.get("estimated_flops")
     layer_apps = compute.get("layer_apps")
     if not _finite_number(flops, positive=True):
@@ -247,7 +253,43 @@ def _trial_compute(
         reasons.append(f"{trial_id}:{arm}_compute_estimator_unidentified")
     elif estimator != expected_estimator:
         reasons.append(f"{trial_id}:{arm}_compute_estimator_mismatch")
-    return float(flops) if flops is not None else None, layer_apps
+    resource: dict[str, Any] | None = None
+    try:
+        resource = validate_resource_receipt(compute.get("resource_accounting"))
+    except (TypeError, ValueError):
+        reasons.append(f"{trial_id}:{arm}_resource_accounting_invalid")
+    if resource is not None:
+        if resource["accounting_complete"] is not True:
+            reasons.append(f"{trial_id}:{arm}_resource_accounting_incomplete")
+        if flops is not None and float(resource["estimated_flops"]) != float(flops):
+            reasons.append(f"{trial_id}:{arm}_compute_receipt_mismatch")
+    return float(flops) if flops is not None else None, layer_apps, resource
+
+
+def _trial_information(
+    trial: dict[str, Any],
+    arm: str,
+    reasons: list[str],
+) -> dict[str, Any] | None:
+    trial_id = str(trial.get("trial_id") or "unknown")
+    try:
+        receipt = validate_information_receipt(trial.get(f"{arm}_information"))
+    except (TypeError, ValueError):
+        reasons.append(f"{trial_id}:{arm}_information_accounting_invalid")
+        return None
+    if receipt["accounting_complete"] is not True:
+        reasons.append(f"{trial_id}:{arm}_information_accounting_incomplete")
+    task_payload_sha256 = trial.get("task_payload_sha256")
+    if not any(
+        source.get("content_sha256") == task_payload_sha256
+        and source.get("kind") == "task_prompt"
+        for source in receipt["sources"]
+    ):
+        reasons.append(f"{trial_id}:{arm}_task_information_unbound")
+    if trial.get(f"{arm}_information_sha256") != receipt["receipt_sha256"]:
+        reasons.append(f"{trial_id}:{arm}_information_receipt_mismatch")
+        return None
+    return receipt
 
 
 def _validate_treatment_receipt(
@@ -839,6 +881,7 @@ def verify_frontier_gain_bundle(
     )
     admitted_trial_count = 0
     rejected_trial_count = 0
+    comparison_accounting: list[dict[str, Any]] = []
     for trial in trials:
         # ADMISSION ISOLATION: a trial's own integrity defects are collected
         # here and, if any exist, the trial is EXCLUDED from the paired
@@ -901,11 +944,21 @@ def verify_frontier_gain_bundle(
         seen_task_payloads.add(task_payload_hash)
         if trial.get("verifier_blinded") is not True:
             trial_reasons.append(f"{trial_id}:blinded_verifier_unproven")
-        treatment_information = trial.get("treatment_information_sha256")
-        control_information = trial.get("control_information_sha256")
+        treatment_information = _trial_information(
+            trial,
+            "treatment",
+            trial_reasons,
+        )
+        control_information = _trial_information(
+            trial,
+            "control",
+            trial_reasons,
+        )
         if (
-            not _is_sha256(treatment_information)
-            or treatment_information != control_information
+            treatment_information is None
+            or control_information is None
+            or treatment_information["source_set_sha256"]
+            != control_information["source_set_sha256"]
         ):
             trial_reasons.append(f"{trial_id}:information_mismatch")
         if str(trial.get("treatment_tool_policy_sha256") or "") != str(
@@ -938,10 +991,10 @@ def verify_frontier_gain_bundle(
             reasons.extend(trial_reasons)
             rejected_trial_count += 1
             continue
-        treatment_flops, treatment_layers = _trial_compute(
+        treatment_flops, treatment_layers, treatment_resource = _trial_compute(
             trial, "treatment", expected_estimator, trial_reasons
         )
-        control_flops, control_layers = _trial_compute(
+        control_flops, control_layers, control_resource = _trial_compute(
             trial, "control", expected_estimator, trial_reasons
         )
         if treatment_flops is not None and control_flops is not None:
@@ -958,6 +1011,29 @@ def verify_frontier_gain_bundle(
             )
             if layer_mismatch > tolerance:
                 trial_reasons.append(f"{trial_id}:layer_apps_mismatch")
+        if (
+            treatment_resource is not None
+            and control_resource is not None
+            and treatment_information is not None
+            and control_information is not None
+        ):
+            tolerance_fraction = Fraction(str(tolerance)).limit_denominator(1_000_000)
+            accounting = certify_comparison_accounting(
+                treatment_resource=treatment_resource,
+                control_resource=control_resource,
+                treatment_information=treatment_information,
+                control_information=control_information,
+                tolerance_numerator=tolerance_fraction.numerator,
+                tolerance_denominator=tolerance_fraction.denominator,
+                require_compute_parity=True,
+            )
+            comparison_accounting.append(
+                {"trial_id": trial_id, **accounting}
+            )
+            for reason in accounting["reasons"]:
+                trial_reasons.append(
+                    f"{trial_id}:comparison_accounting:{reason}"
+                )
         episode_id = _validate_treatment_receipt(
             trial,
             checkpoint,
@@ -1156,6 +1232,7 @@ def verify_frontier_gain_bundle(
         "preregistration_sha256": expected_prereg_hash,
         "trial_count": len(trials),
         "domain_counts": {domain: len(items) for domain, items in paired.items()},
+        "comparison_accounting": comparison_accounting,
         "required_positive_domains": required_positive,
         "reasons": sorted(set(reasons)),
         "statistical_claim": statistical_claim,

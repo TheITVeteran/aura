@@ -34,9 +34,13 @@ import random
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
+from core.brain.llm.latent_cortex.resource_accounting import (
+    certify_comparison_accounting,
+)
 from core.brain.verifiers.foundry import wilson_lower_bound, wilson_upper_bound
 
 logger = logging.getLogger("Aura.LatentCortex.Experiments")
@@ -285,6 +289,10 @@ class PairedObservation:
     control_success: bool
     treatment_layer_apps: int | None = None
     control_layer_apps: int | None = None
+    treatment_resource: dict[str, Any] | None = None
+    control_resource: dict[str, Any] | None = None
+    treatment_information: dict[str, Any] | None = None
+    control_information: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -294,6 +302,10 @@ class PairedObservation:
             "control_success": self.control_success,
             "treatment_layer_apps": self.treatment_layer_apps,
             "control_layer_apps": self.control_layer_apps,
+            "treatment_resource": self.treatment_resource,
+            "control_resource": self.control_resource,
+            "treatment_information": self.treatment_information,
+            "control_information": self.control_information,
         }
 
 
@@ -308,6 +320,24 @@ def _coerce_solver_outcome(value: Any) -> tuple[bool, int | None]:
     if isinstance(value, bool):
         return value, None
     raise ValueError("solver must return bool or (bool, non-negative layer_apps)")
+
+
+def _coerce_accounted_solver_outcome(
+    value: Any,
+) -> tuple[bool, int, dict[str, Any], dict[str, Any]]:
+    if not isinstance(value, tuple) or len(value) != 4:
+        raise ValueError(
+            "claim-grade solver must return "
+            "(bool, layer_apps, resource_receipt, information_receipt)"
+        )
+    success, layer_apps, resource, information = value
+    if not isinstance(success, bool):
+        raise ValueError("solver success must be boolean")
+    if type(layer_apps) is not int or layer_apps <= 0:
+        raise ValueError("solver layer-app receipt must be a positive integer")
+    if not isinstance(resource, dict) or not isinstance(information, dict):
+        raise ValueError("solver accounting receipts must be mappings")
+    return success, layer_apps, resource, information
 
 
 def _coerce_role_outcome(value: Any) -> tuple[bool, int, float]:
@@ -398,6 +428,7 @@ def grade_paired_treatment_vs_control(
     minimum_effect: float = 0.0,
     compute_tolerance: float = 0.05,
     require_compute: bool = True,
+    require_resource_accounting: bool = False,
 ) -> Claim:
     """Paired, multiplicity-corrected capability comparison."""
     for name, value in (
@@ -417,11 +448,15 @@ def grade_paired_treatment_vs_control(
         raise ValueError("compute_tolerance must be inside [0, 1]")
     if type(require_compute) is not bool:
         raise ValueError("require_compute must be boolean")
+    if type(require_resource_accounting) is not bool:
+        raise ValueError("require_resource_accounting must be boolean")
 
     family_stats: dict[str, dict[str, Any]] = {}
     raw_pvalues: dict[str, float] = {}
     all_differences: list[int] = []
     invalid_compute: list[str] = []
+    invalid_resource_accounting: list[str] = []
+    accounting_certificates: dict[str, list[dict[str, Any]]] = {}
     underpowered: list[str] = []
     seen_task_ids: set[str] = set()
     family_bound_alpha = alpha / max(1, len(observations_by_family))
@@ -478,7 +513,38 @@ def grade_paired_treatment_vs_control(
             )
             > compute_tolerance
         ]
-        if require_compute and (missing_compute or nonpositive_compute or mismatched):
+        family_certificates: list[dict[str, Any]] = []
+        if require_resource_accounting:
+            tolerance = Fraction(str(compute_tolerance)).limit_denominator(10_000)
+            for obs in observations:
+                receipts = (
+                    obs.treatment_resource,
+                    obs.control_resource,
+                    obs.treatment_information,
+                    obs.control_information,
+                )
+                if any(receipt is None for receipt in receipts):
+                    invalid_resource_accounting.append(family)
+                    continue
+                certificate = certify_comparison_accounting(
+                    treatment_resource=obs.treatment_resource,
+                    control_resource=obs.control_resource,
+                    treatment_information=obs.treatment_information,
+                    control_information=obs.control_information,
+                    tolerance_numerator=tolerance.numerator,
+                    tolerance_denominator=tolerance.denominator,
+                    require_compute_parity=require_compute,
+                )
+                family_certificates.append(certificate)
+                if not certificate["admitted"]:
+                    invalid_resource_accounting.append(family)
+            accounting_certificates[family] = family_certificates
+        if require_compute and (
+            missing_compute
+            or nonpositive_compute
+            or mismatched
+            or family in invalid_resource_accounting
+        ):
             invalid_compute.append(family)
         effect = sum(differences) / len(differences) if differences else 0.0
         ci_low, ci_high = _paired_bootstrap_interval(
@@ -502,6 +568,7 @@ def grade_paired_treatment_vs_control(
             "missing_compute": missing_compute,
             "nonpositive_compute": nonpositive_compute,
             "compute_mismatch_task_ids": mismatched,
+            "resource_accounting_invalid": family in invalid_resource_accounting,
         }
         all_differences.extend(differences)
 
@@ -513,6 +580,7 @@ def grade_paired_treatment_vs_control(
         and adjusted[family] < alpha
         and stats["effect_interval"][0] > minimum_effect
         and family not in invalid_compute
+        and family not in invalid_resource_accounting
     ]
     regressed_families = [
         family
@@ -545,6 +613,11 @@ def grade_paired_treatment_vs_control(
         # difference may be bought with extra compute rather than by the
         # named mechanism.
         "compute_matched": bool(require_compute),
+        "resource_accounting_required": require_resource_accounting,
+        "resource_accounting_matched": bool(
+            require_resource_accounting and not invalid_resource_accounting
+        ),
+        "accounting_certificates": accounting_certificates,
         "bootstrap_resamples": _BOOTSTRAP_RESAMPLES,
         "families": family_stats,
         "holm_adjusted_p": adjusted,
@@ -552,6 +625,9 @@ def grade_paired_treatment_vs_control(
         "regressed_families": regressed_families,
         "underpowered_families": underpowered,
         "invalid_compute_families": invalid_compute,
+        "invalid_resource_accounting_families": sorted(
+            set(invalid_resource_accounting)
+        ),
         "pooled": {
             "n": len(all_differences),
             "treatment_wins": pooled_wins,
@@ -569,7 +645,11 @@ def grade_paired_treatment_vs_control(
     )
     required_positive = max(2, math.ceil(len(family_stats) * 2 / 3))
     evidence["required_positive_families"] = required_positive
-    if invalid_compute or underpowered:
+    if (
+        invalid_compute
+        or underpowered
+        or (require_resource_accounting and invalid_resource_accounting)
+    ):
         tier = CONJECTURE
     elif (
         len(positive_families) >= required_positive
@@ -902,16 +982,21 @@ def run_slot_causality(
 
 
 def run_virtual_width(
-    solve_branches: Callable[[Task, int], tuple[bool, int]],
-    solve_sampling: Callable[[Task, int], tuple[bool, int]],
+    solve_branches: Callable[
+        [Task, int], tuple[bool, int, dict[str, Any], dict[str, Any]]
+    ],
+    solve_sampling: Callable[
+        [Task, int], tuple[bool, int, dict[str, Any], dict[str, Any]]
+    ],
     tasks_by_family: dict[str, list[Task]],
     k: int,
 ) -> dict[str, Any]:
     """K latent branches vs K textual samples at (verified-)equal FLOPs.
 
-    Both callbacks return (success, layer_apps_spent) so the equal-compute
-    premise is CHECKED, not assumed: a compute mismatch beyond
-    ``_EQUAL_COMPUTE_TOLERANCE`` voids the claim."""
+    Both callbacks return success, admission-layer-apps, a complete resource
+    receipt, and an information receipt. The comparison checks structural
+    FLOPs plus verifier/tool/external-model counters and exact information
+    policy parity; token-layer applications remain a secondary audit field."""
     # K is the experiment's width and appears in every arm name and claim:
     # a bool, zero, negative, or absurd K silently produced degenerate arms.
     if isinstance(k, bool) or not isinstance(k, int) or not 1 <= k <= 64:
@@ -924,12 +1009,12 @@ def run_virtual_width(
         for index, task in enumerate(tasks):
             # STRICT: bool()/int() let non-empty strings become successes and
             # truncated fractional costs into apparently valid receipts.
-            ok_b, cost_b = _coerce_solver_outcome(solve_branches(task, k))
-            ok_s, cost_s = _coerce_solver_outcome(solve_sampling(task, k))
-            if cost_b is None or cost_s is None:
-                raise ValueError(
-                    "virtual-width arms must report layer-application receipts"
-                )
+            ok_b, cost_b, resource_b, information_b = (
+                _coerce_accounted_solver_outcome(solve_branches(task, k))
+            )
+            ok_s, cost_s, resource_s, information_s = (
+                _coerce_accounted_solver_outcome(solve_sampling(task, k))
+            )
             t_arm.n += 1
             t_arm.successes += int(ok_b)
             t_arm.layer_apps += cost_b
@@ -944,6 +1029,10 @@ def run_virtual_width(
                     control_success=ok_s,
                     treatment_layer_apps=cost_b,
                     control_layer_apps=cost_s,
+                    treatment_resource=resource_b,
+                    control_resource=resource_s,
+                    treatment_information=information_b,
+                    control_information=information_s,
                 )
             )
         treatment[family], control[family] = t_arm, c_arm
@@ -955,6 +1044,7 @@ def run_virtual_width(
         # promised 10% while the grader silently applied its 5% default, so
         # reports and operator expectations disagreed with actual behavior.
         compute_tolerance=_EQUAL_COMPUTE_TOLERANCE,
+        require_resource_accounting=True,
     )
     return {
         "treatment": {f: a.to_dict() for f, a in treatment.items()},

@@ -10,6 +10,8 @@ Two layers of honesty are tested here:
 from __future__ import annotations
 
 import argparse
+import hashlib
+from types import SimpleNamespace
 
 import pytest
 
@@ -32,7 +34,54 @@ from core.brain.llm.latent_cortex.experiments import (
     run_virtual_width,
     task_battery,
 )
+from core.brain.llm.latent_cortex.resource_accounting import (
+    ModelComputeProfile,
+    ResourceLedger,
+    build_information_receipt,
+    policy_sha256,
+)
 from tools.latent_cortex_lab import _positive_float
+
+
+def _accounted_outcome(success: bool, layer_apps: int):
+    args = SimpleNamespace(
+        model_type="qwen2",
+        hidden_size=64,
+        intermediate_size=128,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        vocab_size=256,
+        head_dim=None,
+    )
+    model = SimpleNamespace(
+        args=args,
+        model=SimpleNamespace(args=args, layers=[object() for _ in range(8)]),
+    )
+    ledger = ResourceLedger(ModelComputeProfile.from_model(model))
+    ledger.charge(
+        "solver",
+        transformer_layer_apps=layer_apps,
+        attention_query_key_pairs=layer_apps,
+        output_head_tokens=1,
+    )
+    prompt = b"same blinded task"
+    information = build_information_receipt(
+        sources=[
+            {
+                "source_id": "prompt",
+                "kind": "model_input_tokens",
+                "content_sha256": hashlib.sha256(prompt).hexdigest(),
+                "byte_count": len(prompt),
+                "token_count": 3,
+            }
+        ],
+        policies={
+            "tokenizer": policy_sha256({"id": "same"}),
+            "verifier": policy_sha256({"id": "none"}),
+            "tools": policy_sha256({"allow": []}),
+        },
+    )
+    return success, layer_apps, ledger.to_receipt(), information
 
 # ── Task generators ─────────────────────────────────────────────────────
 
@@ -291,15 +340,15 @@ def test_slot_causality_requires_real_damage():
 def test_virtual_width_voids_unequal_compute():
     tasks = {"khop": task_battery(["khop"], [3], per_cell=24, seed=4)}
     honest = run_virtual_width(
-        lambda t, k: (True, 1000),
-        lambda t, k: (t.seed % 3 == 0, 1000),
+        lambda t, k: _accounted_outcome(True, 1000),
+        lambda t, k: _accounted_outcome(t.seed % 3 == 0, 1000),
         tasks,
         k=4,
     )
     assert honest["claim"]["tier"] == SUPPORTED
     cheat = run_virtual_width(
-        lambda t, k: (True, 5000),  # branches quietly spent 5× compute
-        lambda t, k: (t.seed % 3 == 0, 1000),
+        lambda t, k: _accounted_outcome(True, 5000),
+        lambda t, k: _accounted_outcome(t.seed % 3 == 0, 1000),
         tasks,
         k=4,
     )

@@ -52,6 +52,8 @@ _STRUCTURED_FIELDS = (
     "control_receipt",
     "treatment_compute",
     "control_compute",
+    "treatment_information",
+    "control_information",
 )
 _SHA256_LENGTH = 64
 

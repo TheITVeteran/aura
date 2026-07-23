@@ -18,6 +18,10 @@ import copy
 
 import pytest
 
+from core.brain.llm.latent_cortex.resource_accounting import (
+    ModelComputeProfile,
+    ResourceLedger,
+)
 from tests.fixtures.latent_frontier import (
     _bundle,
     _certify,
@@ -109,6 +113,36 @@ def test_claim_carries_compute_validity():
     for stats in families.values():
         assert stats["missing_compute"] is False
         assert stats["compute_mismatch_task_ids"] == []
+
+
+def test_claim_rejects_rehashed_hidden_verifier_advantage():
+    bundle = _accepted_bundle()
+    compute = bundle["trials"][0]["treatment_compute"]
+    original = compute["resource_accounting"]
+    ledger = ResourceLedger(
+        ModelComputeProfile.from_receipt(original["model_profile"])
+    )
+    for operation, counters in original["operations"].items():
+        ledger.charge(operation, **counters)
+    ledger.charge(
+        "unmatched_private_verifier",
+        verifier_calls=1,
+        verifier_input_bytes=128,
+        verifier_output_bytes=8,
+    )
+    compute["resource_accounting"] = ledger.to_receipt()
+    compute["estimated_flops"] = compute["resource_accounting"]["estimated_flops"]
+    _refresh_task_commitment(bundle)
+    _refresh_attestation(bundle)
+
+    certificate = _certify(bundle)
+
+    assert certificate["accepted"] is False
+    assert any(
+        "resource_mismatch:verifier_calls" in reason
+        for reason in certificate["reasons"]
+    )
+    assert certificate["rejected_trial_count"] == 1
 
 
 # ── 3. claim scope must distinguish ablation from frontier ─────────────────

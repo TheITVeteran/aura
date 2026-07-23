@@ -13,6 +13,12 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from core.brain.llm.latent_cortex.resource_accounting import (
+    ModelComputeProfile,
+    ResourceLedger,
+    validate_information_receipt,
+)
+
 # Hard ceilings no configuration may exceed. These protect the live host:
 # a runaway schedule on the resident 32B is a memory/latency incident, not
 # an experiment. Operators may lower them via config, never raise them.
@@ -144,12 +150,14 @@ class FastWeightsConfig:
 
 @dataclass
 class ComputeBudget:
-    """Episode compute economy in token-layer applications + wall clock."""
+    """Episode admission budget plus claim-grade operation accounting."""
 
     max_layer_apps: int = DEFAULT_EPISODE_LAYER_APPS
     wall_clock_s: float = 120.0
     started_monotonic: float = field(default_factory=time.monotonic)
     spent_layer_apps: int = 0
+    resource_ledger: ResourceLedger = field(default_factory=ResourceLedger, repr=False)
+    information_receipt: dict[str, Any] | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if isinstance(self.max_layer_apps, bool) or not isinstance(self.max_layer_apps, int):
@@ -166,7 +174,23 @@ class ComputeBudget:
         if self.spent_layer_apps < 0:
             raise ValueError("spent_layer_apps cannot be negative")
 
-    def charge(self, tokens: int, layers: int) -> None:
+    def bind_model(self, model: Any) -> ModelComputeProfile:
+        profile = ModelComputeProfile.from_model(model)
+        self.resource_ledger.bind_profile(profile)
+        return profile
+
+    def bind_information(self, receipt: dict[str, Any]) -> None:
+        self.information_receipt = validate_information_receipt(receipt)
+
+    def charge(
+        self,
+        tokens: int,
+        layers: int,
+        *,
+        operation: str = "unclassified_transformer_forward",
+        attention_pairs: int | None = None,
+        output_head_tokens: int = 0,
+    ) -> None:
         if (
             isinstance(tokens, bool)
             or isinstance(layers, bool)
@@ -176,9 +200,29 @@ class ComputeBudget:
             or layers < 0
         ):
             raise ValueError("budget charges require non-negative integer tokens and layers")
-        self.charge_layer_apps(tokens * layers)
+        layer_apps = tokens * layers
+        if layer_apps > self.remaining_layer_apps:
+            raise RuntimeError(
+                f"compute budget exhausted: requested={layer_apps} "
+                f"remaining={self.remaining_layer_apps}"
+            )
+        self.spent_layer_apps += layer_apps
+        if attention_pairs is None:
+            self.resource_ledger.mark_unknown(f"{operation}:attention_pairs")
+            attention_pairs = 0
+        self.resource_ledger.charge(
+            operation,
+            transformer_layer_apps=layer_apps,
+            attention_query_key_pairs=attention_pairs,
+            output_head_tokens=output_head_tokens,
+        )
 
-    def charge_layer_apps(self, layer_apps: int) -> None:
+    def charge_layer_apps(
+        self,
+        layer_apps: int,
+        *,
+        operation: str = "unclassified_layer_app_equivalent",
+    ) -> None:
         if isinstance(layer_apps, bool) or not isinstance(layer_apps, int) or layer_apps < 0:
             raise ValueError("layer-app charge must be a non-negative integer")
         if layer_apps > self.remaining_layer_apps:
@@ -187,8 +231,121 @@ class ComputeBudget:
                 f"remaining={self.remaining_layer_apps}"
             )
         self.spent_layer_apps += layer_apps
+        if layer_apps:
+            self.resource_ledger.mark_unknown(operation)
 
-    def charge_cleanup_overdraft(self, tokens: int, layers: int) -> None:
+    def charge_tensor_work(
+        self,
+        operation: str,
+        *,
+        element_reads: int = 0,
+        element_writes: int = 0,
+        scalar_ops: int = 0,
+        host_scalar_ops: int = 0,
+    ) -> None:
+        self.resource_ledger.charge(
+            operation,
+            tensor_element_reads=element_reads,
+            tensor_element_writes=element_writes,
+            tensor_scalar_ops=scalar_ops,
+            host_scalar_ops=host_scalar_ops,
+        )
+
+    def charge_verifier(
+        self,
+        operation: str,
+        *,
+        input_bytes: int,
+        output_bytes: int = 8,
+        host_scalar_ops: int = 0,
+    ) -> None:
+        self.resource_ledger.charge(
+            operation,
+            verifier_calls=1,
+            verifier_input_bytes=input_bytes,
+            verifier_output_bytes=output_bytes,
+            host_scalar_ops=host_scalar_ops,
+        )
+
+    def charge_proxy_work(
+        self,
+        operation: str,
+        *,
+        layer_app_equivalents: int,
+        scalar_ops: int,
+    ) -> None:
+        if (
+            type(layer_app_equivalents) is not int
+            or layer_app_equivalents < 0
+            or type(scalar_ops) is not int
+            or scalar_ops < 0
+        ):
+            raise ValueError("proxy work requires non-negative integer costs")
+        if layer_app_equivalents > self.remaining_layer_apps:
+            raise RuntimeError(
+                "compute budget exhausted: "
+                f"requested={layer_app_equivalents} remaining={self.remaining_layer_apps}"
+            )
+        self.spent_layer_apps += layer_app_equivalents
+        self.resource_ledger.charge(operation, tensor_scalar_ops=scalar_ops)
+
+    def charge_training_work(
+        self,
+        operation: str,
+        *,
+        tokens: int,
+        layers: int,
+        attention_pairs_per_forward: int,
+        forward_evaluations: int,
+        backward_evaluations: int,
+    ) -> None:
+        for name, value in (
+            ("tokens", tokens),
+            ("layers", layers),
+            ("attention_pairs_per_forward", attention_pairs_per_forward),
+            ("forward_evaluations", forward_evaluations),
+            ("backward_evaluations", backward_evaluations),
+        ):
+            if type(value) is not int or value < 0:
+                raise ValueError(f"{name} must be a non-negative integer")
+        equivalents = tokens * layers * (
+            forward_evaluations + 2 * backward_evaluations
+        )
+        if equivalents > self.remaining_layer_apps:
+            raise RuntimeError(
+                "compute budget exhausted: "
+                f"requested={equivalents} remaining={self.remaining_layer_apps}"
+            )
+        profile = self.resource_ledger.profile
+        if profile is None:
+            self.resource_ledger.mark_unknown(f"{operation}:model_profile")
+            backward_flops = 0
+        else:
+            one_forward_flops = profile.estimate_neural_flops(
+                transformer_layer_apps=tokens * layers,
+                attention_query_key_pairs=attention_pairs_per_forward,
+                output_head_tokens=0,
+            )
+            backward_flops = 2 * one_forward_flops * backward_evaluations
+        self.spent_layer_apps += equivalents
+        self.resource_ledger.charge(
+            operation,
+            transformer_layer_apps=tokens * layers * forward_evaluations,
+            attention_query_key_pairs=(
+                attention_pairs_per_forward * forward_evaluations
+            ),
+            tensor_scalar_ops=backward_flops,
+        )
+
+    def charge_cleanup_overdraft(
+        self,
+        tokens: int,
+        layers: int,
+        *,
+        operation: str = "cleanup_transformer_forward",
+        attention_pairs: int | None = None,
+        output_head_tokens: int = 0,
+    ) -> None:
         """Charge safety-obligation work even past exhaustion.
 
         Cleanup proofs (fast-weight erase probes) must NEVER be refused for
@@ -205,6 +362,15 @@ class ComputeBudget:
         ):
             raise ValueError("budget charges require non-negative integer tokens and layers")
         self.spent_layer_apps += tokens * layers
+        if attention_pairs is None:
+            self.resource_ledger.mark_unknown(f"{operation}:attention_pairs")
+            attention_pairs = 0
+        self.resource_ledger.charge(
+            operation,
+            transformer_layer_apps=tokens * layers,
+            attention_query_key_pairs=attention_pairs,
+            output_head_tokens=output_head_tokens,
+        )
 
     @property
     def remaining_wall_s(self) -> float:
@@ -238,6 +404,12 @@ class ComputeBudget:
             "wall_clock_s": self.wall_clock_s,
             "elapsed_s": round(time.monotonic() - self.started_monotonic, 3),
             "exhausted": self.exhausted,
+            "resource_accounting": self.resource_ledger.to_receipt(),
+            "information_accounting": (
+                dict(self.information_receipt)
+                if self.information_receipt is not None
+                else None
+            ),
         }
 
 

@@ -28,6 +28,9 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from core.brain.llm.latent_cortex.resource_accounting import (
+    triangular_attention_pairs,
+)
 from core.brain.llm.latent_cortex.types import ComputeBudget, RecurrenceConfig
 from core.brain.llm.latent_cortex.workspace import per_position_rms
 from core.brain.llm.recurrent_depth import (
@@ -340,7 +343,23 @@ class WindowRunner:
         # Reserve and account the whole atomic pass before execution. A layer
         # fault can consume partial compute, so failed work must not disappear
         # from the conservative ledger or become available to a fallback.
-        self._budget.charge(tokens=tokens, layers=layers)
+        attention_pairs = 0
+        for item in cache[start:end]:
+            offset = getattr(item, "offset", 0) if item is not None else 0
+            context_tokens = max(0, int(offset)) if type(offset) is int else 0
+            attention_pairs += triangular_attention_pairs(
+                tokens, context_tokens=context_tokens
+            )
+        self._budget.charge(
+            tokens=tokens,
+            layers=layers,
+            operation=(
+                "persisted_latent_window"
+                if persist
+                else "speculative_latent_window"
+            ),
+            attention_pairs=attention_pairs,
+        )
         snaps = None
         if not persist:
             snaps = _snapshot_recurrent_caches(cache, start, end)

@@ -25581,3 +25581,63 @@ count completion is approximately 54.0%-85.0%, with a midpoint planning
 estimate of 66.1%. Next: publish CP335, then implement SPARK-022 complete
 same-currency compute and information accounting. Final multi-hour soaks remain
 deferred until every shorter gate is green.
+
+## Checkpoint 2026-07-22-336: Equal Resources Are Measured, Not Assumed
+
+RLC comparisons now use a model-bound, operation-level resource ledger instead
+of treating token-layer applications as a complete compute currency. The ledger
+records transformer applications, attention pairs, output-head work, tensor
+reads/writes/scalar operations, verifier calls and bytes, tool I/O, external-
+model tokens/calls, and host scalar work. Architecture-derived dense-decoder/GQA
+FLOPs, all totals, every named operation, unknown work, and receipt identity are
+independently reconstructable; absent profiles, malformed counters, changed
+derived constants, digest drift, and unmetered operations fail closed.
+
+Information access is separately committed. Exact tokenized model input, typed
+cognitive context, controller evidence, verifier identity, decode/tokenizer
+policy, and tool-access policy carry source IDs, kinds, byte/token counts,
+content hashes, policy hashes, and unknown-access state. Vanilla and RLC arms
+now consume identical chat-template token IDs. Decode work uses observed tokens
+rather than a declared maximum. Equal-compute sampling continues until neural
+FLOPs and every separately metered non-neural target are reached, and refuses a
+result when its sample bound cannot satisfy the target.
+
+The live recurrent path charges branch recurrence, mailbox exchange, cognitive
+operators, state compression, disagreement/diversity, latent optimization,
+fast weights, verifier calls, decode, and cleanup. Worker result receipts bind
+byte-for-byte to the episode budget; the service reconstructs their operation
+totals. Virtual-width experiments, paired campaigns, frontier certification,
+and raw evidence artifacts all carry per-task comparison certificates. Missing,
+incomplete, information-unequal, or resource-unequal evidence cannot retain a
+positive claim tier.
+
+The independent standard-library scoring kernel now separately reconstructs
+model profiles, operations, totals, information envelopes, RLC episode binding,
+and comparison certificates before byte-matching the production semantic grade.
+Tests prove that changing an inner ledger and recomputing the outer result hash
+still fails. During the final ownership gate, the resident recurrent-GRPO JSON
+was found one schema migration behind CP335; the mailbox source policy and slot
+limit are now part of the actual preregistered resident configuration, restoring
+the complete 9/9 preregistration contract.
+
+Validation: focused accounting, experiment, campaign-runner, and contract-
+decode tests pass 91/91; frontier certification/admission/verifier tests pass
+89/89; and the independent evidence boundary passes 89/89. The
+final fixed-snapshot RLC, latent-cortex, recurrence/training, global-workspace,
+GWT, and execution-controller ownership gate passes 1221/1221 in 454.64
+seconds. Focused Ruff, bytecode compilation, JSON parsing, and `git diff --check`
+pass.
+
+SPARK-022 closes at the mechanism and proof-infrastructure level. This is a
+structural comparison currency, not measured hardware energy, and no resident-
+32B capability campaign ran. Reasoning gain, positive interaction, and frontier
+status remain unproven and the verdict remains negative/no-signal.
+
+This is total checkpoint record 397. The revised forecast remains 466-733 total
+records, now approximately 69-336 records after this checkpoint. Checkpoint-
+count completion is approximately 54.2%-85.2%, with a midpoint planning
+estimate of 66.2%. Next: publish CP336, then implement SPARK-023 evidence-
+grounded recurrent state and audit resident weights, Wikipedia/RAG, Black Hole
+memory, one-shot learning, and governed web/tool evidence through retrieval,
+recurrent binding, verification, answer attribution, and memory writeback.
+Final multi-hour soaks remain deferred until every shorter gate is green.

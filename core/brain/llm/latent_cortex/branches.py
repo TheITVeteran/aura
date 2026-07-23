@@ -436,8 +436,9 @@ class BranchEnsemble:
             if self.exchange(
                 sync_kind="interval",
                 sync_id=f"recurrent-step:{max(b.steps for b in self.branches)}",
+                budget=budget,
             ):
-                self.maintain_diversity()
+                self.maintain_diversity(budget=budget)
         for branch, reason in deferred_fixed_depth_halts:
             self._halt(branch, reason)
         return True
@@ -469,13 +470,19 @@ class BranchEnsemble:
             branch.steps = prior_steps
 
     # ── Neural-bytecode instructions ────────────────────────────────────
-    def exchange_now(self, *, sync_kind: str, sync_id: str) -> bool:
+    def exchange_now(
+        self,
+        *,
+        sync_kind: str,
+        sync_id: str,
+        budget: ComputeBudget | None = None,
+    ) -> bool:
         """Bytecode-forced exchange: communicate immediately when ≥2 live."""
         if len(self.active()) < 2:
             return False
-        if not self.exchange(sync_kind=sync_kind, sync_id=sync_id):
+        if not self.exchange(sync_kind=sync_kind, sync_id=sync_id, budget=budget):
             return False
-        self.maintain_diversity()
+        self.maintain_diversity(budget=budget)
         return True
 
     def savepoint_all(self) -> int:
@@ -574,6 +581,7 @@ class BranchEnsemble:
         *,
         action: str,
         action_step: int,
+        budget: ComputeBudget | None = None,
     ) -> list[dict[str, Any]]:
         """Run each live branch's distinct executable strategy privately."""
 
@@ -600,9 +608,23 @@ class BranchEnsemble:
             branch.z = output
             branch.workspace.update(output)
             receipts.append(receipt)
+            if budget is not None:
+                accounting = receipt["tensor_accounting"]
+                budget.charge_tensor_work(
+                    f"cognitive_operator:{branch.operator.value}",
+                    element_reads=accounting["element_reads"],
+                    element_writes=accounting["element_writes"],
+                    scalar_ops=accounting["tensor_scalar_ops"],
+                    host_scalar_ops=accounting["commitment_host_ops"],
+                )
         return receipts
 
-    def compress_state(self, *, strength: float = 0.25) -> int:
+    def compress_state(
+        self,
+        *,
+        strength: float = 0.25,
+        budget: ComputeBudget | None = None,
+    ) -> int:
         """Fold global branch summaries into comm slots without erasing detail."""
 
         import mlx.core as mx
@@ -640,9 +662,18 @@ class BranchEnsemble:
             )
             branch.workspace.update(branch.z)
         mx.eval(*[branch.z for branch in live])
+        if budget is not None:
+            slots = int(live[0].z.shape[1])
+            hidden = int(live[0].z.shape[-1])
+            budget.charge_tensor_work(
+                "branch_state_compression",
+                element_reads=len(live) * slots * hidden,
+                element_writes=len(live) * hidden,
+                scalar_ops=len(live) * hidden * (slots + 6),
+            )
         return len(live)
 
-    def disagreement(self) -> float:
+    def disagreement(self, *, budget: ComputeBudget | None = None) -> float:
         """Mean pairwise cosine distance between active branch summaries."""
 
         import mlx.core as mx
@@ -651,6 +682,16 @@ class BranchEnsemble:
         if len(live) < 2:
             return 0.0
         distances: list[float] = []
+        pair_count = len(live) * (len(live) - 1) // 2
+        if budget is not None:
+            hidden = int(live[0].z.shape[-1])
+            slots = int(live[0].z.shape[1])
+            budget.charge_tensor_work(
+                "branch_disagreement",
+                element_reads=2 * pair_count * slots * hidden,
+                scalar_ops=pair_count * ((2 * slots + 6) * hidden + 4),
+                host_scalar_ops=pair_count * 4,
+            )
         for left_index, left in enumerate(live):
             left_summary = left.workspace.summary()
             for right in live[left_index + 1 :]:
@@ -685,7 +726,13 @@ class BranchEnsemble:
             branch.escape.finalize()
 
     # ── Communication ───────────────────────────────────────────────────
-    def exchange(self, *, sync_kind: str, sync_id: str) -> bool:
+    def exchange(
+        self,
+        *,
+        sync_kind: str,
+        sync_id: str,
+        budget: ComputeBudget | None = None,
+    ) -> bool:
         """Blend the agreement-weighted consensus into each comm slot.
 
         Weights favor branches whose summaries agree with the ensemble mean —
@@ -896,6 +943,12 @@ class BranchEnsemble:
                 * hidden_dimension,
                 "message_elements_emitted": len(live) * hidden_dimension,
                 "consensus_elements_written": len(live) * hidden_dimension,
+                "tensor_scalar_ops": (
+                    len(live)
+                    * hidden_dimension
+                    * (len(source_slots) + 12)
+                    + 9 * len(live)
+                ),
                 "hidden_layer_apps": 0,
             },
         }
@@ -911,6 +964,17 @@ class BranchEnsemble:
             expected_ordinal=ordinal,
         )
         self.exchange_receipts.append(receipt)
+        if budget is not None:
+            accounting = receipt["tensor_accounting"]
+            budget.charge_tensor_work(
+                "branch_exchange",
+                element_reads=accounting["source_elements_read"],
+                element_writes=(
+                    accounting["message_elements_emitted"]
+                    + accounting["consensus_elements_written"]
+                ),
+                scalar_ops=accounting["tensor_scalar_ops"],
+            )
         self._exchange_sync_points.add(sync_point)
         self.exchanges += 1
         self._cross_exposure_started = True
@@ -918,7 +982,11 @@ class BranchEnsemble:
             self._first_exchange_step = min(branch.steps for branch in live)
         return True
 
-    def maintain_diversity(self) -> bool:
+    def maintain_diversity(
+        self,
+        *,
+        budget: ComputeBudget | None = None,
+    ) -> bool:
         """Decorrelate near-parallel branch pairs with deterministic jitter."""
         import mlx.core as mx
 
@@ -926,6 +994,16 @@ class BranchEnsemble:
         if len(live) > 1 and not self._isolation_sealed:
             self._blocked_cross_exposures += 1
             return False
+        pair_count = len(live) * (len(live) - 1) // 2
+        if budget is not None and live:
+            hidden = int(live[0].z.shape[-1])
+            slots = int(live[0].z.shape[1])
+            budget.charge_tensor_work(
+                "branch_diversity_guard",
+                element_reads=2 * pair_count * slots * hidden,
+                scalar_ops=pair_count * ((2 * slots + 6) * hidden + 4),
+                host_scalar_ops=pair_count * 4,
+            )
         for i in range(len(live)):
             for j in range(i + 1, len(live)):
                 a, b = live[i], live[j]
@@ -946,6 +1024,14 @@ class BranchEnsemble:
                 b.z = b.z + jitter
                 b.workspace.update(b.z)
                 mx.eval(b.z)
+                if budget is not None:
+                    elements = int(b.z.size)
+                    budget.charge_tensor_work(
+                        "branch_diversity_jitter",
+                        element_reads=3 * elements,
+                        element_writes=elements,
+                        scalar_ops=12 * elements,
+                    )
                 logger.debug(
                     "Branch diversity jitter: %s↔%s cos=%.4f", a.index, b.index, cos
                 )

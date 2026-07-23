@@ -516,6 +516,39 @@ class LatentCortexService:
                 and all(character in "0123456789abcdef" for character in value)
             )
 
+        resource_accounting: dict[str, Any] | None = None
+        information_accounting: dict[str, Any] | None = None
+        budget_receipt = receipt.get("budget")
+        try:
+            from core.brain.llm.latent_cortex.resource_accounting import (
+                validate_information_receipt,
+                validate_resource_receipt,
+            )
+
+            if not isinstance(budget_receipt, dict):
+                raise ValueError("episode budget receipt is absent")
+            resource_accounting = validate_resource_receipt(
+                budget_receipt.get("resource_accounting")
+            )
+            information_accounting = validate_information_receipt(
+                budget_receipt.get("information_accounting")
+            )
+            if resource_accounting["accounting_complete"] is not True:
+                errors.append("resource_accounting_incomplete")
+            if information_accounting["accounting_complete"] is not True:
+                errors.append("information_accounting_incomplete")
+            n_layers = receipt.get("n_layers")
+            if (
+                type(n_layers) is int
+                and n_layers > 0
+                and resource_accounting["model_profile"]["num_hidden_layers"]
+                != n_layers
+            ):
+                errors.append("resource_model_profile_mismatch")
+        except (ImportError, TypeError, ValueError):
+            errors.append("resource_accounting_unproven")
+            errors.append("information_accounting_unproven")
+
         if not str(receipt.get("episode_id") or ""):
             errors.append("missing_episode_id")
         # CP126 e93ffe9f. A bare params_unchanged=True was accepted as proof
@@ -607,6 +640,21 @@ class LatentCortexService:
             receipt, "input_token_count"
         ):
             errors.append("tokenized_input_identity_unproven")
+        elif information_accounting is not None:
+            rendered_inputs = [
+                source
+                for source in information_accounting["sources"]
+                if source.get("source_id") == "rendered_model_input"
+                and source.get("kind") == "model_input_tokens"
+            ]
+            if (
+                len(rendered_inputs) != 1
+                or rendered_inputs[0].get("content_sha256")
+                != receipt.get("input_tokens_sha256")
+                or rendered_inputs[0].get("token_count")
+                != receipt.get("input_token_count")
+            ):
+                errors.append("input_information_binding_unproven")
         input_context_max_chars = config.get("input_context_max_chars", 0)
         if type(input_context_max_chars) is int and input_context_max_chars > 0:
             compaction = receipt.get("input_context_compaction")
@@ -796,7 +844,7 @@ class LatentCortexService:
                     validate_branch_exchange_trace,
                 )
 
-                validate_branch_exchange_trace(
+                exchange_trace = validate_branch_exchange_trace(
                     receipt.get("branch_exchange"),
                     exchange_count=exchanges,
                     n_branches=int(config.get("n_branches")),
@@ -810,10 +858,49 @@ class LatentCortexService:
                     bytecode_events=receipt.get("bytecode_events"),
                     cognitive_action_trace=receipt.get("cognitive_action_trace"),
                 )
+                expected_reads = 0
+                expected_writes = 0
+                expected_scalar_ops = 0
+                for exchange_row in exchange_trace["exchanges"]:
+                    accounting = exchange_row["tensor_accounting"]
+                    expected_reads += accounting["source_elements_read"]
+                    expected_writes += (
+                        accounting["message_elements_emitted"]
+                        + accounting["consensus_elements_written"]
+                    )
+                    expected_scalar_ops += accounting["tensor_scalar_ops"]
+                operation = (
+                    resource_accounting.get("operations", {}).get("branch_exchange")
+                    if resource_accounting is not None
+                    else None
+                )
+                if (
+                    not isinstance(operation, dict)
+                    or operation.get("tensor_element_reads") != expected_reads
+                    or operation.get("tensor_element_writes") != expected_writes
+                    or operation.get("tensor_scalar_ops") != expected_scalar_ops
+                    or any(
+                        operation.get(name) != 0
+                        for name in operation
+                        if name
+                        not in {
+                            "tensor_element_reads",
+                            "tensor_element_writes",
+                            "tensor_scalar_ops",
+                        }
+                    )
+                ):
+                    errors.append("branch_exchange_resource_binding_unproven")
             except (ImportError, TypeError, ValueError):
                 errors.append("branch_exchange_provenance_unproven")
         elif receipt.get("branch_exchange") not in ({}, None):
             errors.append("unexpected_branch_exchange_trace")
+        if (
+            not (type(exchanges) is int and exchanges > 0)
+            and resource_accounting is not None
+            and "branch_exchange" in resource_accounting.get("operations", {})
+        ):
+            errors.append("branch_exchange_resource_binding_unproven")
         raw_action_trace = receipt.get("cognitive_action_trace")
         if isinstance(raw_action_trace, list) and raw_action_trace:
             try:
@@ -839,6 +926,48 @@ class LatentCortexService:
                 operator_rows = [
                     validate_operator_receipt(row) for row in raw_operator_trace
                 ]
+                expected_operator_work: dict[str, dict[str, int]] = {}
+                for row in operator_rows:
+                    operation_name = f"cognitive_operator:{row['operator']}"
+                    expected = expected_operator_work.setdefault(
+                        operation_name,
+                        {
+                            "tensor_element_reads": 0,
+                            "tensor_element_writes": 0,
+                            "tensor_scalar_ops": 0,
+                            "host_scalar_ops": 0,
+                        },
+                    )
+                    accounting = row["tensor_accounting"]
+                    expected["tensor_element_reads"] += accounting["element_reads"]
+                    expected["tensor_element_writes"] += accounting["element_writes"]
+                    expected["tensor_scalar_ops"] += accounting["tensor_scalar_ops"]
+                    expected["host_scalar_ops"] += accounting["commitment_host_ops"]
+                operations = (
+                    resource_accounting.get("operations", {})
+                    if resource_accounting is not None
+                    else {}
+                )
+                observed_operator_names = {
+                    name
+                    for name in operations
+                    if name.startswith("cognitive_operator:")
+                }
+                if observed_operator_names != set(expected_operator_work):
+                    raise ValueError("cognitive operator resource coverage differs")
+                for operation_name, expected in expected_operator_work.items():
+                    operation = operations.get(operation_name)
+                    if not isinstance(operation, dict) or any(
+                        operation.get(name) != value
+                        for name, value in expected.items()
+                    ):
+                        raise ValueError("cognitive operator resource totals differ")
+                    if any(
+                        operation.get(name) != 0
+                        for name in operation
+                        if name not in expected
+                    ):
+                        raise ValueError("cognitive operator resource kind differs")
                 by_step: dict[int, list[dict[str, Any]]] = {}
                 for row in operator_rows:
                     by_step.setdefault(row["action_step"], []).append(row)
@@ -897,6 +1026,11 @@ class LatentCortexService:
                 )
             except (ImportError, TypeError, ValueError):
                 errors.append("correlated_support_unproven")
+        elif resource_accounting is not None and any(
+            name.startswith("cognitive_operator:")
+            for name in resource_accounting.get("operations", {})
+        ):
+            errors.append("cognitive_operator_execution_unproven")
         preflight: dict[str, Any] | None = None
         if receipt.get("verifier_preflight"):
             try:

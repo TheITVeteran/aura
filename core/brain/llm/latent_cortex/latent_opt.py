@@ -168,6 +168,7 @@ class LatentOptimizer:
         seed: int = 0,
         budget: ComputeBudget | None = None,
         layer_apps_per_loss: int = 0,
+        scalar_ops_per_loss: int = 0,
         reserve_layer_apps: int = 0,
     ) -> None:
         if isinstance(layer_apps_per_loss, bool) or not isinstance(
@@ -178,7 +179,15 @@ class LatentOptimizer:
             reserve_layer_apps, int
         ):
             raise TypeError("reserve_layer_apps must be an integer")
-        if layer_apps_per_loss < 0 or reserve_layer_apps < 0:
+        if isinstance(scalar_ops_per_loss, bool) or not isinstance(
+            scalar_ops_per_loss, int
+        ):
+            raise TypeError("scalar_ops_per_loss must be an integer")
+        if (
+            layer_apps_per_loss < 0
+            or scalar_ops_per_loss < 0
+            or reserve_layer_apps < 0
+        ):
             raise ValueError("optimizer compute costs cannot be negative")
         if budget is not None and layer_apps_per_loss <= 0:
             raise ValueError(
@@ -189,6 +198,7 @@ class LatentOptimizer:
         self._seed = seed
         self._budget = budget
         self._layer_apps_per_loss = layer_apps_per_loss
+        self._scalar_ops_per_loss = scalar_ops_per_loss
         self._reserve_layer_apps = reserve_layer_apps
         self.trace = OptTrace(mode="control" if config.control_mode else "gradient")
 
@@ -220,7 +230,13 @@ class LatentOptimizer:
         charge = count * self._layer_apps_per_loss
         if not self._can_reserve(charge + additional_reserve_layer_apps):
             return False
-        self._budget.charge_layer_apps(charge)
+        if self._scalar_ops_per_loss <= 0 and count:
+            self._budget.resource_ledger.mark_unknown("latent_proxy_loss")
+        self._budget.charge_proxy_work(
+            "latent_proxy_loss",
+            layer_app_equivalents=charge,
+            scalar_ops=count * self._scalar_ops_per_loss,
+        )
         return True
 
     def _clipped_step(self, grad):

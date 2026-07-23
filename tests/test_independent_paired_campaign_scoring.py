@@ -36,6 +36,7 @@ from core.brain.llm.latent_cortex.paired_campaign import (
     build_campaign_plan,
     grade_campaign,
 )
+from tests.fixtures.latent_frontier import _trial_accounting
 from tools import independent_paired_campaign_scoring as independent_kernel
 from tools.independent_paired_campaign_scoring import (
     _Q,
@@ -134,6 +135,10 @@ def _records(plan, tasks):
             )
         else:
             text = "synthetic incorrect answer"
+        task = task_records[definition["task_id"]]
+        resource_accounting, information_accounting = _trial_accounting(
+            task["task_payload_sha256"]
+        )
         result = {
             "arm": arm,
             "text": text,
@@ -163,6 +168,18 @@ def _records(plan, tasks):
                 if arm.startswith("adapter_")
                 else None
             ),
+            "episode_receipt": (
+                {
+                    "budget": {
+                        "resource_accounting": resource_accounting,
+                        "information_accounting": information_accounting,
+                    }
+                }
+                if arm.endswith("_rlc")
+                else {}
+            ),
+            "resource_accounting": resource_accounting,
+            "information_accounting": information_accounting,
         }
         score = issuer_task.score(text).to_dict()
         verification = {
@@ -559,6 +576,22 @@ def test_independent_complete_semantic_tree_matches_production_byte_for_byte():
     assert independent["semantic_grade_canonical_sha256"] == hashlib.sha256(
         canonical_json_bytes(production)
     ).hexdigest()
+
+
+def test_independent_kernel_reconstructs_inner_resource_ledger_after_outer_rehash():
+    plan, tasks = _plan_and_tasks()
+    records = _records(plan, tasks)
+    result = records[0]["result"]
+    result["resource_accounting"]["totals"]["transformer_layer_apps"] += 1
+    records[0]["commit"]["result_sha256"] = hashlib.sha256(
+        canonical_json_bytes(result)
+    ).hexdigest()
+
+    with pytest.raises(
+        IndependentScoringError,
+        match="independent_resource_accounting_invalid",
+    ):
+        independent_grade_campaign(records, plan=plan, issuer_tasks=tasks)
 
 
 def test_independent_valid_incomplete_tree_matches_production_byte_for_byte():

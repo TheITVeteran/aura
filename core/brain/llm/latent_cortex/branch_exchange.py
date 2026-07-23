@@ -354,6 +354,10 @@ def validate_branch_exchange_receipt(
         * hidden_dimension,
         "message_elements_emitted": n_branches * hidden_dimension,
         "consensus_elements_written": n_branches * hidden_dimension,
+        "tensor_scalar_ops": (
+            n_branches * hidden_dimension * (len(source_slots) + 12)
+            + 9 * n_branches
+        ),
         "hidden_layer_apps": 0,
     }
     if accounting != expected_accounting:

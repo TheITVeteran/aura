@@ -19,8 +19,8 @@ from core.brain.llm.latent_cortex.frontier_certification import (
 )
 from core.brain.llm.latent_cortex.frontier_verifier import (
     ATTESTATION_REQUEST_SCHEMA,
-    FrontierVerificationError,
     VERIFICATION_KERNEL_IDENTITY_SCHEMA,
+    FrontierVerificationError,
     prepare_independent_attestation_request,
     verifier_implementation_sha256,
     verify_frontier_evidence_package,
@@ -34,6 +34,7 @@ from tests.fixtures.latent_frontier import (
     _bundle,
     _refresh_attestation,
     _refresh_task_commitment,
+    _trial_accounting,
     _trust_config,
 )
 
@@ -102,6 +103,16 @@ def _build_package(
             {"implementation_sha256": "a" * 64, "mode": "exact", "trial_id": trial_id}
         )
         trial["task_payload_sha256"] = hashlib.sha256(task).hexdigest()
+        _, treatment_information = _trial_accounting(trial["task_payload_sha256"])
+        _, control_information = _trial_accounting(trial["task_payload_sha256"])
+        trial["treatment_information"] = treatment_information
+        trial["control_information"] = control_information
+        trial["treatment_information_sha256"] = treatment_information[
+            "receipt_sha256"
+        ]
+        trial["control_information_sha256"] = control_information[
+            "receipt_sha256"
+        ]
         trial["treatment_output_sha256"] = hashlib.sha256(treatment).hexdigest()
         trial["control_output_sha256"] = hashlib.sha256(control).hexdigest()
         trial["scorer_config_sha256"] = hashlib.sha256(scorer).hexdigest()
@@ -150,8 +161,10 @@ def _build_package(
         rows["structured_receipts"].append(
             {
                 "control_compute": trial["control_compute"],
+                "control_information": trial["control_information"],
                 "control_receipt": trial["control_receipt"],
                 "treatment_compute": trial["treatment_compute"],
+                "treatment_information": trial["treatment_information"],
                 "treatment_receipt": trial["treatment_receipt"],
                 "trial_id": trial_id,
             }

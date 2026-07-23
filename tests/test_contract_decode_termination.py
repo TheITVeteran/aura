@@ -9,6 +9,7 @@ rest of the stream.
 """
 from __future__ import annotations
 
+import hashlib
 from types import SimpleNamespace
 
 import pytest
@@ -19,6 +20,9 @@ pytest.importorskip("mlx_lm")
 from mlx_lm.models.qwen2 import Model, ModelArgs  # noqa: E402
 
 from core.brain.llm.latent_cortex.engine import LatentCortexEngine  # noqa: E402
+from core.brain.llm.latent_cortex.resource_accounting import (  # noqa: E402
+    build_information_receipt,
+)
 from core.brain.llm.latent_cortex.types import (  # noqa: E402
     BranchConfig,
     ComputeBudget,
@@ -29,6 +33,53 @@ from core.brain.llm.latent_cortex.types import (  # noqa: E402
 
 PROMPT_TOKENS = [5, 9, 17, 3, 42, 7, 11, 23]
 CONTRACT_TEXT = 'FINAL_ANSWER: {"node": 6}'
+
+
+def _profiled_stub_model(n_layers: int):
+    args = SimpleNamespace(
+        model_type="qwen2",
+        hidden_size=64,
+        intermediate_size=128,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        vocab_size=128,
+        head_dim=16,
+    )
+    return SimpleNamespace(
+        args=args,
+        model=SimpleNamespace(args=args, layers=[object()] * n_layers),
+    )
+
+
+class _AccountingEngine:
+    def __init__(self, token_count: int) -> None:
+        self._tokens = [1] * token_count
+
+    def _encode(self, *_args):
+        return list(self._tokens)
+
+    def _information_receipt(
+        self,
+        *,
+        encoded_tokens,
+        token_count,
+        context_items,
+        policy_evidence,
+        verifier,
+    ):
+        del context_items, policy_evidence, verifier
+        return build_information_receipt(
+            sources=[
+                {
+                    "source_id": "rendered_model_input",
+                    "kind": "model_input_tokens",
+                    "content_sha256": hashlib.sha256(encoded_tokens).hexdigest(),
+                    "byte_count": len(encoded_tokens),
+                    "token_count": token_count,
+                }
+            ],
+            policies={"fixture": "a" * 64},
+        )
 
 
 def _tiny_model():
@@ -119,7 +170,8 @@ def test_contract_masks_early_eos_and_completes_inside_bounded_grace():
     remaining = iter(ord(char) for char in text)
     observed_eos_logits: list[float] = []
 
-    def eos_pressured_sample(logits, _temperature, _top_p):
+    def eos_pressured_sample(logits, _temperature, _top_p, *, budget=None):
+        del budget
         eos_logit = float(logits[0].item())
         observed_eos_logits.append(eos_logit)
         if eos_logit > -1e8:
@@ -151,7 +203,8 @@ def test_contract_incomplete_exhaustion_is_bounded_and_receipted():
         ),
     )
 
-    def never_complete(logits, _temperature, _top_p):
+    def never_complete(logits, _temperature, _top_p, *, budget=None):
+        del budget
         return ord("x") if float(logits[0].item()) < -1e8 else 0
 
     engine._sample = never_complete
@@ -250,17 +303,22 @@ def test_campaign_vanilla_stream_stops_at_contract(monkeypatch):
     monkeypatch.setattr(mlx_lm, "stream_generate", scripted_stream)
 
     tokenizer = SimpleNamespace(encode=lambda text, **kw: [1] * 11)
-    model = SimpleNamespace(model=SimpleNamespace(layers=[object()] * 8))
-    task = SimpleNamespace(prompt="What node?", domain="mathematics")
-    monkeypatch.setattr(
-        runner, "_render_prompt", lambda tok, tsk: "rendered prompt"
+    model = _profiled_stub_model(8)
+    task = SimpleNamespace(
+        prompt="What node?",
+        domain="mathematics",
+        response_contract=None,
     )
-    text, layer_apps = runner._vanilla_once(
-        model, tokenizer, task, max_tokens=256
+    text, layer_apps, *_ = runner._vanilla_once(
+        model,
+        tokenizer,
+        task,
+        max_tokens=256,
+        accounting_engine=_AccountingEngine(11),
     )
     assert text == 'I think FINAL_ANSWER: {"node": 6}'
     assert consumed["count"] == 3  # the babble segment never streamed
-    assert layer_apps == (11 + 9) * 8  # prompt + ACTUAL generated tokens
+    assert layer_apps == (11 + 8) * 8  # prefill emits token 1; eight decode forwards
 
 
 def test_campaign_vanilla_without_contract_consumes_whole_stream(monkeypatch):
@@ -278,16 +336,21 @@ def test_campaign_vanilla_without_contract_consumes_whole_stream(monkeypatch):
 
     monkeypatch.setattr(mlx_lm, "stream_generate", scripted_stream)
     tokenizer = SimpleNamespace(encode=lambda text, **kw: [1] * 4)
-    model = SimpleNamespace(model=SimpleNamespace(layers=[object()] * 8))
-    task = SimpleNamespace(prompt="Say something", domain="calibration")
-    monkeypatch.setattr(
-        runner, "_render_prompt", lambda tok, tsk: "rendered prompt"
+    model = _profiled_stub_model(8)
+    task = SimpleNamespace(
+        prompt="Say something",
+        domain="calibration",
+        response_contract=None,
     )
-    text, layer_apps = runner._vanilla_once(
-        model, tokenizer, task, max_tokens=256
+    text, layer_apps, *_ = runner._vanilla_once(
+        model,
+        tokenizer,
+        task,
+        max_tokens=256,
+        accounting_engine=_AccountingEngine(4),
     )
     assert text == "no marker here just prose"
-    assert layer_apps == (4 + 6) * 8
+    assert layer_apps == (4 + 5) * 8
 
 
 def test_branch_selection_receipts_contract_verdicts():

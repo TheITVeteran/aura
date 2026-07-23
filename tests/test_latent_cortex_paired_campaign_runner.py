@@ -32,6 +32,11 @@ from core.brain.llm.latent_cortex.detached_campaign_evidence import (
 from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec
 from core.brain.llm.latent_cortex.frontier_tasks import generate_task_battery
 from core.brain.llm.latent_cortex.paired_campaign import build_campaign_plan
+from core.brain.llm.latent_cortex.resource_accounting import (
+    ModelComputeProfile,
+    ResourceLedger,
+    build_information_receipt,
+)
 from tools import run_latent_cortex_paired_campaign as runner
 
 
@@ -1609,12 +1614,52 @@ def test_vanilla_decode_uses_same_contract_stop_and_bounded_grace(monkeypatch):
         def encode(self, text):
             return list(str(text))
 
-    model = SimpleNamespace(model=SimpleNamespace(layers=[object(), object()]))
-    text, layer_apps = runner._vanilla_once(
+    class AccountingEngine:
+        def _encode(self, *_args):
+            return list("rendered")
+
+        def _information_receipt(
+            self,
+            *,
+            encoded_tokens,
+            token_count,
+            context_items,
+            policy_evidence,
+            verifier,
+        ):
+            del context_items, policy_evidence, verifier
+            return build_information_receipt(
+                sources=[
+                    {
+                        "source_id": "rendered_model_input",
+                        "kind": "model_input_tokens",
+                        "content_sha256": hashlib.sha256(encoded_tokens).hexdigest(),
+                        "byte_count": len(encoded_tokens),
+                        "token_count": token_count,
+                    }
+                ],
+                policies={"fixture": "a" * 64},
+            )
+
+    args = SimpleNamespace(
+        model_type="qwen2",
+        hidden_size=64,
+        intermediate_size=128,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        vocab_size=128,
+        head_dim=16,
+    )
+    model = SimpleNamespace(
+        args=args,
+        model=SimpleNamespace(args=args, layers=[object(), object()]),
+    )
+    text, layer_apps, *_ = runner._vanilla_once(
         model,
         Tokenizer(),
         task,
         max_tokens=64,
+        accounting_engine=AccountingEngine(),
     )
 
     expected = 'work\nFINAL_ANSWER: {"answer":7}'
@@ -1622,7 +1667,8 @@ def test_vanilla_decode_uses_same_contract_stop_and_bounded_grace(monkeypatch):
     assert "TRAILING" not in text
     assert "".join(consumed) == expected
     assert observed["max_tokens"] == 128
-    assert layer_apps == (len("rendered") + len(expected)) * 2
+    assert observed["prompt"] == list("rendered")
+    assert layer_apps == (len("rendered") + len(expected) - 1) * 2
 
 
 def test_rlc_campaign_verifier_receives_public_response_contract():
@@ -1635,6 +1681,30 @@ def test_rlc_campaign_verifier_receives_public_response_contract():
         [7], domains=("mathematics",), difficulty=1
     )[0].public
     captured: dict = {}
+    profile = ModelComputeProfile(
+        model_type="runner-fixture",
+        hidden_size=8,
+        intermediate_size=16,
+        num_hidden_layers=2,
+        num_attention_heads=2,
+        num_key_value_heads=1,
+        vocab_size=64,
+        head_dim=4,
+    )
+    ledger = ResourceLedger(profile)
+    ledger.charge("fixture_episode", transformer_layer_apps=1)
+    information = build_information_receipt(
+        sources=[
+            {
+                "source_id": "task",
+                "kind": "task_prompt",
+                "content_sha256": task.task_payload_sha256,
+                "byte_count": len(task.prompt.encode()),
+                "token_count": 1,
+            }
+        ],
+        policies={"fixture": "a" * 64},
+    )
 
     class Engine:
         def reason(self, **kwargs):
@@ -1644,10 +1714,15 @@ def test_rlc_campaign_verifier_receives_public_response_contract():
             return LatentReasoningResult(
                 ok=True,
                 text='FINAL_ANSWER: {"count":2,"witness":[1,2]}',
-                receipt=EpisodeReceipt(),
+                receipt=EpisodeReceipt(
+                    budget={
+                        "resource_accounting": ledger.to_receipt(),
+                        "information_accounting": information,
+                    }
+                ),
             )
 
-    text, _cost, receipt = runner._run_rlc(
+    text, _cost, receipt, resource, observed_information = runner._run_rlc(
         Engine(),
         task,
         SimpleNamespace(episode_timeout=10.0, decode_max_tokens=128),
@@ -1657,6 +1732,8 @@ def test_rlc_campaign_verifier_receives_public_response_contract():
     assert captured["verifier"].response_contract == task.response_contract
     assert receipt["verifier_guidance"]["response_contract_required"] is True
     assert receipt["verifier_guidance"]["response_contract_satisfied"] is True
+    assert resource["accounting_complete"] is True
+    assert observed_information == information
 
 
 def test_projection_resolution_is_exact_and_rejects_missing_owner():
