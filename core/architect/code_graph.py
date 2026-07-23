@@ -579,6 +579,35 @@ class _FileVisitor(ast.NodeVisitor):
             self._add_call_effects(call, node)
         self.generic_visit(node)
 
+    def _signature(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> dict[str, Any]:
+        """A comparable, order-sensitive description of the callable contract."""
+        args = node.args
+
+        def described(items: list[ast.arg]) -> tuple[str, ...]:
+            return tuple(
+                f"{item.arg}:{self._name(item.annotation) or ''}" for item in items
+            )
+
+        def literal(value: ast.expr | None) -> str:
+            if value is None:
+                return ""
+            try:
+                return ast.unparse(value)
+            except (AttributeError, ValueError, TypeError):
+                return type(value).__name__
+
+        return {
+            "posonly": described(getattr(args, "posonlyargs", []) or []),
+            "args": described(args.args),
+            "vararg": args.vararg.arg if args.vararg else "",
+            "kwonly": described(args.kwonlyargs),
+            "kwarg": args.kwarg.arg if args.kwarg else "",
+            "defaults": tuple(literal(default) for default in args.defaults),
+            "kw_defaults": tuple(literal(default) for default in args.kw_defaults),
+            "returns": self._name(node.returns) or literal(node.returns),
+            "is_async": isinstance(node, ast.AsyncFunctionDef),
+        }
+
     def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef, kind: str) -> None:
         owner = ".".join(self.class_stack + [node.name]) if self.class_stack else node.name
         qual = f"{self.module_name}.{owner}"
@@ -590,6 +619,10 @@ class _FileVisitor(ast.NodeVisitor):
         metadata["fingerprint"] = self._fingerprint(node)
         metadata["docstring"] = ast.get_docstring(node) or ""
         metadata["args"] = tuple(arg.arg for arg in node.args.args)
+        # CP126 1978de68: the recorded contract was positional arg NAMES only,
+        # so a change to defaults, keyword-only params, variadics, or the
+        # return annotation was invisible to the semantic oracle.
+        metadata["signature"] = self._signature(node)
         node_kind = "method" if self.class_stack else kind
         arch_node = ArchitectureNode(
             id=f"{node_kind}:{qual}",

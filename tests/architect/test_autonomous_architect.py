@@ -245,7 +245,9 @@ def test_semantic_oracle_rejects_t2_public_api_removal(tmp_path: Path) -> None:
         {"safe_boot": "passed", "changed_modules_import": "passed", "critical_tests": "passed"},
     ).as_proof_result()
     assert not result.passed
-    assert "public symbols removed" in result.evidence["regressions"][0]
+    # CP126 880aae0e: the message now names the symbol and says why the
+    # removal was not waived, instead of a generic "symbols removed".
+    assert "public symbol pkg.mod.public_api removed" in result.evidence["regressions"][0]
 
 
 def test_runtime_receipt_ingestion_from_live_receipt_envelope(tmp_path: Path) -> None:
