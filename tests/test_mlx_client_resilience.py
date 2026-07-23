@@ -1459,7 +1459,12 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
             recorded.append((args, kwargs))
 
         with replace_dotted("core.brain.llm.mlx_client._record_mlx_degradation", _record):
-            with ReplaceAttr(client, "_generate_inner", AsyncCallProbe(side_effect=["", "", "", ""])):
+            # The contract under test is "the readiness probe never returns
+            # text", not a fixed number of calls: a finite side_effect list
+            # made this test exhaust (StopIteration) whenever the precompile
+            # path changed its call count, which is what happened when the
+            # visible probe became unconditional (CP126 cdd743de).
+            with ReplaceAttr(client, "_generate_inner", AsyncCallProbe(return_value="")):
                 with ReplaceAttr(client, "reboot_worker", AsyncCallProbe()):
                     with self.assertRaises(RuntimeError):
                         await client._run_warmup_precompile(

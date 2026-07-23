@@ -304,3 +304,39 @@ class TestLatentAnswerContract:
         source = inspect.getsource(mc.MLXLocalClient.latent_reason_async)
         assert 'str(res.get("text") or "")' not in source
         assert "latent_answer_invalid" in source
+
+
+class TestStrictValueIsNotLaundered:
+    """7f86d404 (mlx_worker): an incorrect draft must not be replaced with
+    the expected answer."""
+
+    def test_exact_value_matches(self):
+        from core.brain.llm.mlx_worker import _matches_expected_strict_value_prefix
+
+        assert _matches_expected_strict_value_prefix("ok", "ok") is True
+
+    def test_separator_suffix_still_matches(self):
+        from core.brain.llm.mlx_worker import _matches_expected_strict_value_prefix
+
+        for text in ("ok.", "ok ", "ok\n", "ok, then", "ok)"):
+            assert _matches_expected_strict_value_prefix(text, "ok") is True, text
+
+    def test_abutting_uppercase_is_not_a_match(self):
+        from core.brain.llm.mlx_worker import _matches_expected_strict_value_prefix
+
+        # "okInjected" is a DIFFERENT token from "ok" — crediting it graded
+        # answer seeding rather than model merit.
+        assert _matches_expected_strict_value_prefix("okInjected", "ok") is False
+        assert _matches_expected_strict_value_prefix("okI output the value", "ok") is False
+
+    def test_normalization_no_longer_returns_the_expected_answer(self):
+        from core.brain.llm.mlx_worker import _normalize_strict_value_response
+
+        out = _normalize_strict_value_response("okInjected", expected_value="ok")
+        assert out != "ok", "an incorrect draft was laundered into the expected value"
+
+    def test_genuine_answer_still_normalizes(self):
+        from core.brain.llm.mlx_worker import _normalize_strict_value_response
+
+        assert _normalize_strict_value_response("ok", expected_value="ok") == "ok"
+        assert _normalize_strict_value_response("  ok.  ", expected_value="ok") == "ok"

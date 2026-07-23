@@ -2146,11 +2146,19 @@ def _matches_expected_strict_value_prefix(cleaned: str, expected_value: str) -> 
     if not suffix:
         return True
     first = suffix[0]
-    # Accept normal separators and the common deterministic probe failure where
-    # a tiny literal is followed immediately by boilerplate, e.g. "okI output".
+    # A real SEPARATOR after the value means the model emitted the value and
+    # then kept talking — the value itself is still what it answered.
     if first.isspace() or first in ".?!,;:)]}>`\"'":
         return True
-    return expected[-1:].islower() and first.isupper()
+    # CP126 7f86d404: an immediately-abutting uppercase character used to
+    # count as a match ("the common deterministic probe failure ... e.g.
+    # okI output"), and normalization then RETURNED the expected value —
+    # discarding the model's actual output and reporting an exact pass. That
+    # is answer laundering: "okInjected" is a different token from "ok", and
+    # a strict-value contract that credits it grades seeding, not merit.
+    # With no separator there is no evidence the model emitted the value as
+    # its answer, so this is a miss.
+    return False
 
 
 def _normalize_strict_value_response(text: str, *, expected_value: str = "") -> str:
