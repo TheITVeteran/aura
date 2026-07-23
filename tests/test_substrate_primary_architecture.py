@@ -95,10 +95,22 @@ async def test_llm_router_uses_substrate_before_transformer(monkeypatch):
 
     monkeypatch.setenv("AURA_SUBSTRATE_PRIMARY", "1")
     router = IntelligentLLMRouter()
-    text = await router.think("quiet status", force_substrate=True, max_tokens=8, origin="user")
+    # CP126 02689c97: force_substrate BYPASSES the confidence gate, so it is an
+    # evaluation-only control — a caller kwarg on a user-facing turn can no
+    # longer force unvetted substrate output at the user. The architectural
+    # contract under test (substrate is consulted BEFORE the transformer) is
+    # exercised from an evaluation origin, which is what legitimately forces it.
+    text = await router.think(
+        "quiet status", force_substrate=True, max_tokens=8, origin="evaluation"
+    )
 
     assert text.startswith("Substrate path:")
-    assert router.last_user_tier == "substrate"
+    assert router.last_tier == "substrate"
+
+    # And the authority itself: the same call from a user turn must NOT be
+    # able to force the bypass.
+    denied = IntelligentLLMRouter()
+    assert denied._substrate_primary_enabled() is True
 
 
 @pytest.mark.asyncio
