@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import importlib
+import os
 import queue
 import tempfile
 import threading
@@ -42,21 +43,30 @@ def ready_init_receipt(model_path: str = TEST_MODEL, **overrides) -> dict:
     bare ``{"status": "ok", "action": "init"}`` and now correctly fail the
     handshake, so the shared valid receipt lives here.
     """
+    lowered = str(model_path).lower()
+    loops = 2 if any(token in lowered for token in ("32b", "cortex", "zenith")) else 1
     receipt = {
         "status": "ok",
         "action": "init",
         "worker_identity": {
-            "worker_boot_id": "0123456789abcdef0123456789abcdef",
+            "schema": "aura.latent_cortex.worker_identity.v1",
+            "worker_boot_id": "1" * 32,
             "worker_pid": 4242,
-            "worker_model_path": model_path,
-            "worker_model_parameter_count": 32_000_000_000,
-            "worker_model_stored_parameter_element_count": 32_000_000_000,
+            "worker_model_path": os.path.realpath(model_path),
+            "worker_model_parameter_count": 1_000_000,
+            "worker_model_stored_parameter_element_count": 1_000_000,
             "worker_model_parameter_count_basis": "stored_tensor_elements",
-            "worker_source_sha256": "a" * 64,
+            "worker_source_sha256": "2" * 64,
             "worker_affective_steering_active": True,
-            "worker_affective_steering_alpha": 0.35,
+            "worker_affective_steering_alpha": 0.30,
         },
-        "recurrent_depth": {"active": True, "loops": 2},
+        "recurrent_depth": {
+            "active": True,
+            "config": {"n_loops": loops},
+            "loops": loops,
+            "expected_loops": loops,
+            "required": loops > 1,
+        },
     }
     receipt.update(overrides)
     return receipt

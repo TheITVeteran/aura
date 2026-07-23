@@ -889,6 +889,13 @@ class EpisodeReceipt:
     # so "the organs reached her thoughts" is receipted per slot and each
     # seeded slot remains individually ablation-testable (Experiment 3).
     cognitive_slots: list[dict[str, Any]] = field(default_factory=list)
+    # Proof that prompt/evidence rows remained available and immutable while a
+    # distinct hidden hypothesis persisted through every recurrent transition.
+    recurrent_grounding: dict[str, Any] = field(default_factory=dict)
+    # Optional one-shot datastore observation admitted before recurrence.
+    # Empty is backward-compatible; a populated receipt is independently
+    # validated by the service and bound to its immutable evidence slot.
+    nonparametric_memory: dict[str, Any] = field(default_factory=dict)
     # Service-admitted operation authority echoed by the worker. It binds the
     # exact epistemic state, controller decision, config, and budget to this
     # request without exposing private reasoning content.
@@ -1154,6 +1161,8 @@ class EpisodeReceipt:
             "input_token_count": self.input_token_count,
             "input_context_compaction": dict(self.input_context_compaction),
             "cognitive_slots": [dict(row) for row in self.cognitive_slots],
+            "recurrent_grounding": dict(self.recurrent_grounding),
+            "nonparametric_memory": dict(self.nonparametric_memory),
             "runtime_operation_authority": dict(
                 self.runtime_operation_authority
             ),

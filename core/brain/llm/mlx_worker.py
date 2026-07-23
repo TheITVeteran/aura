@@ -2212,11 +2212,10 @@ def _should_emit_generation_progress(
 
 
 def _prompt_cache_entry_budget_for_model(model_path: str) -> int:
-    from core.runtime.desktop_boot_safety import desktop_resource_guard_enabled
-
     # Measured weight class (artifact evidence first): a renamed heavy model
     # previously inherited the 12-entry cache budget of an unknown small lane.
     from core.brain.llm.model_artifact_profile import model_size_class
+    from core.runtime.desktop_boot_safety import desktop_resource_guard_enabled
 
     weight_class = model_size_class(str(model_path or ""))
     if weight_class == "72b":
@@ -6239,7 +6238,11 @@ def _mlx_worker_loop(
                 clear_stale_soft_cancel(cancel_seq, job_seq)
                 watchdog.start_job(request_id, "latent_reason")
 
-                def _latent_progress(payload: dict[str, Any]) -> None:
+                def _latent_progress(
+                    payload: dict[str, Any],
+                    *,
+                    _request_id: str = request_id,
+                ) -> None:
                     watchdog.activity()
                     # Envelope fields LAST: handler payload spread after them
                     # could overwrite the correlation id, action, and status
@@ -6247,7 +6250,7 @@ def _mlx_worker_loop(
                     ipc_writer.put(
                         {
                             **dict(payload),
-                            "id": request_id,
+                            "id": _request_id,
                             "action": "latent_reason",
                             "status": "progress",
                         }
@@ -6290,9 +6293,9 @@ def _mlx_worker_loop(
                                     model_path=model_path,
                                     worker_identity=worker_identity,
                                     surface_control_state=surface_control_state,
-                                    cancel_check=lambda: soft_cancel_requested(
+                                    cancel_check=lambda _job_seq=job_seq: soft_cancel_requested(
                                         cancel_seq,
-                                        job_seq,
+                                        _job_seq,
                                     ),
                                     progress=_latent_progress,
                                 )

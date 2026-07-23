@@ -196,6 +196,63 @@ def _branch_isolation_fields(config, *, exchanges=0):
     }
 
 
+def _recurrent_grounding_fields(config, *, steps=1):
+    from core.brain.llm.latent_cortex.recurrent_grounding import (
+        build_recurrent_grounding_receipt,
+    )
+
+    evidence_sha = _digest("empty-evidence")
+    branches = []
+    for index in range(config["n_branches"]):
+        initial = _digest(f"hypothesis-{index}-0")
+        transitions = []
+        prior = initial
+        for step in range(steps):
+            post = _digest(f"hypothesis-{index}-{step + 1}")
+            transitions.append(
+                {
+                    "ordinal": step,
+                    "branch_step": step,
+                    "window_start": 1,
+                    "window_end": 2,
+                    "evidence_pre_sha256": evidence_sha,
+                    "evidence_post_sha256": evidence_sha,
+                    "hypothesis_pre_sha256": prior,
+                    "hypothesis_post_sha256": post,
+                    "evidence_unchanged": True,
+                    "hypothesis_changed": True,
+                }
+            )
+            prior = post
+        branches.append(
+            SimpleNamespace(
+                index=index,
+                role=(
+                    "constructive_solution"
+                    if index == 0
+                    else "counterexample_search"
+                ),
+                evidence_anchor_sha256=evidence_sha,
+                initial_hypothesis_sha256=initial,
+                recurrent_grounding_trace=transitions,
+            )
+        )
+    receipt = build_recurrent_grounding_receipt(
+        input_tokens_sha256="7" * 64,
+        input_token_count=64,
+        cognitive_slots=[],
+        branches=branches,
+        n_slots=config["n_slots"],
+        comm_slot=0,
+        selected_branch=0,
+    )
+    return {
+        "cognitive_slots": [],
+        "selected_branch": 0,
+        "recurrent_grounding": receipt,
+    }
+
+
 def _branch_exchange_fields(config, isolation):
     from core.brain.llm.latent_cortex.branch_exchange import (
         BRANCH_EXCHANGE_SCHEMA,
@@ -862,6 +919,8 @@ async def test_client_preserves_typed_memory_authority_on_worker_wire(monkeypatc
         "retrieval_receipt_sha256": "2" * 64,
         "epistemic_state_sha256": "3" * 64,
         "memory_tier": "episodic",
+        "memory_source_id": "black_hole.episodic",
+        "memory_source_version": "test-v1",
     }
 
     task = asyncio.create_task(
@@ -1533,7 +1592,7 @@ def test_resident_32b_interactive_allocation_keeps_full_stack_inside_live_budget
         timeout_s=128.0,
     )
 
-    assert cfg["n_slots"] == 4
+    assert cfg["n_slots"] == 9
     assert cfg["n_branches"] == 2
     assert cfg["max_steps"] == cfg["min_steps"] == 2
     assert cfg["exchange_interval"] == 1
@@ -1838,6 +1897,7 @@ def test_service_routes_through_client_and_records_receipt(monkeypatch):
                     "checkpoint_file_count": 8,
                         **_identity_receipt(),
                         **_branch_isolation_fields(kwargs["config"]),
+                        **_recurrent_grounding_fields(kwargs["config"], steps=7),
                     "params_unchanged": True,
                     "budget": {
                         "max_layer_apps": 1_000,
@@ -2000,6 +2060,32 @@ def test_service_reconstructs_and_rejects_branch_isolation_tampering():
         },
     }
     assert "branch_isolation_unproven" in (
+        LatentCortexService._receipt_contract_errors(tampered, config)
+    )
+
+
+def test_service_reconstructs_recurrent_grounding_and_rejects_rehashed_lie():
+    from core.brain.llm.latent_cortex.recurrent_grounding import canonical_sha256
+
+    config = {"n_slots": 8, "n_branches": 2}
+    receipt = {
+        **_identity_receipt(),
+        "n_slots": 8,
+        "n_branches": 2,
+        **_recurrent_grounding_fields(config, steps=2),
+    }
+    assert "recurrent_grounding_unproven" not in (
+        LatentCortexService._receipt_contract_errors(receipt, config)
+    )
+
+    tampered = copy.deepcopy(receipt)
+    transition = tampered["recurrent_grounding"]["branches"][0]["transitions"][0]
+    transition["evidence_post_sha256"] = _digest("forged-evidence")
+    grounding = tampered["recurrent_grounding"]
+    grounding["receipt_sha256"] = canonical_sha256(
+        {key: value for key, value in grounding.items() if key != "receipt_sha256"}
+    )
+    assert "recurrent_grounding_unproven" in (
         LatentCortexService._receipt_contract_errors(tampered, config)
     )
 
@@ -2509,6 +2595,7 @@ def _full_success_stub_client(captured):
                     "checkpoint_file_count": 8,
                     **_identity_receipt(),
                     **_branch_isolation_fields(kwargs["config"]),
+                    **_recurrent_grounding_fields(kwargs["config"], steps=7),
                     "params_unchanged": True,
                     "budget": {
                         "max_layer_apps": 1_000,

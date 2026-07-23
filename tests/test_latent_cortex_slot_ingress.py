@@ -3,8 +3,8 @@
 Exit gate 2 of the RSL gap analysis: memory, goals, world hypotheses,
 affect, body, self-model, and Will must be able to seed or modulate
 IDENTIFIABLE workspace slots — not merely scale the compute budget. These
-tests prove the chain end to end on a tiny real Qwen2: seeds become tail
-slots with named roles, the receipt maps slot → organ, the seeded content
+tests prove the chain end to end on a tiny real Qwen2: seeds become a causal
+prefix with named roles, the receipt maps slot → organ, the seeded content
 is CAUSAL on the answer distribution, each seeded slot is individually
 ablatable, and every wire boundary validates the payload.
 """
@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 
+import numpy as np
 import pytest
 
 mx = pytest.importorskip("mlx.core")
@@ -22,6 +23,7 @@ from mlx_lm.models.qwen2 import Model, ModelArgs  # noqa: E402
 from core.brain.llm.latent_cortex.engine import LatentCortexEngine  # noqa: E402
 from core.brain.llm.latent_cortex.types import (  # noqa: E402
     BranchConfig,
+    ComputeBudget,
     CortexConfig,
     RecurrenceConfig,
     WorkspaceConfig,
@@ -53,6 +55,8 @@ def _typed_memory_item(text="Historical observation: the June restart fixed it."
         "retrieval_receipt_sha256": "2" * 64,
         "epistemic_state_sha256": "3" * 64,
         "memory_tier": "episodic",
+        "memory_source_id": "black_hole.episodic",
+        "memory_source_version": "test-v1",
     }
 
 
@@ -105,7 +109,7 @@ def _config(n_slots=8, **overrides) -> CortexConfig:
 # ── Workspace-level seeding ──────────────────────────────────────────────
 
 
-def test_context_seeds_become_identifiable_tail_slots():
+def test_context_seeds_become_identifiable_causal_prefix():
     embeddings = mx.random.normal((1, 6, 64))
     vec = mx.random.normal((1, 1, 64))
     ws = LatentWorkspace.from_prompt_embeddings(
@@ -114,11 +118,12 @@ def test_context_seeds_become_identifiable_tail_slots():
         context_seeds=[("memory", vec), ("goals", vec)],
     )
     assert ws.context_slots == [
-        {"slot": 6, "source": "goals"},
-        {"slot": 7, "source": "memory"},
+        {"slot": 1, "context_index": 0, "source": "memory"},
+        {"slot": 2, "context_index": 1, "source": "goals"},
     ]
-    assert ws.roles[7] == "context:memory"
-    assert ws.roles[6] == "context:goals"
+    assert ws.roles[1] == "context:memory"
+    assert ws.roles[2] == "context:goals"
+    assert ws.hypothesis_slot_indices() == (3, 4, 5, 6, 7)
     # Comm slot 0 keeps its ordinary role.
     assert not ws.roles[0].startswith("context:")
 
@@ -131,9 +136,40 @@ def test_context_slot_cap_preserves_thought_slots():
         WorkspaceConfig(n_slots=4, seed=1),
         context_seeds=[("memory", vec), ("goals", vec), ("world_model", vec)],
     )
-    # m=4 ⇒ at most 1 context slot (comm slot + free thought slots preserved).
-    assert len(ws.context_slots) == 1
-    assert ws.context_slots[0]["slot"] == 3
+    # m=4 ⇒ two evidence rows fit between mailbox 0 and hypothesis row 3.
+    assert len(ws.context_slots) == 2
+    assert [row["slot"] for row in ws.context_slots] == [1, 2]
+    assert ws.hypothesis_slot_indices() == (3,)
+
+
+def test_eight_slot_topology_keeps_all_six_admitted_evidence_items():
+    embeddings = mx.random.normal((1, 6, 64))
+    vec = mx.random.normal((1, 1, 64))
+    ws = LatentWorkspace.from_prompt_embeddings(
+        embeddings,
+        WorkspaceConfig(n_slots=8, seed=1),
+        context_seeds=[(f"source-{index}", vec) for index in range(6)],
+    )
+
+    assert [row["slot"] for row in ws.context_slots] == [1, 2, 3, 4, 5, 6]
+    assert ws.hypothesis_slot_indices() == (7,)
+
+
+def test_sealed_evidence_is_restored_without_reverting_hypothesis_rows():
+    embeddings = mx.random.normal((1, 6, 64))
+    vec = mx.random.normal((1, 1, 64))
+    ws = LatentWorkspace.from_prompt_embeddings(
+        embeddings,
+        WorkspaceConfig(n_slots=6, seed=1),
+        context_seeds=[("memory", vec), ("reference", vec)],
+    )
+    ws.seal_context_evidence()
+    candidate = ws.z + mx.ones_like(ws.z)
+
+    restored = ws.restore_context_evidence(candidate)
+
+    assert bool(mx.array_equal(restored[:, 1:3, :], ws.z[:, 1:3, :]))
+    assert not bool(mx.array_equal(restored[:, 3:, :], ws.z[:, 3:, :]))
 
 
 # ── Engine-level: receipted and CAUSAL ───────────────────────────────────
@@ -150,8 +186,85 @@ def test_receipt_maps_slots_to_organs(tiny_model):
     assert {row["source"] for row in slots} == {"memory", "goals"}
     for row in slots:
         assert 0 < row["slot"] < 8
+        assert row["context_index"] in {0, 1}
+        assert row["role"] == "immutable_evidence"
+        assert row["causal_order"] == "before_hypothesis"
         assert row["text_chars"] > 0
         assert len(row["text_sha256"]) == 64
+    grounding = result.receipt.recurrent_grounding
+    assert grounding["all_evidence_invariant"] is True
+    assert grounding["selected_hypothesis_causal"] is True
+    assert grounding["evidence_slots"] == [
+        {
+            "slot": row["slot"],
+            "context_index": row["context_index"],
+            "source": row["source"],
+            "text_sha256": row["text_sha256"],
+        }
+        for row in slots
+    ]
+    assert all(
+        transition["evidence_pre_sha256"]
+        == transition["evidence_post_sha256"]
+        for branch in grounding["branches"]
+        for transition in branch["transitions"]
+    )
+
+
+def test_prompt_tail_one_shot_recall_is_bound_before_recurrence(
+    tiny_model, tmp_path, monkeypatch
+):
+    from core.brain import nonparametric_memory, nonparametric_worker
+    from core.brain.nonparametric_generation import normalize
+    from core.brain.nonparametric_memory import NonParametricMemory
+
+    engine = LatentCortexEngine(tiny_model, FakeTokenizer(), config=_config())
+    probe_budget = ComputeBudget(max_layer_apps=50_000, wall_clock_s=30.0)
+    probe_budget.bind_model(tiny_model)
+    engine._prefill(PROMPT_TOKENS, engine._fresh_cache(), probe_budget)
+    prompt_tail = normalize(np.asarray(engine._last_prefill_hidden).reshape(-1))
+
+    store = NonParametricMemory(dim=64, path=tmp_path / "one-shot")
+    assert store.add(prompt_tail, token_id=17, token="t17")
+    monkeypatch.setattr(nonparametric_worker, "foreground_enabled", lambda: True)
+    monkeypatch.setattr(
+        nonparametric_memory,
+        "get_nonparametric_memory",
+        lambda dim=0: store if int(dim or 64) == 64 else None,
+    )
+
+    result = engine.reason(token_ids=PROMPT_TOKENS)
+
+    assert result.ok
+    assert result.receipt.nonparametric_memory["status"] == "admitted"
+    one_shot_slots = [
+        row
+        for row in result.receipt.cognitive_slots
+        if row["knowledge_class"] == "one_shot_nonparametric_memory"
+    ]
+    assert len(one_shot_slots) == 1
+    assert one_shot_slots[0]["instruction_authority"] is False
+    assert (
+        one_shot_slots[0]["text_sha256"]
+        == result.receipt.nonparametric_memory["observation_sha256"]
+    )
+    assert result.receipt.recurrent_grounding["evidence_slots"] == [
+        {
+            "slot": one_shot_slots[0]["slot"],
+            "context_index": 0,
+            "source": "one_shot_memory",
+            "text_sha256": one_shot_slots[0]["text_sha256"],
+        }
+    ]
+    information = result.receipt.budget["information_accounting"]
+    source_ids = {row["source_id"] for row in information["sources"]}
+    assert "one_shot_nonparametric_memory" in source_ids
+    assert "cognitive_context:0:one_shot_memory" in source_ids
+    operation = result.receipt.budget["resource_accounting"]["operations"][
+        "nonparametric_memory_retrieval"
+    ]
+    assert operation["tensor_element_reads"] > 0
+    assert operation["host_scalar_ops"] > 0
 
 
 def test_context_seeding_is_causal_on_answer_distribution(tiny_model):
@@ -252,7 +365,7 @@ def test_worker_handler_rejects_memory_authority_tampering(tiny_model):
         model_path="",
     )
     assert body["status"] == "error"
-    assert "memory context authority" in body["message"]
+    assert "memory cognitive context authority" in body["message"]
 
 
 def test_worker_recomputes_and_echoes_runtime_operation_authority(

@@ -254,7 +254,11 @@ class LatentCortexService:
             allocation_profile = "resident_32b_interactive_full_stack_v2"
             config.update(
                 {
-                    "n_slots": 4,
+                    # Nine positions preserve one mailbox, six organ evidence
+                    # rows, an optional one-shot continuation fragment, and a
+                    # persistent private hypothesis. The prior four-slot
+                    # profile silently dropped most admitted evidence.
+                    "n_slots": 9,
                     "max_steps": 2,
                     "min_steps": 2,
                     "n_branches": 2 if stakes >= 0.3 else 1,
@@ -728,6 +732,149 @@ class LatentCortexService:
             "n_branches"
         ) != config.get("n_branches"):
             errors.append("branch_cardinality_mismatch")
+        try:
+            from core.brain.llm.latent_cortex.recurrent_grounding import (
+                validate_recurrent_grounding_receipt,
+            )
+
+            validate_recurrent_grounding_receipt(
+                receipt.get("recurrent_grounding"),
+                input_tokens_sha256=str(receipt.get("input_tokens_sha256") or ""),
+                input_token_count=int(receipt.get("input_token_count") or 0),
+                cognitive_slots=list(receipt.get("cognitive_slots") or []),
+                n_slots=int(config.get("n_slots") or 0),
+                n_branches=int(config.get("n_branches") or 0),
+                selected_branch=int(receipt.get("selected_branch") or 0),
+            )
+        except (ImportError, TypeError, ValueError):
+            errors.append("recurrent_grounding_unproven")
+        one_shot_slots = [
+            row
+            for row in (receipt.get("cognitive_slots") or [])
+            if isinstance(row, dict)
+            and row.get("knowledge_class") == "one_shot_nonparametric_memory"
+        ]
+        one_shot_receipt = receipt.get("nonparametric_memory")
+        try:
+            from core.brain.llm.latent_cortex.nonparametric_context import (
+                validate_receipt as validate_nonparametric_receipt,
+            )
+
+            if one_shot_receipt:
+                validated_one_shot = validate_nonparametric_receipt(
+                    one_shot_receipt
+                )
+                if validated_one_shot["applied"]:
+                    if (
+                        len(one_shot_slots) != 1
+                        or one_shot_slots[0].get("instruction_authority") is not False
+                        or one_shot_slots[0].get("text_sha256")
+                        != validated_one_shot["observation_sha256"]
+                    ):
+                        raise ValueError(
+                            "admitted one-shot evidence is not bound to its slot"
+                        )
+                elif one_shot_slots:
+                    raise ValueError(
+                        "one-shot evidence slot exists without admitted retrieval"
+                    )
+                expected_resource = validated_one_shot["resource_accounting"]
+                operation = (
+                    resource_accounting.get("operations", {}).get(
+                        "nonparametric_memory_retrieval"
+                    )
+                    if resource_accounting is not None
+                    else None
+                )
+                if not isinstance(operation, dict) or any(
+                    operation.get(resource_name) != expected_resource[receipt_name]
+                    for resource_name, receipt_name in (
+                        ("tensor_element_reads", "tensor_element_reads"),
+                        ("tensor_element_writes", "tensor_element_writes"),
+                        ("tensor_scalar_ops", "tensor_scalar_ops"),
+                        ("host_scalar_ops", "host_scalar_ops"),
+                    )
+                ):
+                    raise ValueError(
+                        "one-shot retrieval work differs from resource ledger"
+                    )
+                if information_accounting is None:
+                    raise ValueError("one-shot information accounting is absent")
+                from core.brain.llm.latent_cortex.resource_accounting import (
+                    policy_sha256,
+                )
+
+                source_identity = validated_one_shot["source_identity"]
+                store_sources = [
+                    row
+                    for row in information_accounting["sources"]
+                    if row.get("source_id") == "one_shot_nonparametric_memory"
+                ]
+                if source_identity:
+                    if (
+                        len(store_sources) != 1
+                        or store_sources[0].get("kind")
+                        != "local_nonparametric_memory_store"
+                        or store_sources[0].get("content_sha256")
+                        != source_identity["content_sha256"]
+                        or store_sources[0].get("byte_count")
+                        != source_identity["source_bytes"]
+                    ):
+                        raise ValueError(
+                            "one-shot store differs from information ledger"
+                        )
+                elif store_sources:
+                    raise ValueError(
+                        "information ledger claims an unavailable one-shot store"
+                    )
+                expected_policy = policy_sha256(
+                    {
+                        "policy": "context_only_prompt_tail_recall_v1",
+                        "active_source_receipt_sha256": source_identity.get(
+                            "receipt_sha256", "none"
+                        ),
+                    }
+                )
+                if (
+                    information_accounting["policies"].get(
+                        "nonparametric_memory"
+                    )
+                    != expected_policy
+                ):
+                    raise ValueError("one-shot retrieval policy is not bound")
+                context_sources = [
+                    row
+                    for row in information_accounting["sources"]
+                    if str(row.get("source_id") or "").endswith(
+                        ":one_shot_memory"
+                    )
+                ]
+                if validated_one_shot["applied"]:
+                    slot = one_shot_slots[0]
+                    expected_source_id = (
+                        f"cognitive_context:{slot.get('context_index')}:"
+                        "one_shot_memory"
+                    )
+                    if (
+                        len(context_sources) != 1
+                        or context_sources[0].get("source_id")
+                        != expected_source_id
+                        or context_sources[0].get("kind")
+                        != "typed_cognitive_context"
+                        or context_sources[0].get("content_sha256")
+                        != validated_one_shot["observation_sha256"]
+                    ):
+                        raise ValueError(
+                            "one-shot observation differs from information ledger"
+                        )
+                elif context_sources:
+                    raise ValueError(
+                        "information ledger claims an unadmitted one-shot observation"
+                    )
+            elif one_shot_slots:
+                raise ValueError("one-shot evidence slot has no retrieval receipt")
+        except (ImportError, TypeError, ValueError):
+            errors.append("nonparametric_memory_binding_unproven")
         isolation_steps = config.get("isolation_steps")
         if type(isolation_steps) is int:
             isolation = receipt.get("branch_isolation")
@@ -1583,19 +1730,14 @@ class LatentCortexService:
             return self._record_failure("invalid_require_full_stack")
         if type(foreground_request) is not bool:
             return self._record_failure("invalid_foreground_request")
-        if cognitive_context is not None:
-            if not isinstance(cognitive_context, list) or len(cognitive_context) > 6:
-                return self._record_failure("invalid_cognitive_context")
-            for entry in cognitive_context:
-                if (
-                    not isinstance(entry, dict)
-                    or not isinstance(entry.get("source"), str)
-                    or not entry["source"].strip()
-                    or not isinstance(entry.get("text"), str)
-                    or not entry["text"].strip()
-                    or len(entry["text"]) > 400
-                ):
-                    return self._record_failure("invalid_cognitive_context")
+        try:
+            from core.brain.llm.latent_cortex.cognitive_context import (
+                normalize_cognitive_context,
+            )
+
+            cognitive_context = normalize_cognitive_context(cognitive_context) or None
+        except (TypeError, ValueError):
+            return self._record_failure("invalid_cognitive_context")
         memory_context_present = any(
             isinstance(entry, dict) and entry.get("context_role") == "memory_observation"
             for entry in (cognitive_context or [])

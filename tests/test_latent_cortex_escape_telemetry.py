@@ -32,8 +32,8 @@ from core.brain.llm.latent_cortex.escape import (  # noqa: E402
 from core.brain.llm.latent_cortex.recurrence import HaltingController  # noqa: E402
 from core.brain.llm.latent_cortex.telemetry import (  # noqa: E402
     LATENT_TELEMETRY_SCHEMA,
-    LatentTelemetry,
     MAX_RECORDED_STEPS,
+    LatentTelemetry,
 )
 from core.brain.llm.latent_cortex.types import (  # noqa: E402
     BranchConfig,
@@ -91,6 +91,9 @@ class _FakeBranch:
 
             def update(self, z):
                 self.owner.z = z
+
+            def restore_context_evidence(self, z):
+                return z
 
         self.workspace = _WS(self)
 
@@ -180,6 +183,30 @@ def test_matched_perturbation_is_small_and_matched():
     delta_rms = float(mx.mean(mx.sqrt(mx.mean(mx.square(delta), axis=-1))))
     base_rms = float(mx.mean(mx.sqrt(mx.mean(mx.square(before), axis=-1))))
     assert delta_rms == pytest.approx(0.02 * base_rms, rel=0.05)
+
+
+def test_escape_perturbation_preserves_sealed_evidence_rows():
+    embeddings = mx.random.normal((1, 6, 8))
+    evidence = mx.random.normal((1, 1, 8))
+    workspace = LatentWorkspace.from_prompt_embeddings(
+        embeddings,
+        WorkspaceConfig(n_slots=6, seed=11),
+        context_seeds=[("reference", evidence)],
+    )
+    workspace.seal_context_evidence()
+    branch = _FakeBranch()
+    branch.workspace = workspace
+    branch.z = workspace.z
+    branch.anchor = workspace.seed_z
+    branch.halting.best_state = workspace.z
+    before = workspace.z
+
+    BranchEscapeLadder(
+        EscapeConfig(perturbation_scale=0.02), branch.index
+    )._apply_rung(branch, "matched_perturbation")
+
+    assert bool(mx.array_equal(branch.z[:, 1:2, :], before[:, 1:2, :]))
+    assert not bool(mx.array_equal(branch.z[:, 2:, :], before[:, 2:, :]))
 
 
 def test_role_shift_changes_the_branch_role():

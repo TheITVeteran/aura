@@ -8,6 +8,7 @@ from core.brain.nonparametric_memory import (
     NonParametricMemory,
     get_nonparametric_memory,
     reset_nonparametric_memory,
+    validate_nonparametric_memory_identity,
 )
 
 
@@ -20,6 +21,33 @@ def test_add_and_len(mem):
     assert mem.add(np.array([1.0, 0, 0, 0]), token_id=7, token="seven")
     assert len(mem) == 1
     assert mem.stats()["allocated_bytes"] <= (64 * 4 * 4) + (64 * 4)
+
+
+def test_identity_receipt_is_stable_cached_and_invalidated_by_content(mem):
+    mem.add(np.array([1.0, 0, 0, 0]), token_id=7, token="seven")
+
+    first, first_work = mem.identity_receipt_with_work()
+    second, second_work = mem.identity_receipt_with_work()
+
+    assert validate_nonparametric_memory_identity(first) == first
+    assert second == first
+    assert first_work == first["source_bytes"]
+    assert second_work == 0
+
+    mem.add(np.array([0.0, 1.0, 0, 0]), token_id=8, token="eight")
+    changed, changed_work = mem.identity_receipt_with_work()
+    assert changed["content_sha256"] != first["content_sha256"]
+    assert changed["receipt_sha256"] != first["receipt_sha256"]
+    assert changed_work == changed["source_bytes"]
+
+
+def test_identity_receipt_rejects_rehashed_content_lie(mem):
+    mem.add(np.array([1.0, 0, 0, 0]), token_id=7, token="seven")
+    receipt = mem.identity_receipt()
+    tampered = {**receipt, "content_sha256": "0" * 64}
+
+    with pytest.raises(ValueError, match="identity is invalid"):
+        validate_nonparametric_memory_identity(tampered)
 
 
 def test_add_rejects_wrong_dim(mem):
@@ -144,6 +172,19 @@ def test_inconsistent_persistence_metadata_fails_closed(tmp_path):
     assert len(loaded) == 0
 
 
+def test_nonfinite_persistence_metadata_fails_before_identity_hash(tmp_path):
+    p = tmp_path / "nonfinite"
+    np.save(p.with_suffix(".keys.npy"), np.ones((1, 3), dtype=np.float32))
+    p.with_suffix(".meta.json").write_text(
+        '{"token_ids":[1],"tokens":["one"],"weights":[1.0],"ts":[NaN]}',
+        encoding="utf-8",
+    )
+
+    loaded = NonParametricMemory(dim=3, path=p)
+
+    assert len(loaded) == 0
+
+
 def test_apply_to_logits_flag_off_is_identity(mem, monkeypatch):
     monkeypatch.delenv("AURA_NONPARAMETRIC_MEMORY", raising=False)
     logits = np.array([0.1, 0.2, 5.0, 0.3], dtype=np.float32)
@@ -206,7 +247,6 @@ def test_similarity_raw_fallback_before_mu_ready(tmp_path):
     """Before the query mean converges, similarity is raw cosine and the
     gate is the strict 0.98 — exact re-encounters pass, everything else
     is blocked (measured: unrelated prompts score raw 0.81-0.93)."""
-    import numpy as np
 
     mem = NonParametricMemory(dim=8, path=tmp_path / "npm")
     key = _unit([1, 2, 3, 4, 5, 6, 7, 8])
@@ -255,7 +295,6 @@ def test_similarity_centers_once_mu_ready(tmp_path):
 def test_interpolate_filters_below_gate_neighbors(tmp_path):
     """Below-gate entries must not leak probability mass (the cross-fact
     digit-leakage failure the July proof caught)."""
-    import numpy as np
 
     mem = NonParametricMemory(dim=8, path=tmp_path / "npm")
     target = _unit([1, 0, 0, 0, 0, 0, 0, 0.2])

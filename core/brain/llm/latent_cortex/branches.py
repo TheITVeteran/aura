@@ -24,7 +24,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from core.brain.llm.latent_cortex.branch_exchange import (
@@ -106,6 +106,9 @@ class BranchState:
     candidate_step: int = 0
     rng_stream_sha256: str = ""
     operator: CognitiveOperator = CognitiveOperator.DIRECT_DERIVATION
+    evidence_anchor_sha256: str = ""
+    initial_hypothesis_sha256: str = ""
+    recurrent_grounding_trace: list[dict[str, Any]] = field(default_factory=list)
 
     def to_receipt(self) -> dict[str, Any]:
         receipt = {
@@ -226,6 +229,7 @@ class BranchEnsemble:
             # survive into decode.
             z0 = runner.run(ws.z, cache, 0, prelude_end, persist=False)
             ws.update(z0)
+            ws.seal_context_evidence()
             halting = HaltingController(
                 config=recurrence_cfg,
                 baseline_rms=float(mx.mean(per_position_rms(z0))),
@@ -376,6 +380,22 @@ class BranchEnsemble:
             return False
         deferred_fixed_depth_halts: list[tuple[BranchState, str]] = []
         for branch in active:
+            evidence_slots = branch.workspace.context_slot_indices
+            hypothesis_slots = branch.workspace.hypothesis_slot_indices(
+                comm_slot=int(self.config.comm_slot)
+            )
+            if not hypothesis_slots:
+                raise RuntimeError("recurrent workspace has no persistent hypothesis slot")
+            evidence_pre = _tensor_sha256(
+                branch.workspace.select_slots(branch.z, evidence_slots)
+            )
+            hypothesis_pre = _tensor_sha256(
+                branch.workspace.select_slots(branch.z, hypothesis_slots)
+            )
+            if not branch.evidence_anchor_sha256:
+                branch.evidence_anchor_sha256 = evidence_pre
+            if not branch.initial_hypothesis_sha256:
+                branch.initial_hypothesis_sha256 = hypothesis_pre
             z_next = recurrence_step(
                 branch.z,
                 runner,
@@ -387,7 +407,46 @@ class BranchEnsemble:
                 anchor=branch.anchor,
                 alpha_override=alpha_override,
             )
-            residual = relative_residual(z_next, branch.z)
+            z_next = branch.workspace.restore_context_evidence(z_next)
+            evidence_post = _tensor_sha256(
+                branch.workspace.select_slots(z_next, evidence_slots)
+            )
+            hypothesis_post = _tensor_sha256(
+                branch.workspace.select_slots(z_next, hypothesis_slots)
+            )
+            evidence_unchanged = (
+                evidence_pre
+                == evidence_post
+                == branch.evidence_anchor_sha256
+            )
+            if not evidence_unchanged:
+                raise RuntimeError("sealed recurrent evidence changed during a window pass")
+            branch.recurrent_grounding_trace.append(
+                {
+                    "ordinal": len(branch.recurrent_grounding_trace),
+                    "branch_step": branch.steps,
+                    "window_start": start,
+                    "window_end": end,
+                    "evidence_pre_sha256": evidence_pre,
+                    "evidence_post_sha256": evidence_post,
+                    "hypothesis_pre_sha256": hypothesis_pre,
+                    "hypothesis_post_sha256": hypothesis_post,
+                    "evidence_unchanged": True,
+                    "hypothesis_changed": hypothesis_pre != hypothesis_post,
+                }
+            )
+            hidden = int(branch.z.shape[-1])
+            committed_slots = len(evidence_slots) + len(hypothesis_slots)
+            budget.charge_tensor_work(
+                "recurrent_grounding_commitment",
+                element_reads=2 * committed_slots * hidden,
+                host_scalar_ops=2 * committed_slots * hidden,
+            )
+            reasoning_slots = (int(self.config.comm_slot), *hypothesis_slots)
+            residual = relative_residual(
+                branch.workspace.select_slots(z_next, reasoning_slots),
+                branch.workspace.select_slots(branch.z, reasoning_slots),
+            )
             score = (
                 self._score_candidate(branch, z_next, score_fn)
                 if score_fn is not None
@@ -1022,6 +1081,7 @@ class BranchEnsemble:
                     / mx.maximum(per_position_rms(jitter), 1e-6)
                 )
                 b.z = b.z + jitter
+                b.z = b.workspace.restore_context_evidence(b.z)
                 b.workspace.update(b.z)
                 mx.eval(b.z)
                 if budget is not None:

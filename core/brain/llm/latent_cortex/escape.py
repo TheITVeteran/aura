@@ -307,8 +307,8 @@ class BranchEscapeLadder:
             z = base + noise
         else:  # pragma: no cover - rung set is closed
             raise ValueError(f"unknown escape rung: {rung!r}")
-        branch.z = z
-        branch.workspace.update(z)
+        branch.z = branch.workspace.restore_context_evidence(z)
+        branch.workspace.update(branch.z)
         mx.eval(branch.z)
 
     def to_receipt(self) -> dict[str, Any]:

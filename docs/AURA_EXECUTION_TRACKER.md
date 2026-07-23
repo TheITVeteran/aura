@@ -25641,3 +25641,55 @@ grounded recurrent state and audit resident weights, Wikipedia/RAG, Black Hole
 memory, one-shot learning, and governed web/tool evidence through retrieval,
 recurrent binding, verification, answer attribution, and memory writeback.
 Final multi-hour soaks remain deferred until every shorter gate is green.
+
+## Checkpoint 2026-07-22-337: Recurrence Keeps Evidence, Not Rewritten Prose
+
+RLC recurrence now operates over a persistent hidden hypothesis grounded in an
+immutable causal evidence prefix. Exact prompt tokens are prefilled once into
+shared read-only KV. Typed Black Hole/RAG and episodic memory, Wikipedia/local
+reference passages, body/affect/goals/Will/self/world-model state, live GWT
+coalitions, and a gated token-level nonparametric recall are embedded once before
+branch recurrence. The live foreground profile reserves nine slots so one
+mailbox, six source-diverse organ/evidence items, an optional one-shot recall,
+and a persistent hypothesis can coexist without silently dropping admitted
+evidence.
+
+Every branch seals its evidence after the prelude. Recurrence, bounded mailbox
+exchange, attractor escape, latent optimization, and fast-weight probes restore
+that exact evidence, while optimizer authority over protected slots is zero.
+Residual and convergence measurements exclude immutable evidence. Per-step
+commitments bind evidence anchors and pre/post hypothesis state; the worker
+returns a full topology receipt and the service reconstructs prompt identity,
+causal order, source/content commitments, all branch transitions, selected-
+hypothesis causality, information sources, and resource charges independently.
+
+The local nonparametric memory path now queries the normalized resident prompt-
+tail hidden state once after prefill. It binds the complete store identity,
+query, nearest neighbor, token, similarity gate, decoded fragment, and logical
+retrieval work before admitting one context-only evidence slot. Persisted
+non-finite timestamps are rejected atomically and store-identity caching is
+invalidated after mutation/load. A real-corpus contract and a tiny real-Qwen
+path exercise hidden-state retrieval through recurrent slot grounding.
+
+`docs/RLC_KNOWLEDGE_SOURCE_MATRIX.md` records source retrieval, authority,
+recurrent binding, validation, answer attribution, and writeback. Foreground
+conclusions return to GWT before action consumption and normal visible response
+and memory consolidation continue to own durable writeback; private latent
+tensors remain ephemeral. Governed web/tool observations have a strict receiving
+contract but no live in-episode producer yet, so SPARK-039, SPARK-051, and
+SPARK-065 remain open.
+
+Validation: the focused one-shot, grounding, source-ingress, optimizer, escape,
+worker/client, and service boundary passes 436/436. The final fixed-snapshot
+RLC, latent-cortex, recurrence/training, global-workspace, GWT, and execution-
+controller ownership gate passes 1221/1221 in 604.91 seconds. Focused Ruff,
+bytecode compilation, JSON parsing, and `git diff --check` pass.
+
+SPARK-023 closes at the mechanism and proof-boundary level. No resident-32B
+capability campaign ran. Reasoning gain, adapter/RLC positive interaction, and
+frontier status remain unproven; the capability verdict remains negative/no-
+signal. This is total checkpoint record 398. The forecast remains 466-733 total
+records, approximately 68-335 records remaining, 54.3%-85.4% checkpoint-count
+completion, and a 66.4% midpoint planning estimate. Next: publish CP337, then
+implement SPARK-024 stable shared-loop invariants and train/inference parity.
+Final multi-hour soaks remain deferred until every shorter gate is green.

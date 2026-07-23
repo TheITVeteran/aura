@@ -47,6 +47,7 @@ from .chat_format import format_chatml_messages, format_chatml_prompt
 from .mlx_worker import _mlx_worker_loop
 
 logger = logging.getLogger("LLM.MLX")
+_AURA_SOURCE_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _observed_process_rss_bytes(pid: int) -> int:
@@ -4781,51 +4782,14 @@ class MLXLocalClient:
             except ValueError:
                 return {**base, "reason": "invalid_response_contract"}
         wire_cognitive_context: list[dict[str, Any]] | None = None
-        if cognitive_context is not None:
-            if not isinstance(cognitive_context, list) or len(cognitive_context) > 6:
-                return {**base, "reason": "invalid_cognitive_context"}
-            wire_cognitive_context = []
-            for entry in cognitive_context:
-                if (
-                    not isinstance(entry, dict)
-                    or not isinstance(entry.get("source"), str)
-                    or not entry["source"].strip()
-                    or not isinstance(entry.get("text"), str)
-                    or not entry["text"].strip()
-                    or len(entry["text"]) > 400
-                ):
-                    return {**base, "reason": "invalid_cognitive_context"}
-                if entry.get("context_role") == "memory_observation":
-                    memory_fields = {
-                        "context_role",
-                        "instruction_authority",
-                        "evidence_id",
-                        "content_sha256",
-                        "scope_sha256",
-                        "retrieval_receipt_sha256",
-                        "epistemic_state_sha256",
-                        "memory_tier",
-                    }
-                    if (
-                        set(entry) != {"source", "text", *memory_fields}
-                        or entry.get("instruction_authority") is not False
-                    ):
-                        return {**base, "reason": "invalid_cognitive_context"}
-                    wire_cognitive_context.append(
-                        {
-                            **dict(entry),
-                            "source": entry["source"].strip()[:40],
-                            "text": entry["text"].strip(),
-                        }
-                    )
-                else:
-                    if set(entry) != {"source", "text"}:
-                        return {**base, "reason": "invalid_cognitive_context"}
-                    wire_cognitive_context.append(
-                        {"source": entry["source"].strip()[:40], "text": entry["text"]}
-                    )
-            if not wire_cognitive_context:
-                wire_cognitive_context = None
+        try:
+            from core.brain.llm.latent_cortex.cognitive_context import (
+                normalize_cognitive_context,
+            )
+
+            wire_cognitive_context = normalize_cognitive_context(cognitive_context) or None
+        except (TypeError, ValueError):
+            return {**base, "reason": "invalid_cognitive_context"}
         wire_config = dict(config or {})
         wire_budget = dict(budget or {})
         wire_runtime_controls = dict(runtime_controls or {})
@@ -5148,7 +5112,7 @@ class MLXLocalClient:
                     runtime_identity = await asyncio.wait_for(
                         run_io_bound(
                             collect_latent_runtime_identity,
-                            Path(__file__).resolve().parents[3],
+                            _AURA_SOURCE_ROOT,
                         ),
                         timeout=identity_timeout,
                     )

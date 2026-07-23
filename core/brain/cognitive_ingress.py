@@ -27,11 +27,13 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import inspect
+import json
 import logging
 import re
 import threading
 import uuid
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger("Aura.CognitiveIngress")
@@ -352,6 +354,31 @@ def _dispose_hidden_awaitable(value: Any) -> None:
 def _service_version(service: Any) -> str:
     cls = type(service)
     return f"{cls.__module__}.{cls.__qualname__}"[:128]
+
+
+def _reference_source_version(store: Any) -> str:
+    """Commit the mutable corpus snapshot without hashing a multi-GB database."""
+
+    descriptor: dict[str, Any] = {"implementation": _service_version(store)}
+    get_meta = getattr(store, "get_meta", None)
+    if callable(get_meta):
+        for key in ("schema_version", "sources", "wikipedia_pages_processed"):
+            try:
+                descriptor[key] = str(get_meta(key, ""))[:128]
+            except (OSError, RuntimeError, TypeError, ValueError):
+                descriptor[key] = "unavailable"
+    db_path = getattr(store, "db_path", None)
+    if db_path is not None:
+        try:
+            stat = Path(db_path).expanduser().stat()
+            descriptor["database_size"] = int(stat.st_size)
+            descriptor["database_mtime_ns"] = int(stat.st_mtime_ns)
+        except (OSError, TypeError, ValueError):
+            descriptor["database_file_state"] = "unavailable"
+    payload = json.dumps(descriptor, sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
+    return f"local-corpus-v1:{hashlib.sha256(payload).hexdigest()[:32]}"
 
 
 def _working_memory_records(orchestrator: Any, objective: str, limit: int) -> list[dict[str, Any]]:
@@ -794,6 +821,7 @@ def _signal_reference(objective: str) -> IngressSignal:
     caution = ""
     firewall_receipt: dict[str, Any] = {}
     conflict_uncertainty = 0.0
+    context_items: list[dict[str, Any]] = []
     try:
         verdict = EpistemicFirewall(max_admitted=2).review(objective, evidence)
         firewall_receipt = verdict.to_receipt()
@@ -807,6 +835,37 @@ def _signal_reference(objective: str) -> IngressSignal:
     except (TypeError, ValueError):
         recalled = ""
         caution = "Evidence check: reference admission failed; nothing seeded"
+    if recalled:
+        receipt_payload = json.dumps(
+            firewall_receipt,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        content_sha256 = hashlib.sha256(recalled.encode("utf-8")).hexdigest()
+        retrieval_receipt_sha256 = hashlib.sha256(receipt_payload).hexdigest()
+        source_version = _reference_source_version(store)
+        evidence_identity = hashlib.sha256(
+            f"{content_sha256}:{retrieval_receipt_sha256}:{source_version}".encode()
+        ).hexdigest()
+        origins = ",".join(
+            str(row.get("origin") or "")
+            for row in firewall_receipt.get("admitted", [])
+            if str(row.get("origin") or "").strip()
+        )[:256]
+        context_items = [
+            {
+                "source": "reference",
+                "text": recalled,
+                "context_role": "evidence_observation",
+                "instruction_authority": False,
+                "evidence_id": f"evidence-{evidence_identity[:24]}",
+                "content_sha256": content_sha256,
+                "retrieval_receipt_sha256": retrieval_receipt_sha256,
+                "evidence_kind": "offline_reference",
+                "evidence_origin": origins or "core.knowledge.local_corpus",
+                "source_version": source_version,
+            }
+        ]
     return IngressSignal(
         source="reference",
         present=True,
@@ -819,6 +878,7 @@ def _signal_reference(objective: str) -> IngressSignal:
         context_text=recalled,
         firewall=firewall_receipt,
         caution_text=caution,
+        context_items=context_items,
     )
 
 
@@ -1284,25 +1344,35 @@ def cognitive_context_items(ingress: CognitiveIngress) -> list[dict[str, Any]]:
     memory recall, matched goal, world summary, self-model relevance — plus
     one interoceptive line rendering the body/Will/affect scalars, so the
     felt state itself becomes an identifiable, ablatable thought slot.
-    Bounded to 5 items x 400 chars (engine hard caps at 6).
+    Bounded to 6 items x 400 chars. Source diversity is allocated before
+    duplicate observations so one prolific store cannot silently displace
+    the body, goals, self-model, or world state from recurrent thought.
     """
     items: list[dict[str, Any]] = []
+    overflow: list[dict[str, Any]] = []
     by_source = {signal.source: signal for signal in ingress.signals}
     for source in ("memory", "reference", "goals", "world_model", "self_model"):
         signal = by_source.get(source)
         if signal is None or not signal.present:
             continue
-        if source == "memory" and signal.context_items:
-            items.extend(dict(item) for item in signal.context_items[:2])
+        if signal.context_items:
+            typed = [dict(item) for item in signal.context_items[:2]]
+            items.append(typed[0])
+            overflow.extend(typed[1:])
         elif signal.context_text.strip():
             items.append({"source": source, "text": signal.context_text[:400]})
         # Epistemic caution outranks silence: when admission refused the
         # content (conflicts, thin coverage), the episode is seeded with the
         # doubt itself — deep recurrence must not amplify a lie by omission.
         if signal.caution_text.strip():
-            items.append(
-                {"source": "epistemic_caution", "text": signal.caution_text[:400]}
-            )
+            caution = {
+                "source": "epistemic_caution",
+                "text": signal.caution_text[:400],
+            }
+            if signal.context_items or signal.context_text.strip():
+                overflow.append(caution)
+            else:
+                items.append(caution)
     felt_lines: list[str] = []
     # Rich interoceptive content first: WHAT is strained / HOW it feels
     # (body pressure decomposition, pronounced affect), then the scalar
@@ -1326,7 +1396,8 @@ def cognitive_context_items(ingress: CognitiveIngress) -> list[dict[str, Any]]:
         items.append(
             {"source": "interoception", "text": " | ".join(felt_lines)[:400]}
         )
-    return items[:5]
+    remaining = max(0, 6 - len(items))
+    return (items + overflow[:remaining])[:6]
 
 
 __all__ = [

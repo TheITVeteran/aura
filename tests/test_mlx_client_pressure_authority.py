@@ -25,25 +25,21 @@ class TestBenchmarkLabelCannotWaiveSafety:
         source = _generate_source()
         assert "benchmark_request_explicit = bool(kwargs.get(\"benchmark_request\", False))" in source
 
-        # The guards were refactored so both the override branch and the
-        # refusal branch key off one `override_applies` predicate. Assert that
-        # PREDICATE carries the explicit-flag binding (and that both branches
-        # use it) rather than pinning the old inline formatting — the property
-        # under test is "inference cannot waive the safety exemption", not the
-        # line layout that expressed it in one earlier revision.
+        # The refusal predicate is formed once from measured pressure, lane
+        # class, and the explicit benchmark bit; both override branches then
+        # consume that exact predicate.
+        predicate = source.split("override_applies = (", 1)[1].split(
+            "override_decision = None", 1
+        )[0]
+        assert "memory_snapshot.refuse_heavy_local_generation" in predicate
+        assert "self._is_primary_or_deep_lane()" in predicate
+        assert "not benchmark_request_explicit" in predicate
+        assert "if override_applies and critical_override:" in source
+        assert "if override_applies and not critical_override:" in source
         assert (
-            "override_applies = (\n"
-            "                memory_snapshot.refuse_heavy_local_generation\n"
-            "                and self._is_primary_or_deep_lane()\n"
-            "                and not benchmark_request_explicit\n"
-            "            )"
-        ) in source, "critical-pressure override predicate is not bound to the explicit flag"
-        for marker in (
-            "if override_applies and critical_override:",
-            "if override_applies and not critical_override:",
-            "if self._is_primary_or_deep_lane() and not benchmark_request_explicit:",
-        ):
-            assert marker in source, f"pressure guard not bound to the explicit flag: {marker!r}"
+            "if self._is_primary_or_deep_lane() and not benchmark_request_explicit:"
+            in source
+        )
 
     def test_label_inference_still_classifies_scheduling(self):
         source = _generate_source()

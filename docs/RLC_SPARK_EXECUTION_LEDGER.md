@@ -110,6 +110,10 @@ After CP336, the published total is record 397: 69-336 forecast records remain,
 checkpoint-count completion is 54.2%-85.2%, and the midpoint planning estimate
 is 66.2%.
 
+After CP337, the published total is record 398: 68-335 forecast records remain,
+checkpoint-count completion is 54.3%-85.4%, and the midpoint planning estimate
+is 66.4%.
+
 ## Code-grounded baseline and ownership
 
 The four-slice static audit covered the neural core, epistemic/verifier paths,
@@ -119,9 +123,10 @@ baseline below is exhaustive over SPARK-001 through SPARK-072:
 
 - `ACCEPTED`: SPARK-001, SPARK-005, SPARK-006, SPARK-007, SPARK-008, SPARK-009,
   SPARK-010, SPARK-011, SPARK-012, SPARK-014, SPARK-015, SPARK-016,
-  SPARK-017, SPARK-018, SPARK-019, SPARK-020, SPARK-021, SPARK-022.
+  SPARK-017, SPARK-018, SPARK-019, SPARK-020, SPARK-021, SPARK-022,
+  SPARK-023.
 - `PARTIAL`: SPARK-003,
-  SPARK-023, SPARK-024, SPARK-025,
+  SPARK-024, SPARK-025,
   SPARK-026, SPARK-027, SPARK-035, SPARK-039, SPARK-040, SPARK-041,
   SPARK-042, SPARK-051, SPARK-052, SPARK-053, SPARK-054, SPARK-055,
   SPARK-056, SPARK-058, SPARK-060, SPARK-062, SPARK-063, SPARK-065, SPARK-066,
@@ -573,9 +578,42 @@ before those dependencies close is not admissible.
 
 ## D. Penultimate recurrent neural correction
 
-- [ ] **SPARK-023 - Evidence-grounded recurrent state.** Keep immutable evidence
+- [x] **SPARK-023 - Evidence-grounded recurrent state.** Keep immutable evidence
   available at every recurrent step and update a persistent latent hypothesis
   rather than re-encoding the prior prose.
+  Accepted at CP337. Exact prompt tokens are prefilled once into shared read-only
+  KV and independently committed. Typed memory, reference, organ, and one-shot
+  observations are embedded once as a causal prefix after the communication
+  mailbox and before the mutable hypothesis. The foreground resident profile now
+  has nine slots: one mailbox, up to six source-diverse evidence/organ slots, an
+  optional token-level one-shot slot, and at least one persistent hypothesis.
+
+  The workspace seals post-prelude evidence vectors. Every recurrence step,
+  branch exchange, escape mutation, latent-optimization proposal, and fast-
+  weight probe restores that exact evidence before it may continue. Optimizer
+  authority over protected slots is zero. Residual and convergence measurements
+  use only mailbox and hypothesis slots, so immutable evidence cannot create a
+  false fixed point. The recurrence receipt commits prompt identity, causal slot
+  order, evidence anchors, initial hypotheses, and every pre/post hypothesis
+  transition; the service reconstructs the contract and rejects mutation,
+  reordering, missing transitions, or a selected hypothesis with no causal
+  update.
+
+  Source auditing covers resident weights and adapters, prompt KV, Black Hole/RAG
+  selective memory, episodic and hippocampal recall, Wikipedia/local reference,
+  body/affect/goals/Will/self/world-model state, GWT ingress and return, and local
+  nonparametric one-shot memory. The one-shot path queries the normalized prompt-
+  tail hidden state once after prefill, gates the nearest continuation, charges
+  its logical work, and binds store/query/neighbor/token/similarity/content
+  identity before recurrence. Every memory or evidence item remains context-only
+  with no instruction authority. Foreground conclusions return to GWT and the
+  normal visible-response/memory path; private latent tensors are not persisted.
+  `docs/RLC_KNOWLEDGE_SOURCE_MATRIX.md` records the complete boundary.
+
+  Governed web/tool evidence has the strict receiving contract but not yet a live
+  in-episode producer; SPARK-039, SPARK-051, and SPARK-065 remain open. This
+  checkpoint does not run a resident-32B capability campaign or claim reasoning,
+  positive-interaction, or frontier gains.
 - [ ] **SPARK-024 - Stable shared looped core.** Run shared middle-layer
   computation with anchored norm control, residual scaling, finite checks,
   bounded KV use, fixed-point diagnostics, and train/inference parity.
@@ -837,21 +875,26 @@ also repairs the resident recurrent-GRPO execution-spec artifact omitted during
 the CP335 schema migration and makes the independent scoring kernel reconstruct
 the new accounting evidence without importing the production grader. This does
 not create a capability result; the negative capability verdict is unchanged.
+CP337 closes persistent evidence-grounded recurrence. Prompt KV remains shared
+and read-only; typed cognitive evidence forms an immutable causal prefix; and
+mailbox plus hypothesis slots carry the mutable recurrent state without prose
+re-encoding. Service-reconstructed transition commitments prove evidence
+invariance and causal hypothesis updates. A source matrix traces resident
+weights, Black Hole/RAG and episodic memory, Wikipedia/reference retrieval,
+local nonparametric one-shot memory, live organs, and GWT return. Governed
+in-episode web/tool production remains open, and the negative capability verdict
+is unchanged.
 
-Validation: focused accounting, campaign-runner, contract-decode, and experiment
-tests pass 91/91; frontier certification/admission/verifier tests pass 89/89;
-and resident recurrent-GRPO preregistration tests pass 9/9. The independent
-scoring, disk-evidence, worker-evidence, contamination, and integrity boundary
-passes 89/89. The final fixed-snapshot RLC, latent-cortex,
-recurrence/training, global-workspace, GWT, and execution-controller ownership
-gate passes 1221/1221 in 454.64 seconds. Strict focused Ruff, bytecode
-compilation, JSON parsing, and `git diff --check` pass. No resident 32B
-capability campaign was run, and the negative frontier verdict is unchanged.
+Validation: the focused one-shot, evidence-grounding, source-ingress, optimizer,
+escape, worker/client, and service boundary passes 436/436. The final
+fixed-snapshot RLC, latent-cortex, recurrence/training, global-workspace, GWT,
+and execution-controller ownership gate passes 1221/1221 in 604.91 seconds.
+Strict focused Ruff, bytecode compilation, JSON parsing, and `git diff --check`
+pass. No resident 32B capability campaign was run, and the negative frontier
+verdict is unchanged.
 
-This is total checkpoint record 397. The revised forecast remains 466-733 total
-records, now approximately 69-336 records after this checkpoint. Checkpoint-
-count completion is approximately 54.2%-85.2%, with a midpoint planning
-estimate of 66.2%. Next: publish CP336, then implement SPARK-023 evidence-
-grounded recurrent state and audit every resident-weight, Wikipedia/RAG, Black
-Hole memory, one-shot, and governed web/tool source through retrieval, recurrent
-binding, verification, answer attribution, and memory writeback.
+This is total checkpoint record 398. The revised forecast remains 466-733 total
+records, now approximately 68-335 records after this checkpoint. Checkpoint-
+count completion is approximately 54.3%-85.4%, with a midpoint planning
+estimate of 66.4%. Next: publish CP337, then implement SPARK-024 stable shared
+looped-core invariants, fixed-point diagnostics, and train/inference parity.

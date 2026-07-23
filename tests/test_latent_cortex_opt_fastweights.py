@@ -99,6 +99,18 @@ def test_proxy_descent_reduces_loss(tiny_model):
     )
 
 
+def test_latent_optimizer_cannot_mutate_sealed_evidence_rows(tiny_model):
+    ws = _workspace(tiny_model, n_slots=6)
+    cfg = LatentOptConfig(enabled=True, steps=3, lr=0.05)
+    loss_fn = build_proxy_loss(tiny_model, ws.z, PROMPT_TOKENS, cfg)
+    opt = LatentOptimizer(loss_fn, cfg, seed=1, protected_slots=(1, 2))
+
+    z_out = opt.run(ws.z)
+
+    assert bool(mx.array_equal(z_out[:, 1:3, :], ws.z[:, 1:3, :]))
+    assert not bool(mx.array_equal(z_out[:, 3:, :], ws.z[:, 3:, :]))
+
+
 def test_control_arm_matches_magnitude_but_not_direction(tiny_model):
     ws = _workspace(tiny_model)
     base_cfg = dict(enabled=True, steps=1, lr=0.05)

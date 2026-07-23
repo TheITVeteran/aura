@@ -18,6 +18,9 @@ from core.brain.cognitive_ingress import (
     assemble_cognitive_ingress,
     cognitive_context_items,
 )
+from core.brain.llm.latent_cortex.cognitive_context import (
+    normalize_cognitive_context,
+)
 
 
 class _Hit:
@@ -66,7 +69,13 @@ def test_grounded_hits_seed_a_reference_slot_and_lower_uncertainty(corpus):
     assert signal.firewall["admitted"]
     assert grounded.uncertainty < blank.uncertainty
     items = cognitive_context_items(grounded)
-    assert any(item["source"] == "reference" for item in items)
+    reference = next(item for item in items if item["source"] == "reference")
+    assert reference["context_role"] == "evidence_observation"
+    assert reference["instruction_authority"] is False
+    assert reference["evidence_kind"] == "offline_reference"
+    assert reference["evidence_origin"].startswith("local_corpus:")
+    assert reference["source_version"].startswith("local-corpus-v1:")
+    assert normalize_cognitive_context([reference]) == [reference]
 
 
 def test_conflicting_reference_claims_seed_caution_not_a_winner(corpus):

@@ -24,6 +24,7 @@ the documented seam (`apply_to_logits`), flag-gated (AURA_NONPARAMETRIC_MEMORY).
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import math
@@ -115,6 +116,8 @@ class NonParametricMemory:
         self._weights: list[float] = []
         self._ts: list[float] = []
         self._stats = {"added": 0, "queried": 0, "evicted": 0, "interpolated": 0, "fallthrough": 0}
+        self._content_generation = 0
+        self._identity_cache: tuple[int, dict[str, Any]] | None = None
         # Running mean of QUERY keys — the estimator of the hidden space's
         # anisotropic common direction. Every query is a sample; persisted
         # with the store so the correction survives restarts.
@@ -159,6 +162,8 @@ class NonParametricMemory:
             self._ts.append(time.time())
             self._size += 1
             self._stats["added"] += 1
+            self._content_generation += 1
+            self._identity_cache = None
         return True
 
     def __len__(self) -> int:
@@ -255,7 +260,7 @@ class NonParametricMemory:
                     similarity=float(sim),
                     index=int(i),
                 )
-                for i, dist, sim in zip(idx, dists, similarities)
+                for i, dist, sim in zip(idx, dists, similarities, strict=True)
             ]
 
     def _similarities_for(self, q: np.ndarray, idx: Any) -> list[float]:
@@ -296,7 +301,7 @@ class NonParametricMemory:
         if total <= 0:
             return {}
         probs: dict[int, float] = {}
-        for nb, p in zip(neighbors, ex / total):
+        for nb, p in zip(neighbors, ex / total, strict=True):
             probs[nb.token_id] = probs.get(nb.token_id, 0.0) + float(p)
         return probs
 
@@ -467,6 +472,60 @@ class NonParametricMemory:
                 "allocated_bytes": int(self._keys.nbytes + self._key_norms.nbytes),
             }
 
+    def identity_receipt_with_work(self) -> tuple[dict[str, Any], int]:
+        """Content-address the active store and report bytes hashed this call."""
+
+        with self._lock:
+            cached = self._identity_cache
+            if cached is not None and cached[0] == self._content_generation:
+                return dict(cached[1]), 0
+            hasher = hashlib.sha256()
+            keys = self._keys[: self._size]
+            dtype_bytes = str(keys.dtype).encode("ascii")
+            shape_bytes = str(keys.shape).encode("ascii")
+            hasher.update(dtype_bytes)
+            hasher.update(shape_bytes)
+            hasher.update(memoryview(keys).cast("B"))
+            metadata = json.dumps(
+                {
+                    "token_ids": self._token_ids,
+                    "tokens": self._tokens,
+                    "weights": self._weights,
+                    "timestamps": self._ts,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode("utf-8")
+            hasher.update(metadata)
+            payload = {
+                "schema": "aura.nonparametric_memory.identity.v1",
+                "dimension": self._dim,
+                "entries": self._size,
+                "source_bytes": int(
+                    len(dtype_bytes) + len(shape_bytes) + keys.nbytes + len(metadata)
+                ),
+                "content_sha256": hasher.hexdigest(),
+            }
+            receipt = {
+                **payload,
+                "receipt_sha256": hashlib.sha256(
+                    json.dumps(
+                        payload,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                ).hexdigest(),
+            }
+            self._identity_cache = (self._content_generation, receipt)
+            return dict(receipt), int(receipt["source_bytes"])
+
+    def identity_receipt(self) -> dict[str, Any]:
+        """Content-address the active datastore without exposing learned keys."""
+
+        receipt, _bytes_hashed = self.identity_receipt_with_work()
+        return receipt
+
     # ── internals ───────────────────────────────────────────────────────────────
     def _ensure_capacity(self, needed: int) -> None:
         if needed <= self._capacity:
@@ -532,6 +591,8 @@ class NonParametricMemory:
             if not all(math.isfinite(w) for w in new_weights):
                 raise ValueError("non-parametric memory persisted weights are non-finite")
             new_ts = [float(value) for value in timestamps[-count:]]
+            if not all(math.isfinite(timestamp) for timestamp in new_ts):
+                raise ValueError("non-parametric memory persisted timestamps are non-finite")
             saved_mu = meta.get("query_mu")
             new_mu = None
             new_mu_n = 0
@@ -553,6 +614,8 @@ class NonParametricMemory:
                 if new_mu is not None:
                     self._query_mu = new_mu
                     self._query_mu_n = new_mu_n
+                self._content_generation += 1
+                self._identity_cache = None
         except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
             record_degradation("nonparametric_memory_load", exc)
 
@@ -612,6 +675,39 @@ def get_nonparametric_memory(dim: int = 0) -> NonParametricMemory | None:
         )
         return None
     return _singleton
+
+
+def validate_nonparametric_memory_identity(value: Any) -> dict[str, Any]:
+    required = {
+        "schema",
+        "dimension",
+        "entries",
+        "source_bytes",
+        "content_sha256",
+        "receipt_sha256",
+    }
+    if not isinstance(value, dict) or set(value) != required:
+        raise ValueError("non-parametric memory identity fields differ")
+    payload = {key: value[key] for key in required - {"receipt_sha256"}}
+    expected = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    digest = value.get("content_sha256")
+    if (
+        value.get("schema") != "aura.nonparametric_memory.identity.v1"
+        or type(value.get("dimension")) is not int
+        or value["dimension"] <= 0
+        or type(value.get("entries")) is not int
+        or value["entries"] <= 0
+        or type(value.get("source_bytes")) is not int
+        or value["source_bytes"] <= 0
+        or not isinstance(digest, str)
+        or len(digest) != 64
+        or any(char not in "0123456789abcdef" for char in digest)
+        or value.get("receipt_sha256") != expected
+    ):
+        raise ValueError("non-parametric memory identity is invalid")
+    return dict(value)
 
 
 def reset_nonparametric_memory() -> None:

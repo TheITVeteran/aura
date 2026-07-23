@@ -170,6 +170,7 @@ class LatentOptimizer:
         layer_apps_per_loss: int = 0,
         scalar_ops_per_loss: int = 0,
         reserve_layer_apps: int = 0,
+        protected_slots: tuple[int, ...] = (),
     ) -> None:
         if isinstance(layer_apps_per_loss, bool) or not isinstance(
             layer_apps_per_loss, int
@@ -193,6 +194,8 @@ class LatentOptimizer:
             raise ValueError(
                 "budgeted latent optimization requires a positive loss-evaluation cost"
             )
+        if any(type(index) is not int or index < 0 for index in protected_slots):
+            raise ValueError("protected latent slots must be non-negative integers")
         self._loss_fn = loss_fn
         self.config = config
         self._seed = seed
@@ -200,7 +203,29 @@ class LatentOptimizer:
         self._layer_apps_per_loss = layer_apps_per_loss
         self._scalar_ops_per_loss = scalar_ops_per_loss
         self._reserve_layer_apps = reserve_layer_apps
+        self._protected_slots = tuple(sorted(set(protected_slots)))
         self.trace = OptTrace(mode="control" if config.control_mode else "gradient")
+
+    def _zero_protected(self, value):
+        """Remove optimizer authority over immutable evidence rows."""
+
+        if not self._protected_slots:
+            return value
+        import mlx.core as mx
+
+        slot_count = int(value.shape[1])
+        if any(index >= slot_count for index in self._protected_slots):
+            raise ValueError("protected latent slot is outside the workspace")
+        protected = set(self._protected_slots)
+        return mx.concatenate(
+            [
+                mx.zeros_like(value[:, index : index + 1, :])
+                if index in protected
+                else value[:, index : index + 1, :]
+                for index in range(slot_count)
+            ],
+            axis=1,
+        )
 
     def _can_reserve(self, additional_layer_apps: int = 0) -> bool:
         if isinstance(additional_layer_apps, bool) or not isinstance(
@@ -269,6 +294,7 @@ class LatentOptimizer:
             return z, False, None
         self.trace.attempts += 1
         value, grad = mx.value_and_grad(self._loss_fn)(z)
+        grad = self._zero_protected(grad)
         value_float = float(value)
         if not math.isfinite(value_float) or not bool(mx.all(mx.isfinite(grad))):
             raise RuntimeError("latent optimizer produced a non-finite value or gradient")
@@ -279,7 +305,7 @@ class LatentOptimizer:
             raise RuntimeError("latent optimizer produced a non-finite step magnitude")
         if self.config.control_mode:
             key = mx.random.key(90210 + 7 * self._seed + step_index)
-            rand = mx.random.normal(z.shape, key=key)
+            rand = self._zero_protected(mx.random.normal(z.shape, key=key))
             rand_norm = mx.maximum(mx.linalg.norm(mx.reshape(rand, (-1,))), 1e-12)
             step = rand * (magnitude / rand_norm)
         z_next = z + step

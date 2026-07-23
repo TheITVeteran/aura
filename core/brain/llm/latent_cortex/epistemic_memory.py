@@ -587,6 +587,8 @@ class SelectiveMemoryResult:
                 "retrieval_receipt_sha256": candidate.retrieval_receipt_sha256,
                 "epistemic_state_sha256": state_sha256,
                 "memory_tier": candidate.tier.value,
+                "memory_source_id": candidate.source_id,
+                "memory_source_version": candidate.source_version,
             }
             for index, candidate in enumerate(self.candidates[:limit])
         ]
@@ -1022,6 +1024,8 @@ _MEMORY_CONTEXT_FIELDS = {
     "retrieval_receipt_sha256",
     "epistemic_state_sha256",
     "memory_tier",
+    "memory_source_id",
+    "memory_source_version",
 }
 
 
@@ -1047,6 +1051,8 @@ def validate_memory_context_items(
             raise SelectiveMemoryError("cognitive context item must be an object")
         role = raw.get("context_role")
         reserved = set(raw) & _MEMORY_CONTEXT_FIELDS
+        if role == "evidence_observation":
+            continue
         if role != "memory_observation":
             if reserved - {"source", "text"}:
                 raise SelectiveMemoryError(
@@ -1087,6 +1093,8 @@ def validate_memory_context_items(
             "retrieval_receipt_sha256": candidate.retrieval_receipt_sha256,
             "epistemic_state_sha256": state.state_sha256,
             "memory_tier": candidate.tier.value,
+            "memory_source_id": candidate.source_id,
+            "memory_source_version": candidate.source_version,
         }
         if dict(raw) != expected:
             raise SelectiveMemoryError("memory context differs from its admitted record")

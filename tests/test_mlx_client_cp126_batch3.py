@@ -6,8 +6,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 from core.brain.llm import mlx_client as mc
 from core.brain.llm.latent_cortex.runtime_identity import latent_request_payload_sha256
 
@@ -304,6 +302,21 @@ class TestLatentAnswerContract:
         source = inspect.getsource(mc.MLXLocalClient.latent_reason_async)
         assert 'str(res.get("text") or "")' not in source
         assert "latent_answer_invalid" in source
+
+
+class TestLatentLoopClosures:
+    """Progress and cancellation must retain their request iteration."""
+
+    def test_nested_callbacks_bind_loop_values(self):
+        import inspect
+
+        from core.brain.llm import mlx_worker
+
+        source = inspect.getsource(mlx_worker._mlx_worker_loop)
+        assert "_request_id: str = request_id" in source
+        assert '"id": _request_id' in source
+        assert "lambda _job_seq=job_seq: soft_cancel_requested(" in source
+        assert "_job_seq," in source
 
 
 class TestStrictValueIsNotLaundered:

@@ -741,7 +741,7 @@ def test_exchange_trace_excludes_mailbox_and_context_and_marks_generations(
         comm_slot=0,
         exchange_gamma=0.35,
         branch_isolation=isolation,
-        cognitive_slots=[{"slot": 3}],
+        cognitive_slots=[{"slot": 1}],
         exchange_interval=1,
         schedule_hash="test-schedule",
         bytecode_events=[],
@@ -757,8 +757,8 @@ def test_exchange_trace_excludes_mailbox_and_context_and_marks_generations(
     assert second["generation"] == "cooperative_refinement"
     assert second["counts_as_independent_support"] is False
     assert second["prior_peer_context_possible"] is True
-    assert all(row["source_slots"] == [1, 2] for row in first["source_rows"])
-    assert all(row["excluded_slots"] == [0, 3] for row in first["source_rows"])
+    assert all(row["source_slots"] == [2, 3] for row in first["source_rows"])
+    assert all(row["excluded_slots"] == [0, 1] for row in first["source_rows"])
     assert first["first_answer_text_exposed"] is False
     assert first["message_representation"] == "latent_tensor_only"
     assert all(
@@ -773,7 +773,7 @@ def test_exchange_trace_excludes_mailbox_and_context_and_marks_generations(
         comm_slot=0,
         exchange_gamma=0.35,
         branch_isolation=isolation,
-        cognitive_slots=[{"slot": 3}],
+        cognitive_slots=[{"slot": 1}],
         exchange_interval=1,
         schedule_hash="test-schedule",
         bytecode_events=[],
@@ -791,7 +791,7 @@ def test_exchange_trace_excludes_mailbox_and_context_and_marks_generations(
             comm_slot=0,
             exchange_gamma=0.35,
             branch_isolation=isolation,
-            cognitive_slots=[{"slot": 3}],
+            cognitive_slots=[{"slot": 1}],
             exchange_interval=1,
             schedule_hash="test-schedule",
             bytecode_events=[],

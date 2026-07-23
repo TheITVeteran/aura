@@ -10,6 +10,7 @@ import asyncio
 import gc
 import threading
 import warnings
+from types import SimpleNamespace
 
 import pytest
 
@@ -376,8 +377,6 @@ def test_body_pressure_vector_names_strain_and_weights_anticipation(registry):
 
     import core.being.aura_now as aura_now_mod
 
-    from types import SimpleNamespace
-
     original = aura_now_mod.BodyState
     aura_now_mod.BodyState = FakeBodyState
     try:
@@ -504,3 +503,45 @@ def test_interoceptive_context_reaches_slot_items(registry):
     assert "valence -0.60" in text
     assert "Current felt state:" in text
     assert len(text) <= 400
+
+
+def test_context_selection_preserves_source_diversity_before_extra_memories():
+    from core.brain.cognitive_ingress import (
+        CognitiveIngress,
+        IngressSignal,
+        cognitive_context_items,
+    )
+
+    memory_items = [
+        {"source": "memory", "text": "primary memory"},
+        {"source": "memory.episodic.extra", "text": "secondary memory"},
+    ]
+    ingress = CognitiveIngress(
+        stakes=0.8,
+        uncertainty=0.4,
+        signals=[
+            IngressSignal(
+                source="memory",
+                present=True,
+                context_items=memory_items,
+            ),
+            IngressSignal(source="reference", present=True, context_text="reference"),
+            IngressSignal(source="goals", present=True, context_text="goal"),
+            IngressSignal(source="world_model", present=True, context_text="world"),
+            IngressSignal(source="self_model", present=True, context_text="self"),
+            IngressSignal(source="body", present=True, value=0.4),
+            IngressSignal(source="will", present=True, value=0.7),
+            IngressSignal(source="affect", present=True, value=0.2),
+        ],
+    )
+
+    items = cognitive_context_items(ingress)
+
+    assert [item["source"] for item in items] == [
+        "memory",
+        "reference",
+        "goals",
+        "world_model",
+        "self_model",
+        "interoception",
+    ]
