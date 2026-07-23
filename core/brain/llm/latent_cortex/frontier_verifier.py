@@ -206,6 +206,21 @@ def _finalize_certificate(certificate: dict[str, Any]) -> dict[str, Any]:
     return certificate
 
 
+def _safe_verifier_implementation_sha256() -> str:
+    """Verifier identity that cannot break the fail-closed path.
+
+    CP126 75ccf260: every rejection certificate recomputed the fingerprint, so
+    a missing, unreadable, oversized, or relocated implementation file could
+    RAISE while handling an input failure — and the promised fail-closed
+    certificate was never returned. An unavailable identity is stated, not
+    thrown.
+    """
+    try:
+        return verifier_implementation_sha256()
+    except (OSError, ValueError, TypeError, RuntimeError, MemoryError):
+        return "unavailable"
+
+
 def _rejection_certificate(reason: str) -> dict[str, Any]:
     return _finalize_certificate(
         {
@@ -215,11 +230,15 @@ def _rejection_certificate(reason: str) -> dict[str, Any]:
             "verification_status": "MALFORMED_OR_TAMPERED",
             "claim_tier": CONJECTURE,
             "statistical_tier": "UNVERIFIED",
+            # CP126 463d0bfc: this module validates EVIDENCE; it performs no
+            # ablation, regression, or release-policy verification, so it
+            # states that rather than implying a gate it does not run.
             "ablation_status": "NOT_VERIFIED",
+            "release_gate": "not_evaluated_by_this_verifier",
             "reasons": [reason],
             "bundle_file_sha256": "",
             "trust_config_sha256": "",
-            "verifier_implementation_sha256": verifier_implementation_sha256(),
+            "verifier_implementation_sha256": _safe_verifier_implementation_sha256(),
             "artifact_verification": {},
             "core_certificate": {},
         }
@@ -274,10 +293,34 @@ def verify_frontier_evidence_package(
     accepted = artifact_receipt.get("accepted") is True and core_certificate.get("accepted") is True
     reasons = [] if accepted else list(core_certificate.get("reasons") or [])
     statistical_claim = core_certificate.get("statistical_claim")
-    statistical_tier = (
+    raw_statistical_tier = (
         str(statistical_claim.get("tier") or "UNVERIFIED")
         if isinstance(statistical_claim, Mapping)
         else "UNVERIFIED"
+    )
+    # CP126 fd223c1f: statistical_tier was copied out of the nested claim
+    # REGARDLESS of acceptance, so a package that failed trust, contamination,
+    # parity, or attestation could publish claim_tier CONJECTURE beside
+    # statistical_tier PROVEN. Every PUBLIC tier collapses to UNVERIFIED when
+    # the package was not accepted; the raw grading is retained only as
+    # diagnostics.
+    statistical_tier = raw_statistical_tier if accepted else "UNVERIFIED"
+
+    # CP126 7d790e3c: this verifier supports same-checkpoint ablation AND
+    # external-frontier comparisons, then assigned PROVEN from acceptance
+    # alone — labelling an ablation as frontier evidence. The scope is part of
+    # the verdict.
+    preregistration = bundle.get("preregistration")
+    comparison_kind = (
+        str(preregistration.get("comparison_kind") or "")
+        if isinstance(preregistration, Mapping)
+        else ""
+    )
+    external_comparison = comparison_kind == "resident_32b_vs_external_frontier"
+    claim_scope = (
+        "frontier_competitiveness"
+        if external_comparison
+        else "treatment_contribution_same_checkpoint"
     )
     certificate = {
         "schema": VERIFICATION_CERTIFICATE_SCHEMA,
@@ -285,12 +328,20 @@ def verify_frontier_evidence_package(
         "release_accepted": False,
         "verification_status": "ACCEPTED" if accepted else "VALID_EVIDENCE_NOT_PROVEN",
         "claim_tier": PROVEN if accepted else CONJECTURE,
+        "claim_scope": claim_scope,
+        "comparison_kind": comparison_kind,
+        # Only an external comparison can establish frontier competitiveness.
+        "frontier_competitiveness_established": bool(accepted and external_comparison),
         "statistical_tier": statistical_tier,
+        "statistical_tier_unverified_diagnostic": (
+            "" if accepted else raw_statistical_tier
+        ),
         "ablation_status": "NOT_VERIFIED",
+        "release_gate": "not_evaluated_by_this_verifier",
         "reasons": sorted(set(str(reason) for reason in reasons)),
         "bundle_file_sha256": hashlib.sha256(bundle_bytes).hexdigest(),
         "trust_config_sha256": hashlib.sha256(trust_bytes).hexdigest(),
-        "verifier_implementation_sha256": verifier_implementation_sha256(),
+        "verifier_implementation_sha256": _safe_verifier_implementation_sha256(),
         "artifact_verification": artifact_receipt,
         "core_certificate": core_certificate,
     }
