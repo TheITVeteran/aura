@@ -32,6 +32,36 @@ QWEN32_MODEL = str(TMP_ROOT / "Qwen2.5-32B-Instruct-8bit")
 TEST_MODEL = str(TMP_ROOT / "test-model")
 
 
+def ready_init_receipt(model_path: str = TEST_MODEL, **overrides) -> dict:
+    """A handshake receipt that satisfies the READINESS-IS-EARNED contract.
+
+    CP126 25ca1c12 made ``status: ok`` insufficient on its own: a worker is
+    only READY once its receipt positively establishes worker identity (boot
+    id, pid, model path, parameter counts and their basis) and, on lanes that
+    require it, recurrent depth. Fixtures that predate that contract used a
+    bare ``{"status": "ok", "action": "init"}`` and now correctly fail the
+    handshake, so the shared valid receipt lives here.
+    """
+    receipt = {
+        "status": "ok",
+        "action": "init",
+        "worker_identity": {
+            "worker_boot_id": "0123456789abcdef0123456789abcdef",
+            "worker_pid": 4242,
+            "worker_model_path": model_path,
+            "worker_model_parameter_count": 32_000_000_000,
+            "worker_model_stored_parameter_element_count": 32_000_000_000,
+            "worker_model_parameter_count_basis": "stored_tensor_elements",
+            "worker_source_sha256": "a" * 64,
+            "worker_affective_steering_active": True,
+            "worker_affective_steering_alpha": 0.35,
+        },
+        "recurrent_depth": {"active": True, "loops": 2},
+    }
+    receipt.update(overrides)
+    return receipt
+
+
 def test_worker_memory_sentinel_requires_explicit_child_exit_authority(monkeypatch):
     writer = SimpleNamespace(put=lambda _payload: None)
     sentinel = WorkerMemorySentinel(writer, QWEN32_MODEL)
@@ -683,7 +713,7 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         solver_proc = ProcessProbe(alive=True)
 
         async def _spawn_solver():
-            solver._init_future.set_result({"status": "ok", "action": "init"})
+            solver._init_future.set_result(ready_init_receipt(deep_path))
             return solver_proc
 
         old_clients = dict(mlx_module._CLIENTS)
@@ -742,7 +772,7 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         async def spawn_side_effect():
             self.assertIsNotNone(client._init_future)
             self.assertFalse(client._init_future.done())
-            client._init_future.set_result({"status": "ok", "action": "init"})
+            client._init_future.set_result(ready_init_receipt())
             return ProcessProbe(alive=True)
 
         with ReplaceAttr(client, "_spawn_worker", AsyncCallProbe(side_effect=spawn_side_effect)):
@@ -759,7 +789,7 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         client._init_done = False
         import asyncio
         real_future = asyncio.get_running_loop().create_future()
-        real_future.set_result({"status": "ok", "action": "init"})
+        real_future.set_result(ready_init_receipt())
         client._init_future = real_future
 
         spawn_probe = AsyncCallProbe()
@@ -789,7 +819,7 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
 
             async def _complete():
                 await asyncio.sleep(0.05)
-                future.set_result({"status": "ok", "action": "init"})
+                future.set_result(ready_init_receipt())
                 await asyncio.sleep(0.05)
 
             loop.run_until_complete(_complete())
@@ -894,8 +924,15 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         client = MLXLocalClient(model_path=QWEN32_MODEL)
         old_owner = mlx_module._FOREGROUND_OWNER_NAME
         old_owned_at = mlx_module._FOREGROUND_OWNER_ACQUIRED_AT
+        old_stale_after = mlx_module._FOREGROUND_OWNER_STALE_AFTER
         mlx_module._FOREGROUND_OWNER_NAME = "warmup:cortex"
         mlx_module._FOREGROUND_OWNER_ACQUIRED_AT = time.time() - 120.0
+        # CP126 4cb6a1a0: an owner is stale only by ITS OWN declared budget —
+        # a holder that never declared one is not evictable on age alone (a
+        # short newcomer used to be able to declare a working owner stale).
+        # A real holder always declares this in _foreground_owner_context, so
+        # the simulated holder must too, or it is simply not a stale owner.
+        mlx_module._FOREGROUND_OWNER_STALE_AFTER = 30.0
 
         try:
             with ReplaceAttr(client, "_acquire_request_lock", AsyncCallProbe(return_value=True)):
@@ -910,6 +947,7 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         finally:
             mlx_module._FOREGROUND_OWNER_NAME = old_owner
             mlx_module._FOREGROUND_OWNER_ACQUIRED_AT = old_owned_at
+            mlx_module._FOREGROUND_OWNER_STALE_AFTER = old_stale_after
 
         self.assertEqual(result, "ok")
         inner.assert_awaited_once()
@@ -1672,7 +1710,7 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         solver_proc = ProcessProbe(alive=True)
 
         async def _spawn_solver():
-            solver._init_future.set_result({"status": "ok", "action": "init"})
+            solver._init_future.set_result(ready_init_receipt(deep_path))
             return solver_proc
 
         old_last_heavy = mlx_module._GLOBAL_LAST_HEAVY_MODEL
@@ -1707,7 +1745,7 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         primary_proc = ProcessProbe(alive=True)
 
         async def _spawn_primary():
-            primary._init_future.set_result({"status": "ok", "action": "init"})
+            primary._init_future.set_result(ready_init_receipt(primary_path))
             return primary_proc
 
         old_last_heavy = mlx_module._GLOBAL_LAST_HEAVY_MODEL
@@ -1908,16 +1946,16 @@ class TestMLXRuntimeProbeFailure(unittest.IsolatedAsyncioTestCase):
 
         async def _spawn():
             client._init_future.set_result(
-                {
-                    "status": "ok",
-                    "action": "init",
-                    "recurrent_depth": {
+                ready_init_receipt(
+                    QWEN32_MODEL,
+                    recurrent_depth={
                         "active": True,
                         "config": {"n_loops": 2},
                         "expected_loops": 2,
                         "required": True,
+                        "loops": 2,
                     },
-                }
+                )
             )
             return proc
 

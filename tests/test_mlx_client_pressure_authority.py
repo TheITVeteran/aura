@@ -25,10 +25,22 @@ class TestBenchmarkLabelCannotWaiveSafety:
         source = _generate_source()
         assert "benchmark_request_explicit = bool(kwargs.get(\"benchmark_request\", False))" in source
 
-        # Every memory-pressure guard must consult the explicit flag.
+        # The guards were refactored so both the override branch and the
+        # refusal branch key off one `override_applies` predicate. Assert that
+        # PREDICATE carries the explicit-flag binding (and that both branches
+        # use it) rather than pinning the old inline formatting — the property
+        # under test is "inference cannot waive the safety exemption", not the
+        # line layout that expressed it in one earlier revision.
+        assert (
+            "override_applies = (\n"
+            "                memory_snapshot.refuse_heavy_local_generation\n"
+            "                and self._is_primary_or_deep_lane()\n"
+            "                and not benchmark_request_explicit\n"
+            "            )"
+        ) in source, "critical-pressure override predicate is not bound to the explicit flag"
         for marker in (
-            "and not benchmark_request_explicit\n                and critical_override",
-            "and not benchmark_request_explicit\n                and not critical_override",
+            "if override_applies and critical_override:",
+            "if override_applies and not critical_override:",
             "if self._is_primary_or_deep_lane() and not benchmark_request_explicit:",
         ):
             assert marker in source, f"pressure guard not bound to the explicit flag: {marker!r}"

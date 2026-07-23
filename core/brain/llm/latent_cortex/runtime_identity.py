@@ -53,6 +53,8 @@ def latent_request_payload_sha256(
     operation_authority: Any = None,
     action_policy_evidence: Any = None,
     response_contract: Any = None,
+    verifier_guidance: Any = None,
+    facet_reliability: Any = None,
 ) -> str:
     payload = {
         "prompt": prompt,
@@ -72,6 +74,15 @@ def latent_request_payload_sha256(
         payload["action_policy_evidence"] = action_policy_evidence
     if response_contract is not None:
         payload["response_contract"] = response_contract
+    # CP126 9721b1be: verifier_guidance and facet_reliability are SEMANTIC
+    # inputs to a latent episode — two episodes with different verifier
+    # behavior used to share one expected request identity, so the
+    # parent-side digest proof could not tell them apart. Additive, so
+    # episodes that pass neither hash exactly as they always did.
+    if verifier_guidance is not None:
+        payload["verifier_guidance"] = verifier_guidance
+    if facet_reliability is not None:
+        payload["facet_reliability"] = facet_reliability
     encoded = json.dumps(
         payload,
         sort_keys=True,

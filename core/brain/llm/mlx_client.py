@@ -205,6 +205,46 @@ _MLX_RUNTIME_PROBE: dict[str, Any] = {
     "checked_at": 0.0,
 }
 _MLX_RUNTIME_PROBE_CACHE_PATH = Path.home() / ".aura" / "data" / "mlx_runtime_probe.json"
+
+# Visible conversation-readiness probe. The lane may only claim "ready" after
+# this exact question comes back with an answer that actually responds to it.
+_READINESS_PROBE_PROMPT = "Reply exactly: ready"
+_READINESS_EXPECTED_TOKEN = "ready"
+_READINESS_ANSWER_MAX_CHARS = 200
+# A warmup still running after this long is stuck: cancel it (and prove it
+# ended) before a replacement starts.
+_WARMUP_STALE_AFTER_S = 300.0
+# Reboot lock discipline: wait this much longer after the first 10s before
+# treating contention as anything other than a live lifecycle operation, and
+# only force an unsynchronized reboot after this many consecutive failures.
+_REBOOT_LOCK_ESCALATED_WAIT_S = 35.0
+_REBOOT_LOCK_FORCE_AFTER = 3
+# close() is terminal, so it always completes — but it waits properly first
+# instead of racing a live lifecycle operation after one second.
+_CLOSE_LOCK_WAIT_S = 10.0
+
+
+def _readiness_answer_accepted(text: Any) -> bool:
+    """Does the readiness probe's answer actually respond to what was asked?
+
+    CP126 b6439433: the probe asked the model to reply exactly ``ready`` and
+    then accepted ANY nonblank text, so hallucinated, garbled, stale, or
+    prompt-echo output proved the lane ready.
+
+    Exact equality would be too brittle in the other direction — trained lanes
+    can emit a short latent/reasoning prefix before visible text, and falsely
+    recycling a healthy 32B is its own outage. Requiring the expected token to
+    appear in a bounded answer that is not merely the prompt echoed back is a
+    real check that the failure modes above cannot pass.
+    """
+    answer = str(text or "").strip()
+    if not answer or len(answer) > _READINESS_ANSWER_MAX_CHARS:
+        return False
+    lowered = answer.lower()
+    if _READINESS_EXPECTED_TOKEN not in lowered:
+        return False
+    # An echo of the instruction is not an answer to it.
+    return "reply exactly" not in lowered
 SharedFuture = asyncio.Future[Any] | cfutures.Future[Any]
 
 
@@ -2405,6 +2445,13 @@ class MLXLocalClient:
         self._active_generations = 0
         self._warmup_attempted = False
         self._warmup_in_flight = False
+        # Singleflight handle + its OWN start timestamp (CP126 4d8a7d6b):
+        # staleness must be measured against the warmup, not against
+        # _lane_transition_at, which any other lane transition refreshes.
+        self._warmup_inflight: asyncio.Future | None = None
+        self._warmup_started_at: float = 0.0
+        # Consecutive reboot lock-acquisition failures (CP126 ec341dfa).
+        self._reboot_lock_failures = 0
         self._model_load_admission_state_lock = _threading.Lock()
         self._model_load_admission_backoff_until = 0.0
         self._model_load_admission_backoff_until_unix = 0.0
@@ -2676,25 +2723,29 @@ class MLXLocalClient:
                 fencing_token=fencing_token,
                 reason=str(reason or "worker_stopped"),
             )
+            if not released:
+                # CP126 158ed09e. The controller ALSO returns False for a
+                # FENCING-TOKEN MISMATCH, i.e. a NEWER durable owner is
+                # registered. Unregistering the adapter and discarding the
+                # token + terminal receipt on that path threw away the only
+                # handles able to reconcile that owner, while returning True
+                # told every caller the lane was cleanly released.
+                #
+                # Keep the claim state and the fence recorded so respawn
+                # refuses rather than heartbeating a stale fence, and report
+                # the truth.
+                self._note_lane_release_failure(
+                    RuntimeError(
+                        f"durable_owner_release_not_confirmed:{owner_id}:token={fencing_token}"
+                    ),
+                    reason=str(reason or "worker_stopped"),
+                )
+                return False
+
             unregister_model_lane_owner_adapter(owner_id)
             self._model_lane_fencing_token = 0
             self._model_lane_terminal_receipt_id = ""
             self._clear_lane_release_failure()
-            if not released:
-                # The controller also returns False for a FENCING-TOKEN
-                # MISMATCH (a newer durable owner exists) — that is not
-                # "already absent". Local claim state is cleared either way,
-                # but the outcome must be visible, not narrated as settled.
-                _record_mlx_degradation(
-                    RuntimeError(
-                        f"durable_owner_release_not_confirmed:{owner_id}:token={fencing_token}"
-                    ),
-                    action=(
-                        "cleared local lane claim without controller-confirmed release "
-                        f"during {reason}"
-                    ),
-                    severity="warning",
-                )
             return True
 
     async def _release_durable_model_lane_owner(self, *, reason: str) -> bool:
@@ -3916,6 +3967,29 @@ class MLXLocalClient:
             if loop_serving and not cancelling:
                 return
             _cancel_task_threadsafe(task)
+            # CP126 bd5dea11: cancellation is ASYNCHRONOUS. Creating the
+            # replacement immediately left two listeners briefly draining the
+            # SAME response queue, so the old one could steal the new worker's
+            # init/generation frames. Prove the old listener is gone (bounded —
+            # a wedged listener must not block worker recovery forever) and
+            # drop the handle before installing a replacement.
+            if task.get_loop() is asyncio.get_running_loop():
+                try:
+                    await asyncio.wait_for(asyncio.shield(task), timeout=5.0)
+                except (asyncio.CancelledError, TimeoutError):
+                    pass
+                except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                    logger.debug("Prior MLX listener ended with %s", type(exc).__name__)
+                if not task.done():
+                    _record_mlx_degradation(
+                        TimeoutError("listener_cancel_unconfirmed"),
+                        action=(
+                            "installed a replacement response listener before the "
+                            "prior one confirmed termination"
+                        ),
+                        severity="warning",
+                    )
+            self._listener_task = None
 
         self._listener_task = get_task_tracker().create_task(self._response_listener_loop())
 
@@ -4807,6 +4881,20 @@ class MLXLocalClient:
                 or not 0.01 <= float(steering_alpha) <= 1.0
             ):
                 return {**base, "reason": "invalid_runtime_controls"}
+        # CP126 9721b1be. These are semantic inputs to the episode, so they
+        # must be normalized ONCE here and bound into the request digest —
+        # building them only at job-construction time left two episodes with
+        # different verifier behavior sharing one expected request identity.
+        wire_verifier_guidance = True if verifier_guidance else None
+        wire_facet_reliability: dict[str, float] | None = None
+        if verifier_guidance and isinstance(facet_reliability, dict) and facet_reliability:
+            # Held-out facet calibration rides only alongside the verifier it
+            # calibrates; worker revalidates the shape.
+            wire_facet_reliability = {
+                str(name): float(value)
+                for name, value in list(facet_reliability.items())[:8]
+                if isinstance(value, (int, float)) and not isinstance(value, bool)
+            } or None
         try:
             from core.brain.llm.latent_cortex.runtime_identity import (
                 latent_request_payload_sha256,
@@ -4825,6 +4913,8 @@ class MLXLocalClient:
                 operation_authority=wire_operation_authority,
                 action_policy_evidence=wire_action_policy_evidence,
                 response_contract=response_contract,
+                verifier_guidance=wire_verifier_guidance,
+                facet_reliability=wire_facet_reliability,
             )
         except (TypeError, ValueError, OverflowError):
             return {**base, "reason": "invalid_request_payload"}
@@ -4901,17 +4991,11 @@ class MLXLocalClient:
                 "action": "latent_reason",
                 "domain": str(domain or "general"),
             }
-            if verifier_guidance:
+            # Exactly the values bound into expected_request_sha256 above.
+            if wire_verifier_guidance:
                 job["verifier_guidance"] = True
-                if isinstance(facet_reliability, dict) and facet_reliability:
-                    # Held-out facet calibration rides only alongside the
-                    # verifier it calibrates; worker revalidates the shape.
-                    job["facet_reliability"] = {
-                        str(name): float(value)
-                        for name, value in list(facet_reliability.items())[:8]
-                        if isinstance(value, (int, float))
-                        and not isinstance(value, bool)
-                    }
+                if wire_facet_reliability:
+                    job["facet_reliability"] = dict(wire_facet_reliability)
             if prompt is not None:
                 job["prompt"] = str(prompt)
             if messages is not None:
@@ -5086,10 +5170,33 @@ class MLXLocalClient:
                         "receipt": receipt,
                         "reason": "runtime_identity_unbound",
                     }
+                # CP126 d78cbfa4: a status=ok response used to be coerced with
+                # str(value or "") — a missing, empty, list, or mapping answer
+                # became ok=true with empty or stringified-container text and
+                # bypassed fallback entirely. An episode is successful only
+                # when it produced an actual nonempty STRING answer.
+                answer = res.get("text")
+                if not isinstance(answer, str) or not answer.strip():
+                    _record_mlx_degradation(
+                        TypeError(
+                            "latent_answer_invalid:"
+                            f"{type(answer).__name__}:{len(answer) if isinstance(answer, str) else 'n/a'}"
+                        ),
+                        action="refused latent success for a missing, empty, or non-string answer",
+                        severity="degraded",
+                    )
+                    return {
+                        **base,
+                        "receipt": receipt,
+                        "progress": dict(
+                            self._latent_progress_by_request.get(req_id) or {}
+                        ),
+                        "reason": "latent_answer_invalid",
+                    }
                 self._mark_progress()
                 return {
                     "ok": True,
-                    "text": str(res.get("text") or ""),
+                    "text": answer,
                     "receipt": receipt,
                     "progress": dict(
                         self._latent_progress_by_request.get(req_id) or {}
@@ -5893,13 +6000,33 @@ class MLXLocalClient:
                     # A generation can finish after the caller has already
                     # abandoned it and started another turn. Never hand a
                     # response with an old request id to the current future.
+                    #
+                    # CP126 49d694a1: the id-less fallback (`not req_id or ...`)
+                    # let a stale or malformed terminal frame COMPLETE the
+                    # current request with another turn's content. The worker
+                    # stamps every response with its job id, so an id-less
+                    # terminal frame is malformed by construction — the error
+                    # route already rejects it, and so does this one now.
                     if (
                         self._current_gen_future
                         and not self._current_gen_future.done()
-                        and (not req_id or req_id == self._current_request_id)
+                        and req_id
+                        and req_id == self._current_request_id
                     ):
                         self._mark_progress()
                         _set_shared_future_result(self._current_gen_future, res)
+                        continue
+                    if not req_id:
+                        _record_mlx_degradation(
+                            RuntimeError(
+                                f"uncorrelated_worker_response:{action or 'unknown'}"
+                            ),
+                            action=(
+                                "dropped an id-less worker response instead of "
+                                "completing the active request with it"
+                            ),
+                            severity="warning",
+                        )
                         continue
                 elif status == "degraded":
                     # Worker self-reported health frames (e.g. the memory
@@ -6626,6 +6753,22 @@ class MLXLocalClient:
                         await self.reboot_worker(reason="init_timeout_retry", mark_failed=False)
                         fut = self._init_future
                         if not fut:
+                            # CP126 0c91528f (timeout half). reboot_worker is a
+                            # TEARDOWN: it clears _init_future and does NOT
+                            # spawn a replacement, so this falsy check used to
+                            # `break` and silently skip the advertised one-shot
+                            # retry — the same defect already closed on the
+                            # init-error branch above. Re-enter the spawn
+                            # transaction so the retry actually happens.
+                            if not _init_retry:
+                                return await self._ensure_worker_alive_inner(
+                                    request_is_background=request_is_background,
+                                    foreground_request=foreground_request,
+                                    init_timeout=init_timeout,
+                                    soft_timeout=soft_timeout,
+                                    skip_swap_cooldown=True,
+                                    _init_retry=True,
+                                )
                             break
                         continue
                     logger.error("🛑 [MLX] Init handshake TIMED OUT. Force killing process.")
@@ -7054,37 +7197,91 @@ class MLXLocalClient:
         return normalized or None
 
     @staticmethod
-    def _extract_tool_call_payload(response_text: str) -> dict[str, Any] | None:
+    def _extract_tool_call_payload(
+        response_text: str,
+        *,
+        allowed_tools: set[str] | None = None,
+    ) -> dict[str, Any] | None:
+        """Extract a tool call ONLY when the model actually intended one.
+
+        CP126 5a924075 + 0da5db2e. This used to scan anywhere in model prose
+        and accept any fenced JSON object with name/arguments — so a
+        quotation, a worked example, or user-supplied text that the model
+        merely repeated became an EFFECT REQUEST in the agent loop. It also
+        returned arbitrary tool names, accepted non-dict args, and invented a
+        ``{"value": ...}`` wrapper for strings that failed to parse.
+
+        Now:
+          * ``<tool_call>`` (the model's native structured channel) is trusted
+            anywhere, because emitting it IS the tool intent.
+          * A bare JSON object (fenced or not) counts only as a WHOLE-RESPONSE
+            envelope — i.e. it is the entire reply, not a snippet embedded in
+            prose that discusses it.
+          * The tool name must be in this turn's advertised allowlist.
+          * Arguments must be a real JSON object; nothing is invented.
+        """
         if not response_text:
             return None
 
-        patterns = (
-            re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL),
-            re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL),
-            re.compile(r'\{"tool"\s*:\s*"[^"]+"\s*,\s*"args"\s*:\s*\{.*?\}\s*\}', re.DOTALL),
-            re.compile(r'\{"name"\s*:\s*"[^"]+"\s*,\s*"arguments"\s*:\s*\{.*?\}\s*\}', re.DOTALL),
-        )
+        stripped = response_text.strip()
 
-        for pattern in patterns:
-            match = pattern.search(response_text)
-            if not match:
-                continue
-            candidate = match.group(1) if match.groups() else match.group(0)
-            try:
-                payload = json.loads(candidate)
-            except json.JSONDecodeError:
-                continue
+        def _normalize(payload: Any) -> dict[str, Any] | None:
+            if not isinstance(payload, dict):
+                return None
             if "tool" in payload and "args" in payload:
-                return payload
-            if "name" in payload and "arguments" in payload:
-                args = payload.get("arguments", {})
-                if isinstance(args, str):
-                    try:
-                        args = json.loads(args)
-                    except (json.JSONDecodeError, TypeError, ValueError):
-                        args = {"value": args}
-                return {"tool": payload.get("name"), "args": args or {}}
-        return None
+                name, args = payload.get("tool"), payload.get("args")
+            elif "name" in payload and "arguments" in payload:
+                name, args = payload.get("name"), payload.get("arguments")
+            else:
+                return None
+            if not isinstance(name, str) or not name.strip():
+                return None
+            name = name.strip()
+            if allowed_tools is not None and name not in allowed_tools:
+                _record_mlx_degradation(
+                    PermissionError(f"tool_not_advertised:{name[:64]}"),
+                    action="refused a parsed tool call naming a tool not offered this turn",
+                    severity="warning",
+                )
+                return None
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    # Never INVENT an argument shape for text that failed to
+                    # parse — an unparseable argument string is not a call.
+                    return None
+            if args is None:
+                args = {}
+            if not isinstance(args, dict):
+                return None
+            return {"tool": name, "args": args}
+
+        # 1. Native structured channel — an explicit tool-intent envelope.
+        native = re.search(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", stripped, re.DOTALL)
+        if native:
+            try:
+                call = _normalize(json.loads(native.group(1)))
+            except json.JSONDecodeError:
+                call = None
+            if call is not None:
+                return call
+
+        # 2. Whole-response JSON envelope only. A fenced block must BE the
+        #    response; prose wrapped around it means the model was talking
+        #    about a call, not making one.
+        candidate: str | None = None
+        fenced = re.fullmatch(r"```(?:json)?\s*(\{.*\})\s*```", stripped, re.DOTALL)
+        if fenced:
+            candidate = fenced.group(1)
+        elif stripped.startswith("{") and stripped.endswith("}"):
+            candidate = stripped
+        if candidate is None:
+            return None
+        try:
+            return _normalize(json.loads(candidate))
+        except json.JSONDecodeError:
+            return None
 
     def _check_steering_liveness(self) -> bool | None:
         """Return steering liveness once the worker has reported it.
@@ -7700,7 +7897,33 @@ class MLXLocalClient:
                 req["deadline_unix"] = time.time() + _remaining_s
         except (AttributeError, TypeError, ValueError):
             logger.debug("Request deadline unavailable; worker decodes unbounded.")
-        enqueue_timeout = max(0.5, min(2.0, deadline.remaining or 2.0))
+        # CP126 a838a49b: this used to read
+        # `max(0.5, min(2.0, deadline.remaining or 2.0))`, which turned an
+        # ALREADY-EXPIRED budget (remaining == 0.0, falsy) into a 2-second
+        # wait and floored every sub-half-second remainder up to 0.5s — so a
+        # request could block past its own hard deadline and seed exactly the
+        # ownership/event-loop cascades this path exists to prevent. Never
+        # enqueue past the deadline; refuse instead.
+        _enqueue_remaining = 0.0
+        try:
+            _enqueue_remaining = max(0.0, float(deadline.remaining or 0.0))
+        except (AttributeError, TypeError, ValueError):
+            _enqueue_remaining = 2.0
+        if _enqueue_remaining <= 0.0:
+            await asyncio.shield(
+                self._finish_generation_ownership(
+                    req_id,
+                    fut,
+                    foreground_watchdog,
+                )
+            )
+            _record_mlx_degradation(
+                TimeoutError("request_deadline_expired_before_enqueue"),
+                action="refused to queue work whose deadline had already expired",
+                severity="warning",
+            )
+            return None
+        enqueue_timeout = min(2.0, _enqueue_remaining)
         try:
             if self._req_q is None:
                 raise BrokenPipeError("MLX request queue is closed")
@@ -8034,7 +8257,14 @@ class MLXLocalClient:
             response_text = raw.strip()
             last_response_text = response_text
 
-            tool_call = self._extract_tool_call_payload(response_text) if tools else None
+            tool_call = (
+                self._extract_tool_call_payload(
+                    response_text,
+                    allowed_tools=set(tools.keys()),
+                )
+                if tools
+                else None
+            )
             if not tool_call:
                 return {
                     "content": response_text,
@@ -8044,6 +8274,33 @@ class MLXLocalClient:
 
             tool_name = tool_call.get("tool", "")
             tool_args = tool_call.get("args", {})
+            # CP126 0da5db2e: bind the parsed arguments to the tool's own
+            # advertised JSON schema before anything executes. A call whose
+            # arguments do not satisfy the schema is a malformed call, not an
+            # effect to attempt.
+            schema_error = _tool_arguments_schema_error(
+                tools.get(tool_name), tool_args
+            )
+            if schema_error:
+                _record_mlx_degradation(
+                    ValueError(f"tool_arguments_invalid:{tool_name}:{schema_error}"),
+                    action="refused a tool call whose arguments failed its advertised schema",
+                    severity="warning",
+                )
+                messages.append({"role": "assistant", "content": response_text})
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            f"That call to '{tool_name}' was rejected: {schema_error}. "
+                            "Correct the arguments or answer directly."
+                        ),
+                    }
+                )
+                continue
+            # CP126 abd93abf: every call gets a stable id so the assistant
+            # turn and its tool result are unambiguously paired in history.
+            tool_call_id = f"call_{uuid.uuid4().hex[:12]}"
 
             # ── Execute the tool via FunctionCallingAdapter ───────────
             tool_result = f"[Tool '{tool_name}' not found]"
@@ -8070,7 +8327,14 @@ class MLXLocalClient:
                 )
                 logger.warning("[think_and_act] Tool '%s' failed: %s", tool_name, exc)
 
-            tool_calls_made.append({"tool": tool_name, "args": tool_args, "result": tool_result})
+            tool_calls_made.append(
+                {
+                    "id": tool_call_id,
+                    "tool": tool_name,
+                    "args": tool_args,
+                    "result": tool_result,
+                }
+            )
             logger.info("[think_and_act] turn=%d tool=%s ok", turn + 1, tool_name)
 
             # ── Feed result back into history ─────────────────────────
@@ -8080,22 +8344,34 @@ class MLXLocalClient:
                     "content": "",
                     "tool_calls": [
                         {
+                            "id": tool_call_id,
+                            "type": "function",
                             "function": {
                                 "name": tool_name,
                                 "arguments": json.dumps(
                                     tool_args
                                 ),  # [STABILITY v53] Must be a JSON string, not a dict
-                            }
+                            },
                         }
                     ],
                 }
             )
 
-            # [STABILITY v53] Protect against massive tool outputs breaking context windows
-            if len(tool_result) > 4000:
-                tool_result = tool_result[:4000] + "\n\n...[OUTPUT TRUNCATED FOR LENGTH]..."
+            # [STABILITY v53] Protect against massive tool outputs breaking
+            # context windows. CP126 abd93abf: a blind character slice cut
+            # structured results mid-value, so the model reasoned over
+            # syntactically broken JSON. Truncate to a still-parseable form
+            # and say so explicitly.
+            tool_result = _truncate_tool_result(tool_result, limit=4000)
 
-            messages.append({"role": "tool", "content": tool_result})
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "name": tool_name,
+                    "content": tool_result,
+                }
+            )
 
         # Exhausted turns — return last non-empty response
         return {
@@ -8129,38 +8405,52 @@ class MLXLocalClient:
                 )
                 if warmup_text is None and not self.is_alive():
                     raise RuntimeError("warmup_precompile_worker_dead")
-                if not warmup_text or not str(warmup_text).strip():
-                    logger.info(
-                        "🔥 [MLX] Warmup produced no visible text for %s — verifying conversation readiness with a visible probe.",
-                        os.path.basename(self.model_path),
+                # CP126 cdd743de + b6439433. A nonempty token from a
+                # max_tokens=1 "Hello" proves Metal shaders compiled — it does
+                # NOT prove this lane can hold a conversation, and skipping the
+                # visible probe on that basis is how a lane that cannot answer
+                # got marked ready. The probe now ALWAYS runs, and its answer is
+                # actually checked against what was asked for (the prompt says
+                # "Reply exactly: ready" but any nonblank text used to pass, so
+                # hallucinated, garbled, stale, or prompt-echo output proved
+                # readiness).
+                logger.info(
+                    "🔥 [MLX] Verifying conversation readiness for %s with a visible probe.",
+                    os.path.basename(self.model_path),
+                )
+                readiness_text = await asyncio.wait_for(
+                    self._generate_inner(
+                        _READINESS_PROBE_PROMPT,
+                        _retry=True,
+                        request_is_background=request_is_background,
+                        foreground_request=foreground_request,
+                        owner_label=owner_name,
+                        # Three tokens is not enough for trained models that
+                        # emit a short latent/reasoning prefix before visible
+                        # text. Keep the probe bounded, but give it enough
+                        # room to prove a surfaced answer without falsely
+                        # recycling a healthy 32B worker.
+                        max_tokens=16,
+                        temp=0.0,
+                        top_p=1.0,
+                        min_p=0.0,
+                        repetition_penalty=1.0,
+                        health_probe=True,
+                        disable_prompt_cache=True,
+                        clear_prompt_cache=True,
+                    ),
+                    timeout=min(max(10.0, warmup_timeout), 60.0),
+                )
+                if not readiness_text or not str(readiness_text).strip():
+                    self._set_lane_state("recovering", "warmup_readiness_no_text")
+                    raise RuntimeError("warmup_readiness_no_text")
+                if not _readiness_answer_accepted(readiness_text):
+                    self._set_lane_state("recovering", "warmup_readiness_answer_mismatch")
+                    raise RuntimeError(
+                        "warmup_readiness_answer_mismatch:"
+                        f"{str(readiness_text).strip()[:60]!r}"
                     )
-                    readiness_text = await asyncio.wait_for(
-                        self._generate_inner(
-                            "Reply exactly: ready",
-                            _retry=True,
-                            request_is_background=request_is_background,
-                            foreground_request=foreground_request,
-                            owner_label=owner_name,
-                            # Three tokens is not enough for trained models that
-                            # emit a short latent/reasoning prefix before visible
-                            # text. Keep the probe bounded, but give it enough
-                            # room to prove a surfaced answer without falsely
-                            # recycling a healthy 32B worker.
-                            max_tokens=16,
-                            temp=0.0,
-                            top_p=1.0,
-                            min_p=0.0,
-                            repetition_penalty=1.0,
-                            health_probe=True,
-                            disable_prompt_cache=True,
-                            clear_prompt_cache=True,
-                        ),
-                        timeout=min(max(10.0, warmup_timeout), 60.0),
-                    )
-                    if not readiness_text or not str(readiness_text).strip():
-                        self._set_lane_state("recovering", "warmup_readiness_no_text")
-                        raise RuntimeError("warmup_readiness_no_text")
-                    self._last_visible_readiness_at = time.time()
+                self._last_visible_readiness_at = time.time()
                 self._set_lane_state("ready")
                 self._last_ready_at = time.time()
                 self._warmup_in_flight = False
@@ -8200,6 +8490,69 @@ class MLXLocalClient:
         foreground_request: bool | None = None,
         skip_swap_cooldown: bool = False,
     ) -> bool:
+        """Boot the worker and prove the visible conversation path is ready.
+
+        SINGLEFLIGHT (CP126 4d8a7d6b). Concurrent callers used to each set
+        ``_warmup_in_flight`` and proceed, so two warmups could load/evict the
+        same lane at once; the "stale warmup" recovery then measured
+        ``_lane_transition_at`` — a timestamp any other lane transition
+        refreshes — and force-cleared the shared flag without proving the prior
+        warmup had ended. Callers now JOIN the active warmup, and a genuinely
+        stuck one is cancelled and awaited before a replacement starts.
+        """
+        inflight = self._warmup_inflight
+        if inflight is not None and not inflight.done():
+            age = max(0.0, time.monotonic() - self._warmup_started_at)
+            if age <= _WARMUP_STALE_AFTER_S:
+                # Join the in-flight warmup. shield() so that a cancelled
+                # joiner cannot kill the warmup the other callers need.
+                try:
+                    return bool(await asyncio.shield(inflight))
+                except asyncio.CancelledError:
+                    raise
+                except (RuntimeError, TimeoutError, AttributeError, TypeError, ValueError) as exc:
+                    _record_mlx_degradation(
+                        exc,
+                        action="reported warmup failure to a joined singleflight caller",
+                        severity="warning",
+                    )
+                    return False
+            logger.warning(
+                "🔧 [MLX] Warmup for %s stuck for %.0fs — cancelling the prior "
+                "warmup task before starting a replacement.",
+                os.path.basename(self.model_path),
+                age,
+            )
+            inflight.cancel()
+            # PROVE the prior task ended before starting another one.
+            try:
+                await asyncio.wait_for(asyncio.shield(inflight), timeout=10.0)
+            except (asyncio.CancelledError, TimeoutError):
+                pass
+            except (RuntimeError, AttributeError, TypeError, ValueError):
+                pass
+            self._warmup_in_flight = False
+
+        task = asyncio.ensure_future(
+            self._warmup_impl(
+                foreground_request=foreground_request,
+                skip_swap_cooldown=skip_swap_cooldown,
+            )
+        )
+        self._warmup_inflight = task
+        self._warmup_started_at = time.monotonic()
+        try:
+            return bool(await asyncio.shield(task))
+        finally:
+            if self._warmup_inflight is task and task.done():
+                self._warmup_inflight = None
+
+    async def _warmup_impl(
+        self,
+        *,
+        foreground_request: bool | None = None,
+        skip_swap_cooldown: bool = False,
+    ) -> bool:
         """Boot the worker and prove the visible conversation path is ready."""
         if _shutdown_blocks_model_work(self.model_path, action="warmup"):
             self._warmup_in_flight = False
@@ -8214,18 +8567,11 @@ class MLXLocalClient:
         owner_name = f"warmup:{os.path.basename(self.model_path)}"
         warmup_timeout = self._warmup_timeout()
         self._warmup_attempted = True
-        # [STABILITY v51] Stale-warmup circuit breaker: if _warmup_in_flight
-        # has been True for >300s, the previous warmup task leaked without
-        # clearing the flag. Force-clear before proceeding.
-        if self._warmup_in_flight:
-            elapsed_since_transition = time.time() - self._lane_transition_at
-            if elapsed_since_transition > 300.0:
-                logger.warning(
-                    "🔧 [STABILITY] _warmup_in_flight was stuck True for %.0fs. "
-                    "Force-clearing stale warmup flag.",
-                    elapsed_since_transition,
-                )
-                self._warmup_in_flight = False
+        # Stale-warmup recovery lives in warmup()'s singleflight now: it owns
+        # the task handle, so it can cancel and PROVE termination instead of
+        # force-clearing a shared flag against an unrelated timestamp
+        # (CP126 4d8a7d6b). This flag remains the cheap state other lifecycle
+        # paths poll.
         self._warmup_in_flight = True
         self._set_lane_state("warming")
         try:
@@ -8293,6 +8639,30 @@ class MLXLocalClient:
             if _shutdown_blocks_model_work(self.model_path, action="background warmup"):
                 return False
 
+            # CP126 811cde6f: this yield check used to run AFTER
+            # _ensure_worker_alive, so a background lane could load a 20GB
+            # model (or evict the resident one) and only then decide to defer
+            # its precompile — defeating the very anti-thrash policy the check
+            # exists to enforce. Decide BEFORE touching worker lifecycle.
+            #
+            # Background lanes (solver promotions, brainstem appraisals) yield
+            # to an owned foreground. The PRIMARY lane's own warmup is exempt:
+            # the foreground owner is usually a turn WAITING on exactly this
+            # warmup, and deferring it deadlocked the lane live (2026-07-10:
+            # 206s foreground budget expired every turn while the precompile
+            # it needed sat deferred behind it).
+            if (
+                request_is_background
+                and _foreground_owner_active()
+                and not self._is_primary_lane()
+            ):
+                logger.info(
+                    "⏸️ [MLX] Background warmup deferred for %s (before worker spawn) while foreground lane is owned by %s.",
+                    os.path.basename(self.model_path),
+                    _FOREGROUND_OWNER_NAME or "foreground",
+                )
+                return False
+
             alive = await self._ensure_worker_alive(
                 request_is_background=request_is_background,
                 foreground_request=foreground_request,
@@ -8308,13 +8678,8 @@ class MLXLocalClient:
                 and _foreground_owner_active()
                 and not self._is_primary_lane()
             ):
-                # Background lanes (solver promotions, brainstem appraisals)
-                # yield to an owned foreground — that is the anti-thrash
-                # shield. The PRIMARY lane's own warmup is exempt: the
-                # foreground owner is usually a turn WAITING on exactly this
-                # warmup, and deferring it deadlocked the lane live
-                # (2026-07-10: 206s foreground budget expired every turn
-                # while the precompile it needed sat deferred behind it).
+                # Re-check: a foreground turn can take ownership while the
+                # worker was coming up.
                 logger.info(
                     "⏸️ [MLX] Background warmup precompile deferred for %s while foreground lane is owned by %s.",
                     os.path.basename(self.model_path),
@@ -8352,14 +8717,64 @@ class MLXLocalClient:
         return await self.warmup(**kwargs)
 
     async def reboot_worker(self, reason: str = "manual_reboot", mark_failed: bool = False):
-        """Forcibly reboots the worker."""
+        """Forcibly reboots the worker.
+
+        LOCK DISCIPLINE (CP126 ec341dfa). This used to log "forcing reboot
+        anyway" and then kill the process, replace queues, cancel futures and
+        reset ownership while the actual lock holder was still operating —
+        converting a SUSPECTED deadlock into GUARANTEED unsynchronized
+        corruption. Contention is now waited out (a real lifecycle op is
+        bounded by its own timeouts) and the destructive path is a deliberate,
+        receipted last resort after repeated failures to acquire, not the
+        first response to 10 seconds of contention.
+        """
         self._set_lane_state("recovering", reason)
         acquired = await asyncio.to_thread(self._lock.acquire, True, 10.0)
         if not acquired:
-            logger.error(
-                "🚨 [MLX] DEADLOCK DETECTED: Could not acquire _lock for reboot on %s. Forcing reboot anyway to break deadlock.",
-                os.path.basename(self.model_path),
+            # Escalate the wait before considering anything unsynchronized.
+            acquired = await asyncio.to_thread(
+                self._lock.acquire, True, _REBOOT_LOCK_ESCALATED_WAIT_S
             )
+        forced_unsynchronized = False
+        if not acquired:
+            self._reboot_lock_failures += 1
+            forced_unsynchronized = self._reboot_lock_failures >= _REBOOT_LOCK_FORCE_AFTER
+            if not forced_unsynchronized:
+                _record_mlx_degradation(
+                    TimeoutError(f"reboot_lock_unavailable:{reason}"),
+                    action=(
+                        "deferred reboot instead of mutating worker lifecycle state "
+                        "without the lifecycle lock"
+                    ),
+                    severity="error",
+                )
+                logger.error(
+                    "🚨 [MLX] Could not acquire _lock for reboot on %s after %.0fs "
+                    "(attempt %d/%d). DEFERRING — another lifecycle operation owns "
+                    "this lane.",
+                    os.path.basename(self.model_path),
+                    10.0 + _REBOOT_LOCK_ESCALATED_WAIT_S,
+                    self._reboot_lock_failures,
+                    _REBOOT_LOCK_FORCE_AFTER,
+                )
+                self._set_lane_state("recovering", f"reboot_deferred_lock:{reason}")
+                return
+            _record_mlx_degradation(
+                TimeoutError(f"reboot_lock_wedged:{reason}"),
+                action=(
+                    "forced an unsynchronized reboot after repeated lock-acquisition "
+                    "failures — the lock holder is presumed wedged"
+                ),
+                severity="critical",
+            )
+            logger.critical(
+                "🚨 [MLX] Lock holder for %s presumed WEDGED after %d failed reboot "
+                "acquisitions. Forcing unsynchronized reboot as a last resort.",
+                os.path.basename(self.model_path),
+                self._reboot_lock_failures,
+            )
+        else:
+            self._reboot_lock_failures = 0
         try:
             if self._process is not None:
                 # K4 accounting: the breaker classifies this death by reason
@@ -8667,7 +9082,22 @@ class MLXLocalClient:
             + [self._current_gen_future, self._init_future]
             if future is not None and not future.done()
         }
-        acquired = self._lock.acquire(timeout=1.0)
+        # CP126 97aa64fc: close used to give the lifecycle lock ONE second and
+        # then destroy the client regardless — cancelling futures, killing the
+        # process and closing queues while another lifecycle operation was
+        # still using them. close() is terminal so it must always finish, but
+        # it now waits long enough for ordinary contention to clear and
+        # receipts the case where it genuinely could not.
+        acquired = self._lock.acquire(timeout=_CLOSE_LOCK_WAIT_S)
+        if not acquired:
+            _record_mlx_degradation(
+                TimeoutError("close_lock_unavailable"),
+                action=(
+                    "closed the client without the lifecycle lock after waiting "
+                    f"{_CLOSE_LOCK_WAIT_S:.0f}s — shutdown cannot be deferred"
+                ),
+                severity="error",
+            )
         try:
             for future in pending_futures.values():
                 _cancel_shared_future(future)
@@ -8759,7 +9189,20 @@ def get_mlx_client(model_path: str | None = None, **kwargs) -> MLXLocalClient:
                     f"{target_name} != {primary_name}"
                 )
     except ImportError as _exc:
-        logger.debug("Suppressed %s in core.brain.llm.mlx_client: %s", type(_exc).__name__, _exc)
+        # CP126 84a18b06: swallowing this import failure disabled proof-primary
+        # model enforcement EXACTLY when its enforcement infrastructure was
+        # unavailable, so a proof run could fall through to an unchecked lane.
+        # Fail CLOSED for proof runs; ordinary construction still proceeds.
+        _record_mlx_degradation(
+            _exc,
+            action="could not import proof policy for primary-lane enforcement",
+            severity="error",
+        )
+        if _proof_run_requested(kwargs.get("origin", "mlx_client")):
+            raise RuntimeError(
+                "proof_policy_unavailable: refusing to build an unenforced model "
+                "client for a proof run"
+            ) from _exc
 
     backend = get_local_backend()
     if backend != "mlx" or str(runtime_path).lower().endswith(".gguf"):
@@ -8771,6 +9214,144 @@ def get_mlx_client(model_path: str | None = None, **kwargs) -> MLXLocalClient:
     if client_key not in _CLIENTS:
         _CLIENTS[client_key] = MLXLocalClient(model_path=runtime_path, **kwargs)
     return _CLIENTS[client_key]
+
+
+_TOOL_ARGS_MAX_KEYS = 64
+_TOOL_ARGS_MAX_DEPTH = 6
+_TOOL_ARGS_MAX_CHARS = 20_000
+
+
+def _json_depth(value: Any, *, _depth: int = 0) -> int:
+    if _depth > _TOOL_ARGS_MAX_DEPTH:
+        return _depth
+    if isinstance(value, dict):
+        return max(
+            (_json_depth(item, _depth=_depth + 1) for item in value.values()),
+            default=_depth,
+        )
+    if isinstance(value, list):
+        return max(
+            (_json_depth(item, _depth=_depth + 1) for item in value),
+            default=_depth,
+        )
+    return _depth
+
+
+def _tool_arguments_schema_error(definition: Any, args: Any) -> str:
+    """Validate parsed tool arguments against the tool's advertised schema.
+
+    CP126 0da5db2e: parsed arguments went to execution with no binding to the
+    schema the tool advertised for this turn — no required-field check, no
+    type check, and no size/depth bound. Returns "" when the call is
+    acceptable, else a short reason.
+    """
+    if not isinstance(args, dict):
+        return "arguments must be a JSON object"
+    if len(args) > _TOOL_ARGS_MAX_KEYS:
+        return f"too many argument keys ({len(args)} > {_TOOL_ARGS_MAX_KEYS})"
+    if _json_depth(args) > _TOOL_ARGS_MAX_DEPTH:
+        return "arguments nested too deeply"
+    try:
+        encoded = json.dumps(args, default=str)
+    except (TypeError, ValueError):
+        return "arguments are not JSON-serializable"
+    if len(encoded) > _TOOL_ARGS_MAX_CHARS:
+        return f"arguments too large ({len(encoded)} chars)"
+
+    spec = definition if isinstance(definition, dict) else {}
+    # Accept either a bare function spec or an OpenAI-style wrapper.
+    if isinstance(spec.get("function"), dict):
+        spec = spec["function"]
+    parameters = spec.get("parameters")
+    if not isinstance(parameters, dict):
+        return ""  # Nothing advertised to validate against.
+    properties = parameters.get("properties")
+    properties = properties if isinstance(properties, dict) else {}
+    required = parameters.get("required")
+    required = [str(item) for item in required] if isinstance(required, list) else []
+
+    missing = [name for name in required if name not in args]
+    if missing:
+        return f"missing required argument(s): {', '.join(sorted(missing)[:5])}"
+    if properties and parameters.get("additionalProperties") is False:
+        unexpected = sorted(set(args) - set(properties))
+        if unexpected:
+            return f"unexpected argument(s): {', '.join(unexpected[:5])}"
+
+    json_type_map: dict[str, tuple[type, ...]] = {
+        "string": (str,),
+        "number": (int, float),
+        "integer": (int,),
+        "boolean": (bool,),
+        "object": (dict,),
+        "array": (list,),
+    }
+    for name, value in args.items():
+        prop = properties.get(name)
+        if not isinstance(prop, dict):
+            continue
+        expected = prop.get("type")
+        if not isinstance(expected, str):
+            continue
+        allowed = json_type_map.get(expected)
+        if allowed is None:
+            continue
+        if expected in {"number", "integer"} and isinstance(value, bool):
+            return f"argument '{name}' must be {expected}"
+        if not isinstance(value, allowed):
+            return f"argument '{name}' must be {expected}"
+        enum = prop.get("enum")
+        if isinstance(enum, list) and enum and value not in enum:
+            return f"argument '{name}' is not one of its allowed values"
+    return ""
+
+
+def _truncate_tool_result(result: Any, *, limit: int = 4000) -> str:
+    """Bound a tool result WITHOUT cutting structured output mid-value.
+
+    CP126 abd93abf: a raw character slice produced syntactically broken JSON
+    that the model then reasoned over as if it were the real result.
+    """
+    text = result if isinstance(result, str) else str(result)
+    if len(text) <= limit:
+        return text
+    stripped = text.strip()
+    if stripped.startswith(("{", "[")):
+        try:
+            parsed = json.loads(stripped)
+        except (json.JSONDecodeError, ValueError):
+            parsed = None
+        if parsed is not None:
+            # Re-emit a VALID, explicitly-marked truncation envelope instead
+            # of a broken fragment.
+            preview = json.dumps(parsed, default=str)[: max(0, limit - 200)]
+            return json.dumps(
+                {
+                    "truncated": True,
+                    "original_chars": len(text),
+                    "note": "Result exceeded the context budget; preview only.",
+                    "preview": preview,
+                },
+                default=str,
+            )
+    return text[:limit] + "\n\n...[OUTPUT TRUNCATED FOR LENGTH]..."
+
+
+def _proof_run_requested(origin: Any) -> bool:
+    """Is a proof run in progress, judged WITHOUT the proof-policy module?
+
+    Used only on the path where importing ``core.runtime.proof_policy`` failed:
+    enforcement cannot consult the policy it could not load, so it falls back
+    to the environment signals the policy itself is configured from and fails
+    closed when either says a proof run is active.
+    """
+    if str(origin or "").strip().lower().startswith("proof"):
+        return True
+    for name in ("AURA_PROOF_RUN", "AURA_PROOF_MODEL_TIER", "AURA_PROOF_HEADLESS"):
+        value = str(os.environ.get(name, "") or "").strip().lower()
+        if value and value not in {"0", "false", "off", "no", "none"}:
+            return True
+    return False
 
 
 def _scavenge_env_float(name: str, default: float) -> float:
