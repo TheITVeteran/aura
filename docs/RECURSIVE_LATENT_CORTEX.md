@@ -33,7 +33,8 @@ seed M thought slots (mean prompt embedding + role anchors + jitter)
 slots ──prelude [0..p)──▶ Z₀ at layer p          (slot KV persists for [0..p))
 loop over schedule program π (windows within [p..c), repeats, α):
     Z̃   = Window(Zₜ)          # slots attend to prompt KV + own KV, RoPE-stable
-    Zₜ₊₁ = (1-αₜ)Zₜ + αₜ·RMSMatch(Z̃, Zₜ)         # manifold-controlled update
+    Zₜ₊₁ = RMSMatch((1-αₜ)Zₜ + αₜ·RMSMatch(Z̃, A), A)
+                                                        # A: fixed post-prelude anchor
     slot KV REWOUND every pass  (only clean final pass persists)
     halting: fixed-point residual, divergence guard, overthinking revert
 branches: K independent workspaces, Exchange every E steps via comm slot
@@ -51,7 +52,7 @@ changes the answer — that is the causality contract.
 
 ### Controlled recurrence (not naive looping)
 2026 frozen-loop studies show naive repetition is unstable. Controls:
-- **RMSMatch**: per-position RMS rescaling toward the previous state's norm,
+- **RMSMatch**: per-position RMS rescaling toward the immutable post-prelude anchor,
   ratio-clamped — keeps Z on the activation manifold the next layers expect.
 - **α-interpolation** with configurable schedule (constant / cosine decay).
 - **Divergence guard**: NaN or norm-ratio blowout ⇒ halt, revert to best state.

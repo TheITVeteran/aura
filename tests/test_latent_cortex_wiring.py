@@ -197,18 +197,36 @@ def _branch_isolation_fields(config, *, exchanges=0):
 
 
 def _recurrent_grounding_fields(config, *, steps=1):
+    from core.brain.llm.latent_cortex.loop_core import (
+        KV_BOUND_SCHEMA,
+        alpha_for_step,
+        build_loop_core_contract,
+        canonical_sha256,
+    )
+    from core.brain.llm.latent_cortex.loop_stability import (
+        build_loop_stability_receipt,
+    )
     from core.brain.llm.latent_cortex.recurrent_grounding import (
         build_recurrent_grounding_receipt,
     )
+    from core.brain.llm.latent_cortex.worker_handler import config_from_job
 
+    executed = config_from_job(config)
+    steps = min(steps, executed.recurrence.max_steps)
+    prelude_end, coda_start = 1, 2
     evidence_sha = _digest("empty-evidence")
     branches = []
     for index in range(config["n_branches"]):
         initial = _digest(f"hypothesis-{index}-0")
         transitions = []
+        stability = []
         prior = initial
+        reasoning_prior = _digest(f"reasoning-{index}-0")
+        anchor_sha = _digest(f"anchor-{index}")
+        prior_residual = None
         for step in range(steps):
             post = _digest(f"hypothesis-{index}-{step + 1}")
+            reasoning_post = _digest(f"reasoning-{index}-{step + 1}")
             transitions.append(
                 {
                     "ordinal": step,
@@ -223,7 +241,54 @@ def _recurrent_grounding_fields(config, *, steps=1):
                     "hypothesis_changed": True,
                 }
             )
+            residual = round(0.5 / (step + 1), 8)
+            contraction = (
+                None
+                if prior_residual is None
+                else round(residual / prior_residual, 8)
+            )
+            stability.append(
+                {
+                    "ordinal": step,
+                    "branch_step": step,
+                    "window_start": prelude_end,
+                    "window_end": coda_start,
+                    "hypothesis_pre_sha256": prior,
+                    "hypothesis_post_sha256": post,
+                    "reasoning_pre_sha256": reasoning_prior,
+                    "reasoning_post_sha256": reasoning_post,
+                    "anchor_sha256": anchor_sha,
+                    "continuous_from_previous": step > 0,
+                    "disposition": "accepted",
+                    "divergence_reason": "",
+                    "containment_action": "",
+                    "alpha": round(
+                        alpha_for_step(
+                            alpha=executed.recurrence.alpha,
+                            schedule=executed.recurrence.alpha_schedule,
+                            max_steps=executed.recurrence.max_steps,
+                            step=step,
+                        ),
+                        8,
+                    ),
+                    "input_mean_rms": 1.0,
+                    "output_mean_rms": 1.0,
+                    "anchor_mean_rms": 1.0,
+                    "anchor_rms_ratio": 1.0,
+                    "residual": residual,
+                    "contraction_ratio": contraction,
+                    "delta_cosine": None if step == 0 else 0.25,
+                    "contracting": None if step == 0 else contraction < 1.0,
+                    "oscillating": False,
+                    "fixed_point_candidate": (
+                        residual < executed.recurrence.convergence_eps
+                    ),
+                    "all_finite": True,
+                }
+            )
             prior = post
+            reasoning_prior = reasoning_post
+            prior_residual = residual
         branches.append(
             SimpleNamespace(
                 index=index,
@@ -235,6 +300,7 @@ def _recurrent_grounding_fields(config, *, steps=1):
                 evidence_anchor_sha256=evidence_sha,
                 initial_hypothesis_sha256=initial,
                 recurrent_grounding_trace=transitions,
+                loop_stability_trace=stability,
             )
         )
     receipt = build_recurrent_grounding_receipt(
@@ -246,10 +312,57 @@ def _recurrent_grounding_fields(config, *, steps=1):
         comm_slot=0,
         selected_branch=0,
     )
+    loop_core = build_loop_core_contract(
+        prelude_end=prelude_end,
+        coda_start=coda_start,
+        max_steps=executed.recurrence.max_steps,
+        min_steps=executed.recurrence.min_steps,
+        alpha=executed.recurrence.alpha,
+        alpha_schedule=executed.recurrence.alpha_schedule,
+        rms_clip_ratio=executed.recurrence.rms_clip_ratio,
+        convergence_eps=executed.recurrence.convergence_eps,
+        divergence_ratio=executed.recurrence.divergence_ratio,
+        fixed_depth=executed.recurrence.fixed_depth,
+    )
+    calls = [
+        {
+            "ordinal": ordinal,
+            "start": prelude_end,
+            "end": coda_start,
+            "tokens": config["n_slots"],
+            "context_tokens": 64,
+            "total_tokens": 64 + config["n_slots"],
+            "post_context_tokens": 64,
+            "persist": False,
+            "restored": True,
+        }
+        for ordinal in range(config["n_branches"] * steps)
+    ]
+    kv_bound = {
+        "schema": KV_BOUND_SCHEMA,
+        "position_limit": 512,
+        "position_limit_source": "model_config",
+        "call_count": len(calls),
+        "max_context_tokens": 64,
+        "max_total_tokens": 64 + config["n_slots"],
+        "all_within_limit": True,
+        "calls": calls,
+        "calls_sha256": canonical_sha256(calls),
+    }
+    loop_stability = build_loop_stability_receipt(
+        branches=branches,
+        selected_branch=0,
+        loop_core=loop_core,
+        kv_bound=kv_bound,
+        recurrent_grounding=receipt,
+    )
     return {
         "cognitive_slots": [],
         "selected_branch": 0,
+        "prelude_end": prelude_end,
+        "coda_start": coda_start,
         "recurrent_grounding": receipt,
+        "loop_stability": loop_stability,
     }
 
 
@@ -2087,6 +2200,55 @@ def test_service_reconstructs_recurrent_grounding_and_rejects_rehashed_lie():
     )
     assert "recurrent_grounding_unproven" in (
         LatentCortexService._receipt_contract_errors(tampered, config)
+    )
+
+
+def test_service_reconstructs_loop_stability_and_rejects_rehashed_lies():
+    from core.brain.llm.latent_cortex.loop_core import canonical_sha256
+
+    config = {"n_slots": 8, "n_branches": 2}
+    receipt = {
+        **_identity_receipt(),
+        "n_slots": 8,
+        "n_branches": 2,
+        **_recurrent_grounding_fields(config, steps=3),
+    }
+    assert "loop_stability_unproven" not in (
+        LatentCortexService._receipt_contract_errors(receipt, config)
+    )
+
+    forged_alpha = copy.deepcopy(receipt)
+    stability = forged_alpha["loop_stability"]
+    stability["branches"][0]["transitions"][1]["alpha"] = 0.99
+    stability["receipt_sha256"] = canonical_sha256(
+        {key: value for key, value in stability.items() if key != "receipt_sha256"}
+    )
+    assert "loop_stability_unproven" in (
+        LatentCortexService._receipt_contract_errors(forged_alpha, config)
+    )
+
+    forged_kv = copy.deepcopy(receipt)
+    stability = forged_kv["loop_stability"]
+    kv_bound = stability["kv_bound"]
+    kv_bound["calls"][0]["post_context_tokens"] += 1
+    kv_bound["calls_sha256"] = canonical_sha256(kv_bound["calls"])
+    stability["receipt_sha256"] = canonical_sha256(
+        {key: value for key, value in stability.items() if key != "receipt_sha256"}
+    )
+    assert "loop_stability_unproven" in (
+        LatentCortexService._receipt_contract_errors(forged_kv, config)
+    )
+
+    forged_window = copy.deepcopy(receipt)
+    stability = forged_window["loop_stability"]
+    kv_bound = stability["kv_bound"]
+    kv_bound["calls"][0]["start"] = 0
+    kv_bound["calls_sha256"] = canonical_sha256(kv_bound["calls"])
+    stability["receipt_sha256"] = canonical_sha256(
+        {key: value for key, value in stability.items() if key != "receipt_sha256"}
+    )
+    assert "loop_stability_unproven" in (
+        LatentCortexService._receipt_contract_errors(forged_window, config)
     )
 
 

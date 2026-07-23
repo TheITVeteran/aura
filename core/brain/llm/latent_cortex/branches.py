@@ -41,9 +41,11 @@ from core.brain.llm.latent_cortex.cognitive_operators import (
     operator_for_role,
 )
 from core.brain.llm.latent_cortex.escape import BranchEscapeLadder, EscapeConfig
+from core.brain.llm.latent_cortex.loop_core import transition_metrics
 from core.brain.llm.latent_cortex.recurrence import (
     HaltingController,
     WindowRunner,
+    alpha_at,
     recurrence_step,
     relative_residual,
     rms_match,
@@ -109,6 +111,8 @@ class BranchState:
     evidence_anchor_sha256: str = ""
     initial_hypothesis_sha256: str = ""
     recurrent_grounding_trace: list[dict[str, Any]] = field(default_factory=list)
+    loop_stability_trace: list[dict[str, Any]] = field(default_factory=list)
+    last_loop_delta: Any = None
 
     def to_receipt(self) -> dict[str, Any]:
         receipt = {
@@ -396,6 +400,27 @@ class BranchEnsemble:
                 branch.evidence_anchor_sha256 = evidence_pre
             if not branch.initial_hypothesis_sha256:
                 branch.initial_hypothesis_sha256 = hypothesis_pre
+            reasoning_slots = (int(self.config.comm_slot), *hypothesis_slots)
+            reasoning_pre_state = branch.workspace.select_slots(
+                branch.z,
+                reasoning_slots,
+            )
+            reasoning_pre_sha256 = _tensor_sha256(reasoning_pre_state)
+            reasoning_anchor_state = branch.workspace.select_slots(
+                branch.anchor,
+                reasoning_slots,
+            )
+            anchor_sha256 = _tensor_sha256(reasoning_anchor_state)
+            continuous = bool(
+                branch.loop_stability_trace
+                and branch.loop_stability_trace[-1]["reasoning_post_sha256"]
+                == reasoning_pre_sha256
+            )
+            effective_alpha = (
+                alpha_override
+                if alpha_override is not None
+                else alpha_at(self.recurrence, branch.steps)
+            )
             z_next = recurrence_step(
                 branch.z,
                 runner,
@@ -421,6 +446,42 @@ class BranchEnsemble:
             )
             if not evidence_unchanged:
                 raise RuntimeError("sealed recurrent evidence changed during a window pass")
+            reasoning_post_state = branch.workspace.select_slots(
+                z_next,
+                reasoning_slots,
+            )
+            reasoning_post_sha256 = _tensor_sha256(reasoning_post_state)
+            stability, branch.last_loop_delta = transition_metrics(
+                reasoning_pre_state,
+                reasoning_post_state,
+                reasoning_anchor_state,
+                alpha=effective_alpha,
+                convergence_eps=self.recurrence.convergence_eps,
+                previous_residual=(
+                    float(branch.loop_stability_trace[-1]["residual"])
+                    if continuous
+                    else None
+                ),
+                previous_delta=branch.last_loop_delta if continuous else None,
+            )
+            branch.loop_stability_trace.append(
+                {
+                    "ordinal": len(branch.loop_stability_trace),
+                    "branch_step": branch.steps,
+                    "window_start": start,
+                    "window_end": end,
+                    "hypothesis_pre_sha256": hypothesis_pre,
+                    "hypothesis_post_sha256": hypothesis_post,
+                    "reasoning_pre_sha256": reasoning_pre_sha256,
+                    "reasoning_post_sha256": reasoning_post_sha256,
+                    "anchor_sha256": anchor_sha256,
+                    "continuous_from_previous": continuous,
+                    "disposition": "accepted",
+                    "divergence_reason": "",
+                    "containment_action": "",
+                    **stability,
+                }
+            )
             branch.recurrent_grounding_trace.append(
                 {
                     "ordinal": len(branch.recurrent_grounding_trace),
@@ -442,10 +503,9 @@ class BranchEnsemble:
                 element_reads=2 * committed_slots * hidden,
                 host_scalar_ops=2 * committed_slots * hidden,
             )
-            reasoning_slots = (int(self.config.comm_slot), *hypothesis_slots)
             residual = relative_residual(
-                branch.workspace.select_slots(z_next, reasoning_slots),
-                branch.workspace.select_slots(branch.z, reasoning_slots),
+                reasoning_post_state,
+                reasoning_pre_state,
             )
             score = (
                 self._score_candidate(branch, z_next, score_fn)
@@ -468,15 +528,19 @@ class BranchEnsemble:
                     continue
                 # Divergence gets a second life through the escape ladder;
                 # legitimate halts (converged / max_steps / budget) do not.
-                if (
-                    branch.escape is not None
-                    and decision.reason.startswith("diverged")
-                ):
+                if decision.reason.startswith("diverged"):
+                    transition = branch.loop_stability_trace[-1]
+                    transition["disposition"] = "contained_divergence"
+                    transition["divergence_reason"] = decision.reason
+                if branch.escape is not None and decision.reason.startswith("diverged"):
                     action = branch.escape.on_divergence(branch, decision.reason)
+                    transition["containment_action"] = action
                     if action == "escaped":
                         continue
                     self._halt(branch, action.removeprefix("halt:"))
                     continue
+                if decision.reason.startswith("diverged"):
+                    transition["containment_action"] = "halt_revert"
                 self._halt(branch, decision.reason)
                 continue
             if branch.escape is not None:

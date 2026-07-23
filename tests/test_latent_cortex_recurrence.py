@@ -8,6 +8,8 @@ NOT tested here; see the experiments harness.
 """
 from __future__ import annotations
 
+import copy
+
 import pytest
 
 mx = pytest.importorskip("mlx.core")
@@ -16,6 +18,12 @@ pytest.importorskip("mlx_lm")
 from mlx_lm.models.cache import KVCache  # noqa: E402
 from mlx_lm.models.qwen2 import Model, ModelArgs  # noqa: E402
 
+from core.brain.llm.latent_cortex.loop_core import (  # noqa: E402
+    LoopCoreError,
+    canonical_sha256,
+    controlled_recurrent_update,
+    validate_kv_bound_receipt,
+)
 from core.brain.llm.latent_cortex.recurrence import (  # noqa: E402
     HaltingController,
     WindowRunner,
@@ -143,6 +151,29 @@ def test_window_rewind_keeps_offsets_stable(tiny_model):
     z_fin = runner.run(z, cache, P_END, C_START, persist=True)
     runner.run(z_fin, cache, C_START, N_LAYERS, persist=True)
     assert all(c.offset == prompt_len + 4 for c in cache), "final persist fills every layer"
+    receipt = validate_kv_bound_receipt(runner.kv_bound_receipt())
+    assert receipt["position_limit"] == 512
+    assert receipt["max_total_tokens"] == prompt_len + 4
+    assert all(
+        row["post_context_tokens"]
+        == (row["total_tokens"] if row["persist"] else row["context_tokens"])
+        for row in receipt["calls"]
+    )
+
+    tampered = copy.deepcopy(receipt)
+    tampered["calls"][0]["post_context_tokens"] += 1
+    tampered["calls_sha256"] = canonical_sha256(tampered["calls"])
+    with pytest.raises(ValueError, match="call evidence"):
+        validate_kv_bound_receipt(tampered)
+
+
+def test_window_runner_refuses_model_position_overflow_before_compute(tiny_model):
+    cache = _prefill(tiny_model, mx.array(PROMPT))
+    runner = WindowRunner(tiny_model.model, ComputeBudget())
+    oversized = mx.zeros((1, 503, 64))
+    with pytest.raises(LoopCoreError, match="position limit exceeded"):
+        runner.run(oversized, cache, P_END, C_START, persist=False)
+    assert runner._budget.spent_layer_apps == 0
 
 
 def test_window_rewind_restores_cache_when_layer_raises(tiny_model, monkeypatch):
@@ -200,6 +231,64 @@ def test_rms_match_bounds_norm_drift(tiny_model):
     matched = rms_match(z_wild, z_ref, clip_ratio=3.0)
     ratio = float(mx.mean(per_position_rms(matched)) / mx.mean(per_position_rms(z_ref)))
     assert ratio <= 3.01, "RMSMatch must clamp runaway norms"
+
+
+def test_fixed_anchor_update_prevents_moving_reference_ratchet():
+    anchor = mx.ones((1, 2, 8))
+    fixed = anchor
+    moving = anchor
+    for _ in range(8):
+        fixed = controlled_recurrent_update(
+            fixed,
+            fixed * 100.0,
+            anchor,
+            alpha=1.0,
+            clip_ratio=3.0,
+        )
+        moving = rms_match(moving * 100.0, moving, clip_ratio=3.0)
+    fixed_ratio = float(
+        mx.mean(per_position_rms(fixed)) / mx.mean(per_position_rms(anchor))
+    )
+    moving_ratio = float(
+        mx.mean(per_position_rms(moving)) / mx.mean(per_position_rms(anchor))
+    )
+    assert fixed_ratio <= 3.0001
+    assert moving_ratio > 1000.0
+
+
+def test_shared_update_survives_exact_vector_cancellation():
+    anchor = mx.ones((1, 2, 8))
+    output = controlled_recurrent_update(
+        anchor,
+        -anchor,
+        anchor,
+        alpha=0.5,
+        clip_ratio=3.0,
+    )
+    ratio = float(
+        mx.mean(per_position_rms(output)) / mx.mean(per_position_rms(anchor))
+    )
+    assert 1.0 / 3.0 - 1e-5 <= ratio <= 3.0 + 1e-5
+
+
+def test_recurrence_step_refuses_nonfinite_candidate_before_state_update():
+    class NonFiniteRunner:
+        @staticmethod
+        def run(state, *_args, **_kwargs):
+            return mx.full(state.shape, float("nan"))
+
+    state = mx.ones((1, 2, 8))
+    with pytest.raises(LoopCoreError, match="shared_update_candidate"):
+        recurrence_step(
+            state,
+            NonFiniteRunner(),
+            [],
+            0,
+            1,
+            RecurrenceConfig(max_steps=1, min_steps=1),
+            0,
+            anchor=state,
+        )
 
 
 def test_divergence_guard_trips_on_nonfinite():

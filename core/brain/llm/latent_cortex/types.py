@@ -64,8 +64,8 @@ class RecurrenceConfig:
     min_steps: int = 2
     alpha: float = 0.5
     alpha_schedule: str = "constant"  # constant | cosine
-    # RMSMatch ratio clamp: new-state per-position RMS may move at most this
-    # factor from the previous state's RMS in a single step.
+    # RMSMatch ratio clamp: the state entering the next step remains inside
+    # this per-position RMS band around the fixed post-prelude anchor.
     rms_clip_ratio: float = 3.0
     # Fixed-point convergence: relative residual below eps ⇒ converged.
     convergence_eps: float = 0.02
@@ -892,6 +892,9 @@ class EpisodeReceipt:
     # Proof that prompt/evidence rows remained available and immutable while a
     # distinct hidden hypothesis persisted through every recurrent transition.
     recurrent_grounding: dict[str, Any] = field(default_factory=dict)
+    # Public numerical evidence for fixed-anchor dynamics, finite states,
+    # bounded KV positions, and the exact train/live update implementation.
+    loop_stability: dict[str, Any] = field(default_factory=dict)
     # Optional one-shot datastore observation admitted before recurrence.
     # Empty is backward-compatible; a populated receipt is independently
     # validated by the service and bound to its immutable evidence slot.
@@ -1162,6 +1165,7 @@ class EpisodeReceipt:
             "input_context_compaction": dict(self.input_context_compaction),
             "cognitive_slots": [dict(row) for row in self.cognitive_slots],
             "recurrent_grounding": dict(self.recurrent_grounding),
+            "loop_stability": dict(self.loop_stability),
             "nonparametric_memory": dict(self.nonparametric_memory),
             "runtime_operation_authority": dict(
                 self.runtime_operation_authority

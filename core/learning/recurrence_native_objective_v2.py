@@ -20,12 +20,16 @@ import math
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from core.brain.llm.latent_cortex.branch_exchange import private_exchange_slots
 from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec
-from core.brain.llm.latent_cortex.recurrence import rms_match
+from core.brain.llm.latent_cortex.loop_core import (
+    alpha_for_step,
+    build_loop_core_contract,
+    controlled_recurrent_update,
+)
 from core.brain.llm.latent_cortex.recurrence_adapter import (
     current_recurrence_adapter_scope,
     recurrence_adapter_scope,
@@ -89,6 +93,7 @@ class LivePathForward:
     prompt_tokens: int
     answer_tokens: int
     bridge_tokens: int
+    loop_core: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -298,14 +303,11 @@ def _window_pass(
 
 
 def _alpha_at(spec: RLCExecutionSpec, step: int) -> float:
-    if spec.alpha_schedule != "cosine":
-        return spec.alpha
-    import math
-
-    horizon = max(1, spec.recurrent_steps - 1)
-    progress = min(1.0, step / horizon)
-    return spec.alpha * (
-        0.25 + 0.75 * 0.5 * (1.0 + math.cos(math.pi * progress))
+    return alpha_for_step(
+        alpha=spec.alpha,
+        schedule=spec.alpha_schedule,
+        max_steps=spec.recurrent_steps,
+        step=step,
     )
 
 
@@ -420,8 +422,13 @@ def _advance_recurrent_states(
                 phase_step=step,
             )
         updated.append(
-            (1.0 - alpha) * state
-            + alpha * rms_match(candidate, anchor, spec.rms_clip_ratio)
+            controlled_recurrent_update(
+                state,
+                candidate,
+                anchor,
+                alpha=alpha,
+                clip_ratio=spec.rms_clip_ratio,
+            )
         )
     if len(updated) > 1 and (step + 1) % spec.exchange_interval == 0:
         return _exchange_and_decorrelate(updated, spec, step + 1)
@@ -639,6 +646,18 @@ def live_path_forward(
         prompt_tokens=prepared.prompt_count,
         answer_tokens=prepared.answer_count,
         bridge_tokens=prepared.bridge_count,
+        loop_core=build_loop_core_contract(
+            prelude_end=prepared.prelude_end,
+            coda_start=prepared.coda_start,
+            max_steps=spec.recurrent_steps,
+            min_steps=spec.recurrent_steps,
+            alpha=spec.alpha,
+            alpha_schedule=spec.alpha_schedule,
+            rms_clip_ratio=spec.rms_clip_ratio,
+            convergence_eps=1e-9,
+            divergence_ratio=1000.0,
+            fixed_depth=True,
+        ),
     )
 
 

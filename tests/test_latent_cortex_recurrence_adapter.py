@@ -129,8 +129,12 @@ def test_window_runner_is_the_only_automatic_activation_boundary():
     _, projection = _projection()
 
     class Layer:
-        def __call__(self, hidden, _mask, _cache):
+        def __call__(self, hidden, _mask, cache):
+            cache.offset += int(hidden.shape[1])
             return projection(hidden)
+
+    class Cache:
+        offset = 0
 
     class Inner:
         layers = [Layer()]
@@ -138,7 +142,7 @@ def test_window_runner_is_the_only_automatic_activation_boundary():
     x = mx.ones((1, 3, 4))
     direct = projection(x)
     runner = WindowRunner(Inner(), ComputeBudget(), mask_fn=lambda *_: None)
-    latent = runner.run(x, [object()], 0, 1, persist=True)
+    latent = runner.run(x, [Cache()], 0, 1, persist=True)
     mx.eval(direct, latent)
     assert not bool(mx.array_equal(direct, latent))
     assert runner.adapter_receipt() == {

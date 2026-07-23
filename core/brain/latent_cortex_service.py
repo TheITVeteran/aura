@@ -748,6 +748,39 @@ class LatentCortexService:
             )
         except (ImportError, TypeError, ValueError):
             errors.append("recurrent_grounding_unproven")
+        try:
+            from core.brain.llm.latent_cortex.loop_core import (
+                build_loop_core_contract,
+            )
+            from core.brain.llm.latent_cortex.loop_stability import (
+                validate_loop_stability_receipt,
+            )
+            from core.brain.llm.latent_cortex.worker_handler import config_from_job
+
+            executed_config = config_from_job(config)
+            prelude_end = receipt.get("prelude_end")
+            coda_start = receipt.get("coda_start")
+            if type(prelude_end) is not int or type(coda_start) is not int:
+                raise ValueError("loop boundaries must be integers")
+            expected_loop_core = build_loop_core_contract(
+                prelude_end=prelude_end,
+                coda_start=coda_start,
+                max_steps=executed_config.recurrence.max_steps,
+                min_steps=executed_config.recurrence.min_steps,
+                alpha=executed_config.recurrence.alpha,
+                alpha_schedule=executed_config.recurrence.alpha_schedule,
+                rms_clip_ratio=executed_config.recurrence.rms_clip_ratio,
+                convergence_eps=executed_config.recurrence.convergence_eps,
+                divergence_ratio=executed_config.recurrence.divergence_ratio,
+                fixed_depth=executed_config.recurrence.fixed_depth,
+            )
+            validate_loop_stability_receipt(
+                receipt.get("loop_stability"),
+                recurrent_grounding=receipt.get("recurrent_grounding"),
+                expected_loop_core=expected_loop_core,
+            )
+        except (ImportError, TypeError, ValueError):
+            errors.append("loop_stability_unproven")
         one_shot_slots = [
             row
             for row in (receipt.get("cognitive_slots") or [])

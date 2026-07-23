@@ -114,6 +114,10 @@ After CP337, the published total is record 398: 68-335 forecast records remain,
 checkpoint-count completion is 54.3%-85.4%, and the midpoint planning estimate
 is 66.4%.
 
+After CP338, the published total is record 399: 67-334 forecast records remain,
+checkpoint-count completion is 54.4%-85.6%, and the midpoint planning estimate
+is 66.6%.
+
 ## Code-grounded baseline and ownership
 
 The four-slice static audit covered the neural core, epistemic/verifier paths,
@@ -124,10 +128,9 @@ baseline below is exhaustive over SPARK-001 through SPARK-072:
 - `ACCEPTED`: SPARK-001, SPARK-005, SPARK-006, SPARK-007, SPARK-008, SPARK-009,
   SPARK-010, SPARK-011, SPARK-012, SPARK-014, SPARK-015, SPARK-016,
   SPARK-017, SPARK-018, SPARK-019, SPARK-020, SPARK-021, SPARK-022,
-  SPARK-023.
+  SPARK-023, SPARK-024.
 - `PARTIAL`: SPARK-003,
-  SPARK-024, SPARK-025,
-  SPARK-026, SPARK-027, SPARK-035, SPARK-039, SPARK-040, SPARK-041,
+  SPARK-025, SPARK-026, SPARK-027, SPARK-035, SPARK-039, SPARK-040, SPARK-041,
   SPARK-042, SPARK-051, SPARK-052, SPARK-053, SPARK-054, SPARK-055,
   SPARK-056, SPARK-058, SPARK-060, SPARK-062, SPARK-063, SPARK-065, SPARK-066,
   SPARK-067.
@@ -614,9 +617,44 @@ before those dependencies close is not admissible.
   in-episode producer; SPARK-039, SPARK-051, and SPARK-065 remain open. This
   checkpoint does not run a resident-32B capability campaign or claim reasoning,
   positive-interaction, or frontier gains.
-- [ ] **SPARK-024 - Stable shared looped core.** Run shared middle-layer
+- [x] **SPARK-024 - Stable shared looped core.** Run shared middle-layer
   computation with anchored norm control, residual scaling, finite checks,
   bounded KV use, fixed-point diagnostics, and train/inference parity.
+  Accepted at CP338. Training and inference now call one controlled-update
+  implementation. It applies the same constant/cosine residual scale, clamps the
+  candidate and final blended state to the immutable post-prelude anchor, and
+  restores a stable direction if exact vector cancellation would otherwise
+  collapse the next state. Inputs, candidate, anchor, output, and residual
+  diagnostics fail closed on non-finite values or incompatible shapes. The
+  semantic contract binds layer boundaries, depth, alpha schedule, norm band,
+  convergence/divergence policy, fixed-depth mode, cache policy, and exact
+  implementation identity.
+
+  Every recurrent window call proves one coherent KV offset across the layer
+  span, the model-declared position limit under an absolute safety ceiling, pre-
+  call context, slot count, total position, post-call context, and whether the
+  mutation persisted or restored exactly. Overflow and ambiguous cache state are
+  refused before transformer compute. The service requires exactly one restored
+  speculative call over the certified recurrent layer span for every reported
+  recurrent transition and rejects a rehashed receipt from another window.
+
+  Each branch publishes public dynamics without exposing latent contents:
+  reasoning and fixed-anchor commitments, input/output/anchor RMS, residual,
+  contraction ratio, consecutive-delta cosine, oscillation, and fixed-point
+  classification. Exchange, operator, or escape mutations break the state hash
+  chain and reset derivative diagnostics instead of fabricating contraction.
+  Divergent proposals are distinguished from accepted states; contained/reverted
+  candidates remain visible, while every accepted state must remain inside the
+  anchor band. The service reconstructs the exact authorized loop contract and
+  rejects changed boundaries, alpha, topology, branch selection, cache movement,
+  state linkage, summaries, or rehashed nested evidence.
+
+  Tiny real-Qwen tests prove cache and functional execution equality at multiple
+  depths under constant and cosine schedules, and byte-match the training
+  contract to the fixed live-engine configuration. This accepts stable recurrent
+  mechanics and fixed-depth train/live update parity. It does not claim every
+  adaptive controller trajectory was a training trajectory, or establish a
+  resident-32B capability gain.
 - [ ] **SPARK-025 - Learned accept/discard gate.** Score each latent update
   against evidence/process quality and retain the previous state when the
   proposal is not credibly better; prove the gate changes outcomes.
@@ -884,17 +922,24 @@ weights, Black Hole/RAG and episodic memory, Wikipedia/reference retrieval,
 local nonparametric one-shot memory, live organs, and GWT return. Governed
 in-episode web/tool production remains open, and the negative capability verdict
 is unchanged.
-
-Validation: the focused one-shot, evidence-grounding, source-ingress, optimizer,
-escape, worker/client, and service boundary passes 436/436. The final
-fixed-snapshot RLC, latent-cortex, recurrence/training, global-workspace, GWT,
-and execution-controller ownership gate passes 1221/1221 in 604.91 seconds.
-Strict focused Ruff, bytecode compilation, JSON parsing, and `git diff --check`
-pass. No resident 32B capability campaign was run, and the negative frontier
+CP338 closes stable shared-loop mechanics and fixed-depth train/live update
+parity. Fixed-anchor norm control, finite-state refusal, model-bounded KV
+positions, continuity-aware fixed-point diagnostics, contained-divergence
+disposition, and service-reconstructed certificates are now causal runtime
+contracts. This does not create a capability result; the negative capability
 verdict is unchanged.
 
-This is total checkpoint record 398. The revised forecast remains 466-733 total
-records, now approximately 68-335 records after this checkpoint. Checkpoint-
-count completion is approximately 54.3%-85.4%, with a midpoint planning
-estimate of 66.4%. Next: publish CP337, then implement SPARK-024 stable shared
-looped-core invariants, fixed-point diagnostics, and train/inference parity.
+Validation: focused recurrence, multi-depth training parity, service
+reconstruction, and tamper tests pass 33/33. The affected engine, schedule,
+branch, escape, optimizer, fast-weight, probe-cache, recurrence-native, and GRPO
+suite passes 196/196. The final fixed-snapshot RLC, latent-cortex,
+recurrence/training, global-workspace, GWT, and execution-controller ownership
+gate passes 1251/1251 in 767.83 seconds. Strict focused Ruff, bytecode
+compilation, and `git diff --check` pass. No resident 32B capability campaign
+was run, and the negative frontier verdict is unchanged.
+
+This is total checkpoint record 399. The revised forecast remains 466-733 total
+records, now approximately 67-334 records after this checkpoint. Checkpoint-
+count completion is approximately 54.4%-85.6%, with a midpoint planning
+estimate of 66.6%. Next: publish CP338, then implement SPARK-025's learned,
+evidence-grounded accept/discard gate with causal outcome proof.

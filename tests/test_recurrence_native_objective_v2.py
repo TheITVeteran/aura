@@ -13,6 +13,9 @@ from mlx_lm.models.qwen2 import Model, ModelArgs  # noqa: E402
 from core.brain.llm.latent_cortex.execution_spec import (  # noqa: E402
     RLCExecutionSpec,
 )
+from core.brain.llm.latent_cortex.loop_core import (  # noqa: E402
+    build_loop_core_contract,
+)
 from core.brain.llm.latent_cortex.recurrence import (  # noqa: E402
     WindowRunner,
     recurrence_step,
@@ -32,6 +35,9 @@ from core.learning.recurrence_native_objective_v2 import (  # noqa: E402
     detached_monotonicity_penalty,
     live_path_forward,
     live_path_loss,
+)
+from core.learning.recurrent_grpo import (  # noqa: E402
+    cortex_config_from_execution_spec,
 )
 
 PROMPT = [5, 9, 17, 3, 42]
@@ -163,6 +169,35 @@ def test_functional_executor_matches_live_cache_slots_and_logits():
     # KV-cache and full causal-sequence attention use different kernels, so the
     # logits are numerically close rather than bit-identical on MLX.
     assert float(mx.max(mx.abs(functional_logits - cached_logits))) < 0.01
+
+
+@pytest.mark.parametrize(
+    ("schedule", "depth"),
+    (("constant", 1), ("constant", 3), ("cosine", 4)),
+)
+def test_shared_loop_contract_and_cache_parity_across_schedules(schedule, depth):
+    model = _model()
+    spec = _spec(alpha_schedule=schedule, recurrent_steps=depth)
+    functional = live_path_forward(model, PROMPT, ANSWER, spec=spec)
+    cached_logits, cached_state = _live_cache_logits(model, spec)
+    mx.eval(functional.branch_logits[0], functional.branch_states[0])
+
+    assert bool(mx.array_equal(functional.branch_states[0], cached_state))
+    assert float(mx.max(mx.abs(functional.branch_logits[0] - cached_logits))) < 0.01
+    live_config = cortex_config_from_execution_spec(spec)
+    expected = build_loop_core_contract(
+        prelude_end=1,
+        coda_start=3,
+        max_steps=live_config.recurrence.max_steps,
+        min_steps=live_config.recurrence.min_steps,
+        alpha=live_config.recurrence.alpha,
+        alpha_schedule=live_config.recurrence.alpha_schedule,
+        rms_clip_ratio=live_config.recurrence.rms_clip_ratio,
+        convergence_eps=live_config.recurrence.convergence_eps,
+        divergence_ratio=live_config.recurrence.divergence_ratio,
+        fixed_depth=live_config.recurrence.fixed_depth,
+    )
+    assert functional.loop_core == expected
 
 
 def test_answer_loss_is_finite_and_recurrence_adapter_receives_gradient():

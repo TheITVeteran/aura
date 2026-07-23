@@ -665,6 +665,49 @@ def test_fixed_depth_performs_terminal_exchange_before_halting(tiny_model):
     assert ensemble.all_halted()
 
 
+def test_loop_diagnostics_reset_derivatives_after_exchange(tiny_model):
+    continuous_cache = _prefill(tiny_model)
+    continuous, runner, budget = _ensemble(
+        tiny_model,
+        continuous_cache,
+        n_branches=1,
+        exchange_interval=8,
+        max_steps=2,
+        fixed_depth=True,
+    )
+    assert continuous.step_all(
+        runner, continuous_cache, P_END, C_START, budget=budget
+    )
+    assert continuous.step_all(
+        runner, continuous_cache, P_END, C_START, budget=budget
+    )
+    assert [
+        row["continuous_from_previous"]
+        for row in continuous.branches[0].loop_stability_trace
+    ] == [False, True]
+
+    exchanged_cache = _prefill(tiny_model)
+    exchanged, runner, budget = _ensemble(
+        tiny_model,
+        exchanged_cache,
+        n_branches=2,
+        exchange_interval=1,
+        max_steps=2,
+        fixed_depth=True,
+    )
+    assert exchanged.step_all(
+        runner, exchanged_cache, P_END, C_START, budget=budget
+    )
+    assert exchanged.step_all(
+        runner, exchanged_cache, P_END, C_START, budget=budget
+    )
+    for branch in exchanged.branches:
+        trail = branch.loop_stability_trace
+        assert [row["continuous_from_previous"] for row in trail] == [False, False]
+        assert trail[1]["contraction_ratio"] is None
+        assert trail[1]["delta_cosine"] is None
+
+
 def test_exchange_blends_comm_slot_only(tiny_model):
     cache = _prefill(tiny_model)
     ensemble, runner, budget = _ensemble(tiny_model, cache, n_branches=2)

@@ -83,6 +83,9 @@ def test_full_episode_produces_tokens_and_truthful_receipt(tiny_model):
     assert r.n_branches == 2 and r.n_slots == 4
     assert r.steps_taken >= 2
     assert r.branch_isolation["certified"] is True
+    assert r.loop_stability["shared_train_inference_core"] is True
+    assert r.loop_stability["all_accepted_states_anchor_bounded"] is True
+    assert r.loop_stability["kv_bound"]["all_within_limit"] is True
     assert r.branch_isolation["first_exchange_step"] >= 1
     assert r.branch_isolation["cache_discipline"]["all_restored"] is True
     assert r.cognitive_operator_trace
@@ -511,8 +514,9 @@ def test_decode_newline_discipline_caps_babble_runs(tiny_model, monkeypatch):
         lambda self, h: spiked,
     )
 
-    from core.brain.llm.latent_cortex.types import ComputeBudget
     from mlx_lm.models.cache import KVCache
+
+    from core.brain.llm.latent_cortex.types import ComputeBudget
 
     cache = [KVCache() for _ in tiny_model.model.layers]
     budget = ComputeBudget()
@@ -572,10 +576,10 @@ def test_repetition_penalty_breaks_forced_loop(tiny_model, monkeypatch):
     the loop by the sliding-window penalty — the CP105 live degeneration
     (one line repeated ~80 times) as a mechanical regression."""
     import mlx.core as mx
+    from mlx_lm.models.cache import KVCache
 
     from core.brain.llm.latent_cortex import engine as engine_mod
     from core.brain.llm.latent_cortex.types import ComputeBudget
-    from mlx_lm.models.cache import KVCache
 
     loop_id, alt_id, vocab = 11, 23, 128
 
@@ -623,11 +627,11 @@ def test_sentence_grace_finishes_the_sentence(tiny_model, monkeypatch):
     the grace window until sentence-final punctuation — model tokens only,
     receipted as its own termination kind."""
     import mlx.core as mx
+    from mlx_lm.models.base import create_attention_mask
+    from mlx_lm.models.cache import KVCache
 
     from core.brain.llm.latent_cortex import engine as engine_mod
     from core.brain.llm.latent_cortex.types import ComputeBudget
-    from mlx_lm.models.cache import KVCache
-    from mlx_lm.models.base import create_attention_mask
 
     word_id, period_id, vocab = 9, 13, 128
 
@@ -675,11 +679,11 @@ def test_eos_floor_suppresses_early_stop(tiny_model, monkeypatch):
     decode_min_tokens the EOS logits are masked (min-new-tokens), and after
     the floor the model's own EOS is honored (CP116 live regression)."""
     import mlx.core as mx
+    from mlx_lm.models.base import create_attention_mask
+    from mlx_lm.models.cache import KVCache
 
     from core.brain.llm.latent_cortex import engine as engine_mod
     from core.brain.llm.latent_cortex.types import ComputeBudget
-    from mlx_lm.models.cache import KVCache
-    from mlx_lm.models.base import create_attention_mask
 
     eos_id, word_id, vocab = 3, 9, 128
 

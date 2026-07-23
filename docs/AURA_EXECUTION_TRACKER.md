@@ -25693,3 +25693,62 @@ records, approximately 68-335 records remaining, 54.3%-85.4% checkpoint-count
 completion, and a 66.4% midpoint planning estimate. Next: publish CP337, then
 implement SPARK-024 stable shared-loop invariants and train/inference parity.
 Final multi-hour soaks remain deferred until every shorter gate is green.
+
+## Checkpoint 2026-07-22-338: One Stable Loop Runs in Training and Inference
+
+RLC training and inference now execute one controlled recurrent update rather
+than maintaining duplicated math. The operator applies the same constant or
+cosine residual scale, RMS-matches the middle-layer candidate to the immutable
+post-prelude anchor, blends it with the prior state, and bounds the actual next
+state to that same anchor. Exact vector cancellation recovers a stable prior or
+anchor direction instead of collapsing to a zero state. Shape mismatch and any
+non-finite input, candidate, anchor, output, or residual fail before that state
+can become the next recurrent input.
+
+The loop contract commits the shared middle-layer boundaries, min/max depth,
+alpha and schedule, fixed anchor policy, norm band, convergence/divergence
+thresholds, fixed-depth mode, finite policy, cache policy, and exact shared
+implementation identity. The recurrence-native objective emits that contract;
+multiple-depth constant/cosine tests on real tiny Qwen weights prove exact
+hidden-state equality between differentiable functional execution and the
+cached live path, with matching answer logits inside the established kernel
+tolerance.
+
+KV discipline is now position-bounded as well as rewind-safe. Every window call
+requires coherent layer offsets, refuses a prompt-plus-slot position beyond the
+model declaration or absolute ceiling before compute, and records pre-context,
+slot count, total position, post-context, persistence, and exact restoration.
+The hashed receipt rejects forged post-offsets even when nested and outer hashes
+are recomputed. The service requires exactly one restored speculative call over
+the certified recurrent layer span for every claimed recurrent transition and
+rejects rehashed evidence from a different layer window.
+
+Per-branch public diagnostics bind the immutable anchor, reasoning-state
+continuity, hypothesis transitions, RMS values, residual, contraction, delta
+cosine, oscillation, and fixed-point classification. Cross-branch exchange and
+other external state transforms break the hash chain and reset derivative
+metrics. Divergent candidates remain visible as contained/reverted attempts;
+only states actually admitted into the trajectory must satisfy the anchor band.
+The service reconstructs the expected loop from the exact authorized worker
+config and rejects altered boundaries, schedule, topology, branch selection,
+continuity, summaries, cache evidence, or implementation identity.
+
+Validation: focused recurrence, multi-depth training parity, service
+reconstruction, and adversarial tamper tests pass 33/33. The affected engine,
+schedule, branch, escape, latent-optimizer, fast-weight, probe-cache,
+recurrence-native, and recurrent-GRPO suite passes 196/196. The final unchanged-
+snapshot RLC, latent-cortex, recurrence/training, global-workspace, GWT, and
+execution-controller ownership gate passes 1251/1251 in 767.83 seconds. Focused
+Ruff, bytecode compilation, and `git diff --check` pass.
+
+SPARK-024 closes at the stable-mechanics and fixed-depth train/live parity
+boundary. No resident-32B capability campaign ran. Reasoning gain, adapter/RLC
+positive interaction, and frontier status remain unproven; the capability
+verdict remains negative/no-signal.
+
+This is total checkpoint record 399. The forecast remains 466-733 total records,
+approximately 67-334 records remaining, 54.4%-85.6% checkpoint-count completion,
+and a 66.6% midpoint planning estimate. Next: publish CP338, then implement
+SPARK-025's learned evidence/process accept-discard gate and prove its causal
+effect on retained states and outcomes. Final multi-hour soaks remain deferred
+until every shorter gate is green.

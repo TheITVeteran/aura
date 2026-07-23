@@ -24,10 +24,20 @@ from __future__ import annotations
 
 import logging
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from core.brain.llm.latent_cortex.loop_core import (
+    ABSOLUTE_POSITION_LIMIT,
+    KV_BOUND_SCHEMA,
+    LoopCoreError,
+    alpha_for_step,
+    assert_finite_state,
+    canonical_sha256,
+    controlled_recurrent_update,
+    rms_match,
+)
 from core.brain.llm.latent_cortex.resource_accounting import (
     triangular_attention_pairs,
 )
@@ -104,39 +114,30 @@ def _cache_matches_snapshot(cache, start: int, end: int, snapshots: list) -> boo
     return True
 
 
-def rms_match(new_state, ref_state, clip_ratio: float):
-    """Bound ``new_state``'s per-position RMS to a trust band around ``ref_state``'s.
-
-    Inside the band [ref/clip, ref·clip] the state passes through untouched —
-    genuine, bounded norm movement is signal, not noise. Outside the band the
-    RMS is pinned to the nearest edge, so a runaway pass can never leave the
-    activation manifold the next layers were trained to expect.
-    """
-    import mlx.core as mx
-
-    new_rms = mx.maximum(per_position_rms(new_state), 1e-6)
-    ref_rms = per_position_rms(ref_state)
-    target = mx.clip(new_rms, ref_rms / clip_ratio, ref_rms * clip_ratio)
-    return new_state * (target / new_rms)
-
-
 def alpha_at(config: RecurrenceConfig, step: int) -> float:
     """Interpolation coefficient for a given step under the schedule."""
-    if config.alpha_schedule == "cosine":
-        horizon = max(1, config.max_steps - 1)
-        progress = min(1.0, step / horizon)
-        # Decay from alpha to alpha/4 over the horizon.
-        return config.alpha * (0.25 + 0.75 * 0.5 * (1.0 + math.cos(math.pi * progress)))
-    return config.alpha
+    return alpha_for_step(
+        alpha=config.alpha,
+        schedule=config.alpha_schedule,
+        max_steps=config.max_steps,
+        step=step,
+    )
 
 
 def relative_residual(z_next, z_prev) -> float:
     """‖Zₜ₊₁−Zₜ‖ / ‖Zₜ‖ in mean-RMS terms — the fixed-point signal."""
     import mlx.core as mx
 
+    if tuple(z_next.shape) != tuple(z_prev.shape):
+        raise ValueError("residual state shapes differ")
+    assert_finite_state(z_next, stage="residual_output")
+    assert_finite_state(z_prev, stage="residual_input")
     num = mx.mean(per_position_rms(z_next - z_prev))
     den = mx.maximum(mx.mean(per_position_rms(z_prev)), 1e-6)
-    return float(num / den)
+    value = float(num / den)
+    if not math.isfinite(value) or value < 0.0:
+        raise LoopCoreError("recurrent residual is invalid")
+    return value
 
 
 @dataclass
@@ -291,6 +292,19 @@ class WindowRunner:
         self._nonpersistent_calls = 0
         self._restored_calls = 0
         self._restore_failures = 0
+        model_args = getattr(inner_model, "args", None)
+        raw_limit = (
+            model_args.get("max_position_embeddings")
+            if isinstance(model_args, Mapping)
+            else getattr(model_args, "max_position_embeddings", None)
+        )
+        if type(raw_limit) is int and raw_limit > 0:
+            self._position_limit = min(raw_limit, ABSOLUTE_POSITION_LIMIT)
+            self._position_limit_source = "model_config"
+        else:
+            self._position_limit = ABSOLUTE_POSITION_LIMIT
+            self._position_limit_source = "absolute_safety_ceiling"
+        self._kv_calls: list[dict[str, Any]] = []
 
     def adapter_receipt(self) -> dict[str, int | str | bool]:
         """Aggregate proof that scoped weights ran only inside slot windows."""
@@ -318,6 +332,50 @@ class WindowRunner:
             ),
         }
 
+    def _context_tokens(self, cache, start: int, end: int) -> int:
+        if (
+            not isinstance(cache, (list, tuple))
+            or type(start) is not int
+            or type(end) is not int
+            or not 0 <= start < end <= len(cache)
+        ):
+            raise LoopCoreError("recurrent cache window is invalid")
+        offsets: list[int] = []
+        for item in cache[start:end]:
+            if item is None:
+                offsets.append(0)
+                continue
+            offset = getattr(item, "offset", None)
+            if type(offset) is not int or offset < 0:
+                raise LoopCoreError("recurrent cache offset is invalid")
+            offsets.append(offset)
+        if len(set(offsets)) > 1:
+            raise LoopCoreError("recurrent cache window offsets disagree")
+        return offsets[0] if offsets else 0
+
+    def kv_bound_receipt(self) -> dict[str, Any]:
+        """Return model-bounded position evidence for every window call."""
+
+        calls = [dict(row) for row in self._kv_calls]
+        return {
+            "schema": KV_BOUND_SCHEMA,
+            "position_limit": self._position_limit,
+            "position_limit_source": self._position_limit_source,
+            "call_count": len(calls),
+            "max_context_tokens": max(
+                (row["context_tokens"] for row in calls),
+                default=0,
+            ),
+            "max_total_tokens": max(
+                (row["total_tokens"] for row in calls),
+                default=0,
+            ),
+            "all_within_limit": bool(calls)
+            and all(row["total_tokens"] <= self._position_limit for row in calls),
+            "calls": calls,
+            "calls_sha256": canonical_sha256(calls),
+        }
+
     def _mask(self, h, cache_slice):
         if self._mask_fn is not None:
             return self._mask_fn(h, cache_slice)
@@ -336,6 +394,15 @@ class WindowRunner:
 
         tokens = int(h.shape[1])
         layers = end - start
+        if tokens < 1 or layers < 1:
+            raise LoopCoreError("recurrent window dimensions are empty")
+        context_tokens = self._context_tokens(cache, start, end)
+        total_tokens = context_tokens + tokens
+        if total_tokens > self._position_limit:
+            raise LoopCoreError(
+                "recurrent KV position limit exceeded: "
+                f"total={total_tokens} limit={self._position_limit}"
+            )
         if not self._budget.can_afford(tokens, layers):
             raise RuntimeError(
                 f"compute budget cannot afford window [{start}:{end}) for {tokens} slots"
@@ -346,9 +413,9 @@ class WindowRunner:
         attention_pairs = 0
         for item in cache[start:end]:
             offset = getattr(item, "offset", 0) if item is not None else 0
-            context_tokens = max(0, int(offset)) if type(offset) is int else 0
+            layer_context_tokens = max(0, int(offset)) if type(offset) is int else 0
             attention_pairs += triangular_attention_pairs(
-                tokens, context_tokens=context_tokens
+                tokens, context_tokens=layer_context_tokens
             )
         self._budget.charge(
             tokens=tokens,
@@ -395,6 +462,30 @@ class WindowRunner:
                     raise
                 else:
                     self._restored_calls += 1
+        post_context = self._context_tokens(cache, start, end)
+        restored = not persist and post_context == context_tokens
+        if not persist and not restored:
+            self._restore_failures += 1
+            raise CacheSnapshotError(
+                "KV cache position restore postcondition failed after recurrent pass"
+            )
+        if persist and post_context != total_tokens:
+            raise CacheSnapshotError(
+                "KV cache position did not advance after persistent pass"
+            )
+        self._kv_calls.append(
+            {
+                "ordinal": len(self._kv_calls),
+                "start": start,
+                "end": end,
+                "tokens": tokens,
+                "context_tokens": context_tokens,
+                "total_tokens": total_tokens,
+                "post_context_tokens": post_context,
+                "persist": persist,
+                "restored": restored,
+            }
+        )
         return h
 
 
@@ -430,7 +521,13 @@ def recurrence_step(
         z_raw = runner.run(z, cache, start, end, persist=False)
     alpha = alpha_override if alpha_override is not None else alpha_at(config, step)
     reference = anchor if anchor is not None else z
-    z_next = (1.0 - alpha) * z + alpha * rms_match(z_raw, reference, config.rms_clip_ratio)
+    z_next = controlled_recurrent_update(
+        z,
+        z_raw,
+        reference,
+        alpha=alpha,
+        clip_ratio=config.rms_clip_ratio,
+    )
     mx.eval(z_next)
     return z_next
 
@@ -439,6 +536,7 @@ __all__ = [
     "HaltDecision",
     "HaltingController",
     "CACHE_DISCIPLINE_SCHEMA",
+    "LoopCoreError",
     "WindowRunner",
     "alpha_at",
     "recurrence_step",

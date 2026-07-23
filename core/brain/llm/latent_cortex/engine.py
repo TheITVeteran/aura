@@ -2198,6 +2198,30 @@ class LatentCortexEngine:
             comm_slot=int(self.config.branches.comm_slot),
             selected_branch=winner.index,
         )
+        from core.brain.llm.latent_cortex.loop_core import build_loop_core_contract
+        from core.brain.llm.latent_cortex.loop_stability import (
+            build_loop_stability_receipt,
+        )
+
+        loop_core = build_loop_core_contract(
+            prelude_end=self.prelude_end,
+            coda_start=self.coda_start,
+            max_steps=self.config.recurrence.max_steps,
+            min_steps=self.config.recurrence.min_steps,
+            alpha=self.config.recurrence.alpha,
+            alpha_schedule=self.config.recurrence.alpha_schedule,
+            rms_clip_ratio=self.config.recurrence.rms_clip_ratio,
+            convergence_eps=self.config.recurrence.convergence_eps,
+            divergence_ratio=self.config.recurrence.divergence_ratio,
+            fixed_depth=self.config.recurrence.fixed_depth,
+        )
+        receipt.loop_stability = build_loop_stability_receipt(
+            branches=list(ensemble.branches),
+            selected_branch=winner.index,
+            loop_core=loop_core,
+            kv_bound=runner.kv_bound_receipt(),
+            recurrent_grounding=receipt.recurrent_grounding,
+        )
         escape_receipts: dict[str, Any] = {}
         for branch in ensemble.branches:
             if branch.escape is not None and branch.escape.attempts:
