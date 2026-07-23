@@ -1584,10 +1584,10 @@ class LatentCortexEngine:
             )
         )
         ensemble.telemetry = telemetry if telemetry.enabled else None
-        halting_head = self._resolve_halting_head()
-        if halting_head is not None:
+        stop_gate = self._resolve_halting_head()
+        if stop_gate.mode == "learned":
             for branch in ensemble.branches:
-                branch.halting.halting_head = halting_head
+                branch.halting.stop_gate = stop_gate
         update_gate = self._resolve_update_gate()
         for branch in ensemble.branches:
             branch.update_gate = update_gate
@@ -1686,6 +1686,7 @@ class LatentCortexEngine:
         action_index = 0
         previous_residual = 1.0
         previous_verifier_score: float | None = None
+        previous_verifier_delta: float | None = None
         ensemble.savepoint_all()
         for op_index, op in enumerate(schedule.ops):
             op_kind = getattr(op, "kind", "window")
@@ -1809,7 +1810,7 @@ class LatentCortexEngine:
                         min(1.0, previous_residual - before_residual),
                     ),
                     verifier_score=previous_verifier_score,
-                    verifier_delta=None,
+                    verifier_delta=previous_verifier_delta,
                     disagreement=before_disagreement,
                     uncertainty=self._policy_uncertainty(value_policy.bucket),
                     budget_remaining_fraction=max(
@@ -1839,6 +1840,20 @@ class LatentCortexEngine:
                 decision = value_policy.choose(
                     state_signal,
                     executors=action_executors,
+                )
+                from core.brain.llm.latent_cortex.stop_gate import StopContext
+
+                stop_context = StopContext(
+                    action_step=state_signal.step_index,
+                    max_steps=self.config.recurrence.max_steps,
+                    policy_uncertainty=state_signal.uncertainty,
+                    verifier_score=state_signal.verifier_score,
+                    verifier_delta=state_signal.verifier_delta,
+                    expected_gain_lcb=float(decision["evidence"]["gain_used"]),
+                    expected_cost_ucb=float(decision["evidence"]["cost_used"]),
+                    quality_measured=update_gate.mode == "learned",
+                    evoc_measured=bool(decision["evidence"]["measured"]),
+                    budget_remaining_fraction=state_signal.budget_remaining_fraction,
                 )
                 action = OperationKind(decision["action"])
                 spent_before = int(budget.spent_layer_apps)
@@ -1881,6 +1896,7 @@ class LatentCortexEngine:
                         budget=budget,
                         alpha_override=op.alpha,
                         reserve_layer_apps=safety_reserve,
+                        stop_context=stop_context,
                     )
                     if not admitted:
                         recurrence_budget_limited = True
@@ -2042,6 +2058,11 @@ class LatentCortexEngine:
                 selected_actions.append(action)
                 action_index += 1
                 previous_residual = before_residual
+                previous_verifier_delta = (
+                    max(-1.0, min(1.0, verified_delta))
+                    if checked
+                    else None
+                )
                 previous_verifier_score = accepted_verifier_score
                 stage_started = self._stage_checkpoint(
                     receipt=receipt,
@@ -2254,28 +2275,18 @@ class LatentCortexEngine:
                 if outcomes & {"failed", "unresolved"}:
                     receipt.flag("attractor_escape_failed")
         receipt.escape = escape_receipts
-        halting_mode = str((self.config.halting or {}).get("mode", "residual"))
-        head_halt_branches = [
-            branch.index
-            for branch in ensemble.branches
-            if branch.halt_reason.startswith("head_satisfied")
-        ]
-        receipt.halting = {
-            "mode": halting_mode,
-            "head_attached": halting_head is not None,
-            "head_halts": {
-                str(branch.index): branch.halting.head_halts
-                for branch in ensemble.branches
-                if branch.halting.head_halts
-            },
-            "head_halted_branches": head_halt_branches,
-            # The honest question about a learned policy: did it decide
-            # anything, or did every stop come from the residual floor?
-            "head_was_causal": bool(
-                halting_mode == "learned" and head_halt_branches
-            ),
-        }
-        if halting_mode == "learned" and not head_halt_branches:
+        from core.brain.llm.latent_cortex.stop_gate import (
+            build_stop_gate_receipt,
+        )
+
+        receipt.halting = build_stop_gate_receipt(
+            branches=list(ensemble.branches),
+            gate=stop_gate,
+            update_acceptance=receipt.update_acceptance,
+            loop_stability=receipt.loop_stability,
+            cognitive_action_trace=receipt.cognitive_action_trace,
+        )
+        if stop_gate.mode == "learned" and not receipt.halting["head_was_causal"]:
             receipt.flag("learned_halting_not_causal")
         stage_started = self._stage_checkpoint(
             receipt=receipt,
@@ -2809,19 +2820,13 @@ class LatentCortexEngine:
 
     # ── Learned halting attachment (CP234 seam made loadable) ──────────
     def _resolve_halting_head(self):
-        """Load the trained halting head when learned mode is configured.
+        """Load the pinned calibrated public-signal stop policy."""
 
-        Returns None in residual mode (the engine's historical policy,
-        byte-for-byte). In learned mode a head that cannot load REFUSES the
-        episode: silently falling back would report learned allocation while
-        running the residual rule — the exact mechanism-present-but-not-
-        firing failure this codebase keeps finding.
-        """
+        from core.brain.llm.latent_cortex.stop_gate import StopGateRuntime
+
         halting = self.config.halting or {}
         if str(halting.get("mode", "residual")) != "learned":
-            return None
-        from core.learning.adaptive_halting import HaltingHead
-
+            return StopGateRuntime.from_config(halting)
         head_path = Path(str(halting.get("head_path", ""))).expanduser()
         try:
             stat = head_path.stat()
@@ -2829,27 +2834,23 @@ class LatentCortexEngine:
             raise ValueError(
                 f"learned halting requested but head is unreadable: {head_path}"
             ) from exc
-        cache_key = (str(head_path), stat.st_mtime_ns, stat.st_size)
+        cache_key = (
+            str(head_path),
+            str(halting.get("head_sha256", "")),
+            stat.st_mtime_ns,
+            stat.st_size,
+        )
         cached = getattr(self, "_halting_head_cache", None)
         if cached is not None and cached[0] == cache_key:
-            head = cached[1]
-        else:
-            try:
-                head = HaltingHead.load(head_path)
-            except (OSError, ValueError, KeyError) as exc:
-                raise ValueError(
-                    f"learned halting head failed to load: {head_path}"
-                ) from exc
-            self._halting_head_cache = (cache_key, head)
-        threshold = halting.get("threshold")
-        if threshold is not None:
-            head.threshold = float(threshold)
-        if head.is_identity():
-            # Attaching an untrained head is legal (it reproduces the
-            # residual policy exactly) but the operator should know the
-            # learned mode is not yet earning anything.
-            logger.info("Learned halting head is identity-zero; policy unchanged.")
-        return head
+            return cached[1]
+        try:
+            gate = StopGateRuntime.from_config(halting)
+        except (OSError, ValueError, KeyError) as exc:
+            raise ValueError(
+                f"learned halting head failed to load: {head_path}"
+            ) from exc
+        self._halting_head_cache = (cache_key, gate)
+        return gate
 
     def _resolve_update_gate(self):
         """Load the pinned calibrated per-transition admission head."""

@@ -25822,3 +25822,69 @@ approximately 66-333 records remaining, 54.6%-85.8% checkpoint-count completion,
 and a 66.7% midpoint planning estimate. Next: publish CP339, then implement
 SPARK-026's calibrated learned stop/convergence and expected-value-of-compute
 gate. Final multi-hour soaks remain deferred until every shorter gate is green.
+
+## Checkpoint 2026-07-23-340: Recurrent Compute Must Earn Continuation
+
+Learned stopping is now a calibrated, pinned, independently reconstructable
+runtime decision rather than an attached raw latent head. Its seventeen public
+bounded inputs combine fixed-point residual/contraction, calibrated update
+quality and uncertainty, evidence improvement, verifier score/change,
+action-policy uncertainty, measured gain/cost/net value, remaining budget,
+proposal admission, and evidence availability. The inference inputs use the
+same precision as the signed loop diagnostics, eliminating unverifiable
+raw-versus-receipt float drift.
+
+Training and calibration examples require strict identities, independent
+verifier-receipt commitments, disjoint examples and tasks, 32-100,000 examples
+per split, at least eight unique tasks and four unique tasks per class in each
+split, and at least eight examples per class. Admission requires held-out AUC
+>= 0.75, balanced accuracy >= 0.70, Brier <= 0.25, ten-bin ECE <= 0.20, and
+false-stop rate <= 0.10. The artifact binds the exact feature schema, dataset
+and hashed task-set identities, metrics, and selected threshold. Atomic
+fsync-backed publication and stable no-follow regular-file loading require an
+exact configured SHA-256 and reject malformed, non-finite, racing, symlinked,
+oversized, uncalibrated, or unpinned artifacts. Runtime threshold overrides are
+not accepted.
+
+The controller preserves non-finite/divergence, budget, maximum-depth,
+fixed-depth, and residual-convergence behavior before consulting the learned
+head. Learned stopping requires both measured update-quality and measured
+value-of-compute evidence. Every branch decision binds the precise update
+transition, loop transition, action-policy evidence/state signal, feature
+vector, head probability, threshold, and halt outcome. The service reloads the
+pinned artifact and independently reconstructs every feature and decision from
+the update-acceptance, loop-stability, and cognitive-action receipts; changed
+source evidence, probability, threshold, topology, branch timing, or aggregate
+causality fails validation even if outer hashes are recomputed.
+
+The bounded task-disjoint workload certificate requires eight unique held-out
+tasks with four easy and four hard cases, at least one mean recurrent-step
+reduction on easy tasks, no overall or hard-task accuracy regression, and zero
+hard-task premature stops. A real tiny-Qwen equal-evidence causal test keeps the
+calibrated update head and measured negative value evidence constant, then
+proves the learned stop changes the executed trajectory, reduces recurrent
+transitions, and spends fewer layer applications. The legacy raw hidden-state
+head remains training-compatible but is no longer accepted as the live engine
+policy.
+
+Validation: the focused policy, artifact,
+task-disjoint workload, causal runtime, and tamper boundary passes 7/7; the
+affected adaptive-halting, learned-bridge, attachment, engine, recurrence,
+schedule, branch, wiring, update-acceptance, value-of-computation, and resource
+suite passes 256/256 in 89.36 seconds. The final fixed-snapshot RLC,
+latent-cortex, recurrence/training, global-workspace, GWT, and
+execution-controller ownership gate passes 1307/1307 in 485.19 seconds.
+Focused Ruff, bytecode compilation, and `git diff --check` pass.
+
+SPARK-026 closes at the mechanism, calibration, bounded held-out workload, and
+causal-compute boundary. Default execution remains residual until a calibrated,
+pinned resident head exists. No resident-32B stop head or powered broad-task
+campaign ran, so utility, generalization, adapter/RLC positive interaction,
+reasoning gain, and frontier capability remain unproven. The capability verdict
+remains negative/no-signal.
+
+This is total checkpoint record 401. The forecast remains 466-733 total records,
+approximately 65-332 records remaining, 54.7%-86.1% checkpoint-count completion,
+and a 66.9% midpoint planning estimate. Next: publish CP340, then implement
+SPARK-027's verified best-state and overthinking-reversion boundary. Final
+multi-hour soaks remain deferred until every shorter gate is green.

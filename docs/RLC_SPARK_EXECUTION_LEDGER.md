@@ -122,6 +122,10 @@ After CP339, the published total is record 400: 66-333 forecast records remain,
 checkpoint-count completion is 54.6%-85.8%, and the midpoint planning estimate
 is 66.7%.
 
+After CP340, the published total is record 401: 65-332 forecast records remain,
+checkpoint-count completion is 54.7%-86.1%, and the midpoint planning estimate
+is 66.9%.
+
 ## Code-grounded baseline and ownership
 
 The four-slice static audit covered the neural core, epistemic/verifier paths,
@@ -132,9 +136,9 @@ baseline below is exhaustive over SPARK-001 through SPARK-072:
 - `ACCEPTED`: SPARK-001, SPARK-005, SPARK-006, SPARK-007, SPARK-008, SPARK-009,
   SPARK-010, SPARK-011, SPARK-012, SPARK-014, SPARK-015, SPARK-016,
   SPARK-017, SPARK-018, SPARK-019, SPARK-020, SPARK-021, SPARK-022,
-  SPARK-023, SPARK-024, SPARK-025.
+  SPARK-023, SPARK-024, SPARK-025, SPARK-026.
 - `PARTIAL`: SPARK-003,
-  SPARK-026, SPARK-027, SPARK-035, SPARK-039, SPARK-040, SPARK-041,
+  SPARK-027, SPARK-035, SPARK-039, SPARK-040, SPARK-041,
   SPARK-042, SPARK-051, SPARK-052, SPARK-053, SPARK-054, SPARK-055,
   SPARK-056, SPARK-058, SPARK-060, SPARK-062, SPARK-063, SPARK-065, SPARK-066,
   SPARK-067.
@@ -700,9 +704,43 @@ before those dependencies close is not admissible.
   trained and pinned. This checkpoint does not claim resident utility,
   generalization, positive interaction, or frontier capability; those require
   the later training and campaign gates.
-- [ ] **SPARK-026 - Learned stop/convergence gate.** Combine fixed-point
+- [x] **SPARK-026 - Learned stop/convergence gate.** Combine fixed-point
   residuals, calibrated quality, uncertainty, and expected value of additional
   compute; prove easy tasks halt earlier without harming hard-task accuracy.
+  Accepted at CP340 at the mechanism, calibration, task-disjoint bounded
+  workload, and causal-compute boundary. A portable logistic stop head consumes
+  seventeen public bounded signals: fixed-point residual and contraction,
+  calibrated update quality and uncertainty, evidence improvement, verifier
+  score/change, action-policy uncertainty, measured gain/cost/net value,
+  remaining budget, proposal admission, and evidence-availability flags.
+
+  Training and calibration identities and tasks are disjoint. Each split has
+  32-100,000 examples, at least eight unique tasks, four unique tasks per
+  class, and eight examples per class. Learned mode requires held-out AUC >=
+  0.75, balanced accuracy >= 0.70, Brier <= 0.25, ten-bin ECE <= 0.20, and
+  false-stop rate <= 0.10. The artifact binds hashed train/calibration task
+  sets, dataset hashes, feature schema, metrics, and threshold; atomic
+  fsync-backed publication and stable no-follow regular-file loading require
+  the configured SHA-256 and reject malformed, racing, symlinked, oversized,
+  uncalibrated, or non-finite inputs.
+
+  The live controller preserves divergence, budget, maximum-depth, fixed-depth,
+  and residual-convergence invariants ahead of learned stopping. A learned stop
+  can fire only when both update quality and value-of-compute evidence are
+  measured. Its inference precision matches the signed public loop diagnostics,
+  so the service can reload the pinned head and independently reconstruct every
+  feature, probability, decision, branch stop, and aggregate verdict from the
+  exact update-acceptance, loop-stability, and cognitive-action receipts.
+  Runtime threshold overrides are refused.
+
+  A task-disjoint easy/hard workload certificate requires eight unique held-out
+  tasks, four per difficulty, at least one mean recurrent-step reduction on easy
+  tasks, no overall or hard-task accuracy regression, and zero hard-task
+  premature stops. A real tiny-Qwen equal-evidence causal test holds the
+  calibrated update gate and measured negative value evidence constant, then
+  proves the stop head reduces recurrent transitions and layer applications.
+  This is a bounded mechanism/correctness proof, not a resident-32B utility or
+  frontier result; a resident head and powered broad-task campaign remain open.
 - [ ] **SPARK-027 - Best-state and overthinking reversion.** Preserve the best
   verified state, detect oscillation/divergence, and prevent later recurrence
   from replacing a correct state without confidence-bound evidence.
@@ -978,6 +1016,23 @@ downstream logits. No resident-32B head or capability campaign ran; default
 execution therefore remains explicit passthrough and the negative capability
 verdict is unchanged.
 
+CP340 closes calibrated learned stopping and its measured quality/value
+evidence boundary. The controller preserves hard recurrence invariants before
+consulting the head; the service reconstructs its exact causal inputs and
+decision after transport. Task-disjoint bounded workload tests establish
+earlier easy-task stopping without hard-task regression, and a real tiny-Qwen
+equal-evidence arm proves reduced recurrent transitions and layer applications.
+No resident-32B stop head or powered broad-task campaign ran, so this does not
+change the negative frontier verdict.
+
+CP340 validation passes the focused policy/artifact/workload/causality/tamper
+boundary 7/7 and the affected adaptive-halting, learned-bridge, attachment,
+engine, recurrence, schedule, branch, wiring, update-acceptance,
+value-of-computation, and resource suite 256/256 in 89.36 seconds. The final
+fixed-snapshot RLC, latent-cortex, recurrence/training, global-workspace, GWT,
+and execution-controller ownership gate passes 1307/1307 in 485.19 seconds.
+Strict focused Ruff, bytecode compilation, and `git diff --check` pass.
+
 Validation: the focused acceptance-head and causal-transition suite passes 6/6;
 the combined acceptance/service reconstruction boundary passes 7/7; and the
 affected engine, recurrence, schedule, branch, wiring, and recurrence-native
@@ -991,8 +1046,8 @@ Strict focused Ruff, bytecode compilation, and `git diff --check` pass. No
 resident 32B capability campaign was run, and the negative frontier verdict is
 unchanged.
 
-This is total checkpoint record 400. The revised forecast remains 466-733 total
-records, now approximately 66-333 records after this checkpoint. Checkpoint-
-count completion is approximately 54.6%-85.8%, with a midpoint planning
-estimate of 66.7%. Next: publish CP339, then implement SPARK-026's calibrated
-learned stop/convergence and expected-value-of-compute gate.
+This is total checkpoint record 401. The revised forecast remains 466-733 total
+records, now approximately 65-332 records after this checkpoint. Checkpoint-
+count completion is approximately 54.7%-86.1%, with a midpoint planning
+estimate of 66.9%. Next: publish CP340, then implement SPARK-027's verified
+best-state and overthinking-reversion boundary.

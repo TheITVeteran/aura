@@ -9,6 +9,8 @@ and the receipt must say so.
 """
 from __future__ import annotations
 
+import hashlib
+
 import pytest
 
 mx = pytest.importorskip("mlx.core")
@@ -26,6 +28,11 @@ from core.brain.llm.latent_cortex.types import (  # noqa: E402
     WorkspaceConfig,
 )
 from core.learning.adaptive_halting import HaltingHead  # noqa: E402
+from core.learning.stop_policy import (  # noqa: E402
+    STOP_FEATURE_NAMES,
+    VerifiedStopExample,
+    fit_stop_policy_head,
+)
 
 N_LAYERS = 8
 HIDDEN = 64
@@ -56,6 +63,47 @@ def _config(**overrides) -> CortexConfig:
         decode_max_tokens=4,
         **overrides,
     )
+
+
+def _stop_features(should_stop: bool):
+    values = {name: 0.0 for name in STOP_FEATURE_NAMES}
+    values.update(
+        {
+            "step_fraction": 0.7 if should_stop else 0.2,
+            "residual": 0.04 if should_stop else 0.4,
+            "residual_contraction_ratio": 0.3 if should_stop else 0.9,
+            "quality_probability": 0.95 if should_stop else 0.55,
+            "quality_uncertainty": 0.1 if should_stop else 0.9,
+            "evidence_improvement": 0.2 if should_stop else 0.01,
+            "policy_uncertainty": 0.1 if should_stop else 0.8,
+            "expected_gain_lcb": 0.01 if should_stop else 0.5,
+            "expected_cost_ucb": 0.2 if should_stop else 0.1,
+            "expected_net_value": -0.19 if should_stop else 0.4,
+            "budget_remaining_fraction": 0.5,
+            "proposal_accepted": 1.0,
+            "quality_measured": 1.0,
+            "evoc_measured": 1.0,
+        }
+    )
+    return values
+
+
+def _fitted_stop_head():
+    def rows(prefix, count):
+        return [
+            VerifiedStopExample.from_values(
+                example_id=f"{prefix}-{index}",
+                task_id=f"{prefix}-task-{index}",
+                features=_stop_features(index % 2 == 0),
+                should_stop=index % 2 == 0,
+                verifier_receipt_sha256=hashlib.sha256(
+                    f"{prefix}:{index}".encode()
+                ).hexdigest(),
+            )
+            for index in range(count)
+        ]
+
+    return fit_stop_policy_head(rows("train", 64), rows("cal", 40))
 
 
 # ── Head persistence ────────────────────────────────────────────────────
@@ -90,6 +138,7 @@ def test_malformed_head_file_is_refused(tmp_path):
 def test_learned_mode_requires_a_head_path():
     problems = _config(halting={"mode": "learned"}).validate()
     assert any("head_path" in problem for problem in problems)
+    assert any("head_sha256" in problem for problem in problems)
     unknown = _config(halting={"mode": "residual", "warp": 1}).validate()
     assert any("unknown keys" in problem for problem in unknown)
     fine = _config(halting={"mode": "residual"}).validate()
@@ -104,52 +153,51 @@ def test_residual_default_attaches_nothing(tiny_model):
     result = engine.reason(token_ids=PROMPT_TOKENS, budget=ComputeBudget())
     halting = result.receipt.halting
     assert halting["mode"] == "residual"
-    assert halting["head_attached"] is False
+    assert halting["head_sha256"] == ""
+    assert halting["decision_count"] == 0
     assert halting["head_was_causal"] is False
     assert "halting" in result.receipt.to_dict()
 
 
-def test_trained_head_halts_branches_and_receipt_proves_causality(
-    tiny_model, tmp_path
-):
-    # A head biased hard toward halting: p ≈ sigmoid(large bias) ≈ 1.
-    head = HaltingHead(HIDDEN, threshold=0.5)
-    head.bias = mx.array([8.0])
-    path = tmp_path / "eager_head.npz"
-    head.save(path)
+def test_calibrated_pinned_head_attaches_to_live_engine(tiny_model, tmp_path):
+    head = _fitted_stop_head()
+    path = tmp_path / "stop-head.json"
+    digest = head.save(path)
     engine = LatentCortexEngine(
         tiny_model,
         config=_config(
-            recurrence=RecurrenceConfig(
-                max_steps=6, min_steps=1, convergence_eps=1e-9
-            ),
-            halting={"mode": "learned", "head_path": str(path)},
+            halting={
+                "mode": "learned",
+                "head_path": str(path),
+                "head_sha256": digest,
+            },
+        ),
+    )
+    gate = engine._resolve_halting_head()
+    assert gate.mode == "learned"
+    assert gate.head_sha256 == digest
+    assert gate.manifest == head.manifest()
+
+
+def test_learned_head_with_unmeasured_runtime_evidence_stays_noncausal(
+    tiny_model, tmp_path
+):
+    head = _fitted_stop_head()
+    path = tmp_path / "stop-head.json"
+    digest = head.save(path)
+    engine = LatentCortexEngine(
+        tiny_model,
+        config=_config(
+            halting={
+                "mode": "learned",
+                "head_path": str(path),
+                "head_sha256": digest,
+            }
         ),
     )
     result = engine.reason(token_ids=PROMPT_TOKENS, budget=ComputeBudget())
     halting = result.receipt.halting
     assert halting["mode"] == "learned"
-    assert halting["head_attached"] is True
-    assert halting["head_was_causal"] is True, halting
-    assert halting["head_halted_branches"] == [0]
-    assert result.receipt.halting_reason.startswith("head_satisfied")
-    assert "learned_halting_not_causal" not in result.receipt.honest_flags
-
-
-def test_identity_head_changes_nothing_and_receipt_says_so(
-    tiny_model, tmp_path
-):
-    head = HaltingHead(HIDDEN, threshold=0.5)  # zero-initialized: p = 0.5
-    head.threshold = 0.9  # even the 0.5 logit cannot cross it
-    path = tmp_path / "identity_head.npz"
-    head.save(path)
-    engine = LatentCortexEngine(
-        tiny_model,
-        config=_config(halting={"mode": "learned", "head_path": str(path)}),
-    )
-    result = engine.reason(token_ids=PROMPT_TOKENS, budget=ComputeBudget())
-    halting = result.receipt.halting
-    assert halting["head_attached"] is True
     assert halting["head_was_causal"] is False
     assert "learned_halting_not_causal" in result.receipt.honest_flags
 
@@ -158,27 +206,24 @@ def test_missing_head_refuses_rather_than_silently_reverting(tiny_model):
     engine = LatentCortexEngine(
         tiny_model,
         config=_config(
-            halting={"mode": "learned", "head_path": "/nonexistent/head.npz"}
+            halting={
+                "mode": "learned",
+                "head_path": "/nonexistent/head.json",
+                "head_sha256": "a" * 64,
+            }
         ),
     )
     with pytest.raises(ValueError, match="unreadable"):
         engine._resolve_halting_head()
 
 
-def test_threshold_override_applies(tiny_model, tmp_path):
-    head = HaltingHead(HIDDEN, threshold=0.5)
-    path = tmp_path / "head.npz"
-    head.save(path)
-    engine = LatentCortexEngine(
-        tiny_model,
-        config=_config(
-            halting={
-                "mode": "learned",
-                "head_path": str(path),
-                "threshold": 0.9,
-            }
-        ),
-    )
-    resolved = engine._resolve_halting_head()
-    assert resolved is not None
-    assert resolved.threshold == pytest.approx(0.9)
+def test_runtime_threshold_override_is_rejected():
+    problems = _config(
+        halting={
+            "mode": "learned",
+            "head_path": "head.json",
+            "head_sha256": "a" * 64,
+            "threshold": 0.9,
+        }
+    ).validate()
+    assert any("unknown keys" in problem for problem in problems)

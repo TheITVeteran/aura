@@ -800,6 +800,27 @@ class LatentCortexService:
             )
         except (ImportError, OSError, TypeError, ValueError):
             errors.append("update_acceptance_unproven")
+        try:
+            from core.brain.llm.latent_cortex.stop_gate import (
+                StopGateRuntime,
+                validate_stop_gate_receipt,
+            )
+            from core.brain.llm.latent_cortex.worker_handler import config_from_job
+
+            executed_config = config_from_job(config)
+            expected_stop_gate = StopGateRuntime.from_config(
+                executed_config.halting
+            )
+            validate_stop_gate_receipt(
+                receipt.get("halting"),
+                expected_gate=expected_stop_gate,
+                expected_n_branches=executed_config.branches.n_branches,
+                update_acceptance=receipt.get("update_acceptance"),
+                loop_stability=receipt.get("loop_stability"),
+                cognitive_action_trace=receipt.get("cognitive_action_trace"),
+            )
+        except (ImportError, OSError, TypeError, ValueError):
+            errors.append("halting_unproven")
         one_shot_slots = [
             row
             for row in (receipt.get("cognitive_slots") or [])

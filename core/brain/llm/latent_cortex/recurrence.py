@@ -168,6 +168,10 @@ class HaltingController:
     # own: the head is zero-initialised, so an untrained one never fires.
     halting_head: Any = None
     head_halts: int = 0
+    # Calibrated public-signal stop policy. The engine uses this path for
+    # learned mode; the raw latent head remains only for training compatibility.
+    stop_gate: Any = None
+    stop_trace: list[dict[str, Any]] = field(default_factory=list)
 
     def snapshot(self) -> dict[str, Any]:
         """Capture every mutable field that can influence later halting."""
@@ -179,6 +183,7 @@ class HaltingController:
             "best_score": self.best_score,
             "best_state": self.best_state,
             "head_halts": self.head_halts,
+            "stop_trace": tuple(dict(row) for row in self.stop_trace),
         }
 
     def restore(self, snapshot: dict[str, Any]) -> None:
@@ -191,6 +196,7 @@ class HaltingController:
             "best_score",
             "best_state",
             "head_halts",
+            "stop_trace",
         }
         if not isinstance(snapshot, dict) or set(snapshot) != required:
             raise ValueError("invalid halting-controller snapshot")
@@ -200,6 +206,7 @@ class HaltingController:
         self.best_score = float(snapshot["best_score"])
         self.best_state = snapshot["best_state"]
         self.head_halts = int(snapshot["head_halts"])
+        self.stop_trace = [dict(row) for row in snapshot["stop_trace"]]
 
     def observe(
         self,
@@ -209,6 +216,8 @@ class HaltingController:
         *,
         score: float | None = None,
         budget: ComputeBudget | None = None,
+        stop_context: Any = None,
+        update_decision: Any = None,
     ) -> HaltDecision:
         import mlx.core as mx
 
@@ -240,6 +249,44 @@ class HaltingController:
             and residual < self.config.convergence_eps
         ):
             return HaltDecision(True, "converged")
+
+        if (
+            self.stop_gate is not None
+            and not self.config.fixed_depth
+            and step + 1 >= self.config.min_steps
+        ):
+            if stop_context is None or update_decision is None:
+                raise ValueError(
+                    "learned stop gate requires update and value evidence"
+                )
+            stop_decision = self.stop_gate.evaluate(
+                step=step + 1,
+                residual=residual,
+                previous_residual=(
+                    self.residual_trail[-2]
+                    if len(self.residual_trail) >= 2
+                    else None
+                ),
+                update_decision=update_decision,
+                context=stop_context,
+            )
+            self.stop_trace.append(
+                {
+                    "ordinal": len(self.stop_trace),
+                    "action_step": stop_context.action_step,
+                    "step": step + 1,
+                    "halt": stop_decision.halt,
+                    "reason": stop_decision.reason,
+                    "probability": stop_decision.probability,
+                    "threshold": stop_decision.threshold,
+                    "evidence_ready": stop_decision.evidence_ready,
+                    "features": dict(stop_decision.features),
+                    "features_sha256": stop_decision.features_sha256,
+                }
+            )
+            if stop_decision.halt:
+                self.head_halts += 1
+                return HaltDecision(True, "learned_stop")
 
         # Learned allocation, consulted only AFTER the convergence floor.
         # Residual halting answers "has this loop stopped changing?"; the

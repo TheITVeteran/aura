@@ -209,6 +209,11 @@ def _recurrent_grounding_fields(config, *, steps=1):
     from core.brain.llm.latent_cortex.recurrent_grounding import (
         build_recurrent_grounding_receipt,
     )
+    from core.brain.llm.latent_cortex.stop_gate import (
+        RESIDUAL,
+        StopGateRuntime,
+        build_stop_gate_receipt,
+    )
     from core.brain.llm.latent_cortex.update_gate import (
         PASSTHROUGH,
         UpdateGateRuntime,
@@ -336,6 +341,9 @@ def _recurrent_grounding_fields(config, *, steps=1):
                 recurrent_grounding_trace=transitions,
                 loop_stability_trace=stability,
                 update_acceptance_trace=update_acceptance,
+                halt_reason="schedule_complete",
+                steps=steps,
+                halting=SimpleNamespace(stop_trace=[]),
             )
         )
     receipt = build_recurrent_grounding_receipt(
@@ -399,6 +407,14 @@ def _recurrent_grounding_fields(config, *, steps=1):
         recurrent_grounding=receipt,
         loop_stability=loop_stability,
     )
+    stop_gate = StopGateRuntime(mode=RESIDUAL)
+    halting_receipt = build_stop_gate_receipt(
+        branches=branches,
+        gate=stop_gate,
+        update_acceptance=update_acceptance_receipt,
+        loop_stability=loop_stability,
+        cognitive_action_trace=[],
+    )
     return {
         "cognitive_slots": [],
         "selected_branch": 0,
@@ -407,6 +423,8 @@ def _recurrent_grounding_fields(config, *, steps=1):
         "recurrent_grounding": receipt,
         "loop_stability": loop_stability,
         "update_acceptance": update_acceptance_receipt,
+        "halting": halting_receipt,
+        "cognitive_action_trace": [],
     }
 
 
@@ -2324,6 +2342,35 @@ def test_service_reconstructs_update_gate_and_rejects_rehashed_decision_lie():
         }
     )
     assert "update_acceptance_unproven" in (
+        LatentCortexService._receipt_contract_errors(forged, config)
+    )
+
+
+def test_service_reconstructs_stop_gate_and_rejects_rehashed_policy_lie():
+    from core.brain.llm.latent_cortex.loop_core import canonical_sha256
+
+    config = {"n_slots": 8, "n_branches": 2}
+    receipt = {
+        **_identity_receipt(),
+        "n_slots": 8,
+        "n_branches": 2,
+        **_recurrent_grounding_fields(config, steps=3),
+    }
+    assert "halting_unproven" not in (
+        LatentCortexService._receipt_contract_errors(receipt, config)
+    )
+
+    forged = copy.deepcopy(receipt)
+    halting = forged["halting"]
+    halting["threshold"] = 0.5
+    halting["receipt_sha256"] = canonical_sha256(
+        {
+            key: value
+            for key, value in halting.items()
+            if key != "receipt_sha256"
+        }
+    )
+    assert "halting_unproven" in (
         LatentCortexService._receipt_contract_errors(forged, config)
     )
 

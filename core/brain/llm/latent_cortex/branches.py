@@ -382,6 +382,7 @@ class BranchEnsemble:
         alpha_override: float | None = None,
         score_fn: Callable[[BranchState], float] | None = None,
         reserve_layer_apps: int = 0,
+        stop_context: Any = None,
     ) -> bool:
         """Advance every live branch, or none when the whole round cannot fit."""
         active = self.active()
@@ -588,8 +589,19 @@ class BranchEnsemble:
                 else None
             )
             decision = branch.halting.observe(
-                branch.steps, z_next, residual, score=score, budget=budget
+                branch.steps,
+                z_next,
+                residual,
+                score=score,
+                budget=budget,
+                stop_context=stop_context,
+                update_decision=gate_decision,
             )
+            if branch.halting.stop_gate is not None:
+                budget.charge_tensor_work(
+                    "recurrent_stop_gate",
+                    host_scalar_ops=96,
+                )
             branch.z = z_next
             branch.workspace.update(z_next)
             branch.steps += 1

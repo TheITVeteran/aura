@@ -37,7 +37,7 @@ loop over schedule program π (windows within [p..c), repeats, α):
     Zₜ₊₁ = Uₜ if CalibratedAccept(Evidence, Zₜ, Uₜ, A) else Zₜ
                                                         # A: fixed post-prelude anchor
     slot KV REWOUND every pass  (only clean final pass persists)
-    halting: fixed-point residual, divergence guard, overthinking revert
+    halting: invariant guards, then calibrated quality/value stop policy
 branches: K independent workspaces, Exchange every E steps via comm slot
 optional: latent optimization of Z (∇_Z on reconstruction+manifold proxy,
           verifier accept/reject); episode fast-weights ΔW=UVᵀ (identity-start)
@@ -61,6 +61,11 @@ changes the answer — that is the causality contract.
   proposals are receipted and discarded while the exact prior state persists.
 - **Divergence guard**: NaN or norm-ratio blowout ⇒ halt, revert to best state.
 - **Fixed-point halting**: relative residual ‖Zₜ₊₁−Zₜ‖/‖Zₜ‖ < ε ⇒ converged.
+- **Calibrated learned stopping**: after the hard divergence, budget, depth,
+  fixed-depth, and residual-convergence invariants, a pinned task-disjoint
+  logistic head may stop only when update-quality and expected-value-of-compute
+  evidence are both measured. Its public inputs and decision are reconstructed
+  from signed update, loop, and cognitive-action receipts by the service.
 - **Overthinking guard**: track best-scoring state; revert on halt if the
   trajectory peaked early (recurrent-depth literature's overthinking failure).
 

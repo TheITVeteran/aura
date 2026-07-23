@@ -708,18 +708,29 @@ class CortexConfig:
                 if mode not in {"residual", "learned"}:
                     problems.append("halting.mode must be residual or learned")
                 head_path = self.halting.get("head_path")
+                head_sha256 = self.halting.get("head_sha256")
                 if mode == "learned" and (
                     not isinstance(head_path, str) or not head_path.strip()
                 ):
                     problems.append("halting.learned requires head_path")
-                threshold = self.halting.get("threshold")
-                if threshold is not None and (
-                    isinstance(threshold, bool)
-                    or not isinstance(threshold, (int, float))
-                    or not 0.0 < float(threshold) < 1.0
+                if mode == "learned" and (
+                    not isinstance(head_sha256, str)
+                    or len(head_sha256) != 64
+                    or any(
+                        character not in "0123456789abcdef"
+                        for character in head_sha256
+                    )
                 ):
-                    problems.append("halting.threshold must be inside (0, 1)")
-                unknown = set(self.halting) - {"mode", "head_path", "threshold"}
+                    problems.append("halting.learned requires head_sha256")
+                if mode == "residual" and (
+                    head_path is not None or head_sha256 is not None
+                ):
+                    problems.append("halting.residual cannot carry a head")
+                unknown = set(self.halting) - {
+                    "mode",
+                    "head_path",
+                    "head_sha256",
+                }
                 if unknown:
                     problems.append(f"halting has unknown keys: {sorted(unknown)}")
         if self.update_gate is not None:
