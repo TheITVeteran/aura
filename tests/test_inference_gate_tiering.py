@@ -4375,15 +4375,24 @@ def test_conversation_status_recovery_schedule_is_cooldowned(monkeypatch):
     monkeypatch.setattr(gate, "_cortex_warmup_deferral_reason", lambda context="background": None)
     monkeypatch.setattr(gate, "_schedule_background_cortex_prewarm", lambda delay=12.0: scheduled.append(delay))
 
-    first = gate.get_conversation_status()
-    second = gate.get_conversation_status()
+    # CP126 ab3c124a: a plain OBSERVATION is pure — polling health endpoints
+    # must not schedule recovery work. The gate's own self-heal path opts in.
+    observed_first = gate.get_conversation_status()
+    observed_second = gate.get_conversation_status()
+    assert observed_first["conversation_ready"] is False
+    assert observed_second["conversation_ready"] is False
+    assert scheduled == [], "observing the lane scheduled background work"
+
+    first = gate.get_conversation_status(observe_only=False)
+    second = gate.get_conversation_status(observe_only=False)
 
     assert first["conversation_ready"] is False
     assert second["conversation_ready"] is False
+    # ...and the ratchet that DOES act is still cooldowned.
     assert scheduled == [2.0]
 
     gate._last_status_recovery_schedule_at -= 31.0
-    gate.get_conversation_status()
+    gate.get_conversation_status(observe_only=False)
     assert scheduled == [2.0, 2.0]
 
 

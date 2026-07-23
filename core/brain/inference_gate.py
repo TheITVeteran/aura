@@ -132,10 +132,26 @@ def _verified_cloud_generation_metadata(
     value: Any,
     *,
     endpoint_prefix: str = "",
+    require_provider_receipt: bool = False,
 ) -> bool:
-    """Accept only structured results from a verified non-local endpoint."""
+    """Accept only structured results from a non-local endpoint.
+
+    CP126 8ff3084b — HONEST BOUND. A result is treated as a real cloud
+    generation on the strength of its own ``ok`` / ``is_local`` /
+    ``provider_verified`` fields plus plausible strings. There is no
+    authenticated provider receipt, response signature, or request nonce to
+    check, because the adapters do not produce one — so this cannot be made
+    into a genuine verification here. What it CAN stop doing is treating
+    configuration-derived attribution as if it were proof: when the router
+    reports ``provider_attribution == "router_configuration"`` the weaker
+    basis is recorded, and callers that need real provenance can demand a
+    receipt with ``require_provider_receipt=True``.
+    """
 
     if not isinstance(value, dict) or value.get("ok") is not True:
+        return False
+    attribution = str(value.get("provider_attribution") or "").strip()
+    if require_provider_receipt and attribution != "provider_receipt":
         return False
     endpoint = str(value.get("endpoint") or "").strip()
     provider = str(value.get("provider") or "").strip().lower()
@@ -148,6 +164,15 @@ def _verified_cloud_generation_metadata(
         return False
     if endpoint_prefix and not endpoint.startswith(endpoint_prefix):
         return False
+    if attribution and attribution != "provider_receipt":
+        _record_inference_degradation(
+            RuntimeError(f"cloud_provenance_attributed_not_verified:{attribution}"),
+            action=(
+                "accepted a cloud generation attributed from router configuration "
+                "rather than an authenticated provider receipt"
+            ),
+            severity="debug",
+        )
     return True
 
 
@@ -1691,7 +1716,8 @@ class InferenceGate:
         if self._foreground_user_turn_active() or self._foreground_owner_active():
             return  # Don't interfere with active user turn
 
-        lane = self.get_conversation_status()
+        # This IS the self-heal path: it may act on what it observes.
+        lane = self.get_conversation_status(observe_only=False)
         lane_state = str(lane.get("state", "") or "").lower()
 
         # 1. Detect dead cortex and trigger recovery.
@@ -1795,7 +1821,16 @@ class InferenceGate:
                 if hasattr(self._mlx_client, "note_lane_recovering"):
                     self._mlx_client.note_lane_recovering("watchdog_state_correction")
 
-    def get_conversation_status(self) -> dict[str, Any]:
+    def get_conversation_status(self, *, observe_only: bool = True) -> dict[str, Any]:
+        """Snapshot the conversation lane.
+
+        CP126 ab3c124a: this method is polled by routers, probes, audits,
+        health endpoints and the neural stream, yet OBSERVING it could schedule
+        background recovery work — so poll frequency changed runtime behavior.
+        It is now PURE by default. The gate's own self-heal paths opt into the
+        ratchet with ``observe_only=False``; a cooldown still bounds how often
+        that can fire.
+        """
         # [STABILITY v53] Default to "cold" not "warming" — only report warming
         # when something is actually in flight. Prevents zombie warming state.
         _default_state = "failed" if self._init_error else "cold"
@@ -1957,8 +1992,13 @@ class InferenceGate:
                     lane["state"] = "recovering"
                     lane["last_failure_reason"] = f"prewarm_failed:{type(exc).__name__}"
                     # Auto-trigger recovery if not already in progress
-                    if not self._cortex_recovery_in_progress and not (
-                        self._deferred_prewarm_task and not self._deferred_prewarm_task.done()
+                    if (
+                        not observe_only
+                        and not self._cortex_recovery_in_progress
+                        and not (
+                            self._deferred_prewarm_task
+                            and not self._deferred_prewarm_task.done()
+                        )
                     ):
                         try:
                             warmup_deferral = self._cortex_warmup_deferral_reason("background")

@@ -3634,6 +3634,21 @@ class HealthAwareLLMRouter:
                     # inspection; it must NOT be certified as a verified
                     # provider response (empty or error-marker output was
                     # previously receipted as a successful provider call).
+                    # CP126 3bc237f4 / inference-gate 8ff3084b. These fields
+                    # come from the router's OWN endpoint record — they are an
+                    # ATTRIBUTION, not a verification: no provider signature,
+                    # response nonce, or transport attestation was checked. A
+                    # misregistered, proxied, or deceptive client would be
+                    # described exactly the same way. Say which basis was used
+                    # so consumers can stop treating configuration as proof.
+                    provider_receipt = result.get("provider_receipt")
+                    receipt_backed = isinstance(provider_receipt, dict) and bool(
+                        provider_receipt.get("signature")
+                        or provider_receipt.get("response_id")
+                    )
+                    result["provider_attribution"] = (
+                        "provider_receipt" if receipt_backed else "router_configuration"
+                    )
                     result["provider_verified"] = not benchmark_uncertified
                     result["fallback_chain"] = [dict(item) for item in fallback_chain]
                     # [TELEMETRY] Update for UI reporting

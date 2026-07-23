@@ -636,7 +636,9 @@ class TestProactiveWatchdogWarmupRace:
         gate._deferred_prewarm_task = None
         gate._foreground_user_turn_active = lambda: False
         gate._foreground_owner_active = lambda: False
-        gate.get_conversation_status = lambda: {"state": "warming"}
+        # CP126 ab3c124a: observation is pure by default; the self-heal path
+        # opts in with observe_only=False, so the stub accepts it.
+        gate.get_conversation_status = lambda **_kwargs: {"state": "warming"}
         gate._recovery_calls = []
         if first_seen_age_s is not None:
             gate._cortex_not_alive_first_seen_at = time.time() - first_seen_age_s
