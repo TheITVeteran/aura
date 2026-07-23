@@ -129,6 +129,8 @@ class BranchState:
     verified_best_observation: dict[str, Any] = field(default_factory=dict)
     verified_best_trace: list[dict[str, Any]] = field(default_factory=list)
     verified_finalization: dict[str, Any] = field(default_factory=dict)
+    uncertainty_runtime: Any = None
+    uncertainty_trace: list[dict[str, Any]] = field(default_factory=list)
 
     def to_receipt(self) -> dict[str, Any]:
         receipt = {
@@ -560,6 +562,33 @@ class BranchEnsemble:
                     "features_sha256": gate_decision.features_sha256,
                 }
             )
+            if (
+                branch.uncertainty_runtime is not None
+                and branch.uncertainty_runtime.mode == "learned"
+            ):
+                branch.uncertainty_trace.append(
+                    branch.uncertainty_runtime.observe(
+                        reasoning_post_state,
+                        branch_index=branch.index,
+                        branch_step=branch.steps,
+                        state_sha256=reasoning_post_sha256,
+                    )
+                )
+                head = branch.uncertainty_runtime.head
+                hidden_width = (
+                    0
+                    if head is None
+                    else int(head.input_weights.shape[1])
+                )
+                budget.charge_tensor_work(
+                    "neural_uncertainty_head",
+                    element_reads=int(reasoning_post_state.size),
+                    host_scalar_ops=(
+                        int(reasoning_post_state.size)
+                        + int(reasoning_post_state.shape[-1]) * hidden_width
+                        + hidden_width
+                    ),
+                )
             branch.recurrent_grounding_trace.append(
                 {
                     "ordinal": len(branch.recurrent_grounding_trace),

@@ -481,6 +481,10 @@ class CortexConfig:
     # artifact and its exact SHA-256; an unreadable or changed head refuses the
     # episode. None/passthrough preserves historical recurrence explicitly.
     update_gate: dict[str, Any] | None = None
+    # Hidden-state correctness/entropy measurement. Learned mode requires a
+    # task-disjoint calibrated artifact and exact SHA-256. None/unavailable
+    # emits no confidence rather than substituting generated self-report.
+    uncertainty_head: dict[str, Any] | None = None
     # Checked historical branch-error correlations. None is an explicit
     # bootstrap state: duplicate programs still collapse, but no empirical
     # relationship is invented before independently graded paired outcomes.
@@ -771,6 +775,47 @@ class CortexConfig:
                 if unknown:
                     problems.append(
                         f"update_gate has unknown keys: {sorted(unknown)}"
+                    )
+        if self.uncertainty_head is not None:
+            if not isinstance(self.uncertainty_head, dict):
+                problems.append("uncertainty_head must be a mapping or null")
+            else:
+                mode = self.uncertainty_head.get("mode", "unavailable")
+                if mode not in {"unavailable", "learned"}:
+                    problems.append(
+                        "uncertainty_head.mode must be unavailable or learned"
+                    )
+                head_path = self.uncertainty_head.get("head_path")
+                head_sha256 = self.uncertainty_head.get("head_sha256")
+                if mode == "learned" and (
+                    not isinstance(head_path, str) or not head_path.strip()
+                ):
+                    problems.append("uncertainty_head.learned requires head_path")
+                if mode == "learned" and (
+                    not isinstance(head_sha256, str)
+                    or len(head_sha256) != 64
+                    or any(
+                        character not in "0123456789abcdef"
+                        for character in head_sha256
+                    )
+                ):
+                    problems.append(
+                        "uncertainty_head.learned requires head_sha256"
+                    )
+                if mode == "unavailable" and (
+                    head_path is not None or head_sha256 is not None
+                ):
+                    problems.append(
+                        "uncertainty_head.unavailable cannot carry a head"
+                    )
+                unknown = set(self.uncertainty_head) - {
+                    "mode",
+                    "head_path",
+                    "head_sha256",
+                }
+                if unknown:
+                    problems.append(
+                        f"uncertainty_head has unknown keys: {sorted(unknown)}"
                     )
         if self.escape is not None:
             if not isinstance(self.escape, dict):
@@ -1094,6 +1139,9 @@ class EpisodeReceipt:
     # Confidence-bound, branch-local best-state promotions and preservations.
     # Empty/default traces mean no verifier earned state-selection authority.
     verified_best_state: dict[str, Any] = field(default_factory=dict)
+    # Objective hidden-state correctness probability and predictive entropy.
+    # Unavailable mode is explicit and emits no observations.
+    neural_uncertainty: dict[str, Any] = field(default_factory=dict)
     # Neural-bytecode trace: one event per non-window instruction the
     # schedule program executed (exchange/savepoint/verify_probe outcomes,
     # probe scores, backtracks). Empty for plain window programs.
@@ -1305,6 +1353,7 @@ class EpisodeReceipt:
             "escape": dict(self.escape),
             "halting": dict(self.halting),
             "verified_best_state": dict(self.verified_best_state),
+            "neural_uncertainty": dict(self.neural_uncertainty),
             "bytecode_events": [dict(row) for row in self.bytecode_events],
             "value_of_computation": dict(self.value_of_computation),
             "cognitive_action_trace": [

@@ -206,6 +206,10 @@ def _recurrent_grounding_fields(config, *, steps=1):
     from core.brain.llm.latent_cortex.loop_stability import (
         build_loop_stability_receipt,
     )
+    from core.brain.llm.latent_cortex.neural_uncertainty import (
+        NeuralUncertaintyRuntime,
+        build_neural_uncertainty_receipt,
+    )
     from core.brain.llm.latent_cortex.recurrent_grounding import (
         build_recurrent_grounding_receipt,
     )
@@ -358,6 +362,7 @@ def _recurrent_grounding_fields(config, *, steps=1):
                     "reverted": False,
                     "fixed_depth": executed.recurrence.fixed_depth,
                 },
+                uncertainty_trace=[],
             )
         )
     receipt = build_recurrent_grounding_receipt(
@@ -434,6 +439,15 @@ def _recurrent_grounding_fields(config, *, steps=1):
         cognitive_action_trace=[],
         loop_stability=loop_stability,
     )
+    neural_uncertainty_receipt = build_neural_uncertainty_receipt(
+        branches=branches,
+        runtime=NeuralUncertaintyRuntime.from_config(
+            executed.uncertainty_head
+        ),
+        update_acceptance=update_acceptance_receipt,
+        selected_branch=0,
+        selection_basis="convergence",
+    )
     return {
         "cognitive_slots": [],
         "selected_branch": 0,
@@ -444,6 +458,7 @@ def _recurrent_grounding_fields(config, *, steps=1):
         "update_acceptance": update_acceptance_receipt,
         "halting": halting_receipt,
         "verified_best_state": verified_best_receipt,
+        "neural_uncertainty": neural_uncertainty_receipt,
         "cognitive_action_trace": [],
     }
 
@@ -570,6 +585,7 @@ def test_config_from_job_defaults_are_conservative():
     assert cfg.fast_weights.enabled is False
     assert cfg.verifier_probe_max_tokens == 48
     assert cfg.verifier_accept_non_regression is False
+    assert cfg.uncertainty_head is None
     assert cfg.validate() == []
 
 
@@ -592,6 +608,17 @@ def test_config_from_job_rejects_out_of_band_requests():
         config_from_job({"verifier_probe_max_tokens": 15})
     with pytest.raises(ValueError, match="JSON boolean"):
         config_from_job({"verifier_accept_non_regression": "true"})
+    with pytest.raises(ValueError, match="requires head_path"):
+        config_from_job({"uncertainty_head": {"mode": "learned"}})
+    with pytest.raises(ValueError, match="cannot carry a head"):
+        config_from_job(
+            {
+                "uncertainty_head": {
+                    "mode": "unavailable",
+                    "head_path": "/tmp/not-used",
+                }
+            }
+        )
 
 
 def test_config_from_job_maps_every_advanced_mechanism():
@@ -2422,6 +2449,55 @@ def test_service_reconstructs_verified_best_and_rejects_rehashed_state_lie():
     assert "verified_best_state_unproven" in (
         LatentCortexService._receipt_contract_errors(forged, config)
     )
+
+
+def test_service_reconstructs_uncertainty_and_rejects_rehashed_head_lie():
+    from core.brain.llm.latent_cortex.loop_core import canonical_sha256
+
+    config = {"n_slots": 8, "n_branches": 2}
+    receipt = {
+        **_identity_receipt(),
+        "n_slots": 8,
+        "n_branches": 2,
+        **_recurrent_grounding_fields(config, steps=3),
+    }
+    assert "neural_uncertainty_unproven" not in (
+        LatentCortexService._receipt_contract_errors(receipt, config)
+    )
+
+    forged = copy.deepcopy(receipt)
+    uncertainty = forged["neural_uncertainty"]
+    uncertainty["head_sha256"] = "a" * 64
+    uncertainty["receipt_sha256"] = canonical_sha256(
+        {
+            key: value
+            for key, value in uncertainty.items()
+            if key != "receipt_sha256"
+        }
+    )
+    assert "neural_uncertainty_unproven" in (
+        LatentCortexService._receipt_contract_errors(forged, config)
+    )
+
+
+def test_service_uncertainty_validation_contains_invalid_config():
+    config = {
+        "n_slots": 8,
+        "n_branches": 2,
+        "uncertainty_head": {"mode": "learned"},
+    }
+    receipt = {
+        **_identity_receipt(),
+        "n_slots": 8,
+        "n_branches": 2,
+        **_recurrent_grounding_fields(
+            {"n_slots": 8, "n_branches": 2},
+            steps=3,
+        ),
+    }
+    errors = LatentCortexService._receipt_contract_errors(receipt, config)
+    assert "update_acceptance_unproven" in errors
+    assert "neural_uncertainty_unproven" in errors
 
 
 def test_service_reconstructs_and_rejects_branch_exchange_tampering():

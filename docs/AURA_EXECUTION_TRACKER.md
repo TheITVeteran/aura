@@ -25948,3 +25948,72 @@ approximately 64-331 records remaining, 54.8%-86.3% checkpoint-count completion,
 and a 67.1% midpoint planning estimate. Next: publish CP341, then implement
 SPARK-028's calibrated neural uncertainty head. Final multi-hour soaks remain
 deferred until every shorter gate is green.
+
+## Checkpoint 2026-07-23-342: Hidden States Measure Their Own Error Risk
+
+RLC now has a model-width-aware two-layer neural correctness head over admitted
+hidden states. Its training examples require bounded finite hidden vectors,
+objective correctness labels, unique hidden-state and independently graded
+outcome receipts, independent verifier identity, class support, and at least
+four tasks in each split. Training and calibration example identities and task
+sets must be disjoint. Generated statements about confidence are never an
+input.
+
+The deterministic trainer standardizes from training data only, optimizes both
+tanh and output layers, temperature-calibrates on held-out logits, and selects
+a held-out decision threshold under a false-positive constraint. Admission
+requires AUC >= 0.75, balanced accuracy >= 0.70, Brier <= 0.22, ten-bin ECE <=
+0.15, and false-positive rate <= 0.25. Five reliability bins carry exact counts,
+successes, observed rates, and Wilson bounds; sparse bins abstain instead of
+extrapolating confidence.
+
+The artifact commits input/model width, disjoint dataset and task identities,
+metrics, reliability evidence, normalization, both learned layers, temperature,
+and threshold. It is published through Aura's durable atomic writer and loaded
+through a bounded stable no-follow descriptor under an exact configured
+SHA-256. Changed bytes, symlinks, malformed shapes, non-finite values,
+fabricated admission verdicts, wrong model width, and uncalibrated heads refuse
+learned execution.
+
+Every recurrent transition measures the exact reasoning state admitted by the
+update gate. The worker records its state commitment, rounded pooled hidden
+vector and commitment, pinned head, correctness probability, normalized
+predictive entropy, empirical confidence interval, calibration bin/support, and
+abstention reason. The service reloads the configured head and independently
+recomputes each estimate from that receipted vector, cross-bound to the exact
+update-acceptance transition. Tensor reads and neural/host operations are
+charged to the resource ledger.
+
+The signal is operational rather than decorative. If every branch has a
+supported latest estimate and no admitted task verifier overrides it, branch
+selection uses the highest predicted-correctness state. Sparse or unavailable
+measurements preserve the established convergence selector; an admitted task
+verifier retains higher authority. The receipt proves all latest scores,
+eligibility, selection basis, selected branch, and whether the neural head was
+causal.
+
+Validation: focused objective-label, calibration, leakage, duplicate-evidence,
+weak-head refusal, lesion, persistence, symlink, byte/rehashed-metric tamper,
+exact pooling, disabled non-invention, width-mismatch, source-tamper, and live
+receipt tests pass 13/13. A real tiny-Qwen two-branch path emits one observation
+per admitted transition and causally selects the higher supported
+predicted-correctness branch; that causal test passes three additional repeated
+runs. The affected engine, schedule/branch, worker-origin, service, resource,
+update/stop, verified-best, value-of-computation, and epistemic-runtime gate
+passes 254/254 in 137.07 seconds. The final fixed-snapshot RLC, latent-cortex,
+recurrence/training, global-workspace, GWT, and execution-controller ownership
+gate passes 1338/1338 in 707.61 seconds. Strict focused Ruff, bytecode
+compilation, and `git diff --check` pass.
+
+SPARK-028 closes at the bounded training, calibration, runtime measurement,
+causal-selection, accounting, and independent reconstruction boundary. No
+resident-32B uncertainty head or powered broad-task campaign ran. External
+outcome trust roots remain part of SPARK-071, and utility, adapter/RLC positive
+interaction, reasoning gain, and frontier capability remain unproven. The
+capability verdict remains negative/no-signal.
+
+This is total checkpoint record 403. The forecast remains 466-733 total records,
+approximately 63-330 records remaining, 55.0%-86.5% checkpoint-count completion,
+and a 67.2% midpoint planning estimate. Next: publish CP342, then implement
+SPARK-029's subtle mistake locator. Final multi-hour soaks remain deferred until
+every shorter gate is green.

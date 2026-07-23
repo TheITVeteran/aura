@@ -66,6 +66,15 @@ changes the answer — that is the causality contract.
   logistic head may stop only when update-quality and expected-value-of-compute
   evidence are both measured. Its public inputs and decision are reconstructed
   from signed update, loop, and cognitive-action receipts by the service.
+- **Neural uncertainty**: a model-width-aware two-layer head reads the pooled
+  admitted hidden state, not generated confidence language. It is trained on
+  independently graded correctness outcomes and admitted only after a
+  task-disjoint held-out split passes discrimination, calibration, error-rate,
+  and support gates. Every step emits correctness probability, predictive
+  entropy, empirical bounds, calibration support, and state commitments.
+  When every branch has supported evidence and no admitted task verifier
+  overrides it, the head causally selects the highest predicted-correctness
+  branch; sparse bins abstain and preserve the convergence selector.
 - **Confidence-bound overthinking guard**: an ordinary scalar verifier remains
   ranking-only. A branch can promote a state only from independently committed
   deterministic-exact evidence or a calibrated interval with at least eight

@@ -801,6 +801,25 @@ class LatentCortexService:
         except (ImportError, OSError, TypeError, ValueError):
             errors.append("update_acceptance_unproven")
         try:
+            from core.brain.llm.latent_cortex.neural_uncertainty import (
+                NeuralUncertaintyRuntime,
+                validate_neural_uncertainty_receipt,
+            )
+            from core.brain.llm.latent_cortex.worker_handler import config_from_job
+
+            executed_config = config_from_job(config)
+            expected_uncertainty = NeuralUncertaintyRuntime.from_config(
+                executed_config.uncertainty_head
+            )
+            validate_neural_uncertainty_receipt(
+                receipt.get("neural_uncertainty"),
+                expected_runtime=expected_uncertainty,
+                update_acceptance=receipt.get("update_acceptance"),
+                expected_n_branches=int(config.get("n_branches") or 0),
+            )
+        except (ImportError, OSError, TypeError, ValueError):
+            errors.append("neural_uncertainty_unproven")
+        try:
             from core.brain.llm.latent_cortex.stop_gate import (
                 StopGateRuntime,
                 validate_stop_gate_receipt,

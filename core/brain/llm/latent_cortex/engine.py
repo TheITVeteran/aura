@@ -1595,8 +1595,10 @@ class LatentCortexEngine:
             for branch in ensemble.branches:
                 branch.halting.stop_gate = stop_gate
         update_gate = self._resolve_update_gate()
+        uncertainty_runtime = self._resolve_uncertainty_head()
         for branch in ensemble.branches:
             branch.update_gate = update_gate
+            branch.uncertainty_runtime = uncertainty_runtime
         if ensemble.branches and ensemble.branches[0].workspace.context_slots:
             seeded = ensemble.branches[0].workspace.context_slots
             from core.brain.llm.latent_cortex.cognitive_context import (
@@ -2198,6 +2200,35 @@ class LatentCortexEngine:
         receipt.exchanges = ensemble.exchanges
 
         # ── Branch selection ─────────────────────────────────────────────
+        uncertainty_scores = {
+            branch.index: float(
+                branch.uncertainty_trace[-1]["estimate"][
+                    "correctness_probability"
+                ]
+            )
+            for branch in ensemble.branches
+            if (
+                branch.uncertainty_trace
+                and branch.uncertainty_trace[-1]["estimate"]["supported"]
+            )
+        }
+        uncertainty_selection_eligible = len(uncertainty_scores) == len(
+            ensemble.branches
+        )
+
+        def select_without_task_verifier():
+            if uncertainty_selection_eligible:
+                return ensemble.select(
+                    score_fn=lambda branch: uncertainty_scores[branch.index]
+                )
+            return ensemble.select()
+
+        winner = select_without_task_verifier()
+        selection_basis = (
+            "neural_uncertainty"
+            if uncertainty_selection_eligible
+            else "convergence"
+        )
         branch_probe_cost = self._verifier_probe_layer_apps(
             bridge_tokens,
             count=len(ensemble.branches),
@@ -2241,19 +2272,20 @@ class LatentCortexEngine:
                 receipt.flag(f"branch_decoy_review_failed:{type(exc).__name__}")
                 branch_probe_texts = {}
                 verifier = None
-                winner = ensemble.select()
+                winner = select_without_task_verifier()
             else:
                 if receipt.decoy_verification["selection_admitted"]:
                     verifier = pending_verifier
                     winner = ensemble.select(
                         score_fn=lambda branch: blind_scores[branch.index]
                     )
+                    selection_basis = "task_verifier"
                     if math.isfinite(float(winner.score)):
                         branch_verifier_score = float(winner.score)
                 else:
                     receipt.flag("branch_verifier_decoy_calibration_failed")
                     verifier = None
-                    winner = ensemble.select()
+                    winner = select_without_task_verifier()
             # CP180: selection is auditable against the PUBLIC contract —
             # each probe's contract verdict (complete/valid/why-not) lands
             # in the receipt beside the scalar scores.
@@ -2279,7 +2311,7 @@ class LatentCortexEngine:
             if pending_verifier is not None and self.tokenizer is not None:
                 receipt.flag("branch_verifier_skipped_budget")
             verifier = None
-            winner = ensemble.select()
+            winner = select_without_task_verifier()
         receipt.branch_scores = [float(b.score) for b in ensemble.branches]
         receipt.selected_branch = winner.index
         receipt.steps_taken = winner.steps
@@ -2351,6 +2383,17 @@ class LatentCortexEngine:
             and not receipt.update_acceptance["head_was_causal"]
         ):
             receipt.flag("learned_update_gate_not_causal")
+        from core.brain.llm.latent_cortex.neural_uncertainty import (
+            build_neural_uncertainty_receipt,
+        )
+
+        receipt.neural_uncertainty = build_neural_uncertainty_receipt(
+            branches=list(ensemble.branches),
+            runtime=uncertainty_runtime,
+            update_acceptance=receipt.update_acceptance,
+            selected_branch=winner.index,
+            selection_basis=selection_basis,
+        )
         escape_receipts: dict[str, Any] = {}
         for branch in ensemble.branches:
             if branch.escape is not None and branch.escape.attempts:
@@ -2974,6 +3017,36 @@ class LatentCortexEngine:
         gate = UpdateGateRuntime.from_config(config)
         self._update_gate_cache = (cache_key, gate)
         return gate
+
+    def _resolve_uncertainty_head(self):
+        """Load the pinned calibrated hidden-state correctness head."""
+
+        from core.brain.llm.latent_cortex.neural_uncertainty import (
+            NeuralUncertaintyRuntime,
+        )
+
+        config = self.config.uncertainty_head
+        if not config or str(config.get("mode", "unavailable")) == "unavailable":
+            return NeuralUncertaintyRuntime.from_config(config)
+        path = Path(str(config.get("head_path", ""))).expanduser()
+        try:
+            stat = path.stat()
+        except OSError as exc:
+            raise ValueError(
+                f"learned uncertainty requested but head is unreadable: {path}"
+            ) from exc
+        cache_key = (
+            str(path),
+            str(config.get("head_sha256", "")),
+            stat.st_mtime_ns,
+            stat.st_size,
+        )
+        cached = getattr(self, "_uncertainty_head_cache", None)
+        if cached is not None and cached[0] == cache_key:
+            return cached[1]
+        runtime = NeuralUncertaintyRuntime.from_config(config)
+        self._uncertainty_head_cache = (cache_key, runtime)
+        return runtime
 
     # ── Fast-weight helpers ─────────────────────────────────────────────
     def _enforce_fast_weight_canaries(

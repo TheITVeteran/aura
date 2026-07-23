@@ -772,9 +772,50 @@ before those dependencies close is not admissible.
   the mechanism and proof boundary only. The bounded verifier still depends on
   its caller's evidence commitment pending SPARK-071's external trust roots;
   no resident-32B broad-task utility or frontier claim is accepted here.
-- [ ] **SPARK-028 - Neural uncertainty head.** Train and calibrate a hidden-state
+- [x] **SPARK-028 - Neural uncertainty head.** Train and calibrate a hidden-state
   correctness/entropy head at claim or step granularity; do not substitute
   self-reported confidence.
+
+  A model-width-aware two-layer tanh head now learns directly from pooled
+  admitted hidden states. Training examples require unique state and outcome
+  receipts, independent verifier identity, objective boolean correctness
+  labels, bounded finite vectors, class support, and at least four tasks per
+  split. Training and calibration examples and task sets must be disjoint.
+  The deterministic optimizer standardizes only from training data, trains all
+  neural weights, temperature-calibrates on held-out logits, and selects a
+  held-out threshold under a false-positive constraint.
+
+  Admission requires calibration AUC >= 0.75, balanced accuracy >= 0.70, Brier
+  <= 0.22, ten-bin ECE <= 0.15, and false-positive rate <= 0.25. Five empirical
+  reliability bins carry independently reconstructable counts, rates, and
+  Wilson bounds. A sparse prediction bin abstains. The artifact commits model
+  width, hidden width, disjoint dataset/task identities, metrics, reliability,
+  temperature, threshold, normalization, and both neural layers. Publication
+  uses Aura's durable atomic writer; loading is bounded, no-follow, stable,
+  exact-SHA-pinned, and refuses malformed, changed, uncalibrated, wrong-width,
+  or rehashed artifacts.
+
+  The live branch loop measures the exact admitted reasoning state after every
+  update decision. It receipts the rounded pooled vector, vector and state
+  commitments, pinned head, correctness probability, normalized predictive
+  entropy, empirical interval, calibration support, and abstention. The service
+  reloads the configured artifact and independently recomputes every estimate
+  from the receipted head input, cross-bound to the update-acceptance
+  transition. Work is charged to the structural resource ledger.
+
+  The head has bounded causal authority rather than being decorative. When all
+  branches have a supported latest estimate and no admitted external task
+  verifier supersedes it, branch selection uses the highest predicted
+  correctness; otherwise the existing task-verifier/convergence hierarchy is
+  preserved. The receipt proves eligibility, all latest scores, selection
+  basis, selected branch, and whether neural uncertainty changed authority.
+
+  Objective-label, weak-model refusal, leakage, duplicate-evidence, lesion,
+  persistence, symlink, byte-tamper, rehashed-metric, exact pooling, disabled
+  non-invention, width-mismatch, source-tamper, service, and real tiny-Qwen
+  two-branch tests close the bounded mechanism boundary. The resident 32B has no
+  trained/pinned uncertainty head yet, and external outcome trust roots remain
+  part of SPARK-071; no broad utility or frontier claim is accepted here.
 - [ ] **SPARK-029 - Mistake locator.** Train a span/transition locator on
   in-domain and out-of-domain subtle errors; evaluate location accuracy before
   using it to steer repair.
@@ -1090,8 +1131,26 @@ fixed-snapshot RLC, latent-cortex, recurrence/training, global-workspace, GWT,
 and execution-controller ownership gate passes 1323/1323 in 912.53 seconds.
 Strict focused Ruff, bytecode compilation, and `git diff --check` pass.
 
-This is total checkpoint record 402. The revised forecast remains 466-733 total
-records, now approximately 64-331 records after this checkpoint. Checkpoint-
-count completion is approximately 54.8%-86.3%, with a midpoint planning
-estimate of 67.1%. Next: publish CP341, then implement SPARK-028's calibrated
-neural uncertainty head.
+CP342 closes the hidden-state neural uncertainty mechanism and its bounded
+causal authority. Correctness and entropy now come from an objectively trained,
+task-disjoint calibrated neural head over the admitted recurrent state rather
+than self-reported confidence. Sparse bins abstain; supported measurements can
+select among branches only when an admitted task verifier does not supersede
+them. The service reconstructs the exact head estimate and selection evidence.
+No resident-32B head or powered broad-task campaign ran, so the negative
+frontier verdict is unchanged.
+
+CP342 validation passes 13/13 focused artifact/live tests, three repeated real
+tiny-Qwen causal-selection runs, and the affected engine, schedule/branch,
+worker-origin, service, resource, update/stop, verified-best,
+value-of-computation, and epistemic-runtime gate 254/254 in 137.07 seconds.
+The final fixed-snapshot RLC, latent-cortex, recurrence/training,
+global-workspace, GWT, and execution-controller ownership gate passes 1338/1338
+in 707.61 seconds. Strict focused Ruff, bytecode compilation, and `git diff
+--check` pass.
+
+This is total checkpoint record 403. The revised forecast remains 466-733 total
+records, now approximately 63-330 records after this checkpoint. Checkpoint-
+count completion is approximately 55.0%-86.5%, with a midpoint planning
+estimate of 67.2%. Next: publish CP342, then implement SPARK-029's subtle
+mistake locator.
