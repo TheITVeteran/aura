@@ -74,6 +74,21 @@ _ADMIT_MAX_FALSE_PASS_FLAG = declare(
 # arithmetic): admitted from birth, revocable by evidence.
 SEED_ADMITTED_DOMAINS = frozenset({"code", "math", "logic"})
 
+#: Ground-truth channels allowed to grade a verdict. CP126 cd3bd98e:
+#: grade_verdict accepted a free-form ``source`` string with no allowlist,
+#: grader identity, or independence check — so anything that could call the
+#: method could move reliability and admission by asserting a boolean.
+#: These are the channels that carry their own evidence trail; a caller
+#: naming anything else is refused rather than silently trusted.
+TRUSTED_GRADE_SOURCES = frozenset({
+    "audit",                 # governed audit trail
+    "prediction_resolution", # a prediction that later resolved
+    "action_outcome",        # an executed action's measured result
+    "human",                 # explicit human adjudication
+    "task_verifier",         # an independent task-level verifier
+    "frontier_battery",      # the frontier-gap battery's known-answer grading
+})
+
 _Z95 = 1.6449  # one-sided 95%
 
 
@@ -191,6 +206,12 @@ class VerifierFoundry:
         self._pending_order: list[str] = []
         self._revoked_seeds: set[str] = set()
         self._restore_errors = 0
+        # Events folded into memory whose durable write did not complete
+        # (CP126 1cd91c2e / 9d1a2e8c). Non-empty ⇒ in-memory governance state
+        # is not backed by the tamper-evident ledger.
+        self._unpersisted_events: set[str] = set()
+        # Verdicts already graded — a grade is a one-shot input (CP126 cd3bd98e).
+        self._graded_verdicts: set[str] = set()
 
         # durable writes on a dedicated thread — same no-on-loop-fsync
         # discipline as the covenant ledger
@@ -263,9 +284,24 @@ class VerifierFoundry:
                                    kind=f"foundry_{body['event']}",
                                    body=body,
                                    timestamp=float(body["timestamp"]))
+            with self._lock:
+                self._unpersisted_events.discard(str(body["event_id"]))
         except (OSError, RuntimeError, ImportError, ValueError) as exc:
+            # CP126 1cd91c2e + 9d1a2e8c. The event was ALREADY folded into
+            # live reliability state and callers already hold verdict ids and
+            # admission decisions derived from it, but it is not in the ledger
+            # (or its body landed without a matching chain record). Swallowing
+            # that as a degradation left memory governing admission while the
+            # durable, tamper-evident record disagreed.
+            #
+            # We cannot un-ring the bell for callers, so we do the honest
+            # thing: mark the divergence and let admission FAIL CLOSED until
+            # the ledger is reconciled.
+            with self._lock:
+                self._unpersisted_events.add(str(body["event_id"]))
             record_degradation("verifier_foundry", exc, severity="critical",
-                               action="foundry event held in memory only")
+                               action=("foundry event held in memory only; "
+                                       "admission fails closed until reconciled"))
 
     def flush_ledger(self, timeout: float = 5.0) -> bool:
         deadline = time.monotonic() + timeout
@@ -470,15 +506,42 @@ class VerifierFoundry:
     def grade_verdict(self, verdict_id: str, *, truth_pass: bool,
                       source: str) -> bool:
         """Reality arrived: grade a recorded verdict against ground truth.
-        ``source`` names the ground-truth channel (audit, prediction
-        resolution, action outcome, human)."""
+
+        ``source`` must name a TRUSTED ground-truth channel
+        (:data:`TRUSTED_GRADE_SOURCES`). CP126 cd3bd98e: this accepted any
+        free-form string, so a grade — the input that moves reliability and
+        therefore admission — could come from an unidentified caller with no
+        evidence trail behind it. An unrecognized source is refused and
+        receipted, not recorded as truth.
+
+        A verdict is also graded ONCE: re-grading the same verdict from a
+        second source would let a caller move reliability by repetition.
+        """
+        channel = str(source or "").strip().lower()[:64]
+        if channel not in TRUSTED_GRADE_SOURCES:
+            record_degradation(
+                "verifier_foundry",
+                PermissionError(f"untrusted_grade_source:{channel or 'unset'}"),
+                severity="error",
+                action="refused a ground-truth grade from an unrecognized channel",
+            )
+            return False
         with self._lock:
             if self._closed or verdict_id not in self._pending:
                 return False
+            if verdict_id in self._graded_verdicts:
+                record_degradation(
+                    "verifier_foundry",
+                    ValueError(f"duplicate_grade:{verdict_id}"),
+                    severity="warning",
+                    action="refused a second grade for an already-graded verdict",
+                )
+                return False
+            self._graded_verdicts.add(verdict_id)
             self._append_event("grade", {
                 "verdict_id": verdict_id,
                 "truth_pass": bool(truth_pass),
-                "source": str(source or "unknown")[:64],
+                "source": channel,
             })
         return True
 
@@ -562,6 +625,16 @@ class VerifierFoundry:
         pending revocation is still REPORTED as not-admitted either way, so
         an observer and the gate agree on the verdict.
         """
+        with self._lock:
+            diverged = len(self._unpersisted_events)
+        if diverged:
+            # In-memory reliability is ahead of (or divergent from) the
+            # durable ledger: admission would be governed by state no audit
+            # can reproduce.
+            return AdmissionDecision(
+                domain, False, "ledger_divergence",
+                {"unpersisted_events": diverged})
+
         graded, acc_lb, fp_ub = self._domain_evidence(domain)
 
         if domain in SEED_ADMITTED_DOMAINS and domain not in self._revoked_seeds:
@@ -643,6 +716,11 @@ class VerifierFoundry:
     def is_alive(self) -> bool:
         if self._closed or not self.events_path.parent.is_dir():
             return False
+        with self._lock:
+            if self._unpersisted_events:
+                # Memory and ledger disagree: the component is running but its
+                # governance evidence is not durable.
+                return False
         if not self._writer_started:
             # No writes yet: nothing has failed, so it is alive if it can
             # persist — the audit chain must itself be healthy, not merely

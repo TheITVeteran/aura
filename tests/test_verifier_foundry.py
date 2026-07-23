@@ -47,7 +47,7 @@ def _feed(foundry, *, verifier="probe", domain="factual", n=60,
                                      hard_pass=verdict_pass, score=0.9,
                                      checked=True)
         truth = verdict_pass if i >= wrong else (not verdict_pass)
-        foundry.grade_verdict(vid, truth_pass=truth, source="test_audit")
+        foundry.grade_verdict(vid, truth_pass=truth, source="audit")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -82,7 +82,7 @@ def test_grading_updates_accuracy_brier_and_false_pass(foundry):
 
 def test_grade_unknown_verdict_is_rejected(foundry):
     assert foundry.grade_verdict("vd-nonexistent", truth_pass=True,
-                                 source="test") is False
+                                 source="audit") is False
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -266,7 +266,7 @@ def test_registry_records_verdicts_into_foundry(tmp_path, monkeypatch):
         assert foundry.reliability("alpha", "factual").recorded == 1
         # grading through the returned ids closes the loop
         assert foundry.grade_verdict(verdicts["alpha"], truth_pass=True,
-                                     source="test")
+                                     source="audit")
         assert foundry.reliability("alpha", "factual").graded == 1
     finally:
         foundry.close()
@@ -398,7 +398,7 @@ def test_graded_verdict_leaves_pending_order(foundry):
     vid = foundry.record_verdict(verifier="v", domain="factual",
                                  hard_pass=True, score=0.9, checked=True)
     assert vid in foundry.pending_verdicts()
-    foundry.grade_verdict(vid, truth_pass=True, source="test")
+    foundry.grade_verdict(vid, truth_pass=True, source="audit")
     assert vid not in foundry.pending_verdicts()
 
 
@@ -408,7 +408,7 @@ def test_closed_foundry_refuses_new_events(foundry):
     assert foundry.is_alive() is False
     assert foundry.record_verdict(verifier="v", domain="factual",
                                   hard_pass=True, score=0.9, checked=True) == ""
-    assert foundry.grade_verdict("vd-anything", truth_pass=True, source="t") is False
+    assert foundry.grade_verdict("vd-anything", truth_pass=True, source="audit") is False
 
 
 def test_weak_verifier_is_not_hidden_by_a_strong_one(tmp_path):
