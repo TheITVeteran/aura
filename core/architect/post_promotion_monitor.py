@@ -51,7 +51,10 @@ class PostPromotionMonitor:
         status = PromotionStatus.MONITORING
         reason = "lightweight checks passed"
         if regression:
-            self.rollback_manager.restore(packet)
+            # A detected regression is a deliberate force-revert: the live
+            # generation is the broken one, so the intervening-work guard
+            # (CP126 2bcfa2c3) must not block recovery here.
+            self.rollback_manager.restore(packet, require_candidate_generation=False)
             rollback_triggered = True
             status = PromotionStatus.ROLLED_BACK
             reason = "delayed regression detected; rollback restored original files"

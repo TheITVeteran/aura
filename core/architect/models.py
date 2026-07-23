@@ -121,6 +121,10 @@ class ArchitecturalSmell:
     path: str
     symbol: str = ""
     evidence: tuple[str, ...] = ()
+    #: Machine-checkable static-analysis results backing this smell. CP126
+    #: a8434f1a: proof obligations were satisfied by matching WORDS in prose;
+    #: an artifact the verifier can actually inspect belongs on the smell.
+    static_proof: tuple[dict, ...] = ()
     graph_refs: tuple[str, ...] = ()
     suggested_tier: MutationTier = MutationTier.T1_CLEANUP
     proof_obligations: tuple[str, ...] = ()

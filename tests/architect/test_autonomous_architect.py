@@ -326,7 +326,10 @@ def test_rollback_packet_restores_original_content(tiny_repo: Path) -> None:
     manager = RollbackManager(cfg)
     packet = manager.dry_run(manager.create_packet(plan, shadow))
     (tiny_repo / "pkg" / "mod.py").write_text("broken = True\n", encoding="utf-8")
-    restored = manager.restore(packet)
+    # CP126 2bcfa2c3: restore now refuses to overwrite a live file that is no
+    # longer the generation this packet promoted, so recovering from a
+    # DAMAGED file is the explicit force-revert path.
+    restored = manager.restore(packet, require_candidate_generation=False)
     assert restored.post_restore_verified
     assert "import os" in (tiny_repo / "pkg" / "mod.py").read_text(encoding="utf-8")
 

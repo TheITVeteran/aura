@@ -101,6 +101,19 @@ class RefactorPlanner:
                     severity=smell_severity_for_imports(len(removals)),
                     path=node.path,
                     evidence=(f"unused imports: {', '.join(names[:8])}",),
+                    # CP126 a8434f1a: the T1 proof needs a CHECKABLE artifact,
+                    # not the word "unused_import" in some text. The AST
+                    # analysis actually ran here, so its result travels with
+                    # the smell and into the plan step's static_proof.
+                    static_proof=tuple(
+                        {
+                            "analysis": "ast_unused_import",
+                            "symbol": str(item["name"]),
+                            "line": int(item.get("line", 0) or 0),
+                            "proved": True,
+                        }
+                        for item in removals
+                    ),
                     graph_refs=(node.id,),
                     suggested_tier=MutationTier.T1_CLEANUP,
                     proof_obligations=("unused_import_static_proof", "shadow_imports_pass", "rollback_packet"),
@@ -144,7 +157,17 @@ class RefactorPlanner:
             new_content=new_source,
             invariants=("module parses", "public symbols preserved", "changed module imports"),
             rollback="restore original file from rollback packet",
-            metadata={"smell_id": smell.id, "static_proof": tuple(smell.evidence)},
+            metadata={
+                "smell_id": smell.id,
+                # One entry per proved removal — the artifact the T1 proof
+                # obligation verifies (CP126 a8434f1a).
+                "static_proof": (
+                    dict(getattr(smell, "static_proof", ())[0])
+                    if getattr(smell, "static_proof", ())
+                    else {}
+                ),
+                "static_proof_all": tuple(getattr(smell, "static_proof", ())),
+            },
         )
         proposal = MutationProposal(
             id=f"{plan_id}-proposal",

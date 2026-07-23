@@ -219,8 +219,17 @@ class AutonomousArchitectureGovernor:
     def load_shadow_run(self, run_id: str) -> ShadowRun:
         return self.shadow_manager.load_run(run_id)
 
-    def rollback(self, run_id: str) -> Any:
-        return self.rollback_manager.restore(run_id)
+    def rollback(self, run_id: str, *, force: bool = False) -> Any:
+        """Revert a promoted run.
+
+        By default this refuses when the live files are no longer the
+        generation the packet promoted (CP126 2bcfa2c3) — reverting then would
+        silently discard intervening work. ``force=True`` is the deliberate
+        recovery path.
+        """
+        return self.rollback_manager.restore(
+            run_id, require_candidate_generation=not force
+        )
 
     def monitor_status(self, *, run_id: str | None = None) -> Any:
         if run_id:
