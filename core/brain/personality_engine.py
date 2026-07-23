@@ -82,13 +82,28 @@ class EmotionalState:
 
     def trigger(self, amount: float, reason: str = ""):
         """Increase emotional intensity"""
-        self.intensity = min(100.0, self.intensity + amount)
+        # Reject non-finite/adversarial deltas so NaN/inf cannot corrupt the
+        # persisted intensity (NaN would propagate through every later min/max).
+        try:
+            amount = float(amount)
+        except (TypeError, ValueError):
+            return
+        if amount != amount or amount in (float("inf"), float("-inf")):
+            return
+        amount = max(-100.0, min(100.0, amount))
+        self.intensity = max(0.0, min(100.0, self.intensity + amount))
         self.last_trigger = time.time()
         self.trigger_count += 1
         logger.debug("💫 %s +%s → %.1f (%s)", self.name.upper(), amount, self.intensity, reason)
-    
+
     def decay(self, delta_time: float):
         """Natural decay towards base level"""
+        try:
+            delta_time = float(delta_time)
+        except (TypeError, ValueError):
+            return
+        if delta_time != delta_time or delta_time < 0.0 or delta_time in (float("inf"),):
+            return
         # Decay rate depends on how far from base
         distance = abs(self.intensity - self.base_level)
         decay_rate = distance * 0.05 * self.volatility * delta_time
@@ -484,11 +499,15 @@ class PersonalityEngine:
         profile = self.profiles[self.active_persona]
         style = profile.get("speaking_style", {})
         
-        # Word choice shifts
+        # Word choice shifts. The palette comes from a persona profile JSON;
+        # bound and clean the token so a malformed/hostile profile cannot append
+        # control characters or an oversized string to the reply.
         palette = style.get("lexical_palette", [])
         if palette and random.random() < 0.2:
-            token = random.choice(palette)
-            text += f" — {token}"
+            token = str(random.choice(palette))
+            token = "".join(ch for ch in token if ord(ch) >= 32).strip()[:60]
+            if token:
+                text += f" — {token}"
             
         # Emotive intensity
         emotive = style.get("emotive_level", "medium")
@@ -1001,15 +1020,18 @@ class PersonalityEngine:
         if hasattr(orchestrator, 'reply_queue'):
             original_put = orchestrator.reply_queue.put_nowait
             def filtered_put(item):
+                # Lexical styling FIRST, honesty/privacy guard LAST — otherwise
+                # the randomly-appended persona token bypassed the guard and
+                # could reintroduce unsafe text into an already-filtered reply.
                 if isinstance(item, str):
-                    item = self.filter_response(item)
                     item = self.apply_lexical_style(item)
+                    item = self.filter_response(item)
                     if not item:
                         logger.debug("PersonalityEngine: Suppressing empty filtered response.")
                         return
                 elif isinstance(item, dict) and 'message' in item:
-                    item['message'] = self.filter_response(item['message'])
                     item['message'] = self.apply_lexical_style(item['message'])
+                    item['message'] = self.filter_response(item['message'])
                     if not item['message']:
                         logger.debug("PersonalityEngine: Suppressing empty filtered message in dict.")
                         return
@@ -1033,8 +1055,9 @@ class PersonalityEngine:
             if hasattr(comm, 'queue_message'):
                 original_queue = comm.queue_message
                 def filtered_queue(content, emotion, urgency, context=None):
-                    content = self.filter_response(content)
+                    # Style first, honesty/privacy guard last (see filtered_put).
                     content = self.apply_lexical_style(content)
+                    content = self.filter_response(content)
                     return original_queue(content, emotion, urgency, context)
                 comm.queue_message = filtered_queue
                 logger.info("   [✓] Proactive comm filter active")

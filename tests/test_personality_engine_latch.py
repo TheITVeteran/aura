@@ -17,20 +17,24 @@ from core.container import ServiceContainer
 
 
 class TestLatchMechanism:
-    def test_double_latches_across_container_clear_without_reset(self):
+    def test_container_value_is_read_through_not_latched(self):
+        """The historical latch defect is FIXED: get_personality_engine reads
+        the container through on every call and never caches the registered
+        object into the module global, so clearing the container automatically
+        stops serving a registered double even WITHOUT an explicit reset."""
         from core.brain import personality_engine as pe
 
         pe.reset_personality_engine_for_test()
         double = SimpleNamespace(name="latch-proof-double")
         ServiceContainer.register_instance("personality_engine", double, required=False)
         try:
-            assert pe.get_personality_engine() is double, "container value latches"
+            assert pe.get_personality_engine() is double, "registered value wins while present"
             ServiceContainer.clear()
-            # THE DEFECT SHAPE: cleared container, latch still serves the double.
-            assert pe.get_personality_engine() is double, (
-                "the latch survives ServiceContainer.clear() — this is exactly "
-                "why the reset seam and conftest wiring exist"
-            )
+            # FIXED SHAPE: the read-through purges the double the moment the
+            # container is cleared — no stale SimpleNamespace poisons later callers.
+            resolved = pe.get_personality_engine()
+            assert resolved is not double, "read-through must not latch the double past clear"
+            assert hasattr(resolved, "get_personality_prompt"), "clear falls back to the real engine"
         finally:
             pe.reset_personality_engine_for_test()
             ServiceContainer.clear()
