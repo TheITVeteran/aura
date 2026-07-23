@@ -11,7 +11,6 @@ from core.architect.code_graph import LiveArchitectureGraphBuilder
 from core.architect.config import ASAConfig
 from core.architect.ghost_boot import GhostBootReport
 from core.architect.models import (
-    BehaviorDelta,
     MutationTier,
     ProofReceipt,
     ProofResult,

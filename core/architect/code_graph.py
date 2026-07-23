@@ -7,7 +7,7 @@ import json
 import os
 import sqlite3
 import time
-from collections import Counter, defaultdict
+from collections import Counter
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -20,7 +20,6 @@ from core.architect.models import (
     ArchitectureNode,
     OwnershipDomain,
     RuntimeReceipt,
-    SemanticSurface,
 )
 from core.architect.semantic_classifier import SemanticClassifier
 from core.runtime.atomic_writer import atomic_write_text

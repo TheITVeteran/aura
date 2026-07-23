@@ -11,7 +11,6 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from subprocess import SubprocessError, TimeoutExpired
-from typing import Any
 
 from core.architect.config import ASAConfig
 from core.architect.errors import ShadowWorkspaceError

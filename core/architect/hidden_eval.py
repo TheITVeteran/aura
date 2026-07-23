@@ -27,7 +27,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Deque, Dict, List, Optional
+from typing import Any, Callable, Deque, Dict, List
 
 import numpy as np
 
@@ -293,9 +293,12 @@ class HiddenEvalRunner:
                     line = line.strip()
                     if not line:
                         continue
-                    data = json.loads(line)
+                    # Validate that the line IS a result record, then count
+                    # the run. The parsed body was assigned and discarded,
+                    # which read as "we use this" while proving nothing.
+                    if not isinstance(json.loads(line), dict):
+                        continue
                     self._run_count = max(self._run_count, 1)
-                    # We just need the health score for drift detection
         except (OSError, IOError, json.JSONDecodeError, ValueError):
             return
 
