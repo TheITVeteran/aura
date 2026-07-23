@@ -2458,6 +2458,14 @@ class CognitiveEngine:
                 system_prompt = f"{system_prompt}\n{situation_directive}"
         if style_contract and not capability_inventory_contract:
             system_prompt = f"{system_prompt}\n{style_contract}"
+        persona_contract = str(context.get("persona_system_prompt") or "").strip()
+        if persona_contract:
+            # CP126 ab3abbae: persona conditioning arrives as a structured
+            # context field and is applied here, at SYSTEM role. It used to be
+            # string-prepended into the user objective, where later objective
+            # text could override it and it polluted task semantics, caching,
+            # memory and audit attribution.
+            system_prompt = f"{system_prompt}\n[PERSONA CONTRACT]\n{persona_contract[:2000]}"
         mind_context_contract = str(context.get("mind_context_contract") or "").strip()
         if isinstance(live_mind_context, dict) and live_mind_context:
             mind_context_limit = 900 if memory_state_contract else 360 if capability_inventory_contract else 2600
