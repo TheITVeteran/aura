@@ -298,8 +298,11 @@ def _validate_treatment_receipt(
     worker_boot_id: str,
     installed_app_build_sha256: str,
     reasons: list[str],
+    unproven_integrity_claims: list[str] | None = None,
 ) -> str:
     trial_id = str(trial.get("trial_id") or "unknown")
+    if unproven_integrity_claims is None:
+        unproven_integrity_claims = []
     receipt = trial.get("treatment_receipt")
     if not isinstance(receipt, dict):
         reasons.append(f"{trial_id}:treatment_receipt_missing")
@@ -313,6 +316,23 @@ def _validate_treatment_receipt(
     for key, expected in required_truths.items():
         if receipt.get(key) is not expected:
             reasons.append(f"{trial_id}:{key}_unproven")
+    # CP126 6090a5ae + 01e8b3c1. The control receipt already required DIGEST
+    # evidence for params_unchanged; the treatment receipt — the arm whose
+    # effect is being published — passed on the literal booleans above alone.
+    #
+    # A digest that REFUTES the claim is disqualifying: the boolean says the
+    # weights were untouched / the fast weights erased, and the measurement
+    # says otherwise. An ABSENT digest is a gap in the evidence chain, not a
+    # refutation; producers do not emit treatment-side weight_integrity yet, so
+    # rejecting on absence would make certification unachievable rather than
+    # more honest. Absence is surfaced on the certificate instead of counting
+    # as proof.
+    for claim in ("params_unchanged", "fast_weights_erased"):
+        verdict = _receipt_integrity_verdict(receipt, claim)
+        if verdict == "refuted":
+            reasons.append(f"{trial_id}:treatment_{claim}_refuted_by_digest")
+        elif verdict != "proven":
+            unproven_integrity_claims.append(f"treatment_{claim}")
     if str(receipt.get("checkpoint_fingerprint") or "") != checkpoint:
         reasons.append(f"{trial_id}:treatment_checkpoint_mismatch")
     if receipt.get("checkpoint_fingerprint_method") != "sha256" or type(
@@ -427,6 +447,63 @@ def _receipt_integrity_verdict(receipt: Any, claim: str) -> str:
     if proven is None:
         return "unproven"
     return "proven" if proven else "refuted"
+
+
+#: Everything that can make two arms decode differently. CP126 8a56c486: the
+#: arm-parity checks covered information hashes, tool policy, compute and run
+#: order but NOT the generation manifest, so an outcome difference could come
+#: from sampling rather than from the latent-cortex treatment.
+_ARM_GENERATION_PARITY_FIELDS: tuple[str, ...] = (
+    "decode_seed",
+    "decode_temperature",
+    "decode_top_p",
+    "decode_repetition_penalty_applied",
+    "decode_max_tokens",
+    "decode_stop_sequences_sha256",
+    "context_window_tokens",
+    "tokenizer_sha256",
+    "prompt_template_sha256",
+)
+
+
+def _validate_arm_generation_parity(
+    trial_id: str,
+    treatment_receipt: Any,
+    control_receipt: Any,
+    reasons: list[str],
+) -> list[str]:
+    """Both arms must have decoded the same way.
+
+    A DECLARED difference is disqualifying: the trial's outcome gap can come
+    from sampling rather than from the treatment, so the trial cannot feed the
+    paired claim.
+
+    A field neither arm declares is a real gap in the evidence chain, but the
+    producers do not emit the full generation manifest yet. Rejecting on it
+    would make certification permanently unachievable rather than more honest,
+    so undeclared fields are RETURNED as certificate-visible gaps (the claim
+    carries what it could not verify) instead of silently passing as equal.
+    Closing them for real needs the worker-side manifest emission.
+    """
+    gaps: list[str] = []
+    if not isinstance(treatment_receipt, dict) or not isinstance(control_receipt, dict):
+        reasons.append(f"{trial_id}:generation_parity_receipts_missing")
+        return gaps
+    for field_name in _ARM_GENERATION_PARITY_FIELDS:
+        in_treatment = field_name in treatment_receipt
+        in_control = field_name in control_receipt
+        if not in_treatment and not in_control:
+            gaps.append(field_name)
+            continue
+        if in_treatment != in_control:
+            # Only one arm declares it. That is an incomplete manifest, not
+            # proof the arms diverged — the control-side decode manifest
+            # landed before the treatment-side one exists. Report it.
+            gaps.append(field_name)
+            continue
+        if treatment_receipt.get(field_name) != control_receipt.get(field_name):
+            reasons.append(f"{trial_id}:generation_parity_mismatch:{field_name}")
+    return gaps
 
 
 def _validate_vanilla_control_manifest(
@@ -865,6 +942,15 @@ def verify_frontier_gain_bundle(
     seen_task_payloads: set[str] = set()
     seen_episode_ids: set[str] = set()
     seen_control_request_ids: set[str] = set()
+    # Generation-manifest fields neither arm declared (CP126 8a56c486). These
+    # are surfaced on the certificate as unverified parity, not silently
+    # assumed equal.
+    generation_parity_gaps: set[str] = set()
+    # Integrity claims asserted by a boolean but never measured by a digest
+    # (CP126 6090a5ae / 01e8b3c1). A REFUTED digest rejects the trial; an
+    # ABSENT one is carried here so the certificate says what it could not
+    # verify instead of treating the assertion as proof.
+    unproven_integrity_claims: set[str] = set()
     order_counts = {"treatment_first": 0, "control_first": 0}
     frozen_at = (
         float(prereg["frozen_at"])
@@ -1034,13 +1120,16 @@ def verify_frontier_gain_bundle(
                 trial_reasons.append(
                     f"{trial_id}:comparison_accounting:{reason}"
                 )
+        trial_integrity_gaps: list[str] = []
         episode_id = _validate_treatment_receipt(
             trial,
             checkpoint,
             worker_boot_id,
             installed_app_build_sha256,
             trial_reasons,
+            trial_integrity_gaps,
         )
+        unproven_integrity_claims.update(trial_integrity_gaps)
         if episode_id in seen_episode_ids:
             trial_reasons.append(f"{trial_id}:duplicate_treatment_episode")
         seen_episode_ids.add(episode_id)
@@ -1054,6 +1143,16 @@ def verify_frontier_gain_bundle(
         if control_request_id in seen_control_request_ids:
             trial_reasons.append(f"{trial_id}:duplicate_control_request")
         seen_control_request_ids.add(control_request_id)
+        # CP126 8a56c486: seeds and decoding settings were never paired, so a
+        # difference in sampling could be reported as a latent-cortex effect.
+        generation_parity_gaps.update(
+            _validate_arm_generation_parity(
+                trial_id,
+                trial.get("treatment_receipt"),
+                trial.get("control_receipt"),
+                trial_reasons,
+            )
+        )
         if _finite_number(trial.get("task_generated_at"), positive=True):
             latest_task_generated_at = max(
                 latest_task_generated_at, float(trial["task_generated_at"])
@@ -1234,6 +1333,14 @@ def verify_frontier_gain_bundle(
         "domain_counts": {domain: len(items) for domain, items in paired.items()},
         "comparison_accounting": comparison_accounting,
         "required_positive_domains": required_positive,
+        # CP126 8a56c486: generation-manifest fields that NEITHER arm declared.
+        # Declared differences reject the trial; these are the parity claims the
+        # certificate could not verify at all, carried on the certificate rather
+        # than assumed equal. Closing them needs worker-side manifest emission.
+        "unverified_generation_parity_fields": sorted(generation_parity_gaps),
+        "generation_parity_fully_declared": not generation_parity_gaps,
+        "unproven_integrity_claims": sorted(unproven_integrity_claims),
+        "integrity_claims_digest_backed": not unproven_integrity_claims,
         "reasons": sorted(set(reasons)),
         "statistical_claim": statistical_claim,
     }
