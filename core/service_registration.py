@@ -4,6 +4,7 @@ Refactored into a modular provider system for Digital Metabolism.
 """
 
 import logging
+import threading
 
 from core.runtime.errors import record_degradation
 
@@ -26,6 +27,10 @@ from .services.metabolism import MetabolismService
 
 logger = logging.getLogger(__name__)
 
+# Serializes concurrent boot-time registration passes (RLock so the body can
+# call container operations that may re-enter).
+_REGISTRATION_LOCK = threading.RLock()
+
 def register_all_services(is_proxy: bool = False):
     """Register all services via modular providers.
     
@@ -33,16 +38,32 @@ def register_all_services(is_proxy: bool = False):
     registers services that are missing.
     """
     container = get_container()
-    
-    # Check if we've already done a full registration
-    if hasattr(register_all_services, "_full_run") and register_all_services._full_run:
-        logger.debug("Modular services already fully registered.")
-        return container
-    
-    if not is_proxy:
-        register_all_services._full_run = True
 
-    logger.info("Initializing Modular Service Providers (is_proxy=%s)...", is_proxy)
+    # Serialize concurrent boot callers so two cannot both pass the
+    # already-registered check and interleave registration.
+    with _REGISTRATION_LOCK:
+        # Check if we've already done a full registration
+        if getattr(register_all_services, "_full_run", False):
+            logger.debug("Modular services already fully registered.")
+            return container
+
+        logger.info("Initializing Modular Service Providers (is_proxy=%s)...", is_proxy)
+        _register_all_services_body(container, is_proxy)
+        # Mark the full run complete ONLY after registration succeeds — a
+        # failure mid-registration must let a retry re-run, not return a
+        # partially-registered container forever.
+        if not is_proxy:
+            register_all_services._full_run = True
+        logger.info(
+            "Modular service registration pass complete (is_proxy=%s); some services "
+            "are lazy/optional factories and are validated on first use, not at boot.",
+            is_proxy,
+        )
+        return container
+
+
+def _register_all_services_body(container, is_proxy: bool):
+    """Register the modular service providers (idempotence handled by caller)."""
 
     # 0. Infrastructure (Remain in main entry for now)
     def create_event_bus():
@@ -501,8 +522,12 @@ def register_all_services(is_proxy: bool = False):
     container.register('neural_intent_router', create_neural_intent_router, lifetime=ServiceLifetime.SINGLETON, required=False)
     container.register('permission_setup', create_permission_setup, lifetime=ServiceLifetime.SINGLETON, required=False)
 
-    # Patch 28: Dynamic Router & Loop Monitor
-    container.register("loop_monitor", lambda: LoopLagMonitor(), lifetime=ServiceLifetime.SINGLETON)
+    # Patch 28: Dynamic Router & Loop Monitor. Register under the CANONICAL
+    # name the health contract + runtime_pressure look up (event_loop_monitor),
+    # keeping loop_monitor as an alias — otherwise a live monitor was reported
+    # missing by health because of the name drift.
+    container.register("event_loop_monitor", lambda: LoopLagMonitor(), lifetime=ServiceLifetime.SINGLETON, required=False)
+    container.register("loop_monitor", lambda: container.get("event_loop_monitor"), lifetime=ServiceLifetime.SINGLETON, required=False)
     container.register("dynamic_router", lambda: DynamicRouter(), lifetime=ServiceLifetime.SINGLETON)
 
     # Patch 49: Core state binding
@@ -613,7 +638,7 @@ def register_all_services(is_proxy: bool = False):
     container.register('tool_orchestrator', _create_tool_orchestrator, lifetime=ServiceLifetime.SINGLETON, required=False)
 
     # Patch 27: Container lock deferred to aura_main.py after all top-level components register
-    logger.info("✅ All modular services registered and validated (Lock deferred).")
+    logger.debug("Modular service providers registered (container lock deferred).")
     return container
 
 def _finalize_wiring(container):
@@ -643,9 +668,27 @@ def _finalize_wiring(container):
         record_degradation('service_registration', e)
         logger.debug("Wiring deferred: %s", e)
 
+# Services never injected wholesale into cognition context — they hold keys,
+# trust roots, or governance authority that must be reached only through their
+# owning gateways, not handed to arbitrary context consumers.
+_CONTEXT_INJECTION_DENYLIST = frozenset({
+    "trust_engine", "keypair", "signing_key", "governance_vault", "vault",
+    "credential_store", "secret_store", "will", "constitutional_core",
+    "authority_gateway",
+})
+
+
 def inject_services_into_context(context: dict) -> dict:
     container = get_container()
-    for name, descriptor in container._services.items():
+    # Iterate a SNAPSHOT (not the live registry) so a concurrent registration
+    # cannot mutate the dict mid-iteration, and skip sensitive owners.
+    try:
+        items = list(container._services.items())
+    except (AttributeError, RuntimeError):
+        return context
+    for name, descriptor in items:
+        if name in _CONTEXT_INJECTION_DENYLIST:
+            continue
         if descriptor.lifetime == ServiceLifetime.SINGLETON and descriptor.instance:
             context[name] = descriptor.instance
     return context
