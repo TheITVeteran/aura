@@ -493,6 +493,11 @@ class CortexConfig:
     # requires a disjoint ID/OOD-admitted artifact and exact SHA-256.
     # SPARK-031 remains diagnostic and cannot perturb attention.
     contradiction_head: dict[str, Any] | None = None
+    # Bounded SPARK-032 intervention. Counterfactual mode is inert unless an
+    # admitted contradiction coordinate and independently authoritative task
+    # verifier are both present. Every attempted mutation competes against
+    # repeated no-op and matched-random controls and rolls back by default.
+    contradiction_perturber: dict[str, Any] | None = None
     # Checked historical branch-error correlations. None is an explicit
     # bootstrap state: duplicate programs still collapse, but no empirical
     # relationship is invented before independently graded paired outcomes.
@@ -909,6 +914,22 @@ class CortexConfig:
                     problems.append(
                         f"contradiction_head has unknown keys: {sorted(unknown)}"
                     )
+        if self.contradiction_perturber is not None:
+            if not isinstance(self.contradiction_perturber, dict):
+                problems.append(
+                    "contradiction_perturber must be a mapping or null"
+                )
+            else:
+                try:
+                    from core.brain.llm.latent_cortex.contradiction_perturber import (
+                        ContradictionPerturberConfig,
+                    )
+
+                    ContradictionPerturberConfig.from_value(
+                        self.contradiction_perturber
+                    )
+                except (TypeError, ValueError) as exc:
+                    problems.append(str(exc))
         if self.escape is not None:
             if not isinstance(self.escape, dict):
                 problems.append("escape must be a mapping or null")
@@ -1241,8 +1262,12 @@ class EpisodeReceipt:
     # critic is non-causal in context access and read-only in authority.
     bidirectional_reflector: dict[str, Any] = field(default_factory=dict)
     # Calibrated transition-by-latent-position contradiction evidence over
-    # the reflected trace. It is diagnostic until SPARK-032.
+    # the reflected trace. It remains diagnostic by itself.
     contradiction_tensor: dict[str, Any] = field(default_factory=dict)
+    # Counterbalanced no-op/matched-random/guided intervention evidence.
+    # Only an authoritative, repeat-stable, equal-compute win may alter the
+    # selected branch; every other evaluated path restores the exact baseline.
+    contradiction_perturbation: dict[str, Any] = field(default_factory=dict)
     # Neural-bytecode trace: one event per non-window instruction the
     # schedule program executed (exchange/savepoint/verify_probe outcomes,
     # probe scores, backtracks). Empty for plain window programs.
@@ -1458,6 +1483,9 @@ class EpisodeReceipt:
             "mistake_locator": dict(self.mistake_locator),
             "bidirectional_reflector": dict(self.bidirectional_reflector),
             "contradiction_tensor": dict(self.contradiction_tensor),
+            "contradiction_perturbation": dict(
+                self.contradiction_perturbation
+            ),
             "bytecode_events": [dict(row) for row in self.bytecode_events],
             "value_of_computation": dict(self.value_of_computation),
             "cognitive_action_trace": [

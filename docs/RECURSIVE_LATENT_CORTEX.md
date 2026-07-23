@@ -104,6 +104,19 @@ changes the answer — that is the causality contract.
   AUC/Brier/ECE floors. The service reconstructs the full tensor; unavailable
   mode invents no score. SPARK-031 is diagnostic only and cannot mutate state,
   select a branch, repair a transition, or perturb attention.
+- **Counterfactually admitted latent perturbation**: a localized contradiction
+  may propose a bounded change to the corresponding writable position in the
+  selected branch's final latent workspace. The guided delta moves toward the
+  fixed post-prelude anchor; a deterministic orthogonal random delta matches
+  its RMS; an exact no-op supplies the second control. All three run at least
+  twice in counterbalanced order with fixed-length, non-memoized probes and
+  equal measured layer applications. A separately decoy-admitted authoritative
+  verifier must be repeat-stable, and the guided lower bound must clear both
+  control upper bounds by the configured margin. Otherwise the exact baseline
+  is restored. Immutable context slots cannot be touched, answer text is not
+  stored, and the service reconstructs the complete transaction. Default
+  counterfactual mode remains inert without admitted localization, verifier,
+  and budget evidence.
 - **Confidence-bound overthinking guard**: an ordinary scalar verifier remains
   ranking-only. A branch can promote a state only from independently committed
   deterministic-exact evidence or a calibrated interval with at least eight

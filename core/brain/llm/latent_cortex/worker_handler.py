@@ -111,6 +111,7 @@ _CONFIG_KEYS = {
     "probe_cache",
     "telemetry",
     "contradiction_head",
+    "contradiction_perturber",
     "mistake_locator",
     "uncertainty_head",
     "update_gate",
@@ -276,6 +277,7 @@ def config_from_job(job_config: dict[str, Any] | None) -> CortexConfig:
         uncertainty_head=raw.get("uncertainty_head"),
         mistake_locator=raw.get("mistake_locator"),
         contradiction_head=raw.get("contradiction_head"),
+        contradiction_perturber=raw.get("contradiction_perturber"),
         branch_correlation_evidence=raw.get("branch_correlation_evidence"),
         critic_blind_spot_evidence=raw.get("critic_blind_spot_evidence"),
     )

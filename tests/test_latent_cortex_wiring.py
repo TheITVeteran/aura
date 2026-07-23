@@ -12,6 +12,7 @@ import hashlib
 import queue
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 from core.brain.latent_cortex_service import LatentCortexService
@@ -136,7 +137,11 @@ def _accounting_fields(
                 "token_count": input_token_count,
             }
         ],
-        policies={"tokenizer": "8" * 64, "tools": "9" * 64},
+        policies={
+            "tokenizer": "8" * 64,
+            "tools": "9" * 64,
+            "verifier": "a" * 64,
+        },
     )
     return {
         "resource_accounting": resource,
@@ -200,6 +205,10 @@ def _recurrent_grounding_fields(config, *, steps=1):
     from core.brain.llm.latent_cortex.bidirectional_reflector import (
         build_bidirectional_reflector_receipt,
         observe_reflector_vectors,
+    )
+    from core.brain.llm.latent_cortex.contradiction_perturber import (
+        ContradictionPerturberConfig,
+        run_contradiction_perturbation,
     )
     from core.brain.llm.latent_cortex.contradiction_tensor import (
         ContradictionTensorRuntime,
@@ -501,6 +510,19 @@ def _recurrent_grounding_fields(config, *, steps=1):
         ),
         selected_branch=0,
     )
+    _, contradiction_perturbation_receipt = run_contradiction_perturbation(
+        baseline=np.zeros((1, config["n_slots"], 8), dtype=np.float32),
+        anchor=np.zeros((1, config["n_slots"], 8), dtype=np.float32),
+        protected_positions=(),
+        contradiction_tensor=contradiction_tensor_receipt,
+        selected_branch=0,
+        config=ContradictionPerturberConfig.from_value(
+            executed.contradiction_perturber
+        ),
+        verifier_policy_sha256="a" * 64,
+        decoy_review_sha256="",
+        evaluate=None,
+    )
     return {
         "cognitive_slots": [],
         "selected_branch": 0,
@@ -515,6 +537,7 @@ def _recurrent_grounding_fields(config, *, steps=1):
         "mistake_locator": mistake_locator_receipt,
         "bidirectional_reflector": bidirectional_reflector_receipt,
         "contradiction_tensor": contradiction_tensor_receipt,
+        "contradiction_perturbation": contradiction_perturbation_receipt,
         "cognitive_action_trace": [],
     }
 
@@ -644,6 +667,7 @@ def test_config_from_job_defaults_are_conservative():
     assert cfg.uncertainty_head is None
     assert cfg.mistake_locator is None
     assert cfg.contradiction_head is None
+    assert cfg.contradiction_perturber is None
     assert cfg.validate() == []
 
 
@@ -674,6 +698,16 @@ def test_config_from_job_rejects_out_of_band_requests():
                 "uncertainty_head": {
                     "mode": "unavailable",
                     "head_path": "/tmp/not-used",
+                }
+            }
+        )
+    with pytest.raises(ValueError, match="replicates"):
+        config_from_job({"contradiction_perturber": {"replicates": 1}})
+    with pytest.raises(ValueError, match="delta bound"):
+        config_from_job(
+            {
+                "contradiction_perturber": {
+                    "max_relative_delta_rms": 0.5,
                 }
             }
         )
@@ -2663,6 +2697,40 @@ def test_service_reconstructs_contradiction_tensor_and_rejects_authority_lie():
         }
     )
     assert "contradiction_tensor_unproven" in (
+        LatentCortexService._receipt_contract_errors(forged, config)
+    )
+
+
+def test_service_reconstructs_perturbation_and_rejects_rehashed_authority_lie():
+    from core.brain.llm.latent_cortex.loop_core import canonical_sha256
+
+    config = {"n_slots": 8, "n_branches": 2}
+    receipt = {
+        **_identity_receipt(),
+        "n_slots": 8,
+        "n_branches": 2,
+        **_recurrent_grounding_fields(config, steps=3),
+        "budget": {
+            "information_accounting": _accounting_fields()[
+                "information_accounting"
+            ],
+        },
+    }
+    assert "contradiction_perturbation_unproven" not in (
+        LatentCortexService._receipt_contract_errors(receipt, config)
+    )
+
+    forged = copy.deepcopy(receipt)
+    perturbation = forged["contradiction_perturbation"]
+    perturbation["state_mutation_applied"] = True
+    perturbation["receipt_sha256"] = canonical_sha256(
+        {
+            key: value
+            for key, value in perturbation.items()
+            if key != "receipt_sha256"
+        }
+    )
+    assert "contradiction_perturbation_unproven" in (
         LatentCortexService._receipt_contract_errors(forged, config)
     )
 

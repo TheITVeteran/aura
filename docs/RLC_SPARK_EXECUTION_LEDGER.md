@@ -949,9 +949,52 @@ before those dependencies close is not admissible.
   mechanism and falsifiable admission path. No resident-32B artifact or broad
   outcome campaign ran, so live utility and frontier reasoning gains remain
   unproven.
-- [ ] **SPARK-032 - Attention/KV perturber.** Translate localized contradiction
+- [x] **SPARK-032 - Attention/KV perturber.** Translate localized contradiction
   evidence into bounded, receipt-bearing changes to attention geometry or
   latent state at affected positions; include matched-random and no-op controls.
+
+  An admitted contradiction coordinate can now propose one transaction on the
+  selected branch's corresponding final latent workspace position. It does not
+  rewrite the historical trace or call a latent position a decoded token. The
+  guided arm moves only that writable position toward the branch's fixed
+  post-prelude anchor, with target-slot delta RMS capped at eight percent by
+  default and never above the configured 25-percent hard ceiling. Sealed
+  cognitive-context positions are enumerated in the receipt and cannot be
+  targeted.
+
+  Every proposal runs three state-distinct arms: exact no-op, deterministic
+  matched-random, and contradiction-guided. The random delta is orthogonal to
+  the guided direction and matches its target-slot RMS. Other positions remain
+  bit-identical. Each arm runs at least twice in independently shuffled,
+  source-bound order. Probe decoding disables memoization and suppresses EOS
+  to the fixed probe length, so actual transformer layer applications, not
+  nominal limits, must match across every arm.
+
+  The contradiction head never judges its own intervention. A verifier must
+  first pass the existing concealed decoy preflight and mixed branch review,
+  then emit independently committed deterministic-exact or calibrated-interval
+  observations for every arm. Repeat observations must be identical. The
+  guided arm is retained only when its worst lower bound exceeds the best
+  upper bound of both controls by the configured margin. Scalar-only,
+  unstable, unequal-compute, tied, regressing, failed, under-budget, or
+  unverifiable attempts restore the exact baseline. Answer text is discarded;
+  only probe hashes, bounded observations, state commitments, geometry,
+  resource counts, decision, and rollback proof remain.
+
+  Counterfactual mode is on by default but performs no perturbation without an
+  admitted SPARK-031 artifact, localized writable coordinate, decoy-admitted
+  authoritative verifier, and complete probe budget. The service reconstructs
+  source, config, protected positions, arm geometry, observations, compute
+  parity, decision, and authority. Unit tests cover retained, rollback,
+  uncalibrated, unstable, unequal-compute, immutable-evidence, unavailable,
+  evaluator-failure, configuration, and rehashed-authority paths. A seeded
+  real tiny-Qwen episode executes the actual fixed-length transformer probes,
+  meters candidate construction, and proves non-winning rollback.
+
+  This closes the bounded intervention mechanism, not utility. No resident-32B
+  artifact, broad outcome campaign, adapter/RLC interaction, reasoning gain,
+  or frontier-capability result is claimed. SPARK-033 must separately earn
+  localized exploration authority.
 - [ ] **SPARK-033 - Locally conditioned exploration.** Increase stochastic
   exploration only in uncertain/contradictory regions while preserving stable
   regions; meter entropy, diversity, regressions, and determinism controls.
@@ -1363,3 +1406,37 @@ count completion is approximately 55.4%-87.1%, with a midpoint planning
 estimate of 67.7%. Next: publish CP345, then implement SPARK-032's bounded,
 counterfactually verified contradiction-driven perturbation. Final multi-hour
 soaks remain deferred until every shorter gate is green.
+
+CP346 closes SPARK-032's bounded contradiction-driven intervention. An
+admitted coordinate may propose a change only to its writable position in the
+selected branch's final latent workspace. The guided arm competes against
+exact no-op and norm-matched orthogonal-random controls in counterbalanced,
+repeated, fixed-length transformer probes. Protected cognitive-context slots
+are receipt-bound and immutable.
+
+The contradiction head cannot authorize its own proposal. Retention requires a
+decoy-admitted authoritative verifier, stable exact or calibrated-interval
+observations, equal actual layer applications, and a guided lower bound above
+both control upper bounds by the configured margin. Every unavailable,
+scalar-only, unstable, unequal-compute, tied, regressing, failed, or
+under-budget path restores the exact baseline. The service independently
+reconstructs source, configuration, geometry, protected positions,
+observations, compute parity, decision, and rollback.
+
+CP346 validation passes the focused contradiction/perturber/tensor/wiring
+boundary 126/126 in 68.19 seconds and the final affected engine, predecessor,
+resource, worker-origin, and service boundary 293/293 in 157.95 seconds. The
+conservative fixed-snapshot RLC, latent-cortex, recurrence/training,
+resident-campaign, global-workspace, GWT, and execution-controller ownership
+gate passes 1538/1538 across 96 files in 789.05 seconds. Strict focused Ruff,
+bytecode compilation, and `git diff --check` pass. Repository-wide governance
+lint remains non-green at the same 49 unrelated/concurrent regressions and 13
+stale buckets; CP346 adds no effect-ownership entry and does not absorb that
+drift.
+
+This is total checkpoint record 407. The revised forecast remains 466-733 total
+records, now approximately 59-326 records after this checkpoint. Checkpoint-
+count completion is approximately 55.5%-87.3%, with a midpoint planning
+estimate of 67.9%. Next: publish CP346, then implement SPARK-033's locally
+conditioned exploration. Final multi-hour soaks remain deferred until every
+shorter gate is green.

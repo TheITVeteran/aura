@@ -26204,3 +26204,72 @@ completion, and a 67.7% midpoint planning estimate. Next: publish CP345, then
 implement SPARK-032's bounded counterfactually verified contradiction-driven
 perturbation. Final multi-hour soaks remain deferred until every shorter gate
 is green.
+
+## Checkpoint 2026-07-23-346: Contradiction Influence Must Beat Its Controls
+
+SPARK-032 now grants one narrow, transactional influence path to admitted
+SPARK-031 evidence. A localized contradiction may target the corresponding
+writable position in the selected branch's final latent workspace. It does not
+rewrite a historical transition, alter branch selection, or equate a latent
+position with a decoded token. The guided candidate moves only that position
+toward the fixed post-prelude anchor. Its target-slot delta RMS is capped at
+eight percent by default and at 25 percent by the hard configuration boundary.
+Sealed cognitive-context positions are explicitly bound into the receipt and
+cannot be modified.
+
+Each attempted intervention constructs exact no-op, deterministic
+matched-random, and contradiction-guided arms. The random delta is orthogonal
+to the guided direction and has the same target-slot RMS. All non-target
+positions remain bit-identical. Each arm runs at least twice in independently
+shuffled, source-bound order. Counterfactual probe decoding bypasses
+memoization and suppresses EOS through the fixed probe length, making actual
+transformer layer applications equal rather than merely requesting equal token
+limits.
+
+The contradiction head cannot authorize its own repair. The task verifier must
+first pass concealed decoy preflight and mixed-review calibration, then return
+independently committed deterministic-exact or calibrated-interval evidence
+for every arm. Repeat observations must be stable. The guided state survives
+only when its worst lower bound exceeds the best upper bound of both controls
+by the configured margin. Scalar-only, unstable, unequal-compute, tied,
+regressing, failed, under-budget, and unverifiable paths restore the exact
+baseline. Receipts retain probe hashes and counts, verifier observations,
+state commitments, bounded geometry, order, resources, decision, and rollback;
+they never retain decoded probe text.
+
+Counterfactual mode is active by default but is compute-inert unless the
+learned tensor supplies a candidate. It remains mutation-inert unless the
+candidate is writable and a decoy-admitted authoritative verifier plus the
+complete equal-compute budget are available. The service independently
+reconstructs the source binding, config, protected positions, control geometry,
+observations, compute parity, decision, and authority. Unit coverage proves
+retention, exact rollback, scalar refusal, repeat-instability refusal,
+compute-mismatch refusal, immutable-evidence refusal, unavailable mode,
+evaluator failure, bounded configuration, and rehashed-authority rejection. A
+seeded real tiny-Qwen episode runs the actual fixed-length transformer controls,
+meters perturbation construction, and proves rollback when the guided arm does
+not win.
+
+Validation passes the focused contradiction/perturber/tensor/wiring boundary
+126/126 in 68.19 seconds and the final affected engine, reflector, locator,
+uncertainty, resource-accounting, update/stop, probe-cache, worker-origin, and
+service boundary 293/293 in 157.95 seconds. The conservative fixed-snapshot
+RLC, latent-cortex, recurrence/training, resident-campaign, global-workspace,
+GWT, and execution-controller ownership gate passes 1538/1538 across 96 test
+files in 789.05 seconds. Strict focused Ruff, bytecode compilation, and `git
+diff --check` pass. Repository-wide governance lint remains non-green at the
+same 49 unrelated/concurrent regressions and 13 stale buckets present before
+this checkpoint; SPARK-032 introduces no effect-ownership entry and does not
+absorb or normalize that drift.
+
+SPARK-032 proves the bounded intervention mechanism and its rollback boundary.
+It does not prove resident-32B utility, adapter/RLC positive interaction,
+reasoning gain, or frontier capability. Those claims remain open and require
+fresh broad campaigns. SPARK-033 is next: localized exploration must earn its
+own entropy, diversity, determinism, equal-compute, and no-regression evidence.
+
+This is total checkpoint record 407. The forecast remains 466-733 total records,
+approximately 59-326 records remaining, 55.5%-87.3% checkpoint-count
+completion, and a 67.9% midpoint planning estimate. Next: publish CP346, then
+implement SPARK-033's locally conditioned exploration. Final multi-hour soaks
+remain deferred until every shorter gate is green.

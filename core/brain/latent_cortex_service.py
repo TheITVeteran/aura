@@ -835,6 +835,64 @@ class LatentCortexService:
         except (ImportError, OSError, TypeError, ValueError):
             errors.append("contradiction_tensor_unproven")
         try:
+            from core.brain.llm.latent_cortex.contradiction_perturber import (
+                ContradictionPerturberConfig,
+                validate_contradiction_perturbation_receipt,
+            )
+            from core.brain.llm.latent_cortex.worker_handler import config_from_job
+
+            executed_config = config_from_job(config)
+            information = (
+                receipt.get("budget", {}).get("information_accounting", {})
+                if isinstance(receipt.get("budget"), dict)
+                else {}
+            )
+            policies = (
+                information.get("policies", {})
+                if isinstance(information, dict)
+                else {}
+            )
+            decoy = receipt.get("decoy_verification")
+            cognitive_slots = receipt.get("cognitive_slots")
+            protected_positions = (
+                sorted(
+                    {
+                        int(row["slot"])
+                        for row in cognitive_slots
+                        if (
+                            isinstance(row, dict)
+                            and type(row.get("slot")) is int
+                        )
+                    }
+                )
+                if isinstance(cognitive_slots, list)
+                else []
+            )
+            validate_contradiction_perturbation_receipt(
+                receipt.get("contradiction_perturbation"),
+                expected_config=ContradictionPerturberConfig.from_value(
+                    executed_config.contradiction_perturber
+                ),
+                contradiction_tensor=receipt.get("contradiction_tensor"),
+                expected_selected_branch=int(
+                    receipt.get("selected_branch", -1)
+                ),
+                expected_protected_positions=protected_positions,
+                verifier_policy_sha256=str(
+                    policies.get("verifier", "")
+                ),
+                decoy_review_sha256=(
+                    str(decoy.get("receipt_sha256", ""))
+                    if (
+                        isinstance(decoy, dict)
+                        and decoy.get("selection_admitted") is True
+                    )
+                    else ""
+                ),
+            )
+        except (ImportError, TypeError, ValueError):
+            errors.append("contradiction_perturbation_unproven")
+        try:
             from core.brain.llm.latent_cortex.neural_uncertainty import (
                 NeuralUncertaintyRuntime,
                 validate_neural_uncertainty_receipt,

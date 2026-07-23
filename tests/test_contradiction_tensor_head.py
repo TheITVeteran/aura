@@ -502,6 +502,9 @@ def test_real_tiny_qwen_runs_full_tensor_and_meters_work(
         RecurrenceConfig,
         WorkspaceConfig,
     )
+    from core.brain.llm.latent_cortex.verified_best import (
+        VERIFIER_OBSERVATION_SCHEMA,
+    )
 
     path = tmp_path / "real-qwen-contradiction.json"
     digest = admitted_head.save(path)
@@ -515,6 +518,32 @@ def test_real_tiny_qwen_runs_full_tensor_and_meters_work(
         def decode(self, ids):
             return " ".join(str(item) for item in ids)
 
+    class ExactVerifier:
+        def __call__(self, text):
+            if text.startswith("Independent consistency check:"):
+                from core.brain.llm.latent_cortex.task_verifiers import (
+                    check_arithmetic_claims,
+                )
+
+                return float(check_arithmetic_claims(text)["score"])
+            return 0.8
+
+        def observe_with_bounds(self, text):
+            score = self(text)
+            return {
+                "schema": VERIFIER_OBSERVATION_SCHEMA,
+                "score": score,
+                "lower_bound": score,
+                "upper_bound": score,
+                "sample_count": 1,
+                "basis": "deterministic_exact",
+                "independent": True,
+                "evidence_sha256": hashlib.sha256(
+                    text.encode("utf-8")
+                ).hexdigest(),
+            }
+
+    mx.random.seed(17)
     model = Model(
         ModelArgs(
             model_type="qwen2",
@@ -548,6 +577,11 @@ def test_real_tiny_qwen_runs_full_tensor_and_meters_work(
                 "head_path": str(path),
                 "head_sha256": digest,
             },
+            contradiction_perturber={
+                "mode": "counterfactual",
+                "replicates": 2,
+            },
+            verifier_probe_max_tokens=16,
             decode_max_tokens=3,
             allow_vanilla_fallback=False,
         ),
@@ -555,6 +589,7 @@ def test_real_tiny_qwen_runs_full_tensor_and_meters_work(
     result = engine.reason(
         token_ids=[5, 9, 17, 3, 42, 7],
         budget=ComputeBudget(),
+        verifier=ExactVerifier(),
     )
     assert result.ok is True
     receipt = result.receipt.contradiction_tensor
@@ -562,6 +597,15 @@ def test_real_tiny_qwen_runs_full_tensor_and_meters_work(
     assert receipt["cell_count"] >= 1
     operations = result.receipt.budget["resource_accounting"]["operations"]
     assert operations["contradiction_tensor_head"]["host_scalar_ops"] > 0
+    perturbation = result.receipt.contradiction_perturbation
+    assert perturbation["status"] == "restored", perturbation
+    assert perturbation["state_mutation_applied"] is False
+    assert perturbation["rollback_proven"] is True
+    assert perturbation["all_arms_equal_compute"] is True
+    assert len(perturbation["arms"]) == 3
+    assert operations["contradiction_perturbation_candidates"][
+        "tensor_element_writes"
+    ] > 0
     validate_contradiction_tensor_receipt(
         receipt,
         expected_runtime=engine._resolve_contradiction_head(),

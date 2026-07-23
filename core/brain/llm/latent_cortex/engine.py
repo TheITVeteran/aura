@@ -740,6 +740,7 @@ class LatentCortexEngine:
         sentence_grace_tokens: int | None = None,
         contract_grace_tokens: int | None = None,
         token_logprobs_out: list[float] | None = None,
+        force_exact_tokens: bool = False,
     ) -> tuple[list[int], str]:
         """Minimal sampler: first token from ``initial_logits`` (the logits of
         the last persisted position — prompt tail or final thought slot), then
@@ -775,6 +776,8 @@ class LatentCortexEngine:
         )
         if type(contract_grace) is not int or not 0 <= contract_grace <= 4096:
             raise ValueError("contract_grace_tokens must be an integer in [0, 4096]")
+        if type(force_exact_tokens) is not bool:
+            raise TypeError("force_exact_tokens must be boolean")
 
         out: list[int] = []
         newline_run = 0
@@ -849,7 +852,8 @@ class LatentCortexEngine:
             # masked so sampling variance cannot abandon the answer a few
             # tokens in (min-new-tokens, the standard serving constraint).
             if eos and (
-                len(out) < min_tokens
+                force_exact_tokens
+                or len(out) < min_tokens
                 or (contract_required and not contract_satisfied)
             ):
                 eos_ids = mx.array(sorted(eos))
@@ -879,7 +883,7 @@ class LatentCortexEngine:
         # closed an object ("}") or on a periodic beat after the marker
         # might exist — text work, never model work.
         def contract_complete_now() -> bool:
-            if not contract_required:
+            if force_exact_tokens or not contract_required:
                 return False
             from core.brain.llm.latent_cortex.answer_contract import (
                 is_contract_complete,
@@ -992,6 +996,8 @@ class LatentCortexEngine:
         *,
         max_tokens: int | None = None,
         bridge_tokens: list[int] | None = None,
+        use_cache: bool = True,
+        force_exact_tokens: bool = False,
     ) -> list[int]:
         """Decode a short probe from a branch WITHOUT disturbing the caches.
 
@@ -1013,7 +1019,7 @@ class LatentCortexEngine:
         )
         probe_cache = getattr(self, "_episode_probe_cache", None)
         cache_key = None
-        if probe_cache is not None:
+        if use_cache and probe_cache is not None:
             cache_key = probe_cache.key(
                 branch.workspace.seed_z,
                 branch.z,
@@ -1041,10 +1047,11 @@ class LatentCortexEngine:
                 temperature=0.0,
                 sentence_grace_tokens=0,
                 contract_grace_tokens=0,
+                force_exact_tokens=force_exact_tokens,
             )[0]
         finally:
             _restore_recurrent_caches(cache, 0, self.n_layers, snaps)
-        if probe_cache is not None and cache_key is not None:
+        if use_cache and probe_cache is not None and cache_key is not None:
             probe_cache.put(
                 cache_key,
                 decoded,
@@ -2408,6 +2415,133 @@ class LatentCortexEngine:
             selected_branch=winner.index,
             budget=budget,
         )
+        from core.brain.llm.latent_cortex.contradiction_perturber import (
+            ContradictionPerturberConfig,
+            PerturbationArmResult,
+            run_contradiction_perturbation,
+        )
+        from core.brain.llm.latent_cortex.verified_best import (
+            VerifierObservation,
+            validate_observation,
+        )
+
+        perturber_config = ContradictionPerturberConfig.from_value(
+            self.config.contradiction_perturber
+        )
+        information = budget.information_receipt or {}
+        policies = information.get("policies")
+        verifier_policy_sha256 = (
+            str(policies.get("verifier", ""))
+            if isinstance(policies, dict)
+            else ""
+        )
+        decoy_review_sha256 = (
+            str(receipt.decoy_verification.get("receipt_sha256", ""))
+            if receipt.decoy_verification.get("selection_admitted") is True
+            else ""
+        )
+        arm_count = 3 * perturber_config.replicates
+        arm_layer_apps = self._verifier_probe_layer_apps(
+            bridge_tokens,
+            count=arm_count,
+        )
+        evaluation_unavailable_reason = ""
+        arm_evaluator = None
+        if verifier is None or self.tokenizer is None:
+            evaluation_unavailable_reason = (
+                "independent_admitted_verifier_unavailable"
+            )
+        elif arm_layer_apps + safety_reserve > budget.remaining_layer_apps:
+            evaluation_unavailable_reason = "counterfactual_probe_budget_unavailable"
+        else:
+
+            def arm_evaluator(
+                _name: str,
+                candidate_state,
+                _replicate: int,
+            ) -> PerturbationArmResult:
+                import mlx.core as mx
+
+                baseline_state = winner.z
+                spent_before = budget.spent_layer_apps
+                try:
+                    projected = mx.array(candidate_state)
+                    projected = winner.workspace.restore_context_evidence(
+                        projected
+                    )
+                    winner.z = projected
+                    winner.workspace.update(projected)
+                    probe = self._decode_probe(
+                        winner,
+                        cache,
+                        runner,
+                        budget,
+                        bridge_tokens=bridge_tokens,
+                        use_cache=False,
+                        force_exact_tokens=True,
+                    )
+                    rendered = self.tokenizer.decode(probe)
+                    bounded = getattr(verifier, "observe_with_bounds", None)
+                    raw_observation = (
+                        bounded(rendered)
+                        if callable(bounded)
+                        else verifier(rendered)
+                    )
+                    if (
+                        isinstance(raw_observation, dict)
+                        and "observation_sha256" in raw_observation
+                    ):
+                        observation = validate_observation(raw_observation)
+                    else:
+                        observation = VerifierObservation.from_value(
+                            raw_observation
+                        ).to_dict()
+                    encoded_probe = json.dumps(
+                        probe,
+                        separators=(",", ":"),
+                        allow_nan=False,
+                    ).encode("ascii")
+                    return PerturbationArmResult(
+                        probe_tokens_sha256=hashlib.sha256(
+                            encoded_probe
+                        ).hexdigest(),
+                        probe_token_count=len(probe),
+                        observation=observation,
+                        layer_apps=budget.spent_layer_apps - spent_before,
+                    )
+                finally:
+                    winner.z = baseline_state
+                    winner.workspace.update(baseline_state)
+
+        resulting_state, receipt.contradiction_perturbation = (
+            run_contradiction_perturbation(
+                baseline=winner.z,
+                anchor=winner.anchor,
+                protected_positions=winner.workspace.context_slot_indices,
+                contradiction_tensor=receipt.contradiction_tensor,
+                selected_branch=winner.index,
+                config=perturber_config,
+                verifier_policy_sha256=verifier_policy_sha256,
+                decoy_review_sha256=decoy_review_sha256,
+                evaluate=arm_evaluator,
+                evaluation_unavailable_reason=evaluation_unavailable_reason,
+                budget=budget,
+            )
+        )
+        if receipt.contradiction_perturbation["state_mutation_applied"]:
+            import mlx.core as mx
+
+            winner.z = winner.workspace.restore_context_evidence(
+                mx.array(resulting_state)
+            )
+            winner.workspace.update(winner.z)
+            receipt.flag("contradiction_perturbation_retained")
+        elif receipt.contradiction_perturbation["status"] == "restored":
+            receipt.flag("contradiction_perturbation_restored")
+            if str(
+                receipt.contradiction_perturbation["reason"]
+            ).startswith("evaluation_failed:"):
+                receipt.flag("contradiction_perturbation_evaluation_failed")
         from core.brain.llm.latent_cortex.neural_uncertainty import (
             build_neural_uncertainty_receipt,
         )
