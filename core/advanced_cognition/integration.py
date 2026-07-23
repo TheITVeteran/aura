@@ -73,17 +73,6 @@ class AdvancedCognitionRuntime:
             if selected_for_prediction is not None
             else {}
         )
-        tier = self.tiers.choose_tier(
-            obs,
-            actions,
-            risk=max(zero.risk, float(world_prediction.get("risk", 0.0)) if world_prediction else 0.0),
-            uncertainty=float(world_prediction.get("uncertainty", 0.5)) if world_prediction else 0.75,
-            novelty=1.0 if obs.domain not in self.ontology.models else 0.2,
-            self_modification=any(
-                "self_modify" in set((a.tags if isinstance(a, ActionCandidate) else tuple(dict(a).get("tags", ()))) or ())
-                for a in actions
-            ),
-        )
         selected = zero.selected.to_dict() if zero.selected else None
         if physical.get("selected") is None and selected and zero.risk > 0.4:
             selected = None
@@ -94,6 +83,48 @@ class AdvancedCognitionRuntime:
             )
             if selected is None or (safer and (zero.confidence < 0.55 or safer["risk"] < zero.risk)):
                 selected = physical["selected"]
+
+        # CP126 1c45593a: the tier verdict used to be decoration — the gate
+        # released the action whether or not System 2 was required. The gate
+        # DOES perform a real short-horizon search (the zero-shot ranking), a
+        # real prediction (the world model), and a real hazard/tolerance check,
+        # so those are handed over as the tier's proof. What it cannot produce
+        # — proof obligations and a postmortem owner for self-modification —
+        # is therefore genuinely missing, and the action stays withheld.
+        alternatives = [
+            row.get("action", {}).get("action_id")
+            for row in zero.ranking
+            if isinstance(row, Mapping)
+        ]
+        approved = bool(selected) and zero.risk <= float(risk_tolerance)
+        tier = self.tiers.choose_tier(
+            obs,
+            actions,
+            risk=max(zero.risk, float(world_prediction.get("risk", 0.0)) if world_prediction else 0.0),
+            uncertainty=float(world_prediction.get("uncertainty", 0.5)) if world_prediction else 0.75,
+            novelty=1.0 if obs.domain not in self.ontology.models else 0.2,
+            self_modification=any(
+                "self_modify" in set((a.tags if isinstance(a, ActionCandidate) else tuple(dict(a).get("tags", ()))) or ())
+                for a in actions
+            ),
+            system2_evidence={
+                "search_ranking": zero.ranking,
+                "prediction": world_prediction or {},
+                "alternatives_considered": alternatives if len(alternatives) > 1 else [],
+                "approval": (
+                    {
+                        "by": "advanced_cognition_gate",
+                        "risk": zero.risk,
+                        "risk_tolerance": float(risk_tolerance),
+                        "physical_veto": physical.get("selected") is None,
+                    }
+                    if approved
+                    else False
+                ),
+            },
+        )
+        if tier.requires_system2 and not tier.system2_satisfied:
+            selected = None
         receipt = {
             "receipt_id": stable_hash(
                 {"z": zero.receipt, "p": physical.get("receipt_id"), "selected": selected, "ts": round(time.time(), 3)},
