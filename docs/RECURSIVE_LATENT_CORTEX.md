@@ -84,6 +84,16 @@ changes the answer — that is the causality contract.
   locator scores the proposal while binding the update gate's admitted state
   and disposition. Its receipt is reconstructable and metered, but SPARK-029
   grants no repair, selection, attention, or decode authority.
+- **Bidirectional hidden reflection**: every prior, proposal, and admitted
+  transition contributes a bounded `asinh`-stabilized block-mean/RMS sketch
+  covering all hidden dimensions, including extreme finite activations. After
+  recurrence, a read-only critic revisits the complete trace
+  with admitted prefix and suffix context plus the initial latent premise and
+  final latent conclusion. Earlier reflected-state commitments therefore
+  change under future-only lesions, proving non-causal context access. Rejected
+  proposals remain inspectable but outside the admitted path. The service
+  reconstructs all context and comparison evidence; no decoded answer text or
+  state, selection, repair, attention, or decode authority enters this layer.
 - **Confidence-bound overthinking guard**: an ordinary scalar verifier remains
   ranking-only. A branch can promote a state only from independently committed
   deterministic-exact evidence or a calibrated interval with at least eight

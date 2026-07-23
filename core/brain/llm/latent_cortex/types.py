@@ -1190,6 +1190,9 @@ class EpisodeReceipt:
     # Admitted transition-level localization evidence. It remains diagnostic
     # until a separately proved repair-steering milestone grants authority.
     mistake_locator: dict[str, Any] = field(default_factory=dict)
+    # Full-sequence, hidden-trace-only premise/conclusion reflection. This
+    # critic is non-causal in context access and read-only in authority.
+    bidirectional_reflector: dict[str, Any] = field(default_factory=dict)
     # Neural-bytecode trace: one event per non-window instruction the
     # schedule program executed (exchange/savepoint/verify_probe outcomes,
     # probe scores, backtracks). Empty for plain window programs.
@@ -1403,6 +1406,7 @@ class EpisodeReceipt:
             "verified_best_state": dict(self.verified_best_state),
             "neural_uncertainty": dict(self.neural_uncertainty),
             "mistake_locator": dict(self.mistake_locator),
+            "bidirectional_reflector": dict(self.bidirectional_reflector),
             "bytecode_events": [dict(row) for row in self.bytecode_events],
             "value_of_computation": dict(self.value_of_computation),
             "cognitive_action_trace": [

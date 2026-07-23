@@ -197,6 +197,10 @@ def _branch_isolation_fields(config, *, exchanges=0):
 
 
 def _recurrent_grounding_fields(config, *, steps=1):
+    from core.brain.llm.latent_cortex.bidirectional_reflector import (
+        build_bidirectional_reflector_receipt,
+        observe_reflector_vectors,
+    )
     from core.brain.llm.latent_cortex.loop_core import (
         KV_BOUND_SCHEMA,
         alpha_for_step,
@@ -246,6 +250,7 @@ def _recurrent_grounding_fields(config, *, steps=1):
         transitions = []
         stability = []
         update_acceptance = []
+        reflector_trace = []
         prior = initial
         reasoning_prior = _digest(f"reasoning-{index}-0")
         anchor_sha = _digest(f"anchor-{index}")
@@ -336,6 +341,26 @@ def _recurrent_grounding_fields(config, *, steps=1):
                     ),
                 }
             )
+            prior_vector = (float(step), 0.0, float(index), 1.0)
+            proposal_vector = (
+                float(step + 1),
+                0.25,
+                float(index),
+                1.0,
+            )
+            reflector_trace.append(
+                observe_reflector_vectors(
+                    prior_vector,
+                    proposal_vector,
+                    proposal_vector,
+                    branch_index=index,
+                    branch_step=step,
+                    prior_state_sha256=reasoning_prior,
+                    proposal_state_sha256=reasoning_post,
+                    admitted_state_sha256=reasoning_post,
+                    accepted=True,
+                )
+            )
             prior = post
             reasoning_prior = reasoning_post
             prior_residual = residual
@@ -368,6 +393,7 @@ def _recurrent_grounding_fields(config, *, steps=1):
                 },
                 uncertainty_trace=[],
                 mistake_locator_trace=[],
+                reflector_trace=reflector_trace,
             )
         )
     receipt = build_recurrent_grounding_receipt(
@@ -459,6 +485,11 @@ def _recurrent_grounding_fields(config, *, steps=1):
         update_acceptance=update_acceptance_receipt,
         selected_branch=0,
     )
+    bidirectional_reflector_receipt = build_bidirectional_reflector_receipt(
+        branches=branches,
+        update_acceptance=update_acceptance_receipt,
+        selected_branch=0,
+    )
     return {
         "cognitive_slots": [],
         "selected_branch": 0,
@@ -471,6 +502,7 @@ def _recurrent_grounding_fields(config, *, steps=1):
         "verified_best_state": verified_best_receipt,
         "neural_uncertainty": neural_uncertainty_receipt,
         "mistake_locator": mistake_locator_receipt,
+        "bidirectional_reflector": bidirectional_reflector_receipt,
         "cognitive_action_trace": [],
     }
 
@@ -2549,6 +2581,35 @@ def test_service_reconstructs_mistake_locator_and_rejects_rehashed_lie():
         }
     )
     assert "mistake_locator_unproven" in (
+        LatentCortexService._receipt_contract_errors(forged, config)
+    )
+
+
+def test_service_reconstructs_bidirectional_reflector_and_rejects_authority_lie():
+    from core.brain.llm.latent_cortex.loop_core import canonical_sha256
+
+    config = {"n_slots": 8, "n_branches": 2}
+    receipt = {
+        **_identity_receipt(),
+        "n_slots": 8,
+        "n_branches": 2,
+        **_recurrent_grounding_fields(config, steps=3),
+    }
+    assert "bidirectional_reflector_unproven" not in (
+        LatentCortexService._receipt_contract_errors(receipt, config)
+    )
+
+    forged = copy.deepcopy(receipt)
+    reflector = forged["bidirectional_reflector"]
+    reflector["selection_authorized"] = True
+    reflector["receipt_sha256"] = canonical_sha256(
+        {
+            key: value
+            for key, value in reflector.items()
+            if key != "receipt_sha256"
+        }
+    )
+    assert "bidirectional_reflector_unproven" in (
         LatentCortexService._receipt_contract_errors(forged, config)
     )
 

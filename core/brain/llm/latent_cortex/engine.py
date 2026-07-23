@@ -2385,6 +2385,18 @@ class LatentCortexEngine:
             and not receipt.update_acceptance["head_was_causal"]
         ):
             receipt.flag("learned_update_gate_not_causal")
+        from core.brain.llm.latent_cortex.bidirectional_reflector import (
+            build_bidirectional_reflector_receipt,
+        )
+
+        receipt.bidirectional_reflector = (
+            build_bidirectional_reflector_receipt(
+                branches=list(ensemble.branches),
+                update_acceptance=receipt.update_acceptance,
+                selected_branch=winner.index,
+                budget=budget,
+            )
+        )
         from core.brain.llm.latent_cortex.neural_uncertainty import (
             build_neural_uncertainty_receipt,
         )

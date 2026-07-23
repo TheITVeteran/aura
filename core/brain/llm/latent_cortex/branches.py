@@ -133,6 +133,7 @@ class BranchState:
     uncertainty_trace: list[dict[str, Any]] = field(default_factory=list)
     mistake_locator_runtime: Any = None
     mistake_locator_trace: list[dict[str, Any]] = field(default_factory=list)
+    reflector_trace: list[dict[str, Any]] = field(default_factory=list)
 
     def to_receipt(self) -> dict[str, Any]:
         receipt = {
@@ -563,6 +564,39 @@ class BranchEnsemble:
                     "features": dict(gate_decision.features),
                     "features_sha256": gate_decision.features_sha256,
                 }
+            )
+            from core.brain.llm.latent_cortex.bidirectional_reflector import (
+                observe_reflector_transition,
+            )
+
+            branch.reflector_trace.append(
+                observe_reflector_transition(
+                    reasoning_pre_state,
+                    proposal_reasoning_state,
+                    reasoning_post_state,
+                    branch_index=branch.index,
+                    branch_step=branch.steps,
+                    prior_state_sha256=reasoning_pre_sha256,
+                    proposal_state_sha256=proposal_reasoning_sha256,
+                    admitted_state_sha256=reasoning_post_sha256,
+                    accepted=gate_decision.accepted,
+                )
+            )
+            state_width = int(reasoning_post_state.shape[-1])
+            sketch_width = 2 * min(64, state_width)
+            budget.charge_tensor_work(
+                "bidirectional_reflector_capture",
+                element_reads=(
+                    int(reasoning_pre_state.size)
+                    + int(proposal_reasoning_state.size)
+                    + int(reasoning_post_state.size)
+                ),
+                host_scalar_ops=(
+                    int(reasoning_pre_state.size)
+                    + int(proposal_reasoning_state.size)
+                    + int(reasoning_post_state.size)
+                    + 6 * sketch_width
+                ),
             )
             if (
                 branch.uncertainty_runtime is not None

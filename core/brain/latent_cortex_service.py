@@ -801,6 +801,18 @@ class LatentCortexService:
         except (ImportError, OSError, TypeError, ValueError):
             errors.append("update_acceptance_unproven")
         try:
+            from core.brain.llm.latent_cortex.bidirectional_reflector import (
+                validate_bidirectional_reflector_receipt,
+            )
+
+            validate_bidirectional_reflector_receipt(
+                receipt.get("bidirectional_reflector"),
+                update_acceptance=receipt.get("update_acceptance"),
+                expected_n_branches=int(config.get("n_branches") or 0),
+            )
+        except (ImportError, TypeError, ValueError):
+            errors.append("bidirectional_reflector_unproven")
+        try:
             from core.brain.llm.latent_cortex.neural_uncertainty import (
                 NeuralUncertaintyRuntime,
                 validate_neural_uncertainty_receipt,

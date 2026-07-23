@@ -866,9 +866,43 @@ before those dependencies close is not admissible.
   powered broad-domain campaign ran, and no repair authority is claimed before
   SPARK-030 through SPARK-032 establish the critic, contradiction, and bounded
   perturbation chain.
-- [ ] **SPARK-030 - Bidirectional hidden-state reflector.** Inspect the complete
+- [x] **SPARK-030 - Bidirectional hidden-state reflector.** Inspect the complete
   hidden trace with a non-causal critic that can compare premises and
   conclusions without reading only the final answer.
+
+  Every recurrent branch now records a bounded hidden-state sketch for each
+  prior, proposal, and admitted state. Numerically stabilized `asinh` block
+  means and RMS values cover every model dimension while bounding each sketch
+  to at most 128 scalars, including deliberately exploding finite activations.
+  Each observation is bound to the update gate's prior/proposal/
+  admitted state commitments and acceptance disposition, so a rejected
+  proposal remains inspectable without entering the retained reasoning path.
+
+  After recurrence ends, a read-only full-sequence critic revisits every step.
+  For each transition it computes admitted prefix and suffix contexts, the
+  initial hidden premise, the final admitted hidden conclusion, and a reflected
+  state commitment spanning local, past, future, premise, and conclusion
+  representations. It receipts local proposal/admission deltas and proposal
+  cosine relationships to premise, conclusion, prefix, and suffix. Changing
+  only a future conclusion changes an earlier reflection while preserving the
+  earlier source observation, directly proving non-causal context access.
+
+  The worker receipts complete transition coverage, past/future context counts,
+  premise/conclusion commitments and comparison, selected-branch summary, and
+  the exact update-acceptance source. The service reconstructs every sketch
+  commitment, context, metric, reflected-state commitment, and aggregate.
+  The critic consumes no decoded answer text and is structurally forbidden from
+  mutating state, selecting a branch, steering repair, or perturbing attention.
+  Capture and full-trace review work are charged separately to the resource
+  ledger. It is active on every recurrent episode rather than waiting for a
+  resident artifact or silently substituting final-answer prose.
+
+  Direct, lesion, rejected-proposal, tamper, real tiny-Qwen, resource, and
+  service tests prove full coverage, future-context dependence, retained-path
+  separation, reconstruction, non-authority, and answer-text exclusion. This
+  closes the complete-trace representation boundary only. It does not call the
+  deterministic sketch a correctness model; calibrated contradiction evidence
+  and any downstream authority remain SPARK-031 and SPARK-032 work.
 - [ ] **SPARK-031 - Contradiction tensor.** Produce calibrated token/step-level
   contradiction evidence, train on controlled mutations, and prove localization
   on middle-of-trace and long-context failures.
@@ -1229,3 +1263,25 @@ count completion is approximately 55.1%-86.7%, with a midpoint planning
 estimate of 67.4%. Next: publish CP343, then implement SPARK-030's complete-
 trace bidirectional reflector. Final multi-hour soaks remain deferred until
 every shorter gate is green.
+
+CP344 closes the always-on complete-hidden-trace reflector. Every transition
+now contributes bounded prior, proposal, and admitted sketches; a read-only
+full-sequence pass compares each step with both past and future admitted
+context, the initial latent premise, and final latent conclusion. Rejected
+proposals remain visible but outside the admitted path. The service
+independently reconstructs the evidence, and no decoded answer or mutation
+authority enters the critic.
+
+CP344 validation passes the focused reflector/service boundary 94/94 and the
+affected engine, branch, recurrence, update, uncertainty, locator, resource,
+escape/telemetry, worker-origin, and wiring gate 257/257 in 133.92 seconds. The final fixed-
+snapshot RLC, latent-cortex, recurrence/training, global-workspace, GWT, and
+execution-controller ownership gate passes 1358/1358 in 697.14 seconds. Strict focused Ruff,
+bytecode compilation, and `git diff --check` pass.
+
+This is total checkpoint record 405. The revised forecast remains 466-733 total
+records, now approximately 61-328 records after this checkpoint. Checkpoint-
+count completion is approximately 55.3%-86.9%, with a midpoint planning
+estimate of 67.6%. Next: publish CP344, then implement SPARK-031's calibrated
+contradiction tensor over the reflected trace. Final multi-hour soaks remain
+deferred until every shorter gate is green.
