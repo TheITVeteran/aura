@@ -55,6 +55,10 @@ from core.brain.llm.latent_cortex.update_gate import (
     PASSTHROUGH,
     UpdateGateRuntime,
 )
+from core.brain.llm.latent_cortex.verified_best import (
+    VerifierObservation,
+    tensor_sha256,
+)
 from core.brain.llm.latent_cortex.workspace import (
     LatentWorkspace,
     _role_seed,
@@ -119,6 +123,12 @@ class BranchState:
     update_acceptance_trace: list[dict[str, Any]] = field(default_factory=list)
     update_gate: UpdateGateRuntime | None = None
     last_loop_delta: Any = None
+    verified_best_state: Any = None
+    verified_best_step: int = -1
+    verified_best_state_sha256: str = ""
+    verified_best_observation: dict[str, Any] = field(default_factory=dict)
+    verified_best_trace: list[dict[str, Any]] = field(default_factory=list)
+    verified_finalization: dict[str, Any] = field(default_factory=dict)
 
     def to_receipt(self) -> dict[str, Any]:
         receipt = {
@@ -624,16 +634,24 @@ class BranchEnsemble:
                     transition["containment_action"] = action
                     if action == "escaped":
                         continue
-                    self._halt(branch, action.removeprefix("halt:"))
+                    self._halt(
+                        branch,
+                        action.removeprefix("halt:"),
+                        budget=budget,
+                    )
                     continue
                 if decision.reason.startswith("diverged"):
                     transition["containment_action"] = "halt_revert"
-                self._halt(branch, decision.reason)
+                self._halt(branch, decision.reason, budget=budget)
                 continue
             if branch.escape is not None:
                 action = branch.escape.on_step(branch)
                 if action.startswith("halt:"):
-                    self._halt(branch, action.removeprefix("halt:"))
+                    self._halt(
+                        branch,
+                        action.removeprefix("halt:"),
+                        budget=budget,
+                    )
 
         self._seal_isolation_if_ready()
 
@@ -650,7 +668,7 @@ class BranchEnsemble:
             ):
                 self.maintain_diversity(budget=budget)
         for branch, reason in deferred_fixed_depth_halts:
-            self._halt(branch, reason)
+            self._halt(branch, reason, budget=budget)
         return True
 
     @staticmethod
@@ -714,6 +732,25 @@ class BranchEnsemble:
             saved += 1
         return saved
 
+    def savepoint_branch(self, branch: BranchState) -> bool:
+        """Snapshot one branch; evidence from one probe grants no peer authority."""
+
+        if not any(item is branch for item in self.branches) or branch.halted:
+            return False
+        branch.savepoint = {
+            "z": branch.z,
+            "role": branch.role,
+            "operator": branch.operator.value,
+            "halted": branch.halted,
+            "halt_reason": branch.halt_reason,
+            "steps": branch.steps,
+            "score": branch.score,
+            "halting": branch.halting.snapshot(),
+            "escape": branch.escape.snapshot() if branch.escape is not None else None,
+        }
+        branch.savepoint_steps = branch.steps
+        return True
+
     def revert_branch_to_savepoint(self, branch: BranchState) -> bool:
         """Transactionally restore one branch to its most recent savepoint."""
 
@@ -755,6 +792,120 @@ class BranchEnsemble:
             if self.revert_branch_to_savepoint(branch):
                 reverted += 1
         return reverted
+
+    def observe_verified_best(
+        self,
+        branch: BranchState,
+        raw_observation: Any,
+        *,
+        action_step: int,
+        budget: ComputeBudget | None = None,
+    ) -> tuple[VerifierObservation, str, bool]:
+        """Promote or preserve a branch-local state under interval dominance."""
+
+        if not any(item is branch for item in self.branches):
+            raise ValueError("verified-best branch is not in this ensemble")
+        if type(action_step) is not int or action_step < 0:
+            raise ValueError("verified-best action step is invalid")
+        observation = VerifierObservation.from_value(raw_observation)
+        observation_receipt = observation.to_dict()
+        if budget is not None:
+            elements = int(branch.z.size)
+            budget.charge_tensor_work(
+                "verified_best_state",
+                element_reads=elements,
+                host_scalar_ops=elements + 64,
+            )
+        candidate_sha256 = tensor_sha256(branch.z)
+        prior_sha256 = branch.verified_best_state_sha256
+        restored = False
+        if not observation.authoritative:
+            decision = "ranking_only"
+        elif branch.verified_best_state is None:
+            decision = "promote"
+        else:
+            incumbent = VerifierObservation.from_value(
+                {
+                    key: branch.verified_best_observation[key]
+                    for key in (
+                        "schema",
+                        "score",
+                        "lower_bound",
+                        "upper_bound",
+                        "sample_count",
+                        "basis",
+                        "independent",
+                        "evidence_sha256",
+                    )
+                }
+            )
+            if observation.lower_bound > incumbent.upper_bound + 1e-9:
+                decision = "promote"
+            else:
+                decision = "preserve_verified"
+                if candidate_sha256 != prior_sha256:
+                    branch.z = branch.verified_best_state
+                    branch.workspace.update(branch.z)
+                    restored = True
+        if decision == "promote":
+            branch.verified_best_state = branch.z
+            branch.verified_best_step = branch.steps
+            branch.verified_best_state_sha256 = candidate_sha256
+            branch.verified_best_observation = observation_receipt
+        resulting_sha256 = (
+            branch.verified_best_state_sha256
+            if decision == "preserve_verified"
+            else candidate_sha256
+        )
+        branch.verified_best_trace.append(
+            {
+                "ordinal": len(branch.verified_best_trace),
+                "action_step": action_step,
+                "branch_step": branch.steps,
+                "candidate_state_sha256": candidate_sha256,
+                "prior_best_state_sha256": prior_sha256,
+                "observation": observation_receipt,
+                "decision": decision,
+                "restored": restored,
+                "resulting_state_sha256": resulting_sha256,
+            }
+        )
+        return observation, decision, restored
+
+    def final_state(
+        self,
+        branch: BranchState,
+        *,
+        budget: ComputeBudget | None = None,
+    ) -> tuple[Any, bool, str]:
+        """Prefer confidence-bound verified state, then the legacy proxy peak."""
+
+        if budget is not None:
+            elements = int(branch.z.size)
+            budget.charge_tensor_work(
+                "verified_best_finalization",
+                element_reads=2 * elements,
+                host_scalar_ops=2 * elements + 64,
+            )
+        pre_sha256 = tensor_sha256(branch.z)
+        if not self.recurrence.fixed_depth and branch.verified_best_state is not None:
+            result = (
+                branch.verified_best_state,
+                pre_sha256 != branch.verified_best_state_sha256,
+                "verified",
+            )
+        else:
+            final, reverted = branch.halting.final_state(branch.z)
+            result = final, reverted, "proxy" if reverted else "current"
+        final, reverted, source = result
+        branch.verified_finalization = {
+            "source": source,
+            "pre_state_sha256": pre_sha256,
+            "post_state_sha256": tensor_sha256(final),
+            "reverted": reverted,
+            "fixed_depth": self.recurrence.fixed_depth,
+        }
+        return result
 
     def inject_control(self, control, *, strength: float = 0.12) -> int:
         """Causally write one bounded operator vector into each live workspace."""
@@ -917,17 +1068,28 @@ class BranchEnsemble:
                 distances.append(max(0.0, min(1.0, 0.5 * (1.0 - cosine))))
         return sum(distances) / max(1, len(distances))
 
-    def halt_all(self, reason: str) -> int:
+    def halt_all(
+        self,
+        reason: str,
+        *,
+        budget: ComputeBudget | None = None,
+    ) -> int:
         """Stop every live branch through the same best-state finalizer."""
 
         live = list(self.active())
         for branch in live:
-            self._halt(branch, reason)
+            self._halt(branch, reason, budget=budget)
         return len(live)
 
-    def _halt(self, branch: BranchState, reason: str) -> None:
+    def _halt(
+        self,
+        branch: BranchState,
+        reason: str,
+        *,
+        budget: ComputeBudget | None = None,
+    ) -> None:
         """Halt one branch, shipping the best state when it beats the last."""
-        final, reverted = branch.halting.final_state(branch.z)
+        final, reverted, _source = self.final_state(branch, budget=budget)
         branch.z = final
         branch.workspace.update(final)
         branch.halted = True

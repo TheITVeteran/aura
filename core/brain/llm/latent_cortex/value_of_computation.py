@@ -920,6 +920,7 @@ def validate_action_trace_row(
         "state_before",
         "state_after",
         "affected_branches",
+        "verification",
     }
     if not isinstance(value, Mapping) or set(value) != fields:
         raise ValueError("cognitive action trace fields differ")
@@ -1016,13 +1017,23 @@ def validate_action_trace_row(
     before_score = before["verifier_score"]
     after_score = after["verifier_score"]
     observed_score = after["observed_verifier_score"]
+    raw_verification = value.get("verification")
+    verification_decision = (
+        raw_verification.get("decision")
+        if isinstance(raw_verification, Mapping)
+        else None
+    )
     checked = before_score is not None and observed_score is not None
     if transition["checked"] is not checked:
         raise ValueError("cognitive action checked status differs from public state")
     verified_delta = (
         float(observed_score) - float(before_score) if checked else 0.0
     )
-    if observed_score is None:
+    if verification_decision == "preserve_verified":
+        if before_score is None or observed_score is None:
+            raise ValueError("verified-best preservation lacks comparable scores")
+        expected_accepted_score = before_score
+    elif observed_score is None:
         expected_accepted_score = before_score
     elif before_score is not None and observed_score < before_score - 1e-9:
         if "regression_reverted" not in transition["outcome"]:
@@ -1070,6 +1081,61 @@ def validate_action_trace_row(
         or not 0 <= affected_branches <= signal.total_branches
     ):
         raise ValueError("cognitive action affected branch count is invalid")
+    verification = value.get("verification")
+    verification_fields = {
+        "target_branch",
+        "observation",
+        "decision",
+        "restored",
+    }
+    if not isinstance(verification, Mapping) or set(verification) != verification_fields:
+        raise ValueError("cognitive action verification fields differ")
+    verification = dict(verification)
+    if verification["target_branch"] is None:
+        if (
+            verification["observation"] != {}
+            or verification["decision"] != "not_run"
+            or verification["restored"] is not False
+            or observed_score is not None
+        ):
+            raise ValueError("absent cognitive verification is contradictory")
+    else:
+        from core.brain.llm.latent_cortex.verified_best import (
+            validate_observation,
+        )
+
+        if (
+            type(verification["target_branch"]) is not int
+            or not 0 <= verification["target_branch"] < signal.total_branches
+            or verification["decision"]
+            not in {"ranking_only", "promote", "preserve_verified"}
+            or type(verification["restored"]) is not bool
+        ):
+            raise ValueError("cognitive verification decision is invalid")
+        verification["observation"] = validate_observation(
+            verification["observation"]
+        )
+        if (
+            observed_score is None
+            or abs(
+                float(verification["observation"]["score"])
+                - float(observed_score)
+            )
+            > 1e-9
+            or (
+                verification["decision"] == "ranking_only"
+                and verification["observation"]["authoritative"]
+            )
+            or (
+                verification["decision"] != "ranking_only"
+                and not verification["observation"]["authoritative"]
+            )
+            or (
+                verification["decision"] != "preserve_verified"
+                and verification["restored"]
+            )
+        ):
+            raise ValueError("cognitive verification evidence is contradictory")
     return {
         "decision": decision,
         "transition": transition,
@@ -1077,6 +1143,7 @@ def validate_action_trace_row(
         "state_before": before,
         "state_after": after,
         "affected_branches": affected_branches,
+        "verification": verification,
     }
 
 

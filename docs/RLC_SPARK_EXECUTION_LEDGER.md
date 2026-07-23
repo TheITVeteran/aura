@@ -741,9 +741,37 @@ before those dependencies close is not admissible.
   proves the stop head reduces recurrent transitions and layer applications.
   This is a bounded mechanism/correctness proof, not a resident-32B utility or
   frontier result; a resident head and powered broad-task campaign remain open.
-- [ ] **SPARK-027 - Best-state and overthinking reversion.** Preserve the best
+- [x] **SPARK-027 - Best-state and overthinking reversion.** Preserve the best
   verified state, detect oscillation/divergence, and prevent later recurrence
   from replacing a correct state without confidence-bound evidence.
+
+  Best-state authority is now branch-local and confidence-bound. Bare scalar
+  verifier output is explicitly uncalibrated and may rank candidates but may
+  not preserve or restore hidden state. Authority requires either independently
+  committed deterministic-exact evidence or a calibrated confidence interval
+  with at least eight samples. The first authoritative observation promotes;
+  later candidates replace the incumbent only when their lower bound exceeds
+  the incumbent upper bound. Overlap or regression restores the exact
+  incumbent state immediately without mutating peer branches.
+
+  Finalization records the pre-state, returned state, source, fixed-depth mode,
+  and whether reversion occurred. Adaptive execution prefers the verified
+  state over the legacy scalar proxy; fixed-depth experiments preserve their
+  scheduled endpoint. The top-level best-step identity follows the state
+  actually returned. The receipt binds every branch-local observation and
+  disposition to the exact cognitive-action trace and loop-stability receipt,
+  whose oscillation, divergence, and containment evidence is already
+  independently reconstructed by the service. State hashing and finalization
+  are charged to the resource ledger.
+
+  Unit and real tiny-Qwen execution tests prove scalar non-authority, minimum
+  calibration power, interval-dominance promotion, overlap preservation,
+  exact branch-local restoration, peer isolation, fixed-depth behavior,
+  final overthinking reversion, receipt tamper rejection, service rejection,
+  and preservation of bounded-verifier metadata through metering. This closes
+  the mechanism and proof boundary only. The bounded verifier still depends on
+  its caller's evidence commitment pending SPARK-071's external trust roots;
+  no resident-32B broad-task utility or frontier claim is accepted here.
 - [ ] **SPARK-028 - Neural uncertainty head.** Train and calibrate a hidden-state
   correctness/entropy head at claim or step granularity; do not substitute
   self-reported confidence.
@@ -1046,8 +1074,24 @@ Strict focused Ruff, bytecode compilation, and `git diff --check` pass. No
 resident 32B capability campaign was run, and the negative frontier verdict is
 unchanged.
 
-This is total checkpoint record 401. The revised forecast remains 466-733 total
-records, now approximately 65-332 records after this checkpoint. Checkpoint-
-count completion is approximately 54.7%-86.1%, with a midpoint planning
-estimate of 66.9%. Next: publish CP340, then implement SPARK-027's verified
-best-state and overthinking-reversion boundary.
+CP341 closes confidence-bound best-state authority and overthinking reversion.
+Verifier observations are branch-local, ordinary scalar scores cannot acquire
+state-selection authority, interval overlap preserves the incumbent exactly,
+and the final returned state is independently reconstructable from the action
+and loop-stability receipts. Fixed-depth experiments remain unchanged. No
+resident-32B bounded-verifier campaign or externally rooted verifier evidence
+ran, so this does not change the negative frontier verdict.
+
+CP341 validation passes the focused engine, verifier, resource-accounting,
+schedule/branch, value-of-computation, and service boundary 194/194 and the
+affected adaptive-halting, learned-bridge, attachment, recurrence, escape,
+update-acceptance, epistemic-runtime, and wiring gate 298/298. The final
+fixed-snapshot RLC, latent-cortex, recurrence/training, global-workspace, GWT,
+and execution-controller ownership gate passes 1323/1323 in 912.53 seconds.
+Strict focused Ruff, bytecode compilation, and `git diff --check` pass.
+
+This is total checkpoint record 402. The revised forecast remains 466-733 total
+records, now approximately 64-331 records after this checkpoint. Checkpoint-
+count completion is approximately 54.8%-86.3%, with a midpoint planning
+estimate of 67.1%. Next: publish CP341, then implement SPARK-028's calibrated
+neural uncertainty head.

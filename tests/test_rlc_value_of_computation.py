@@ -1,5 +1,6 @@
 """Contracts for the per-recurrence value-of-computation policy."""
 
+import hashlib
 from copy import deepcopy
 
 import pytest
@@ -20,6 +21,7 @@ from core.brain.llm.latent_cortex.value_of_computation import (
     validate_action_transition,
     validate_evidence_snapshot,
 )
+from core.brain.llm.latent_cortex.verified_best import VerifierObservation
 
 
 def _state(**overrides):
@@ -294,6 +296,12 @@ def test_action_trace_recomputes_policy_and_public_transition_metrics():
             "observed_verifier_score": None,
         },
         "affected_branches": 2,
+        "verification": {
+            "target_branch": None,
+            "observation": {},
+            "decision": "not_run",
+            "restored": False,
+        },
     }
     assert validate_action_trace_row(
         row,
@@ -358,6 +366,12 @@ def test_reverted_verifier_probe_does_not_replace_accepted_score():
             "observed_verifier_score": 0.3,
         },
         "affected_branches": 2,
+        "verification": {
+            "target_branch": 0,
+            "observation": VerifierObservation.from_value(0.3).to_dict(),
+            "decision": "ranking_only",
+            "restored": False,
+        },
     }
     validate_action_trace_row(
         row,
@@ -373,6 +387,80 @@ def test_reverted_verifier_probe_does_not_replace_accepted_score():
             evidence_snapshot=snapshot,
             executors=executors,
         )
+
+
+def test_overlapping_confidence_interval_preserves_incumbent_point_score():
+    state = _state(
+        step_index=2,
+        residual=0.4,
+        disagreement=0.4,
+        verifier_score=0.8,
+        verifier_delta=0.0,
+        has_verifier=True,
+    )
+    snapshot = build_evidence_snapshot(bucket="b", cells={})
+    executors = (OperationKind.FALSIFY,)
+    decision = ValueOfComputationPolicy(snapshot).choose(
+        state,
+        executors=executors,
+    )
+    transition = {
+        "schema": ACTION_TRANSITION_SCHEMA,
+        "bucket": "b",
+        "snapshot_sha256": snapshot["snapshot_sha256"],
+        "decision_sha256": decision["decision_sha256"],
+        "step_index": 2,
+        "action": "falsify",
+        "mode": decision["mode"],
+        "outcome": "verified_best_preserved",
+        "checked": True,
+        "metrics": transition_reward(
+            verified_delta=0.04,
+            information_gain=0.0,
+            diversity_gain=0.0,
+            unsupported_confidence=0.0,
+            cost=0.1,
+        ),
+    }
+    observation = VerifierObservation(
+        score=0.84,
+        lower_bound=0.78,
+        upper_bound=0.90,
+        sample_count=32,
+        basis="calibrated_interval",
+        independent=True,
+        evidence_sha256=hashlib.sha256(b"overlap").hexdigest(),
+    )
+    row = {
+        "decision": decision,
+        "transition": transition,
+        "state_signal": state.to_dict(),
+        "state_before": {
+            "residual": 0.4,
+            "disagreement": 0.4,
+            "verifier_score": 0.8,
+            "budget_remaining_fraction": 0.8,
+        },
+        "state_after": {
+            "residual": 0.4,
+            "disagreement": 0.4,
+            "verifier_score": 0.8,
+            "observed_verifier_score": 0.84,
+        },
+        "affected_branches": 1,
+        "verification": {
+            "target_branch": 0,
+            "observation": observation.to_dict(),
+            "decision": "preserve_verified",
+            "restored": True,
+        },
+    }
+    validated = validate_action_trace_row(
+        row,
+        evidence_snapshot=snapshot,
+        executors=executors,
+    )
+    assert validated["state_after"]["verifier_score"] == 0.8
 
 
 def test_invalid_state_and_empty_executor_inventory_fail_before_selection():

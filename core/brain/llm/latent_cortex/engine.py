@@ -413,15 +413,15 @@ class LatentCortexEngine:
 
     @staticmethod
     def _meter_verifier(
-        verifier: Callable[[str], float] | None,
+        verifier: Callable[[str], Any] | None,
         budget: ComputeBudget,
-    ) -> Callable[[str], float] | None:
+    ) -> Callable[[str], Any] | None:
         if verifier is None:
             return None
 
-        def metered(text: str) -> float:
+        def charge(callback: Callable[[str], Any], text: str) -> Any:
             rendered = str(text)
-            result = verifier(rendered)
+            result = callback(rendered)
             budget.charge_verifier(
                 "task_verifier",
                 input_bytes=len(rendered.encode("utf-8")),
@@ -430,6 +430,12 @@ class LatentCortexEngine:
             )
             return result
 
+        def metered(text: str) -> Any:
+            return charge(verifier, text)
+
+        bounded = getattr(verifier, "observe_with_bounds", None)
+        if callable(bounded):
+            metered.observe_with_bounds = lambda text: charge(bounded, text)
         return metered
 
     def _token_ends_sentence(self, token: int) -> bool:
@@ -1685,8 +1691,8 @@ class LatentCortexEngine:
         cognitive_operator_trace: list[dict[str, Any]] = []
         action_index = 0
         previous_residual = 1.0
-        previous_verifier_score: float | None = None
-        previous_verifier_delta: float | None = None
+        branch_verifier_scores: dict[int, float] = {}
+        branch_verifier_deltas: dict[int, float] = {}
         ensemble.savepoint_all()
         for op_index, op in enumerate(schedule.ops):
             op_kind = getattr(op, "kind", "window")
@@ -1783,11 +1789,29 @@ class LatentCortexEngine:
                 if ensemble.all_halted() or budget.exhausted:
                     break
                 if action_index >= self.config.recurrence.max_steps:
-                    ensemble.halt_all("value_controller_action_budget")
+                    ensemble.halt_all(
+                        "value_controller_action_budget",
+                        budget=budget,
+                    )
                     receipt.flag("value_controller_action_budget")
                     break
                 before_residual = self._mean_latest_residual(ensemble)
                 before_disagreement = ensemble.disagreement(budget=budget)
+                signal_candidates = ensemble.active() or list(ensemble.branches)
+                prospective_target = min(
+                    signal_candidates,
+                    key=lambda branch: (
+                        branch.halting.residual_trail[-1]
+                        if branch.halting.residual_trail
+                        else float("inf")
+                    ),
+                )
+                previous_verifier_score = branch_verifier_scores.get(
+                    prospective_target.index
+                )
+                previous_verifier_delta = branch_verifier_deltas.get(
+                    prospective_target.index
+                )
                 remaining_fraction = (
                     budget.remaining_layer_apps / max(1, budget.max_layer_apps)
                 )
@@ -1861,6 +1885,12 @@ class LatentCortexEngine:
                 affected_branches = 0
                 probe_score: float | None = None
                 accepted_verifier_score = previous_verifier_score
+                verification = {
+                    "target_branch": None,
+                    "observation": {},
+                    "decision": "not_run",
+                    "restored": False,
+                }
 
                 if action is OperationKind.REGENERATE_FROM_PREFIX:
                     affected_branches += ensemble.revert_all_to_savepoint()
@@ -1921,10 +1951,16 @@ class LatentCortexEngine:
                     affected_branches = ensemble.compress_state(budget=budget)
                     outcome = "state_compressed"
                 elif action is OperationKind.ANSWER:
-                    affected_branches = ensemble.halt_all("value_controller_answer")
+                    affected_branches = ensemble.halt_all(
+                        "value_controller_answer",
+                        budget=budget,
+                    )
                     outcome = "answer_selected"
                 elif action is OperationKind.ABSTAIN:
-                    affected_branches = ensemble.halt_all("value_controller_abstain")
+                    affected_branches = ensemble.halt_all(
+                        "value_controller_abstain",
+                        budget=budget,
+                    )
                     outcome = "abstention_selected"
 
                 if (
@@ -1940,15 +1976,7 @@ class LatentCortexEngine:
                 ):
                     probe_cost = self._verifier_probe_layer_apps(bridge_tokens)
                     if probe_cost + safety_reserve <= budget.remaining_layer_apps:
-                        candidates = ensemble.active() or list(ensemble.branches)
-                        target = min(
-                            candidates,
-                            key=lambda branch: (
-                                branch.halting.residual_trail[-1]
-                                if branch.halting.residual_trail
-                                else float("inf")
-                            ),
-                        )
+                        target = prospective_target
                         probe = self._decode_probe(
                             target,
                             cache,
@@ -1956,15 +1984,53 @@ class LatentCortexEngine:
                             budget,
                             bridge_tokens=bridge_tokens,
                         )
-                        probe_score = float(verifier(self.tokenizer.decode(probe)))
-                        if not math.isfinite(probe_score):
+                        rendered_probe = self.tokenizer.decode(probe)
+                        bounded_observer = getattr(
+                            verifier,
+                            "observe_with_bounds",
+                            None,
+                        )
+                        raw_observation = (
+                            bounded_observer(rendered_probe)
+                            if callable(bounded_observer)
+                            else verifier(rendered_probe)
+                        )
+                        try:
+                            (
+                                observation,
+                                best_decision,
+                                best_restored,
+                            ) = ensemble.observe_verified_best(
+                                target,
+                                raw_observation,
+                                action_step=action_index,
+                                budget=budget,
+                            )
+                        except (TypeError, ValueError):
                             probe_score = None
-                            outcome = "verifier_nonfinite"
+                            outcome = "verifier_observation_invalid"
+                        else:
+                            probe_score = observation.score
+                            verification = {
+                                "target_branch": target.index,
+                                "observation": observation.to_dict(),
+                                "decision": best_decision,
+                                "restored": best_restored,
+                            }
+                        if probe_score is None:
+                            pass
+                        elif best_decision == "preserve_verified":
+                            accepted_verifier_score = float(
+                                target.verified_best_observation["score"]
+                            )
+                            outcome = "verified_best_preserved"
                         elif (
                             previous_verifier_score is not None
                             and probe_score < previous_verifier_score - 1e-9
                         ):
-                            reverted = ensemble.revert_all_to_savepoint()
+                            reverted = int(
+                                ensemble.revert_branch_to_savepoint(target)
+                            )
                             outcome = f"verifier_regression_reverted_{reverted}"
                         else:
                             accepted_verifier_score = probe_score
@@ -1972,7 +2038,7 @@ class LatentCortexEngine:
                                 previous_verifier_score is None
                                 or probe_score > previous_verifier_score
                             ):
-                                ensemble.savepoint_all()
+                                ensemble.savepoint_branch(target)
                                 outcome = "verified_progress_saved"
                     else:
                         outcome = "verifier_probe_budget_refused"
@@ -2053,17 +2119,27 @@ class LatentCortexEngine:
                             "observed_verifier_score": probe_score,
                         },
                         "affected_branches": affected_branches,
+                        "verification": verification,
                     }
                 )
                 selected_actions.append(action)
                 action_index += 1
                 previous_residual = before_residual
-                previous_verifier_delta = (
-                    max(-1.0, min(1.0, verified_delta))
-                    if checked
-                    else None
-                )
-                previous_verifier_score = accepted_verifier_score
+                if (
+                    verification["target_branch"] is not None
+                    and accepted_verifier_score is not None
+                ):
+                    branch_index = int(verification["target_branch"])
+                    branch_verifier_scores[branch_index] = (
+                        accepted_verifier_score
+                    )
+                    if checked:
+                        branch_verifier_deltas[branch_index] = max(
+                            -1.0,
+                            min(1.0, verified_delta),
+                        )
+                    else:
+                        branch_verifier_deltas.pop(branch_index, None)
                 stage_started = self._stage_checkpoint(
                     receipt=receipt,
                     budget=budget,
@@ -2102,7 +2178,10 @@ class LatentCortexEngine:
         )
         for branch in ensemble.branches:
             if not branch.halted:
-                final, reverted = branch.halting.final_state(branch.z)
+                final, reverted, _source = ensemble.final_state(
+                    branch,
+                    budget=budget,
+                )
                 branch.z = final
                 branch.workspace.update(final)
                 branch.halted = True
@@ -2205,7 +2284,14 @@ class LatentCortexEngine:
         receipt.selected_branch = winner.index
         receipt.steps_taken = winner.steps
         receipt.residual_trail = list(winner.halting.residual_trail)
-        receipt.best_step = winner.halting.best_step
+        receipt.best_step = (
+            winner.verified_best_step
+            if (
+                not self.config.recurrence.fixed_depth
+                and winner.verified_best_step >= 0
+            )
+            else winner.halting.best_step
+        )
         receipt.halting_reason = winner.halt_reason
         receipt.reverted_to_best = winner.halt_reason.endswith("_reverted")
         telemetry.record_selection(receipt.branch_scores, winner.index)
@@ -2288,6 +2374,15 @@ class LatentCortexEngine:
         )
         if stop_gate.mode == "learned" and not receipt.halting["head_was_causal"]:
             receipt.flag("learned_halting_not_causal")
+        from core.brain.llm.latent_cortex.verified_best import (
+            build_verified_best_receipt,
+        )
+
+        receipt.verified_best_state = build_verified_best_receipt(
+            branches=list(ensemble.branches),
+            cognitive_action_trace=receipt.cognitive_action_trace,
+            loop_stability=receipt.loop_stability,
+        )
         stage_started = self._stage_checkpoint(
             receipt=receipt,
             budget=budget,

@@ -25888,3 +25888,63 @@ approximately 65-332 records remaining, 54.7%-86.1% checkpoint-count completion,
 and a 66.9% midpoint planning estimate. Next: publish CP340, then implement
 SPARK-027's verified best-state and overthinking-reversion boundary. Final
 multi-hour soaks remain deferred until every shorter gate is green.
+
+## Checkpoint 2026-07-23-341: Verified States Survive Later Overthinking
+
+Best-state authority is now branch-local and confidence-bound rather than a
+scalar score attached to whichever recurrent candidate happened to be current.
+Bare numeric verifier output is explicitly an uncalibrated ranking signal with
+the vacuous interval [0, 1] and cannot preserve or restore hidden state.
+Authority requires independently committed deterministic-exact evidence or a
+calibrated interval with at least eight samples. The first authoritative
+observation promotes its exact branch state. A later candidate may replace it
+only when the candidate lower bound exceeds the incumbent upper bound;
+overlapping or weaker evidence restores the incumbent immediately.
+
+Verifier probes now transact against one target branch. Their savepoint,
+verified score history, score delta, state hash, and restoration decision no
+longer mutate or borrow evidence from peers. The cognitive-action trace records
+the target, observation schema and commitment, interval decision, and
+restoration. Ordinary scalar scores continue to support ranking and the legacy
+regression guard, but cannot be confused with verified best-state authority.
+
+Every branch finalization binds the pre-state, returned state, source,
+fixed-depth flag, and reversion decision. Adaptive execution prefers a
+confidence-verified state over the legacy proxy peak; fixed-depth experiments
+retain the exact scheduled endpoint. The episode's top-level best-step now
+identifies the verified state actually returned. Hashing, preservation, and
+finalization work are charged to the structural resource ledger.
+
+The independent receipt validator reconstructs every promotion and preservation
+from the exact cognitive-action trace, then cross-binds the result to the
+loop-stability receipt that already proves oscillation, divergence, continuity,
+and containment. It rejects altered branch targets, bounds, observations,
+state identities, decisions, restoration flags, finalization sources,
+fixed-depth behavior, aggregates, or source receipts even when an attacker
+rehashes the outer object. The service requires this proof before accepting the
+worker result.
+
+Validation: the focused engine, verifier, resource-accounting, schedule/branch,
+value-of-computation, and service boundary passes 194/194 in 130.40 seconds.
+The broader adaptive-halting, learned-bridge, attachment, recurrence, escape,
+update-acceptance, epistemic-runtime, and wiring gate passes 298/298 in 177.07
+seconds. The final fixed-snapshot RLC, latent-cortex, recurrence/training,
+global-workspace, GWT, and execution-controller ownership gate passes 1323/1323
+in 912.53 seconds. Strict focused Ruff, bytecode compilation, and `git diff
+--check` pass. Unit and real tiny-Qwen execution cover scalar non-authority,
+minimum calibration power, interval-dominance promotion, overlap preservation,
+exact branch-local restoration, peer isolation, fixed-depth behavior, final
+overthinking reversion, metered structured evidence, and tamper rejection.
+
+SPARK-027 closes at the mechanism and independently reconstructable runtime
+boundary. The bounded observation still trusts its caller's evidence
+commitment; external trust roots remain part of SPARK-071. No resident-32B
+bounded-verifier campaign ran, so utility, adapter/RLC positive interaction,
+reasoning gain, and frontier capability remain unproven. The capability verdict
+remains negative/no-signal.
+
+This is total checkpoint record 402. The forecast remains 466-733 total records,
+approximately 64-331 records remaining, 54.8%-86.3% checkpoint-count completion,
+and a 67.1% midpoint planning estimate. Next: publish CP341, then implement
+SPARK-028's calibrated neural uncertainty head. Final multi-hour soaks remain
+deferred until every shorter gate is green.

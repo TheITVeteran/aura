@@ -66,8 +66,15 @@ changes the answer — that is the causality contract.
   logistic head may stop only when update-quality and expected-value-of-compute
   evidence are both measured. Its public inputs and decision are reconstructed
   from signed update, loop, and cognitive-action receipts by the service.
-- **Overthinking guard**: track best-scoring state; revert on halt if the
-  trajectory peaked early (recurrent-depth literature's overthinking failure).
+- **Confidence-bound overthinking guard**: an ordinary scalar verifier remains
+  ranking-only. A branch can promote a state only from independently committed
+  deterministic-exact evidence or a calibrated interval with at least eight
+  samples; a later state replaces it only when its lower confidence bound
+  exceeds the incumbent upper bound. Overlapping or weaker evidence restores
+  the exact incumbent branch state immediately, and finalization returns that
+  state unless a fixed-depth experiment explicitly forbids adaptive reversion.
+  The service reconstructs every promotion, preservation, and finalization
+  against the exact action and loop-stability receipts.
 
 ### Layer-schedule programs
 A schedule is a validated program `[(start, end, repeats, α), ...]` over the

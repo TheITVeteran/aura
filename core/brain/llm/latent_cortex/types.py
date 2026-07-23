@@ -1091,6 +1091,9 @@ class EpisodeReceipt:
     # learned run whose every stop came from the residual floor is the old
     # policy under a new name, and the receipt must say so.
     halting: dict[str, Any] = field(default_factory=dict)
+    # Confidence-bound, branch-local best-state promotions and preservations.
+    # Empty/default traces mean no verifier earned state-selection authority.
+    verified_best_state: dict[str, Any] = field(default_factory=dict)
     # Neural-bytecode trace: one event per non-window instruction the
     # schedule program executed (exchange/savepoint/verify_probe outcomes,
     # probe scores, backtracks). Empty for plain window programs.
@@ -1301,6 +1304,7 @@ class EpisodeReceipt:
             "verifier_guidance": dict(self.verifier_guidance),
             "escape": dict(self.escape),
             "halting": dict(self.halting),
+            "verified_best_state": dict(self.verified_best_state),
             "bytecode_events": [dict(row) for row in self.bytecode_events],
             "value_of_computation": dict(self.value_of_computation),
             "cognitive_action_trace": [

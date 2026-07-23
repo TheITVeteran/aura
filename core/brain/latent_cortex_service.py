@@ -821,6 +821,19 @@ class LatentCortexService:
             )
         except (ImportError, OSError, TypeError, ValueError):
             errors.append("halting_unproven")
+        try:
+            from core.brain.llm.latent_cortex.verified_best import (
+                validate_verified_best_receipt,
+            )
+
+            validate_verified_best_receipt(
+                receipt.get("verified_best_state"),
+                cognitive_action_trace=receipt.get("cognitive_action_trace"),
+                loop_stability=receipt.get("loop_stability"),
+                expected_n_branches=int(config.get("n_branches") or 0),
+            )
+        except (ImportError, TypeError, ValueError):
+            errors.append("verified_best_state_unproven")
         one_shot_slots = [
             row
             for row in (receipt.get("cognitive_slots") or [])

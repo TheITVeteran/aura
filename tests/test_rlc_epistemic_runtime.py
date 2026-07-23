@@ -674,6 +674,12 @@ async def test_service_never_marks_contract_failed_worker_as_successful_operatio
                                 "observed_verifier_score": None,
                             },
                             "affected_branches": 0,
+                            "verification": {
+                                "target_branch": None,
+                                "observation": {},
+                                "decision": "not_run",
+                                "restored": False,
+                            },
                         }
                     ],
                 },

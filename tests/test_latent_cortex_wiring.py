@@ -219,6 +219,9 @@ def _recurrent_grounding_fields(config, *, steps=1):
         UpdateGateRuntime,
         build_update_gate_receipt,
     )
+    from core.brain.llm.latent_cortex.verified_best import (
+        build_verified_best_receipt,
+    )
     from core.brain.llm.latent_cortex.worker_handler import config_from_job
     from core.learning.update_acceptance import (
         FEATURE_NAMES,
@@ -344,6 +347,17 @@ def _recurrent_grounding_fields(config, *, steps=1):
                 halt_reason="schedule_complete",
                 steps=steps,
                 halting=SimpleNamespace(stop_trace=[]),
+                verified_best_trace=[],
+                verified_best_step=-1,
+                verified_best_state_sha256="",
+                verified_best_observation={},
+                verified_finalization={
+                    "source": "current",
+                    "pre_state_sha256": prior,
+                    "post_state_sha256": prior,
+                    "reverted": False,
+                    "fixed_depth": executed.recurrence.fixed_depth,
+                },
             )
         )
     receipt = build_recurrent_grounding_receipt(
@@ -415,6 +429,11 @@ def _recurrent_grounding_fields(config, *, steps=1):
         loop_stability=loop_stability,
         cognitive_action_trace=[],
     )
+    verified_best_receipt = build_verified_best_receipt(
+        branches=branches,
+        cognitive_action_trace=[],
+        loop_stability=loop_stability,
+    )
     return {
         "cognitive_slots": [],
         "selected_branch": 0,
@@ -424,6 +443,7 @@ def _recurrent_grounding_fields(config, *, steps=1):
         "loop_stability": loop_stability,
         "update_acceptance": update_acceptance_receipt,
         "halting": halting_receipt,
+        "verified_best_state": verified_best_receipt,
         "cognitive_action_trace": [],
     }
 
@@ -2371,6 +2391,35 @@ def test_service_reconstructs_stop_gate_and_rejects_rehashed_policy_lie():
         }
     )
     assert "halting_unproven" in (
+        LatentCortexService._receipt_contract_errors(forged, config)
+    )
+
+
+def test_service_reconstructs_verified_best_and_rejects_rehashed_state_lie():
+    from core.brain.llm.latent_cortex.loop_core import canonical_sha256
+
+    config = {"n_slots": 8, "n_branches": 2}
+    receipt = {
+        **_identity_receipt(),
+        "n_slots": 8,
+        "n_branches": 2,
+        **_recurrent_grounding_fields(config, steps=3),
+    }
+    assert "verified_best_state_unproven" not in (
+        LatentCortexService._receipt_contract_errors(receipt, config)
+    )
+
+    forged = copy.deepcopy(receipt)
+    verified = forged["verified_best_state"]
+    verified["branches"][0]["final_best_state_sha256"] = "a" * 64
+    verified["receipt_sha256"] = canonical_sha256(
+        {
+            key: value
+            for key, value in verified.items()
+            if key != "receipt_sha256"
+        }
+    )
+    assert "verified_best_state_unproven" in (
         LatentCortexService._receipt_contract_errors(forged, config)
     )
 
