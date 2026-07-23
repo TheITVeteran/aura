@@ -344,6 +344,28 @@ def _bundle(
                         "installed_app_build_sha256": app_build,
                         "schedule_hash": "3" * 64,
                         "params_unchanged": True,
+                        # CP126 6090a5ae + 01e8b3c1: the TREATMENT arm is the
+                        # one whose effect gets published, so its integrity
+                        # claims need the same digest evidence the control
+                        # already carried. EpisodeReceipt.to_dict() emits
+                        # weight_integrity + integrity_verdicts for real
+                        # episodes; the fixture now matches the producer.
+                        "weight_integrity": {
+                            "algorithm": "sha256",
+                            "version": 1,
+                            "params_before": canonical_sha256(
+                                ["treatment-params", trial_id]
+                            ),
+                            "params_after": canonical_sha256(
+                                ["treatment-params", trial_id]
+                            ),
+                            "canary_before": canonical_sha256(
+                                ["treatment-canary", trial_id]
+                            ),
+                            "canary_after": canonical_sha256(
+                                ["treatment-canary", trial_id]
+                            ),
+                        },
                         "latent_opt_applied": True,
                         "latent_opt_mode": "gradient",
                         "latent_opt_attempts": 2,

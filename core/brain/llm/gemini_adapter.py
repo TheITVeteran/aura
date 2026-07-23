@@ -728,6 +728,28 @@ class GeminiAdapter:
             parts = candidate.get("content", {}).get("parts", [])
             text = "".join(p.get("text", "") for p in parts)
 
+            # PROVIDER RECEIPT (CP126 inference-gate 8ff3084b /
+            # llm_health_router 3bc237f4). Provenance was previously asserted
+            # from the ROUTER's own endpoint record, so a misregistered,
+            # proxied or deceptive client was described identically to a real
+            # one. These fields come from the PROVIDER's response body, not
+            # from our configuration: responseId is generated server-side and
+            # modelVersion is the model that actually answered.
+            response_id = str(data.get("responseId") or "").strip()
+            model_version = str(data.get("modelVersion") or "").strip()
+            if response_id or model_version:
+                metadata["provider_receipt"] = {
+                    "provider": "gemini",
+                    "response_id": response_id,
+                    "model_version": model_version,
+                    "requested_model": str(kwargs.get("model") or self.model or ""),
+                    "source": "provider_response_body",
+                }
+                # The model that ANSWERED must be the one we asked for.
+                requested = str(kwargs.get("model") or self.model or "")
+                if model_version and requested and not model_version.startswith(requested.split("-latest")[0]):
+                    metadata["provider_receipt"]["model_version_mismatch"] = True
+
             # Extract token usage
             usage = data.get("usageMetadata", {})
             metadata["tokens_used"] = usage.get("totalTokenCount", 0)
@@ -826,10 +848,12 @@ class GeminiAdapter:
         else:
             result = await self.call(prompt, **kwargs)
         success, text, meta = result
+        provider_receipt = (meta or {}).get("provider_receipt")
         self._last_generation_metadata = {
             "provider": "gemini",
             "model": model or self.model,
             "ok": bool(success),
+            **({"provider_receipt": dict(provider_receipt)} if isinstance(provider_receipt, dict) else {}),
             **({} if success else {"error": str((meta or {}).get("error", "gemini_call_failed"))}),
         }
         return result

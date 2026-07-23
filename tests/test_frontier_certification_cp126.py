@@ -67,11 +67,14 @@ class TestTreatmentIntegrityDigest:
         reasons, _ = self._run(receipt)
         assert any("fast_weights_erased_refuted_by_digest" in r for r in reasons)
 
-    def test_absent_digest_is_a_reported_gap_not_silent_proof(self):
+    def test_absent_digest_disqualifies_and_is_distinguishable(self):
         reasons, gaps = self._run(self._receipt())
-        # A bare boolean no longer counts as measured evidence...
+        # A bare boolean is not measured evidence, and the producer
+        # (EpisodeReceipt.to_dict) DOES emit the digests — so an absent
+        # verdict on a published claim disqualifies the trial...
         assert set(gaps) == {"treatment_params_unchanged", "treatment_fast_weights_erased"}
-        # ...but absence is not a refutation, so it does not reject the trial.
+        assert any("unproven_no_digest" in r for r in reasons)
+        # ...while staying distinguishable from "measured and false".
         assert not any("refuted_by_digest" in r for r in reasons)
 
     def test_proven_digest_leaves_no_gap(self):

@@ -3646,6 +3646,19 @@ class HealthAwareLLMRouter:
                         provider_receipt.get("signature")
                         or provider_receipt.get("response_id")
                     )
+                    if receipt_backed and provider_receipt.get("model_version_mismatch"):
+                        # The provider answered with a DIFFERENT model than the
+                        # one this endpoint claims to serve. That is exactly the
+                        # misattribution the receipt exists to catch.
+                        receipt_backed = False
+                        _record_router_degradation(
+                            RuntimeError(
+                                "provider_model_version_mismatch:"
+                                f"{provider_receipt.get('model_version')}"
+                            ),
+                            action="downgraded provider attribution after a model-version mismatch",
+                            severity="error",
+                        )
                     result["provider_attribution"] = (
                         "provider_receipt" if receipt_backed else "router_configuration"
                     )

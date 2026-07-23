@@ -320,18 +320,20 @@ def _validate_treatment_receipt(
     # evidence for params_unchanged; the treatment receipt — the arm whose
     # effect is being published — passed on the literal booleans above alone.
     #
-    # A digest that REFUTES the claim is disqualifying: the boolean says the
-    # weights were untouched / the fast weights erased, and the measurement
-    # says otherwise. An ABSENT digest is a gap in the evidence chain, not a
-    # refutation; producers do not emit treatment-side weight_integrity yet, so
-    # rejecting on absence would make certification unachievable rather than
-    # more honest. Absence is surfaced on the certificate instead of counting
-    # as proof.
+    # The producer DOES emit this: EpisodeReceipt.to_dict() carries
+    # weight_integrity digests and integrity_verdicts(). So an absent verdict
+    # on a published capability claim means the receipt was hand-assembled or
+    # came from a lane that measured nothing — neither is evidence, and this
+    # is the exact fail-open the finding names. Both a REFUTED and an
+    # UNPROVEN verdict now disqualify the trial; the distinction is preserved
+    # in the reason so an operator can tell "measured false" from "never
+    # measured".
     for claim in ("params_unchanged", "fast_weights_erased"):
         verdict = _receipt_integrity_verdict(receipt, claim)
         if verdict == "refuted":
             reasons.append(f"{trial_id}:treatment_{claim}_refuted_by_digest")
         elif verdict != "proven":
+            reasons.append(f"{trial_id}:treatment_{claim}_unproven_no_digest")
             unproven_integrity_claims.append(f"treatment_{claim}")
     if str(receipt.get("checkpoint_fingerprint") or "") != checkpoint:
         reasons.append(f"{trial_id}:treatment_checkpoint_mismatch")
