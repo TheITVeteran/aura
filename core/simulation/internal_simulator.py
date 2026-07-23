@@ -210,9 +210,10 @@ class InternalSimulator:
 
             content_lower = content.lower()
 
-            # Late night + error detected → helpful actions score high
+            # Late night + error detected → helpful actions score high. Reads a
+            # low-confidence time-heuristic hypothesis, not an asserted mood.
             if ws.time_of_day in ("night", "late_night"):
-                if ws.get_belief("user_likely_frustrated"):
+                if ws.get_belief("user_possibly_frustrated_late_night_error"):
                     if any(w in content_lower for w in ["fix", "help", "repair", "patch", "error"]):
                         score += 0.3  # maximum boost for proactive help
 

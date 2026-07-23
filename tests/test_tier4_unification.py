@@ -97,7 +97,12 @@ class TestWorldState:
         ws = WorldState()
         ws.time_of_day = "late_night"
         ws.on_user_error("ModuleNotFoundError: no module named 'foo'")
-        assert ws.estimated_user_mood == "frustrated"
+        # A late-night error records a LOW-confidence, explicitly-labeled
+        # time-heuristic hypothesis rather than asserting the user's mood
+        # (which had no linguistic/behavioral evidence).
+        assert ws.estimated_user_mood == "unknown"
+        full = ws.get_belief_full("user_possibly_frustrated_late_night_error")
+        assert full is not None and full["confidence"] <= 0.3
         events = ws.get_salient_events()
         assert len(events) >= 1
         assert "error" in events[0]["description"].lower()

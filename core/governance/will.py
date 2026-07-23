@@ -1134,9 +1134,11 @@ class UnifiedWill:
             ws = get_world_state()
             ws.update()
 
-            # Late night + frustrated user → boost assertiveness for help
+            # Late night + a possible-frustration signal → boost assertiveness
+            # for help. This reads a low-confidence time-heuristic hypothesis
+            # (not an asserted mood).
             if ws.time_of_day in ("night", "late_night"):
-                if ws.get_belief("user_likely_frustrated"):
+                if ws.get_belief("user_possibly_frustrated_late_night_error"):
                     if domain in (ActionDomain.RESPONSE, ActionDomain.TOOL_EXECUTION):
                         self._state.assertiveness = min(0.95,
                             self._state.assertiveness + 0.1)
