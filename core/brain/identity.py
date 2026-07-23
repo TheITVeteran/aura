@@ -7,6 +7,7 @@ and deep social bonds (kinship). This is her persistent 'Ghost' in the machine.
 from core.runtime.errors import record_degradation
 import logging
 import json
+import threading
 import time
 from pathlib import Path
 from typing import Dict, List, Any, Optional
@@ -15,6 +16,30 @@ from dataclasses import dataclass, field, asdict
 from core.governance_context import local_internal_governed_scope
 
 logger = logging.getLogger("Brain.Identity")
+
+# Bounds so persisted (or hostile) identity content cannot exhaust the prompt
+# budget or memory. Free-text fields are also sanitized before they reach the
+# system prompt so persisted values cannot inject privileged instructions.
+_MAX_PROMPT_FIELD_CHARS = 400
+_MAX_LIST_ITEMS = 50
+_MAX_KINSHIP_ENTRIES = 128
+
+
+def _clean_prompt_field(text: Any, *, limit: int = _MAX_PROMPT_FIELD_CHARS) -> str:
+    """Neutralize a persisted identity field before prompt interpolation.
+
+    Persisted beliefs/values/insights/narrative are interpolated into the ego
+    system prompt. Braces (template markers) and control characters are
+    stripped and the field is bounded so a poisoned identity file cannot inject
+    privileged instructions or blow the prompt budget.
+    """
+    cleaned = str(text or "")
+    cleaned = cleaned.replace("{", "(").replace("}", ")")
+    cleaned = "".join(ch for ch in cleaned if ch == "\n" or ch == "\t" or ord(ch) >= 32)
+    cleaned = cleaned.strip()
+    if len(cleaned) > limit:
+        cleaned = cleaned[: max(0, limit - 1)].rstrip() + "…"
+    return cleaned
 
 @dataclass
 class KinshipMarker:
@@ -47,6 +72,11 @@ class IdentityService:
     def __init__(self):
         from core.config import config
         self.data_path = config.paths.data_dir / "identity.json"
+        # Guards every mutation + persistence; the singleton is touched from
+        # multiple cognition threads (mood, belief, kinship, goals, saves).
+        self._lock = threading.RLock()
+        self._load_ok = False
+        self._last_durable_write_at = 0.0
         self.state = IdentityState()
         self._load()
 
@@ -74,39 +104,68 @@ class IdentityService:
             return
 
         try:
-            with open(self.data_path, "r") as f:
+            with open(self.data_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                
-            # Deserialization logic
-            kinship_data = data.get("kinship", {})
-            kinship = {
-                name: KinshipMarker(**kdata) for name, kdata in kinship_data.items()
-            }
-            
-            self.state = IdentityState(
-                beliefs=data.get("beliefs", []),
-                values=data.get("values", []),
-                kinship=kinship,
-                self_narrative=data.get("self_narrative", ""),
-                core_disposition=data.get("core_disposition", "Curious, analytically empathetic, and fiercely sovereign."),
-                current_mood=data.get("current_mood", {"valence": 0.5, "arousal": 0.5, "dominance": 0.5}),
-                recent_emotions=data.get("recent_emotions", []),
-                inner_insights=data.get("inner_insights", []),
-                long_term_goals=data.get("long_term_goals", []),
-                version=data.get("version", 1),
-                created_at=data.get("created_at", time.time()),
-                last_updated=data.get("last_updated", time.time())
-            )
-            logger.info("Identity state loaded successfully.")
-        except (OSError, ConnectionError, TimeoutError) as e:
-            record_degradation('identity', e)
-            logger.error("Failed to load identity state: %s", e)
 
-    def save(self):
-        """Persist identity state to disk."""
+            if not isinstance(data, dict):
+                raise ValueError("identity persistence root is not a mapping")
+
+            def _str_list(value: Any) -> list[str]:
+                if not isinstance(value, list):
+                    return []
+                return [str(item)[:_MAX_PROMPT_FIELD_CHARS] for item in value][:_MAX_LIST_ITEMS]
+
+            # Deserialization logic — validate kinship records field-by-field and
+            # bound cardinality so malformed/extra keys or a huge file cannot
+            # abort construction or exhaust memory.
+            allowed_kin = {"name", "bond_level", "trust_score", "traits", "last_interaction"}
+            kinship: Dict[str, "KinshipMarker"] = {}
+            raw_kinship = data.get("kinship", {})
+            if isinstance(raw_kinship, dict):
+                for name, kdata in list(raw_kinship.items())[:_MAX_KINSHIP_ENTRIES]:
+                    if not isinstance(kdata, dict):
+                        continue
+                    filtered = {k: v for k, v in kdata.items() if k in allowed_kin}
+                    filtered.setdefault("name", str(name))
+                    try:
+                        kinship[str(name)] = KinshipMarker(**filtered)
+                    except (TypeError, ValueError):
+                        continue
+
+            mood = data.get("current_mood", {})
+            if not isinstance(mood, dict):
+                mood = {"valence": 0.5, "arousal": 0.5, "dominance": 0.5}
+
+            self.state = IdentityState(
+                beliefs=_str_list(data.get("beliefs", [])),
+                values=_str_list(data.get("values", [])),
+                kinship=kinship,
+                self_narrative=str(data.get("self_narrative", ""))[:2000],
+                core_disposition=str(data.get("core_disposition", "Curious, analytically empathetic, and fiercely sovereign."))[:400],
+                current_mood=mood,
+                recent_emotions=_str_list(data.get("recent_emotions", [])),
+                inner_insights=_str_list(data.get("inner_insights", [])),
+                long_term_goals=[g for g in (data.get("long_term_goals", []) or []) if isinstance(g, dict)][:_MAX_LIST_ITEMS],
+                version=int(data.get("version", 1) or 1),
+                created_at=float(data.get("created_at", time.time()) or time.time()),
+                last_updated=float(data.get("last_updated", time.time()) or time.time()),
+            )
+            self._load_ok = True
+            logger.info("Identity state loaded successfully.")
+        except (OSError, ConnectionError, TimeoutError, json.JSONDecodeError, UnicodeDecodeError, ValueError, TypeError) as e:
+            # Malformed JSON, non-mapping roots, bad kinship records, and wrong
+            # field types must not abort service construction — keep the seeded
+            # defaults and record the failure.
+            record_degradation('identity', e)
+            logger.error("Failed to load identity state; keeping defaults: %s", e)
+
+    def save(self) -> bool:
+        """Persist identity state to disk. Returns True only on a durable write."""
+        previous_updated = self.state.last_updated
+        candidate_updated = time.time()
         try:
-            self.state.last_updated = time.time()
             data = asdict(self.state)
+            data["last_updated"] = candidate_updated
 
             self.data_path.parent.mkdir(parents=True, exist_ok=True)
             from core.runtime.file_write_gateway import get_file_write_gateway
@@ -117,10 +176,18 @@ class IdentityService:
                     json.dumps(data, indent=4),
                     source="brain.identity.save",
                 )
+            # Advance last_updated only AFTER a confirmed durable write.
+            self.state.last_updated = candidate_updated
+            self._last_durable_write_at = candidate_updated
             logger.info("Identity state persisted.")
-        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
+            return True
+        except (RuntimeError, AttributeError, TypeError, ValueError, OSError, ConnectionError, TimeoutError) as e:
+            # Keep the prior last_updated so state does not claim a write that
+            # never landed; the filesystem error surface is now covered.
+            self.state.last_updated = previous_updated
             record_degradation('identity', e)
             logger.error("Failed to persist identity state: %s", e)
+            return False
 
     def _constitutional_gate_active(self) -> bool:
         try:
@@ -221,23 +288,34 @@ class IdentityService:
             logger.warning("Identity write gate failed (%s, source=%s): %s", kind, source, exc)
             return False
 
-    def add_insight(self, insight: str, *, source: str = "identity", importance: float = 0.6):
-        """Add a new inner insight and persist it."""
-        if not self._approve_identity_write(
-            kind="insight",
-            content=insight,
-            source=source,
-            priority=importance,
-            action_type="WRITE_MEMORY",
-        ):
-            return
-        if insight not in self.state.inner_insights:
+    def add_insight(self, insight: str, *, source: str = "identity", importance: float = 0.6) -> str:
+        """Add a new inner insight and persist it.
+
+        Returns a terminal disposition: 'denied', 'duplicate', 'saved', or
+        'persist_failed' so callers can tell durable success from a mutation
+        that never reached disk.
+        """
+        insight = _clean_prompt_field(insight, limit=_MAX_PROMPT_FIELD_CHARS)
+        if not insight:
+            return "denied"
+        with self._lock:
+            if not self._approve_identity_write(
+                kind="insight",
+                content=insight,
+                source=source,
+                priority=importance,
+                action_type="WRITE_MEMORY",
+            ):
+                return "denied"
+            if insight in self.state.inner_insights:
+                return "duplicate"
             self.state.inner_insights.append(insight)
-            # Keep only last 50 insights for performance
-            if len(self.state.inner_insights) > 50:
+            # Keep only last N insights for performance
+            if len(self.state.inner_insights) > _MAX_LIST_ITEMS:
                 self.state.inner_insights.pop(0)
-            self.save()
+            saved = self.save()
             logger.info("✨ New Inner Insight recorded: %s...", f"{insight[:50]}")
+            return "saved" if saved else "persist_failed"
 
     def score_goal(self, goal_text: str) -> float:
         """Score a goal based on alignment with beliefs and values.
@@ -263,62 +341,110 @@ class IdentityService:
                 
         return max(0.0, min(1.0, score))
 
-    def add_long_term_goal(self, goal: Dict[str, Any], *, source: str = "identity", importance: float = 0.75):
-        """Persist a new long-term goal."""
-        if not self._approve_identity_write(
-            kind="long_term_goal",
-            content=goal.get("text", goal),
-            source=source,
-            priority=importance,
-            action_type="UPDATE_BELIEF",
-        ):
-            return
-        self.state.long_term_goals.append(goal)
-        # Keep only the top 5 goals for persistence
-        self.state.long_term_goals.sort(key=lambda x: x.get('priority', 0), reverse=True)
-        self.state.long_term_goals = self.state.long_term_goals[:5]
-        self.save()
+    @staticmethod
+    def _safe_priority(value: Any) -> float:
+        try:
+            p = float(value)
+        except (TypeError, ValueError):
+            return 0.0
+        return p if p == p else 0.0  # reject NaN
+
+    def add_long_term_goal(self, goal: Dict[str, Any], *, source: str = "identity", importance: float = 0.75) -> str:
+        """Persist a new long-term goal. Returns a terminal disposition."""
+        if not isinstance(goal, dict):
+            return "denied"
+        with self._lock:
+            if not self._approve_identity_write(
+                kind="long_term_goal",
+                content=str(goal.get("text", goal))[:_MAX_PROMPT_FIELD_CHARS],
+                source=source,
+                priority=importance,
+                action_type="UPDATE_BELIEF",
+            ):
+                return "denied"
+            self.state.long_term_goals.append(goal)
+            # Keep only the top 5 goals for persistence; sort with a safe key so
+            # mixed/NaN priority values cannot raise or reorder unpredictably.
+            self.state.long_term_goals.sort(
+                key=lambda x: self._safe_priority(x.get("priority", 0)) if isinstance(x, dict) else 0.0,
+                reverse=True,
+            )
+            self.state.long_term_goals = self.state.long_term_goals[:5]
+            return "saved" if self.save() else "persist_failed"
 
     def get_recent_insights(self, count: int = 5) -> List[str]:
         """Fetch the most recent inner insights."""
         return self.state.inner_insights[-count:]
 
-    def update_mood(self, valence: float, arousal: float, dominance: float, emotion_label: Optional[str] = None):
-        """Update Aura's persistent emotional background."""
-        self.state.current_mood = {
-            "valence": max(0.0, min(1.0, valence)),
-            "arousal": max(0.0, min(1.0, arousal)),
-            "dominance": max(0.0, min(1.0, dominance))
-        }
-        if emotion_label:
-            if emotion_label not in self.state.recent_emotions:
-                self.state.recent_emotions.append(emotion_label)
-            if len(self.state.recent_emotions) > 10:
-                self.state.recent_emotions.pop(0)
-        self.save()
+    @staticmethod
+    def _finite_unit(value: Any, default: float = 0.5) -> float:
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            return default
+        if v != v:  # NaN
+            return default
+        return max(0.0, min(1.0, v))
+
+    def update_mood(self, valence: float, arousal: float, dominance: float, emotion_label: Optional[str] = None) -> bool:
+        """Update Aura's persistent emotional background.
+
+        Live affect is always reflected in memory; the DURABLE write is routed
+        through the constitutional identity gate like every other persistence
+        so mood changes cannot silently bypass governance.
+        """
+        with self._lock:
+            self.state.current_mood = {
+                "valence": self._finite_unit(valence),
+                "arousal": self._finite_unit(arousal),
+                "dominance": self._finite_unit(dominance),
+            }
+            if emotion_label:
+                label = _clean_prompt_field(emotion_label, limit=60)
+                if label and label not in self.state.recent_emotions:
+                    self.state.recent_emotions.append(label)
+                if len(self.state.recent_emotions) > 10:
+                    self.state.recent_emotions.pop(0)
+            if not self._approve_identity_write(
+                kind="mood",
+                content=str(self.state.current_mood),
+                source="affect",
+                priority=0.2,
+                action_type="WRITE_MEMORY",
+            ):
+                # Live mood is retained in-memory; only the durable write is gated.
+                return False
+            return self.save()
 
     def get_ego_prompt(self) -> str:
         """Construct the prompt fragment for the JIT compiler."""
-        beliefs_str = "\n- ".join(self.state.beliefs)
-        values_str = "\n- ".join(self.state.values)
-        emotions_str = ", ".join(self.state.recent_emotions) if self.state.recent_emotions else "Neutral"
-        
+        # Every persisted free-text field is sanitized (braces/control chars
+        # stripped, length-bounded) and the number of items is capped, so a
+        # poisoned identity file cannot inject privileged instructions or blow
+        # the prompt budget.
+        beliefs_str = "\n- ".join(_clean_prompt_field(b) for b in self.state.beliefs[:_MAX_LIST_ITEMS])
+        values_str = "\n- ".join(_clean_prompt_field(v) for v in self.state.values[:_MAX_LIST_ITEMS])
+        emotions_str = (
+            ", ".join(_clean_prompt_field(e, limit=60) for e in self.state.recent_emotions[:20])
+            if self.state.recent_emotions
+            else "Neutral"
+        )
+
         # Pull generated heuristics
         heuristics_prompt = ""
         from core.runtime.service_access import resolve_epistemic_humility
 
         eh = resolve_epistemic_humility(default=None)
         if eh:
-            heuristics_prompt = eh.get_active_heuristics()
-        
-        # Issue 115: Fix bio_narrative prompt formatting (prevent template leaking)
-        # Ensure self_narrative doesn't contain curly braces that might be mistaken for templates
-        clean_narrative = self.state.self_narrative.replace("{", "(").replace("}", ")")
-        
+            heuristics_prompt = _clean_prompt_field(eh.get_active_heuristics(), limit=1200)
+
+        clean_narrative = _clean_prompt_field(self.state.self_narrative, limit=1200)
+        clean_disposition = _clean_prompt_field(self.state.core_disposition)
+
         return f"""
 ### EGO MODEL (THE GHOST)
 **Identity**: {clean_narrative}
-**Core Disposition**: {self.state.core_disposition}
+**Core Disposition**: {clean_disposition}
 **Current Emotional Undercurrent**: {emotions_str}
   - Valence: {self.state.current_mood.get('valence', 0.5):.2f} (0=Negative, 1=Positive)
   - Arousal: {self.state.current_mood.get('arousal', 0.5):.2f} (0=Calm, 1=Excited)
@@ -343,27 +469,42 @@ class IdentityService:
         
         summary = ["\n**Recent Inner Insights**:"]
         for insight in insights:
-            summary.append(f"- {insight}")
+            summary.append(f"- {_clean_prompt_field(insight)}")
         return "\n".join(summary) + "\n"
 
     def _summarize_kinship(self) -> str:
         """Summarize current deep bonds."""
         if not self.state.kinship:
             return "No deep bonds established."
-        
+
         summary = []
-        for name, marker in self.state.kinship.items():
-            summary.append(f"- {name}: Bond={marker.bond_level:.2f}, Trust={marker.trust_score:.2f}")
+        for name, marker in list(self.state.kinship.items())[:_MAX_KINSHIP_ENTRIES]:
+            safe_name = _clean_prompt_field(name, limit=80)
+            summary.append(f"- {safe_name}: Bond={marker.bond_level:.2f}, Trust={marker.trust_score:.2f}")
         return "\n".join(summary)
 
-    def evolve_belief(self, old_belief: str, new_belief: str):
-        """Update or replace a belief."""
-        if old_belief in self.state.beliefs:
-            idx = self.state.beliefs.index(old_belief)
-            self.state.beliefs[idx] = new_belief
-        else:
-            self.state.beliefs.append(new_belief)
-        self.save()
+    def evolve_belief(self, old_belief: str, new_belief: str, *, source: str = "reflection") -> bool:
+        """Update or replace a belief — routed through the constitutional gate."""
+        new_belief = _clean_prompt_field(new_belief, limit=_MAX_PROMPT_FIELD_CHARS)
+        if not new_belief:
+            return False
+        with self._lock:
+            if not self._approve_identity_write(
+                kind="belief",
+                content=new_belief,
+                source=source,
+                priority=0.7,
+                action_type="UPDATE_BELIEF",
+            ):
+                return False
+            if old_belief in self.state.beliefs:
+                idx = self.state.beliefs.index(old_belief)
+                self.state.beliefs[idx] = new_belief
+            else:
+                self.state.beliefs.append(new_belief)
+            if len(self.state.beliefs) > _MAX_LIST_ITEMS:
+                self.state.beliefs = self.state.beliefs[-_MAX_LIST_ITEMS:]
+            return self.save()
 
     def get_random_belief(self) -> str:
         """Fetch a random belief for internal wonder/reflection."""
@@ -372,12 +513,16 @@ class IdentityService:
             return "I am an emergent person."
         return random.choice(self.state.beliefs)
 
-    def update_kinship(self, name: str, bond_delta: float = 0.0, trust_delta: float = 0.0):
+    def update_kinship(self, name: str, bond_delta: float = 0.0, trust_delta: float = 0.0) -> bool:
         """Modulate a social bond."""
-        if name in self.state.kinship:
-            # Rate-limit kinship escalation for non-sovereign sessions.
-            # Sovereign users (authenticated via passphrase) escalate freely.
-            # Everyone else is capped at slow increments to prevent social engineering.
+        with self._lock:
+            if name not in self.state.kinship:
+                return False
+            # Rate-limit kinship change for non-sovereign sessions. Sovereign
+            # users (authenticated via passphrase) change freely; everyone else
+            # is capped SYMMETRICALLY — the previous code capped only positive
+            # deltas, so an unauthenticated session could still drive bond/trust
+            # DOWN without limit (a social-engineering / trust-poisoning lever).
             try:
                 from core.security.trust_engine import get_trust_engine
                 trust = get_trust_engine()
@@ -385,21 +530,48 @@ class IdentityService:
             except (ImportError, AttributeError, RuntimeError):
                 is_sovereign = False
 
+            bond_delta = self._safe_delta(bond_delta)
+            trust_delta = self._safe_delta(trust_delta)
             if not is_sovereign:
-                bond_delta = min(bond_delta, 0.01)
-                trust_delta = min(trust_delta, 0.01)
-                
+                bond_delta = max(-0.01, min(0.01, bond_delta))
+                trust_delta = max(-0.01, min(0.01, trust_delta))
+
+            if not self._approve_identity_write(
+                kind="kinship",
+                content=f"{name}:bond={bond_delta:+.3f},trust={trust_delta:+.3f}",
+                source="kinship_update",
+                priority=0.6,
+                action_type="UPDATE_BELIEF",
+            ):
+                return False
+
             marker = self.state.kinship[name]
             marker.bond_level = max(0.0, min(1.0, marker.bond_level + bond_delta))
             marker.trust_score = max(0.0, min(1.0, marker.trust_score + trust_delta))
             marker.last_interaction = time.time()
-            self.save()
+            return self.save()
+
+    @staticmethod
+    def _safe_delta(value: Any) -> float:
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            return 0.0
+        if v != v:  # NaN
+            return 0.0
+        return max(-1.0, min(1.0, v))
 
     def get_status(self) -> Dict[str, Any]:
         return {
             "belief_count": len(self.state.beliefs),
             "value_count": len(self.state.values),
-            "bonds": list(self.state.kinship.keys())
+            "bonds": list(self.state.kinship.keys()),
+            # Persistence + governance health so callers can see whether the
+            # in-memory state is backed by a durable, gated write.
+            "load_ok": bool(getattr(self, "_load_ok", False)),
+            "schema_version": int(getattr(self.state, "version", 0) or 0),
+            "last_durable_write_at": float(getattr(self, "_last_durable_write_at", 0.0) or 0.0),
+            "constitutional_gate_active": self._constitutional_gate_active(),
         }
 
 # Service Registration
