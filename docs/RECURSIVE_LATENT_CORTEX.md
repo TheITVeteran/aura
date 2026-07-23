@@ -117,6 +117,20 @@ changes the answer — that is the causality contract.
   stored, and the service reconstructs the complete transaction. Default
   counterfactual mode remains inert without admitted localization, verifier,
   and budget evidence.
+- **Locally conditioned exploration**: stochasticity is localized rather than
+  applied to the global decoder. An admitted contradiction coordinate supplies
+  the only writable target, while the latest supported neural predictive
+  entropy and calibrated contradiction probability jointly scale a bounded
+  radius. Source-bound orthonormal directions generate exact no-op,
+  equal-radius low-contradiction-position sham, and target-position families.
+  Repeated counterbalanced fixed-compute probes meter direction and output
+  entropy, conditioned diversity, regressions, verifier authority, replay,
+  no-op order invariance, and exact layer applications. A target candidate is
+  retained only when its verifier lower bound clears every no-op and sham upper
+  bound by the configured margin; every other path restores the exact baseline.
+  Stable sham states never receive mutation authority, protected context slots
+  remain bit-identical, and exploration abstains when its uncertainty source
+  predates an already-retained perturbation.
 - **Confidence-bound overthinking guard**: an ordinary scalar verifier remains
   ranking-only. A branch can promote a state only from independently committed
   deterministic-exact evidence or a calibrated interval with at least eight

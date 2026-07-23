@@ -4,6 +4,7 @@ No worker processes are spawned here — the worker/client IPC bodies are
 exercised through the handler function and a mocked client, which is exactly
 the seam the live path uses.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -214,6 +215,10 @@ def _recurrent_grounding_fields(config, *, steps=1):
         ContradictionTensorRuntime,
         build_contradiction_tensor_receipt,
     )
+    from core.brain.llm.latent_cortex.local_exploration import (
+        LocalExplorationConfig,
+        run_local_exploration,
+    )
     from core.brain.llm.latent_cortex.loop_core import (
         KV_BOUND_SCHEMA,
         alpha_for_step,
@@ -286,11 +291,7 @@ def _recurrent_grounding_fields(config, *, steps=1):
                 }
             )
             residual = round(0.5 / (step + 1), 8)
-            contraction = (
-                None
-                if prior_residual is None
-                else round(residual / prior_residual, 8)
-            )
+            contraction = None if prior_residual is None else round(residual / prior_residual, 8)
             stability.append(
                 {
                     "ordinal": step,
@@ -324,9 +325,7 @@ def _recurrent_grounding_fields(config, *, steps=1):
                     "delta_cosine": None if step == 0 else 0.25,
                     "contracting": None if step == 0 else contraction < 1.0,
                     "oscillating": False,
-                    "fixed_point_candidate": (
-                        residual < executed.recurrence.convergence_eps
-                    ),
+                    "fixed_point_candidate": (residual < executed.recurrence.convergence_eps),
                     "all_finite": True,
                 }
             )
@@ -380,11 +379,7 @@ def _recurrent_grounding_fields(config, *, steps=1):
         branches.append(
             SimpleNamespace(
                 index=index,
-                role=(
-                    "constructive_solution"
-                    if index == 0
-                    else "counterexample_search"
-                ),
+                role=("constructive_solution" if index == 0 else "counterexample_search"),
                 evidence_anchor_sha256=evidence_sha,
                 initial_hypothesis_sha256=initial,
                 recurrent_grounding_trace=transitions,
@@ -485,9 +480,7 @@ def _recurrent_grounding_fields(config, *, steps=1):
     )
     neural_uncertainty_receipt = build_neural_uncertainty_receipt(
         branches=branches,
-        runtime=NeuralUncertaintyRuntime.from_config(
-            executed.uncertainty_head
-        ),
+        runtime=NeuralUncertaintyRuntime.from_config(executed.uncertainty_head),
         update_acceptance=update_acceptance_receipt,
         selected_branch=0,
         selection_basis="convergence",
@@ -505,9 +498,7 @@ def _recurrent_grounding_fields(config, *, steps=1):
     )
     contradiction_tensor_receipt = build_contradiction_tensor_receipt(
         reflector=bidirectional_reflector_receipt,
-        runtime=ContradictionTensorRuntime.from_config(
-            executed.contradiction_head
-        ),
+        runtime=ContradictionTensorRuntime.from_config(executed.contradiction_head),
         selected_branch=0,
     )
     _, contradiction_perturbation_receipt = run_contradiction_perturbation(
@@ -516,9 +507,19 @@ def _recurrent_grounding_fields(config, *, steps=1):
         protected_positions=(),
         contradiction_tensor=contradiction_tensor_receipt,
         selected_branch=0,
-        config=ContradictionPerturberConfig.from_value(
-            executed.contradiction_perturber
-        ),
+        config=ContradictionPerturberConfig.from_value(executed.contradiction_perturber),
+        verifier_policy_sha256="a" * 64,
+        decoy_review_sha256="",
+        evaluate=None,
+    )
+    _, local_exploration_receipt = run_local_exploration(
+        baseline=np.zeros((1, config["n_slots"], 8), dtype=np.float32),
+        protected_positions=(),
+        contradiction_tensor=contradiction_tensor_receipt,
+        contradiction_perturbation=contradiction_perturbation_receipt,
+        neural_uncertainty=neural_uncertainty_receipt,
+        selected_branch=0,
+        config=LocalExplorationConfig.from_value(executed.local_exploration),
         verifier_policy_sha256="a" * 64,
         decoy_review_sha256="",
         evaluate=None,
@@ -538,6 +539,7 @@ def _recurrent_grounding_fields(config, *, steps=1):
         "bidirectional_reflector": bidirectional_reflector_receipt,
         "contradiction_tensor": contradiction_tensor_receipt,
         "contradiction_perturbation": contradiction_perturbation_receipt,
+        "local_exploration": local_exploration_receipt,
         "cognitive_action_trace": [],
     }
 
@@ -585,9 +587,7 @@ def _branch_exchange_fields(config, isolation):
         "n_slots": n_slots,
         "comm_slot": 0,
         "exchange_gamma": config["exchange_gamma"],
-        "source_policy": (
-            "bounded_private_reasoning_mean_excluding_mailbox_and_context_v1"
-        ),
+        "source_policy": ("bounded_private_reasoning_mean_excluding_mailbox_and_context_v1"),
         "message_representation": "latent_tensor_only",
         "message_slot_count": 1,
         "hidden_dimension": hidden,
@@ -597,9 +597,7 @@ def _branch_exchange_fields(config, isolation):
         "first_answer_text_exposed": False,
         "prior_peer_context_possible": False,
         "counts_as_independent_support": True,
-        "candidate_set_sha256": candidate_set_sha256(
-            {"candidates": isolation["candidates"]}
-        ),
+        "candidate_set_sha256": candidate_set_sha256({"candidates": isolation["candidates"]}),
         "source_rows": source_rows,
         "consensus_sha256": _digest("consensus"),
         "recipient_rows": [
@@ -619,9 +617,7 @@ def _branch_exchange_fields(config, isolation):
             "source_elements_read": count * len(source_slots) * hidden,
             "message_elements_emitted": count * hidden,
             "consensus_elements_written": count * hidden,
-            "tensor_scalar_ops": (
-                count * hidden * (len(source_slots) + 12) + 9 * count
-            ),
+            "tensor_scalar_ops": (count * hidden * (len(source_slots) + 12) + 9 * count),
             "hidden_layer_apps": 0,
         },
     }
@@ -651,6 +647,7 @@ def _bind_test_client_identity(monkeypatch, client):
         lambda *_args, **_kwargs: dict(_RUNTIME_IDENTITY),
     )
 
+
 # ── Worker handler ──────────────────────────────────────────────────────
 
 
@@ -668,6 +665,7 @@ def test_config_from_job_defaults_are_conservative():
     assert cfg.mistake_locator is None
     assert cfg.contradiction_head is None
     assert cfg.contradiction_perturber is None
+    assert cfg.local_exploration is None
     assert cfg.validate() == []
 
 
@@ -711,6 +709,10 @@ def test_config_from_job_rejects_out_of_band_requests():
                 }
             }
         )
+    with pytest.raises(ValueError, match="candidates"):
+        config_from_job({"local_exploration": {"candidates": 1}})
+    with pytest.raises(ValueError, match="entropy floor"):
+        config_from_job({"local_exploration": {"min_predictive_entropy": -0.1}})
     with pytest.raises(ValueError, match="requires head_path"):
         config_from_job({"contradiction_head": {"mode": "learned"}})
     with pytest.raises(ValueError, match="cannot carry a head"):
@@ -794,9 +796,7 @@ def test_budget_from_job_rejects_invalid_values(payload):
 def test_kill_switch_refuses_honestly(monkeypatch):
     monkeypatch.setenv("AURA_LATENT_CORTEX", "0")
     assert cortex_enabled() is False
-    body = handle_latent_reason(
-        {"prompt": "hi"}, model=None, tokenizer=None, model_path=""
-    )
+    body = handle_latent_reason({"prompt": "hi"}, model=None, tokenizer=None, model_path="")
     assert body["status"] == "error"
     assert "latent_cortex_disabled" in body["message"]
 
@@ -871,9 +871,7 @@ def test_handler_wires_response_contract_into_config_and_verifier(monkeypatch):
     verifier = captured["verifier"]
     assert verifier is not None
     assert verifier.response_contract == '{"answer":int}'
-    assert body["receipt"]["verifier_guidance"][
-        "response_contract_required"
-    ] is True
+    assert body["receipt"]["verifier_guidance"]["response_contract_required"] is True
 
 
 def test_handler_compacts_messages_but_hashes_the_original_request(monkeypatch):
@@ -940,9 +938,15 @@ def test_handler_runs_full_episode_on_tiny_model(monkeypatch, tmp_path):
 
     monkeypatch.delenv("AURA_LATENT_CORTEX", raising=False)
     args = ModelArgs(
-        model_type="qwen2", hidden_size=64, num_hidden_layers=8,
-        intermediate_size=128, num_attention_heads=4, rms_norm_eps=1e-6,
-        vocab_size=128, num_key_value_heads=2, max_position_embeddings=512,
+        model_type="qwen2",
+        hidden_size=64,
+        num_hidden_layers=8,
+        intermediate_size=128,
+        num_attention_heads=4,
+        rms_norm_eps=1e-6,
+        vocab_size=128,
+        num_key_value_heads=2,
+        max_position_embeddings=512,
         rope_theta=10000.0,
     )
     model = Model(args)
@@ -1092,9 +1096,7 @@ def test_handler_runs_full_episode_on_tiny_model(monkeypatch, tmp_path):
     original_information = body["receipt"]["budget"]["information_accounting"]
     altered_sources = copy.deepcopy(original_information["sources"])
     rendered_source = next(
-        source
-        for source in altered_sources
-        if source["source_id"] == "rendered_model_input"
+        source for source in altered_sources if source["source_id"] == "rendered_model_input"
     )
     rendered_source["content_sha256"] = "f" * 64
     tampered = copy.deepcopy(body["receipt"])
@@ -1105,9 +1107,7 @@ def test_handler_runs_full_episode_on_tiny_model(monkeypatch, tmp_path):
     assert "input_information_binding_unproven" in (
         LatentCortexService._receipt_contract_errors(tampered, contract_config)
     )
-    original_resource = validate_resource_receipt(
-        body["receipt"]["budget"]["resource_accounting"]
-    )
+    original_resource = validate_resource_receipt(body["receipt"]["budget"]["resource_accounting"])
 
     def without_operations(*excluded: str) -> dict:
         ledger = ResourceLedger(
@@ -1121,21 +1121,15 @@ def test_handler_runs_full_episode_on_tiny_model(monkeypatch, tmp_path):
         return ledger.to_receipt()
 
     tampered = copy.deepcopy(body["receipt"])
-    tampered["budget"]["resource_accounting"] = without_operations(
-        "branch_exchange"
-    )
+    tampered["budget"]["resource_accounting"] = without_operations("branch_exchange")
     assert "branch_exchange_resource_binding_unproven" in (
         LatentCortexService._receipt_contract_errors(tampered, contract_config)
     )
     tampered = copy.deepcopy(body["receipt"])
     cognitive_operations = tuple(
-        name
-        for name in original_resource["operations"]
-        if name.startswith("cognitive_operator:")
+        name for name in original_resource["operations"] if name.startswith("cognitive_operator:")
     )
-    tampered["budget"]["resource_accounting"] = without_operations(
-        *cognitive_operations
-    )
+    tampered["budget"]["resource_accounting"] = without_operations(*cognitive_operations)
     assert "cognitive_operator_execution_unproven" in (
         LatentCortexService._receipt_contract_errors(tampered, contract_config)
     )
@@ -1286,9 +1280,7 @@ async def test_client_preserves_typed_memory_authority_on_worker_wire(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_client_preserves_runtime_operation_authority_on_worker_wire(
-    tmp_path, monkeypatch
-):
+async def test_client_preserves_runtime_operation_authority_on_worker_wire(tmp_path, monkeypatch):
     from core.brain.llm import mlx_client
     from core.brain.llm.latent_cortex.epistemic_runtime import RuntimeOperationLease
     from core.brain.llm.latent_cortex.epistemic_state import (
@@ -1407,15 +1399,11 @@ async def test_client_latent_reason_serializes_concurrent_requests(monkeypatch):
     )
 
     first = asyncio.create_task(
-        client.latent_reason_async(
-            prompt="first", timeout_s=5.0, foreground_request=False
-        )
+        client.latent_reason_async(prompt="first", timeout_s=5.0, foreground_request=False)
     )
     first_request = await asyncio.to_thread(client._req_q.get, True, 2.0)
     second = asyncio.create_task(
-        client.latent_reason_async(
-            prompt="second", timeout_s=5.0, foreground_request=False
-        )
+        client.latent_reason_async(prompt="second", timeout_s=5.0, foreground_request=False)
     )
     await asyncio.sleep(0.05)
     assert client._req_q.empty(), "second episode must wait behind request ownership"
@@ -1532,7 +1520,7 @@ async def test_client_latent_reason_timeout_keeps_clean_cooperatively_cancelled_
             "id": client._current_request_id,
             "status": "error",
             "message": "soft_cancelled",
-                    "receipt": {
+            "receipt": {
                 "params_unchanged": True,
                 "fast_weights_applied": True,
                 "fast_weights_erased": True,
@@ -1564,7 +1552,9 @@ async def test_client_latent_reason_timeout_keeps_clean_cooperatively_cancelled_
         return digest
 
     monkeypatch.setattr(
-        _runtime_identity, "latent_request_payload_sha256", _capture_sha,
+        _runtime_identity,
+        "latent_request_payload_sha256",
+        _capture_sha,
     )
 
     result = await client.latent_reason_async(
@@ -1650,9 +1640,7 @@ async def test_client_latent_reason_cancel_while_queued_releases_foreground_owne
 
     monkeypatch.setattr(mlx_client, "_foreground_owner_context", lambda *a, **k: OwnerContext())
     monkeypatch.setattr(client, "_acquire_request_lock", wait_for_lane)
-    task = asyncio.create_task(
-        client.latent_reason_async(prompt="queued", foreground_request=True)
-    )
+    task = asyncio.create_task(client.latent_reason_async(prompt="queued", foreground_request=True))
     await lock_wait_started.wait()
     task.cancel()
 
@@ -1691,9 +1679,7 @@ async def test_client_latent_reason_integrity_failure_recycles_resident(monkeypa
     monkeypatch.setattr(client, "reboot_worker", record_reboot)
     monkeypatch.setattr(client, "_set_durable_lane_preemptible", record_fence)
     task = asyncio.create_task(
-        client.latent_reason_async(
-            prompt="prove cleanup", timeout_s=5.0, foreground_request=False
-        )
+        client.latent_reason_async(prompt="prove cleanup", timeout_s=5.0, foreground_request=False)
     )
     request = await asyncio.to_thread(client._req_q.get, True, 2.0)
     mlx_client._set_shared_future_result(
@@ -1735,16 +1721,12 @@ async def test_client_latent_reason_rejects_invalid_inputs_before_lane_fence(mon
 
     monkeypatch.setattr(client, "_set_durable_lane_preemptible", record_fence)
 
-    assert (
-        await client.latent_reason_async(
-            prompt="q", config="bad", foreground_request=False
-        )
-    )["reason"] == "invalid_config"
-    assert (
-        await client.latent_reason_async(
-            prompt="q", budget="bad", foreground_request=False
-        )
-    )["reason"] == "invalid_budget"
+    assert (await client.latent_reason_async(prompt="q", config="bad", foreground_request=False))[
+        "reason"
+    ] == "invalid_config"
+    assert (await client.latent_reason_async(prompt="q", budget="bad", foreground_request=False))[
+        "reason"
+    ] == "invalid_budget"
     assert (
         await client.latent_reason_async(
             prompt="q",
@@ -1752,11 +1734,9 @@ async def test_client_latent_reason_rejects_invalid_inputs_before_lane_fence(mon
             foreground_request=False,
         )
     )["reason"] == "invalid_runtime_controls"
-    assert (
-        await client.latent_reason_async(
-            prompt="q", foreground_request="false"
-        )
-    )["reason"] == "invalid_foreground_request"
+    assert (await client.latent_reason_async(prompt="q", foreground_request="false"))[
+        "reason"
+    ] == "invalid_foreground_request"
     assert (
         await client.latent_reason_async(
             prompt="q",
@@ -2218,9 +2198,7 @@ def test_service_routes_through_client_and_records_receipt(monkeypatch):
             captured["gate_snapshot"] = generation_gate_snapshot()
             return {
                 "ok": True,
-                "text": (
-                    "The deep answer explains the architecture and preserves its evidence."
-                ),
+                "text": ("The deep answer explains the architecture and preserves its evidence."),
                 "receipt": {
                     "steps_taken": 7,
                     "halting_reason": "converged",
@@ -2231,9 +2209,9 @@ def test_service_routes_through_client_and_records_receipt(monkeypatch):
                     "checkpoint_fingerprint": "a" * 64,
                     "checkpoint_fingerprint_method": "sha256",
                     "checkpoint_file_count": 8,
-                        **_identity_receipt(),
-                        **_branch_isolation_fields(kwargs["config"]),
-                        **_recurrent_grounding_fields(kwargs["config"], steps=7),
+                    **_identity_receipt(),
+                    **_branch_isolation_fields(kwargs["config"]),
+                    **_recurrent_grounding_fields(kwargs["config"], steps=7),
                     "params_unchanged": True,
                     "budget": {
                         "max_layer_apps": 1_000,
@@ -2248,9 +2226,7 @@ def test_service_routes_through_client_and_records_receipt(monkeypatch):
                     "decode_repetition_penalty_applied": kwargs["config"].get(
                         "decode_repetition_penalty", 1.0
                     ),
-                    "decode_temperature": kwargs["config"].get(
-                        "decode_temperature", 0.0
-                    ),
+                    "decode_temperature": kwargs["config"].get("decode_temperature", 0.0),
                     "decode_top_p": kwargs["config"].get("decode_top_p", 1.0),
                     "verifier_probe_max_tokens": kwargs["config"].get(
                         "verifier_probe_max_tokens", 48
@@ -2313,8 +2289,7 @@ def test_service_routes_through_client_and_records_receipt(monkeypatch):
     }
     assert captured["gate_snapshot"]["active_count"] >= 1
     assert "latent_cortex_foreground:episode" in {
-        item["owner"]
-        for item in captured["gate_snapshot"]["active"].values()
+        item["owner"] for item in captured["gate_snapshot"]["active"].values()
     }
     assert svc.get_status()["last_receipt"]["halting_reason"] == "converged"
 
@@ -2496,11 +2471,7 @@ def test_service_reconstructs_update_gate_and_rejects_rehashed_decision_lie():
     update_gate = forged["update_acceptance"]
     update_gate["branches"][0]["transitions"][0]["probability"] = 0.25
     update_gate["receipt_sha256"] = canonical_sha256(
-        {
-            key: value
-            for key, value in update_gate.items()
-            if key != "receipt_sha256"
-        }
+        {key: value for key, value in update_gate.items() if key != "receipt_sha256"}
     )
     assert "update_acceptance_unproven" in (
         LatentCortexService._receipt_contract_errors(forged, config)
@@ -2517,23 +2488,15 @@ def test_service_reconstructs_stop_gate_and_rejects_rehashed_policy_lie():
         "n_branches": 2,
         **_recurrent_grounding_fields(config, steps=3),
     }
-    assert "halting_unproven" not in (
-        LatentCortexService._receipt_contract_errors(receipt, config)
-    )
+    assert "halting_unproven" not in (LatentCortexService._receipt_contract_errors(receipt, config))
 
     forged = copy.deepcopy(receipt)
     halting = forged["halting"]
     halting["threshold"] = 0.5
     halting["receipt_sha256"] = canonical_sha256(
-        {
-            key: value
-            for key, value in halting.items()
-            if key != "receipt_sha256"
-        }
+        {key: value for key, value in halting.items() if key != "receipt_sha256"}
     )
-    assert "halting_unproven" in (
-        LatentCortexService._receipt_contract_errors(forged, config)
-    )
+    assert "halting_unproven" in (LatentCortexService._receipt_contract_errors(forged, config))
 
 
 def test_service_reconstructs_verified_best_and_rejects_rehashed_state_lie():
@@ -2554,11 +2517,7 @@ def test_service_reconstructs_verified_best_and_rejects_rehashed_state_lie():
     verified = forged["verified_best_state"]
     verified["branches"][0]["final_best_state_sha256"] = "a" * 64
     verified["receipt_sha256"] = canonical_sha256(
-        {
-            key: value
-            for key, value in verified.items()
-            if key != "receipt_sha256"
-        }
+        {key: value for key, value in verified.items() if key != "receipt_sha256"}
     )
     assert "verified_best_state_unproven" in (
         LatentCortexService._receipt_contract_errors(forged, config)
@@ -2583,11 +2542,7 @@ def test_service_reconstructs_uncertainty_and_rejects_rehashed_head_lie():
     uncertainty = forged["neural_uncertainty"]
     uncertainty["head_sha256"] = "a" * 64
     uncertainty["receipt_sha256"] = canonical_sha256(
-        {
-            key: value
-            for key, value in uncertainty.items()
-            if key != "receipt_sha256"
-        }
+        {key: value for key, value in uncertainty.items() if key != "receipt_sha256"}
     )
     assert "neural_uncertainty_unproven" in (
         LatentCortexService._receipt_contract_errors(forged, config)
@@ -2632,11 +2587,7 @@ def test_service_reconstructs_mistake_locator_and_rejects_rehashed_lie():
     locator = forged["mistake_locator"]
     locator["repair_steering_authorized"] = True
     locator["receipt_sha256"] = canonical_sha256(
-        {
-            key: value
-            for key, value in locator.items()
-            if key != "receipt_sha256"
-        }
+        {key: value for key, value in locator.items() if key != "receipt_sha256"}
     )
     assert "mistake_locator_unproven" in (
         LatentCortexService._receipt_contract_errors(forged, config)
@@ -2661,11 +2612,7 @@ def test_service_reconstructs_bidirectional_reflector_and_rejects_authority_lie(
     reflector = forged["bidirectional_reflector"]
     reflector["selection_authorized"] = True
     reflector["receipt_sha256"] = canonical_sha256(
-        {
-            key: value
-            for key, value in reflector.items()
-            if key != "receipt_sha256"
-        }
+        {key: value for key, value in reflector.items() if key != "receipt_sha256"}
     )
     assert "bidirectional_reflector_unproven" in (
         LatentCortexService._receipt_contract_errors(forged, config)
@@ -2690,11 +2637,7 @@ def test_service_reconstructs_contradiction_tensor_and_rejects_authority_lie():
     tensor = forged["contradiction_tensor"]
     tensor["attention_perturbation_authorized"] = True
     tensor["receipt_sha256"] = canonical_sha256(
-        {
-            key: value
-            for key, value in tensor.items()
-            if key != "receipt_sha256"
-        }
+        {key: value for key, value in tensor.items() if key != "receipt_sha256"}
     )
     assert "contradiction_tensor_unproven" in (
         LatentCortexService._receipt_contract_errors(forged, config)
@@ -2711,9 +2654,7 @@ def test_service_reconstructs_perturbation_and_rejects_rehashed_authority_lie():
         "n_branches": 2,
         **_recurrent_grounding_fields(config, steps=3),
         "budget": {
-            "information_accounting": _accounting_fields()[
-                "information_accounting"
-            ],
+            "information_accounting": _accounting_fields()["information_accounting"],
         },
     }
     assert "contradiction_perturbation_unproven" not in (
@@ -2724,13 +2665,37 @@ def test_service_reconstructs_perturbation_and_rejects_rehashed_authority_lie():
     perturbation = forged["contradiction_perturbation"]
     perturbation["state_mutation_applied"] = True
     perturbation["receipt_sha256"] = canonical_sha256(
-        {
-            key: value
-            for key, value in perturbation.items()
-            if key != "receipt_sha256"
-        }
+        {key: value for key, value in perturbation.items() if key != "receipt_sha256"}
     )
     assert "contradiction_perturbation_unproven" in (
+        LatentCortexService._receipt_contract_errors(forged, config)
+    )
+
+
+def test_service_reconstructs_local_exploration_and_rejects_rehashed_evidence_lie():
+    from core.brain.llm.latent_cortex.loop_core import canonical_sha256
+
+    config = {"n_slots": 8, "n_branches": 2}
+    receipt = {
+        **_identity_receipt(),
+        "n_slots": 8,
+        "n_branches": 2,
+        **_recurrent_grounding_fields(config, steps=3),
+        "budget": {
+            "information_accounting": _accounting_fields()["information_accounting"],
+        },
+    }
+    assert "local_exploration_unproven" not in (
+        LatentCortexService._receipt_contract_errors(receipt, config)
+    )
+
+    forged = copy.deepcopy(receipt)
+    exploration = forged["local_exploration"]
+    exploration["repeat_deterministic"] = True
+    exploration["receipt_sha256"] = canonical_sha256(
+        {key: value for key, value in exploration.items() if key != "receipt_sha256"}
+    )
+    assert "local_exploration_unproven" in (
         LatentCortexService._receipt_contract_errors(forged, config)
     )
 
@@ -2742,11 +2707,15 @@ def test_service_uses_executed_default_branch_count_for_learned_evidence():
         "n_slots": 16,
         "n_branches": 2,
         **_recurrent_grounding_fields(executed, steps=3),
+        "budget": {
+            "information_accounting": _accounting_fields()["information_accounting"],
+        },
     }
     errors = LatentCortexService._receipt_contract_errors(receipt, {})
     assert "bidirectional_reflector_unproven" not in errors
     assert "contradiction_tensor_unproven" not in errors
     assert "neural_uncertainty_unproven" not in errors
+    assert "local_exploration_unproven" not in errors
     assert "mistake_locator_unproven" not in errors
 
 
@@ -2783,9 +2752,9 @@ def test_service_reconstructs_and_rejects_branch_exchange_tampering():
     )
 
     tampered = copy.deepcopy(receipt)
-    tampered["branch_exchange"]["exchanges"][0]["source_rows"][0][
-        "candidate_sha256"
-    ] = _digest("different-candidate")
+    tampered["branch_exchange"]["exchanges"][0]["source_rows"][0]["candidate_sha256"] = _digest(
+        "different-candidate"
+    )
     assert "branch_exchange_provenance_unproven" in (
         LatentCortexService._receipt_contract_errors(tampered, config)
     )
@@ -2819,9 +2788,7 @@ def test_service_validates_interactive_verifier_profile_and_acceptance_receipt()
                     "current_proxy_loss": 1.0,
                     "candidate_proxy_loss": 0.9,
                     "proxy_required_delta": 1e-9,
-                    "decision": (
-                        "accepted_task_score_nonregression_with_proxy_descent"
-                    ),
+                    "decision": ("accepted_task_score_nonregression_with_proxy_descent"),
                 }
             ],
             "score_improvement_accepts": 0,
@@ -2937,9 +2904,7 @@ def test_service_rejects_unproven_fast_weight_descent(override, expected_error):
         ("token_limit", True, "incomplete_or_exhausted_compute_receipt"),
     ],
 )
-def test_service_rejects_truncated_or_exhausted_decode_receipts(
-    termination, exhausted, expected
-):
+def test_service_rejects_truncated_or_exhausted_decode_receipts(termination, exhausted, expected):
     config = {
         "n_slots": 16,
         "n_branches": 2,
@@ -3096,9 +3061,7 @@ def test_service_rejects_incomplete_success_receipt(monkeypatch):
         ("not-a-mapping", "invalid_client_response"),
     ],
 )
-def test_service_contains_malformed_worker_response(
-    monkeypatch, worker_result, expected_reason
-):
+def test_service_contains_malformed_worker_response(monkeypatch, worker_result, expected_reason):
     monkeypatch.delenv("AURA_LATENT_CORTEX", raising=False)
     svc = LatentCortexService()
 
@@ -3108,9 +3071,7 @@ def test_service_contains_malformed_worker_response(
 
     import core.brain.llm.mlx_client as mlx_client_mod
 
-    monkeypatch.setattr(
-        mlx_client_mod, "get_mlx_client", lambda *a, **k: MalformedClient()
-    )
+    monkeypatch.setattr(mlx_client_mod, "get_mlx_client", lambda *a, **k: MalformedClient())
     result = asyncio.run(svc.deep_reason("q"))
     assert result["ok"] is False
     assert expected_reason in result["reason"]
@@ -3217,9 +3178,7 @@ def test_service_requests_verifier_guidance_for_resident_profile(monkeypatch):
 
     import core.brain.llm.mlx_client as mlx_client_mod
 
-    monkeypatch.setattr(
-        mlx_client_mod, "get_mlx_client", lambda *a, **k: Resident32Client()
-    )
+    monkeypatch.setattr(mlx_client_mod, "get_mlx_client", lambda *a, **k: Resident32Client())
     asyncio.run(
         svc.deep_reason(
             "hard live question",
@@ -3263,9 +3222,7 @@ def _full_success_stub_client(captured):
                         "exhausted": False,
                         **_accounting_fields(),
                     },
-                    "decode_requested_tokens": kwargs["config"][
-                        "decode_max_tokens"
-                    ],
+                    "decode_requested_tokens": kwargs["config"]["decode_max_tokens"],
                     "decode_generated_tokens": 12,
                     "decode_termination": "eos",
                     "decode_newline_suppressions": 0,
@@ -3288,9 +3245,7 @@ def _full_success_stub_client(captured):
                     "fast_weight_optimized_steps": 2,
                     "fast_weight_rejected_steps": 0,
                     "fast_weight_budget_exhausted": False,
-                    "fast_weight_optimizer": (
-                        "rms_normalized_sgd_backtracking_v1"
-                    ),
+                    "fast_weight_optimizer": ("rms_normalized_sgd_backtracking_v1"),
                     "fast_weight_loss_trail": [2.0, 1.5, 1.0],
                     "fast_weight_gradient_norm_trail": [3.0, 2.0],
                     "fast_weight_accepted_step_sizes": [0.005, 0.0025],
@@ -3327,9 +3282,7 @@ def _run_episode_with_coupling_probes(monkeypatch, *, foreground: bool):
         }
 
     monkeypatch.setattr(coupling_mod, "merge_cognitive_context", _fake_merge)
-    monkeypatch.setattr(
-        coupling_mod, "broadcast_episode_conclusion", _fake_broadcast
-    )
+    monkeypatch.setattr(coupling_mod, "broadcast_episode_conclusion", _fake_broadcast)
     monkeypatch.setattr(
         mlx_client_mod,
         "get_mlx_client",
@@ -3351,9 +3304,7 @@ def _run_episode_with_coupling_probes(monkeypatch, *, foreground: bool):
 
 
 def test_foreground_episode_couples_to_workspace(monkeypatch):
-    result, calls = _run_episode_with_coupling_probes(
-        monkeypatch, foreground=True
-    )
+    result, calls = _run_episode_with_coupling_probes(monkeypatch, foreground=True)
     assert result["ok"]
     assert calls["merge"] == 1
     assert calls["broadcast"] == 1
@@ -3363,9 +3314,7 @@ def test_foreground_episode_couples_to_workspace(monkeypatch):
 
 
 def test_background_episode_stays_decoupled_from_live_mind(monkeypatch):
-    result, calls = _run_episode_with_coupling_probes(
-        monkeypatch, foreground=False
-    )
+    result, calls = _run_episode_with_coupling_probes(monkeypatch, foreground=False)
     assert result["ok"]
     assert calls["merge"] == 0
     assert calls["broadcast"] == 0
@@ -3382,18 +3331,14 @@ def test_facet_weights_stay_none_until_foundry_has_graded_evidence(monkeypatch):
 
     import core.brain.verifiers.foundry as foundry_mod
 
-    monkeypatch.setattr(
-        foundry_mod, "get_verifier_foundry", lambda: NeutralFoundry()
-    )
+    monkeypatch.setattr(foundry_mod, "get_verifier_foundry", lambda: NeutralFoundry())
     assert LatentCortexService._facet_reliability_weights("general") is None
 
     class MeasuredFoundry:
         def weight_for(self, verifier, domain):
             return 0.4 if verifier == "latent_facet_explain" else 1.0
 
-    monkeypatch.setattr(
-        foundry_mod, "get_verifier_foundry", lambda: MeasuredFoundry()
-    )
+    monkeypatch.setattr(foundry_mod, "get_verifier_foundry", lambda: MeasuredFoundry())
     weights = LatentCortexService._facet_reliability_weights("general")
     assert weights is not None
     assert weights["explain"] == 0.4
@@ -3413,9 +3358,7 @@ def test_successful_episode_queues_facet_judgments_for_grading(monkeypatch):
 
     import core.brain.verifiers.foundry as foundry_mod
 
-    monkeypatch.setattr(
-        foundry_mod, "get_verifier_foundry", lambda: RecordingFoundry()
-    )
+    monkeypatch.setattr(foundry_mod, "get_verifier_foundry", lambda: RecordingFoundry())
     svc = LatentCortexService()
     receipt = {
         "verifier_guidance": {

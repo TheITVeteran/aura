@@ -995,9 +995,61 @@ before those dependencies close is not admissible.
   artifact, broad outcome campaign, adapter/RLC interaction, reasoning gain,
   or frontier-capability result is claimed. SPARK-033 must separately earn
   localized exploration authority.
-- [ ] **SPARK-033 - Locally conditioned exploration.** Increase stochastic
+- [x] **SPARK-033 - Locally conditioned exploration.** Increase stochastic
   exploration only in uncertain/contradictory regions while preserving stable
   regions; meter entropy, diversity, regressions, and determinism controls.
+
+  The default-live `counterfactual` mode derives its target only from an
+  admitted SPARK-031 contradiction coordinate and its search radius only from
+  that coordinate's calibrated probability multiplied by the latest supported
+  SPARK-028 neural predictive entropy. Sealed cognitive-context positions are
+  excluded. A second, low-contradiction writable position is selected from the
+  complete tensor as a stable-region sham; it can be evaluated but never
+  retained. If SPARK-032 already retained a mutation, exploration abstains
+  because the uncertainty observation predates that changed state.
+
+  Each source-bound deterministic direction produces three candidate families:
+  exact duplicate no-op, equal-radius stable-position sham, and
+  contradiction-position exploration. Directions are orthonormal before
+  conversion to the actual latent dtype, their identities and geometry are
+  receipt-bound, and generation is replayed exactly. Every non-baseline
+  candidate changes exactly one position; every protected and non-target
+  position remains bit-identical. Radius, candidate count, replicate count,
+  direction entropy, output-hash entropy, unique conditioned outputs,
+  regressing candidates, actual layer applications, repeated-observation
+  determinism, and cross-label no-op determinism are independently
+  reconstructable.
+
+  All families receive the same fixed-length non-memoized transformer probes
+  in counterbalanced order. Retention requires a decoy-admitted authoritative
+  verifier, repeat-stable observations, deterministic no-op controls, equal
+  actual compute, exact generator replay, at least the configured number of
+  distinct conditioned outputs, and a conditioned lower bound above every
+  no-op and stable-sham upper bound by the configured margin. Any malformed,
+  unsupported, stale, low-entropy, protected, under-budget, collapsed,
+  nondeterministic, unequal-compute, non-authoritative, failed, or non-winning
+  path is compute-inert or restores the exact baseline. Probe text is
+  discarded. The service reconstructs source conditioning, geometry, controls,
+  evidence, decision, and authority from the serialized worker receipt.
+
+  Validation passes 32/32 direct contracts including retention, exact rollback,
+  source abstention, dtype-resolution collapse, evaluator failure, stale-source
+  refusal, order leakage, output collapse, rehashed tamper, and configuration
+  bounds. The focused exploration/perturber/tensor/wiring boundary passes
+  158/158 in 84.16 seconds. The affected engine, reflector, update,
+  uncertainty, locator, resource, verifier, stop, cache, worker-origin, and
+  service boundary passes 325/325 in 171.60 seconds. The fixed 97-file RLC,
+  recurrence/training, resident-campaign, global-workspace, GWT, and
+  execution-controller ownership snapshot passes 1570/1570 in 809.59 seconds.
+  Ruff, formatting, bytecode compilation, and diff hygiene pass. Governance
+  remains at the pre-existing 49 regressions and 13 stale buckets, with no
+  CP347 effect-ownership addition.
+
+  SPARK-033 proves localized, source-conditioned search and its admission
+  boundary. It does not prove resident-32B utility, adapter/RLC positive
+  interaction, reasoning gain, or frontier capability; those still require
+  fresh powered campaigns. SPARK-034 must combine old and new candidate
+  distributions without granting an uncalibrated learned preference.
 - [ ] **SPARK-034 - Heterogeneous integration.** Combine old/new candidate
   distributions using calibrated evidence, not a free learned preference;
   compare selection, logit fusion, and abstention under equal compute.

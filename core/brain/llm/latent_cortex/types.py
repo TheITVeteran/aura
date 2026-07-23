@@ -6,6 +6,7 @@ blew its budget, or fell back to the vanilla path says so in machine-readable
 form — downstream consumers (health, ledgers, the experiment harness) never
 have to infer what happened.
 """
+
 from __future__ import annotations
 
 import math
@@ -308,9 +309,7 @@ class ComputeBudget:
         ):
             if type(value) is not int or value < 0:
                 raise ValueError(f"{name} must be a non-negative integer")
-        equivalents = tokens * layers * (
-            forward_evaluations + 2 * backward_evaluations
-        )
+        equivalents = tokens * layers * (forward_evaluations + 2 * backward_evaluations)
         if equivalents > self.remaining_layer_apps:
             raise RuntimeError(
                 "compute budget exhausted: "
@@ -331,9 +330,7 @@ class ComputeBudget:
         self.resource_ledger.charge(
             operation,
             transformer_layer_apps=tokens * layers * forward_evaluations,
-            attention_query_key_pairs=(
-                attention_pairs_per_forward * forward_evaluations
-            ),
+            attention_query_key_pairs=(attention_pairs_per_forward * forward_evaluations),
             tensor_scalar_ops=backward_flops,
         )
 
@@ -383,8 +380,7 @@ class ComputeBudget:
         ):
             return False
         return (
-            not self.exhausted
-            and tokens * layers + reserve_layer_apps <= self.remaining_layer_apps
+            not self.exhausted and tokens * layers + reserve_layer_apps <= self.remaining_layer_apps
         )
 
     @property
@@ -406,9 +402,7 @@ class ComputeBudget:
             "exhausted": self.exhausted,
             "resource_accounting": self.resource_ledger.to_receipt(),
             "information_accounting": (
-                dict(self.information_receipt)
-                if self.information_receipt is not None
-                else None
+                dict(self.information_receipt) if self.information_receipt is not None else None
             ),
         }
 
@@ -498,6 +492,11 @@ class CortexConfig:
     # verifier are both present. Every attempted mutation competes against
     # repeated no-op and matched-random controls and rolls back by default.
     contradiction_perturber: dict[str, Any] | None = None
+    # SPARK-033 bounded local exploration. Calibrated predictive entropy
+    # scales source-bound stochastic candidates only at an admitted
+    # contradiction position. Equal-compute no-op and stable-position sham
+    # families prevent global or unearned exploration authority.
+    local_exploration: dict[str, Any] | None = None
     # Checked historical branch-error correlations. None is an explicit
     # bootstrap state: duplicate programs still collapse, but no empirical
     # relationship is invented before independently graded paired outcomes.
@@ -523,17 +522,18 @@ class CortexConfig:
 
         if not integer_in(self.workspace.n_slots, 1, ABSOLUTE_MAX_SLOTS):
             problems.append(f"n_slots {self.workspace.n_slots} outside [1, {ABSOLUTE_MAX_SLOTS}]")
-        if not isinstance(self.workspace.roles, (list, tuple)) or not self.workspace.roles or any(
-            not isinstance(role, str) or not role.strip() for role in self.workspace.roles
-        ) or len(self.workspace.roles) > ABSOLUTE_MAX_SLOTS:
+        if (
+            not isinstance(self.workspace.roles, (list, tuple))
+            or not self.workspace.roles
+            or any(not isinstance(role, str) or not role.strip() for role in self.workspace.roles)
+            or len(self.workspace.roles) > ABSOLUTE_MAX_SLOTS
+        ):
             problems.append("workspace roles must be non-empty strings")
         if not integer_in(self.workspace.seed, -(2**63), 2**63 - 1):
             problems.append("workspace seed must be a signed 64-bit integer")
         if not finite(self.workspace.anchor_scale) or not 0.0 <= self.workspace.anchor_scale <= 1.0:
             problems.append("anchor_scale must be finite and inside [0, 1]")
-        if not integer_in(
-            self.recurrence.max_steps, 1, ABSOLUTE_MAX_RECURRENT_STEPS
-        ):
+        if not integer_in(self.recurrence.max_steps, 1, ABSOLUTE_MAX_RECURRENT_STEPS):
             problems.append(
                 f"max_steps {self.recurrence.max_steps} outside [1, {ABSOLUTE_MAX_RECURRENT_STEPS}]"
             )
@@ -543,18 +543,29 @@ class CortexConfig:
             and 1 <= self.recurrence.min_steps <= self.recurrence.max_steps
         ):
             problems.append("min_steps must be inside [1, max_steps]")
-        if not isinstance(self.recurrence.alpha_schedule, str) or self.recurrence.alpha_schedule not in {
+        if not isinstance(
+            self.recurrence.alpha_schedule, str
+        ) or self.recurrence.alpha_schedule not in {
             "constant",
             "cosine",
         }:
             problems.append("alpha_schedule must be constant or cosine")
         if not finite(self.recurrence.alpha) or not 0.0 < self.recurrence.alpha <= 1.0:
             problems.append(f"alpha {self.recurrence.alpha} outside (0, 1]")
-        if not finite(self.recurrence.rms_clip_ratio) or not 1.0 <= self.recurrence.rms_clip_ratio <= 100.0:
+        if (
+            not finite(self.recurrence.rms_clip_ratio)
+            or not 1.0 <= self.recurrence.rms_clip_ratio <= 100.0
+        ):
             problems.append("rms_clip_ratio must be finite and inside [1, 100]")
-        if not finite(self.recurrence.convergence_eps) or not 0.0 < self.recurrence.convergence_eps <= 1.0:
+        if (
+            not finite(self.recurrence.convergence_eps)
+            or not 0.0 < self.recurrence.convergence_eps <= 1.0
+        ):
             problems.append("convergence_eps must be finite and inside (0, 1]")
-        if not finite(self.recurrence.divergence_ratio) or not 1.0 < self.recurrence.divergence_ratio <= 1000.0:
+        if (
+            not finite(self.recurrence.divergence_ratio)
+            or not 1.0 < self.recurrence.divergence_ratio <= 1000.0
+        ):
             problems.append("divergence_ratio must be finite and inside (1, 1000]")
         if type(self.recurrence.fixed_depth) is not bool:
             problems.append("fixed_depth must be boolean")
@@ -568,11 +579,12 @@ class CortexConfig:
             and 1 <= self.branches.isolation_steps <= self.recurrence.max_steps
         ):
             problems.append("isolation_steps must be inside [1, max_steps]")
-        if not integer_in(
-            self.branches.exchange_interval, 1, ABSOLUTE_MAX_RECURRENT_STEPS
-        ):
+        if not integer_in(self.branches.exchange_interval, 1, ABSOLUTE_MAX_RECURRENT_STEPS):
             problems.append("exchange_interval outside recurrent-step limits")
-        if not finite(self.branches.exchange_gamma) or not 0.0 <= self.branches.exchange_gamma <= 1.0:
+        if (
+            not finite(self.branches.exchange_gamma)
+            or not 0.0 <= self.branches.exchange_gamma <= 1.0
+        ):
             problems.append("exchange_gamma must be finite and inside [0, 1]")
         if not (
             type(self.branches.comm_slot) is int
@@ -580,7 +592,10 @@ class CortexConfig:
             and 0 <= self.branches.comm_slot < self.workspace.n_slots
         ):
             problems.append("comm_slot index outside workspace")
-        if not finite(self.branches.collapse_cos_threshold) or not -1.0 <= self.branches.collapse_cos_threshold <= 1.0:
+        if (
+            not finite(self.branches.collapse_cos_threshold)
+            or not -1.0 <= self.branches.collapse_cos_threshold <= 1.0
+        ):
             problems.append("collapse_cos_threshold must be finite and inside [-1, 1]")
         if not finite(self.branches.jitter_scale) or not 0.0 <= self.branches.jitter_scale <= 1.0:
             problems.append("jitter_scale must be finite and inside [0, 1]")
@@ -588,23 +603,31 @@ class CortexConfig:
             problems.append("latent_opt.enabled must be boolean")
         if type(self.latent_opt.control_mode) is not bool:
             problems.append("latent_opt.control_mode must be boolean")
-        if not integer_in(
-            self.latent_opt.steps, 1, ABSOLUTE_MAX_RECURRENT_STEPS
-        ):
+        if not integer_in(self.latent_opt.steps, 1, ABSOLUTE_MAX_RECURRENT_STEPS):
             problems.append("latent_opt.steps outside recurrent-step limits")
         if not finite(self.latent_opt.lr) or not 0.0 < self.latent_opt.lr <= 1.0:
             problems.append("latent_opt.lr must be finite and inside (0, 1]")
-        if not finite(self.latent_opt.lambda_reconstruct) or self.latent_opt.lambda_reconstruct < 0.0:
+        if (
+            not finite(self.latent_opt.lambda_reconstruct)
+            or self.latent_opt.lambda_reconstruct < 0.0
+        ):
             problems.append("latent_opt.lambda_reconstruct must be finite and non-negative")
         if not finite(self.latent_opt.lambda_manifold) or self.latent_opt.lambda_manifold < 0.0:
             problems.append("latent_opt.lambda_manifold must be finite and non-negative")
-        if not finite(self.latent_opt.max_grad_norm) or not 0.0 < self.latent_opt.max_grad_norm <= 1000.0:
+        if (
+            not finite(self.latent_opt.max_grad_norm)
+            or not 0.0 < self.latent_opt.max_grad_norm <= 1000.0
+        ):
             problems.append("latent_opt.max_grad_norm must be finite and inside (0, 1000]")
         if not finite(self.prelude_frac) or not 0.0 < self.prelude_frac < 0.5:
             problems.append(f"prelude_frac {self.prelude_frac} outside (0, 0.5)")
         if not finite(self.coda_frac) or not 0.0 < self.coda_frac < 0.5:
             problems.append(f"coda_frac {self.coda_frac} outside (0, 0.5)")
-        if finite(self.prelude_frac) and finite(self.coda_frac) and self.prelude_frac + self.coda_frac >= 1.0:
+        if (
+            finite(self.prelude_frac)
+            and finite(self.coda_frac)
+            and self.prelude_frac + self.coda_frac >= 1.0
+        ):
             problems.append("prelude_frac + coda_frac must be < 1")
         if self.schedule is not None and not isinstance(self.schedule, dict):
             problems.append("schedule must be a mapping or null")
@@ -618,31 +641,24 @@ class CortexConfig:
             not finite(self.decode_repetition_penalty)
             or not 1.0 <= self.decode_repetition_penalty <= 2.0
         ):
-            problems.append(
-                "decode_repetition_penalty must be finite and inside [1, 2]"
-            )
+            problems.append("decode_repetition_penalty must be finite and inside [1, 2]")
         if (
             type(self.decode_repetition_window) is not int
             or not 1 <= self.decode_repetition_window <= 512
         ):
-            problems.append(
-                "decode_repetition_window must be an integer inside [1, 512]"
-            )
+            problems.append("decode_repetition_window must be an integer inside [1, 512]")
         if (
             type(self.decode_min_tokens) is not int
             or not 0 <= self.decode_min_tokens <= 512
             or self.decode_min_tokens >= max(1, self.decode_max_tokens)
         ):
             problems.append(
-                "decode_min_tokens must be an integer inside [0, 512] and "
-                "below decode_max_tokens"
+                "decode_min_tokens must be an integer inside [0, 512] and below decode_max_tokens"
             )
         if not integer_in(self.verifier_probe_max_tokens, 16, 512):
             problems.append("verifier_probe_max_tokens outside [16, 512]")
         if self.decode_contract not in ("none", "final_answer_v1"):
-            problems.append(
-                "decode_contract must be 'none' or 'final_answer_v1'"
-            )
+            problems.append("decode_contract must be 'none' or 'final_answer_v1'")
         if not integer_in(self.decode_contract_grace_tokens, 0, 4096):
             problems.append("decode_contract_grace_tokens outside [0, 4096]")
         if type(self.verifier_accept_non_regression) is not bool:
@@ -653,19 +669,12 @@ class CortexConfig:
             "assistant_answer_v2",
             "assistant_answer_v3",
         }:
-            problems.append(
-                "decode_bridge_policy must be none or an assistant_answer_v1-v3 policy"
-            )
+            problems.append("decode_bridge_policy must be none or an assistant_answer_v1-v3 policy")
         if not (
             type(self.input_context_max_chars) is int
-            and (
-                self.input_context_max_chars == 0
-                or 2048 <= self.input_context_max_chars <= 65536
-            )
+            and (self.input_context_max_chars == 0 or 2048 <= self.input_context_max_chars <= 65536)
         ):
-            problems.append(
-                "input_context_max_chars must be 0 or inside [2048, 65536]"
-            )
+            problems.append("input_context_max_chars must be 0 or inside [2048, 65536]")
         if type(self.allow_vanilla_fallback) is not bool:
             problems.append("allow_vanilla_fallback must be boolean")
         if type(self.fast_weights.enabled) is not bool:
@@ -679,9 +688,7 @@ class CortexConfig:
             "down_proj",
         }:
             problems.append("fast_weights.target must be o_proj or down_proj")
-        if not integer_in(
-            self.fast_weights.opt_steps, 1, ABSOLUTE_MAX_RECURRENT_STEPS
-        ):
+        if not integer_in(self.fast_weights.opt_steps, 1, ABSOLUTE_MAX_RECURRENT_STEPS):
             problems.append("fast_weights.opt_steps outside recurrent-step limits")
         if not finite(self.fast_weights.lr) or not 0.0 < self.fast_weights.lr <= 1.0:
             problems.append("fast_weights.lr must be finite and inside (0, 1]")
@@ -702,9 +709,7 @@ class CortexConfig:
             )
         if (
             not finite(self.fast_weights.canary_max_effective_delta_rms)
-            or not 0.0
-            < self.fast_weights.canary_max_effective_delta_rms
-            <= 10.0
+            or not 0.0 < self.fast_weights.canary_max_effective_delta_rms <= 10.0
         ):
             problems.append(
                 "fast_weights.canary_max_effective_delta_rms must be finite and inside (0, 10]"
@@ -726,22 +731,15 @@ class CortexConfig:
                     problems.append("halting.mode must be residual or learned")
                 head_path = self.halting.get("head_path")
                 head_sha256 = self.halting.get("head_sha256")
-                if mode == "learned" and (
-                    not isinstance(head_path, str) or not head_path.strip()
-                ):
+                if mode == "learned" and (not isinstance(head_path, str) or not head_path.strip()):
                     problems.append("halting.learned requires head_path")
                 if mode == "learned" and (
                     not isinstance(head_sha256, str)
                     or len(head_sha256) != 64
-                    or any(
-                        character not in "0123456789abcdef"
-                        for character in head_sha256
-                    )
+                    or any(character not in "0123456789abcdef" for character in head_sha256)
                 ):
                     problems.append("halting.learned requires head_sha256")
-                if mode == "residual" and (
-                    head_path is not None or head_sha256 is not None
-                ):
+                if mode == "residual" and (head_path is not None or head_sha256 is not None):
                     problems.append("halting.residual cannot carry a head")
                 unknown = set(self.halting) - {
                     "mode",
@@ -756,178 +754,126 @@ class CortexConfig:
             else:
                 mode = self.update_gate.get("mode", "passthrough")
                 if mode not in {"passthrough", "learned"}:
-                    problems.append(
-                        "update_gate.mode must be passthrough or learned"
-                    )
+                    problems.append("update_gate.mode must be passthrough or learned")
                 head_path = self.update_gate.get("head_path")
                 head_sha256 = self.update_gate.get("head_sha256")
-                if mode == "learned" and (
-                    not isinstance(head_path, str) or not head_path.strip()
-                ):
+                if mode == "learned" and (not isinstance(head_path, str) or not head_path.strip()):
                     problems.append("update_gate.learned requires head_path")
                 if mode == "learned" and (
                     not isinstance(head_sha256, str)
                     or len(head_sha256) != 64
-                    or any(
-                        character not in "0123456789abcdef"
-                        for character in head_sha256
-                    )
+                    or any(character not in "0123456789abcdef" for character in head_sha256)
                 ):
                     problems.append("update_gate.learned requires head_sha256")
-                if mode == "passthrough" and (
-                    head_path is not None or head_sha256 is not None
-                ):
-                    problems.append(
-                        "update_gate.passthrough cannot carry a head"
-                    )
+                if mode == "passthrough" and (head_path is not None or head_sha256 is not None):
+                    problems.append("update_gate.passthrough cannot carry a head")
                 unknown = set(self.update_gate) - {
                     "mode",
                     "head_path",
                     "head_sha256",
                 }
                 if unknown:
-                    problems.append(
-                        f"update_gate has unknown keys: {sorted(unknown)}"
-                    )
+                    problems.append(f"update_gate has unknown keys: {sorted(unknown)}")
         if self.uncertainty_head is not None:
             if not isinstance(self.uncertainty_head, dict):
                 problems.append("uncertainty_head must be a mapping or null")
             else:
                 mode = self.uncertainty_head.get("mode", "unavailable")
                 if mode not in {"unavailable", "learned"}:
-                    problems.append(
-                        "uncertainty_head.mode must be unavailable or learned"
-                    )
+                    problems.append("uncertainty_head.mode must be unavailable or learned")
                 head_path = self.uncertainty_head.get("head_path")
                 head_sha256 = self.uncertainty_head.get("head_sha256")
-                if mode == "learned" and (
-                    not isinstance(head_path, str) or not head_path.strip()
-                ):
+                if mode == "learned" and (not isinstance(head_path, str) or not head_path.strip()):
                     problems.append("uncertainty_head.learned requires head_path")
                 if mode == "learned" and (
                     not isinstance(head_sha256, str)
                     or len(head_sha256) != 64
-                    or any(
-                        character not in "0123456789abcdef"
-                        for character in head_sha256
-                    )
+                    or any(character not in "0123456789abcdef" for character in head_sha256)
                 ):
-                    problems.append(
-                        "uncertainty_head.learned requires head_sha256"
-                    )
-                if mode == "unavailable" and (
-                    head_path is not None or head_sha256 is not None
-                ):
-                    problems.append(
-                        "uncertainty_head.unavailable cannot carry a head"
-                    )
+                    problems.append("uncertainty_head.learned requires head_sha256")
+                if mode == "unavailable" and (head_path is not None or head_sha256 is not None):
+                    problems.append("uncertainty_head.unavailable cannot carry a head")
                 unknown = set(self.uncertainty_head) - {
                     "mode",
                     "head_path",
                     "head_sha256",
                 }
                 if unknown:
-                    problems.append(
-                        f"uncertainty_head has unknown keys: {sorted(unknown)}"
-                    )
+                    problems.append(f"uncertainty_head has unknown keys: {sorted(unknown)}")
         if self.mistake_locator is not None:
             if not isinstance(self.mistake_locator, dict):
                 problems.append("mistake_locator must be a mapping or null")
             else:
                 mode = self.mistake_locator.get("mode", "unavailable")
                 if mode not in {"unavailable", "learned"}:
-                    problems.append(
-                        "mistake_locator.mode must be unavailable or learned"
-                    )
+                    problems.append("mistake_locator.mode must be unavailable or learned")
                 head_path = self.mistake_locator.get("head_path")
                 head_sha256 = self.mistake_locator.get("head_sha256")
-                if mode == "learned" and (
-                    not isinstance(head_path, str) or not head_path.strip()
-                ):
+                if mode == "learned" and (not isinstance(head_path, str) or not head_path.strip()):
                     problems.append("mistake_locator.learned requires head_path")
                 if mode == "learned" and (
                     not isinstance(head_sha256, str)
                     or len(head_sha256) != 64
-                    or any(
-                        character not in "0123456789abcdef"
-                        for character in head_sha256
-                    )
+                    or any(character not in "0123456789abcdef" for character in head_sha256)
                 ):
-                    problems.append(
-                        "mistake_locator.learned requires head_sha256"
-                    )
-                if mode == "unavailable" and (
-                    head_path is not None or head_sha256 is not None
-                ):
-                    problems.append(
-                        "mistake_locator.unavailable cannot carry a head"
-                    )
+                    problems.append("mistake_locator.learned requires head_sha256")
+                if mode == "unavailable" and (head_path is not None or head_sha256 is not None):
+                    problems.append("mistake_locator.unavailable cannot carry a head")
                 unknown = set(self.mistake_locator) - {
                     "mode",
                     "head_path",
                     "head_sha256",
                 }
                 if unknown:
-                    problems.append(
-                        f"mistake_locator has unknown keys: {sorted(unknown)}"
-                    )
+                    problems.append(f"mistake_locator has unknown keys: {sorted(unknown)}")
         if self.contradiction_head is not None:
             if not isinstance(self.contradiction_head, dict):
                 problems.append("contradiction_head must be a mapping or null")
             else:
                 mode = self.contradiction_head.get("mode", "unavailable")
                 if mode not in {"unavailable", "learned"}:
-                    problems.append(
-                        "contradiction_head.mode must be unavailable or learned"
-                    )
+                    problems.append("contradiction_head.mode must be unavailable or learned")
                 head_path = self.contradiction_head.get("head_path")
                 head_sha256 = self.contradiction_head.get("head_sha256")
-                if mode == "learned" and (
-                    not isinstance(head_path, str) or not head_path.strip()
-                ):
-                    problems.append(
-                        "contradiction_head.learned requires head_path"
-                    )
+                if mode == "learned" and (not isinstance(head_path, str) or not head_path.strip()):
+                    problems.append("contradiction_head.learned requires head_path")
                 if mode == "learned" and (
                     not isinstance(head_sha256, str)
                     or len(head_sha256) != 64
-                    or any(
-                        character not in "0123456789abcdef"
-                        for character in head_sha256
-                    )
+                    or any(character not in "0123456789abcdef" for character in head_sha256)
                 ):
-                    problems.append(
-                        "contradiction_head.learned requires head_sha256"
-                    )
-                if mode == "unavailable" and (
-                    head_path is not None or head_sha256 is not None
-                ):
-                    problems.append(
-                        "contradiction_head.unavailable cannot carry a head"
-                    )
+                    problems.append("contradiction_head.learned requires head_sha256")
+                if mode == "unavailable" and (head_path is not None or head_sha256 is not None):
+                    problems.append("contradiction_head.unavailable cannot carry a head")
                 unknown = set(self.contradiction_head) - {
                     "mode",
                     "head_path",
                     "head_sha256",
                 }
                 if unknown:
-                    problems.append(
-                        f"contradiction_head has unknown keys: {sorted(unknown)}"
-                    )
+                    problems.append(f"contradiction_head has unknown keys: {sorted(unknown)}")
         if self.contradiction_perturber is not None:
             if not isinstance(self.contradiction_perturber, dict):
-                problems.append(
-                    "contradiction_perturber must be a mapping or null"
-                )
+                problems.append("contradiction_perturber must be a mapping or null")
             else:
                 try:
                     from core.brain.llm.latent_cortex.contradiction_perturber import (
                         ContradictionPerturberConfig,
                     )
 
-                    ContradictionPerturberConfig.from_value(
-                        self.contradiction_perturber
+                    ContradictionPerturberConfig.from_value(self.contradiction_perturber)
+                except (TypeError, ValueError) as exc:
+                    problems.append(str(exc))
+        if self.local_exploration is not None:
+            if not isinstance(self.local_exploration, dict):
+                problems.append("local_exploration must be a mapping or null")
+            else:
+                try:
+                    from core.brain.llm.latent_cortex.local_exploration import (
+                        LocalExplorationConfig,
                     )
+
+                    LocalExplorationConfig.from_value(self.local_exploration)
                 except (TypeError, ValueError) as exc:
                     problems.append(str(exc))
         if self.escape is not None:
@@ -945,9 +891,7 @@ class CortexConfig:
                     if value is not None and not integer_in(value, low, high):
                         problems.append(f"escape.{key} outside [{low}, {high}]")
                 scale = self.escape.get("perturbation_scale")
-                if scale is not None and (
-                    not finite(scale) or not 0.0 < float(scale) <= 0.5
-                ):
+                if scale is not None and (not finite(scale) or not 0.0 < float(scale) <= 0.5):
                     problems.append("escape.perturbation_scale outside (0, 0.5]")
                 unknown = set(self.escape) - {
                     "enabled",
@@ -1049,11 +993,7 @@ class WeightIntegrityProof:
         if not isinstance(data, dict):
             return cls(unavailable_reason="proof_not_a_mapping")
         raw_layers = data.get("erased_layer_ids")
-        layers = (
-            [str(item) for item in raw_layers]
-            if isinstance(raw_layers, (list, tuple))
-            else []
-        )
+        layers = [str(item) for item in raw_layers] if isinstance(raw_layers, (list, tuple)) else []
         try:
             version = int(data.get("version", 1))
         except (TypeError, ValueError):
@@ -1126,9 +1066,7 @@ class EpisodeReceipt:
     params_unchanged: bool | None = None
     fast_weights_erased: bool | None = None
     # Digest evidence backing the two booleans above.
-    weight_integrity: WeightIntegrityProof = field(
-        default_factory=WeightIntegrityProof
-    )
+    weight_integrity: WeightIntegrityProof = field(default_factory=WeightIntegrityProof)
     # Topology actually used.
     n_layers: int = 0
     prelude_end: int = 0
@@ -1268,6 +1206,10 @@ class EpisodeReceipt:
     # Only an authoritative, repeat-stable, equal-compute win may alter the
     # selected branch; every other evaluated path restores the exact baseline.
     contradiction_perturbation: dict[str, Any] = field(default_factory=dict)
+    # Entropy-conditioned source-bound candidate family against no-op and
+    # stable-position sham controls. Stable positions have no retained write
+    # authority; any unproven search restores the exact baseline.
+    local_exploration: dict[str, Any] = field(default_factory=dict)
     # Neural-bytecode trace: one event per non-window instruction the
     # schedule program executed (exchange/savepoint/verify_probe outcomes,
     # probe scores, backtracks). Empty for plain window programs.
@@ -1385,9 +1327,7 @@ class EpisodeReceipt:
             "worker_model_stored_parameter_element_count": (
                 self.worker_model_stored_parameter_element_count
             ),
-            "worker_model_parameter_count_basis": (
-                self.worker_model_parameter_count_basis
-            ),
+            "worker_model_parameter_count_basis": (self.worker_model_parameter_count_basis),
             "worker_source_sha256": self.worker_source_sha256,
             "worker_affective_steering_active": self.worker_affective_steering_active,
             "worker_affective_steering_alpha": self.worker_affective_steering_alpha,
@@ -1402,9 +1342,7 @@ class EpisodeReceipt:
             "loop_stability": dict(self.loop_stability),
             "update_acceptance": dict(self.update_acceptance),
             "nonparametric_memory": dict(self.nonparametric_memory),
-            "runtime_operation_authority": dict(
-                self.runtime_operation_authority
-            ),
+            "runtime_operation_authority": dict(self.runtime_operation_authority),
             "params_unchanged": self.params_unchanged,
             "fast_weights_erased": self.fast_weights_erased,
             "weight_integrity": self.weight_integrity.to_dict(),
@@ -1450,18 +1388,14 @@ class EpisodeReceipt:
             "fast_weight_rejected_steps": self.fast_weight_rejected_steps,
             "fast_weight_budget_exhausted": self.fast_weight_budget_exhausted,
             "fast_weight_optimizer": self.fast_weight_optimizer,
-            "fast_weight_loss_trail": [
-                round(v, 6) for v in self.fast_weight_loss_trail
-            ],
+            "fast_weight_loss_trail": [round(v, 6) for v in self.fast_weight_loss_trail],
             "fast_weight_gradient_norm_trail": [
                 round(v, 6) for v in self.fast_weight_gradient_norm_trail
             ],
             "fast_weight_accepted_step_sizes": [
                 round(v, 12) for v in self.fast_weight_accepted_step_sizes
             ],
-            "fast_weight_line_search_backtracks": (
-                self.fast_weight_line_search_backtracks
-            ),
+            "fast_weight_line_search_backtracks": (self.fast_weight_line_search_backtracks),
             "fast_weight_canaries": dict(self.fast_weight_canaries),
             "fast_weight_verifier": dict(self.fast_weight_verifier),
             "decode_requested_tokens": self.decode_requested_tokens,
@@ -1470,9 +1404,7 @@ class EpisodeReceipt:
             "decode_contract_required": self.decode_contract_required,
             "decode_contract_satisfied": self.decode_contract_satisfied,
             "decode_contract_grace_tokens": self.decode_contract_grace_tokens,
-            "decode_contract_grace_used_tokens": (
-                self.decode_contract_grace_used_tokens
-            ),
+            "decode_contract_grace_used_tokens": (self.decode_contract_grace_used_tokens),
             "decode_newline_suppressions": self.decode_newline_suppressions,
             "decode_repetition_penalty_applied": self.decode_repetition_penalty_applied,
             "verifier_guidance": dict(self.verifier_guidance),
@@ -1483,17 +1415,12 @@ class EpisodeReceipt:
             "mistake_locator": dict(self.mistake_locator),
             "bidirectional_reflector": dict(self.bidirectional_reflector),
             "contradiction_tensor": dict(self.contradiction_tensor),
-            "contradiction_perturbation": dict(
-                self.contradiction_perturbation
-            ),
+            "contradiction_perturbation": dict(self.contradiction_perturbation),
+            "local_exploration": dict(self.local_exploration),
             "bytecode_events": [dict(row) for row in self.bytecode_events],
             "value_of_computation": dict(self.value_of_computation),
-            "cognitive_action_trace": [
-                dict(row) for row in self.cognitive_action_trace
-            ],
-            "cognitive_operator_trace": [
-                dict(row) for row in self.cognitive_operator_trace
-            ],
+            "cognitive_action_trace": [dict(row) for row in self.cognitive_action_trace],
+            "cognitive_operator_trace": [dict(row) for row in self.cognitive_operator_trace],
             "structural_diversity": dict(self.structural_diversity),
             "correlated_support": dict(self.correlated_support),
             "latent_telemetry": dict(self.latent_telemetry),

@@ -10,16 +10,16 @@ from typing import Any
 
 import numpy as np
 
+from core.brain.llm.latent_cortex.counterfactual_probe import (
+    CounterfactualProbeResult,
+)
 from core.brain.llm.latent_cortex.loop_core import canonical_sha256
 from core.brain.llm.latent_cortex.verified_best import (
-    VerifierObservation,
     tensor_sha256,
     validate_observation,
 )
 
-CONTRADICTION_PERTURBATION_SCHEMA = (
-    "aura.rlc.contradiction_perturbation_receipt.v1"
-)
+CONTRADICTION_PERTURBATION_SCHEMA = "aura.rlc.contradiction_perturbation_receipt.v1"
 DISABLED = "disabled"
 COUNTERFACTUAL = "counterfactual"
 ARM_NAMES = ("no_op", "matched_random", "contradiction_guided")
@@ -59,16 +59,12 @@ class ContradictionPerturberConfig:
             not _finite(self.max_relative_delta_rms)
             or not 0.0 < float(self.max_relative_delta_rms) <= 0.25
         ):
-            raise ValueError(
-                "contradiction perturber delta bound must be inside (0, 0.25]"
-            )
+            raise ValueError("contradiction perturber delta bound must be inside (0, 0.25]")
         if (
             not _finite(self.min_verifier_margin)
             or not 0.0 <= float(self.min_verifier_margin) <= 0.25
         ):
-            raise ValueError(
-                "contradiction perturber verifier margin must be inside [0, 0.25]"
-            )
+            raise ValueError("contradiction perturber verifier margin must be inside [0, 0.25]")
         if type(self.replicates) is not int or not 2 <= self.replicates <= MAX_REPLICATES:
             raise ValueError(
                 f"contradiction perturber replicates must be inside [2, {MAX_REPLICATES}]"
@@ -90,9 +86,7 @@ class ContradictionPerturberConfig:
             "seed",
         }
         if unknown:
-            raise ValueError(
-                f"contradiction perturber has unknown keys: {sorted(unknown)}"
-            )
+            raise ValueError(f"contradiction perturber has unknown keys: {sorted(unknown)}")
         return cls(
             mode=raw.get("mode", COUNTERFACTUAL),
             max_relative_delta_rms=raw.get("max_relative_delta_rms", 0.08),
@@ -104,46 +98,14 @@ class ContradictionPerturberConfig:
     def to_dict(self) -> dict[str, Any]:
         return {
             "mode": self.mode,
-            "max_relative_delta_rms": round(
-                float(self.max_relative_delta_rms), 10
-            ),
-            "min_verifier_margin": round(
-                float(self.min_verifier_margin), 10
-            ),
+            "max_relative_delta_rms": round(float(self.max_relative_delta_rms), 10),
+            "min_verifier_margin": round(float(self.min_verifier_margin), 10),
             "replicates": self.replicates,
             "seed": self.seed,
         }
 
 
-@dataclass(frozen=True, slots=True)
-class PerturbationArmResult:
-    """One independently evaluated state; generated answer text is discarded."""
-
-    probe_tokens_sha256: str
-    probe_token_count: int
-    observation: Mapping[str, Any]
-    layer_apps: int
-
-    def normalized(self) -> dict[str, Any]:
-        observation = (
-            validate_observation(self.observation)
-            if "observation_sha256" in self.observation
-            else VerifierObservation.from_value(self.observation).to_dict()
-        )
-        if (
-            not _is_sha256(self.probe_tokens_sha256)
-            or type(self.probe_token_count) is not int
-            or self.probe_token_count < 0
-            or type(self.layer_apps) is not int
-            or self.layer_apps < 0
-        ):
-            raise ValueError("contradiction perturbation arm result is invalid")
-        return {
-            "probe_tokens_sha256": self.probe_tokens_sha256,
-            "probe_token_count": self.probe_token_count,
-            "observation": observation,
-            "layer_apps": self.layer_apps,
-        }
+PerturbationArmResult = CounterfactualProbeResult
 
 
 def _as_state(value: Any, *, name: str) -> np.ndarray:
@@ -210,12 +172,8 @@ def _candidate_states(
     random_flat = random_delta.reshape(-1).astype(np.float64)
     guided_energy = float(np.dot(guided_flat, guided_flat))
     if guided_energy > 1e-18:
-        random_flat -= (
-            float(np.dot(random_flat, guided_flat)) / guided_energy
-        ) * guided_flat
-        random_delta = random_flat.reshape(random_delta.shape).astype(
-            base.dtype
-        )
+        random_flat -= (float(np.dot(random_flat, guided_flat)) / guided_energy) * guided_flat
+        random_delta = random_flat.reshape(random_delta.shape).astype(base.dtype)
     random_rms = _rms(random_delta)
     if random_rms <= 1e-12:
         raise ValueError("contradiction perturbation random control degenerated")
@@ -226,33 +184,25 @@ def _candidate_states(
         "matched_random": np.array(base, copy=True),
         "contradiction_guided": np.array(base, copy=True),
     }
-    states["matched_random"][:, position_index : position_index + 1, :] += (
-        random_delta
-    )
-    states["contradiction_guided"][
-        :, position_index : position_index + 1, :
-    ] += guided_delta
+    states["matched_random"][:, position_index : position_index + 1, :] += random_delta
+    states["contradiction_guided"][:, position_index : position_index + 1, :] += guided_delta
 
     summaries: dict[str, dict[str, Any]] = {}
     baseline_sha256 = tensor_sha256(base)
     for name in ARM_NAMES:
         state = states[name]
         delta = state - base
-        target_delta = delta[
-            :, position_index : position_index + 1, :
-        ]
+        target_delta = delta[:, position_index : position_index + 1, :]
         target_delta_flat = target_delta.reshape(-1).astype(np.float64)
         target_delta_rms = _rms(target_delta)
         if target_delta_rms <= 1e-12:
             cosine_to_guided = None
         else:
             denominator = math.sqrt(
-                float(np.dot(target_delta_flat, target_delta_flat))
-                * guided_energy
+                float(np.dot(target_delta_flat, target_delta_flat)) * guided_energy
             )
             cosine_to_guided = round(
-                float(np.dot(target_delta_flat, guided_flat))
-                / max(denominator, 1e-18),
+                float(np.dot(target_delta_flat, guided_flat)) / max(denominator, 1e-18),
                 12,
             )
         changed_positions = [
@@ -264,9 +214,7 @@ def _candidate_states(
             "name": name,
             "state_sha256": tensor_sha256(state),
             "delta_rms": round(_rms(delta), 12),
-            "target_delta_rms": round(
-                target_delta_rms, 12
-            ),
+            "target_delta_rms": round(target_delta_rms, 12),
             "relative_target_delta_rms": round(
                 target_delta_rms / slot_rms,
                 12,
@@ -274,8 +222,7 @@ def _candidate_states(
             "cosine_to_guided_delta": cosine_to_guided,
             "changed_positions": changed_positions,
             "protected_positions_unchanged": all(
-                np.array_equal(state[:, index, :], base[:, index, :])
-                for index in protected
+                np.array_equal(state[:, index, :], base[:, index, :]) for index in protected
             ),
         }
     if summaries["no_op"]["state_sha256"] != baseline_sha256:
@@ -292,10 +239,9 @@ def _candidate_states(
     if not math.isclose(guided_rms, random_rms, rel_tol=1e-5, abs_tol=1e-8):
         raise RuntimeError("contradiction random control is not magnitude matched")
     if any(
-            summary["changed_positions"] not in ([], [position_index])
-            or not summary["protected_positions_unchanged"]
-            or summary["relative_target_delta_rms"]
-            > float(config.max_relative_delta_rms) + 1e-6
+        summary["changed_positions"] not in ([], [position_index])
+        or not summary["protected_positions_unchanged"]
+        or summary["relative_target_delta_rms"] > float(config.max_relative_delta_rms) + 1e-6
         for summary in summaries.values()
     ):
         raise RuntimeError("contradiction perturbation escaped its state bound")
@@ -320,8 +266,7 @@ def _empty_receipt(
             isinstance(branches, list)
             and 0 <= selected_branch < len(branches)
             and isinstance(branches[selected_branch], Mapping)
-            and contradiction_tensor.get("selected_branch_candidate")
-            is not None
+            and contradiction_tensor.get("selected_branch_candidate") is not None
         )
         else None
     )
@@ -437,10 +382,7 @@ def run_contradiction_perturbation(
             decoy_review_sha256=decoy_review_sha256,
             protected_positions=protected_positions,
             status="skipped",
-            reason=(
-                evaluation_unavailable_reason
-                or "independent_admitted_verifier_unavailable"
-            ),
+            reason=(evaluation_unavailable_reason or "independent_admitted_verifier_unavailable"),
         )
 
     try:
@@ -492,9 +434,7 @@ def run_contradiction_perturbation(
     try:
         for replicate, order in enumerate(orders):
             for name in order:
-                results[name].append(
-                    evaluate(name, states[name], replicate).normalized()
-                )
+                results[name].append(evaluate(name, states[name], replicate).normalized())
     except Exception as exc:
         payload = _empty_receipt(
             config=config,
@@ -522,9 +462,7 @@ def run_contradiction_perturbation(
         all_authoritative = all_authoritative and all(
             row["authoritative"] is True for row in observations
         )
-        repeat_stable = repeat_stable and all(
-            row == observations[0] for row in observations[1:]
-        )
+        repeat_stable = repeat_stable and all(row == observations[0] for row in observations[1:])
         layer_apps.extend(row["layer_apps"] for row in results[name])
         arm_rows.append(
             {
@@ -534,12 +472,10 @@ def run_contradiction_perturbation(
         )
     all_equal_compute = bool(layer_apps) and len(set(layer_apps)) == 1
     observations_by_name = {
-        name: [row["observation"] for row in results[name]]
-        for name in ARM_NAMES
+        name: [row["observation"] for row in results[name]] for name in ARM_NAMES
     }
     guided_lower = min(
-        float(row["lower_bound"])
-        for row in observations_by_name["contradiction_guided"]
+        float(row["lower_bound"]) for row in observations_by_name["contradiction_guided"]
     )
     control_upper = max(
         float(row["upper_bound"])
@@ -550,8 +486,7 @@ def run_contradiction_perturbation(
         all_authoritative
         and repeat_stable
         and all_equal_compute
-        and guided_lower
-        > control_upper + float(config.min_verifier_margin) + 1e-12
+        and guided_lower > control_upper + float(config.min_verifier_margin) + 1e-12
     )
     baseline_sha256 = tensor_sha256(baseline)
     if guided_beats_controls:
@@ -664,28 +599,21 @@ def validate_contradiction_perturbation_receipt(
     protected = sorted(set(expected_protected_positions))
     source_branches = contradiction_tensor.get("branches")
     source_probability = (
-        source_branches[expected_selected_branch].get(
-            "candidate_probability"
-        )
+        source_branches[expected_selected_branch].get("candidate_probability")
         if (
             isinstance(source_branches, list)
             and 0 <= expected_selected_branch < len(source_branches)
-            and isinstance(
-                source_branches[expected_selected_branch], Mapping
-            )
-            and contradiction_tensor.get("selected_branch_candidate")
-            is not None
+            and isinstance(source_branches[expected_selected_branch], Mapping)
+            and contradiction_tensor.get("selected_branch_candidate") is not None
         )
         else None
     )
     if (
         receipt["schema"] != CONTRADICTION_PERTURBATION_SCHEMA
         or receipt["config"] != expected_config.to_dict()
-        or receipt["contradiction_tensor_sha256"]
-        != contradiction_tensor["receipt_sha256"]
+        or receipt["contradiction_tensor_sha256"] != contradiction_tensor["receipt_sha256"]
         or receipt["selected_branch"] != expected_selected_branch
-        or receipt["candidate"]
-        != contradiction_tensor.get("selected_branch_candidate")
+        or receipt["candidate"] != contradiction_tensor.get("selected_branch_candidate")
         or receipt["candidate_probability"] != source_probability
         or receipt["protected_positions"] != protected
         or receipt["verifier_policy_sha256"] != verifier_policy_sha256
@@ -710,46 +638,32 @@ def validate_contradiction_perturbation_receipt(
             or receipt["authority_scope"] != "none"
         ):
             raise ValueError("inactive contradiction perturbation claims authority")
-        if (
-            receipt["status"] == "disabled"
-            and (
-                expected_config.mode != DISABLED
-                or receipt["reason"] != "configured_disabled"
-            )
+        if receipt["status"] == "disabled" and (
+            expected_config.mode != DISABLED or receipt["reason"] != "configured_disabled"
         ):
             raise ValueError("contradiction perturbation disabled state differs")
-        if (
-            receipt["status"] == "skipped"
-            and receipt["reason"]
-            not in {
-                "learned_localized_candidate_unavailable",
-                "candidate_targets_immutable_evidence",
-                "independent_admitted_verifier_unavailable",
-                "counterfactual_probe_budget_unavailable",
-                "guided_direction_unavailable",
-            }
-        ):
+        if receipt["status"] == "skipped" and receipt["reason"] not in {
+            "learned_localized_candidate_unavailable",
+            "candidate_targets_immutable_evidence",
+            "independent_admitted_verifier_unavailable",
+            "counterfactual_probe_budget_unavailable",
+            "guided_direction_unavailable",
+        }:
             raise ValueError("contradiction perturbation skip reason is invalid")
-        if (
-            receipt["reason"] == "candidate_targets_immutable_evidence"
-            and (
-                not isinstance(receipt["candidate"], Mapping)
-                or receipt["candidate"].get("position_index") not in protected
-            )
+        if receipt["reason"] == "candidate_targets_immutable_evidence" and (
+            not isinstance(receipt["candidate"], Mapping)
+            or receipt["candidate"].get("position_index") not in protected
         ):
             raise ValueError("contradiction perturbation evidence protection differs")
         return receipt
     if receipt["status"] == "restored" and not receipt["arms"]:
-        failure_kind = str(receipt["reason"]).removeprefix(
-            "evaluation_failed:"
-        )
+        failure_kind = str(receipt["reason"]).removeprefix("evaluation_failed:")
         if (
             not str(receipt["reason"]).startswith("evaluation_failed:")
             or not failure_kind.isidentifier()
             or len(failure_kind) > 128
             or not _is_sha256(receipt["baseline_state_sha256"])
-            or receipt["resulting_state_sha256"]
-            != receipt["baseline_state_sha256"]
+            or receipt["resulting_state_sha256"] != receipt["baseline_state_sha256"]
             or receipt["evaluation_order"]
             or receipt["all_arms_equal_compute"] is not False
             or receipt["all_observations_authoritative"] is not False
@@ -838,15 +752,12 @@ def validate_contradiction_perturbation_receipt(
             receipt["baseline_state_sha256"],
             rows["contradiction_guided"]["state_sha256"],
         }
-        or rows["contradiction_guided"]["state_sha256"]
-        == receipt["baseline_state_sha256"]
+        or rows["contradiction_guided"]["state_sha256"] == receipt["baseline_state_sha256"]
         or float(rows["matched_random"]["target_delta_rms"]) <= 0.0
         or float(rows["contradiction_guided"]["target_delta_rms"]) <= 0.0
-        or rows["matched_random"]["changed_positions"]
-        != [receipt["candidate"]["position_index"]]
+        or rows["matched_random"]["changed_positions"] != [receipt["candidate"]["position_index"]]
         or not _finite(rows["matched_random"]["cosine_to_guided_delta"])
-        or abs(float(rows["matched_random"]["cosine_to_guided_delta"]))
-        > 1e-5
+        or abs(float(rows["matched_random"]["cosine_to_guided_delta"])) > 1e-5
         or rows["contradiction_guided"]["changed_positions"]
         != [receipt["candidate"]["position_index"]]
         or not math.isclose(
@@ -869,13 +780,10 @@ def validate_contradiction_perturbation_receipt(
         for observation in values
     )
     stable = all(
-        all(value == values[0] for value in values[1:])
-        for values in observations.values()
+        all(value == values[0] for value in values[1:]) for values in observations.values()
     )
     equal_compute = bool(layer_apps) and len(set(layer_apps)) == 1
-    guided_lower = min(
-        float(row["lower_bound"]) for row in observations["contradiction_guided"]
-    )
+    guided_lower = min(float(row["lower_bound"]) for row in observations["contradiction_guided"])
     control_upper = max(
         float(row["upper_bound"])
         for name in ("no_op", "matched_random")
@@ -885,8 +793,7 @@ def validate_contradiction_perturbation_receipt(
         authoritative
         and stable
         and equal_compute
-        and guided_lower
-        > control_upper + float(expected_config.min_verifier_margin) + 1e-12
+        and guided_lower > control_upper + float(expected_config.min_verifier_margin) + 1e-12
     )
     expected_reason = (
         "guided_lower_bound_beats_both_controls"
@@ -917,17 +824,14 @@ def validate_contradiction_perturbation_receipt(
     if beats:
         if (
             receipt["status"] != "retained"
-            or receipt["resulting_state_sha256"]
-            != rows["contradiction_guided"]["state_sha256"]
+            or receipt["resulting_state_sha256"] != rows["contradiction_guided"]["state_sha256"]
             or receipt["rollback_proven"] is not False
-            or receipt["authority_scope"]
-            != "selected_branch_target_position_only"
+            or receipt["authority_scope"] != "selected_branch_target_position_only"
         ):
             raise ValueError("contradiction perturbation retained wrong state")
     elif (
         receipt["status"] != "restored"
-        or receipt["resulting_state_sha256"]
-        != receipt["baseline_state_sha256"]
+        or receipt["resulting_state_sha256"] != receipt["baseline_state_sha256"]
         or receipt["rollback_proven"] is not True
         or receipt["authority_scope"] != "none"
     ):

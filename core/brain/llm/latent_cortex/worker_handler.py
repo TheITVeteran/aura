@@ -27,6 +27,7 @@ Job contract (all optional except the prompt source):
 Kill switch: AURA_LATENT_CORTEX=0 refuses every episode with an honest
 reason — the caller falls back to ordinary generation, no silence.
 """
+
 from __future__ import annotations
 
 import logging
@@ -112,6 +113,7 @@ _CONFIG_KEYS = {
     "telemetry",
     "contradiction_head",
     "contradiction_perturber",
+    "local_exploration",
     "mistake_locator",
     "uncertainty_head",
     "update_gate",
@@ -192,21 +194,15 @@ def config_from_job(job_config: dict[str, Any] | None) -> CortexConfig:
             exchange_interval=_typed_value(raw, "exchange_interval", 4, int),
             exchange_gamma=_typed_value(raw, "exchange_gamma", 0.35, float),
             comm_slot=_typed_value(raw, "comm_slot", 0, int),
-            collapse_cos_threshold=_typed_value(
-                raw, "collapse_cos_threshold", 0.98, float
-            ),
+            collapse_cos_threshold=_typed_value(raw, "collapse_cos_threshold", 0.98, float),
             jitter_scale=_typed_value(raw, "jitter_scale", 0.02, float),
         ),
         latent_opt=LatentOptConfig(
             enabled=_typed_value(raw, "latent_opt", False, bool),
             steps=_typed_value(raw, "latent_opt_steps", 4, int),
             lr=_typed_value(raw, "latent_opt_lr", 0.05, float),
-            lambda_reconstruct=_typed_value(
-                raw, "latent_opt_lambda_reconstruct", 1.0, float
-            ),
-            lambda_manifold=_typed_value(
-                raw, "latent_opt_lambda_manifold", 0.5, float
-            ),
+            lambda_reconstruct=_typed_value(raw, "latent_opt_lambda_reconstruct", 1.0, float),
+            lambda_manifold=_typed_value(raw, "latent_opt_lambda_manifold", 0.5, float),
             max_grad_norm=_typed_value(raw, "latent_opt_max_grad_norm", 1.0, float),
             control_mode=_typed_value(raw, "latent_opt_control", False, bool),
         ),
@@ -217,58 +213,36 @@ def config_from_job(job_config: dict[str, Any] | None) -> CortexConfig:
             target=_typed_value(raw, "fast_weights_target", "o_proj", str),
             opt_steps=_typed_value(raw, "fast_weights_opt_steps", 4, int),
             lr=_typed_value(raw, "fast_weights_lr", 0.01, float),
-            max_wrapped_layers=_typed_value(
-                raw, "fast_weights_max_layers", 8, int
-            ),
-            export_candidates=_typed_value(
-                raw, "fast_weights_export_candidates", False, bool
-            ),
+            max_wrapped_layers=_typed_value(raw, "fast_weights_max_layers", 8, int),
+            export_candidates=_typed_value(raw, "fast_weights_export_candidates", False, bool),
             canary_enabled=_typed_value(raw, "fast_weights_canary", True, bool),
-            canary_max_logprob_drop=_typed_value(
-                raw, "fast_weights_canary_max_drop", 0.5, float
-            ),
+            canary_max_logprob_drop=_typed_value(raw, "fast_weights_canary_max_drop", 0.5, float),
             canary_max_effective_delta_rms=_typed_value(
                 raw, "fast_weights_canary_max_delta_rms", 0.05, float
             ),
             canary_rescale_attempts=_typed_value(
                 raw, "fast_weights_canary_rescale_attempts", 2, int
             ),
-            canary_max_tokens=_typed_value(
-                raw, "fast_weights_canary_max_tokens", 24, int
-            ),
+            canary_max_tokens=_typed_value(raw, "fast_weights_canary_max_tokens", 24, int),
         ),
         prelude_frac=_typed_value(raw, "prelude_frac", 0.25, float),
         coda_frac=_typed_value(raw, "coda_frac", 0.25, float),
         schedule=raw.get("schedule"),
         decode_max_tokens=_typed_value(raw, "decode_max_tokens", 512, int),
         decode_contract=_typed_value(raw, "decode_contract", "none", str),
-        decode_contract_grace_tokens=_typed_value(
-            raw, "decode_contract_grace_tokens", 0, int
-        ),
+        decode_contract_grace_tokens=_typed_value(raw, "decode_contract_grace_tokens", 0, int),
         decode_min_tokens=_typed_value(raw, "decode_min_tokens", 0, int),
-        verifier_probe_max_tokens=_typed_value(
-            raw, "verifier_probe_max_tokens", 48, int
-        ),
+        verifier_probe_max_tokens=_typed_value(raw, "verifier_probe_max_tokens", 48, int),
         verifier_accept_non_regression=_typed_value(
             raw, "verifier_accept_non_regression", False, bool
         ),
         decode_temperature=_typed_value(raw, "decode_temperature", 0.0, float),
         decode_top_p=_typed_value(raw, "decode_top_p", 1.0, float),
-        decode_repetition_penalty=_typed_value(
-            raw, "decode_repetition_penalty", 1.0, float
-        ),
-        decode_repetition_window=_typed_value(
-            raw, "decode_repetition_window", 72, int
-        ),
-        decode_bridge_policy=_typed_value(
-            raw, "decode_bridge_policy", "none", str
-        ),
-        input_context_max_chars=_typed_value(
-            raw, "input_context_max_chars", 0, int
-        ),
-        allow_vanilla_fallback=_typed_value(
-            raw, "allow_vanilla_fallback", True, bool
-        ),
+        decode_repetition_penalty=_typed_value(raw, "decode_repetition_penalty", 1.0, float),
+        decode_repetition_window=_typed_value(raw, "decode_repetition_window", 72, int),
+        decode_bridge_policy=_typed_value(raw, "decode_bridge_policy", "none", str),
+        input_context_max_chars=_typed_value(raw, "input_context_max_chars", 0, int),
+        allow_vanilla_fallback=_typed_value(raw, "allow_vanilla_fallback", True, bool),
         escape=raw.get("escape"),
         telemetry_enabled=_typed_value(raw, "telemetry", True, bool),
         probe_cache_enabled=_typed_value(raw, "probe_cache", True, bool),
@@ -278,6 +252,7 @@ def config_from_job(job_config: dict[str, Any] | None) -> CortexConfig:
         mistake_locator=raw.get("mistake_locator"),
         contradiction_head=raw.get("contradiction_head"),
         contradiction_perturber=raw.get("contradiction_perturber"),
+        local_exploration=raw.get("local_exploration"),
         branch_correlation_evidence=raw.get("branch_correlation_evidence"),
         critic_blind_spot_evidence=raw.get("critic_blind_spot_evidence"),
     )
@@ -363,8 +338,7 @@ def handle_latent_reason(
             return {
                 "status": "error",
                 "message": (
-                    "latent_reason response_contract conflicts with "
-                    "config.decode_contract"
+                    "latent_reason response_contract conflicts with config.decode_contract"
                 ),
             }
         raw_config["decode_contract"] = "final_answer_v1"
@@ -410,9 +384,7 @@ def handle_latent_reason(
                 validate_evidence_snapshot,
             )
 
-            action_policy_evidence = validate_evidence_snapshot(
-                action_policy_evidence
-            )
+            action_policy_evidence = validate_evidence_snapshot(action_policy_evidence)
         except (ImportError, TypeError, ValueError) as exc:
             return {
                 "status": "error",
@@ -660,9 +632,7 @@ def handle_latent_reason(
         and not isinstance(applied_alpha, bool)
     )
     receipt.episode_affective_steering_alpha = (
-        float(applied_alpha)
-        if receipt.episode_affective_steering_applied
-        else 0.0
+        float(applied_alpha) if receipt.episode_affective_steering_applied else 0.0
     )
     from core.brain.llm.latent_cortex.runtime_identity import (
         latent_request_payload_sha256,
@@ -687,8 +657,7 @@ def handle_latent_reason(
     # An unproven fast-weight erase means prompt caches computed before the
     # episode can no longer be trusted — the caller must clear them.
     body["requires_cache_clear"] = (
-        result.receipt.fast_weights_applied
-        and result.receipt.fast_weights_erased is not True
+        result.receipt.fast_weights_applied and result.receipt.fast_weights_erased is not True
     )
     # MISSING PROOF IS NOT PROOF OF SAFETY. This tested `is False` only, so a
     # parameter check that FAILED to run — or was skipped entirely — left
@@ -697,12 +666,8 @@ def handle_latent_reason(
     # recycle matters most: it is the case where nothing can vouch for the
     # resident parameters. Only an explicit True (the check ran and the
     # parameters were unchanged) avoids the recycle.
-    body["requires_worker_recycle"] = (
-        result.receipt.params_unchanged is not True
-        or (
-            result.receipt.fast_weights_applied
-            and result.receipt.fast_weights_erased is not True
-        )
+    body["requires_worker_recycle"] = result.receipt.params_unchanged is not True or (
+        result.receipt.fast_weights_applied and result.receipt.fast_weights_erased is not True
     )
     if result.receipt.params_unchanged is None:
         logger.warning(

@@ -26273,3 +26273,61 @@ approximately 59-326 records remaining, 55.5%-87.3% checkpoint-count
 completion, and a 67.9% midpoint planning estimate. Next: publish CP346, then
 implement SPARK-033's locally conditioned exploration. Final multi-hour soaks
 remain deferred until every shorter gate is green.
+
+## Checkpoint 2026-07-23-347: Exploration Is Local, Earned, and Reversible
+
+SPARK-033 replaces global decode-temperature exploration with one bounded
+latent search that is active by default but cannot act without learned,
+calibrated sources. The admitted SPARK-031 contradiction coordinate supplies
+the only writable target. The latest supported SPARK-028 predictive entropy
+multiplies that coordinate's calibrated contradiction probability to scale the
+search radius. Protected cognitive-context slots are excluded. A separately
+selected low-contradiction writable position supplies a stable-region sham and
+can never become the retained state.
+
+Source-bound orthonormal directions generate exact duplicate no-op,
+equal-radius stable-position sham, and contradiction-position candidate
+families. Candidate generation is replayed exactly and bound to the real latent
+dtype. Every non-baseline candidate changes exactly one position; every
+protected and non-target position remains bit-identical. All families run
+through repeated counterbalanced, fixed-length, non-memoized transformer probes
+with equal measured layer applications. The receipt meters latent-direction
+entropy, family output-hash entropy, conditioned output diversity, regressions,
+repeat determinism, cross-label no-op determinism, source conditioning,
+geometry, verifier evidence, decision, and rollback without storing decoded
+probe text.
+
+Retention requires a decoy-admitted authoritative verifier, deterministic
+repeats and no-op controls, equal actual compute, exact generator replay,
+sufficient conditioned output diversity, and a target lower bound above every
+no-op and stable-sham upper bound by the configured margin. Malformed,
+unsupported, stale, low-entropy, protected, under-budget, collapsed,
+nondeterministic, unequal-compute, non-authoritative, failed, and non-winning
+paths remain compute-inert or restore the exact baseline. Exploration also
+abstains after a retained SPARK-032 mutation because the available uncertainty
+observation describes the pre-mutation state. The service independently
+reconstructs the complete worker receipt and authority decision.
+
+Validation passes 32/32 direct contracts and the focused
+exploration/perturber/tensor/wiring boundary 158/158 in 84.16 seconds. The
+affected engine, reflector, update, uncertainty, locator, resource, verifier,
+stop, cache, worker-origin, and service boundary passes 325/325 in 171.60
+seconds. The conservative fixed 97-file RLC, latent-cortex,
+recurrence/training, resident-campaign, global-workspace, GWT, and
+execution-controller ownership snapshot passes 1570/1570 in 809.59 seconds.
+Strict Ruff, formatting, bytecode compilation, and `git diff --check` pass.
+Repository-wide governance remains non-green at the same 49 unrelated or
+concurrent regressions and 13 stale buckets; CP347 adds no effect-ownership
+entry and does not absorb that drift.
+
+SPARK-033 proves the locally conditioned exploration mechanism and its exact
+rollback boundary. It does not prove resident-32B utility, adapter/RLC positive
+interaction, reasoning gain, or frontier capability. Those claims remain open
+and require fresh powered broad-task campaigns.
+
+This is total checkpoint record 408. The revised forecast remains 466-733 total
+records, now approximately 58-325 records after this checkpoint. Checkpoint-
+count completion is approximately 55.7%-87.6%, with a midpoint planning
+estimate of 68.1%. Next: publish CP347, then implement SPARK-034's calibrated
+heterogeneous candidate integration. Final multi-hour soaks remain deferred
+until every shorter gate is green.

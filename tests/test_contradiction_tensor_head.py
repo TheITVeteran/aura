@@ -8,6 +8,7 @@ from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 from core.brain.llm.latent_cortex.bidirectional_reflector import (
@@ -34,10 +35,7 @@ def _digest(value: str) -> str:
 
 
 def _mean(rows):
-    return tuple(
-        sum(row[index] for row in rows) / len(rows)
-        for index in range(len(rows[0]))
-    )
+    return tuple(sum(row[index] for row in rows) / len(rows) for index in range(len(rows[0])))
 
 
 def _trace_states(
@@ -76,9 +74,7 @@ def _trace_states(
                     strict=True,
                 )
             )
-            is_error = (
-                transition == error_transition and position == error_position
-            )
+            is_error = transition == error_transition and position == error_position
             if is_error != invert:
                 proposal = tuple(
                     left + right
@@ -154,9 +150,7 @@ def _split(
                 trace_id = f"{prefix}-trace-{trace_index}"
                 examples.append(
                     ContradictionCellExample(
-                        example_id=(
-                            f"{trace_id}-transition-{transition}-position-{position}"
-                        ),
+                        example_id=(f"{trace_id}-transition-{transition}-position-{position}"),
                         trace_id=trace_id,
                         task_id=f"{prefix}-task-{trace_index}",
                         domain_id=domain,
@@ -249,9 +243,7 @@ def test_training_requires_genuinely_out_of_domain_tasks():
         replace(row, domain_id="logic")
         if row.domain_id == "code"
         else replace(row, domain_id="math")
-        for row in _split(
-            "out_of_domain", "ood", ("code", "planning")
-        )
+        for row in _split("out_of_domain", "ood", ("code", "planning"))
     ]
     with pytest.raises(ValueError, match="ID/OOD domains"):
         ContradictionTensorHead.fit(
@@ -332,9 +324,7 @@ def _reflector_source(
         domain_offset=0.0,
     )
     if future_shift:
-        proposals[-1][-1] = tuple(
-            value + future_shift for value in proposals[-1][-1]
-        )
+        proposals[-1][-1] = tuple(value + future_shift for value in proposals[-1][-1])
         admitted[-1][-1] = proposals[-1][-1]
     observations = []
     transitions = []
@@ -342,9 +332,7 @@ def _reflector_source(
         zip(priors, proposals, admitted, strict=True)
     ):
         prior_hash = _digest(f"prior:{trace_index}:{step}:{prior_positions}")
-        proposal_hash = _digest(
-            f"proposal:{trace_index}:{step}:{proposal_positions}"
-        )
+        proposal_hash = _digest(f"proposal:{trace_index}:{step}:{proposal_positions}")
         admitted_hash = proposal_hash
         observations.append(
             observe_reflector_vectors(
@@ -377,9 +365,7 @@ def _reflector_source(
         "receipt_sha256": canonical_sha256(source_payload),
     }
     reflector = build_bidirectional_reflector_receipt(
-        branches=[
-            SimpleNamespace(index=0, reflector_trace=observations)
-        ],
+        branches=[SimpleNamespace(index=0, reflector_trace=observations)],
         update_acceptance=update_acceptance,
         selected_branch=0,
     )
@@ -435,10 +421,7 @@ def test_future_only_lesion_changes_earlier_contradiction_evidence(
     before = baseline["branches"][0]["tensor"][0][2]
     after = changed["branches"][0]["tensor"][0][2]
     assert before["features_sha256"] != after["features_sha256"]
-    assert (
-        before["contradiction_probability"]
-        != after["contradiction_probability"]
-    )
+    assert before["contradiction_probability"] != after["contradiction_probability"]
 
 
 def test_rehashed_probability_lie_is_rejected(
@@ -451,15 +434,9 @@ def test_rehashed_probability_lie_is_rejected(
         selected_branch=0,
     )
     forged = json.loads(json.dumps(receipt))
-    forged["branches"][0]["tensor"][4][0][
-        "contradiction_probability"
-    ] = 0.01
+    forged["branches"][0]["tensor"][4][0]["contradiction_probability"] = 0.01
     forged["receipt_sha256"] = canonical_sha256(
-        {
-            key: value
-            for key, value in forged.items()
-            if key != "receipt_sha256"
-        }
+        {key: value for key, value in forged.items() if key != "receipt_sha256"}
     )
     with pytest.raises(ValueError, match="reconstruction failed"):
         validate_contradiction_tensor_receipt(
@@ -505,9 +482,55 @@ def test_real_tiny_qwen_runs_full_tensor_and_meters_work(
     from core.brain.llm.latent_cortex.verified_best import (
         VERIFIER_OBSERVATION_SCHEMA,
     )
+    from core.learning.neural_uncertainty import (
+        HiddenStateCorrectnessExample,
+        NeuralUncertaintyHead,
+    )
 
     path = tmp_path / "real-qwen-contradiction.json"
     digest = admitted_head.save(path)
+
+    def uncertainty_examples(split: str):
+        rng = np.random.default_rng(31 if split == "train" else 47)
+        rows = []
+        index = 0
+        for signal, expected_rate in (
+            (-3.0, 0.05),
+            (-1.5, 0.20),
+            (-0.5, 0.40),
+            (0.5, 0.60),
+            (1.5, 0.80),
+            (3.0, 0.95),
+        ):
+            labels = [True] * round(48 * expected_rate)
+            labels += [False] * (48 - len(labels))
+            rng.shuffle(labels)
+            for correct in labels:
+                hidden = rng.normal(0.0, 0.10, size=32)
+                hidden[0] = signal + rng.normal(0.0, 0.03)
+                rows.append(
+                    HiddenStateCorrectnessExample(
+                        example_id=f"{split}-{index}",
+                        task_id=f"{split}-task-{index % 8}",
+                        hidden_state=tuple(float(value) for value in hidden),
+                        correct=correct,
+                        state_sha256=_digest(f"{split}:state:{index}"),
+                        outcome_receipt_sha256=_digest(f"{split}:outcome:{index}"),
+                        outcome_verifier_id=("independent-exact-grader-v1"),
+                    )
+                )
+                index += 1
+        return rows
+
+    uncertainty_head = NeuralUncertaintyHead.fit(
+        uncertainty_examples("train"),
+        uncertainty_examples("calibration"),
+        hidden_width=8,
+        seed=53,
+        steps=500,
+    )
+    uncertainty_path = tmp_path / "real-qwen-uncertainty.json"
+    uncertainty_digest = uncertainty_head.save(uncertainty_path)
 
     class Tokenizer:
         eos_token_id = 0
@@ -538,9 +561,7 @@ def test_real_tiny_qwen_runs_full_tensor_and_meters_work(
                 "sample_count": 1,
                 "basis": "deterministic_exact",
                 "independent": True,
-                "evidence_sha256": hashlib.sha256(
-                    text.encode("utf-8")
-                ).hexdigest(),
+                "evidence_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
             }
 
     mx.random.seed(17)
@@ -581,6 +602,16 @@ def test_real_tiny_qwen_runs_full_tensor_and_meters_work(
                 "mode": "counterfactual",
                 "replicates": 2,
             },
+            uncertainty_head={
+                "mode": "learned",
+                "head_path": str(uncertainty_path),
+                "head_sha256": uncertainty_digest,
+            },
+            local_exploration={
+                "mode": "counterfactual",
+                "min_predictive_entropy": 0.0,
+                "max_stable_contradiction_probability": 1.0,
+            },
             verifier_probe_max_tokens=16,
             decode_max_tokens=3,
             allow_vanilla_fallback=False,
@@ -603,9 +634,15 @@ def test_real_tiny_qwen_runs_full_tensor_and_meters_work(
     assert perturbation["rollback_proven"] is True
     assert perturbation["all_arms_equal_compute"] is True
     assert len(perturbation["arms"]) == 3
-    assert operations["contradiction_perturbation_candidates"][
-        "tensor_element_writes"
-    ] > 0
+    assert operations["contradiction_perturbation_candidates"]["tensor_element_writes"] > 0
+    exploration = result.receipt.local_exploration
+    assert exploration["status"] == "restored", exploration
+    assert exploration["state_mutation_applied"] is False
+    assert exploration["rollback_proven"] is True
+    assert exploration["all_candidates_equal_compute"] is True
+    assert len(exploration["candidates"]) == 9
+    assert exploration["target_position"] != exploration["sham_position"]
+    assert operations["local_exploration_candidates"]["tensor_element_writes"] > 0
     validate_contradiction_tensor_receipt(
         receipt,
         expected_runtime=engine._resolve_contradiction_head(),

@@ -16,6 +16,7 @@ error) returns ``{"ok": False, "reason": ...}`` with bounded evidence so the
 caller can decide whether no model work ran or the single model owner was
 already exhausted. Nothing here fakes an answer.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -56,7 +57,7 @@ def _cortex_enabled() -> bool:
 
 
 def _integrity_verdict(receipt: Any, claim: str) -> str:
-    """"proven" | "refuted" | "unproven" for one weight-integrity claim.
+    """ "proven" | "refuted" | "unproven" for one weight-integrity claim.
 
     WHERE STRICTNESS BELONGS. A verdict of "refuted" — evidence that
     contradicts the claim — is fatal everywhere, immediately: it means
@@ -136,10 +137,7 @@ def _controller_outcome(
     reason = (
         "independent_grade"
         if checked
-        else str(
-            verifier_evidence.get("outcome_reason")
-            or "task_ground_truth_unavailable"
-        )
+        else str(verifier_evidence.get("outcome_reason") or "task_ground_truth_unavailable")
     )
     return best_score, checked, passed, reason
 
@@ -354,8 +352,7 @@ class LatentCortexService:
             tolerance = arbitration.get("score_tolerance")
             proxy_scale = arbitration.get("proxy_tolerance_scale")
             if (
-                arbitration.get("policy")
-                != "task_score_nonregression_with_proxy_descent_v1"
+                arbitration.get("policy") != "task_score_nonregression_with_proxy_descent_v1"
                 or arbitration.get("baseline_source")
                 not in {"caller_reused_verified_branch", "decoded_state_probe"}
                 or type(score_accepts) is not int
@@ -409,8 +406,7 @@ class LatentCortexService:
                     )
                     or not math.isclose(
                         float(required_delta),
-                        proxy_tolerance_scale
-                        * max(1.0, abs(float(current_proxy))),
+                        proxy_tolerance_scale * max(1.0, abs(float(current_proxy))),
                         rel_tol=1e-6,
                         abs_tol=receipt_epsilon,
                     )
@@ -433,12 +429,10 @@ class LatentCortexService:
                     return False
                 candidate_score = float(raw_candidate)
                 score_improved = (
-                    candidate_score
-                    > baseline_score + score_tolerance + receipt_epsilon
+                    candidate_score > baseline_score + score_tolerance + receipt_epsilon
                 )
                 score_nonregressing = (
-                    candidate_score
-                    >= baseline_score - score_tolerance - receipt_epsilon
+                    candidate_score >= baseline_score - score_tolerance - receipt_epsilon
                 )
                 proxy_finite = finite_number(candidate_proxy)
                 proxy_improved = bool(
@@ -455,17 +449,19 @@ class LatentCortexService:
                     ):
                         return False
                 elif decision == "accepted_task_score_improvement":
-                    if not proxy_finite or not score_improved or not math.isclose(
-                        next_score,
-                        candidate_score,
-                        rel_tol=0.0,
-                        abs_tol=receipt_epsilon,
+                    if (
+                        not proxy_finite
+                        or not score_improved
+                        or not math.isclose(
+                            next_score,
+                            candidate_score,
+                            rel_tol=0.0,
+                            abs_tol=receipt_epsilon,
+                        )
                     ):
                         return False
                     observed_score_accepts += 1
-                elif decision == (
-                    "accepted_task_score_nonregression_with_proxy_descent"
-                ):
+                elif decision == ("accepted_task_score_nonregression_with_proxy_descent"):
                     if (
                         score_improved
                         or not score_nonregressing
@@ -502,8 +498,7 @@ class LatentCortexService:
                     ):
                         return False
             return (
-                observed_score_accepts == score_accepts
-                and observed_proxy_accepts == proxy_accepts
+                observed_score_accepts == score_accepts and observed_proxy_accepts == proxy_accepts
             )
 
         def sha256(value: Any) -> bool:
@@ -545,8 +540,7 @@ class LatentCortexService:
             if (
                 type(n_layers) is int
                 and n_layers > 0
-                and resource_accounting["model_profile"]["num_hidden_layers"]
-                != n_layers
+                and resource_accounting["model_profile"]["num_hidden_layers"] != n_layers
             ):
                 errors.append("resource_model_profile_mismatch")
         except (ImportError, TypeError, ValueError):
@@ -590,9 +584,7 @@ class LatentCortexService:
                 )
                 blind_spots = validate_shared_blind_spot_evidence(
                     receipt.get("shared_blind_spots"),
-                    generator_function_sha256=identity["generator_identity"][
-                        "function_sha256"
-                    ],
+                    generator_function_sha256=identity["generator_identity"]["function_sha256"],
                     critic_function_sha256=identity["critic_function_sha256"],
                 )
                 if blind_spots != config.get("critic_blind_spot_evidence"):
@@ -620,9 +612,7 @@ class LatentCortexService:
                 isinstance(expected_alpha, bool)
                 or not isinstance(expected_alpha, (int, float))
                 or isinstance(receipt.get("episode_affective_steering_alpha"), bool)
-                or not isinstance(
-                    receipt.get("episode_affective_steering_alpha"), (int, float)
-                )
+                or not isinstance(receipt.get("episode_affective_steering_alpha"), (int, float))
                 or not math.isclose(
                     float(receipt["episode_affective_steering_alpha"]),
                     float(expected_alpha),
@@ -653,10 +643,8 @@ class LatentCortexService:
             ]
             if (
                 len(rendered_inputs) != 1
-                or rendered_inputs[0].get("content_sha256")
-                != receipt.get("input_tokens_sha256")
-                or rendered_inputs[0].get("token_count")
-                != receipt.get("input_token_count")
+                or rendered_inputs[0].get("content_sha256") != receipt.get("input_tokens_sha256")
+                or rendered_inputs[0].get("token_count") != receipt.get("input_token_count")
             ):
                 errors.append("input_information_binding_unproven")
         input_context_max_chars = config.get("input_context_max_chars", 0)
@@ -675,29 +663,24 @@ class LatentCortexService:
                 or not positive_int(compaction, "original_char_count")
                 or not positive_int(compaction, "compacted_char_count")
                 or compaction["compacted_char_count"] > input_context_max_chars
-                or compaction["original_char_count"]
-                < compaction["compacted_char_count"]
-                or compaction["compacted_message_count"]
-                > compaction["original_message_count"]
+                or compaction["original_char_count"] < compaction["compacted_char_count"]
+                or compaction["compacted_message_count"] > compaction["original_message_count"]
                 or type(compaction.get("applied")) is not bool
                 or type(compaction.get("omitted_char_count")) is not int
                 or compaction["omitted_char_count"] < 0
                 or compaction["omitted_char_count"]
-                != compaction["original_char_count"]
-                - compaction["compacted_char_count"]
+                != compaction["original_char_count"] - compaction["compacted_char_count"]
                 or (
                     compaction["applied"]
                     and (
-                        compaction["original_sha256"]
-                        == compaction["compacted_sha256"]
+                        compaction["original_sha256"] == compaction["compacted_sha256"]
                         or compaction["omitted_char_count"] == 0
                     )
                 )
                 or (
                     not compaction["applied"]
                     and (
-                        compaction["original_sha256"]
-                        != compaction["compacted_sha256"]
+                        compaction["original_sha256"] != compaction["compacted_sha256"]
                         or compaction["omitted_char_count"] != 0
                     )
                 )
@@ -728,9 +711,9 @@ class LatentCortexService:
             "n_slots"
         ):
             errors.append("workspace_cardinality_mismatch")
-        if type(config.get("n_branches")) is not int or receipt.get(
+        if type(config.get("n_branches")) is not int or receipt.get("n_branches") != config.get(
             "n_branches"
-        ) != config.get("n_branches"):
+        ):
             errors.append("branch_cardinality_mismatch")
         try:
             from core.brain.llm.latent_cortex.recurrent_grounding import (
@@ -789,9 +772,7 @@ class LatentCortexService:
             from core.brain.llm.latent_cortex.worker_handler import config_from_job
 
             executed_config = config_from_job(config)
-            expected_update_gate = UpdateGateRuntime.from_config(
-                executed_config.update_gate
-            )
+            expected_update_gate = UpdateGateRuntime.from_config(executed_config.update_gate)
             validate_update_gate_receipt(
                 receipt.get("update_acceptance"),
                 expected_gate=expected_update_gate,
@@ -847,11 +828,7 @@ class LatentCortexService:
                 if isinstance(receipt.get("budget"), dict)
                 else {}
             )
-            policies = (
-                information.get("policies", {})
-                if isinstance(information, dict)
-                else {}
-            )
+            policies = information.get("policies", {}) if isinstance(information, dict) else {}
             decoy = receipt.get("decoy_verification")
             cognitive_slots = receipt.get("cognitive_slots")
             protected_positions = (
@@ -859,10 +836,7 @@ class LatentCortexService:
                     {
                         int(row["slot"])
                         for row in cognitive_slots
-                        if (
-                            isinstance(row, dict)
-                            and type(row.get("slot")) is int
-                        )
+                        if (isinstance(row, dict) and type(row.get("slot")) is int)
                     }
                 )
                 if isinstance(cognitive_slots, list)
@@ -874,19 +848,12 @@ class LatentCortexService:
                     executed_config.contradiction_perturber
                 ),
                 contradiction_tensor=receipt.get("contradiction_tensor"),
-                expected_selected_branch=int(
-                    receipt.get("selected_branch", -1)
-                ),
+                expected_selected_branch=int(receipt.get("selected_branch", -1)),
                 expected_protected_positions=protected_positions,
-                verifier_policy_sha256=str(
-                    policies.get("verifier", "")
-                ),
+                verifier_policy_sha256=str(policies.get("verifier", "")),
                 decoy_review_sha256=(
                     str(decoy.get("receipt_sha256", ""))
-                    if (
-                        isinstance(decoy, dict)
-                        and decoy.get("selection_admitted") is True
-                    )
+                    if (isinstance(decoy, dict) and decoy.get("selection_admitted") is True)
                     else ""
                 ),
             )
@@ -912,6 +879,52 @@ class LatentCortexService:
         except (ImportError, OSError, TypeError, ValueError):
             errors.append("neural_uncertainty_unproven")
         try:
+            from core.brain.llm.latent_cortex.local_exploration import (
+                LocalExplorationConfig,
+                validate_local_exploration_receipt,
+            )
+            from core.brain.llm.latent_cortex.worker_handler import config_from_job
+
+            executed_config = config_from_job(config)
+            information = (
+                receipt.get("budget", {}).get("information_accounting", {})
+                if isinstance(receipt.get("budget"), dict)
+                else {}
+            )
+            policies = information.get("policies", {}) if isinstance(information, dict) else {}
+            decoy = receipt.get("decoy_verification")
+            cognitive_slots = receipt.get("cognitive_slots")
+            protected_positions = (
+                sorted(
+                    {
+                        int(row["slot"])
+                        for row in cognitive_slots
+                        if (isinstance(row, dict) and type(row.get("slot")) is int)
+                    }
+                )
+                if isinstance(cognitive_slots, list)
+                else []
+            )
+            validate_local_exploration_receipt(
+                receipt.get("local_exploration"),
+                expected_config=LocalExplorationConfig.from_value(
+                    executed_config.local_exploration
+                ),
+                contradiction_tensor=receipt.get("contradiction_tensor"),
+                contradiction_perturbation=receipt.get("contradiction_perturbation"),
+                neural_uncertainty=receipt.get("neural_uncertainty"),
+                expected_selected_branch=int(receipt.get("selected_branch", -1)),
+                expected_protected_positions=protected_positions,
+                verifier_policy_sha256=str(policies.get("verifier", "")),
+                decoy_review_sha256=(
+                    str(decoy.get("receipt_sha256", ""))
+                    if (isinstance(decoy, dict) and decoy.get("selection_admitted") is True)
+                    else ""
+                ),
+            )
+        except (ImportError, TypeError, ValueError):
+            errors.append("local_exploration_unproven")
+        try:
             from core.brain.llm.latent_cortex.mistake_locator import (
                 MistakeLocatorRuntime,
                 validate_mistake_locator_receipt,
@@ -919,9 +932,7 @@ class LatentCortexService:
             from core.brain.llm.latent_cortex.worker_handler import config_from_job
 
             executed_config = config_from_job(config)
-            expected_locator = MistakeLocatorRuntime.from_config(
-                executed_config.mistake_locator
-            )
+            expected_locator = MistakeLocatorRuntime.from_config(executed_config.mistake_locator)
             validate_mistake_locator_receipt(
                 receipt.get("mistake_locator"),
                 expected_runtime=expected_locator,
@@ -938,9 +949,7 @@ class LatentCortexService:
             from core.brain.llm.latent_cortex.worker_handler import config_from_job
 
             executed_config = config_from_job(config)
-            expected_stop_gate = StopGateRuntime.from_config(
-                executed_config.halting
-            )
+            expected_stop_gate = StopGateRuntime.from_config(executed_config.halting)
             validate_stop_gate_receipt(
                 receipt.get("halting"),
                 expected_gate=expected_stop_gate,
@@ -977,9 +986,7 @@ class LatentCortexService:
             )
 
             if one_shot_receipt:
-                validated_one_shot = validate_nonparametric_receipt(
-                    one_shot_receipt
-                )
+                validated_one_shot = validate_nonparametric_receipt(one_shot_receipt)
                 if validated_one_shot["applied"]:
                     if (
                         len(one_shot_slots) != 1
@@ -987,18 +994,12 @@ class LatentCortexService:
                         or one_shot_slots[0].get("text_sha256")
                         != validated_one_shot["observation_sha256"]
                     ):
-                        raise ValueError(
-                            "admitted one-shot evidence is not bound to its slot"
-                        )
+                        raise ValueError("admitted one-shot evidence is not bound to its slot")
                 elif one_shot_slots:
-                    raise ValueError(
-                        "one-shot evidence slot exists without admitted retrieval"
-                    )
+                    raise ValueError("one-shot evidence slot exists without admitted retrieval")
                 expected_resource = validated_one_shot["resource_accounting"]
                 operation = (
-                    resource_accounting.get("operations", {}).get(
-                        "nonparametric_memory_retrieval"
-                    )
+                    resource_accounting.get("operations", {}).get("nonparametric_memory_retrieval")
                     if resource_accounting is not None
                     else None
                 )
@@ -1011,9 +1012,7 @@ class LatentCortexService:
                         ("host_scalar_ops", "host_scalar_ops"),
                     )
                 ):
-                    raise ValueError(
-                        "one-shot retrieval work differs from resource ledger"
-                    )
+                    raise ValueError("one-shot retrieval work differs from resource ledger")
                 if information_accounting is None:
                     raise ValueError("one-shot information accounting is absent")
                 from core.brain.llm.latent_cortex.resource_accounting import (
@@ -1029,20 +1028,14 @@ class LatentCortexService:
                 if source_identity:
                     if (
                         len(store_sources) != 1
-                        or store_sources[0].get("kind")
-                        != "local_nonparametric_memory_store"
+                        or store_sources[0].get("kind") != "local_nonparametric_memory_store"
                         or store_sources[0].get("content_sha256")
                         != source_identity["content_sha256"]
-                        or store_sources[0].get("byte_count")
-                        != source_identity["source_bytes"]
+                        or store_sources[0].get("byte_count") != source_identity["source_bytes"]
                     ):
-                        raise ValueError(
-                            "one-shot store differs from information ledger"
-                        )
+                        raise ValueError("one-shot store differs from information ledger")
                 elif store_sources:
-                    raise ValueError(
-                        "information ledger claims an unavailable one-shot store"
-                    )
+                    raise ValueError("information ledger claims an unavailable one-shot store")
                 expected_policy = policy_sha256(
                     {
                         "policy": "context_only_prompt_tail_recall_v1",
@@ -1052,41 +1045,30 @@ class LatentCortexService:
                     }
                 )
                 if (
-                    information_accounting["policies"].get(
-                        "nonparametric_memory"
-                    )
+                    information_accounting["policies"].get("nonparametric_memory")
                     != expected_policy
                 ):
                     raise ValueError("one-shot retrieval policy is not bound")
                 context_sources = [
                     row
                     for row in information_accounting["sources"]
-                    if str(row.get("source_id") or "").endswith(
-                        ":one_shot_memory"
-                    )
+                    if str(row.get("source_id") or "").endswith(":one_shot_memory")
                 ]
                 if validated_one_shot["applied"]:
                     slot = one_shot_slots[0]
                     expected_source_id = (
-                        f"cognitive_context:{slot.get('context_index')}:"
-                        "one_shot_memory"
+                        f"cognitive_context:{slot.get('context_index')}:one_shot_memory"
                     )
                     if (
                         len(context_sources) != 1
-                        or context_sources[0].get("source_id")
-                        != expected_source_id
-                        or context_sources[0].get("kind")
-                        != "typed_cognitive_context"
+                        or context_sources[0].get("source_id") != expected_source_id
+                        or context_sources[0].get("kind") != "typed_cognitive_context"
                         or context_sources[0].get("content_sha256")
                         != validated_one_shot["observation_sha256"]
                     ):
-                        raise ValueError(
-                            "one-shot observation differs from information ledger"
-                        )
+                        raise ValueError("one-shot observation differs from information ledger")
                 elif context_sources:
-                    raise ValueError(
-                        "information ledger claims an unadmitted one-shot observation"
-                    )
+                    raise ValueError("information ledger claims an unadmitted one-shot observation")
             elif one_shot_slots:
                 raise ValueError("one-shot evidence slot has no retrieval receipt")
         except (ImportError, TypeError, ValueError):
@@ -1125,9 +1107,10 @@ class LatentCortexService:
                         "candidate_sha256",
                     )
                 )
-                one_context = bool(candidate_rows_valid) and len(
-                    {row["context_sha256"] for row in candidates}
-                ) == 1
+                one_context = (
+                    bool(candidate_rows_valid)
+                    and len({row["context_sha256"] for row in candidates}) == 1
+                )
                 cache_valid = (
                     isinstance(cache_discipline, dict)
                     and set(cache_discipline)
@@ -1138,8 +1121,7 @@ class LatentCortexService:
                         "restore_failures",
                         "all_restored",
                     }
-                    and cache_discipline.get("schema")
-                    == "aura.rlc.cache_discipline.v1"
+                    and cache_discipline.get("schema") == "aura.rlc.cache_discipline.v1"
                     and positive_int(cache_discipline, "nonpersistent_calls")
                     and cache_discipline.get("restored_calls")
                     == cache_discipline.get("nonpersistent_calls")
@@ -1181,8 +1163,7 @@ class LatentCortexService:
                         "candidates",
                         "cache_discipline",
                     }
-                    and isolation.get("schema")
-                    == "aura.rlc.branch_isolation.v1"
+                    and isolation.get("schema") == "aura.rlc.branch_isolation.v1"
                     and isolation.get("n_branches") == branch_count
                     and isolation.get("required_steps") == isolation_steps
                     and isolation.get("sealed") is True
@@ -1286,9 +1267,7 @@ class LatentCortexService:
                 raw_operator_trace = receipt.get("cognitive_operator_trace")
                 if not isinstance(raw_operator_trace, list) or not raw_operator_trace:
                     raise ValueError("cognitive operator trace is absent")
-                operator_rows = [
-                    validate_operator_receipt(row) for row in raw_operator_trace
-                ]
+                operator_rows = [validate_operator_receipt(row) for row in raw_operator_trace]
                 expected_operator_work: dict[str, dict[str, int]] = {}
                 for row in operator_rows:
                     operation_name = f"cognitive_operator:{row['operator']}"
@@ -1312,24 +1291,17 @@ class LatentCortexService:
                     else {}
                 )
                 observed_operator_names = {
-                    name
-                    for name in operations
-                    if name.startswith("cognitive_operator:")
+                    name for name in operations if name.startswith("cognitive_operator:")
                 }
                 if observed_operator_names != set(expected_operator_work):
                     raise ValueError("cognitive operator resource coverage differs")
                 for operation_name, expected in expected_operator_work.items():
                     operation = operations.get(operation_name)
                     if not isinstance(operation, dict) or any(
-                        operation.get(name) != value
-                        for name, value in expected.items()
+                        operation.get(name) != value for name, value in expected.items()
                     ):
                         raise ValueError("cognitive operator resource totals differ")
-                    if any(
-                        operation.get(name) != 0
-                        for name in operation
-                        if name not in expected
-                    ):
+                    if any(operation.get(name) != 0 for name in operation if name not in expected):
                         raise ValueError("cognitive operator resource kind differs")
                 by_step: dict[int, list[dict[str, Any]]] = {}
                 for row in operator_rows:
@@ -1406,10 +1378,10 @@ class LatentCortexService:
                     episode_id=receipt.get("episode_id"),
                     objective_sha256=receipt.get("input_tokens_sha256"),
                 )
-                if (
-                    preflight["verifier_admitted"] is False
-                    and "verifier_preflight_decoy_calibration_failed"
-                    not in (receipt.get("honest_flags") or [])
+                if preflight[
+                    "verifier_admitted"
+                ] is False and "verifier_preflight_decoy_calibration_failed" not in (
+                    receipt.get("honest_flags") or []
                 ):
                     raise ValueError("decoy preflight rejection was not disclosed")
             except (ImportError, TypeError, ValueError):
@@ -1442,8 +1414,7 @@ class LatentCortexService:
                     raise ValueError("decoy-review honest flags are invalid")
                 if (
                     decoy["selection_admitted"] is False
-                    and "branch_verifier_decoy_calibration_failed"
-                    not in honest_flags
+                    and "branch_verifier_decoy_calibration_failed" not in honest_flags
                 ):
                     raise ValueError("decoy selection rejection was not disclosed")
             except (ImportError, TypeError, ValueError):
@@ -1490,8 +1461,7 @@ class LatentCortexService:
             if (
                 type(configured_contract_grace) is not int
                 or configured_contract_grace < 0
-                or receipt.get("decode_contract_grace_tokens")
-                != configured_contract_grace
+                or receipt.get("decode_contract_grace_tokens") != configured_contract_grace
             ):
                 errors.append("decode_contract_grace_mismatch")
             grace_used = receipt.get("decode_contract_grace_used_tokens")
@@ -1587,9 +1557,7 @@ class LatentCortexService:
         ):
             errors.append("decode_top_p_mismatch")
         raw_flags = receipt.get("honest_flags")
-        if not isinstance(raw_flags, list) or any(
-            not isinstance(flag, str) for flag in raw_flags
-        ):
+        if not isinstance(raw_flags, list) or any(not isinstance(flag, str) for flag in raw_flags):
             errors.append("invalid_honest_flags")
             flags: list[str] = []
         else:
@@ -1643,10 +1611,7 @@ class LatentCortexService:
                 # still resident. This is the case that must never be
                 # confused with "we did not look".
                 errors.append("fast_weight_erase_refuted")
-            elif (
-                erase_verdict == "unproven"
-                and receipt.get("fast_weights_erased") is not True
-            ):
+            elif erase_verdict == "unproven" and receipt.get("fast_weights_erased") is not True:
                 errors.append("fast_weight_erase_unproven")
             if not positive_int(receipt, "fast_weights_layers"):
                 errors.append("fast_weights_no_layers")
@@ -1671,26 +1636,20 @@ class LatentCortexService:
             loss_trail = receipt.get("fast_weight_loss_trail")
             gradient_trail = receipt.get("fast_weight_gradient_norm_trail")
             step_sizes = receipt.get("fast_weight_accepted_step_sizes")
-            if receipt.get("fast_weight_optimizer") != (
-                "rms_normalized_sgd_backtracking_v1"
-            ):
+            if receipt.get("fast_weight_optimizer") != ("rms_normalized_sgd_backtracking_v1"):
                 errors.append("fast_weight_optimizer_unproven")
             if (
                 not finite_number_list(loss_trail)
-                or len(loss_trail)
-                != receipt.get("fast_weight_optimized_steps", 0) + 1
+                or len(loss_trail) != receipt.get("fast_weight_optimized_steps", 0) + 1
                 or any(
                     later >= earlier
-                    for earlier, later in zip(
-                        loss_trail, loss_trail[1:], strict=False
-                    )
+                    for earlier, later in zip(loss_trail, loss_trail[1:], strict=False)
                 )
             ):
                 errors.append("fast_weight_loss_descent_unproven")
             if (
                 not finite_number_list(gradient_trail)
-                or len(gradient_trail)
-                != receipt.get("fast_weight_optimization_attempts", 0)
+                or len(gradient_trail) != receipt.get("fast_weight_optimization_attempts", 0)
                 or any(float(value) <= 0.0 for value in gradient_trail)
             ):
                 errors.append("fast_weight_gradient_evidence_invalid")
@@ -1830,9 +1789,7 @@ class LatentCortexService:
 
             foundry = get_verifier_foundry()
             weights = {
-                name: float(
-                    foundry.weight_for(f"latent_facet_{name}", str(domain))
-                )
+                name: float(foundry.weight_for(f"latent_facet_{name}", str(domain)))
                 for name in _ANSWER_FACET_HINTS
             }
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
@@ -1841,9 +1798,7 @@ class LatentCortexService:
             return None
         return weights
 
-    def _record_facet_judgments(
-        self, receipt: dict[str, Any], domain: str, objective: str
-    ) -> None:
+    def _record_facet_judgments(self, receipt: dict[str, Any], domain: str, objective: str) -> None:
         """Feed the episode's facet judgments to the Foundry grade queue.
 
         Each judgment (facet, satisfied, excerpt) becomes an ungraded
@@ -1862,9 +1817,7 @@ class LatentCortexService:
             from core.brain.verifiers.foundry import get_verifier_foundry
 
             foundry = get_verifier_foundry()
-            task_key = hashlib.sha256(
-                str(objective or "").encode("utf-8")
-            ).hexdigest()[:16]
+            task_key = hashlib.sha256(str(objective or "").encode("utf-8")).hexdigest()[:16]
             for row in judgments[:8]:
                 facet = row.get("facet") if isinstance(row, dict) else None
                 if not isinstance(facet, str) or not facet:
@@ -1926,12 +1879,8 @@ class LatentCortexService:
                 "clean_user_surface_recurrent_loops",
                 "clean_user_surface_steering_alpha",
             }
-            recurrent_loops = runtime_controls.get(
-                "clean_user_surface_recurrent_loops"
-            )
-            steering_alpha = runtime_controls.get(
-                "clean_user_surface_steering_alpha"
-            )
+            recurrent_loops = runtime_controls.get("clean_user_surface_recurrent_loops")
+            steering_alpha = runtime_controls.get("clean_user_surface_steering_alpha")
             if (
                 set(runtime_controls) != expected_control_keys
                 or type(recurrent_loops) is not int
@@ -1978,8 +1927,7 @@ class LatentCortexService:
                     or not isinstance(selective_memory_result, SelectiveMemoryResult)
                     or epistemic_state.episode_id != epistemic_genesis.episode_id
                     or epistemic_state.problem != epistemic_genesis.problem
-                    or epistemic_state.parent_sha256
-                    != epistemic_genesis.state_sha256
+                    or epistemic_state.parent_sha256 != epistemic_genesis.state_sha256
                 ):
                     return self._record_failure("invalid_epistemic_memory_authority")
                 visible_objective = self._visible_objective(question, messages)
@@ -2030,9 +1978,7 @@ class LatentCortexService:
             if isinstance(candidate_identity, dict):
                 worker_identity = dict(candidate_identity)
         try:
-            model_parameter_count = int(
-                worker_identity.get("worker_model_parameter_count") or 0
-            )
+            model_parameter_count = int(worker_identity.get("worker_model_parameter_count") or 0)
         except (TypeError, ValueError, OverflowError):
             model_parameter_count = 0
         try:
@@ -2045,9 +1991,7 @@ class LatentCortexService:
             )
         except (TypeError, ValueError, OverflowError):
             return self._record_failure("invalid_cognitive_economy")
-        allocation_profile = str(
-            self._last_allocation.get("allocation_profile") or ""
-        )
+        allocation_profile = str(self._last_allocation.get("allocation_profile") or "")
         if config_overrides is not None:
             config.update(dict(config_overrides))
         # Learned execution controller: evidence-gated arm selection over
@@ -2103,23 +2047,16 @@ class LatentCortexService:
                         config,
                         recurrent_region=(
                             (16, 48)
-                            if allocation_profile
-                            == "resident_32b_interactive_full_stack_v2"
+                            if allocation_profile == "resident_32b_interactive_full_stack_v2"
                             else None
                         ),
                     )
                     config = application["config"]
                     controller_decision["applied"] = bool(application["applied"])
-                    controller_decision["application_reason"] = str(
-                        application.get("reason") or ""
-                    )
+                    controller_decision["application_reason"] = str(application.get("reason") or "")
                     if not application["applied"]:
-                        controller_decision["arm"] = str(
-                            application.get("effective_arm") or "base"
-                        )
-                self._last_allocation["execution_controller"] = (
-                    controller_decision
-                )
+                        controller_decision["arm"] = str(application.get("effective_arm") or "base")
+                self._last_allocation["execution_controller"] = controller_decision
             except (
                 ImportError,
                 AttributeError,
@@ -2159,9 +2096,7 @@ class LatentCortexService:
                 **correlation_ledger.status(),
                 "bucket": correlation_bucket,
                 "roles": correlation_roles,
-                "evidence_state": config["branch_correlation_evidence"][
-                    "evidence_state"
-                ],
+                "evidence_state": config["branch_correlation_evidence"]["evidence_state"],
             }
         except (
             ImportError,
@@ -2205,12 +2140,10 @@ class LatentCortexService:
                 self._last_allocation["critic_blind_spots"] = {
                     **critic_ledger.status(),
                     "bucket": critic_bucket,
-                    "evidence_state": config["critic_blind_spot_evidence"][
-                        "evidence_state"
+                    "evidence_state": config["critic_blind_spot_evidence"]["evidence_state"],
+                    "critic_reliability_admitted": config["critic_blind_spot_evidence"][
+                        "critic_reliability_admitted"
                     ],
-                    "critic_reliability_admitted": config[
-                        "critic_blind_spot_evidence"
-                    ]["critic_reliability_admitted"],
                 }
             except (
                 ImportError,
@@ -2237,9 +2170,7 @@ class LatentCortexService:
             # complete and the ANSWER SURFACE was the only failing stage.
             from core.brain.llm.latent_cortex.output_quality import request_facets
 
-            objective_facets = request_facets(
-                self._visible_objective(question, messages)
-            )
+            objective_facets = request_facets(self._visible_objective(question, messages))
             compound_objective = len(objective_facets) >= 2
             if compound_objective:
                 config["decode_max_tokens"] = max(
@@ -2258,13 +2189,9 @@ class LatentCortexService:
                 # loops; the repetition penalty, EOS floor, and newline
                 # discipline now make low-temperature decoding safe.
                 try:
-                    requested_temperature = float(
-                        config.get("decode_temperature") or 0.0
-                    )
+                    requested_temperature = float(config.get("decode_temperature") or 0.0)
                 except (TypeError, ValueError, OverflowError):
-                    return self._record_failure(
-                        "invalid_decode_temperature_override"
-                    )
+                    return self._record_failure("invalid_decode_temperature_override")
                 config["decode_temperature"] = min(0.3, max(0.0, requested_temperature))
             else:
                 config["decode_max_tokens"] = max(
@@ -2296,9 +2223,7 @@ class LatentCortexService:
                 # verified winner score; a conservative 65s still reserves
                 # prefill, all causal mechanisms, bridge, and cleanup. Never
                 # promise a 384-token surface the owner cannot finish.
-                affordable_tokens = int(
-                    (float(budget["wall_clock_s"]) - 65.0) / 0.26
-                )
+                affordable_tokens = int((float(budget["wall_clock_s"]) - 65.0) / 0.26)
                 config["decode_max_tokens"] = max(
                     128, min(int(config["decode_max_tokens"]), affordable_tokens)
                 )
@@ -2341,9 +2266,7 @@ class LatentCortexService:
                 action="refused latent episode whose process-wide generation lease was unavailable",
                 severity="warning",
             )
-            return self._record_failure(
-                f"generation_lease_unavailable:{type(exc).__name__}"
-            )
+            return self._record_failure(f"generation_lease_unavailable:{type(exc).__name__}")
         if generation_lease_id is None:
             return self._record_failure("generation_gate_busy")
 
@@ -2390,9 +2313,7 @@ class LatentCortexService:
 
             terminal_outcome = outcome
             terminal_failure = failure_code
-            journal_action_transitions: tuple[dict[str, Any], ...] = tuple(
-                action_transitions
-            )
+            journal_action_transitions: tuple[dict[str, Any], ...] = tuple(action_transitions)
             action_costs: tuple[float, ...] = ()
             try:
                 cost, operation_cost_receipt = measured_operation_cost(
@@ -2412,8 +2333,7 @@ class LatentCortexService:
             if journal_action_transitions:
                 remaining_state_budget = max(
                     0.0,
-                    operation_lease.state.budget.total
-                    - operation_lease.state.budget.used,
+                    operation_lease.state.budget.total - operation_lease.state.budget.used,
                 )
                 mutable_action_costs = [
                     float(row["metrics"]["cost"]) * remaining_state_budget
@@ -2435,12 +2355,8 @@ class LatentCortexService:
                         mutable_action_costs[-1] - (action_cost_total - cost),
                     )
                 action_costs = tuple(mutable_action_costs)
-                operation_cost_receipt["action_state_cost"] = round(
-                    math.fsum(action_costs), 12
-                )
-                operation_cost_receipt["action_operation_count"] = len(
-                    journal_action_transitions
-                )
+                operation_cost_receipt["action_state_cost"] = round(math.fsum(action_costs), 12)
+                operation_cost_receipt["action_operation_count"] = len(journal_action_transitions)
             if terminal_outcome is not OperationOutcome.SUCCEEDED and not terminal_failure:
                 terminal_failure = "worker_operation_failed"
             detail = (
@@ -2498,9 +2414,7 @@ class LatentCortexService:
                         config=config,
                         budget=budget,
                         action_policy_evidence=action_policy_evidence,
-                        root=Path(DATA_DIR)
-                        / "latent_cortex"
-                        / "epistemic_runtime",
+                        root=Path(DATA_DIR) / "latent_cortex" / "epistemic_runtime",
                     )
                     operation_authority = dict(operation_lease.authority)
                     epistemic_state = operation_lease.state
@@ -2530,9 +2444,7 @@ class LatentCortexService:
                         "operation_id": operation_authority["operation_id"],
                         "operation_kind": operation_authority["operation_kind"],
                         "attempt_sha256": operation_authority["attempt_sha256"],
-                        "admitted_state_sha256": operation_authority[
-                            "admitted_state_sha256"
-                        ],
+                        "admitted_state_sha256": operation_authority["admitted_state_sha256"],
                     }
                 except (
                     ImportError,
@@ -2575,8 +2487,7 @@ class LatentCortexService:
                     # (arithmetic recomputation, code syntax, facet coverage,
                     # grounding) — verified correctness, not convergence.
                     verifier_guidance=(
-                        allocation_profile
-                        == "resident_32b_interactive_full_stack_v2"
+                        allocation_profile == "resident_32b_interactive_full_stack_v2"
                     ),
                     # Held-out calibration: facets whose cue-detectors humans
                     # keep overruling (Foundry grades) are muted inside the
@@ -2595,7 +2506,14 @@ class LatentCortexService:
                         failure_code="caller_cancelled",
                     )
                 raise
-            except (OSError, RuntimeError, AttributeError, TypeError, ValueError, TimeoutError) as exc:
+            except (
+                OSError,
+                RuntimeError,
+                AttributeError,
+                TypeError,
+                ValueError,
+                TimeoutError,
+            ) as exc:
                 record_degradation(
                     "latent_cortex",
                     exc,
@@ -2657,12 +2575,10 @@ class LatentCortexService:
                 if (
                     not isinstance(policy_receipt, dict)
                     or set(policy_receipt) != policy_fields
-                    or policy_receipt.get("schema")
-                    != action_policy_evidence["schema"]
+                    or policy_receipt.get("schema") != action_policy_evidence["schema"]
                     or policy_receipt.get("snapshot_sha256")
                     != action_policy_evidence["snapshot_sha256"]
-                    or policy_receipt.get("bucket")
-                    != action_policy_evidence["bucket"]
+                    or policy_receipt.get("bucket") != action_policy_evidence["bucket"]
                     or policy_receipt.get("active") is not True
                     or not isinstance(raw_trace, list)
                     or not raw_trace
@@ -2679,13 +2595,8 @@ class LatentCortexService:
                 try:
                     executors = tuple(OperationKind(item) for item in raw_executors)
                 except (TypeError, ValueError) as exc:
-                    raise ValueError(
-                        "worker action executor inventory is invalid"
-                    ) from exc
-                if (
-                    len(set(executors)) != len(executors)
-                    or OperationKind.EXECUTE in executors
-                ):
+                    raise ValueError("worker action executor inventory is invalid") from exc
+                if len(set(executors)) != len(executors) or OperationKind.EXECUTE in executors:
                     raise ValueError("worker action executor inventory is invalid")
                 for row in raw_trace:
                     validated_row = validate_action_trace_row(
@@ -2696,23 +2607,18 @@ class LatentCortexService:
                     decision = validated_row["decision"]
                     transition = validated_row["transition"]
                     if (
-                        transition["snapshot_sha256"]
-                        != action_policy_evidence["snapshot_sha256"]
+                        transition["snapshot_sha256"] != action_policy_evidence["snapshot_sha256"]
                         or transition["bucket"] != action_policy_evidence["bucket"]
-                        or decision["snapshot_sha256"]
-                        != action_policy_evidence["snapshot_sha256"]
+                        or decision["snapshot_sha256"] != action_policy_evidence["snapshot_sha256"]
                         or decision["bucket"] != action_policy_evidence["bucket"]
                     ):
                         raise ValueError("worker action transition authority differs")
                     action_transitions.append(transition)
                 selected_actions = [row["action"] for row in action_transitions]
-                checked_transitions = sum(
-                    int(row["checked"]) for row in action_transitions
-                )
+                checked_transitions = sum(int(row["checked"]) for row in action_transitions)
                 if (
                     policy_receipt.get("selected_actions") != selected_actions
-                    or policy_receipt.get("checked_transitions")
-                    != checked_transitions
+                    or policy_receipt.get("checked_transitions") != checked_transitions
                 ):
                     raise ValueError("worker action policy summary differs from trace")
                 action_policy_matches = True
@@ -2754,11 +2660,7 @@ class LatentCortexService:
             )
             try:
                 operation_receipt = await complete_runtime_operation(
-                    (
-                        OperationOutcome.SUCCEEDED
-                        if worker_succeeded
-                        else OperationOutcome.FAILED
-                    ),
+                    (OperationOutcome.SUCCEEDED if worker_succeeded else OperationOutcome.FAILED),
                     worker_receipt=result_receipt,
                     failure_code=(
                         ""
@@ -2768,8 +2670,7 @@ class LatentCortexService:
                             if not authority_matches
                             else (
                                 "action_policy_receipt_mismatch"
-                                if result.get("ok") is True
-                                and not action_policy_matches
+                                if result.get("ok") is True and not action_policy_matches
                                 else (
                                     "worker_receipt_contract_failed"
                                     if contract_errors
@@ -2908,9 +2809,7 @@ class LatentCortexService:
                         success=outcome_passed,
                         checked=outcome_checked,
                         wall_clock_s=time.monotonic() - started,
-                        decision_id=str(
-                            controller_decision.get("decision_id") or ""
-                        ),
+                        decision_id=str(controller_decision.get("decision_id") or ""),
                     )
                     checked_action_transitions = [
                         row for row in action_transitions if row["checked"] is True
@@ -2926,13 +2825,9 @@ class LatentCortexService:
                         **controller_decision,
                         "outcome_recorded": outcome_recorded,
                         "outcome_checked": outcome_checked,
-                        "outcome_passed": (
-                            outcome_passed if outcome_checked else None
-                        ),
+                        "outcome_passed": (outcome_passed if outcome_checked else None),
                         "outcome_reason": outcome_reason,
-                        "action_transitions_checked": len(
-                            checked_action_transitions
-                        ),
+                        "action_transitions_checked": len(checked_action_transitions),
                         "action_outcomes_recorded": action_outcomes_recorded,
                     }
                     result["receipt"] = result_receipt
@@ -2954,8 +2849,8 @@ class LatentCortexService:
                     check_identity_consistency,
                 )
 
-                result_receipt["identity_consistency"] = (
-                    check_identity_consistency(str(result.get("text") or ""))
+                result_receipt["identity_consistency"] = check_identity_consistency(
+                    str(result.get("text") or "")
                 )
                 result["receipt"] = result_receipt
             except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
@@ -2980,13 +2875,11 @@ class LatentCortexService:
                         broadcast_episode_conclusion,
                     )
 
-                    result_receipt["workspace_broadcast"] = (
-                        await broadcast_episode_conclusion(
-                            self._visible_objective(question, messages),
-                            str(result.get("text") or ""),
-                            result_receipt,
-                            stakes=stakes,
-                        )
+                    result_receipt["workspace_broadcast"] = await broadcast_episode_conclusion(
+                        self._visible_objective(question, messages),
+                        str(result.get("text") or ""),
+                        result_receipt,
+                        stakes=stakes,
                     )
                     result["receipt"] = result_receipt
                 except (
@@ -2996,9 +2889,7 @@ class LatentCortexService:
                     TypeError,
                     ValueError,
                 ) as exc:
-                    logger.debug(
-                        "Workspace broadcast of conclusion skipped: %s", exc
-                    )
+                    logger.debug("Workspace broadcast of conclusion skipped: %s", exc)
             self._last_receipt = result_receipt
             self._last_failure_receipt = {}
             logger.info(
@@ -3016,9 +2907,7 @@ class LatentCortexService:
                 "input_tokens=%s timings=%s progress=%s",
                 self._last_refusal,
                 elapsed,
-                result_receipt.get("last_stage")
-                or self._last_progress.get("stage")
-                or "unknown",
+                result_receipt.get("last_stage") or self._last_progress.get("stage") or "unknown",
                 result_receipt.get("input_token_count")
                 or self._last_progress.get("input_tokens")
                 or "unknown",
@@ -3142,9 +3031,9 @@ def register_latent_cortex(orchestrator: Any = None) -> LatentCortexService:
     from core.runtime.service_registry import get_runtime_service, register_runtime_service
     from core.service_names import ServiceNames
 
-    inst = get_runtime_service(ServiceNames.LATENT_CORTEX, default=None) or get_latent_cortex_service(
-        orchestrator
-    )
+    inst = get_runtime_service(
+        ServiceNames.LATENT_CORTEX, default=None
+    ) or get_latent_cortex_service(orchestrator)
     register_runtime_service(
         ServiceNames.LATENT_CORTEX,
         inst,
