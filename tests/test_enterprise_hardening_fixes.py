@@ -2068,7 +2068,10 @@ def test_primary_benchmark_lane_does_not_become_user_facing_chat():
     assert "proof_or_benchmark_model_no_valid_text" in response_source
     assert "and not benchmark_turn" in response_source
     assert "if self._guard and not benchmark_turn" in response_source
-    assert "benchmark_request = bool(kwargs.get(\"benchmark_request\", False))" in mlx_source
+    # mlx_client now distinguishes the explicit kwarg from origin-inferred
+    # benchmark routing (benchmark_request_explicit), so the pinned line is the
+    # explicit-derivation form; the isolation semantics are unchanged.
+    assert "benchmark_request_explicit = bool(kwargs.get(\"benchmark_request\", False))" in mlx_source
     assert "request_is_background = False" in mlx_source
     assert "and not benchmark_request" in mlx_source
     assert "not benchmark_request" in gate_source
