@@ -41,7 +41,10 @@ def ledger_dir(tmp_path, monkeypatch):
 
 
 @pytest.fixture
-def target(tmp_path):
+def target(tmp_path, monkeypatch):
+    # Self-improvement confines rewrites to AURA_SELF_CODE_ROOT; point it at the
+    # temp dir so this fixture's victim module is a legitimate in-root target.
+    monkeypatch.setenv("AURA_SELF_CODE_ROOT", str(tmp_path))
     module = tmp_path / "victim_module.py"
     module.write_text(ORIGINAL_MODULE, encoding="utf-8")
     return module
