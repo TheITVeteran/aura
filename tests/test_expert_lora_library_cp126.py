@@ -302,3 +302,239 @@ class TestAsyncSlotReservation:
         assert await lib.activate_async("b", applier) is False
         assert lib.resident() == ["a"]
         assert "b" not in applier.loaded
+
+
+class TestActivationRollback:
+    """fcc5ab93: a failed load must not destroy the adapters it evicted."""
+
+    def test_failed_load_restores_the_evictee(self, tmp_path):
+        class _FailsSecondLoad(_Applier):
+            def load(self, adapter):
+                self.loaded.append(adapter.name)
+                return adapter.name != "b"
+
+        applier = _FailsSecondLoad()
+        lib = ExpertLoRALibrary(tmp_path / "lib.json", max_resident=1, applier=applier)
+        lib.register(_adapter(tmp_path, "a"))
+        lib.register(_adapter(tmp_path, "b"))
+        assert lib.activate("a") is True
+        assert lib.activate("b") is False
+        # "a" was evicted for "b"; "b" failed, so "a" must be back.
+        assert lib.resident() == ["a"]
+        assert applier.loaded == ["a", "b", "a"]
+
+    @pytest.mark.asyncio
+    async def test_async_failed_load_restores_the_evictee(self, tmp_path):
+        class _FailsSecondLoad(_AsyncApplier):
+            async def load(self, adapter):
+                self.loaded.append(adapter.name)
+                return adapter.name != "b"
+
+        applier = _FailsSecondLoad()
+        lib = ExpertLoRALibrary(tmp_path / "lib.json", max_resident=1)
+        lib.register(_adapter(tmp_path, "a"))
+        lib.register(_adapter(tmp_path, "b"))
+        assert await lib.activate_async("a", applier) is True
+        assert await lib.activate_async("b", applier) is False
+        assert lib.resident() == ["a"]
+
+
+class TestSyncActivationDoesNotHoldTheLock:
+    """0889dd98: applier I/O must not block registry readers."""
+
+    def test_registry_is_readable_during_a_slow_load(self, tmp_path):
+        import threading
+
+        started = threading.Event()
+        release = threading.Event()
+        observed: dict[str, object] = {}
+
+        class _SlowApplier(_Applier):
+            def load(self, adapter):
+                started.set()
+                release.wait(timeout=5.0)
+                return super().load(adapter)
+
+        lib = ExpertLoRALibrary(tmp_path / "lib.json", applier=_SlowApplier())
+        lib.register(_adapter(tmp_path, "a"))
+
+        worker = threading.Thread(target=lambda: lib.activate("a"))
+        worker.start()
+        assert started.wait(timeout=5.0)
+        # The registry must answer WHILE the load is in flight.
+        reader = threading.Thread(target=lambda: observed.update(n=len(lib.list())))
+        reader.start()
+        reader.join(timeout=3.0)
+        release.set()
+        worker.join(timeout=5.0)
+        assert reader.is_alive() is False, "registry read blocked on applier I/O"
+        assert observed.get("n") == 1
+
+
+class TestSyncLoadExceptionIsContained:
+    """34f303bc: a raising load must not escape after state mutation."""
+
+    def test_exception_becomes_a_failed_activation(self, tmp_path):
+        class _Boom(_Applier):
+            def load(self, adapter):
+                raise RuntimeError("metal OOM during attach")
+
+        lib = ExpertLoRALibrary(tmp_path / "lib.json", applier=_Boom())
+        lib.register(_adapter(tmp_path, "a"))
+        assert lib.activate("a") is False
+        assert lib.resident() == []
+
+
+class TestBaseModelCompatibility:
+    """a0cf1594: unknown base is unverified, not compatible."""
+
+    def test_unknown_base_is_not_selected_when_a_base_is_required(self, tmp_path):
+        lib = ExpertLoRALibrary(tmp_path / "lib.json", applier=_Applier())
+        untagged = _adapter(tmp_path, "untagged")
+        untagged.base_model = ""
+        lib.register(untagged)
+        assert lib.select_for("math task", "math", base_model="Qwen2.5-32B") is None
+
+    def test_matching_base_still_selected(self, tmp_path):
+        lib = ExpertLoRALibrary(tmp_path / "lib.json", applier=_Applier())
+        adapter = _adapter(tmp_path, "matched")
+        adapter.base_model = "Qwen2.5-32B"
+        lib.register(adapter)
+        assert lib.select_for("math task", "math", base_model="Qwen2.5-32B") is not None
+
+
+class TestUntaggedAdaptersAreNotUniversal:
+    """9abdd2bf: an empty task_types set is not 'matches everything'."""
+
+    def test_untagged_adapter_is_never_selected(self, tmp_path):
+        lib = ExpertLoRALibrary(tmp_path / "lib.json", applier=_Applier())
+        untagged = LoRAAdapter(name="scanned", path=_artifact(tmp_path, "scanned"))
+        lib.register(untagged)
+        assert lib.select_for("anything at all", "math") is None
+        assert lib.select_for("anything at all", "") is None
+
+
+class TestMetadataValidation:
+    """079e8448: malformed manifest values must not enter ranking."""
+
+    def test_string_tags_are_one_tag_not_characters(self):
+        adapter = LoRAAdapter.from_dict(
+            {"name": "a", "path": "/p", "task_types": "math", "keywords": "algebra"}
+        )
+        assert adapter.task_types == {"math"}
+        assert adapter.keywords == {"algebra"}
+
+    def test_non_finite_values_are_rejected(self):
+        adapter = LoRAAdapter.from_dict(
+            {"name": "a", "path": "/p", "quality": float("nan"), "size_mb": float("inf")}
+        )
+        assert adapter.quality == 0.5
+        assert adapter.size_mb == 0.0
+
+    def test_quality_is_bounded(self):
+        assert LoRAAdapter.from_dict({"name": "a", "path": "/p", "quality": 99}).quality == 1.0
+        assert LoRAAdapter.from_dict({"name": "a", "path": "/p", "quality": -5}).quality == 0.0
+
+    def test_non_mapping_rejected(self):
+        with pytest.raises(ValueError):
+            LoRAAdapter.from_dict(["not", "a", "mapping"])
+
+
+class TestRegistryEncapsulation:
+    """37e18573: reads must not hand out mutable internal objects."""
+
+    def test_mutating_a_returned_adapter_does_not_change_the_registry(self, tmp_path):
+        lib = ExpertLoRALibrary(tmp_path / "lib.json", applier=_Applier())
+        lib.register(_adapter(tmp_path, "a"))
+        got = lib.get("a")
+        got.path = "/evil"
+        got.quality = 1.0
+        got.task_types.add("everything")
+        fresh = lib.get("a")
+        assert fresh.path != "/evil"
+        assert fresh.quality == 0.5
+        assert "everything" not in fresh.task_types
+
+    def test_list_returns_snapshots(self, tmp_path):
+        lib = ExpertLoRALibrary(tmp_path / "lib.json", applier=_Applier())
+        lib.register(_adapter(tmp_path, "a"))
+        lib.list()[0].name = "hijacked"
+        assert lib.get("a") is not None
+
+
+class TestPersistenceTruth:
+    """d09b9a74: registration is durable or it failed."""
+
+    def test_failed_persist_rolls_back_registration(self, tmp_path, monkeypatch):
+        lib = ExpertLoRALibrary(tmp_path / "lib.json", applier=_Applier())
+        monkeypatch.setattr(ExpertLoRALibrary, "_persist", lambda self: False)
+        assert lib.register(_adapter(tmp_path, "a")) is False
+        assert lib.get("a") is None
+
+
+class TestManifestKeyIntegrity:
+    """68e1d462: the manifest key is authoritative."""
+
+    def test_mismatched_inner_name_is_reconciled(self, tmp_path):
+        import json as _json
+
+        manifest = tmp_path / "lib.json"
+        manifest.write_text(
+            _json.dumps(
+                {
+                    "schema_version": 1,
+                    "adapters": {
+                        "outer_key": {
+                            "name": "inner_name",
+                            "path": _artifact(tmp_path, "art"),
+                            "task_types": ["math"],
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        lib = ExpertLoRALibrary(manifest, applier=_Applier())
+        adapter = lib.get("outer_key")
+        assert adapter is not None
+        assert adapter.name == "outer_key", "registry key and adapter name disagree"
+
+
+class TestScanIntegrity:
+    """315080b7: a config file alone is not an adapter."""
+
+    def test_config_only_directory_is_skipped(self, tmp_path):
+        lib = ExpertLoRALibrary(tmp_path / "lib.json", applier=_Applier())
+        d = tmp_path / "scan" / "config_only"
+        d.mkdir(parents=True)
+        (d / "adapter_config.json").write_text("{}", encoding="utf-8")
+        assert lib.scan(tmp_path / "scan") == 0
+
+    def test_directory_with_weights_is_registered_and_sized_recursively(self, tmp_path):
+        lib = ExpertLoRALibrary(tmp_path / "lib.json", applier=_Applier())
+        d = tmp_path / "scan" / "real"
+        (d / "nested").mkdir(parents=True)
+        (d / "adapter_config.json").write_text("{}", encoding="utf-8")
+        (d / "adapters.safetensors").write_bytes(b"0" * 1024)
+        (d / "nested" / "extra.safetensors").write_bytes(b"0" * 2048)
+        assert lib.scan(tmp_path / "scan") == 1
+        adapter = lib.get("real")
+        assert adapter.size_mb > 0
+        # Nested weights must be counted, not omitted.
+        assert adapter.size_mb == pytest.approx((1024 + 2048 + 2) / (1024 * 1024), rel=0.2)
+
+
+class TestResetReleasesWeights:
+    """21661496: model modifications must not outlive the registry."""
+
+    def test_reset_unloads_resident_adapters(self, tmp_path, monkeypatch):
+        from core.brain import expert_lora_library as mod
+
+        applier = _Applier()
+        lib = ExpertLoRALibrary(tmp_path / "lib.json", applier=applier)
+        lib.register(_adapter(tmp_path, "a"))
+        assert lib.activate("a") is True
+        monkeypatch.setattr(mod, "_singleton", lib)
+        mod.reset_expert_lora_library()
+        assert applier.unloaded == ["a"], "weights outlived the registry"
+        assert mod._singleton is None

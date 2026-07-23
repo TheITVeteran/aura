@@ -57,6 +57,38 @@ def _budget_mb_env(name: str, default: float) -> float:
     return value
 
 
+def _tag_set(value: Any) -> set[str]:
+    """Normalized tag set from untrusted data — never a set of characters."""
+    if value is None:
+        return set()
+    if isinstance(value, str):
+        # A bare string is ONE tag, not a sequence of letters.
+        tag = value.strip().lower()
+        return {tag} if tag else set()
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return {
+            str(item).strip().lower()
+            for item in value
+            if str(item).strip()
+        }
+    return set()
+
+
+def _finite(value: Any, default: float, *, minimum: float | None = None,
+            maximum: float | None = None) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return float(default)
+    if number != number or number in (float("inf"), float("-inf")):
+        return float(default)
+    if minimum is not None:
+        number = max(minimum, number)
+    if maximum is not None:
+        number = min(maximum, number)
+    return number
+
+
 def _applier_attaches_weights(applier: Any) -> bool:
     """Does this applier actually attach weights?
 
@@ -139,16 +171,43 @@ class LoRAAdapter:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "LoRAAdapter":
+        """Build an adapter from untrusted manifest data.
+
+        CP126 079e8448: deserialization validated nothing — a STRING supplied
+        for task_types/keywords became a set of single CHARACTERS, and
+        NaN/Infinity could enter ranking and JSON output.
+        """
+        if not isinstance(data, dict):
+            raise ValueError("adapter record is not a mapping")
         return cls(
-            name=str(data.get("name", "")),
-            path=str(data.get("path", "")),
-            base_model=str(data.get("base_model", "")),
-            task_types=set(data.get("task_types", []) or []),
-            keywords=set(data.get("keywords", []) or []),
-            size_mb=float(data.get("size_mb", 0.0) or 0.0),
-            quality=float(data.get("quality", 0.5) or 0.5),
-            source=str(data.get("source", "")),
-            created_at=float(data.get("created_at", time.time()) or time.time()),
+            name=str(data.get("name", "")).strip(),
+            path=str(data.get("path", "")).strip(),
+            base_model=str(data.get("base_model", "")).strip(),
+            task_types=_tag_set(data.get("task_types")),
+            keywords=_tag_set(data.get("keywords")),
+            size_mb=_finite(data.get("size_mb"), 0.0, minimum=0.0),
+            quality=_finite(data.get("quality"), 0.5, minimum=0.0, maximum=1.0),
+            source=str(data.get("source", "")).strip()[:64],
+            created_at=_finite(data.get("created_at"), time.time(), minimum=0.0),
+        )
+
+    def copy(self) -> "LoRAAdapter":
+        """A detached snapshot.
+
+        CP126 37e18573: registry reads handed out the INTERNAL instances, so a
+        caller could mutate name, path, tags, quality, or base identity with no
+        lock, persistence, duplicate check, or residency reconciliation.
+        """
+        return LoRAAdapter(
+            name=self.name,
+            path=self.path,
+            base_model=self.base_model,
+            task_types=set(self.task_types),
+            keywords=set(self.keywords),
+            size_mb=self.size_mb,
+            quality=self.quality,
+            source=self.source,
+            created_at=self.created_at,
         )
 
 
@@ -275,8 +334,23 @@ class ExpertLoRALibrary:
                             severity="error",
                         )
                         return False
-            self._adapters[adapter.name] = adapter
-            self._persist()
+            # Store a detached copy so a caller keeping its reference cannot
+            # mutate registry state behind the lock (CP126 37e18573).
+            self._adapters[adapter.name] = adapter.copy()
+            # CP126 d09b9a74: _persist swallowed every configured error and
+            # returned nothing, so register/unregister reported success after
+            # an in-memory-only mutation. Registration is durable or it failed.
+            if not self._persist():
+                self._adapters.pop(adapter.name, None)
+                if existing is not None:
+                    self._adapters[adapter.name] = existing
+                record_degradation(
+                    "expert_lora_persist",
+                    RuntimeError(f"adapter_registration_not_durable:{adapter.name}"),
+                    action="rolled back an adapter registration that could not be persisted",
+                    severity="error",
+                )
+                return False
         logger.info("📚 [ExpertLoRA] registered '%s' (task_types=%s)", adapter.name, sorted(adapter.task_types))
         return True
 
@@ -300,12 +374,14 @@ class ExpertLoRALibrary:
             return existed
 
     def list(self) -> list[LoRAAdapter]:
+        # CP126 37e18573: hand out snapshots, not the live registry objects.
         with self._lock:
-            return list(self._adapters.values())
+            return [adapter.copy() for adapter in self._adapters.values()]
 
     def get(self, name: str) -> LoRAAdapter | None:
         with self._lock:
-            return self._adapters.get(name)
+            adapter = self._adapters.get(name)
+            return adapter.copy() if adapter is not None else None
 
     # ── selection ─────────────────────────────────────────────────────────────
     def select_for(self, objective: str, task_type: str, *, base_model: str = "") -> LoRAAdapter | None:
@@ -315,9 +391,19 @@ class ExpertLoRALibrary:
         best: tuple[float, LoRAAdapter] | None = None
         with self._lock:
             for adapter in self._adapters.values():
-                if base_model and adapter.base_model and adapter.base_model != base_model:
-                    continue  # never apply an adapter trained on a different base
-                if adapter.task_types and tt not in adapter.task_types:
+                if base_model:
+                    # CP126 a0cf1594: an adapter with an UNKNOWN base bypassed
+                    # the mismatch check entirely, contradicting the stated
+                    # "never apply an adapter trained on a different base".
+                    # Unknown is not compatible — it is unverified.
+                    if not adapter.base_model or adapter.base_model != base_model:
+                        continue
+                # CP126 9abdd2bf: this skipped only when task_types was
+                # NONEMPTY, while scan() registers every discovered adapter
+                # with an EMPTY set — so untagged adapters scored positively
+                # for every objective and could be selected on nothing but
+                # quality and insertion order.
+                if not adapter.task_types or tt not in adapter.task_types:
                     continue
                 overlap = len(obj_tokens & adapter.keywords) if adapter.keywords else 0
                 # task_type match alone is worth a small base score so a tagged
@@ -325,7 +411,7 @@ class ExpertLoRALibrary:
                 relevance = (1.0 + overlap) * max(0.05, adapter.quality)
                 if best is None or relevance > best[0]:
                     best = (relevance, adapter)
-        return best[1] if best else None
+        return best[1].copy() if best else None
 
     # ── RAM-budgeted residency ──────────────────────────────────────────────
     def _applier_id(self, applier: Any) -> str:
@@ -347,44 +433,139 @@ class ExpertLoRALibrary:
         ) > self._max_resident_mb
 
     def activate(self, name: str) -> bool:
-        """Make an adapter resident (load on demand, LRU-evict over budget)."""
+        """Make an adapter resident (load on demand, LRU-evict over budget).
+
+        CP126 0889dd98: this used to hold the registry RLock across every
+        unload and load, so a multi-second worker swap blocked list, get,
+        selection, registration, and unrelated activations for its full
+        duration. Applier I/O now runs OUTSIDE the lock behind a reservation,
+        the same discipline as ``activate_async``.
+        """
+        applier = self._applier
+        if not _applier_attaches_weights(applier):
+            # CP126 20a12402: never record residency behind an applier that
+            # does not attach weights.
+            logger.info(
+                "📎 [ExpertLoRA] '%s' not activated: no weight-attaching applier is wired.",
+                name,
+            )
+            return False
+        applier_id = self._applier_id(applier)
+        evictees: list[tuple[str, LoRAAdapter]] = []
         with self._lock:
             adapter = self._adapters.get(name)
             if adapter is None:
                 return False
-            if name in self._resident:
+            entry = self._resident.get(name)
+            if entry is not None:
                 self._resident.move_to_end(name)
-                self._resident[name].last_used = time.time()
+                entry.last_used = time.time()
                 return True
-            # Evict until BOTH the count ceiling and the memory budget admit
-            # this adapter (CP126 bddade3a). Bounded by the resident set.
-            while self._resident and self._needs_eviction(adapter):
-                lru_name = next(iter(self._resident))
-                if not self._evict(lru_name):
-                    # CP126 b022149a: a refused unload must not free budget.
-                    return False
-            applier = self._applier
-            if not _applier_attaches_weights(applier):
-                # CP126 20a12402: never record residency behind an applier
-                # that does not attach weights.
-                logger.info(
-                    "📎 [ExpertLoRA] '%s' not activated: no weight-attaching applier is wired.",
-                    name,
-                )
+            if name in self._pending:
                 return False
+            # Evict until BOTH the count ceiling and the memory budget admit
+            # this adapter (CP126 bddade3a).
+            while self._needs_eviction(adapter):
+                evictable = [n for n, e in self._resident.items() if not e.evicting]
+                if not evictable:
+                    return False
+                lru_name = evictable[0]
+                lru_entry = self._resident[lru_name]
+                lru_adapter = self._adapters.get(lru_name)
+                if lru_adapter is None:
+                    self._resident.pop(lru_name, None)
+                    continue
+                evictees.append((lru_name, lru_adapter))
+                lru_entry.evicting = True
+                break
+            self._pending[name] = applier_id
+
+        restore: list[tuple[str, _Residency]] = []
+        try:
+            for lru_name, lru_adapter in evictees:
+                with self._lock:
+                    lru_entry = self._resident.get(lru_name)
+                unload_applier = (
+                    lru_entry.applier if lru_entry is not None and lru_entry.applier else applier
+                )
+                try:
+                    unloaded = bool(unload_applier.unload(lru_adapter))
+                except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
+                    record_degradation("expert_lora_unload", exc)
+                    unloaded = False
+                with self._lock:
+                    entry = self._resident.get(lru_name)
+                    if entry is not None:
+                        entry.evicting = False
+                    if unloaded and entry is not None:
+                        restore.append((lru_name, entry))
+                        self._resident.pop(lru_name, None)
+                if not unloaded:
+                    # CP126 b022149a: a refused unload must not free budget.
+                    record_degradation(
+                        "expert_lora_unload",
+                        RuntimeError(f"adapter_unload_refused:{lru_name}"),
+                        action="refused new activation because the evictee is still attached",
+                        severity="error",
+                    )
+                    return False
+            # CP126 34f303bc: the sync load was the ONLY applier call without
+            # an exception boundary, so a raise escaped after evictions had
+            # already changed physical and logical state.
             try:
                 ok = bool(applier.load(adapter))
             except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
                 record_degradation("expert_lora_load", exc)
-                return False
+                ok = False
             if ok:
-                self._resident[name] = _Residency(
-                    applier_id=self._applier_id(applier),
-                    applier=applier,
-                    size_mb=float(adapter.size_mb or 0.0),
-                    last_used=time.time(),
+                with self._lock:
+                    self._resident[name] = _Residency(
+                        applier_id=applier_id,
+                        applier=applier,
+                        size_mb=float(adapter.size_mb or 0.0),
+                        last_used=time.time(),
+                    )
+                return True
+            # CP126 fcc5ab93: a failed replacement load used to leave the
+            # evicted adapters unloaded and forgotten — turning a failed
+            # activation into destructive state loss. Put them back.
+            self._restore_evicted(restore, applier)
+            return False
+        finally:
+            with self._lock:
+                self._pending.pop(name, None)
+
+    def _restore_evicted(
+        self,
+        restore: list[tuple[str, "_Residency"]],
+        applier: Any,
+    ) -> None:
+        """Reload adapters evicted for an activation that then failed."""
+        for lru_name, entry in restore:
+            adapter = self.get(lru_name)
+            if adapter is None:
+                continue
+            reload_applier = entry.applier or applier
+            try:
+                reloaded = bool(reload_applier.load(adapter))
+            except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
+                record_degradation("expert_lora_load", exc)
+                reloaded = False
+            if reloaded:
+                with self._lock:
+                    self._resident[lru_name] = _Residency(
+                        applier_id=entry.applier_id,
+                        applier=entry.applier,
+                        size_mb=entry.size_mb,
+                        last_used=entry.last_used,
+                    )
+            else:
+                record_degradation(
+                    "expert_lora_load",
+                    RuntimeError(f"evicted_adapter_not_restored:{lru_name}"),
+                    action="reported lost residency after a failed activation rollback",
+                    severity="error",
                 )
-            return ok
 
     def _evict(self, name: str) -> bool:
         """Unload an adapter and free its residency ONLY on confirmed unload.
@@ -420,6 +601,11 @@ class ExpertLoRALibrary:
             return False
         self._resident.pop(name, None)
         return True
+
+    def deactivate(self, name: str) -> bool:
+        """Release an adapter's weights. True when nothing is attached after."""
+        with self._lock:
+            return self._evict(name)
 
     def resident(self) -> list[str]:
         with self._lock:
@@ -520,6 +706,7 @@ class ExpertLoRALibrary:
                 break
             self._pending[name] = applier_id
 
+        restored: list[tuple[str, _Residency]] = []
         try:
             for lru_name, lru_adapter, lru_applier in evictees:
                 try:
@@ -531,7 +718,8 @@ class ExpertLoRALibrary:
                     entry = self._resident.get(lru_name)
                     if entry is not None:
                         entry.evicting = False
-                    if unloaded:
+                    if unloaded and entry is not None:
+                        restored.append((lru_name, entry))
                         self._resident.pop(lru_name, None)
                 if not unloaded:
                     record_degradation(
@@ -545,7 +733,7 @@ class ExpertLoRALibrary:
                 ok = bool(await applier.load(adapter))
             except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
                 record_degradation("expert_lora_load", exc)
-                return False
+                ok = False
             if ok:
                 with self._lock:
                     self._resident[name] = _Residency(
@@ -554,10 +742,45 @@ class ExpertLoRALibrary:
                         size_mb=float(adapter.size_mb or 0.0),
                         last_used=time.time(),
                     )
-            return ok
+                return True
+            # CP126 fcc5ab93: restore what this activation evicted rather than
+            # leaving a failed load as destructive state loss.
+            await self._restore_evicted_async(restored, applier)
+            return False
         finally:
             with self._lock:
                 self._pending.pop(name, None)
+
+    async def _restore_evicted_async(
+        self,
+        restore: list[tuple[str, "_Residency"]],
+        applier: Any,
+    ) -> None:
+        for lru_name, entry in restore:
+            adapter = self.get(lru_name)
+            if adapter is None:
+                continue
+            reload_applier = entry.applier or applier
+            try:
+                reloaded = bool(await reload_applier.load(adapter))
+            except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
+                record_degradation("expert_lora_load", exc)
+                reloaded = False
+            if reloaded:
+                with self._lock:
+                    self._resident[lru_name] = _Residency(
+                        applier_id=entry.applier_id,
+                        applier=entry.applier,
+                        size_mb=entry.size_mb,
+                        last_used=entry.last_used,
+                    )
+            else:
+                record_degradation(
+                    "expert_lora_load",
+                    RuntimeError(f"evicted_adapter_not_restored:{lru_name}"),
+                    action="reported lost residency after a failed async activation rollback",
+                    severity="error",
+                )
 
     async def select_and_activate_async(
         self,
@@ -583,15 +806,30 @@ class ExpertLoRALibrary:
         if not root.exists():
             return 0
         found = 0
-        markers = ("adapter_config.json", "adapters.safetensors", "adapters.npz")
+        markers = _ADAPTER_MARKERS
+        weight_markers = ("adapters.safetensors", "adapters.npz")
         for cfg in root.rglob("*"):
             try:
                 if cfg.is_dir() and any((cfg / m).exists() for m in markers):
                     name = cfg.name
                     if name in self._adapters:
                         continue
+                    # CP126 315080b7: a directory containing ONLY a config
+                    # marker was registered as an adapter. Require actual
+                    # weight material, refuse symlinked artifacts, and size
+                    # the whole tree (immediate-file-only sizing omitted
+                    # nested weights and so understated the RAM budget).
+                    if cfg.is_symlink():
+                        continue
+                    if not any((cfg / m).is_file() for m in weight_markers):
+                        logger.debug(
+                            "📚 [ExpertLoRA] scan skipped '%s': no weight material", cfg
+                        )
+                        continue
                     size_mb = sum(
-                        f.stat().st_size for f in cfg.glob("*") if f.is_file()
+                        f.stat().st_size
+                        for f in cfg.rglob("*")
+                        if f.is_file() and not f.is_symlink()
                     ) / (1024 * 1024)
                     self.register(
                         LoRAAdapter(
@@ -632,16 +870,39 @@ class ExpertLoRALibrary:
         try:
             raw = json.loads(self._manifest_path.read_text(encoding="utf-8"))
             items = raw.get("adapters", {}) if isinstance(raw, dict) else {}
+            if not isinstance(items, dict):
+                items = {}
             with self._lock:
                 for name, data in items.items():
                     try:
-                        self._adapters[name] = LoRAAdapter.from_dict(data)
-                    except self._ERRORS:
+                        adapter = LoRAAdapter.from_dict(data)
+                    except (ValueError, TypeError, AttributeError):
                         continue
+                    key = str(name).strip()
+                    if not key or not adapter.path:
+                        continue
+                    # CP126 68e1d462: the record was stored under the OUTER
+                    # manifest key while from_dict read its own internal name,
+                    # so selection could return an object whose .name did not
+                    # match its registry key — activation then looked up
+                    # adapter.name and missed (or hit a different adapter).
+                    # The key is authoritative; a disagreement is recorded.
+                    if adapter.name != key:
+                        record_degradation(
+                            "expert_lora_manifest",
+                            ValueError(
+                                f"manifest_key_name_mismatch:{key}!={adapter.name}"
+                            ),
+                            action="reconciled adapter name to its manifest key on load",
+                            severity="warning",
+                        )
+                        adapter.name = key
+                    self._adapters[key] = adapter
         except self._ERRORS as exc:
             record_degradation("expert_lora_load", exc)
 
-    def _persist(self) -> None:
+    def _persist(self) -> bool:
+        """Write the manifest. Returns whether the durable write succeeded."""
         try:
             self._manifest_path.parent.mkdir(parents=True, exist_ok=True)
             payload = {
@@ -657,8 +918,10 @@ class ExpertLoRALibrary:
             finally:
                 if os.path.exists(tmp):
                     os.unlink(tmp)
+            return True
         except self._ERRORS as exc:
             record_degradation("expert_lora_persist", exc)
+            return False
 
 
 _singleton: ExpertLoRALibrary | None = None
@@ -675,6 +938,32 @@ def get_expert_lora_library() -> ExpertLoRALibrary:
 
 
 def reset_expert_lora_library() -> None:
+    """Drop the singleton AFTER releasing whatever it made resident.
+
+    CP126 21661496: this only cleared the reference, so live model
+    modifications outlived the registry that tracked them — the next library
+    had no record of adapters still attached to the worker.
+    """
     global _singleton
     with _singleton_lock:
-        _singleton = None
+        library, _singleton = _singleton, None
+    if library is None:
+        return
+    for name in library.resident():
+        try:
+            library.deactivate(name)
+        except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
+            record_degradation(
+                "expert_lora_reset",
+                exc,
+                action="library reset left an adapter attached to the model",
+                severity="error",
+            )
+    remaining = library.resident()
+    if remaining:
+        record_degradation(
+            "expert_lora_reset",
+            RuntimeError(f"adapters_still_attached_after_reset:{','.join(remaining[:4])}"),
+            action="reported adapters that outlived their registry",
+            severity="error",
+        )
