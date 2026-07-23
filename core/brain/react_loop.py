@@ -535,16 +535,27 @@ class ActionExecutor:
 
     # Sandbox policy lives at class scope so a safe __import__ can consult it
     # without re-parsing — and so it is trivially auditable.
+    #
+    # Imports are governed by an ALLOWLIST, not a blocklist: a blocklist is
+    # always incomplete (e.g. `import builtins; builtins.open(...)` escaped the
+    # old blocklist entirely). Only these pure-computation stdlib modules may
+    # be imported inside the sandbox.
+    _SANDBOX_ALLOWED_MODULES = {
+        "math", "json", "statistics", "fractions", "decimal",
+        "itertools", "functools", "random", "re", "collections",
+        "string", "datetime", "cmath", "bisect", "heapq", "textwrap",
+    }
     _SANDBOX_BLOCKED_MODULES = {
         "os", "subprocess", "shutil", "sys", "importlib", "ctypes",
         "socket", "http", "urllib", "pathlib", "requests", "httpx",
-        "asyncio", "threading", "multiprocessing",
+        "asyncio", "threading", "multiprocessing", "builtins",
     }
     _SANDBOX_BLOCKED_BUILTINS = {
         "eval", "exec", "compile", "__import__", "open",
         "getattr", "setattr", "delattr", "globals", "locals",
         "input", "vars", "breakpoint",
     }
+    _PYTHON_SANDBOX_TIMEOUT_S = 5.0
 
     async def _execute_python(self, action: Action) -> Observation:
         """Execute Python in a restricted sandbox. SEC-01: AST-based validation.
@@ -570,14 +581,18 @@ class ActionExecutor:
         blocked_modules = self._SANDBOX_BLOCKED_MODULES
         blocked_builtins = self._SANDBOX_BLOCKED_BUILTINS
 
+        allowed_modules = self._SANDBOX_ALLOWED_MODULES
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    if alias.name.split(".")[0] in blocked_modules:
-                        return Observation(content=f"Blocked: import of '{alias.name}' is not allowed", success=False)
+                    root = alias.name.split(".")[0]
+                    # Allowlist: anything not explicitly permitted is refused.
+                    if root not in allowed_modules:
+                        return Observation(content=f"Blocked: import of '{alias.name}' is not on the sandbox allowlist", success=False)
             elif isinstance(node, ast.ImportFrom):
-                if node.module and node.module.split(".")[0] in blocked_modules:
-                    return Observation(content=f"Blocked: import from '{node.module}' is not allowed", success=False)
+                root = (node.module or "").split(".")[0]
+                if root not in allowed_modules:
+                    return Observation(content=f"Blocked: import from '{node.module}' is not on the sandbox allowlist", success=False)
             elif isinstance(node, ast.Call):
                 func = node.func
                 if isinstance(func, ast.Name) and func.id in blocked_builtins:
@@ -603,8 +618,12 @@ class ActionExecutor:
 
             def safe_import(name, globals=None, locals=None, fromlist=(), level=0):
                 root = name.split(".")[0]
-                if root in blocked_modules:
-                    raise ImportError(f"Blocked: import of '{name}' is not allowed in the sandbox")
+                # Allowlist at runtime too — the AST pass and the runtime import
+                # hook enforce the SAME permitted set, so neither a dynamic
+                # __import__ nor a missed AST node can pull in an unlisted
+                # module (e.g. builtins/os/socket).
+                if root not in self._SANDBOX_ALLOWED_MODULES:
+                    raise ImportError(f"Blocked: import of '{name}' is not on the sandbox allowlist")
                 return real_import(name, globals, locals, fromlist, level)
 
             safe_globals = {
@@ -641,19 +660,34 @@ class ActionExecutor:
             safe_globals["functools"] = functools
 
             exec_result: dict[str, Any] = {}
-            with redirect_stdout(output_buf):
-                dynamic_gateway = get_dynamic_execution_gateway()
-                code_object = dynamic_gateway.compile_source(
-                    code,
-                    filename="<react_python_sandbox>",
-                    mode="exec",
-                    source="react_loop.python_sandbox",
-                )
-                dynamic_gateway.execute_code_object(
-                    code_object,
-                    globals_dict=safe_globals,
-                    locals_dict=exec_result,
-                    source="react_loop.python_sandbox",
+
+            def _run() -> None:
+                with redirect_stdout(output_buf):
+                    dynamic_gateway = get_dynamic_execution_gateway()
+                    code_object = dynamic_gateway.compile_source(
+                        code,
+                        filename="<react_python_sandbox>",
+                        mode="exec",
+                        source="react_loop.python_sandbox",
+                    )
+                    dynamic_gateway.execute_code_object(
+                        code_object,
+                        globals_dict=safe_globals,
+                        locals_dict=exec_result,
+                        source="react_loop.python_sandbox",
+                    )
+
+            # Run OFF the event loop with a wall-clock bound so model-generated
+            # code cannot block the server's loop and a runaway is time-capped
+            # (best-effort: a CPU-bound thread cannot be force-killed, but the
+            # loop regains control and the episode continues).
+            try:
+                await asyncio.wait_for(asyncio.to_thread(_run), timeout=self._PYTHON_SANDBOX_TIMEOUT_S)
+            except (asyncio.TimeoutError, TimeoutError):
+                return Observation(
+                    content=f"Python execution exceeded the {self._PYTHON_SANDBOX_TIMEOUT_S:.0f}s sandbox limit",
+                    success=False,
+                    error="sandbox_timeout",
                 )
 
             output = output_buf.getvalue()
@@ -666,7 +700,7 @@ class ActionExecutor:
                 source="python_sandbox"
             )
 
-        except (ImportError, AttributeError, RuntimeError) as e:
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as e:
             _record_react_degradation(e, action="returned python execution sandbox error observation", severity="error")
             return Observation(
                 content=f"Python error: {type(e).__name__}: {e}",
@@ -807,11 +841,31 @@ class ReActLoop:
         self.brain = brain
         self.executor = ActionExecutor(orchestrator=orchestrator)
         self.parser = ReActResponseParser()
-        self.max_steps = max_steps
-        self.simple_threshold = simple_threshold
-        self.timeout_seconds = timeout_seconds
+        # Validate/bound loop controls so a negative/huge/NaN step count or
+        # timeout cannot create an unbounded or instantly-terminating loop.
+        self.max_steps = self._bounded_int(max_steps, default=6, lo=1, hi=50)
+        self.simple_threshold = self._bounded_int(simple_threshold, default=15, lo=0, hi=1000)
+        self.timeout_seconds = self._bounded_float(timeout_seconds, default=90.0, lo=1.0, hi=1800.0)
         self.think_mode = think_mode if think_mode is not None else _thinking_mode_default()
         self.record_episodes = record_episodes
+
+    @staticmethod
+    def _bounded_int(value: Any, *, default: int, lo: int, hi: int) -> int:
+        try:
+            v = int(value)
+        except (TypeError, ValueError):
+            return default
+        return max(lo, min(hi, v))
+
+    @staticmethod
+    def _bounded_float(value: Any, *, default: float, lo: float, hi: float) -> float:
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            return default
+        if v != v:  # NaN
+            return default
+        return max(lo, min(hi, v))
 
     def _is_simple_query(self, query: str) -> bool:
         """Detect queries that don't need multi-step reasoning."""
