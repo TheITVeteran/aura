@@ -18,8 +18,48 @@ from core.brain.llm.latent_cortex.value_of_computation import (
 )
 
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _enable_controller(monkeypatch):
+    """CP126 f1088112: the kill switch is now ENFORCED inside choose,
+    apply_arm and record_outcome (direct users of the class and singleton
+    previously bypassed it entirely). tests/conftest.py defaults the flag OFF,
+    so tests that exercise the decision logic must turn it on explicitly —
+    test_kill_switch_defaults_off_in_tests still pins the default.
+    """
+    monkeypatch.setenv("AURA_EXECUTION_CONTROLLER", "1")
+
+
 def _controller(tmp_path):
     return ExecutionController(root=tmp_path / "controller")
+
+
+def _record(controller, *, bucket, arm, verified_score, success, checked=True,
+            objective="q", domain="general", stakes=0.5, uncertainty=0.5,
+            wall_clock_s=0.0):
+    """Record an outcome through a REAL decision token.
+
+    CP126 3b3d44e8: record_outcome no longer accepts a caller-asserted
+    bucket/arm — outcomes must be bound to the decision that produced them.
+    Tests therefore mint a decision and bind the outcome to it.
+    """
+    # Mint a decision for exactly this (bucket, arm) through the controller's
+    # own issuing path — no production test-backdoor, just private state a
+    # test may legitimately drive.
+    decision = {"bucket": bucket, "arm": arm, "mode": "explore"}
+    controller._issue_decision(decision)
+    token = decision["decision_id"]
+    return controller.record_outcome(
+        bucket=bucket,
+        arm=arm,
+        verified_score=verified_score,
+        success=success,
+        checked=checked,
+        wall_clock_s=wall_clock_s,
+        decision_id=token,
+    )
 
 
 def test_context_bucket_is_coarse_and_deterministic():
@@ -65,14 +105,14 @@ def test_exploitation_requires_wilson_separation(tmp_path):
     bucket = context_bucket("q", "general", 0.5, 0.5)
     # 12 mediocre base episodes, 12 strong deeper-recurrence episodes.
     for _ in range(12):
-        controller.record_outcome(
+        _record(controller,
             bucket=bucket,
             arm="base",
             verified_score=0.2,
             success=False,
             checked=True,
         )
-        controller.record_outcome(
+        _record(controller,
             bucket=bucket,
             arm="deeper_recurrence",
             verified_score=1.0,
@@ -91,14 +131,14 @@ def test_no_exploitation_on_underpowered_or_overlapping_evidence(tmp_path):
     controller = _controller(tmp_path)
     bucket = context_bucket("q", "general", 0.5, 0.5)
     for _ in range(11):  # one short of MIN_TRIALS
-        controller.record_outcome(
+        _record(controller,
             bucket=bucket,
             arm="base",
             verified_score=0.2,
             success=False,
             checked=True,
         )
-        controller.record_outcome(
+        _record(controller,
             bucket=bucket,
             arm="wider_branches",
             verified_score=1.0,
@@ -111,14 +151,14 @@ def test_no_exploitation_on_underpowered_or_overlapping_evidence(tmp_path):
     assert decision["mode"] != "exploit"
     overlapping = _controller(tmp_path / "b")
     for _ in range(20):
-        overlapping.record_outcome(
+        _record(overlapping,
             bucket=bucket,
             arm="base",
             verified_score=0.6,
             success=True,
             checked=True,
         )
-        overlapping.record_outcome(
+        _record(overlapping,
             bucket=bucket,
             arm="wider_branches",
             verified_score=0.65,
@@ -136,7 +176,7 @@ def test_ledger_persists_and_tolerates_corruption(tmp_path):
     first = ExecutionController(root=root)
     bucket = context_bucket("q", "general", 0.5, 0.5)
     for _ in range(3):
-        first.record_outcome(
+        _record(first,
             bucket=bucket,
             arm="base",
             verified_score=0.8,
@@ -201,14 +241,14 @@ def test_probe_guided_arm_emits_valid_bytecode_only_with_region(tmp_path):
 
 def test_junk_outcomes_are_ignored(tmp_path):
     controller = _controller(tmp_path)
-    controller.record_outcome(
+    _record(controller,
         bucket="b",
         arm="base",
         verified_score=float("nan"),
         success=True,
         checked=True,
     )
-    controller.record_outcome(
+    _record(controller,
         bucket="b",
         arm="not_an_arm",
         verified_score=0.5,
@@ -223,7 +263,7 @@ def test_junk_outcomes_are_ignored(tmp_path):
 def test_persistence_failure_cannot_create_transient_learning(tmp_path, monkeypatch):
     controller = _controller(tmp_path)
     monkeypatch.setattr(controller, "_append", lambda _row: False)
-    assert controller.record_outcome(
+    assert _record(controller,
         bucket="b",
         arm="base",
         verified_score=1.0,
@@ -236,7 +276,7 @@ def test_persistence_failure_cannot_create_transient_learning(tmp_path, monkeypa
 def test_unchecked_and_fractional_scores_cannot_create_wilson_evidence(tmp_path):
     controller = _controller(tmp_path)
     bucket = context_bucket("q", "general", 0.5, 0.5)
-    assert controller.record_outcome(
+    assert _record(controller,
         bucket=bucket,
         arm="base",
         verified_score=1.0,
@@ -244,14 +284,14 @@ def test_unchecked_and_fractional_scores_cannot_create_wilson_evidence(tmp_path)
         checked=False,
     ) is False
     for _ in range(20):
-        controller.record_outcome(
+        _record(controller,
             bucket=bucket,
             arm="base",
             verified_score=0.1,
             success=True,
             checked=True,
         )
-        controller.record_outcome(
+        _record(controller,
             bucket=bucket,
             arm="wider_branches",
             verified_score=0.99,
@@ -360,5 +400,9 @@ def test_independently_graded_outcome_is_admissible():
     )
 
 
-def test_kill_switch_defaults_off_in_tests():
+def test_kill_switch_defaults_off_in_tests(monkeypatch):
+    # The autouse fixture turns the flag ON for the decision-logic tests; the
+    # DEFAULT (tests/conftest.py sets AURA_EXECUTION_CONTROLLER=0) is what this
+    # test pins, so it removes the override first.
+    monkeypatch.setenv("AURA_EXECUTION_CONTROLLER", "0")
     assert controller_enabled() is False

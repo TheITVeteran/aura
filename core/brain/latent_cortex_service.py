@@ -1876,7 +1876,13 @@ class LatentCortexService:
                         cells={},
                     )
                 if controller_decision["arm"] != "base":
-                    config = controller.apply_arm(
+                    # CP126 ea828a97: apply_arm could silently leave the config
+                    # unchanged (e.g. probe-guided bytecode with no recurrent
+                    # region) while the decision still named the treatment, so
+                    # the outcome was credited to bytecode that never ran. Take
+                    # the application RECEIPT and fall the decision back to
+                    # base when the arm did not actually apply.
+                    application = controller.apply_arm_receipt(
                         controller_decision["arm"],
                         config,
                         recurrent_region=(
@@ -1886,6 +1892,15 @@ class LatentCortexService:
                             else None
                         ),
                     )
+                    config = application["config"]
+                    controller_decision["applied"] = bool(application["applied"])
+                    controller_decision["application_reason"] = str(
+                        application.get("reason") or ""
+                    )
+                    if not application["applied"]:
+                        controller_decision["arm"] = str(
+                            application.get("effective_arm") or "base"
+                        )
                 self._last_allocation["execution_controller"] = (
                     controller_decision
                 )
@@ -2666,6 +2681,10 @@ class LatentCortexService:
                         outcome_passed,
                         outcome_reason,
                     ) = _controller_outcome(verifier_evidence)
+                    # CP126 3b3d44e8: the outcome must be bound to the DECISION
+                    # that produced it — a caller-asserted bucket/arm could
+                    # credit any arm, including recording a base execution as
+                    # a treatment.
                     outcome_recorded = get_execution_controller().record_outcome(
                         bucket=str(controller_decision.get("bucket") or ""),
                         arm=str(controller_decision.get("arm") or "base"),
@@ -2673,6 +2692,9 @@ class LatentCortexService:
                         success=outcome_passed,
                         checked=outcome_checked,
                         wall_clock_s=time.monotonic() - started,
+                        decision_id=str(
+                            controller_decision.get("decision_id") or ""
+                        ),
                     )
                     checked_action_transitions = [
                         row for row in action_transitions if row["checked"] is True
