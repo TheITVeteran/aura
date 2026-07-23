@@ -201,6 +201,10 @@ def _recurrent_grounding_fields(config, *, steps=1):
         build_bidirectional_reflector_receipt,
         observe_reflector_vectors,
     )
+    from core.brain.llm.latent_cortex.contradiction_tensor import (
+        ContradictionTensorRuntime,
+        build_contradiction_tensor_receipt,
+    )
     from core.brain.llm.latent_cortex.loop_core import (
         KV_BOUND_SCHEMA,
         alpha_for_step,
@@ -490,6 +494,13 @@ def _recurrent_grounding_fields(config, *, steps=1):
         update_acceptance=update_acceptance_receipt,
         selected_branch=0,
     )
+    contradiction_tensor_receipt = build_contradiction_tensor_receipt(
+        reflector=bidirectional_reflector_receipt,
+        runtime=ContradictionTensorRuntime.from_config(
+            executed.contradiction_head
+        ),
+        selected_branch=0,
+    )
     return {
         "cognitive_slots": [],
         "selected_branch": 0,
@@ -503,6 +514,7 @@ def _recurrent_grounding_fields(config, *, steps=1):
         "neural_uncertainty": neural_uncertainty_receipt,
         "mistake_locator": mistake_locator_receipt,
         "bidirectional_reflector": bidirectional_reflector_receipt,
+        "contradiction_tensor": contradiction_tensor_receipt,
         "cognitive_action_trace": [],
     }
 
@@ -631,6 +643,7 @@ def test_config_from_job_defaults_are_conservative():
     assert cfg.verifier_accept_non_regression is False
     assert cfg.uncertainty_head is None
     assert cfg.mistake_locator is None
+    assert cfg.contradiction_head is None
     assert cfg.validate() == []
 
 
@@ -659,6 +672,17 @@ def test_config_from_job_rejects_out_of_band_requests():
         config_from_job(
             {
                 "uncertainty_head": {
+                    "mode": "unavailable",
+                    "head_path": "/tmp/not-used",
+                }
+            }
+        )
+    with pytest.raises(ValueError, match="requires head_path"):
+        config_from_job({"contradiction_head": {"mode": "learned"}})
+    with pytest.raises(ValueError, match="cannot carry a head"):
+        config_from_job(
+            {
+                "contradiction_head": {
                     "mode": "unavailable",
                     "head_path": "/tmp/not-used",
                 }
@@ -2612,6 +2636,50 @@ def test_service_reconstructs_bidirectional_reflector_and_rejects_authority_lie(
     assert "bidirectional_reflector_unproven" in (
         LatentCortexService._receipt_contract_errors(forged, config)
     )
+
+
+def test_service_reconstructs_contradiction_tensor_and_rejects_authority_lie():
+    from core.brain.llm.latent_cortex.loop_core import canonical_sha256
+
+    config = {"n_slots": 8, "n_branches": 2}
+    receipt = {
+        **_identity_receipt(),
+        "n_slots": 8,
+        "n_branches": 2,
+        **_recurrent_grounding_fields(config, steps=3),
+    }
+    assert "contradiction_tensor_unproven" not in (
+        LatentCortexService._receipt_contract_errors(receipt, config)
+    )
+
+    forged = copy.deepcopy(receipt)
+    tensor = forged["contradiction_tensor"]
+    tensor["attention_perturbation_authorized"] = True
+    tensor["receipt_sha256"] = canonical_sha256(
+        {
+            key: value
+            for key, value in tensor.items()
+            if key != "receipt_sha256"
+        }
+    )
+    assert "contradiction_tensor_unproven" in (
+        LatentCortexService._receipt_contract_errors(forged, config)
+    )
+
+
+def test_service_uses_executed_default_branch_count_for_learned_evidence():
+    executed = {"n_slots": 16, "n_branches": 2}
+    receipt = {
+        **_identity_receipt(),
+        "n_slots": 16,
+        "n_branches": 2,
+        **_recurrent_grounding_fields(executed, steps=3),
+    }
+    errors = LatentCortexService._receipt_contract_errors(receipt, {})
+    assert "bidirectional_reflector_unproven" not in errors
+    assert "contradiction_tensor_unproven" not in errors
+    assert "neural_uncertainty_unproven" not in errors
+    assert "mistake_locator_unproven" not in errors
 
 
 def test_service_reconstructs_and_rejects_branch_exchange_tampering():

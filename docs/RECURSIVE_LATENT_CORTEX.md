@@ -94,6 +94,16 @@ changes the answer — that is the causality contract.
   proposals remain inspectable but outside the admitted path. The service
   reconstructs all context and comparison evidence; no decoded answer text or
   state, selection, repair, attention, or decode authority enters this layer.
+- **Calibrated contradiction tensor**: a pinned learned head scores every
+  transition-by-latent-workspace-position cell against local, premise,
+  conclusion, prefix, suffix, and trajectory context. These are latent sequence
+  positions, not decoded answer-token or private-text labels. Cell and step
+  readouts are temperature-calibrated independently and admitted only after
+  complete controlled-mutation/sham tensors pass task, trace, evidence, and
+  domain-disjoint ID/OOD gates plus middle/long-context localization and
+  AUC/Brier/ECE floors. The service reconstructs the full tensor; unavailable
+  mode invents no score. SPARK-031 is diagnostic only and cannot mutate state,
+  select a branch, repair a transition, or perturb attention.
 - **Confidence-bound overthinking guard**: an ordinary scalar verifier remains
   ranking-only. A branch can promote a state only from independently committed
   deterministic-exact evidence or a calibrated interval with at least eight

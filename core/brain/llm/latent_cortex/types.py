@@ -489,6 +489,10 @@ class CortexConfig:
     # task-disjoint, OOD-admitted artifact and exact SHA-256. Localization is
     # diagnostic in SPARK-029 and cannot authorize repair steering.
     mistake_locator: dict[str, Any] | None = None
+    # Full-trace, latent-position contradiction evidence. Learned mode
+    # requires a disjoint ID/OOD-admitted artifact and exact SHA-256.
+    # SPARK-031 remains diagnostic and cannot perturb attention.
+    contradiction_head: dict[str, Any] | None = None
     # Checked historical branch-error correlations. None is an explicit
     # bootstrap state: duplicate programs still collapse, but no empirical
     # relationship is invented before independently graded paired outcomes.
@@ -862,6 +866,49 @@ class CortexConfig:
                     problems.append(
                         f"mistake_locator has unknown keys: {sorted(unknown)}"
                     )
+        if self.contradiction_head is not None:
+            if not isinstance(self.contradiction_head, dict):
+                problems.append("contradiction_head must be a mapping or null")
+            else:
+                mode = self.contradiction_head.get("mode", "unavailable")
+                if mode not in {"unavailable", "learned"}:
+                    problems.append(
+                        "contradiction_head.mode must be unavailable or learned"
+                    )
+                head_path = self.contradiction_head.get("head_path")
+                head_sha256 = self.contradiction_head.get("head_sha256")
+                if mode == "learned" and (
+                    not isinstance(head_path, str) or not head_path.strip()
+                ):
+                    problems.append(
+                        "contradiction_head.learned requires head_path"
+                    )
+                if mode == "learned" and (
+                    not isinstance(head_sha256, str)
+                    or len(head_sha256) != 64
+                    or any(
+                        character not in "0123456789abcdef"
+                        for character in head_sha256
+                    )
+                ):
+                    problems.append(
+                        "contradiction_head.learned requires head_sha256"
+                    )
+                if mode == "unavailable" and (
+                    head_path is not None or head_sha256 is not None
+                ):
+                    problems.append(
+                        "contradiction_head.unavailable cannot carry a head"
+                    )
+                unknown = set(self.contradiction_head) - {
+                    "mode",
+                    "head_path",
+                    "head_sha256",
+                }
+                if unknown:
+                    problems.append(
+                        f"contradiction_head has unknown keys: {sorted(unknown)}"
+                    )
         if self.escape is not None:
             if not isinstance(self.escape, dict):
                 problems.append("escape must be a mapping or null")
@@ -1193,6 +1240,9 @@ class EpisodeReceipt:
     # Full-sequence, hidden-trace-only premise/conclusion reflection. This
     # critic is non-causal in context access and read-only in authority.
     bidirectional_reflector: dict[str, Any] = field(default_factory=dict)
+    # Calibrated transition-by-latent-position contradiction evidence over
+    # the reflected trace. It is diagnostic until SPARK-032.
+    contradiction_tensor: dict[str, Any] = field(default_factory=dict)
     # Neural-bytecode trace: one event per non-window instruction the
     # schedule program executed (exchange/savepoint/verify_probe outcomes,
     # probe scores, backtracks). Empty for plain window programs.
@@ -1407,6 +1457,7 @@ class EpisodeReceipt:
             "neural_uncertainty": dict(self.neural_uncertainty),
             "mistake_locator": dict(self.mistake_locator),
             "bidirectional_reflector": dict(self.bidirectional_reflector),
+            "contradiction_tensor": dict(self.contradiction_tensor),
             "bytecode_events": [dict(row) for row in self.bytecode_events],
             "value_of_computation": dict(self.value_of_computation),
             "cognitive_action_trace": [

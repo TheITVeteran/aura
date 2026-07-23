@@ -1597,6 +1597,7 @@ class LatentCortexEngine:
         update_gate = self._resolve_update_gate()
         uncertainty_runtime = self._resolve_uncertainty_head()
         mistake_locator_runtime = self._resolve_mistake_locator()
+        contradiction_runtime = self._resolve_contradiction_head()
         for branch in ensemble.branches:
             branch.update_gate = update_gate
             branch.uncertainty_runtime = uncertainty_runtime
@@ -2397,6 +2398,16 @@ class LatentCortexEngine:
                 budget=budget,
             )
         )
+        from core.brain.llm.latent_cortex.contradiction_tensor import (
+            build_contradiction_tensor_receipt,
+        )
+
+        receipt.contradiction_tensor = build_contradiction_tensor_receipt(
+            reflector=receipt.bidirectional_reflector,
+            runtime=contradiction_runtime,
+            selected_branch=winner.index,
+            budget=budget,
+        )
         from core.brain.llm.latent_cortex.neural_uncertainty import (
             build_neural_uncertainty_receipt,
         )
@@ -3100,6 +3111,36 @@ class LatentCortexEngine:
             return cached[1]
         runtime = MistakeLocatorRuntime.from_config(config)
         self._mistake_locator_cache = (cache_key, runtime)
+        return runtime
+
+    def _resolve_contradiction_head(self):
+        """Load the pinned, full-trace contradiction tensor head."""
+
+        from core.brain.llm.latent_cortex.contradiction_tensor import (
+            ContradictionTensorRuntime,
+        )
+
+        config = self.config.contradiction_head
+        if not config or str(config.get("mode", "unavailable")) == "unavailable":
+            return ContradictionTensorRuntime.from_config(config)
+        path = Path(str(config.get("head_path", ""))).expanduser()
+        try:
+            stat = path.stat()
+        except OSError as exc:
+            raise ValueError(
+                f"learned contradiction tensor requested but head is unreadable: {path}"
+            ) from exc
+        cache_key = (
+            str(path),
+            str(config.get("head_sha256", "")),
+            stat.st_mtime_ns,
+            stat.st_size,
+        )
+        cached = getattr(self, "_contradiction_head_cache", None)
+        if cached is not None and cached[0] == cache_key:
+            return cached[1]
+        runtime = ContradictionTensorRuntime.from_config(config)
+        self._contradiction_head_cache = (cache_key, runtime)
         return runtime
 
     # ── Fast-weight helpers ─────────────────────────────────────────────

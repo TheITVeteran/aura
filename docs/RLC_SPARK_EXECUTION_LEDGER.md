@@ -903,9 +903,52 @@ before those dependencies close is not admissible.
   closes the complete-trace representation boundary only. It does not call the
   deterministic sketch a correctness model; calibrated contradiction evidence
   and any downstream authority remain SPARK-031 and SPARK-032 work.
-- [ ] **SPARK-031 - Contradiction tensor.** Produce calibrated token/step-level
+- [x] **SPARK-031 - Contradiction tensor.** Produce calibrated token/step-level
   contradiction evidence, train on controlled mutations, and prove localization
   on middle-of-trace and long-context failures.
+
+  The complete-trace reflector now preserves a second bounded representation
+  at every recurrent latent sequence position. Each position sketch uses
+  `asinh`-stabilized block means and RMS values in which every hidden dimension
+  contributes. The receipt calls these latent workspace sequence positions,
+  never decoded text-token indices. This closes the position-level evidence
+  requirement without falsely claiming alignment to private chain-of-thought
+  text or generated answer tokens.
+
+  A pinned two-layer contradiction head consumes the exact shared
+  training/runtime feature map for every transition-by-position cell. Its
+  reconstructable channels cover local discontinuity, rejected-admission gap,
+  premise, conclusion, prefix, suffix, and whole-trajectory conflict. Cell
+  probabilities and per-step probabilities have independent temperature
+  calibration; taking the maximum calibrated cell is not mislabeled as a
+  calibrated step score. Admission includes cell and step AUC, Brier, and ECE,
+  exact cell/step localization, within-one-step accuracy, no-error specificity,
+  middle-of-trace accuracy, long-context error accuracy, and long-context sham
+  specificity.
+
+  Training requires complete transition-by-position tensors, split-disjoint
+  task and trace identities, unique trace/mutation receipts, and a bound
+  outcome-verifier identity. Train and in-domain calibration tasks are
+  disjoint, out-of-domain tasks are disjoint again, and OOD domains cannot
+  overlap the train/ID domains. Every split must
+  contain controlled mutation families, independently committed sham traces,
+  middle failures, long-context failures, and long-context no-error controls.
+  Aggregate and per-domain floors decide admission; an unadmitted artifact
+  cannot load.
+
+  Learned mode is exact-SHA pinned, bounded, no-follow loaded, independently
+  reconstructed by the service, and metered. A rehashed probability or
+  authority lie is rejected. Unavailable mode emits no synthetic probability
+  and avoids hidden feature-computation cost. The live tensor cannot mutate
+  state, select a branch, repair a transition, or perturb attention. SPARK-032
+  must earn any bounded causal influence separately.
+
+  Controlled-mutation, task/trace/evidence separation, OOD, middle/long,
+  calibration, artifact, future-lesion, tamper, unavailable-mode, real
+  tiny-Qwen, resource, configuration, and service tests pass. This proves the
+  mechanism and falsifiable admission path. No resident-32B artifact or broad
+  outcome campaign ran, so live utility and frontier reasoning gains remain
+  unproven.
 - [ ] **SPARK-032 - Attention/KV perturber.** Translate localized contradiction
   evidence into bounded, receipt-bearing changes to attention geometry or
   latent state at affected positions; include matched-random and no-op controls.
@@ -1285,3 +1328,38 @@ count completion is approximately 55.3%-86.9%, with a midpoint planning
 estimate of 67.6%. Next: publish CP344, then implement SPARK-031's calibrated
 contradiction tensor over the reflected trace. Final multi-hour soaks remain
 deferred until every shorter gate is green.
+
+CP345 closes SPARK-031's calibrated transition-by-latent-position contradiction
+tensor. The reflector now preserves bounded position evidence, and the learned
+head compares every cell against local, premise, conclusion, prefix, suffix,
+and trajectory context. Cell and step probabilities are calibrated
+independently. Admission requires complete controlled-mutation and sham tensors,
+disjoint task/trace/evidence identities, genuine OOD domains, middle and
+long-context support, aggregate and per-domain localization floors, and
+calibration bounds.
+
+The worker and service reconstruct every channel, feature commitment,
+probability, aggregate, source binding, and non-authority claim. Exact-SHA,
+no-follow artifact loading fails closed. Unavailable mode emits no probability
+and performs no hidden scoring work. SPARK-031 grants no state, selection,
+repair, or attention authority; SPARK-032 remains the bounded perturbation
+milestone.
+
+CP345 validation passes the focused controlled-mutation/tensor/reflector/service
+boundary 108/108 and the affected engine, update, locator, uncertainty, escape,
+resource, worker-origin, and wiring gate 227/227 in 120.93 seconds. The final
+fixed-snapshot RLC, latent-cortex, recurrence/training, global-workspace, GWT,
+and execution-controller ownership gate passes 1372/1372 in 715.81 seconds.
+Strict focused Ruff, bytecode compilation, and `git diff --check` pass.
+The effect-ownership baseline selectively records the contradiction artifact's
+reviewed atomic write and stable no-follow descriptor read. Repository-wide
+governance lint remains non-green at the same 49 unrelated/concurrent
+regressions and 13 stale buckets present before this checkpoint; CP345 does not
+absorb that drift or call the global gate green.
+
+This is total checkpoint record 406. The revised forecast remains 466-733 total
+records, now approximately 60-327 records after this checkpoint. Checkpoint-
+count completion is approximately 55.4%-87.1%, with a midpoint planning
+estimate of 67.7%. Next: publish CP345, then implement SPARK-032's bounded,
+counterfactually verified contradiction-driven perturbation. Final multi-hour
+soaks remain deferred until every shorter gate is green.

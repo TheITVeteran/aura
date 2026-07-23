@@ -584,6 +584,8 @@ class BranchEnsemble:
             )
             state_width = int(reasoning_post_state.shape[-1])
             sketch_width = 2 * min(64, state_width)
+            position_count = int(reasoning_post_state.shape[-2])
+            position_sketch_width = 2 * min(8, state_width)
             budget.charge_tensor_work(
                 "bidirectional_reflector_capture",
                 element_reads=(
@@ -595,7 +597,11 @@ class BranchEnsemble:
                     int(reasoning_pre_state.size)
                     + int(proposal_reasoning_state.size)
                     + int(reasoning_post_state.size)
-                    + 6 * sketch_width
+                    + 6
+                    * (
+                        sketch_width
+                        + position_count * position_sketch_width
+                    )
                 ),
             )
             if (

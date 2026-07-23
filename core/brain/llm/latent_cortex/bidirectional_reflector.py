@@ -15,6 +15,8 @@ BIDIRECTIONAL_REFLECTOR_RECEIPT_SCHEMA = (
 REFLECTOR_OBSERVATION_SCHEMA = "aura.rlc.reflector_transition_observation.v1"
 MAX_STATE_WIDTH = 16_384
 MAX_BUCKETS = 64
+MAX_SLOT_BUCKETS = 8
+MAX_SLOTS = 64
 MAX_TRANSITIONS = 256
 
 
@@ -37,6 +39,8 @@ def _finite_vector(
     *,
     width: int | None = None,
 ) -> list[float]:
+    if not isinstance(value, (str, bytes)) and hasattr(value, "tolist"):
+        value = value.tolist()
     if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
         raise ValueError("reflector hidden vector must be a sequence")
     vector = [round(float(item), 8) for item in value]
@@ -69,6 +73,29 @@ def _hidden_sketch(value: Sequence[float]) -> list[float]:
     return means + rms_values
 
 
+def _slot_sketch(value: Sequence[float]) -> list[float]:
+    vector = [math.asinh(item) for item in _finite_vector(value)]
+    width = len(vector)
+    buckets = min(MAX_SLOT_BUCKETS, width)
+    means: list[float] = []
+    rms_values: list[float] = []
+    for index in range(buckets):
+        start = index * width // buckets
+        end = (index + 1) * width // buckets
+        block = vector[start:end]
+        means.append(round(sum(block) / len(block), 8))
+        rms_values.append(
+            round(math.sqrt(sum(item * item for item in block) / len(block)), 8)
+        )
+    return means + rms_values
+
+
+def position_hidden_sketch(value: Sequence[float]) -> list[float]:
+    """Public training/runtime map for one latent sequence position."""
+
+    return _slot_sketch(value)
+
+
 def _pooled_hidden(state: Any) -> list[float]:
     import mlx.core as mx
 
@@ -85,6 +112,29 @@ def _pooled_hidden(state: Any) -> list[float]:
     return _finite_vector(pooled.tolist())
 
 
+def _position_hidden(state: Any) -> list[list[float]]:
+    import mlx.core as mx
+
+    if (
+        state.ndim < 2
+        or not 1 <= int(state.shape[-2]) <= MAX_SLOTS
+        or not 1 <= int(state.shape[-1]) <= MAX_STATE_WIDTH
+        or not bool(mx.all(mx.isfinite(state)).item())
+    ):
+        raise ValueError("reflector position state is incompatible or non-finite")
+    axes = tuple(range(state.ndim - 2))
+    positions = (
+        mx.mean(state.astype(mx.float32), axis=axes)
+        if axes
+        else state.astype(mx.float32)
+    )
+    mx.eval(positions)
+    values = positions.tolist()
+    if not isinstance(values, list) or len(values) != int(state.shape[-2]):
+        raise ValueError("reflector position state is invalid")
+    return [_finite_vector(row, width=int(state.shape[-1])) for row in values]
+
+
 def observe_reflector_vectors(
     prior_hidden: Sequence[float],
     proposal_hidden: Sequence[float],
@@ -96,6 +146,9 @@ def observe_reflector_vectors(
     proposal_state_sha256: str,
     admitted_state_sha256: str,
     accepted: bool,
+    prior_positions: Sequence[Sequence[float]] | None = None,
+    proposal_positions: Sequence[Sequence[float]] | None = None,
+    admitted_positions: Sequence[Sequence[float]] | None = None,
 ) -> dict[str, Any]:
     if (
         type(branch_index) is not int
@@ -119,12 +172,45 @@ def observe_reflector_vectors(
     prior_sketch = _hidden_sketch(prior)
     proposal_sketch = _hidden_sketch(proposal)
     admitted_sketch = _hidden_sketch(admitted)
+    prior_rows = (
+        [prior] if prior_positions is None else list(prior_positions)
+    )
+    proposal_rows = (
+        [proposal]
+        if proposal_positions is None
+        else list(proposal_positions)
+    )
+    admitted_rows = (
+        [admitted]
+        if admitted_positions is None
+        else list(admitted_positions)
+    )
+    if (
+        not 1 <= len(prior_rows) <= MAX_SLOTS
+        or len(proposal_rows) != len(prior_rows)
+        or len(admitted_rows) != len(prior_rows)
+    ):
+        raise ValueError("reflector position coverage differs")
+    prior_position_sketches = [
+        _slot_sketch(_finite_vector(row, width=len(prior))) for row in prior_rows
+    ]
+    proposal_position_sketches = [
+        _slot_sketch(_finite_vector(row, width=len(prior)))
+        for row in proposal_rows
+    ]
+    admitted_position_sketches = [
+        _slot_sketch(_finite_vector(row, width=len(prior)))
+        for row in admitted_rows
+    ]
+    position_sketch_width = len(prior_position_sketches[0])
     payload = {
         "schema": REFLECTOR_OBSERVATION_SCHEMA,
         "branch_index": branch_index,
         "branch_step": branch_step,
         "state_width": len(prior),
         "sketch_width": len(prior_sketch),
+        "position_count": len(prior_rows),
+        "position_sketch_width": position_sketch_width,
         "prior_reasoning_sha256": prior_state_sha256,
         "proposal_reasoning_sha256": proposal_state_sha256,
         "admitted_reasoning_sha256": admitted_state_sha256,
@@ -135,6 +221,18 @@ def observe_reflector_vectors(
         "proposal_sketch_sha256": _vector_sha256(proposal_sketch),
         "admitted_sketch": admitted_sketch,
         "admitted_sketch_sha256": _vector_sha256(admitted_sketch),
+        "prior_position_sketches": prior_position_sketches,
+        "prior_position_sketches_sha256": canonical_sha256(
+            prior_position_sketches
+        ),
+        "proposal_position_sketches": proposal_position_sketches,
+        "proposal_position_sketches_sha256": canonical_sha256(
+            proposal_position_sketches
+        ),
+        "admitted_position_sketches": admitted_position_sketches,
+        "admitted_position_sketches_sha256": canonical_sha256(
+            admitted_position_sketches
+        ),
     }
     return {**payload, "observation_sha256": canonical_sha256(payload)}
 
@@ -149,6 +247,9 @@ def observe_reflector_transition(
         _pooled_hidden(prior_state),
         _pooled_hidden(proposal_state),
         _pooled_hidden(admitted_state),
+        prior_positions=_position_hidden(prior_state),
+        proposal_positions=_position_hidden(proposal_state),
+        admitted_positions=_position_hidden(admitted_state),
         **identity,
     )
 
@@ -261,6 +362,8 @@ def _validate_observation(
         "branch_step",
         "state_width",
         "sketch_width",
+        "position_count",
+        "position_sketch_width",
         "prior_reasoning_sha256",
         "proposal_reasoning_sha256",
         "admitted_reasoning_sha256",
@@ -271,6 +374,12 @@ def _validate_observation(
         "proposal_sketch_sha256",
         "admitted_sketch",
         "admitted_sketch_sha256",
+        "prior_position_sketches",
+        "prior_position_sketches_sha256",
+        "proposal_position_sketches",
+        "proposal_position_sketches_sha256",
+        "admitted_position_sketches",
+        "admitted_position_sketches_sha256",
         "observation_sha256",
     }
     if not isinstance(value, Mapping) or set(value) != fields:
@@ -294,6 +403,10 @@ def _validate_observation(
         or type(row["sketch_width"]) is not int
         or row["sketch_width"]
         != 2 * min(MAX_BUCKETS, row["state_width"])
+        or type(row["position_count"]) is not int
+        or not 1 <= row["position_count"] <= MAX_SLOTS
+        or row["position_sketch_width"]
+        != 2 * min(MAX_SLOT_BUCKETS, row["state_width"])
     ):
         raise ValueError("reflector observation identity is invalid")
     for prefix in ("prior", "proposal", "admitted"):
@@ -305,6 +418,24 @@ def _validate_observation(
             or row[f"{prefix}_sketch_sha256"] != _vector_sha256(vector)
         ):
             raise ValueError("reflector observation sketch is invalid")
+        positions = row[f"{prefix}_position_sketches"]
+        if (
+            not isinstance(positions, list)
+            or len(positions) != row["position_count"]
+            or any(
+                not isinstance(position, list)
+                or len(position) != row["position_sketch_width"]
+                or _finite_vector(
+                    position,
+                    width=row["position_sketch_width"],
+                )
+                != position
+                for position in positions
+            )
+            or row[f"{prefix}_position_sketches_sha256"]
+            != canonical_sha256(positions)
+        ):
+            raise ValueError("reflector position sketches are invalid")
     if (
         row["accepted"]
         and row["proposal_reasoning_sha256"] != row["admitted_reasoning_sha256"]
@@ -346,10 +477,16 @@ def build_bidirectional_reflector_receipt(
         )
         if budget is not None:
             sketch_width = int(observations[0]["sketch_width"])
+            position_width = int(observations[0]["position_sketch_width"])
+            position_count = int(observations[0]["position_count"])
             budget.charge_tensor_work(
                 "bidirectional_reflector_review",
-                element_reads=len(observations) * 3 * sketch_width,
-                host_scalar_ops=len(observations) * 24 * sketch_width,
+                element_reads=len(observations)
+                * 3
+                * (sketch_width + position_count * position_width),
+                host_scalar_ops=len(observations)
+                * 24
+                * (sketch_width + position_count * position_width),
             )
     payload = {
         "schema": BIDIRECTIONAL_REFLECTOR_RECEIPT_SCHEMA,
@@ -524,5 +661,6 @@ __all__ = [
     "build_bidirectional_reflector_receipt",
     "observe_reflector_transition",
     "observe_reflector_vectors",
+    "position_hidden_sketch",
     "validate_bidirectional_reflector_receipt",
 ]

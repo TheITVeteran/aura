@@ -804,14 +804,36 @@ class LatentCortexService:
             from core.brain.llm.latent_cortex.bidirectional_reflector import (
                 validate_bidirectional_reflector_receipt,
             )
+            from core.brain.llm.latent_cortex.worker_handler import config_from_job
+
+            executed_config = config_from_job(config)
 
             validate_bidirectional_reflector_receipt(
                 receipt.get("bidirectional_reflector"),
                 update_acceptance=receipt.get("update_acceptance"),
-                expected_n_branches=int(config.get("n_branches") or 0),
+                expected_n_branches=executed_config.branches.n_branches,
             )
         except (ImportError, TypeError, ValueError):
             errors.append("bidirectional_reflector_unproven")
+        try:
+            from core.brain.llm.latent_cortex.contradiction_tensor import (
+                ContradictionTensorRuntime,
+                validate_contradiction_tensor_receipt,
+            )
+            from core.brain.llm.latent_cortex.worker_handler import config_from_job
+
+            executed_config = config_from_job(config)
+            expected_contradiction = ContradictionTensorRuntime.from_config(
+                executed_config.contradiction_head
+            )
+            validate_contradiction_tensor_receipt(
+                receipt.get("contradiction_tensor"),
+                expected_runtime=expected_contradiction,
+                reflector=receipt.get("bidirectional_reflector"),
+                expected_n_branches=executed_config.branches.n_branches,
+            )
+        except (ImportError, OSError, TypeError, ValueError):
+            errors.append("contradiction_tensor_unproven")
         try:
             from core.brain.llm.latent_cortex.neural_uncertainty import (
                 NeuralUncertaintyRuntime,
@@ -827,7 +849,7 @@ class LatentCortexService:
                 receipt.get("neural_uncertainty"),
                 expected_runtime=expected_uncertainty,
                 update_acceptance=receipt.get("update_acceptance"),
-                expected_n_branches=int(config.get("n_branches") or 0),
+                expected_n_branches=executed_config.branches.n_branches,
             )
         except (ImportError, OSError, TypeError, ValueError):
             errors.append("neural_uncertainty_unproven")
@@ -846,7 +868,7 @@ class LatentCortexService:
                 receipt.get("mistake_locator"),
                 expected_runtime=expected_locator,
                 update_acceptance=receipt.get("update_acceptance"),
-                expected_n_branches=int(config.get("n_branches") or 0),
+                expected_n_branches=executed_config.branches.n_branches,
             )
         except (ImportError, OSError, TypeError, ValueError):
             errors.append("mistake_locator_unproven")

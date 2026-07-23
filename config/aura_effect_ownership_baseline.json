@@ -201,6 +201,14 @@
       "scope": "<module>.MistakeLocatorHead.save"
     },
     {
+      "callee": "core.runtime.atomic_writer.atomic_write_bytes",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/learning/contradiction_tensor.py",
+      "scope": "<module>.ContradictionTensorHead.save"
+    },
+    {
       "callee": "core.runtime.atomic_writer.atomic_write_text",
       "canonical_owner": false,
       "category": "direct_atomic_file_write",
@@ -5911,6 +5919,14 @@
       "count": 1,
       "path": "core/learning/mistake_locator.py",
       "scope": "<module>.MistakeLocatorHead.load"
+    },
+    {
+      "callee": "os.open",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/contradiction_tensor.py",
+      "scope": "<module>.ContradictionTensorHead.load"
     },
     {
       "callee": "shutil.copy2",
@@ -14298,6 +14314,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "fd52dd0cfc79bca1c936ef9412ed0ce8717fbf988f4d59f3b529dcc88aa644f0",
+  "inventory_sha256": "83958dab2fd3e4716d913398a81e8f8fdd33fba992d4ef70d5bc79a3b8cf8c89",
   "schema_version": 1
 }

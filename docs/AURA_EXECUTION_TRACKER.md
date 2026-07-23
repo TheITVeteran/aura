@@ -26143,3 +26143,64 @@ approximately 61-328 records remaining, 55.3%-86.9% checkpoint-count completion,
 and a 67.6% midpoint planning estimate. Next: publish CP344, then implement
 SPARK-031's calibrated contradiction tensor over the reflected trace. Final
 multi-hour soaks remain deferred until every shorter gate is green.
+
+## Checkpoint 2026-07-23-345: Contradictions Have Calibrated Coordinates
+
+The complete-trace reflector now retains a bounded sketch for every recurrent
+latent sequence position as well as the pooled branch state. Each sketch uses
+numerically stabilized block means and RMS values, with every hidden dimension
+contributing. Receipts label these as latent workspace positions rather than
+decoded text-token indices; no private reasoning text or final answer enters
+the measurement.
+
+A new pinned contradiction head scores every transition-by-position cell
+against its local update, admitted path, initial premise, final conclusion,
+prefix context, suffix context, and whole-trajectory consistency. It emits
+named reconstructable channels plus a calibrated cell probability. Step
+probabilities have an independently fitted temperature: a maximum over
+calibrated cells is not passed off as a calibrated aggregate.
+
+Artifact admission requires complete controlled-mutation and sham tensors,
+split-disjoint task and trace identities, unique trace/mutation receipts, bound
+outcome-verifier identity, disjoint train and in-domain tasks, domain-disjoint
+out-of-domain tasks, multiple mutation families, middle-of-trace errors,
+long-context errors, and long-context no-error controls. Aggregate and
+per-domain exact localization, within-one, specificity, AUC, Brier, and ECE
+gates decide admission. Unadmitted, changed, oversize, irregular, or symlinked
+artifacts cannot load.
+
+The worker binds the tensor to the exact reflector receipt and meters learned
+inference. The service reconstructs every feature commitment, evidence
+channel, cell probability, independently calibrated step probability,
+candidate, and authority flag. Unavailable mode emits no probability and does
+no hidden scoring work. A default-config regression also closes a service bug
+where omitted `n_branches` was interpreted as zero instead of the executed
+default of two.
+
+Validation: controlled mutation, complete tensor, split/evidence independence,
+genuine OOD, middle/long-context, cell/step calibration, artifact pin/load,
+future-only lesion, tamper, unavailable-mode, real tiny-Qwen, resource,
+configuration, and service contracts pass 108/108. The affected engine, update,
+locator, uncertainty, escape, resource, worker-origin, and wiring gate passes
+227/227 in 120.93 seconds. The final fixed-snapshot RLC, latent-cortex,
+recurrence/training, global-workspace, GWT, and execution-controller ownership
+gate passes 1372/1372 in 715.81 seconds. Strict focused Ruff, bytecode
+compilation, and `git diff --check` pass.
+The effect-ownership baseline selectively records only the contradiction
+artifact's reviewed atomic write and stable no-follow descriptor read.
+Repository-wide governance lint remains non-green at the pre-existing 49
+unrelated/concurrent regressions and 13 stale buckets; this checkpoint neither
+absorbs that drift nor calls the global gate green.
+
+SPARK-031 closes only calibrated diagnostic evidence. The tensor cannot mutate
+state, select a branch, repair a step, or perturb attention; SPARK-032 must
+prove bounded causal influence separately. No resident-32B artifact or broad
+outcome campaign ran, so live utility, adapter/RLC positive interaction,
+reasoning gain, and frontier capability remain unproven.
+
+This is total checkpoint record 406. The forecast remains 466-733 total records,
+approximately 60-327 records remaining, 55.4%-87.1% checkpoint-count
+completion, and a 67.7% midpoint planning estimate. Next: publish CP345, then
+implement SPARK-032's bounded counterfactually verified contradiction-driven
+perturbation. Final multi-hour soaks remain deferred until every shorter gate
+is green.

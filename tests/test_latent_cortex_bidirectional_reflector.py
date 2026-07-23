@@ -6,6 +6,7 @@ import copy
 import hashlib
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 mx = pytest.importorskip("mlx.core")
@@ -184,6 +185,31 @@ def test_extreme_finite_proposal_is_bounded_for_escape_diagnostics():
     assert all(
         abs(value) < 1_000.0 for value in observation["proposal_sketch"]
     )
+
+
+def test_array_backed_position_sequences_are_unambiguous():
+    prior_hash = _digest("array-prior")
+    proposal_hash = _digest("array-proposal")
+    positions = np.asarray(
+        ((0.0, 0.1, 0.2), (0.3, 0.4, 0.5)),
+        dtype=np.float64,
+    )
+    observation = observe_reflector_vectors(
+        (0.15, 0.25, 0.35),
+        (0.20, 0.30, 0.40),
+        (0.20, 0.30, 0.40),
+        branch_index=0,
+        branch_step=0,
+        prior_state_sha256=prior_hash,
+        proposal_state_sha256=proposal_hash,
+        admitted_state_sha256=proposal_hash,
+        accepted=True,
+        prior_positions=positions,
+        proposal_positions=positions + 0.05,
+        admitted_positions=positions + 0.05,
+    )
+    assert observation["position_count"] == 2
+    assert len(observation["proposal_position_sketches"]) == 2
 
 
 class _Tokenizer:
