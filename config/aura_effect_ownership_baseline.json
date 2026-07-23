@@ -193,6 +193,14 @@
       "scope": "<module>.ComputerUseSkill._run_applescript"
     },
     {
+      "callee": "core.runtime.atomic_writer.atomic_write_bytes",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/learning/mistake_locator.py",
+      "scope": "<module>.MistakeLocatorHead.save"
+    },
+    {
       "callee": "core.runtime.atomic_writer.atomic_write_text",
       "canonical_owner": false,
       "category": "direct_atomic_file_write",
@@ -1383,6 +1391,14 @@
       "count": 2,
       "path": "core/learning/model_merge.py",
       "scope": "<module>.transplant_model_dirs_streaming"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.atomic_write_bytes",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/learning/neural_uncertainty.py",
+      "scope": "<module>.NeuralUncertaintyHead.save"
     },
     {
       "callee": "core.runtime.atomic_writer.atomic_write_text",
@@ -5889,6 +5905,14 @@
       "scope": "<module>.ImmuneSystem.__init__"
     },
     {
+      "callee": "os.open",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/mistake_locator.py",
+      "scope": "<module>.MistakeLocatorHead.load"
+    },
+    {
       "callee": "shutil.copy2",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -8967,6 +8991,14 @@
       "count": 1,
       "path": "core/learning/model_merge.py",
       "scope": "<module>.transplant_model_dirs_streaming"
+    },
+    {
+      "callee": "os.open",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/neural_uncertainty.py",
+      "scope": "<module>.NeuralUncertaintyHead.load"
     },
     {
       "callee": "data_dir.mkdir",
@@ -14266,6 +14298,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "3a34ad21521d1d8ee992f4e6e409ddd16eebd844c0271d913c0fb28ebfd0671d",
+  "inventory_sha256": "fd52dd0cfc79bca1c936ef9412ed0ce8717fbf988f4d59f3b529dcc88aa644f0",
   "schema_version": 1
 }

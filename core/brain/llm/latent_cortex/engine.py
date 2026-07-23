@@ -1596,9 +1596,11 @@ class LatentCortexEngine:
                 branch.halting.stop_gate = stop_gate
         update_gate = self._resolve_update_gate()
         uncertainty_runtime = self._resolve_uncertainty_head()
+        mistake_locator_runtime = self._resolve_mistake_locator()
         for branch in ensemble.branches:
             branch.update_gate = update_gate
             branch.uncertainty_runtime = uncertainty_runtime
+            branch.mistake_locator_runtime = mistake_locator_runtime
         if ensemble.branches and ensemble.branches[0].workspace.context_slots:
             seeded = ensemble.branches[0].workspace.context_slots
             from core.brain.llm.latent_cortex.cognitive_context import (
@@ -2394,6 +2396,16 @@ class LatentCortexEngine:
             selected_branch=winner.index,
             selection_basis=selection_basis,
         )
+        from core.brain.llm.latent_cortex.mistake_locator import (
+            build_mistake_locator_receipt,
+        )
+
+        receipt.mistake_locator = build_mistake_locator_receipt(
+            branches=list(ensemble.branches),
+            runtime=mistake_locator_runtime,
+            update_acceptance=receipt.update_acceptance,
+            selected_branch=winner.index,
+        )
         escape_receipts: dict[str, Any] = {}
         for branch in ensemble.branches:
             if branch.escape is not None and branch.escape.attempts:
@@ -3046,6 +3058,36 @@ class LatentCortexEngine:
             return cached[1]
         runtime = NeuralUncertaintyRuntime.from_config(config)
         self._uncertainty_head_cache = (cache_key, runtime)
+        return runtime
+
+    def _resolve_mistake_locator(self):
+        """Load the pinned, OOD-admitted transition mistake locator."""
+
+        from core.brain.llm.latent_cortex.mistake_locator import (
+            MistakeLocatorRuntime,
+        )
+
+        config = self.config.mistake_locator
+        if not config or str(config.get("mode", "unavailable")) == "unavailable":
+            return MistakeLocatorRuntime.from_config(config)
+        path = Path(str(config.get("head_path", ""))).expanduser()
+        try:
+            stat = path.stat()
+        except OSError as exc:
+            raise ValueError(
+                f"learned mistake locator requested but head is unreadable: {path}"
+            ) from exc
+        cache_key = (
+            str(path),
+            str(config.get("head_sha256", "")),
+            stat.st_mtime_ns,
+            stat.st_size,
+        )
+        cached = getattr(self, "_mistake_locator_cache", None)
+        if cached is not None and cached[0] == cache_key:
+            return cached[1]
+        runtime = MistakeLocatorRuntime.from_config(config)
+        self._mistake_locator_cache = (cache_key, runtime)
         return runtime
 
     # ── Fast-weight helpers ─────────────────────────────────────────────

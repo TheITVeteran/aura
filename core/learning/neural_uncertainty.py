@@ -150,15 +150,28 @@ def _sigmoid(values: np.ndarray) -> np.ndarray:
 
 
 def _auc(probabilities: np.ndarray, labels: np.ndarray) -> float:
-    positives = probabilities[labels == 1.0]
-    negatives = probabilities[labels == 0.0]
-    if not len(positives) or not len(negatives):
+    positive_count = int((labels == 1.0).sum())
+    negative_count = int((labels == 0.0).sum())
+    if not positive_count or not negative_count:
         return 0.0
-    comparisons = (
-        (positives[:, None] > negatives[None, :]).sum()
-        + 0.5 * (positives[:, None] == negatives[None, :]).sum()
-    )
-    return float(comparisons / (len(positives) * len(negatives)))
+    order = np.argsort(probabilities, kind="mergesort")
+    ordered_probabilities = probabilities[order]
+    ranks = np.empty(len(probabilities), dtype=np.float64)
+    start = 0
+    while start < len(order):
+        end = start + 1
+        while (
+            end < len(order)
+            and ordered_probabilities[end] == ordered_probabilities[start]
+        ):
+            end += 1
+        ranks[order[start:end]] = (start + 1 + end) / 2.0
+        start = end
+    positive_rank_sum = float(ranks[labels == 1.0].sum())
+    return (
+        positive_rank_sum
+        - positive_count * (positive_count + 1) / 2.0
+    ) / (positive_count * negative_count)
 
 
 def _classification_metrics(

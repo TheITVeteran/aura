@@ -75,6 +75,15 @@ changes the answer — that is the causality contract.
   When every branch has supported evidence and no admitted task verifier
   overrides it, the head causally selects the highest predicted-correctness
   branch; sparse bins abstain and preserve the convergence selector.
+- **Mistake localization**: a separately admitted two-layer head sees every
+  prior-to-proposal recurrent transition as prior state, proposal state,
+  signed delta, and absolute delta. Complete controlled-mutation traces train
+  it; fresh in-domain tasks calibrate it; genuinely unseen domains evaluate it.
+  Aggregate and per-domain exact-location, within-one, no-error, AUC, Brier,
+  and ECE gates must pass. Rejected proposals remain visible because the
+  locator scores the proposal while binding the update gate's admitted state
+  and disposition. Its receipt is reconstructable and metered, but SPARK-029
+  grants no repair, selection, attention, or decode authority.
 - **Confidence-bound overthinking guard**: an ordinary scalar verifier remains
   ranking-only. A branch can promote a state only from independently committed
   deterministic-exact evidence or a calibrated interval with at least eight

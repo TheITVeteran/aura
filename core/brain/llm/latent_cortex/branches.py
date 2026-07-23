@@ -131,6 +131,8 @@ class BranchState:
     verified_finalization: dict[str, Any] = field(default_factory=dict)
     uncertainty_runtime: Any = None
     uncertainty_trace: list[dict[str, Any]] = field(default_factory=list)
+    mistake_locator_runtime: Any = None
+    mistake_locator_trace: list[dict[str, Any]] = field(default_factory=list)
 
     def to_receipt(self) -> dict[str, Any]:
         receipt = {
@@ -587,6 +589,42 @@ class BranchEnsemble:
                         int(reasoning_post_state.size)
                         + int(reasoning_post_state.shape[-1]) * hidden_width
                         + hidden_width
+                    ),
+                )
+            if (
+                branch.mistake_locator_runtime is not None
+                and branch.mistake_locator_runtime.mode == "learned"
+            ):
+                branch.mistake_locator_trace.append(
+                    branch.mistake_locator_runtime.observe(
+                        reasoning_pre_state,
+                        proposal_reasoning_state,
+                        branch_index=branch.index,
+                        branch_step=branch.steps,
+                        prior_state_sha256=reasoning_pre_sha256,
+                        proposal_state_sha256=proposal_reasoning_sha256,
+                        admitted_state_sha256=reasoning_post_sha256,
+                        accepted=gate_decision.accepted,
+                    )
+                )
+                locator_head = branch.mistake_locator_runtime.head
+                locator_hidden = (
+                    0
+                    if locator_head is None
+                    else int(locator_head.input_weights.shape[1])
+                )
+                locator_features = int(reasoning_post_state.shape[-1]) * 4
+                budget.charge_tensor_work(
+                    "mistake_locator_head",
+                    element_reads=(
+                        int(reasoning_pre_state.size)
+                        + int(proposal_reasoning_state.size)
+                    ),
+                    host_scalar_ops=(
+                        int(reasoning_pre_state.size)
+                        + int(proposal_reasoning_state.size)
+                        + locator_features * locator_hidden
+                        + locator_hidden
                     ),
                 )
             branch.recurrent_grounding_trace.append(

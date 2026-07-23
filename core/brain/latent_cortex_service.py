@@ -820,6 +820,25 @@ class LatentCortexService:
         except (ImportError, OSError, TypeError, ValueError):
             errors.append("neural_uncertainty_unproven")
         try:
+            from core.brain.llm.latent_cortex.mistake_locator import (
+                MistakeLocatorRuntime,
+                validate_mistake_locator_receipt,
+            )
+            from core.brain.llm.latent_cortex.worker_handler import config_from_job
+
+            executed_config = config_from_job(config)
+            expected_locator = MistakeLocatorRuntime.from_config(
+                executed_config.mistake_locator
+            )
+            validate_mistake_locator_receipt(
+                receipt.get("mistake_locator"),
+                expected_runtime=expected_locator,
+                update_acceptance=receipt.get("update_acceptance"),
+                expected_n_branches=int(config.get("n_branches") or 0),
+            )
+        except (ImportError, OSError, TypeError, ValueError):
+            errors.append("mistake_locator_unproven")
+        try:
             from core.brain.llm.latent_cortex.stop_gate import (
                 StopGateRuntime,
                 validate_stop_gate_receipt,

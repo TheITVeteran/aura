@@ -110,6 +110,7 @@ _CONFIG_KEYS = {
     "halting",
     "probe_cache",
     "telemetry",
+    "mistake_locator",
     "uncertainty_head",
     "update_gate",
     "verifier_accept_non_regression",
@@ -272,6 +273,7 @@ def config_from_job(job_config: dict[str, Any] | None) -> CortexConfig:
         halting=raw.get("halting"),
         update_gate=raw.get("update_gate"),
         uncertainty_head=raw.get("uncertainty_head"),
+        mistake_locator=raw.get("mistake_locator"),
         branch_correlation_evidence=raw.get("branch_correlation_evidence"),
         critic_blind_spot_evidence=raw.get("critic_blind_spot_evidence"),
     )

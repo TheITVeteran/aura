@@ -485,6 +485,10 @@ class CortexConfig:
     # task-disjoint calibrated artifact and exact SHA-256. None/unavailable
     # emits no confidence rather than substituting generated self-report.
     uncertainty_head: dict[str, Any] | None = None
+    # Transition-level mistake localization. Learned mode requires a
+    # task-disjoint, OOD-admitted artifact and exact SHA-256. Localization is
+    # diagnostic in SPARK-029 and cannot authorize repair steering.
+    mistake_locator: dict[str, Any] | None = None
     # Checked historical branch-error correlations. None is an explicit
     # bootstrap state: duplicate programs still collapse, but no empirical
     # relationship is invented before independently graded paired outcomes.
@@ -817,6 +821,47 @@ class CortexConfig:
                     problems.append(
                         f"uncertainty_head has unknown keys: {sorted(unknown)}"
                     )
+        if self.mistake_locator is not None:
+            if not isinstance(self.mistake_locator, dict):
+                problems.append("mistake_locator must be a mapping or null")
+            else:
+                mode = self.mistake_locator.get("mode", "unavailable")
+                if mode not in {"unavailable", "learned"}:
+                    problems.append(
+                        "mistake_locator.mode must be unavailable or learned"
+                    )
+                head_path = self.mistake_locator.get("head_path")
+                head_sha256 = self.mistake_locator.get("head_sha256")
+                if mode == "learned" and (
+                    not isinstance(head_path, str) or not head_path.strip()
+                ):
+                    problems.append("mistake_locator.learned requires head_path")
+                if mode == "learned" and (
+                    not isinstance(head_sha256, str)
+                    or len(head_sha256) != 64
+                    or any(
+                        character not in "0123456789abcdef"
+                        for character in head_sha256
+                    )
+                ):
+                    problems.append(
+                        "mistake_locator.learned requires head_sha256"
+                    )
+                if mode == "unavailable" and (
+                    head_path is not None or head_sha256 is not None
+                ):
+                    problems.append(
+                        "mistake_locator.unavailable cannot carry a head"
+                    )
+                unknown = set(self.mistake_locator) - {
+                    "mode",
+                    "head_path",
+                    "head_sha256",
+                }
+                if unknown:
+                    problems.append(
+                        f"mistake_locator has unknown keys: {sorted(unknown)}"
+                    )
         if self.escape is not None:
             if not isinstance(self.escape, dict):
                 problems.append("escape must be a mapping or null")
@@ -1142,6 +1187,9 @@ class EpisodeReceipt:
     # Objective hidden-state correctness probability and predictive entropy.
     # Unavailable mode is explicit and emits no observations.
     neural_uncertainty: dict[str, Any] = field(default_factory=dict)
+    # Admitted transition-level localization evidence. It remains diagnostic
+    # until a separately proved repair-steering milestone grants authority.
+    mistake_locator: dict[str, Any] = field(default_factory=dict)
     # Neural-bytecode trace: one event per non-window instruction the
     # schedule program executed (exchange/savepoint/verify_probe outcomes,
     # probe scores, backtracks). Empty for plain window programs.
@@ -1354,6 +1402,7 @@ class EpisodeReceipt:
             "halting": dict(self.halting),
             "verified_best_state": dict(self.verified_best_state),
             "neural_uncertainty": dict(self.neural_uncertainty),
+            "mistake_locator": dict(self.mistake_locator),
             "bytecode_events": [dict(row) for row in self.bytecode_events],
             "value_of_computation": dict(self.value_of_computation),
             "cognitive_action_trace": [

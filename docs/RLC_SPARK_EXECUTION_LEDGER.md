@@ -816,9 +816,56 @@ before those dependencies close is not admissible.
   two-branch tests close the bounded mechanism boundary. The resident 32B has no
   trained/pinned uncertainty head yet, and external outcome trust roots remain
   part of SPARK-071; no broad utility or frontier claim is accepted here.
-- [ ] **SPARK-029 - Mistake locator.** Train a span/transition locator on
+- [x] **SPARK-029 - Mistake locator.** Train a span/transition locator on
   in-domain and out-of-domain subtle errors; evaluate location accuracy before
   using it to steer repair.
+
+  A model-width-aware two-layer transition head now scores the complete
+  prior-to-proposal change: pooled prior state, pooled proposal state, signed
+  delta, and absolute delta. It therefore observes a bad proposal even when
+  the update gate rejects it and preserves the exact prior state. Complete
+  trace examples bind unique example/trace/task identity, controlled-mutation
+  family, transition ordinal/count, objective error location or no-error
+  label, trace receipt, and independent verifier identity.
+
+  Training, in-domain calibration, and out-of-domain evaluation have disjoint
+  example, trace, and task sets. In-domain evaluation uses exactly the training
+  domain set on fresh tasks; OOD domains are disjoint. Every split requires
+  complete traces, error and no-error support, multiple tasks, mutation
+  families, and domains; every domain separately requires both positive and
+  negative traces. Only training data determines normalization and neural
+  weights. Temperature and decision threshold use the in-domain held-out split;
+  OOD evidence is never used for fitting or threshold selection.
+
+  Admission requires aggregate in-domain and OOD exact-location, error-only
+  exact, within-one, no-error specificity, transition AUC, Brier, and ECE
+  limits. Per-domain floors prevent an easy domain from hiding a failed one.
+  The artifact commits all three dataset/task/domain identities, aggregate and
+  per-domain evidence, model parameters, calibration, threshold, verdict, and
+  an explicit `repair_steering_authorized=false`. Dataset and parameter memory
+  are bounded; AUC uses rank statistics rather than a quadratic pair matrix.
+  Durable atomic publication and stable bounded no-follow loading require the
+  configured exact SHA-256 and refuse malformed, non-finite, changed,
+  unadmitted, symlinked, or wrong-width artifacts.
+
+  Every live recurrent proposal records prior/proposal/admitted commitments,
+  acceptance disposition, rounded hidden vectors and commitments, pinned head,
+  and reconstructed error probability. The receipt identifies the maximum
+  above-threshold suspect per branch and the selected branch's candidate, but
+  cannot steer state, repair, selection, attention, or decoding. The service
+  reloads the configured artifact and independently reconstructs every score,
+  source transition, candidate, aggregate, and non-authority boundary. Tensor
+  reads and neural/host operations are charged to the resource ledger.
+
+  Unit and real tiny-Qwen tests cover complete-trace/data-domain admission,
+  objective localization, failed-OOD refusal, artifact persistence and
+  tampering, symlink refusal, exact feature mapping, disabled non-invention,
+  rejected-proposal visibility, live transition coverage, resource accounting,
+  service reconstruction, and rehashed score/authority lies. This closes the
+  bounded locator mechanism only. No resident-32B locator dataset/artifact or
+  powered broad-domain campaign ran, and no repair authority is claimed before
+  SPARK-030 through SPARK-032 establish the critic, contradiction, and bounded
+  perturbation chain.
 - [ ] **SPARK-030 - Bidirectional hidden-state reflector.** Inspect the complete
   hidden trace with a non-causal critic that can compare premises and
   conclusions without reading only the final answer.
@@ -1154,3 +1201,31 @@ records, now approximately 63-330 records after this checkpoint. Checkpoint-
 count completion is approximately 55.0%-86.5%, with a midpoint planning
 estimate of 67.2%. Next: publish CP342, then implement SPARK-029's subtle
 mistake locator.
+
+CP343 closes the bounded transition-mistake locator. Complete controlled-
+mutation traces now train a prior-to-proposal neural head under task-disjoint
+in-domain calibration and genuinely domain-disjoint OOD evaluation. Aggregate
+and per-domain exact, within-one, no-error, discrimination, and calibration
+gates must pass before an artifact is admitted. Rejected proposals remain
+visible, while the locator is structurally forbidden from steering repair.
+The service independently reconstructs the entire live receipt.
+
+CP343 validation passes the focused artifact, live runtime, real tiny-Qwen, and
+service boundary 99/99 and the affected engine, branch, recurrence, update,
+uncertainty, resource, worker-origin, stop, verified-best, and wiring gate
+250/250 in 133.40 seconds. The final fixed-snapshot RLC, latent-cortex,
+recurrence/training,
+global-workspace, GWT, and execution-controller ownership gate passes 1351/1351
+in 701.66 seconds. Strict focused Ruff, bytecode compilation, and `git diff
+--check` pass.
+The effect-ownership baseline now records only the four reviewed locator and
+neural-uncertainty artifact read/write effects. Repository-wide governance
+lint remains non-green at 49 regressions and 13 stale buckets from concurrent
+unrelated work; CP343 does not absorb that drift or claim the global gate.
+
+This is total checkpoint record 404. The revised forecast remains 466-733 total
+records, now approximately 62-329 records after this checkpoint. Checkpoint-
+count completion is approximately 55.1%-86.7%, with a midpoint planning
+estimate of 67.4%. Next: publish CP343, then implement SPARK-030's complete-
+trace bidirectional reflector. Final multi-hour soaks remain deferred until
+every shorter gate is green.

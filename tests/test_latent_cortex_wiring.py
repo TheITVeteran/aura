@@ -206,6 +206,10 @@ def _recurrent_grounding_fields(config, *, steps=1):
     from core.brain.llm.latent_cortex.loop_stability import (
         build_loop_stability_receipt,
     )
+    from core.brain.llm.latent_cortex.mistake_locator import (
+        MistakeLocatorRuntime,
+        build_mistake_locator_receipt,
+    )
     from core.brain.llm.latent_cortex.neural_uncertainty import (
         NeuralUncertaintyRuntime,
         build_neural_uncertainty_receipt,
@@ -363,6 +367,7 @@ def _recurrent_grounding_fields(config, *, steps=1):
                     "fixed_depth": executed.recurrence.fixed_depth,
                 },
                 uncertainty_trace=[],
+                mistake_locator_trace=[],
             )
         )
     receipt = build_recurrent_grounding_receipt(
@@ -448,6 +453,12 @@ def _recurrent_grounding_fields(config, *, steps=1):
         selected_branch=0,
         selection_basis="convergence",
     )
+    mistake_locator_receipt = build_mistake_locator_receipt(
+        branches=branches,
+        runtime=MistakeLocatorRuntime.from_config(executed.mistake_locator),
+        update_acceptance=update_acceptance_receipt,
+        selected_branch=0,
+    )
     return {
         "cognitive_slots": [],
         "selected_branch": 0,
@@ -459,6 +470,7 @@ def _recurrent_grounding_fields(config, *, steps=1):
         "halting": halting_receipt,
         "verified_best_state": verified_best_receipt,
         "neural_uncertainty": neural_uncertainty_receipt,
+        "mistake_locator": mistake_locator_receipt,
         "cognitive_action_trace": [],
     }
 
@@ -586,6 +598,7 @@ def test_config_from_job_defaults_are_conservative():
     assert cfg.verifier_probe_max_tokens == 48
     assert cfg.verifier_accept_non_regression is False
     assert cfg.uncertainty_head is None
+    assert cfg.mistake_locator is None
     assert cfg.validate() == []
 
 
@@ -614,6 +627,17 @@ def test_config_from_job_rejects_out_of_band_requests():
         config_from_job(
             {
                 "uncertainty_head": {
+                    "mode": "unavailable",
+                    "head_path": "/tmp/not-used",
+                }
+            }
+        )
+    with pytest.raises(ValueError, match="requires head_path"):
+        config_from_job({"mistake_locator": {"mode": "learned"}})
+    with pytest.raises(ValueError, match="cannot carry a head"):
+        config_from_job(
+            {
+                "mistake_locator": {
                     "mode": "unavailable",
                     "head_path": "/tmp/not-used",
                 }
@@ -2498,6 +2522,35 @@ def test_service_uncertainty_validation_contains_invalid_config():
     errors = LatentCortexService._receipt_contract_errors(receipt, config)
     assert "update_acceptance_unproven" in errors
     assert "neural_uncertainty_unproven" in errors
+
+
+def test_service_reconstructs_mistake_locator_and_rejects_rehashed_lie():
+    from core.brain.llm.latent_cortex.loop_core import canonical_sha256
+
+    config = {"n_slots": 8, "n_branches": 2}
+    receipt = {
+        **_identity_receipt(),
+        "n_slots": 8,
+        "n_branches": 2,
+        **_recurrent_grounding_fields(config, steps=3),
+    }
+    assert "mistake_locator_unproven" not in (
+        LatentCortexService._receipt_contract_errors(receipt, config)
+    )
+
+    forged = copy.deepcopy(receipt)
+    locator = forged["mistake_locator"]
+    locator["repair_steering_authorized"] = True
+    locator["receipt_sha256"] = canonical_sha256(
+        {
+            key: value
+            for key, value in locator.items()
+            if key != "receipt_sha256"
+        }
+    )
+    assert "mistake_locator_unproven" in (
+        LatentCortexService._receipt_contract_errors(forged, config)
+    )
 
 
 def test_service_reconstructs_and_rejects_branch_exchange_tampering():

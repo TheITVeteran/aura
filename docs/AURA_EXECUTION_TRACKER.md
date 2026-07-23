@@ -26017,3 +26017,77 @@ approximately 63-330 records remaining, 55.0%-86.5% checkpoint-count completion,
 and a 67.2% midpoint planning estimate. Next: publish CP342, then implement
 SPARK-029's subtle mistake locator. Final multi-hour soaks remain deferred until
 every shorter gate is green.
+
+## Checkpoint 2026-07-23-343: Subtle Mistakes Become Localizable Evidence
+
+RLC now has a model-width-aware two-layer neural transition locator. Its exact
+feature map joins the pooled prior state, pooled proposal state, signed delta,
+and absolute delta. It deliberately scores the proposal rather than only the
+admitted state, so an erroneous proposal remains observable when the update
+gate rejects it and preserves the clean prior state.
+
+Each training row belongs to a complete trace and binds unique example, trace,
+and task identities; domain and controlled-mutation family; transition
+ordinal/count; objective error index or no-error label; trace receipt; and
+independent verifier identity. Training, in-domain calibration, and OOD
+evaluation are example-, trace-, and task-disjoint. The in-domain split uses
+the same domain set on fresh tasks, while the OOD domain set must be disjoint.
+Every split and every domain require both error and no-error support; incomplete
+or weakly supported evidence refuses training.
+
+Only training data determines normalization and both neural layers. Held-out
+in-domain evidence determines temperature and the decision threshold.
+Out-of-domain evidence is untouched until final evaluation. Admission checks
+aggregate exact location, error-only exact, within-one accuracy, no-error
+specificity/false-localization, transition AUC, Brier score, and ten-bin ECE on
+both held-out splits. Per-domain floors prevent a strong easy domain from
+masking a failed domain. A rank-based AUC implementation removes the previous
+quadratic pair-matrix memory hazard from both the locator and neural uncertainty
+trainer.
+
+The artifact commits all dataset/task/domain identities, aggregate and
+per-domain metrics, dimensions, normalization, both learned layers,
+temperature, threshold, admission verdict, and the explicit fact that repair
+steering is unauthorized. Dataset and parameter sizes are bounded. Publication
+uses Aura's durable atomic writer; loading uses a stable bounded no-follow
+descriptor under an exact configured SHA-256 and refuses symlinks, byte races,
+malformed/non-finite arrays, wrong dimensions, fabricated verdicts, and
+unadmitted heads.
+
+Every recurrent proposal now records its prior, proposal, and admitted state
+commitments; update disposition; rounded prior/proposal hidden vectors and
+commitments; pinned head; and error probability. Per-branch receipts identify
+the maximum above-threshold suspect and the selected branch's candidate.
+Tensor reads and neural/host work are charged to the resource ledger. The
+service reloads the artifact and reconstructs every score and source transition
+from the worker evidence. The locator cannot alter branch selection, state,
+repair, attention, or decoding in this checkpoint.
+
+Validation: focused complete-trace/domain admission, OOD failure, persistence,
+symlink/tamper, feature-map, disabled, rejected-proposal, real tiny-Qwen,
+resource, config, service, and receipt tests pass 99/99. The affected engine,
+branch, recurrence, update, uncertainty, resource, worker-origin, stop,
+verified-best, and wiring gate passes 250/250 in 133.40 seconds. The final
+fixed-snapshot RLC,
+latent-cortex, recurrence/training, global-workspace, GWT, and execution-
+controller ownership gate passes 1351/1351 in 701.66 seconds. Strict focused
+Ruff, bytecode compilation, and `git diff --check` pass.
+The effect-ownership baseline selectively records the four reviewed locator
+and neural-uncertainty artifact read/write effects. The repository-wide
+governance inventory still reports 49 unrelated/concurrent regressions and 13
+stale buckets; this checkpoint neither absorbs that drift nor calls the global
+gate green.
+
+SPARK-029 closes at the bounded training, in-domain/OOD evaluation, live
+measurement, accounting, and independent-reconstruction boundary. No
+resident-32B locator dataset, pinned resident artifact, or powered broad-domain
+campaign ran. Repair authority remains closed pending the complete-trace
+reflector, contradiction evidence, and controlled perturbation milestones.
+Utility, adapter/RLC positive interaction, reasoning gain, and frontier
+capability remain unproven; the capability verdict remains negative/no-signal.
+
+This is total checkpoint record 404. The forecast remains 466-733 total records,
+approximately 62-329 records remaining, 55.1%-86.7% checkpoint-count completion,
+and a 67.4% midpoint planning estimate. Next: publish CP343, then implement
+SPARK-030's complete-trace bidirectional reflector. Final multi-hour soaks
+remain deferred until every shorter gate is green.
