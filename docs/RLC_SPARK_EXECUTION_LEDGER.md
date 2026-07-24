@@ -163,15 +163,28 @@ as half a checkbox.
   pre-training half at F2 (state-causality instrument; remaining semantic
   acceptance binds to the SPARK-069 trained treatment), SPARK-003 at F3
   (executable threat model), SPARK-002 at F4 (literature dossier).
-- **SPARK-070's pre-training half is CLAIMED and in progress by the Fable
-  session (Bryan-directed) as of 2026-07-23 21:45 PT**: the falsification-
-  matrix harness itself — typed row registry, runnable-row executors against
-  the current engine, fail-closed blocked rows naming their SPARK blockers,
-  independent replay, and a dry-run receipt on the untrained baseline. The
-  post-training run on fresh held-out tasks (the acceptance event) stays
-  bound to the SPARK-069 treatment. The march owns everything else; rows
-  blocked on 039-050/055-056 machinery will bind to that machinery when it
-  lands, not fork it.
+- **SPARK-070's pre-training half is RESOLVED in the Fable lane at F5
+  (2026-07-23 22:15 PT)**: `falsification_matrix.py` is the typed,
+  fail-closed registry over all twelve ledger rows — 8 runnable (bound to
+  concrete executors over the existing experiment harness), 1 enforced
+  (blind review, structural by construction, proven by threat-model
+  checks), 3 blocked (verifier arms → SPARK-039-046; adversarial/OOD →
+  generated fresh at acceptance; fast-weight controls → SPARK-055/056),
+  each blocker named. `tools/run_falsification_matrix.py` produced the
+  clean dry-run receipt on the untrained 1.5B baseline (372 episodes,
+  zero degradations, receipt `8487e1ad…` under
+  `artifacts/closeout/latent_cortex/spark070_falsification_matrix/`,
+  independently replayed). Runnable rows return CONJECTURE at this n on
+  untrained weights (expected); the `lesions_restorations` row carries the
+  F2 state-causality SUPPORTED structural claims. **The dry run also caught
+  a real live defect**: CP328's sanctioned duplicate-role lesion arm was
+  refused by CP331's correlation-evidence validation and silently degraded
+  to a vanilla-decode fallback, voiding the diversity comparison — repaired
+  in `correlated_support.py` (lesioned ensembles build unmeasured evidence
+  over distinct roles under a dedicated bucket; preregistered evidence
+  still cannot claim a lesion run). The post-training run on fresh
+  held-out tasks (the acceptance event, checkbox stays `[ ]`) binds to the
+  SPARK-069 treatment. The march owns everything else.
 
 | Checkpoints | Primary implementation owners | Live integration owners |
 |---|---|---|
