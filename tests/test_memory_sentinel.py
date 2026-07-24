@@ -178,16 +178,23 @@ def test_memory_sentinel_identity_survives_transient_rss_failure(monkeypatch):
     assert observed.rss_bytes == 0
 
 
-def test_memory_sentinel_confirms_identity_after_missing_tree_sample(monkeypatch):
-    process = type(
-        "Process",
-        (),
-        {
-            "create_time": lambda self: 100.0,
-            "status": lambda self: "running",
-        },
-    )()
-    monkeypatch.setattr(memory_sentinel.psutil, "Process", lambda _pid: process)
+def test_memory_sentinel_confirms_identity_after_missing_tree_sample(resource_observer):
+    # target_identity_state reads the canonical resource observer, not psutil
+    # directly — observe pid 11 as running with the expected create_time.
+    resource_observer.configure_processes(
+        [
+            ProcessObservation(
+                provenance=resource_observer.provenance,
+                pid=11,
+                ppid=os.getpid(),
+                create_time=100.0,
+                status="running",
+                name="target",
+                cmdline=("python",),
+                rss_bytes=1024,
+            )
+        ]
+    )
 
     assert memory_sentinel.target_identity_state(11, 100.0) == "current"
 

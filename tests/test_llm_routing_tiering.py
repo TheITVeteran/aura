@@ -133,6 +133,10 @@ def router_clients():
 async def test_primary_tier_excludes_solver_lane(router_clients):
     router, clients = router_clients
     clients["cortex"].failure = RuntimeError("32B failed")
+    # Authorized cloud recovery now expands on ANY local foreground failure, so
+    # fail the cloud lane too and isolate the property this test names: the
+    # local deep SOLVER lane is never admitted for a primary-tier request.
+    clients["api"].failure = RuntimeError("API failed")
 
     result = await router.generate_with_metadata("Hello", prefer_tier="primary")
 

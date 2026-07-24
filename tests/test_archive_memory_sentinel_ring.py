@@ -71,10 +71,15 @@ def test_archiver_writes_self_hashed_terminal_receipt(tmp_path, monkeypatch):
     states = iter(("current", "gone"))
     monkeypatch.setattr(archiver, "_target_state", lambda *_args: next(states))
     monkeypatch.setattr(archiver.time, "sleep", lambda _seconds: None)
+    # Identity is confirmed through the canonical resource observer, not psutil
+    # directly — observe the target pid with the expected create_time.
     monkeypatch.setattr(
-        archiver.psutil,
-        "Process",
-        lambda _pid: type("Process", (), {"create_time": lambda self: 100.0})(),
+        "core.runtime.resource_observation.get_resource_observer",
+        lambda: type(
+            "Obs",
+            (),
+            {"process": lambda self, _pid: type("Proc", (), {"create_time": 100.0})()},
+        )(),
     )
     destination = tmp_path / "archive.jsonl"
     state = tmp_path / "state.json"

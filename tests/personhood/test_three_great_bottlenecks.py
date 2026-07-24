@@ -72,22 +72,27 @@ def test_sandbox_operator_execution_and_affect_grounding():
     assert res["success"] is True
     assert "HELLO AURA WORLD" in res["stdout"]
     assert res["exit_code"] == 0
-    assert not os.path.exists(res["file_path"])  # Succeeded scripts are removed
+    # The result exposes only the basename (never the abs path); reconstruct it
+    # against the operator's sandbox dir to confirm succeeded scripts are removed.
+    assert not os.path.exists(os.path.join(operator.sandbox_dir, res["sandbox_file"]))
 
     # Verify positive affect grounding
     assert hv.get("Obedience") >= initial_obedience  # Restores obedience weight
 
-    # 2. Test Failing execution
-    failing_code = "import sys\nsys.stderr.write('CRITICAL FAULT')\nsys.exit(42)"
+    # 2. Test Failing execution. The sandbox's AST policy bans `import sys`, so
+    #    raise to produce a genuine non-zero-exit failure that is kept for
+    #    analysis (a refusal would not run and would move no affect).
+    failing_code = "raise ValueError('CRITICAL FAULT')"
     res_fail = operator.execute_synthesized_tool(failing_code)
 
     assert res_fail["success"] is False
     assert "CRITICAL FAULT" in res_fail["stderr"]
-    assert res_fail["exit_code"] == 42
-    # Failed scripts are kept for analysis
-    assert os.path.exists(res_fail["file_path"])
+    assert res_fail["exit_code"] != 0
+    # Failed scripts are kept for analysis (contract exposes basename only)
+    failed_path = os.path.join(operator.sandbox_dir, res_fail["sandbox_file"])
+    assert os.path.exists(failed_path)
     try:
-        os.remove(res_fail["file_path"])
+        os.remove(failed_path)
     except OSError:
         pass
 
