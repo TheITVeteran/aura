@@ -1050,9 +1050,61 @@ before those dependencies close is not admissible.
   interaction, reasoning gain, or frontier capability; those still require
   fresh powered campaigns. SPARK-034 must combine old and new candidate
   distributions without granting an uncalibrated learned preference.
-- [ ] **SPARK-034 - Heterogeneous integration.** Combine old/new candidate
+- [x] **SPARK-034 - Heterogeneous integration.** Combine old/new candidate
   distributions using calibrated evidence, not a free learned preference;
   compare selection, logit fusion, and abstention under equal compute.
+
+  Accepted at CP348 at the bounded integration, final-decode, rollback, and
+  independent-reconstruction boundary. Default-live counterfactual mode accepts
+  exactly one retained source: SPARK-032's contradiction correction or
+  SPARK-033's localized exploration. Local exploration already abstains after a
+  retained contradiction mutation, and the integrator independently rejects
+  zero, multiple, malformed, duplicate-label, stale, or lineage-inconsistent
+  sources before policy compute.
+
+  The prior source evidence supplies conservative old-upper and new-lower
+  verifier bounds. Only separated bounds derive the fixed probability-fusion
+  weight `new_lower / (new_lower + old_upper)`; no learned scalar or caller
+  preference can choose the mixture. Incumbent selection, corrected selection,
+  and per-token probability fusion run in counterbalanced repeats. Every policy
+  executes both real transformer lanes from the same prompt-KV snapshot,
+  bridge, candidate tensors, and token budget. Candidate distributions are
+  normalized before mixing; raw logits and hidden states are never linearly
+  interpolated.
+
+  Probes must finish the exact fixed-length contract. Old/new lane applications
+  must be equal, all policy totals must be equal, and the summed lane work must
+  equal the episode budget's independently accumulated layer-app delta.
+  Initial and complete lane/policy logits commitments, Jensen-Shannon
+  divergence, authoritative verifier bounds, repeat determinism, state hashes,
+  fusion weight, order, and compute are receipt-bound without retaining answer
+  text. Fusion acts only when its worst lower bound beats both selection upper
+  bounds by the configured margin. Corrected selection must separately beat
+  incumbent selection. Every other evaluated path restores the exact incumbent.
+
+  A winning fusion remains dual-lane for the complete user-visible
+  autoregressive decode: each sampled token advances both isolated caches and
+  the next-token probabilities are mixed by the admitted weight. Final receipts
+  bind both latent tensors, weight, traces, lane work, divergence, termination,
+  first logits, and output-token commitment. The service reconstructs policy
+  authority and recomputes that commitment from the worker's returned raw token
+  list, rejecting rehashed state, weight, lane, policy, or transport
+  substitutions. Persistence, bridge, and decode timings are emitted at their
+  actual execution boundaries.
+
+  Validation passes 30/30 direct contracts and the focused
+  integrator/engine/service boundary 162/162. The final affected predecessor,
+  engine, verifier, resource, cache, worker-origin, and service gate passes
+  307/307 in 115.48 seconds. The fixed 98-file RLC, recurrence/training,
+  resident-campaign, global-workspace, GWT, and execution-controller ownership
+  snapshot passes 1593/1593 in 576.71 seconds. Ruff, formatting, bytecode
+  compilation, and diff hygiene pass. Governance remains at the pre-existing
+  49 regressions and 13 stale buckets, with no CP348 effect-ownership addition.
+
+  SPARK-034 proves calibrated distribution integration, exact rollback, and
+  final-decode execution mechanics. It does not prove resident-32B utility,
+  adapter/RLC positive interaction, reasoning gain, or frontier capability;
+  those remain fresh powered campaign claims.
 - [ ] **SPARK-035 - KV state tree and rewind.** Snapshot at verified boundaries,
   remove rejected KV slices, restore exact prior state, and prove rejected
   reasoning cannot leak into regenerated branches.

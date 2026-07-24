@@ -310,6 +310,7 @@ class LatentCortexService:
         config: dict[str, Any],
         runtime_controls: dict[str, Any] | None = None,
         expected_worker_identity: dict[str, Any] | None = None,
+        output_tokens: Any = ...,
     ) -> list[str]:
         if not isinstance(receipt, dict):
             return ["receipt_not_mapping"]
@@ -924,6 +925,49 @@ class LatentCortexService:
             )
         except (ImportError, TypeError, ValueError):
             errors.append("local_exploration_unproven")
+        try:
+            from core.brain.llm.latent_cortex.heterogeneous_integrator import (
+                HeterogeneousIntegrationConfig,
+                validate_heterogeneous_integration_receipt,
+            )
+            from core.brain.llm.latent_cortex.worker_handler import config_from_job
+
+            executed_config = config_from_job(config)
+            information = (
+                receipt.get("budget", {}).get("information_accounting", {})
+                if isinstance(receipt.get("budget"), dict)
+                else {}
+            )
+            policies = information.get("policies", {}) if isinstance(information, dict) else {}
+            decoy = receipt.get("decoy_verification")
+            validate_heterogeneous_integration_receipt(
+                receipt.get("heterogeneous_integration"),
+                expected_config=HeterogeneousIntegrationConfig.from_value(
+                    executed_config.heterogeneous_integration
+                ),
+                contradiction_perturbation=receipt.get("contradiction_perturbation"),
+                local_exploration=receipt.get("local_exploration"),
+                verifier_policy_sha256=str(policies.get("verifier", "")),
+                decoy_review_sha256=(
+                    str(decoy.get("receipt_sha256", ""))
+                    if (isinstance(decoy, dict) and decoy.get("selection_admitted") is True)
+                    else ""
+                ),
+            )
+        except (ImportError, TypeError, ValueError):
+            errors.append("heterogeneous_integration_unproven")
+        try:
+            from core.brain.llm.latent_cortex.heterogeneous_integrator import (
+                validate_heterogeneous_decode_receipt,
+            )
+
+            validate_heterogeneous_decode_receipt(
+                receipt.get("heterogeneous_decode"),
+                integration=receipt.get("heterogeneous_integration"),
+                expected_output_tokens=output_tokens,
+            )
+        except (ImportError, TypeError, ValueError):
+            errors.append("heterogeneous_decode_unproven")
         try:
             from core.brain.llm.latent_cortex.mistake_locator import (
                 MistakeLocatorRuntime,
@@ -2633,6 +2677,7 @@ class LatentCortexService:
                 config,
                 runtime_controls,
                 worker_identity,
+                result.get("tokens"),
             )
             if not contract_errors:
                 quality_receipt = evaluate_latent_output(

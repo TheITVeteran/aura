@@ -26331,3 +26331,65 @@ count completion is approximately 55.7%-87.6%, with a midpoint planning
 estimate of 68.1%. Next: publish CP347, then implement SPARK-034's calibrated
 heterogeneous candidate integration. Final multi-hour soaks remain deferred
 until every shorter gate is green.
+
+## Checkpoint 2026-07-23-348: Candidate Integration Must Earn Final Decode
+
+SPARK-034 closes the gap between a retained latent correction and the
+user-visible answer. Default-live heterogeneous integration accepts exactly one
+retained source from SPARK-032 contradiction correction or SPARK-033 localized
+exploration. Local exploration is already compute-inert after a retained
+contradiction mutation. The integrator independently refuses zero, multiple,
+malformed, duplicate-label, stale, or state-lineage-inconsistent sources before
+policy evaluation.
+
+Conservative source evidence supplies the incumbent upper bound and corrected
+lower bound. Only separated bounds derive the fixed fusion weight
+`new_lower / (new_lower + old_upper)`; there is no learned or caller-selected
+preference. Incumbent selection, corrected selection, and probability fusion
+then run in counterbalanced repeated probes. Every policy advances both real,
+cache-isolated transformer lanes from the same prompt snapshot, candidate
+tensors, bridge, and exact token budget. Fusion mixes normalized next-token
+probabilities, not hidden states or raw logits.
+
+Policy authority requires exact-length probe completion, authoritative and
+repeat-stable observations, identical initial lane evidence across policies,
+nontrivial measured Jensen-Shannon divergence, equal old/new lane work, equal
+policy totals, and equality between summed lane applications and the episode
+budget's independently accumulated layer-app delta. Fusion acts only when its
+worst lower bound beats both selection upper bounds by the configured margin.
+Corrected selection must separately beat incumbent selection. Otherwise the
+exact incumbent tensor is restored.
+
+A winning fusion remains dual-lane for the complete user-visible
+autoregressive decode. Every sampled token advances both isolated caches before
+the admitted probability mixture supplies the next token. Receipts bind the
+incumbent and corrected tensor hashes, calibrated weight, initial and complete
+lane/policy logits traces, compute, divergence, termination, first logits, and
+output-token commitment without storing answer text. The service reconstructs
+the complete authority decision and recomputes the token commitment from the
+worker response, rejecting rehashed state, weight, lane, policy, and transport
+substitution. Persistence, bridge, and decode telemetry now marks the real
+execution boundaries rather than charging fused generation time to persistence.
+
+Validation passes 30/30 direct contracts and the focused
+integrator/engine/service boundary 162/162. The final affected predecessor,
+engine, verifier, resource, stop, cache, worker-origin, and service boundary
+passes 307/307 in 115.48 seconds. The conservative fixed 98-file RLC,
+latent-cortex, recurrence/training, resident-campaign, global-workspace, GWT,
+and execution-controller ownership snapshot passes 1593/1593 in 576.71
+seconds. Strict Ruff, formatting, bytecode compilation, and `git diff --check`
+pass. Repository-wide governance remains non-green at the same 49 unrelated or
+concurrent regressions and 13 stale buckets; CP348 adds no effect-ownership
+entry and does not absorb that drift.
+
+SPARK-034 proves the calibrated integration, final-decode, transport-binding,
+and exact-rollback mechanism. It does not prove resident-32B utility,
+adapter/RLC positive interaction, reasoning gain, or frontier capability.
+Those claims remain open and require fresh powered broad-task campaigns.
+
+This is total checkpoint record 409. The revised forecast remains 466-733 total
+records, now approximately 57-324 records after this checkpoint. Checkpoint-
+count completion is approximately 55.8%-87.8%, with a midpoint planning
+estimate of 68.2%. Next: publish CP348, then implement SPARK-035's verified KV
+state tree and exact rewind. Final multi-hour soaks remain deferred until every
+shorter gate is green.

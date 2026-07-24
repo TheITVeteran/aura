@@ -215,6 +215,10 @@ def _recurrent_grounding_fields(config, *, steps=1):
         ContradictionTensorRuntime,
         build_contradiction_tensor_receipt,
     )
+    from core.brain.llm.latent_cortex.heterogeneous_integrator import (
+        HeterogeneousIntegrationConfig,
+        run_heterogeneous_integration,
+    )
     from core.brain.llm.latent_cortex.local_exploration import (
         LocalExplorationConfig,
         run_local_exploration,
@@ -524,6 +528,22 @@ def _recurrent_grounding_fields(config, *, steps=1):
         decoy_review_sha256="",
         evaluate=None,
     )
+    _, _, heterogeneous_integration_receipt = run_heterogeneous_integration(
+        incumbent_state=np.zeros(
+            (1, config["n_slots"], 8),
+            dtype=np.float32,
+        ),
+        corrected_state=np.zeros(
+            (1, config["n_slots"], 8),
+            dtype=np.float32,
+        ),
+        contradiction_perturbation=(contradiction_perturbation_receipt),
+        local_exploration=local_exploration_receipt,
+        config=HeterogeneousIntegrationConfig.from_value(executed.heterogeneous_integration),
+        verifier_policy_sha256="a" * 64,
+        decoy_review_sha256="",
+        evaluate=None,
+    )
     return {
         "cognitive_slots": [],
         "selected_branch": 0,
@@ -540,6 +560,8 @@ def _recurrent_grounding_fields(config, *, steps=1):
         "contradiction_tensor": contradiction_tensor_receipt,
         "contradiction_perturbation": contradiction_perturbation_receipt,
         "local_exploration": local_exploration_receipt,
+        "heterogeneous_integration": (heterogeneous_integration_receipt),
+        "heterogeneous_decode": {},
         "cognitive_action_trace": [],
     }
 
@@ -666,6 +688,7 @@ def test_config_from_job_defaults_are_conservative():
     assert cfg.contradiction_head is None
     assert cfg.contradiction_perturber is None
     assert cfg.local_exploration is None
+    assert cfg.heterogeneous_integration is None
     assert cfg.validate() == []
 
 
@@ -713,6 +736,16 @@ def test_config_from_job_rejects_out_of_band_requests():
         config_from_job({"local_exploration": {"candidates": 1}})
     with pytest.raises(ValueError, match="entropy floor"):
         config_from_job({"local_exploration": {"min_predictive_entropy": -0.1}})
+    with pytest.raises(ValueError, match="replicates"):
+        config_from_job({"heterogeneous_integration": {"replicates": 1}})
+    with pytest.raises(ValueError, match="JS floor"):
+        config_from_job(
+            {
+                "heterogeneous_integration": {
+                    "min_js_divergence_bits": 1.1,
+                }
+            }
+        )
     with pytest.raises(ValueError, match="requires head_path"):
         config_from_job({"contradiction_head": {"mode": "learned"}})
     with pytest.raises(ValueError, match="cannot carry a head"):
@@ -2397,6 +2430,41 @@ def test_service_reconstructs_recurrent_grounding_and_rejects_rehashed_lie():
         {key: value for key, value in grounding.items() if key != "receipt_sha256"}
     )
     assert "recurrent_grounding_unproven" in (
+        LatentCortexService._receipt_contract_errors(tampered, config)
+    )
+
+
+def test_service_rejects_rehashed_heterogeneous_authority_and_decode_lies():
+    from core.brain.llm.latent_cortex.loop_core import canonical_sha256
+
+    config = {"n_slots": 8, "n_branches": 2}
+    receipt = {
+        **_identity_receipt(),
+        "n_slots": 8,
+        "n_branches": 2,
+        "budget": _accounting_fields(),
+        **_recurrent_grounding_fields(config, steps=2),
+    }
+    clean_errors = LatentCortexService._receipt_contract_errors(receipt, config)
+    assert "heterogeneous_integration_unproven" not in clean_errors
+    assert "heterogeneous_decode_unproven" not in clean_errors
+
+    tampered = copy.deepcopy(receipt)
+    integration = tampered["heterogeneous_integration"]
+    integration["selected_policy"] = "select_new"
+    integration["receipt_sha256"] = canonical_sha256(
+        {key: value for key, value in integration.items() if key != "receipt_sha256"}
+    )
+    assert "heterogeneous_integration_unproven" in (
+        LatentCortexService._receipt_contract_errors(tampered, config)
+    )
+
+    tampered = copy.deepcopy(receipt)
+    tampered["heterogeneous_decode"] = {
+        "selected_policy": "select_new",
+        "answer_text_stored": False,
+    }
+    assert "heterogeneous_decode_unproven" in (
         LatentCortexService._receipt_contract_errors(tampered, config)
     )
 

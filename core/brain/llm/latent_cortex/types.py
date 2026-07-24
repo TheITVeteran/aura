@@ -497,6 +497,10 @@ class CortexConfig:
     # contradiction position. Equal-compute no-op and stable-position sham
     # families prevent global or unearned exploration authority.
     local_exploration: dict[str, Any] | None = None
+    # SPARK-034 incumbent/corrected/fused policy arbitration. A fusion weight
+    # comes only from conservative verifier bounds, and every policy executes
+    # both lanes under equal measured compute before it can affect decode.
+    heterogeneous_integration: dict[str, Any] | None = None
     # Checked historical branch-error correlations. None is an explicit
     # bootstrap state: duplicate programs still collapse, but no empirical
     # relationship is invented before independently graded paired outcomes.
@@ -876,6 +880,18 @@ class CortexConfig:
                     LocalExplorationConfig.from_value(self.local_exploration)
                 except (TypeError, ValueError) as exc:
                     problems.append(str(exc))
+        if self.heterogeneous_integration is not None:
+            if not isinstance(self.heterogeneous_integration, dict):
+                problems.append("heterogeneous_integration must be a mapping or null")
+            else:
+                try:
+                    from core.brain.llm.latent_cortex.heterogeneous_integrator import (
+                        HeterogeneousIntegrationConfig,
+                    )
+
+                    HeterogeneousIntegrationConfig.from_value(self.heterogeneous_integration)
+                except (TypeError, ValueError) as exc:
+                    problems.append(str(exc))
         if self.escape is not None:
             if not isinstance(self.escape, dict):
                 problems.append("escape must be a mapping or null")
@@ -1210,6 +1226,12 @@ class EpisodeReceipt:
     # stable-position sham controls. Stable positions have no retained write
     # authority; any unproven search restores the exact baseline.
     local_exploration: dict[str, Any] = field(default_factory=dict)
+    # Equal-compute comparison of incumbent selection, corrected selection,
+    # and per-token probability fusion. Overlapping evidence abstains.
+    heterogeneous_integration: dict[str, Any] = field(default_factory=dict)
+    # Final user-visible decode commitment for the integration policy. Fusion
+    # carries dual-lane trace/accounting evidence; selection carries no text.
+    heterogeneous_decode: dict[str, Any] = field(default_factory=dict)
     # Neural-bytecode trace: one event per non-window instruction the
     # schedule program executed (exchange/savepoint/verify_probe outcomes,
     # probe scores, backtracks). Empty for plain window programs.
@@ -1417,6 +1439,8 @@ class EpisodeReceipt:
             "contradiction_tensor": dict(self.contradiction_tensor),
             "contradiction_perturbation": dict(self.contradiction_perturbation),
             "local_exploration": dict(self.local_exploration),
+            "heterogeneous_integration": dict(self.heterogeneous_integration),
+            "heterogeneous_decode": dict(self.heterogeneous_decode),
             "bytecode_events": [dict(row) for row in self.bytecode_events],
             "value_of_computation": dict(self.value_of_computation),
             "cognitive_action_trace": [dict(row) for row in self.cognitive_action_trace],

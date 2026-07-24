@@ -5,8 +5,10 @@ answer, receipts tell the truth, fallbacks are honest, budgets bind, the
 checkpoint invariant is enforced, and fast-weight episodes leave the model
 bit-for-bit unchanged.
 """
+
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
 mx = pytest.importorskip("mlx.core")
@@ -14,9 +16,11 @@ pytest.importorskip("mlx_lm")
 
 from mlx_lm.models.qwen2 import Model, ModelArgs  # noqa: E402
 
+from core.brain.llm.latent_cortex.branches import BranchEnsemble  # noqa: E402
 from core.brain.llm.latent_cortex.engine import LatentCortexEngine  # noqa: E402
 from core.brain.llm.latent_cortex.fast_weights import EpisodicFastWeights  # noqa: E402
 from core.brain.llm.latent_cortex.governance import parameter_fingerprint  # noqa: E402
+from core.brain.llm.latent_cortex.recurrence import WindowRunner  # noqa: E402
 from core.brain.llm.latent_cortex.schedules import LayerSchedule, StageOp  # noqa: E402
 from core.brain.llm.latent_cortex.types import (  # noqa: E402
     BranchConfig,
@@ -89,9 +93,10 @@ def test_full_episode_produces_tokens_and_truthful_receipt(tiny_model):
     assert r.branch_isolation["first_exchange_step"] >= 1
     assert r.branch_isolation["cache_discipline"]["all_restored"] is True
     assert r.cognitive_operator_trace
-    assert {
-        row["operator"] for row in r.cognitive_operator_trace
-    } == {"constructive_solution", "counterexample"}
+    assert {row["operator"] for row in r.cognitive_operator_trace} == {
+        "constructive_solution",
+        "counterexample",
+    }
     assert all(validate_operator_receipt(row) for row in r.cognitive_operator_trace)
     assert r.structural_diversity["certified"] is True
     assert r.structural_diversity["wording_counted"] is False
@@ -124,9 +129,7 @@ def test_verifier_probe_cost_uses_receipted_profile_and_bridge(tiny_model):
         config=_config(verifier_probe_max_tokens=24),
     )
 
-    assert engine._verifier_probe_layer_apps([3, 4], count=2) == (
-        2 * (4 + 2 + 23) * N_LAYERS
-    )
+    assert engine._verifier_probe_layer_apps([3, 4], count=2) == (2 * (4 + 2 + 23) * N_LAYERS)
     result = engine.reason(token_ids=PROMPT_TOKENS)
     assert result.receipt.verifier_probe_max_tokens == 24
 
@@ -178,6 +181,145 @@ def test_verifier_preview_is_hard_capped_and_compute_charge_is_exact(
     assert final_termination == "token_limit"
 
 
+def test_heterogeneous_dual_lane_decode_is_real_equal_compute_and_restoring(
+    tiny_model,
+):
+    engine = LatentCortexEngine(tiny_model, config=_config())
+    budget = ComputeBudget(max_layer_apps=500_000, wall_clock_s=30.0)
+    budget.bind_model(tiny_model)
+    cache = engine._fresh_cache()
+    embeddings, _ = engine._prefill(PROMPT_TOKENS, cache, budget)
+    runner = WindowRunner(tiny_model.model, budget)
+    ensemble = BranchEnsemble.seed(
+        embeddings,
+        engine.config.workspace,
+        engine.config.branches,
+        engine.config.recurrence,
+        runner,
+        cache,
+        engine.prelude_end,
+    )
+    branch = ensemble.branches[0]
+    saved_state = branch.z
+    saved_offsets = [layer.offset for layer in cache]
+    incumbent = np.array(branch.z, copy=True)
+    correction = np.linspace(
+        -0.35,
+        0.35,
+        incumbent.shape[-1],
+        dtype=incumbent.dtype,
+    )[None, None, :]
+    corrected = np.array(incumbent + correction, copy=True)
+    phase_events = []
+
+    def decode(policy: str):
+        return engine._heterogeneous_dual_lane_decode(
+            branch=branch,
+            cache=cache,
+            runner=runner,
+            budget=budget,
+            incumbent_state=incumbent,
+            corrected_state=corrected,
+            policy=policy,
+            fusion_weight=0.65,
+            bridge_tokens=[31, 32],
+            max_tokens=4,
+            temperature=0.0,
+            force_exact_tokens=True,
+            phase_checkpoint=phase_events.append,
+        )
+
+    old_tokens, old_termination, old_audit = decode("select_old")
+    new_tokens, new_termination, new_audit = decode("select_new")
+    fused_tokens, fused_termination, fused_audit = decode("probability_fusion")
+    repeated_tokens, repeated_termination, repeated_audit = decode("probability_fusion")
+
+    expected_lane_apps = (engine.config.workspace.n_slots + 2 + len(old_tokens) - 1) * N_LAYERS
+    for tokens, termination, audit in (
+        (old_tokens, old_termination, old_audit),
+        (new_tokens, new_termination, new_audit),
+        (fused_tokens, fused_termination, fused_audit),
+    ):
+        assert len(tokens) == 4
+        assert termination == "token_limit"
+        assert audit["old_lane_layer_apps"] == expected_lane_apps
+        assert audit["new_lane_layer_apps"] == expected_lane_apps
+        assert audit["divergence_samples"] == len(tokens)
+        assert audit["mean_js_divergence_bits"] > 0.0
+    assert old_audit["old_initial_logits_sha256"] != (old_audit["new_initial_logits_sha256"])
+    assert old_audit["policy_initial_logits_sha256"] == (old_audit["old_initial_logits_sha256"])
+    assert new_audit["policy_initial_logits_sha256"] == (new_audit["new_initial_logits_sha256"])
+    assert fused_audit["policy_initial_logits_sha256"] not in {
+        fused_audit["old_initial_logits_sha256"],
+        fused_audit["new_initial_logits_sha256"],
+    }
+    assert repeated_tokens == fused_tokens
+    assert repeated_termination == fused_termination
+    assert repeated_audit == fused_audit
+    assert branch.z is saved_state
+    assert [layer.offset for layer in cache] == saved_offsets
+    assert phase_events == ["persist", "decode_bridge"] * 4
+
+
+def test_heterogeneous_policy_refuses_partial_exact_probe(
+    tiny_model,
+    monkeypatch,
+):
+    class Tokenizer:
+        @staticmethod
+        def decode(_tokens):
+            return "partial"
+
+    engine = LatentCortexEngine(
+        tiny_model,
+        tokenizer=Tokenizer(),
+        config=_config(verifier_probe_max_tokens=16),
+    )
+    monkeypatch.setattr(
+        engine,
+        "_heterogeneous_dual_lane_decode",
+        lambda **_kwargs: ([1], "budget_exhausted", {}),
+    )
+    evaluator = engine._heterogeneous_policy_evaluator(
+        branch=None,
+        cache=None,
+        runner=None,
+        budget=ComputeBudget(),
+        bridge_tokens=[],
+        verifier=lambda _text: 1.0,
+    )
+
+    with pytest.raises(RuntimeError, match="exact equal-compute token contract"):
+        evaluator(
+            "select_old",
+            np.zeros((1, 4, 64), dtype=np.float32),
+            np.ones((1, 4, 64), dtype=np.float32),
+            0.5,
+            0,
+        )
+
+    monkeypatch.setattr(
+        engine,
+        "_heterogeneous_dual_lane_decode",
+        lambda **_kwargs: (
+            [1] * 16,
+            "token_limit",
+            {
+                "old_lane_layer_apps": N_LAYERS,
+                "new_lane_layer_apps": N_LAYERS,
+            },
+        ),
+    )
+    with pytest.raises(RuntimeError, match="episode compute budget"):
+        evaluator(
+            "select_old",
+            np.zeros((1, 4, 64), dtype=np.float32),
+            np.ones((1, 4, 64), dtype=np.float32),
+            0.5,
+            0,
+        )
+
+
 def test_episode_cooperatively_cancels_at_safe_stage_and_preserves_checkpoint(
     tiny_model,
 ):
@@ -219,10 +361,7 @@ def test_nucleus_sampling_excludes_tokens_outside_probability_mass():
     engine = LatentCortexEngine.__new__(LatentCortexEngine)
     logits = mx.array([12.0, 2.0, 1.0, 0.0])
 
-    sampled = {
-        engine._sample(logits, temperature=0.7, top_p=0.01)
-        for _ in range(32)
-    }
+    sampled = {engine._sample(logits, temperature=0.7, top_p=0.01) for _ in range(32)}
 
     assert sampled == {0}
 
@@ -238,7 +377,9 @@ def test_latent_computation_is_causal_on_answer(tiny_model):
     ).reason(token_ids=PROMPT_TOKENS)
     deep = LatentCortexEngine(
         tiny_model,
-        config=_config(recurrence=RecurrenceConfig(max_steps=12, min_steps=8, convergence_eps=1e-9)),
+        config=_config(
+            recurrence=RecurrenceConfig(max_steps=12, min_steps=8, convergence_eps=1e-9)
+        ),
     ).reason(token_ids=PROMPT_TOKENS)
     assert shallow.ok and deep.ok
     assert shallow.receipt.steps_taken < deep.receipt.steps_taken
@@ -284,10 +425,7 @@ def test_production_episode_refuses_secondary_vanilla_decode(tiny_model):
     assert result.tokens == []
     assert result.receipt.decode_termination == "not_started"
     assert "vanilla_fallback_disabled" in result.receipt.honest_flags
-    assert not any(
-        flag.startswith("fallback_vanilla")
-        for flag in result.receipt.honest_flags
-    )
+    assert not any(flag.startswith("fallback_vanilla") for flag in result.receipt.honest_flags)
 
 
 def test_budget_binds_and_is_reported(tiny_model):
@@ -301,7 +439,8 @@ def test_budget_binds_and_is_reported(tiny_model):
     assert result.receipt.budget["spent_layer_apps"] <= fallback_ceiling
     assert result.receipt.decode_termination in {"eos", "token_limit"}
     reasons = {result.receipt.halting_reason} | {
-        b["halt_reason"] for b in [] # branch receipts live in ensemble receipt; halting_reason covers winner
+        b["halt_reason"]
+        for b in []  # branch receipts live in ensemble receipt; halting_reason covers winner
     }
     assert any("budget" in r or r for r in reasons)
 
@@ -354,9 +493,7 @@ def test_fast_weight_episode_proves_erase_and_invariant():
     assert r.fast_weight_budget_exhausted is False
     assert r.fast_weight_optimizer == "rms_normalized_sgd_backtracking_v1"
     assert len(r.fast_weight_loss_trail) == r.fast_weight_optimized_steps + 1
-    assert len(r.fast_weight_gradient_norm_trail) == (
-        r.fast_weight_optimization_attempts
-    )
+    assert len(r.fast_weight_gradient_norm_trail) == (r.fast_weight_optimization_attempts)
     assert len(r.fast_weight_accepted_step_sizes) == r.fast_weight_optimized_steps
     assert r.fast_weights_erased is True
     assert r.params_unchanged is True
@@ -449,9 +586,7 @@ def test_config_validation_rejects_garbage(tiny_model):
     with pytest.raises(ValueError):
         LatentCortexEngine(tiny_model, config=_config(recurrence=RecurrenceConfig(max_steps=0)))
     with pytest.raises(ValueError):
-        LatentCortexEngine(
-            tiny_model, config=_config(branches=BranchConfig(n_branches=99))
-        )
+        LatentCortexEngine(tiny_model, config=_config(branches=BranchConfig(n_branches=99)))
 
 
 @pytest.mark.parametrize(
@@ -530,9 +665,7 @@ def test_decode_newline_discipline_caps_babble_runs(tiny_model, monkeypatch):
     for i, layer in enumerate(inner.layers):
         h = layer(h, mask, cache[i])
 
-    out, termination = engine._decode(
-        cache, budget, spiked[0, 0], max_tokens=12, temperature=0.0
-    )
+    out, termination = engine._decode(cache, budget, spiked[0, 0], max_tokens=12, temperature=0.0)
     assert termination == "token_limit"
     assert engine._last_decode_newline_suppressions >= 3
     # No run of pure-newline tokens longer than the discipline allows.
@@ -587,9 +720,7 @@ def test_repetition_penalty_breaks_forced_loop(tiny_model, monkeypatch):
     spiked[0, 0, loop_id] = 6.0
     spiked[0, 0, alt_id] = 5.5  # runner-up the penalty must expose
 
-    monkeypatch.setattr(
-        engine_mod.LatentCortexEngine, "_logits", lambda self, h: spiked
-    )
+    monkeypatch.setattr(engine_mod.LatentCortexEngine, "_logits", lambda self, h: spiked)
 
     def run(penalty):
         engine = engine_mod.LatentCortexEngine(
@@ -607,7 +738,9 @@ def test_repetition_penalty_breaks_forced_loop(tiny_model, monkeypatch):
         mask = create_attention_mask(h, cache)
         for i, layer in enumerate(inner.layers):
             h = layer(h, mask, cache[i])
-        out, _ = engine._decode(cache, ComputeBudget(), spiked[0, 0], max_tokens=24, temperature=0.0)
+        out, _ = engine._decode(
+            cache, ComputeBudget(), spiked[0, 0], max_tokens=24, temperature=0.0
+        )
         return out
 
     unguarded = run(1.0)
@@ -700,9 +833,7 @@ def test_eos_floor_suppresses_early_stop(tiny_model, monkeypatch):
     spiked = mx.full((1, 1, vocab), -20.0)
     spiked[0, 0, eos_id] = 9.0
     spiked[0, 0, word_id] = 5.0
-    monkeypatch.setattr(
-        engine_mod.LatentCortexEngine, "_logits", lambda self, h: spiked
-    )
+    monkeypatch.setattr(engine_mod.LatentCortexEngine, "_logits", lambda self, h: spiked)
 
     def run(min_tokens):
         engine = engine_mod.LatentCortexEngine(
@@ -716,9 +847,7 @@ def test_eos_floor_suppresses_early_stop(tiny_model, monkeypatch):
         mask = create_attention_mask(h, cache)
         for i, layer in enumerate(inner.layers):
             h = layer(h, mask, cache[i])
-        return engine._decode(
-            cache, ComputeBudget(), spiked[0, 0], max_tokens=20, temperature=0.0
-        )
+        return engine._decode(cache, ComputeBudget(), spiked[0, 0], max_tokens=20, temperature=0.0)
 
     out, termination = run(0)
     assert termination == "eos" and len(out) == 0, "control: instant EOS honored"

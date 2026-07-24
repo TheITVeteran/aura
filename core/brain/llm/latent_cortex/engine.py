@@ -725,6 +725,8 @@ class LatentCortexEngine:
         contract_grace_tokens: int | None = None,
         token_logprobs_out: list[float] | None = None,
         force_exact_tokens: bool = False,
+        external_step_logits: Callable[[int], Any] | None = None,
+        external_step_lanes: int = 1,
     ) -> tuple[list[int], str]:
         """Minimal sampler: first token from ``initial_logits`` (the logits of
         the last persisted position — prompt tail or final thought slot), then
@@ -760,6 +762,12 @@ class LatentCortexEngine:
             raise ValueError("contract_grace_tokens must be an integer in [0, 4096]")
         if type(force_exact_tokens) is not bool:
             raise TypeError("force_exact_tokens must be boolean")
+        if (
+            type(external_step_lanes) is not int
+            or external_step_lanes < 1
+            or (external_step_logits is None and external_step_lanes != 1)
+        ):
+            raise ValueError("external decode lane count is invalid")
 
         out: list[int] = []
         newline_run = 0
@@ -924,22 +932,25 @@ class LatentCortexEngine:
                 if budget.remaining_wall_s < wall_reserve_s:
                     termination = "wall_reserve"
                     break
-            if not budget.can_afford(1, self.n_layers):
+            if not budget.can_afford(external_step_lanes, self.n_layers):
                 termination = "budget_unaffordable"
                 break
-            context_tokens = self._cache_context_tokens(cache)
-            budget.charge(
-                tokens=1,
-                layers=self.n_layers,
-                operation="autoregressive_decode",
-                attention_pairs=max(1, context_tokens + 1) * self.n_layers,
-                output_head_tokens=1,
-            )
-            h = inner.embed_tokens(mx.array([[token]]))
-            mask = create_attention_mask(h, cache)
-            for i, layer in enumerate(inner.layers):
-                h = layer(h, mask, cache[i])
-            logits = self._logits(h)[0, -1]
+            if external_step_logits is None:
+                context_tokens = self._cache_context_tokens(cache)
+                budget.charge(
+                    tokens=1,
+                    layers=self.n_layers,
+                    operation="autoregressive_decode",
+                    attention_pairs=max(1, context_tokens + 1) * self.n_layers,
+                    output_head_tokens=1,
+                )
+                h = inner.embed_tokens(mx.array([[token]]))
+                mask = create_attention_mask(h, cache)
+                for i, layer in enumerate(inner.layers):
+                    h = layer(h, mask, cache[i])
+                logits = self._logits(h)[0, -1]
+            else:
+                logits = external_step_logits(token)
             token, token_logprob = sample_disciplined(logits)
             if (index + 1) % 16 == 0:
                 self._emit_progress(
@@ -1095,6 +1106,351 @@ class LatentCortexEngine:
             finally:
                 branch.z = baseline_state
                 branch.workspace.update(baseline_state)
+
+        return evaluate
+
+    @staticmethod
+    def _heterogeneous_mix_logits(
+        old_logits,
+        new_logits,
+        *,
+        policy: str,
+        fusion_weight: float,
+        budget: ComputeBudget,
+    ):
+        """Return one policy distribution and measured old/new JS divergence."""
+
+        import mlx.core as mx
+
+        if policy not in {
+            "select_old",
+            "select_new",
+            "probability_fusion",
+        }:
+            raise ValueError("heterogeneous decode policy is invalid")
+        if not math.isfinite(float(fusion_weight)) or not 0.0 <= float(fusion_weight) <= 1.0:
+            raise ValueError("heterogeneous fusion weight is invalid")
+        old = old_logits.astype(mx.float32)
+        new = new_logits.astype(mx.float32)
+        if old.shape != new.shape or len(old.shape) != 1:
+            raise ValueError("heterogeneous lane logits shape differs")
+        old_log_probability = old - mx.logsumexp(old)
+        new_log_probability = new - mx.logsumexp(new)
+        old_probability = mx.exp(old_log_probability)
+        new_probability = mx.exp(new_log_probability)
+        midpoint = 0.5 * (old_probability + new_probability)
+        log_midpoint = mx.log(mx.maximum(midpoint, 1e-30))
+        js_nats = 0.5 * (
+            mx.sum(old_probability * (old_log_probability - log_midpoint))
+            + mx.sum(new_probability * (new_log_probability - log_midpoint))
+        )
+        js_bits = float(js_nats / math.log(2.0))
+        if not math.isfinite(js_bits) or not -1e-7 <= js_bits <= 1.0 + 1e-7:
+            raise ValueError("heterogeneous JS divergence is invalid")
+        js_bits = min(1.0, max(0.0, js_bits))
+        if policy == "select_old":
+            policy_logits = old
+        elif policy == "select_new":
+            policy_logits = new
+        else:
+            gamma = float(fusion_weight)
+            mixed_probability = (1.0 - gamma) * old_probability + gamma * new_probability
+            policy_logits = mx.log(mx.maximum(mixed_probability, 1e-30))
+        vocab = int(old.shape[-1])
+        budget.charge_tensor_work(
+            "heterogeneous_distribution_integration",
+            element_reads=6 * vocab,
+            element_writes=5 * vocab,
+            scalar_ops=24 * vocab,
+            host_scalar_ops=16,
+        )
+        mx.eval(policy_logits)
+        return policy_logits, js_bits
+
+    def _heterogeneous_dual_lane_decode(
+        self,
+        *,
+        branch,
+        cache,
+        runner,
+        budget: ComputeBudget,
+        incumbent_state,
+        corrected_state,
+        policy: str,
+        fusion_weight: float,
+        bridge_tokens: list[int],
+        max_tokens: int,
+        temperature: float,
+        force_exact_tokens: bool,
+        cancel_check: Callable[[], bool] | None = None,
+        progress: Callable[[dict], None] | None = None,
+        sentence_grace_tokens: int | None = 0,
+        contract_grace_tokens: int | None = 0,
+        wall_reserve_s: float = 0.0,
+        token_logprobs_out: list[float] | None = None,
+        phase_checkpoint: Callable[[str], None] | None = None,
+    ) -> tuple[list[int], str, dict[str, Any]]:
+        """Decode two cache-isolated lanes under one selected distribution."""
+
+        import mlx.core as mx
+        from mlx_lm.models.base import create_attention_mask
+
+        from core.brain.llm.latent_cortex.verified_best import tensor_sha256
+        from core.brain.llm.recurrent_depth import (
+            _restore_recurrent_caches,
+            _snapshot_recurrent_caches,
+        )
+
+        if type(max_tokens) is not int or max_tokens <= 0:
+            raise ValueError("heterogeneous decode token count is invalid")
+        snapshots = _snapshot_recurrent_caches(
+            cache,
+            0,
+            self.n_layers,
+        )
+        old_cache = self._fresh_cache()
+        new_cache = self._fresh_cache()
+        _restore_recurrent_caches(
+            old_cache,
+            0,
+            self.n_layers,
+            snapshots,
+        )
+        _restore_recurrent_caches(
+            new_cache,
+            0,
+            self.n_layers,
+            snapshots,
+        )
+        saved_state = branch.z
+        old_trace: list[str] = []
+        new_trace: list[str] = []
+        policy_trace: list[str] = []
+        divergences: list[float] = []
+        old_lane_apps = 0
+        new_lane_apps = 0
+
+        def persist(state, lane_cache):
+            projected = branch.workspace.restore_context_evidence(mx.array(state))
+            branch.z = projected
+            branch.workspace.update(projected)
+            return self._persist_branch(
+                branch,
+                lane_cache,
+                runner,
+                budget,
+            )
+
+        try:
+            old_logits = persist(incumbent_state, old_cache)
+            old_lane_apps += self.config.workspace.n_slots * self.n_layers
+            new_logits = persist(corrected_state, new_cache)
+            new_lane_apps += self.config.workspace.n_slots * self.n_layers
+            if phase_checkpoint is not None:
+                phase_checkpoint("persist")
+            if bridge_tokens:
+                old_logits = self._apply_decode_bridge(
+                    old_cache,
+                    budget,
+                    bridge_tokens,
+                )
+                old_lane_apps += len(bridge_tokens) * self.n_layers
+                new_logits = self._apply_decode_bridge(
+                    new_cache,
+                    budget,
+                    bridge_tokens,
+                )
+                new_lane_apps += len(bridge_tokens) * self.n_layers
+                if phase_checkpoint is not None:
+                    phase_checkpoint("decode_bridge")
+            old_initial_sha256 = _logits_digest(old_logits)
+            new_initial_sha256 = _logits_digest(new_logits)
+
+            def integrate(left, right):
+                policy_logits, js_bits = self._heterogeneous_mix_logits(
+                    left,
+                    right,
+                    policy=policy,
+                    fusion_weight=fusion_weight,
+                    budget=budget,
+                )
+                old_trace.append(_logits_digest(left))
+                new_trace.append(_logits_digest(right))
+                policy_trace.append(_logits_digest(policy_logits))
+                divergences.append(js_bits)
+                return policy_logits
+
+            initial_logits = integrate(old_logits, new_logits)
+            inner = self.model.model
+
+            def advance(token: int):
+                nonlocal old_lane_apps, new_lane_apps
+                lane_logits = []
+                for name, lane_cache in (
+                    ("old", old_cache),
+                    ("new", new_cache),
+                ):
+                    context_tokens = self._cache_context_tokens(lane_cache)
+                    budget.charge(
+                        tokens=1,
+                        layers=self.n_layers,
+                        operation=(
+                            "heterogeneous_incumbent_decode"
+                            if name == "old"
+                            else "heterogeneous_corrected_decode"
+                        ),
+                        attention_pairs=max(1, context_tokens + 1) * self.n_layers,
+                        output_head_tokens=1,
+                    )
+                    hidden = inner.embed_tokens(mx.array([[token]]))
+                    mask = create_attention_mask(hidden, lane_cache)
+                    for index, layer in enumerate(inner.layers):
+                        hidden = layer(
+                            hidden,
+                            mask,
+                            lane_cache[index],
+                        )
+                    logits = self._logits(hidden)[0, -1]
+                    mx.eval(logits)
+                    lane_logits.append(logits)
+                    if name == "old":
+                        old_lane_apps += self.n_layers
+                    else:
+                        new_lane_apps += self.n_layers
+                return integrate(lane_logits[0], lane_logits[1])
+
+            decoded, termination = self._decode(
+                old_cache,
+                budget,
+                initial_logits,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                cancel_check=cancel_check,
+                progress=progress,
+                sentence_grace_tokens=sentence_grace_tokens,
+                contract_grace_tokens=contract_grace_tokens,
+                force_exact_tokens=force_exact_tokens,
+                wall_reserve_s=wall_reserve_s,
+                token_logprobs_out=token_logprobs_out,
+                external_step_logits=advance,
+                external_step_lanes=2,
+            )
+        finally:
+            branch.z = saved_state
+            branch.workspace.update(saved_state)
+        if not divergences or old_lane_apps <= 0 or old_lane_apps != new_lane_apps:
+            raise RuntimeError("heterogeneous decode lane accounting differs")
+
+        def trace_sha256(values: list[str]) -> str:
+            return hashlib.sha256(":".join(values).encode("ascii")).hexdigest()
+
+        audit = {
+            "incumbent_state_sha256": tensor_sha256(incumbent_state),
+            "corrected_state_sha256": tensor_sha256(corrected_state),
+            "fusion_weight": round(float(fusion_weight), 10),
+            "old_lane_layer_apps": old_lane_apps,
+            "new_lane_layer_apps": new_lane_apps,
+            "old_initial_logits_sha256": old_initial_sha256,
+            "new_initial_logits_sha256": new_initial_sha256,
+            "policy_initial_logits_sha256": policy_trace[0],
+            "old_logits_trace_sha256": trace_sha256(old_trace),
+            "new_logits_trace_sha256": trace_sha256(new_trace),
+            "policy_logits_trace_sha256": trace_sha256(policy_trace),
+            "mean_js_divergence_bits": round(
+                sum(divergences) / len(divergences),
+                10,
+            ),
+            "max_js_divergence_bits": round(max(divergences), 10),
+            "divergence_samples": len(divergences),
+        }
+        return decoded, termination, audit
+
+    def _heterogeneous_policy_evaluator(
+        self,
+        *,
+        branch,
+        cache,
+        runner,
+        budget: ComputeBudget,
+        bridge_tokens: list[int],
+        verifier,
+    ):
+        """Build one exact dual-lane policy evaluator."""
+
+        from core.brain.llm.latent_cortex.counterfactual_probe import (
+            CounterfactualProbeResult,
+        )
+        from core.brain.llm.latent_cortex.heterogeneous_integrator import (
+            IntegrationPolicyResult,
+        )
+        from core.brain.llm.latent_cortex.verified_best import (
+            VerifierObservation,
+            validate_observation,
+        )
+
+        if verifier is None or self.tokenizer is None:
+            return None
+
+        def evaluate(
+            policy: str,
+            incumbent_state,
+            corrected_state,
+            fusion_weight: float,
+            _replicate: int,
+        ) -> IntegrationPolicyResult:
+            spent_before = budget.spent_layer_apps
+            decoded, termination, audit = self._heterogeneous_dual_lane_decode(
+                branch=branch,
+                cache=cache,
+                runner=runner,
+                budget=budget,
+                incumbent_state=incumbent_state,
+                corrected_state=corrected_state,
+                policy=policy,
+                fusion_weight=fusion_weight,
+                bridge_tokens=bridge_tokens,
+                max_tokens=self.config.verifier_probe_max_tokens,
+                temperature=0.0,
+                force_exact_tokens=True,
+            )
+            if (
+                len(decoded) != self.config.verifier_probe_max_tokens
+                or termination != "token_limit"
+            ):
+                raise RuntimeError(
+                    "heterogeneous verifier probe did not complete its exact "
+                    "equal-compute token contract"
+                )
+            measured_layer_apps = budget.spent_layer_apps - spent_before
+            lane_layer_apps = audit["old_lane_layer_apps"] + audit["new_lane_layer_apps"]
+            if measured_layer_apps != lane_layer_apps:
+                raise RuntimeError(
+                    "heterogeneous verifier lane accounting differs from the episode compute budget"
+                )
+            rendered = self.tokenizer.decode(decoded)
+            bounded = getattr(verifier, "observe_with_bounds", None)
+            raw_observation = bounded(rendered) if callable(bounded) else verifier(rendered)
+            if isinstance(raw_observation, dict) and "observation_sha256" in raw_observation:
+                observation = validate_observation(raw_observation)
+            else:
+                observation = VerifierObservation.from_value(raw_observation).to_dict()
+            encoded = json.dumps(
+                decoded,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode("ascii")
+            policy_audit = {
+                key: value for key, value in audit.items() if key != "policy_initial_logits_sha256"
+            }
+            return IntegrationPolicyResult(
+                probe=CounterfactualProbeResult(
+                    probe_tokens_sha256=hashlib.sha256(encoded).hexdigest(),
+                    probe_token_count=len(decoded),
+                    observation=observation,
+                    layer_apps=measured_layer_apps,
+                ),
+                **policy_audit,
+            )
 
         return evaluate
 
@@ -2373,6 +2729,7 @@ class LatentCortexEngine:
             if receipt.decoy_verification.get("selection_admitted") is True
             else ""
         )
+        heterogeneous_incumbent_state = winner.z
         arm_count = 3 * perturber_config.replicates
         arm_layer_apps = self._verifier_probe_layer_apps(
             bridge_tokens,
@@ -2468,6 +2825,76 @@ class LatentCortexEngine:
             receipt.flag("local_exploration_restored")
             if str(receipt.local_exploration["reason"]).startswith("evaluation_failed:"):
                 receipt.flag("local_exploration_evaluation_failed")
+        from core.brain.llm.latent_cortex.heterogeneous_integrator import (
+            POLICIES,
+            HeterogeneousIntegrationConfig,
+            run_heterogeneous_integration,
+        )
+
+        heterogeneous_config = HeterogeneousIntegrationConfig.from_value(
+            self.config.heterogeneous_integration
+        )
+        heterogeneous_probe_count = 2 * len(POLICIES) * heterogeneous_config.replicates
+        heterogeneous_probe_apps = self._verifier_probe_layer_apps(
+            bridge_tokens,
+            count=heterogeneous_probe_count,
+        )
+        fused_completion_extra = persist_cost + bridge_cost + decode_cost
+        heterogeneous_unavailable_reason = ""
+        heterogeneous_evaluator = None
+        if verifier is None or self.tokenizer is None:
+            heterogeneous_unavailable_reason = "independent_admitted_verifier_unavailable"
+        elif (
+            heterogeneous_probe_apps + fused_completion_extra + safety_reserve
+            > budget.remaining_layer_apps
+        ):
+            heterogeneous_unavailable_reason = "counterfactual_probe_budget_unavailable"
+        else:
+            heterogeneous_evaluator = self._heterogeneous_policy_evaluator(
+                branch=winner,
+                cache=cache,
+                runner=runner,
+                budget=budget,
+                bridge_tokens=bridge_tokens,
+                verifier=verifier,
+            )
+        (
+            integrated_state,
+            heterogeneous_policy,
+            receipt.heterogeneous_integration,
+        ) = run_heterogeneous_integration(
+            incumbent_state=heterogeneous_incumbent_state,
+            corrected_state=winner.z,
+            contradiction_perturbation=receipt.contradiction_perturbation,
+            local_exploration=receipt.local_exploration,
+            config=heterogeneous_config,
+            verifier_policy_sha256=verifier_policy_sha256,
+            decoy_review_sha256=decoy_review_sha256,
+            evaluate=heterogeneous_evaluator,
+            evaluation_unavailable_reason=(heterogeneous_unavailable_reason),
+            budget=budget,
+        )
+        import mlx.core as mx
+
+        winner.z = winner.workspace.restore_context_evidence(mx.array(integrated_state))
+        winner.workspace.update(winner.z)
+        heterogeneous_finalized = bool(
+            receipt.heterogeneous_integration["policies"]
+        ) and receipt.heterogeneous_integration["status"] in {
+            "selected",
+            "abstained",
+        }
+        heterogeneous_fusion_context = (
+            (
+                heterogeneous_incumbent_state,
+                integrated_state,
+                float(receipt.heterogeneous_integration["fusion_weight"]),
+            )
+            if heterogeneous_policy == "probability_fusion"
+            else None
+        )
+        if heterogeneous_finalized:
+            receipt.flag(f"heterogeneous_integration_finalized:{heterogeneous_policy}")
         from core.brain.llm.latent_cortex.mistake_locator import (
             build_mistake_locator_receipt,
         )
@@ -2527,7 +2954,7 @@ class LatentCortexEngine:
         # Best VERIFIED score of the winner's final latent state — becomes
         # the pre-adaptation reference for fast-weight verifier arbitration.
         latent_opt_verifier_score = float("-inf")
-        if self.config.latent_opt.enabled:
+        if self.config.latent_opt.enabled and not heterogeneous_finalized:
             loss_fn = build_proxy_loss(self.model, winner.anchor, tokens, self.config.latent_opt)
             optimizer = LatentOptimizer(
                 loss_fn,
@@ -2614,7 +3041,7 @@ class LatentCortexEngine:
         fast_weights: EpisodicFastWeights | None = None
         fw_baseline = None
         canary_baseline: dict[str, float] | None = None
-        if self.config.fast_weights.enabled:
+        if self.config.fast_weights.enabled and not heterogeneous_finalized:
             fast_weights = EpisodicFastWeights(self.config.fast_weights)
             if self._episode_probe_cache is not None:
                 # Every ΔW lifecycle transition changes the model function;
@@ -2780,24 +3207,80 @@ class LatentCortexEngine:
                 receipt.flag(f"slot_ablated:{int(ablate_slot)}:{ablate_mode}")
 
             # ── Commit the winner + decode the answer ────────────────────
-            slot_logits = self._persist_branch(winner, cache, runner, budget)
-            receipt.first_logits_digest = _logits_digest(slot_logits)
-            stage_started = self._stage_checkpoint(
-                receipt=receipt,
-                budget=budget,
-                stage="persist",
-                stage_started=stage_started,
-                episode_started=episode_started,
-                progress=progress,
-                cancel_check=cancel_check,
-            )
-            decode_logits = slot_logits
-            if bridge_tokens:
-                decode_logits = self._apply_decode_bridge(
-                    cache,
-                    budget,
-                    bridge_tokens,
+            final_fusion_audit = None
+            if heterogeneous_fusion_context is not None:
+
+                def checkpoint_fusion_phase(stage: str) -> None:
+                    nonlocal stage_started
+                    detail = (
+                        {
+                            "bridge_policy": self.config.decode_bridge_policy,
+                            "bridge_tokens": len(bridge_tokens),
+                        }
+                        if stage == "decode_bridge"
+                        else {}
+                    )
+                    stage_started = self._stage_checkpoint(
+                        receipt=receipt,
+                        budget=budget,
+                        stage=stage,
+                        stage_started=stage_started,
+                        episode_started=episode_started,
+                        progress=progress,
+                        cancel_check=cancel_check,
+                        **detail,
+                    )
+
+                (
+                    fusion_incumbent_state,
+                    fusion_corrected_state,
+                    fusion_weight,
+                ) = heterogeneous_fusion_context
+                (
+                    out_tokens,
+                    decode_termination,
+                    final_fusion_audit,
+                ) = self._heterogeneous_dual_lane_decode(
+                    branch=winner,
+                    cache=cache,
+                    runner=runner,
+                    budget=budget,
+                    incumbent_state=fusion_incumbent_state,
+                    corrected_state=fusion_corrected_state,
+                    policy="probability_fusion",
+                    fusion_weight=fusion_weight,
+                    bridge_tokens=bridge_tokens,
+                    max_tokens=decode_limit,
+                    temperature=float(self.config.decode_temperature),
+                    force_exact_tokens=False,
+                    cancel_check=cancel_check,
+                    progress=progress,
+                    sentence_grace_tokens=decode_sentence_grace_tokens,
+                    contract_grace_tokens=None,
+                    wall_reserve_s=0.0,
+                    token_logprobs_out=token_logprobs_out,
+                    phase_checkpoint=checkpoint_fusion_phase,
                 )
+                receipt.first_logits_digest = final_fusion_audit["policy_initial_logits_sha256"]
+                receipt.flag("heterogeneous_fusion_decode_applied")
+            else:
+                slot_logits = self._persist_branch(
+                    winner,
+                    cache,
+                    runner,
+                    budget,
+                )
+                receipt.first_logits_digest = _logits_digest(slot_logits)
+                stage_started = self._stage_checkpoint(
+                    receipt=receipt,
+                    budget=budget,
+                    stage="persist",
+                    stage_started=stage_started,
+                    episode_started=episode_started,
+                    progress=progress,
+                    cancel_check=cancel_check,
+                )
+            if bridge_tokens:
                 serialized_bridge = json.dumps(
                     bridge_tokens,
                     separators=(",", ":"),
@@ -2806,32 +3289,45 @@ class LatentCortexEngine:
                 receipt.decode_bridge_applied = True
                 receipt.decode_bridge_token_count = len(bridge_tokens)
                 receipt.decode_bridge_tokens_sha256 = hashlib.sha256(serialized_bridge).hexdigest()
-                receipt.decode_bridge_logits_digest = _logits_digest(decode_logits)
-                stage_started = self._stage_checkpoint(
-                    receipt=receipt,
-                    budget=budget,
-                    stage="decode_bridge",
-                    stage_started=stage_started,
-                    episode_started=episode_started,
-                    progress=progress,
+                if heterogeneous_fusion_context is not None:
+                    receipt.decode_bridge_logits_digest = final_fusion_audit[
+                        "policy_initial_logits_sha256"
+                    ]
+                else:
+                    decode_logits = self._apply_decode_bridge(
+                        cache,
+                        budget,
+                        bridge_tokens,
+                    )
+                    receipt.decode_bridge_logits_digest = _logits_digest(decode_logits)
+                    stage_started = self._stage_checkpoint(
+                        receipt=receipt,
+                        budget=budget,
+                        stage="decode_bridge",
+                        stage_started=stage_started,
+                        episode_started=episode_started,
+                        progress=progress,
+                        cancel_check=cancel_check,
+                        bridge_policy=self.config.decode_bridge_policy,
+                        bridge_tokens=len(bridge_tokens),
+                    )
+            elif heterogeneous_fusion_context is None:
+                decode_logits = slot_logits
+            if heterogeneous_fusion_context is None:
+                out_tokens, decode_termination = self._decode(
+                    cache,
+                    budget,
+                    decode_logits,
+                    max_tokens=decode_max_tokens,
                     cancel_check=cancel_check,
-                    bridge_policy=self.config.decode_bridge_policy,
-                    bridge_tokens=len(bridge_tokens),
+                    progress=progress,
+                    # Cleanup time is sacrosanct: with temporary synapses
+                    # attached the decode surrenders its tail rather than let
+                    # the wall clock expire before the erase proof.
+                    wall_reserve_s=(6.0 if fast_weights is not None else 0.0),
+                    token_logprobs_out=token_logprobs_out,
+                    sentence_grace_tokens=decode_sentence_grace_tokens,
                 )
-            out_tokens, decode_termination = self._decode(
-                cache,
-                budget,
-                decode_logits,
-                max_tokens=decode_max_tokens,
-                cancel_check=cancel_check,
-                progress=progress,
-                # Cleanup time is sacrosanct: with temporary synapses attached
-                # the decode surrenders its tail rather than let the wall
-                # clock expire before the erase proof.
-                wall_reserve_s=(6.0 if self.config.fast_weights.enabled else 0.0),
-                token_logprobs_out=token_logprobs_out,
-                sentence_grace_tokens=decode_sentence_grace_tokens,
-            )
             receipt.decode_requested_tokens = decode_limit
             receipt.decode_generated_tokens = len(out_tokens)
             receipt.decode_termination = decode_termination
@@ -2841,6 +3337,18 @@ class LatentCortexEngine:
             )
             receipt.decode_newline_suppressions = int(self._last_decode_newline_suppressions)
             receipt.decode_repetition_penalty_applied = float(self.config.decode_repetition_penalty)
+            if heterogeneous_finalized:
+                from core.brain.llm.latent_cortex.heterogeneous_integrator import (
+                    build_heterogeneous_decode_receipt,
+                )
+
+                receipt.heterogeneous_decode = build_heterogeneous_decode_receipt(
+                    integration=receipt.heterogeneous_integration,
+                    output_tokens=out_tokens,
+                    termination=decode_termination,
+                    first_logits_sha256=(receipt.first_logits_digest),
+                    fusion_audit=final_fusion_audit,
+                )
             if decode_termination.startswith("budget_") or decode_termination == "wall_reserve":
                 receipt.flag(f"decode_{decode_termination}")
             stage_started = self._stage_checkpoint(

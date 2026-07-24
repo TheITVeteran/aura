@@ -114,6 +114,7 @@ _CONFIG_KEYS = {
     "contradiction_head",
     "contradiction_perturber",
     "local_exploration",
+    "heterogeneous_integration",
     "mistake_locator",
     "uncertainty_head",
     "update_gate",
@@ -253,6 +254,7 @@ def config_from_job(job_config: dict[str, Any] | None) -> CortexConfig:
         contradiction_head=raw.get("contradiction_head"),
         contradiction_perturber=raw.get("contradiction_perturber"),
         local_exploration=raw.get("local_exploration"),
+        heterogeneous_integration=raw.get("heterogeneous_integration"),
         branch_correlation_evidence=raw.get("branch_correlation_evidence"),
         critic_blind_spot_evidence=raw.get("critic_blind_spot_evidence"),
     )
