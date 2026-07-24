@@ -73,6 +73,12 @@ def _hidden_sketch(value: Sequence[float]) -> list[float]:
     return means + rms_values
 
 
+def hidden_state_sketch(value: Sequence[float]) -> list[float]:
+    """Public all-dimension map shared by trace capture and learned verifiers."""
+
+    return _hidden_sketch(value)
+
+
 def _slot_sketch(value: Sequence[float]) -> list[float]:
     vector = [math.asinh(item) for item in _finite_vector(value)]
     width = len(vector)
@@ -449,6 +455,28 @@ def _validate_observation(
     return row
 
 
+def validate_reflector_observation(value: Any) -> dict[str, Any]:
+    """Validate one standalone observation against the complete live schema."""
+
+    if not isinstance(value, Mapping):
+        raise ValueError("reflector observation must be a mapping")
+    branch_index = value.get("branch_index")
+    if type(branch_index) is not int or branch_index < 0:
+        raise ValueError("reflector observation branch identity is invalid")
+    source_transition = {
+        "branch_step": value.get("branch_step"),
+        "prior_reasoning_sha256": value.get("prior_reasoning_sha256"),
+        "proposal_reasoning_sha256": value.get("proposal_reasoning_sha256"),
+        "admitted_reasoning_sha256": value.get("admitted_reasoning_sha256"),
+        "accepted": value.get("accepted"),
+    }
+    return _validate_observation(
+        value,
+        branch_index=branch_index,
+        source_transition=source_transition,
+    )
+
+
 def build_bidirectional_reflector_receipt(
     *,
     branches: list[Any],
@@ -659,8 +687,10 @@ __all__ = [
     "BIDIRECTIONAL_REFLECTOR_RECEIPT_SCHEMA",
     "REFLECTOR_OBSERVATION_SCHEMA",
     "build_bidirectional_reflector_receipt",
+    "hidden_state_sketch",
     "observe_reflector_transition",
     "observe_reflector_vectors",
     "position_hidden_sketch",
     "validate_bidirectional_reflector_receipt",
+    "validate_reflector_observation",
 ]

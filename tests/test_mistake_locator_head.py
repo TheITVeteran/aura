@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from core.learning.mistake_locator import (
+    MISTAKE_LOCATOR_SCHEMA_V2,
     MistakeLocatorHead,
     MistakeTransitionExample,
     transition_features,
@@ -189,3 +190,26 @@ def test_loader_refuses_symlink(tmp_path: Path, admitted_head: MistakeLocatorHea
     link.symlink_to(target)
     with pytest.raises(OSError):
         MistakeLocatorHead.load(link, expected_sha256=digest)
+
+
+def test_v2_process_artifact_remains_loadable(tmp_path: Path, admitted_head: MistakeLocatorHead):
+    payload = admitted_head.to_payload()
+    assert payload["schema"] == MISTAKE_LOCATOR_SCHEMA_V2
+    content = {key: payload[key] for key in payload if key != "content_sha256"}
+    payload["content_sha256"] = hashlib.sha256(
+        json.dumps(
+            content,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("ascii")
+    ).hexdigest()
+    path = tmp_path / "legacy-v2.json"
+    path.write_text(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")),
+        encoding="ascii",
+    )
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    loaded = MistakeLocatorHead.load(path, expected_sha256=digest)
+    assert "input_representation" not in loaded.manifest()

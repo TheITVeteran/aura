@@ -15,7 +15,8 @@ from typing import Any
 import numpy as np
 
 MISTAKE_LOCATOR_SCHEMA_V1 = "aura.rlc.mistake_locator_head.v1"
-MISTAKE_LOCATOR_SCHEMA = "aura.rlc.mistake_locator_head.v2"
+MISTAKE_LOCATOR_SCHEMA_V2 = "aura.rlc.mistake_locator_head.v2"
+MISTAKE_LOCATOR_SCHEMA = "aura.rlc.mistake_locator_head.v3"
 MISTAKE_EXAMPLE_SCHEMA = "aura.rlc.mistake_transition_example.v1"
 PROCESS_CALIBRATION_SCHEMA = "aura.rlc.process_calibration.v1"
 MAX_ARTIFACT_BYTES = 32 * 1024 * 1024
@@ -31,6 +32,9 @@ MIN_DOMAINS_PER_SPLIT = 2
 PROCESS_DEPTH_BANDS = ("early", "middle", "late")
 MIN_PROCESS_CELL_EXAMPLES = 8
 MIN_PROCESS_CELL_CLASS_EXAMPLES = 2
+POOLED_HIDDEN_V1 = "pooled_hidden_v1"
+REFLECTOR_SKETCH_V1 = "reflector_hidden_sketch_v1"
+INPUT_REPRESENTATIONS = frozenset({POOLED_HIDDEN_V1, REFLECTOR_SKETCH_V1})
 
 
 def process_depth_band(transition_index: int, transition_count: int) -> str:
@@ -613,6 +617,65 @@ def _admission_failures(
     return sorted(reason for reason, failed in checks if failed)
 
 
+def evaluate_mistake_locator(
+    head: MistakeLocatorHead,
+    examples: Sequence[MistakeTransitionExample],
+) -> dict[str, Any]:
+    """Independently score a frozen head on one complete held-out split."""
+
+    if not isinstance(head, MistakeLocatorHead):
+        raise ValueError("mistake-locator evaluation head is invalid")
+    relation = examples[0].relation if examples else ""
+    _, traces = _validate_split(
+        examples,
+        name="frozen evaluation",
+        relation=relation,
+        state_width=head.state_width,
+    )
+    probabilities = {
+        trace_id: [head.probability(row.prior_hidden, row.candidate_hidden) for row in rows]
+        for trace_id, rows in traces.items()
+    }
+    overall = _trace_metrics(traces, probabilities, threshold=head.threshold)
+
+    def grouped(field: str) -> dict[str, dict[str, Any]]:
+        values = sorted({str(getattr(rows[0], field)) for rows in traces.values()})
+        return {
+            value: _trace_metrics(
+                {
+                    trace_id: rows
+                    for trace_id, rows in traces.items()
+                    if str(getattr(rows[0], field)) == value
+                },
+                probabilities,
+                threshold=head.threshold,
+            )
+            for value in values
+        }
+
+    exact_count = round(overall["exact_location_accuracy"] * overall["trace_count"])
+    false_localizations = round(
+        overall["false_localization_rate"] * overall["no_error_trace_count"]
+    )
+    return {
+        "dataset_sha256": _dataset_sha256(examples),
+        "threshold": round(float(head.threshold), 10),
+        "overall": overall,
+        "by_domain": grouped("domain_id"),
+        "by_mutation_family": grouped("mutation_family"),
+        "exact_accuracy_wilson_lower": _wilson_bound(
+            exact_count,
+            overall["trace_count"],
+            upper=False,
+        ),
+        "false_localization_wilson_upper": _wilson_bound(
+            false_localizations,
+            overall["no_error_trace_count"],
+            upper=True,
+        ),
+    }
+
+
 @dataclass(slots=True)
 class MistakeLocatorHead:
     """Two-layer transition classifier admitted by trace-level OOD evidence."""
@@ -665,11 +728,12 @@ class MistakeLocatorHead:
         return json.loads(json.dumps(self.manifest_data))
 
     def to_payload(self) -> dict[str, Any]:
-        schema = (
-            MISTAKE_LOCATOR_SCHEMA
-            if "process_calibration" in self.manifest_data
-            else MISTAKE_LOCATOR_SCHEMA_V1
-        )
+        if "input_representation" in self.manifest_data:
+            schema = MISTAKE_LOCATOR_SCHEMA
+        elif "process_calibration" in self.manifest_data:
+            schema = MISTAKE_LOCATOR_SCHEMA_V2
+        else:
+            schema = MISTAKE_LOCATOR_SCHEMA_V1
         payload = {
             "schema": schema,
             "means": self.means.tolist(),
@@ -754,9 +818,11 @@ class MistakeLocatorHead:
         if not isinstance(payload, Mapping) or set(payload) != fields:
             raise ValueError("mistake-locator artifact fields differ")
         content = {key: payload[key] for key in fields - {"content_sha256"}}
-        if payload["schema"] not in {MISTAKE_LOCATOR_SCHEMA_V1, MISTAKE_LOCATOR_SCHEMA} or payload[
-            "content_sha256"
-        ] != _sha256(content):
+        if payload["schema"] not in {
+            MISTAKE_LOCATOR_SCHEMA_V1,
+            MISTAKE_LOCATOR_SCHEMA_V2,
+            MISTAKE_LOCATOR_SCHEMA,
+        } or payload["content_sha256"] != _sha256(content):
             raise ValueError("mistake-locator content commitment is invalid")
         try:
             head = cls(
@@ -773,9 +839,16 @@ class MistakeLocatorHead:
         except (TypeError, ValueError, OverflowError) as exc:
             raise ValueError("mistake-locator arrays are malformed") from exc
         head.validate()
-        if (payload["schema"] == MISTAKE_LOCATOR_SCHEMA) is not (
-            "process_calibration" in head.manifest_data
-        ):
+        expected_schema = (
+            MISTAKE_LOCATOR_SCHEMA
+            if "input_representation" in head.manifest_data
+            else (
+                MISTAKE_LOCATOR_SCHEMA_V2
+                if "process_calibration" in head.manifest_data
+                else MISTAKE_LOCATOR_SCHEMA_V1
+            )
+        )
+        if payload["schema"] != expected_schema:
             raise ValueError("mistake-locator artifact schema/manifest differ")
         if not head.admitted:
             raise ValueError("mistake-locator artifact failed admission")
@@ -837,6 +910,9 @@ class MistakeLocatorHead:
         is_process_calibrated = "process_calibration" in manifest
         if is_process_calibrated:
             fields.update({"process_calibration_schema", "process_calibration"})
+        has_input_representation = "input_representation" in manifest
+        if has_input_representation:
+            fields.add("input_representation")
         if (
             not isinstance(manifest, Mapping)
             or set(manifest) != fields
@@ -867,6 +943,10 @@ class MistakeLocatorHead:
             or manifest["train_domains_sha256"] == manifest["out_of_domain_domains_sha256"]
             or type(manifest["admitted"]) is not bool
             or manifest["repair_steering_authorized"] is not False
+            or (
+                has_input_representation
+                and manifest["input_representation"] not in INPUT_REPRESENTATIONS
+            )
             or not isinstance(manifest["failure_reasons"], list)
             or any(
                 not isinstance(reason, str) or not reason for reason in manifest["failure_reasons"]
@@ -1057,6 +1137,7 @@ class MistakeLocatorHead:
         seed: int = 0,
         steps: int = 600,
         learning_rate: float = 0.03,
+        input_representation: str | None = None,
     ) -> MistakeLocatorHead:
         state_width, _train_traces = _validate_split(train, name="training", relation="train")
         _, in_domain_traces = _validate_split(
@@ -1102,6 +1183,10 @@ class MistakeLocatorHead:
             or not 50 <= steps <= 10_000
             or isinstance(learning_rate, bool)
             or not 0.0001 <= float(learning_rate) <= 0.5
+            or (
+                input_representation is not None
+                and input_representation not in INPUT_REPRESENTATIONS
+            )
         ):
             raise ValueError("mistake-locator optimizer configuration is invalid")
         ordered_train = tuple(sorted(train, key=lambda row: (row.trace_id, row.transition_index)))
@@ -1267,6 +1352,8 @@ class MistakeLocatorHead:
             "failure_reasons": failures,
             "repair_steering_authorized": False,
         }
+        if input_representation is not None:
+            manifest["input_representation"] = input_representation
         head = cls(
             means=means,
             scales=scales,
@@ -1289,10 +1376,14 @@ __all__ = [
     "MISTAKE_EXAMPLE_SCHEMA",
     "MISTAKE_LOCATOR_SCHEMA",
     "MISTAKE_LOCATOR_SCHEMA_V1",
+    "MISTAKE_LOCATOR_SCHEMA_V2",
+    "POOLED_HIDDEN_V1",
+    "REFLECTOR_SKETCH_V1",
     "PROCESS_CALIBRATION_SCHEMA",
     "PROCESS_DEPTH_BANDS",
     "MistakeLocatorHead",
     "MistakeTransitionExample",
     "process_depth_band",
     "transition_features",
+    "evaluate_mistake_locator",
 ]

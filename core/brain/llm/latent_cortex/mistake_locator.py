@@ -10,7 +10,9 @@ from typing import Any
 
 from core.brain.llm.latent_cortex.loop_core import canonical_sha256
 from core.learning.mistake_locator import (
+    POOLED_HIDDEN_V1,
     PROCESS_CALIBRATION_SCHEMA,
+    REFLECTOR_SKETCH_V1,
     MistakeLocatorHead,
     process_depth_band,
     transition_features,
@@ -48,6 +50,24 @@ def _pooled_hidden(state: Any, *, width: int) -> list[float]:
     if len(values) != width or any(not math.isfinite(item) for item in values):
         raise ValueError("mistake-locator pooled state is invalid")
     return values
+
+
+def _locator_hidden(state: Any, *, head: MistakeLocatorHead) -> list[float]:
+    representation = head.manifest_data.get("input_representation", POOLED_HIDDEN_V1)
+    pooled = _pooled_hidden(
+        state,
+        width=(int(state.shape[-1]) if representation == REFLECTOR_SKETCH_V1 else head.state_width),
+    )
+    if representation == POOLED_HIDDEN_V1:
+        return pooled
+    if representation != REFLECTOR_SKETCH_V1:
+        raise ValueError("mistake-locator input representation is unknown")
+    from core.brain.llm.latent_cortex.bidirectional_reflector import hidden_state_sketch
+
+    sketch = hidden_state_sketch(pooled)
+    if len(sketch) != head.state_width:
+        raise ValueError("mistake-locator reflector sketch width differs")
+    return sketch
 
 
 class MistakeLocatorRuntime:
@@ -135,8 +155,8 @@ class MistakeLocatorRuntime:
             or type(accepted) is not bool
         ):
             raise ValueError("mistake observation identity is invalid")
-        prior = _pooled_hidden(prior_state, width=self.head.state_width)
-        proposal = _pooled_hidden(proposal_state, width=self.head.state_width)
+        prior = _locator_hidden(prior_state, head=self.head)
+        proposal = _locator_hidden(proposal_state, head=self.head)
         probability = self.head.probability(prior, proposal)
         payload = {
             "schema": MISTAKE_OBSERVATION_SCHEMA,

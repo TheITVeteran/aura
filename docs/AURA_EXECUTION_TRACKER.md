@@ -26855,3 +26855,61 @@ count completion is approximately 56.9%-89.5%, with a midpoint planning
 estimate of 69.5%. Next: publish CP356, then implement SPARK-043's adversarial
 verifier curriculum. Final multi-hour soaks remain deferred until every shorter
 gate is green.
+
+## Checkpoint 2026-07-24-357: Adversaries May Teach Only From Proven Failures
+
+SPARK-043 turns adversarial error insertion into a bounded training protocol,
+not an unchecked model-authored label factory. Each pair captures complete real
+RLC reflector observations and binds the closed-form recurrence task, model
+stack, layer schedule, configuration, seed, source manifest, answer digest, and
+every hidden-trace commitment. Independent repeats of both clean and mutant
+arms must be identical. The clean trace must pass the exact executable task
+oracle, the mutant must fail it, all controls must match, and the first changed
+proposal after an unchanged prior is the only admissible localization target.
+Mutation magnitude is bounded so gross corruption cannot masquerade as subtle
+error discovery.
+
+The adaptive inserter balances mutation-family exposure while weighting cells
+by retained locator misses and perturbation size. Every verified training
+candidate updates that policy, including examples the round did not select.
+Task identity is disjoint across train, in-domain calibration, and OOD sets;
+OOD domains and mutation families are disjoint from training as well. Complete
+held-out candidate sets are frozen before fitting, and neither held-out split
+can update locator weights or mutator policy. The trained two-layer locator
+consumes the same bounded all-dimension reflector sketch used by live RLC
+transitions. The resulting v3 artifact is representation-explicit while v1/v2
+artifacts remain loadable through their historical pooled-hidden path.
+
+Held-out evaluation executes under native macOS `sandbox-exec`, with network
+and file writes denied and only the frozen head plus held-out examples supplied
+to the child. The parent independently reconstructs predictions, aggregate and
+cell metrics, Wilson bounds, data hashes, and the evaluation receipt. Verified
+training misses alone may enter the retained-negative store. Its records are
+content-addressed and append-only under an interprocess lock and atomic writes;
+semantic reconstruction, pair/example lineage checks, and Aura's hash-chain
+detect substitution, corruption, unchained files, and tampering. Crash recovery
+can safely finish chaining an already-created valid record.
+
+The bounded CLI validates a strict regular non-symlink input bundle, trains,
+sandbox-evaluates, atomically persists the reloadable head and report, and
+returns success only for an admitted artifact. The complete subprocess test
+exercises that path. Focused curriculum and locator coverage passes 29/29,
+broader verifier curriculum coverage passes 138/138, and the complete
+latent-cortex ownership suite passes 904/904 in 48.34 seconds. Strict Ruff,
+bytecode compilation, diff hygiene, and the enterprise ratchet pass. Exact
+parent/current enterprise scans both contain 168 findings and 38 high/critical
+findings with identical finding identities, so CP357 adds no scanner debt.
+
+This checkpoint proves adversarial curriculum, frozen held-out evaluation,
+tamper-evident negative retention, and live input-representation compatibility.
+It deliberately reports `false` for a trusted resident-32B artifact, external
+source-manifest signature, resident reasoning gain, and frontier capability.
+Those claims require an externally rooted powered resident campaign and cannot
+be promoted from synthetic admission evidence.
+
+This is total checkpoint record 418. The revised forecast remains 466-733 total
+records, now approximately 48-315 records after this checkpoint. Checkpoint-
+count completion is approximately 57.0%-89.7%, with a midpoint planning
+estimate of 69.7%. Next: publish CP357, then implement SPARK-044's
+counterfactual verifier. Final multi-hour soaks remain deferred until every
+shorter gate is green.

@@ -1577,9 +1577,55 @@ before those dependencies close is not admissible.
   falsification mechanics and bounded causal wiring, not independent weights,
   general factual verification, resident-32B utility, adapter interaction,
   reasoning gain, or frontier capability.
-- [ ] **SPARK-043 - Adversarial verifier curriculum.** Co-train subtle error
-  insertion and error localization under sandboxed, held-out evaluation; retain
-  verified failures as negatives.
+- [x] **SPARK-043 - Adversarial verifier curriculum.** CP357 adds a bounded,
+  reproducible curriculum that may teach the recurrent mistake locator only
+  from independently verified failures. Each training unit binds a real,
+  complete RLC reflector observation; closed-form recurrence task identity;
+  model stack, layer schedule, configuration, seed, and source-manifest
+  commitments; and two clean plus two mutated executions. Clean arms must pass
+  the deterministic task oracle, mutant arms must fail it, repeats must be
+  byte-equivalent, and controls must remain identical. The pair localizes the
+  exact first divergent recurrent transition, requires an unchanged prior and
+  a changed proposal, and rejects perturbations outside a bounded subtlety cap.
+  Labels therefore come from the independent executable oracle, never from the
+  model or mutator that produced the trace.
+
+  The adaptive inserter chooses balanced task/mutation cells using prior
+  locator misses and perturbation size, then receives feedback from every
+  verified training candidate rather than only selected examples. Training,
+  in-domain calibration, and OOD tasks are disjoint. OOD domains and mutation
+  families are also disjoint from training, the complete calibration/OOD sets
+  are frozen before fitting, and no held-out result can update head weights or
+  inserter state. The learned two-layer head consumes the same bounded
+  all-dimension reflector sketch that live recurrence emits. This creates v3
+  artifacts while preserving v1/v2 diagnostic compatibility; the runtime
+  dispatches each artifact to its declared representation and rejects width or
+  schema drift.
+
+  Held-out scoring runs in native macOS `sandbox-exec` with network and file
+  writes denied. The child receives only the frozen head and held-out examples;
+  the parent independently reconstructs all probabilities, predictions,
+  per-domain/per-mutation metrics, Wilson bounds, dataset digest, and receipt.
+  Verified training misses below the retention threshold enter an append-only,
+  content-addressed negative store protected by an interprocess lock, atomic
+  creation, crash recovery, semantic reconstruction, and Aura's hash-chained
+  audit log. Held-out examples and pair/example lineage substitutions are
+  rejected, and both record and chain tampering are detected.
+
+  `tools/train_adversarial_verifier.py` is the operational bounded-input path:
+  it validates a strict non-symlink 256 MiB bundle, trains, runs the native
+  sandbox evaluation, persists the reloadable head and report atomically, and
+  exits nonzero unless the head is admitted. A subprocess test exercises that
+  complete path. Focused curriculum/artifact/runtime coverage passes 29/29;
+  broader verifier curriculum coverage passes 138/138; and the complete
+  latent-cortex ownership suite passes 904/904 in 48.34 seconds. Strict Ruff,
+  bytecode compilation, diff hygiene, and the enterprise ratchet pass, with
+  exact parent/current scans identical at 168 findings and 38 high/critical.
+  This proves the adversarial curriculum, sandbox, retention, and live input
+  representation mechanics. It does not prove a signed resident-32B head,
+  resident-32B utility, adapter interaction, reasoning gain, or frontier
+  capability; those claims still require an externally rooted powered
+  campaign and cannot be inferred from synthetic admission.
 - [ ] **SPARK-044 - Counterfactual verifier.** Perturb assumptions and inputs,
   require predicted consequence changes, and penalize fragile claims that remain
   invariant when they should move.
