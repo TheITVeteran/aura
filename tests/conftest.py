@@ -209,6 +209,49 @@ def _live_data_write_guard(request):
 
 
 @pytest.fixture(autouse=True)
+def _environment_learning_isolation():
+    """Evict environment-kernel learning services between tests.
+
+    ``EnvironmentKernel`` registers its ``AdvancedCognitionRuntime`` into the
+    process-global ServiceContainer; without eviction, every later kernel in
+    the same test process reuses the first test's runtime — including its
+    accumulated in-memory episodes, so learned risk climbs across tests until
+    the advanced-cognition gate starts vetoing benign actions (the in-memory
+    twin of the on-disk contamination fixed via AURA_ENV_RUNTIME_DIR).
+    Only the kernel-registered learning instances are evicted; the rest of
+    the container is untouched.
+    """
+
+    def _evict() -> None:
+        try:
+            from core.container import ServiceContainer
+        except ImportError:
+            return
+        services = getattr(ServiceContainer, "_services", None)
+        if not isinstance(services, dict):
+            return
+        lock = getattr(ServiceContainer, "_lock", None)
+        keys = [
+            key
+            for key in list(services)
+            if key == "advanced_cognition" or key.startswith("environment_kernel:")
+        ]
+        if not keys:
+            return
+        if lock is not None:
+            with lock:
+                for key in keys:
+                    services.pop(key, None)
+        else:
+            for key in keys:
+                services.pop(key, None)
+
+    _evict()
+    yield
+    _evict()
+
+
+@pytest.fixture(autouse=True)
 def resource_observer(request, monkeypatch, tmp_path):
     """Keep ordinary tests independent from the developer host's pressure.
 
@@ -236,6 +279,14 @@ def resource_observer(request, monkeypatch, tmp_path):
     monkeypatch.setenv("AURA_MEMORY_SNAPSHOT_CACHE_TTL_S", "0")
     monkeypatch.setenv("AURA_LANE_AUDIT_CACHE_TTL_S", "0")
     monkeypatch.setenv("AURA_TEST_RUNTIME_ROOT", str(runtime_root))
+    # 2026-07-23: environment learning sidecars (world model, zero-shot
+    # transfer) live under the USER-GLOBAL data dir shared with the live
+    # organism. Tests were inheriting learned risk from it and writing test
+    # episodes back into it. Every test gets a disposable workspace; a test
+    # that genuinely needs the live store must set AURA_ENV_RUNTIME_DIR
+    # itself. core/environment/runtime_workspace.py enforces the same rule
+    # process-wide for import-time calls no fixture can reach.
+    monkeypatch.setenv("AURA_ENV_RUNTIME_DIR", str(runtime_root / "environment_runtime"))
 
     def _reset_resource_singletons():
         from core.agency.capability_token import reset_token_store

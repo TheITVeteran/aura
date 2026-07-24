@@ -23,6 +23,9 @@ ALLOWED_RAW_KEY_MODULES = {
     "core/environment/adapter.py",
     "core/environment/command.py",
     "core/environment/generic_command_handlers.py",
+    # Unix socketpair frame writer for detached training workers —
+    # socket.send() on an AF_UNIX stream, not a terminal keystroke sink.
+    "core/runtime/detached_worker_origin_channel.py",
     "core/embodiment/",
     "core/adapters/",
     "core/environments/",
