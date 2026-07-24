@@ -575,7 +575,8 @@ class LatentCortexService:
         guidance = receipt.get("verifier_guidance")
         if (
             isinstance(guidance, dict)
-            and guidance.get("schema") == "aura.latent_task_verifier.v3"
+            and guidance.get("schema")
+            in {"aura.latent_task_verifier.v3", "aura.latent_task_verifier.v4"}
             and type(guidance.get("evaluations")) is int
             and guidance["evaluations"] > 0
         ):
@@ -592,6 +593,17 @@ class LatentCortexService:
                     or guidance.get("grade_admissible") is not True
                 ):
                     raise ValueError("atomic decomposition denied grading authority")
+                if guidance.get("schema") == "aura.latent_task_verifier.v4":
+                    from core.brain.llm.latent_cortex.deterministic_verifier_router import (
+                        validate_deterministic_router_envelope,
+                    )
+
+                    routed = validate_deterministic_router_envelope(
+                        guidance.get("deterministic_router"),
+                        atomic_receipt=atomic,
+                    )
+                    if routed["hard_pass"] is not True:
+                        raise ValueError("deterministic verifier refuted candidate")
             except (ImportError, TypeError, ValueError):
                 errors.append("atomic_decomposition_unproven")
         if config.get("critic_blind_spot_evidence") is not None:

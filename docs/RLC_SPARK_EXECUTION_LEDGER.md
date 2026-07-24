@@ -1498,10 +1498,18 @@ before those dependencies close is not admissible.
   judge. Focused atomic/verifier/verified-best/wiring coverage passes 141/141.
   This closes structural decomposition, not claim truth; SPARK-040 through
   SPARK-046 remain open for domain routing and independent semantic grading.
-- [ ] **SPARK-040 - Deterministic verifier router.** Route eligible claims to
-  sandboxed code, calculators, schemas, compilers, SAT/SMT, theorem proving,
-  database constraints, planning, simulation, or retrieval with explicit
-  unknown/unsupported results and governed tool receipts.
+- [x] **SPARK-040 - Deterministic verifier router.** Atomic claims now route
+  before scoring to exact integer arithmetic, Python AST compilation, or JSON
+  parsing when a complete deterministic unit exists. Formal/SAT, retrieval,
+  simulation, and planning claims return explicit `unsupported` with the exact
+  missing authority; unclassified prose returns `unknown`, never a vacuous
+  pass. Every route carries a content-bound pure-local read-only tool receipt.
+  The service independently reconstructs route counts, atom bindings, tool
+  commitments, and hard-pass authority. Chunked code and partial JSON abstain
+  instead of false-refuting. Focused coverage passes 42/42 and the complete
+  latent-cortex suite passes 823/823 in 78.42 seconds. This closes deterministic
+  routing truthfully; governed external executors remain future eligible
+  authorities rather than simulated successes.
 - [ ] **SPARK-041 - Process verifier.** Score local state transitions with a
   calibrated PRM/process model, expose reliability by domain and depth, and
   refuse dense credit where the verifier is not validated.

@@ -25223,6 +25223,37 @@ isolation and distinct executable operator policies before resident integration
 and lesion proof. Final multi-hour soaks remain deferred until every shorter
 gate is green.
 
+## Checkpoint 2026-07-24-354: Deterministic Verification Must Abstain Honestly
+
+SPARK-040 adds a per-atom deterministic router after atomic decomposition and
+before holistic scoring. Complete arithmetic, Python, and JSON units receive
+content-bound read-only verifier receipts and exact `verified` or `refuted`
+outcomes. Formal/SAT, retrieval, simulation, and planning claims name their
+missing governed authority as `unsupported`; unclassified prose is `unknown`.
+Neither state earns correctness credit. Chunked code and partial multiline JSON
+abstain rather than false-refuting incomplete fragments.
+
+Task-verifier v4 binds the router receipt. Deterministic refutations cap branch
+authority; the service independently validates atom linkage, route and tool
+hashes, reconstructed counts, and hard-pass status. The router joins the critic
+source closure so code changes invalidate critic identity. Focused coverage
+passes 42/42 and the complete latent-cortex suite passes 823/823 in 78.42
+seconds. The clean closeout audit enumerates 7,901 tracked files, including
+4,878 code files and 1,542,041 code lines, and passes every configured gate.
+The semantic ledger contains 1,546 current entries and 429 fully reviewed code
+files. The enterprise ratchet remains at the inherited 180 findings and 50
+high/critical findings; CP353 and CP354 have identical finding identities, so
+this checkpoint adds no scanner debt. This proves honest deterministic routing,
+not semantic coverage for unsupported domains, process-model validity,
+resident-32B gain, or frontier capability.
+
+This is total checkpoint record 415. The revised forecast remains 466-733 total
+records, now approximately 51-318 records after this checkpoint. Checkpoint-
+count completion is approximately 56.6%-89.1%, with a midpoint planning
+estimate of 69.2%. Next: publish CP354, then implement SPARK-041's calibrated
+process verifier. Final multi-hour soaks remain deferred until every shorter
+gate is green.
+
 ## Checkpoint 2026-07-22-328: Branches Think Independently Before They Confer
 
 Virtual-width branches now have an enforced fresh-context isolation phase. Each

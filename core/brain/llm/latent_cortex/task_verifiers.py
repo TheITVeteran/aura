@@ -33,6 +33,9 @@ from typing import Any
 from core.brain.llm.latent_cortex.atomic_decomposition import (
     decomposition_check,
 )
+from core.brain.llm.latent_cortex.deterministic_verifier_router import (
+    router_check,
+)
 from core.brain.llm.latent_cortex.output_quality import (
     evaluate_facet_coverage,
 )
@@ -44,7 +47,7 @@ from core.brain.llm.latent_cortex.response_contracts import (
 
 logger = logging.getLogger("Aura.LatentCortex.TaskVerifiers")
 
-TASK_VERIFIER_SCHEMA = "aura.latent_task_verifier.v3"
+TASK_VERIFIER_SCHEMA = "aura.latent_task_verifier.v4"
 
 # The trailing guard rejects decimal continuations ("= 40.5") without
 # rejecting sentence-final claims ("= 40."). The leading guard keeps the
@@ -235,6 +238,7 @@ class EpisodeTaskVerifier:
 
     _WEIGHTS = {
         "atomic_decomposition": 0.40,
+        "deterministic_router": 0.45,
         "response_contract": 0.55,
         "arithmetic": 0.35,
         "code": 0.25,
@@ -285,8 +289,14 @@ class EpisodeTaskVerifier:
 
     def evaluate(self, text: str) -> dict[str, Any]:
         atomic = decomposition_check(text, objective=self.objective)
+        routed = router_check(
+            text,
+            objective=self.objective,
+            atomic_receipt=atomic.get("receipt") or {},
+        )
         checks = {
             "atomic_decomposition": atomic,
+            "deterministic_router": routed,
             "arithmetic": check_arithmetic_claims(text),
             "code": check_code_blocks(text),
             "facets": check_facet_coverage(text, self.objective),
@@ -317,7 +327,7 @@ class EpisodeTaskVerifier:
             score *= float(degeneracy["factor"])
         # Holistic checks cannot acquire branch-selection authority when the
         # candidate omitted a structurally required dependency or source span.
-        if text.strip() and not atomic["valid"]:
+        if text.strip() and (not atomic["valid"] or not routed["valid"]):
             score = min(score, 0.25)
         row = {
             "schema": TASK_VERIFIER_SCHEMA,
@@ -390,6 +400,9 @@ class EpisodeTaskVerifier:
             },
             "atomic_decomposition": dict(
                 best["checks"]["atomic_decomposition"].get("receipt") or {}
+            ),
+            "deterministic_router": dict(
+                best["checks"]["deterministic_router"].get("receipt") or {}
             ),
             "grade_admissible": bool(best.get("grade_admissible")),
             "facet_judgments": judgments,
