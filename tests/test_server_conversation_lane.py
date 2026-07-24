@@ -1809,11 +1809,14 @@ async def test_api_chat_continues_to_kernel_when_lane_warmup_times_out(monkeypat
             timeout = kwargs.get("timeout", args[0] if args else None)
             raise TimeoutError(f"timed out after {timeout}")
 
+    kernel_calls: list[tuple] = []
+
     class _FakeKernelInterface:
         def is_ready(self):
             return True
 
-        async def process(self, *_args, **_kwargs):
+        async def process(self, *args, **_kwargs):
+            kernel_calls.append(args)
             return "Fallback local lane answered."
 
     monkeypatch.setattr(server_module, "_notify_user_spoke", lambda *_args, **_kwargs: None)
@@ -1846,8 +1849,15 @@ async def test_api_chat_continues_to_kernel_when_lane_warmup_times_out(monkeypat
 
     assert response.status_code == 200
     payload = json.loads(response.body)
-    assert "right here with you" in payload["response"].lower()
+    # The subject of this test: a warmup TIMEOUT must not abort the turn — the
+    # kernel lane is still consulted and the turn is served.
+    assert kernel_calls, "kernel lane was never reached after the warmup timeout"
+    assert payload["response"].strip()
     assert payload["response_confidence"] == "high"
+    # The canned "I'm right here with you" reflex is no longer the contract:
+    # response_reliability now classifies it as a fluent, ungrounded reflex and
+    # the endurance probe flags it (REFLEX_CANNED_RE).
+    assert "right here with you" not in payload["response"].lower()
 
 
 @pytest.mark.asyncio
@@ -12351,9 +12361,14 @@ async def test_stabilize_user_facing_reply_clarifies_confusion_callout(monkeypat
         "Yeah. That's where all the interesting stuff lives. Stay there.",
     )
 
-    assert result.startswith("I lost the thread")
-    assert "likely break" in result
-    assert "anchoring" in result
+    # 35cea49fa replaced the scripted "I lost the thread on that answer..."
+    # apology with the generated degraded-live composer (reason=
+    # confusion_repair), and locked that in test_feedback_audit_fixes.py
+    # ::test_confusion_override_uses_degraded_live_composer_not_scripted_apology.
+    # The contract is now grounded self-report, not a canned phrase.
+    assert "synthetic fallback" in result
+    assert "anchor" in result
+    assert "I lost the thread on that answer" not in result
 
 
 @pytest.mark.asyncio
@@ -12432,13 +12447,11 @@ async def test_stabilize_user_facing_reply_blocks_semantic_glitch(monkeypatch):
         "Heidi. That's the thing to do.",
     )
 
-    assert result.startswith(
-        (
-            "I lost the thread",
-            "That reply drifted away",
-            "I caught a bad answer",
-        )
-    )
+    # The glitch must be blocked and replaced by grounded self-report rather
+    # than one of the retired canned openers (35cea49fa removed the scripted
+    # fallback in favour of the degraded-live composer).
+    assert "synthetic fallback" in result
+    assert "anchor" in result
     assert "Heidi" not in result
 
 

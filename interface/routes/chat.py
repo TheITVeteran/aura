@@ -13300,7 +13300,11 @@ async def _stabilize_user_facing_reply(
     try:
         from core.container import ServiceContainer
         inference_gate = ServiceContainer.get("inference_gate", default=None)
-        if inference_gate:
+        # Match the guard in _attempt_generated_social_grounding_repair: a gate
+        # that exists but exposes no think() raised AttributeError deep in the
+        # rewrite call, which surfaced as an emergency-severity chat incident
+        # instead of a quiet "no rewrite lane available" fallback.
+        if inference_gate is not None and hasattr(inference_gate, "think"):
             if desktop_cognitive_engine_required or protected_foreground_lane:
                 allowed, block_reason = _desktop_secondary_model_repair_allowed(
                     reason=f"stabilizer_rewrite:{str(reason or 'quality_gate')[:120]}",
