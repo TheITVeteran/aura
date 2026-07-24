@@ -292,3 +292,37 @@ def test_memory_governor_feeds_the_detector():
         "MemoryGovernor does not tell the detector when it mitigates — it can "
         "never learn that its own cleanup is not working"
     )
+
+
+def test_a_runaway_actually_records_its_critical_degradation(monkeypatch):
+    """The fail-closed record must be WRITTEN, not just logged.
+
+    ``severity=Severity.CRITICAL`` raised AttributeError("CRITICAL") —
+    errors.Severity is a typing Literal, not an enum — so every live
+    RUNAWAY (2026-07-21 22:32/23:13) logged "Could not record runaway
+    degradation: CRITICAL" and no degradation record ever existed. This
+    pins the repaired path end to end.
+    """
+    from core.runtime import errors as errors_module
+
+    captured: dict = {}
+
+    def _spy(subsystem, error, severity="degraded", action="", **kwargs):
+        captured["subsystem"] = subsystem
+        captured["severity"] = severity
+        captured["action"] = action
+        return None
+
+    monkeypatch.setattr(errors_module, "record_degradation", _spy)
+
+    det = RunawayDetector(
+        "rss", _policy(ceiling=48000.0, projection_horizon_s=3600.0)
+    )
+    _feed(det, 40000.0, 12000.0, minutes=20)
+    verdict = det.assess(now=1000.0 + 20 * 60)
+
+    assert verdict.is_runaway()
+    assert captured.get("subsystem") == "runaway_budget", (
+        "the RUNAWAY verdict must reach record_degradation"
+    )
+    assert captured.get("severity") == "critical"

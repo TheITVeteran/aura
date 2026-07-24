@@ -911,3 +911,84 @@ async def test_stability_guardian_allows_research_cycle_boot_grace():
     result = await guardian._check_background_tasks()
 
     assert result.healthy is True
+
+
+@pytest.mark.asyncio
+async def test_finished_subprocess_refs_are_released_not_retained_for_life():
+    """The registry must not BE the leak it exists to find.
+
+    _process_refs used to hold a strong reference to every Popen ever
+    created until shutdown, pinning each one's stdout/stderr wrappers and
+    pipe buffers for process lifetime — the dominant cluster in the Jul 7
+    soak's tracemalloc top-growth (longevity_leakrepro: 16k live io.open +
+    21k TextIOWrapper objects). Finished procs must be released while
+    their small records stay for reporting.
+    """
+    hygiene = RuntimeHygieneManager()
+    await hygiene.start(asyncio.get_running_loop())
+    proc = await asyncio.to_thread(
+        subprocess.Popen, [sys.executable, "-c", "pass"],
+    )
+    try:
+        await asyncio.to_thread(proc.wait, 5.0)
+        hygiene._refresh_process_records()
+        assert id(proc) not in hygiene._process_refs, (
+            "a finished subprocess must not stay strongly referenced"
+        )
+        record = hygiene._process_records.get(id(proc))
+        assert record is not None and record.finished_at is not None, (
+            "the bounded post-mortem record should remain"
+        )
+    finally:
+        await hygiene.stop()
+        hygiene.reset_state()
+
+
+@pytest.mark.asyncio
+async def test_finished_records_are_bounded_not_unbounded():
+    hygiene = RuntimeHygieneManager()
+    await hygiene.start(asyncio.get_running_loop())
+    try:
+        retention = hygiene._FINISHED_RECORD_RETENTION
+        for index in range(retention + 40):
+            key = 10_000_000 + index
+            hygiene._process_records[key] = runtime_hygiene_module.ProcessRecord(
+                key=key, kind="subprocess", name=f"fake-{index}",
+                source="test", command="true", pid=None,
+            )
+            hygiene._process_records[key].finished_at = float(index)
+            hygiene._process_refs[key] = SimpleNamespace(poll=lambda: 0)
+        hygiene._refresh_process_records()
+        finished = [
+            record for record in hygiene._process_records.values()
+            if record.finished_at is not None
+        ]
+        assert len(finished) <= retention
+        # Oldest finished entries are the ones dropped.
+        assert all(
+            record.finished_at >= 40.0
+            for record in finished
+            if record.name.startswith("fake-")
+        )
+    finally:
+        await hygiene.stop()
+        hygiene.reset_state()
+
+
+@pytest.mark.asyncio
+async def test_finished_thread_refs_are_released():
+    hygiene = RuntimeHygieneManager()
+    await hygiene.start(asyncio.get_running_loop())
+    worker = threading.Thread(target=lambda: None, name="hygiene-evict-probe")
+    worker.start()
+    worker.join(timeout=5.0)
+    try:
+        key = id(worker)
+        if key in hygiene._thread_refs:
+            hygiene._refresh_thread_records()
+            assert key not in hygiene._thread_refs, (
+                "a finished thread must not stay strongly referenced"
+            )
+    finally:
+        await hygiene.stop()
+        hygiene.reset_state()

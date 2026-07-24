@@ -273,13 +273,19 @@ class RunawayDetector:
                 "🚨 RUNAWAY [%s]: %s", self.name, verdict.reason,
             )
             try:
-                from core.runtime.errors import Severity, record_degradation
+                from core.runtime.errors import record_degradation
 
+                # severity is the Literal STRING "critical" — errors.Severity
+                # is a typing alias, not an enum. `Severity.CRITICAL` raised
+                # AttributeError("CRITICAL") here, so every live RUNAWAY
+                # (e.g. 2026-07-21 22:32 and 23:13, 39-54GB/h projections)
+                # logged "Could not record runaway degradation: CRITICAL"
+                # and the fail-closed record was never written.
                 record_degradation(
                     "runaway_budget",
                     RuntimeError(f"runaway: {self.name}: {verdict.reason}"),
                     action="failing closed: refusing new consequential work",
-                    severity=Severity.CRITICAL,
+                    severity="critical",
                     enforce_failure_policy=False,
                     extra=verdict.to_dict(),
                 )

@@ -1424,6 +1424,34 @@ class RuntimeHygieneManager:
             command=getattr(proc, "name", "multiprocessing"),
         )
 
+    # How many FINISHED records each registry retains for post-mortem
+    # reporting. The registries used to retain every record — and every
+    # strong ref — until shutdown: each Popen's stdout/stderr wrappers and
+    # pipe buffers stayed reachable for process lifetime, which is the
+    # dominant cluster in the Jul 7 soak's tracemalloc top-growth (16k
+    # io.open + 21k TextIOWrapper live objects, longevity_leakrepro).
+    _FINISHED_RECORD_RETENTION = 512
+
+    def _evict_finished(self, records: dict, refs: dict) -> None:
+        """Drop strong refs to finished resources; keep a bounded history.
+
+        The ref is what pins pipes, buffers, and thread objects in memory.
+        The record is a small dataclass kept for shutdown/health reporting,
+        bounded to the most recent finished entries so a long-lived runtime
+        cannot accumulate one record per subprocess it ever ran.
+        """
+        finished = [
+            key for key, record in records.items()
+            if record.finished_at is not None
+        ]
+        for key in finished:
+            refs.pop(key, None)
+        overflow = len(finished) - self._FINISHED_RECORD_RETENTION
+        if overflow > 0:
+            finished.sort(key=lambda key: records[key].finished_at)
+            for key in finished[:overflow]:
+                records.pop(key, None)
+
     def _refresh_thread_records(self) -> None:
         now = time.monotonic()
         live_idents = {thread.ident for thread in threading.enumerate()}
@@ -1438,6 +1466,7 @@ class RuntimeHygieneManager:
                 record.started_at = now
             if record.ident is not None and record.ident not in live_idents and record.finished_at is None:
                 record.finished_at = now
+        self._evict_finished(self._thread_records, self._thread_refs)
 
     def _refresh_process_records(self) -> None:
         now = time.monotonic()
@@ -1491,6 +1520,11 @@ class RuntimeHygieneManager:
                     except (RuntimeError, TypeError, ValueError):
                         record.exit_code = None
                     record.finished_at = record.finished_at or now
+        # Release finished procs: OUR ref must not keep their pipes alive.
+        # Callers that still hold a finished Popen keep it valid; when they
+        # drop it, everything frees. Pipes are never closed from here — a
+        # caller may legitimately read buffered output after exit.
+        self._evict_finished(self._process_records, self._process_refs)
 
     def _thread_summary(self, *, include_stacks: bool = False) -> dict[str, Any]:
         now = time.monotonic()
