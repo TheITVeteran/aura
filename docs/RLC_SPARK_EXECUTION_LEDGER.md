@@ -185,19 +185,40 @@ as half a checkbox.
   still cannot claim a lesion run). The post-training run on fresh
   held-out tasks (the acceptance event, checkbox stays `[ ]`) binds to the
   SPARK-069 treatment. The march owns everything else.
-- **The pass-divergence design problem is CLAIMED and in progress by the
-  Fable session (Bryan-directed) as of 2026-07-24**: diagnosis of the
-  cos(pass1, pass2) = 0.9994 obstacle as an architecture defect rather
-  than a training-budget one — why a fixed recurrent map lacks any
-  mechanism to make pass t+1 compute something different from pass t —
-  plus a menu of flag-gated, T=1-identity-safe divergence interventions
-  (step-conditioned operators on the intrinsic path, anchor re-injection
-  schedules, inter-pass bottleneck/noise, alternative recurrence
-  formulations), each with structural tests proving the mechanism is
-  actually consulted. Scope boundary: this lane produces diagnosis, code,
-  tests, and small-model measurements only. It launches NO training; the
-  SPARK-069 admission preflight, campaign protocol, and any 32B run stay
-  bound to the march. The Fable session also takes the live-runtime
+- **The pass-divergence design problem is RESOLVED in the Fable lane at
+  F6 (2026-07-24, commit eb3735c7)** — diagnosis, repaired instrument,
+  one new mechanism, and a measured lever menu at
+  `artifacts/closeout/latent_cortex/pass_divergence_design/`:
+  * **The CP227 accuracy gate's verdict is VOID** — `_decode` ran outside
+    `recurrence_adapter_scope`, so both arms decoded the bare base model
+    (on@d == off@d exactly, 6/2/0 both arms). Do not build on
+    `cp227_accuracy_gate/`'s negative result; the repaired tool proves
+    treatment activation per block and must be re-run on the CP227
+    adapter before any conclusion about it.
+  * cp305's `uniform_partial_reward` is a flat reward channel (baseline
+    0% at every depth, `no_marker`/`token_limit` on every episode at 320
+    tokens with cot) — Failure A, march-owned, blocks everything.
+  * Failure B: the campaign architecture cannot express pass-to-pass
+    difference — `wrap_depth_conditioned` has no campaign call site
+    (banks never attached; the forward seam is live), jitter/collapse-cos
+    act on branches not passes, α constant, and the intrinsic levers
+    (rotation_weight, anchor_injection) ran at 0.0 in CP227.
+  * Measured on the 1.5B (T=4): baseline increment alignment 0.75→0.94
+    (power-iteration capture); renormalize alone → 0.20/0.28; anchor
+    0.1–0.3 → 0.15/0.11; seeded inter-pass noise 0.05–0.1 → 0.06/0.01;
+    step-operator deltas inert at 0.005 and anti-aligned (−0.27) at
+    0.02; all levers stacked → −0.47 (period-2 direction). Geometry
+    only — no accuracy claim.
+  * New mechanism: `RecurrentDepthPlan.interpass_noise` (+`noise_seed`),
+    a deterministic RMS-relative kick at re-entry only — T=1 stays
+    bit-identical, same seed replays exactly. Per-sample seeds give GRPO
+    groups latent-side variance, which is exactly what the uniform-reward
+    diagnosis says the groups lack.
+  * The march's adoption menu (ordered, with configs) is in
+    `DIAGNOSIS_AND_MENU.md`; step 1 is the free one: re-run the repaired
+    accuracy gate on the existing CP227 adapter before any new training.
+  The SPARK-069 admission preflight, campaign protocol, and any 32B run
+  stay bound to the march. The Fable session still holds the live-runtime
   endurance forensics (the ~15-turn resident ceiling and the 4h soak
   memory slope) — outside the Spark checkpoints, no march collision.
 
