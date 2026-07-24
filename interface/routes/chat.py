@@ -3684,11 +3684,19 @@ async def _find_session_content_exchanges(
     user_message: str,
     *,
     session_id: str = "",
-    limit: int = 40,
+    limit: int = _MAX_CONVERSATION_LOG_EXCHANGES,
 ) -> list[dict[str, str]]:
     """Latest-first session exchanges whose USER turn matches the question's
     content words. Grounded content recall: the answer to "earlier I gave you
-    X" is a quote from the transcript, never a durable-memory guess."""
+    X" is a quote from the transcript, never a durable-memory guess.
+
+    Searches the FULL retained session (the log is bounded at
+    _MAX_CONVERSATION_LOG_EXCHANGES), not a recent window: a fact you gave
+    100 turns ago must still be recallable. A 40-turn window silently
+    "forgot" anything planted earlier in a long conversation — the 200-turn
+    endurance soak's retention probes (plant at turn 3, probe at turn 111)
+    failed 0/3 purely because the plant had scrolled out of the window while
+    still sitting in the log. Keyword matching over <=500 turns is cheap."""
     keywords = _content_recall_keywords(user_message)
     if not keywords:
         return []

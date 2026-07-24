@@ -104,3 +104,51 @@ async def test_content_recall_is_session_isolated():
     assert reply is not None
     assert "7213" not in reply, "must not leak another session's facts"
     assert "won't guess" in reply
+
+
+@pytest.mark.asyncio
+async def test_content_recall_survives_a_long_conversation():
+    """The 2026-07-24 endurance soak's real failure: a fact planted at turn 3
+    and probed at turn 111 came back 'I don't find that in this conversation'
+    (retention 0/3) — not because it was gone (the log holds 500) but because
+    the content search only looked at the latest 40 turns. A fact given 100+
+    turns ago must still be recallable in the same session."""
+    entries = [_exchange(1, "Morning.", "Morning to you.")]
+    entries.append(_exchange(2, PLANT_USER, PLANT_AURA))
+    # Bury the plant under 120 unrelated turns — well past the old 40 window.
+    for n in range(3, 123):
+        entries.append(_exchange(n, f"Unrelated small-talk turn {n}, nothing to remember.",
+                                 f"Acknowledged turn {n}."))
+    await _seed(entries)
+
+    reply = await chat_routes._build_conversation_recall_reply(
+        PROBE, session_id="s-endure"
+    )
+    assert reply is not None, "recall must not miss a fact still in the session log"
+    assert "7213" in reply, (
+        f"a fact planted 120 turns ago must still be recalled, got: {reply!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_content_recall_prefers_the_fact_over_a_prior_probe_turn():
+    """Anti-confabulation under long conversations: a later probe must ground
+    on the FACT plant, not on an earlier recall-probe turn that shares the
+    generic 'earlier / what was' scaffolding (the soak's n=141/171 echo)."""
+    entries = [_exchange(1, "Hi.", "Hello.")]
+    entries.append(_exchange(2, PLANT_USER, PLANT_AURA))
+    for n in range(3, 60):
+        entries.append(_exchange(n, f"Filler {n}.", f"Ok {n}."))
+    # A prior recall-probe turn with the same scaffolding words but no fact.
+    entries.append(_exchange(60, "Earlier, what was that thing I mentioned? Just tell me.",
+                             "I don't find that in this conversation's completed turns."))
+    for n in range(61, 100):
+        entries.append(_exchange(n, f"More filler {n}.", f"Sure {n}."))
+    await _seed(entries)
+
+    reply = await chat_routes._build_conversation_recall_reply(
+        PROBE, session_id="s-endure"
+    )
+    assert reply is not None and "7213" in reply, (
+        f"recall must prefer the fact plant over a prior probe turn: {reply!r}"
+    )
