@@ -98,12 +98,23 @@ class FinetunePipe:
             try:
                 # Offload synchronous file append to a background thread
                 def _write_batch(batch, path):
+                    from core.governance_context import local_internal_governed_scope
+
                     payload = "".join(json.dumps(entry) + "\n" for entry in batch)
-                    get_file_write_gateway().append_text(
-                        path,
-                        payload,
-                        source="adaptation.finetune_pipe.dataset",
-                    )
+                    # Governed scope, established INSIDE the worker thread:
+                    # without it the live runtime refused every flush as a
+                    # governance violation ("append_text:adaptation.
+                    # finetune_pipe.dataset called outside governed context",
+                    # ×12 in the Jul 18 live log) and the learning traces
+                    # were silently dropped.
+                    with local_internal_governed_scope(
+                        "adaptation.finetune_pipe.dataset"
+                    ):
+                        get_file_write_gateway().append_text(
+                            path,
+                            payload,
+                            source="adaptation.finetune_pipe.dataset",
+                        )
                             
                 await asyncio.to_thread(_write_batch, self._batch.copy(), self.dataset_path)
                 
@@ -113,6 +124,8 @@ class FinetunePipe:
                 # AUDIT-FIX: Quality-score-based rotation — keep highest-quality 1000 samples,
                 # not the most recent 1000 (chronological rotation discards good old samples).
                 def _rotate_dataset(path):
+                    from core.governance_context import local_internal_governed_scope
+
                     lines = path.read_text(encoding="utf-8").splitlines()
                     if len(lines) <= 1000:
                         return
@@ -130,11 +143,14 @@ class FinetunePipe:
                         except (json.JSONDecodeError, TypeError, ValueError):
                             entries.append((0.5, line))
                     entries.sort(key=lambda x: x[0], reverse=True)
-                    get_file_write_gateway().write_text(
-                        path,
-                        "".join(line + "\n" for _, line in entries[:1000]),
-                        source="adaptation.finetune_pipe.rotate_dataset",
-                    )
+                    with local_internal_governed_scope(
+                        "adaptation.finetune_pipe.rotate_dataset"
+                    ):
+                        get_file_write_gateway().write_text(
+                            path,
+                            "".join(line + "\n" for _, line in entries[:1000]),
+                            source="adaptation.finetune_pipe.rotate_dataset",
+                        )
                             
                 try:
                     await asyncio.to_thread(_rotate_dataset, self.dataset_path)

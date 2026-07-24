@@ -36,9 +36,10 @@ import os
 import threading
 import time
 from collections import deque
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, Callable
+from typing import Any
 
 logger = logging.getLogger("Aura.Resilience.RunawayBudget")
 
@@ -121,7 +122,7 @@ class RunawayPolicy:
     projection_horizon_s: float = 3600.0
 
     @classmethod
-    def for_memory_mb(cls) -> "RunawayPolicy":
+    def for_memory_mb(cls) -> RunawayPolicy:
         try:
             from core.runtime import resource_psutil as psutil
 

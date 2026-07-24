@@ -992,3 +992,39 @@ async def test_finished_thread_refs_are_released():
     finally:
         await hygiene.stop()
         hygiene.reset_state()
+
+
+@pytest.mark.asyncio
+async def test_finetune_pipe_flush_writes_inside_a_governed_scope(tmp_path, monkeypatch):
+    """LRP-008: the live runtime refused every finetune-pipe flush as a
+    governance violation ("append_text:adaptation.finetune_pipe.dataset
+    called outside governed context", x12 Jul 18) and silently dropped
+    the learning traces. The write must carry an active governance token
+    in the thread that performs it."""
+    from core.adaptation import finetune_pipe as pipe_module
+    from core.governance_context import get_active_governance
+
+    observed: dict = {}
+
+    class _GatewayStub:
+        def append_text(self, path, payload, source=""):
+            observed["governed"] = get_active_governance() is not None
+            observed["source"] = source
+            Path(str(path)).write_text(payload)
+
+        def write_text(self, path, payload, source=""):
+            observed["rotate_governed"] = get_active_governance() is not None
+            Path(str(path)).write_text(payload)
+
+    monkeypatch.setattr(pipe_module, "get_file_write_gateway", lambda: _GatewayStub())
+    pipe = pipe_module.FinetunePipe.__new__(pipe_module.FinetunePipe)
+    pipe._batch = [{"text": "sample"}]
+    pipe._flush_lock = asyncio.Lock()
+    pipe.dataset_path = tmp_path / "dataset.jsonl"
+
+    await pipe.flush()
+
+    assert observed.get("source") == "adaptation.finetune_pipe.dataset"
+    assert observed.get("governed") is True, (
+        "the dataset append must run inside local_internal_governed_scope"
+    )
