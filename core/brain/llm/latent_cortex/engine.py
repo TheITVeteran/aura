@@ -571,6 +571,44 @@ class LatentCortexEngine:
         return max(0.0, min(1.0, sum(values) / len(values)))
 
     @staticmethod
+    def _ensemble_snapshot_boundaries(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+        """Describe a private ensemble snapshot using tensor-free commitments."""
+
+        branches = snapshot.get("branches") if isinstance(snapshot, dict) else None
+        if not isinstance(branches, dict) or not branches:
+            raise ValueError("ensemble snapshot has no branch inventory")
+        rows = []
+        for index in sorted(branches):
+            branch = branches[index]
+            if not isinstance(branch, dict):
+                raise ValueError("ensemble snapshot branch is invalid")
+            state_sha256 = tensor_sha256(branch["z"])
+            kv_sha256 = str(branch["kv_boundary_sha256"])
+            if len(kv_sha256) != 64:
+                raise ValueError("ensemble snapshot KV identity is invalid")
+            rows.append(
+                {
+                    "index": int(index),
+                    "state_sha256": state_sha256,
+                    "kv_boundary_sha256": kv_sha256,
+                    "steps": int(branch["steps"]),
+                    "operator": str(branch["operator"]),
+                    "halted": bool(branch["halted"]),
+                }
+            )
+        return rows
+
+    @classmethod
+    def _ensemble_snapshot_identity(cls, snapshot: dict[str, Any]) -> tuple[str, str]:
+        """Commit a complete private ensemble snapshot without disclosing tensors."""
+
+        from core.brain.llm.latent_cortex.latent_tree_search import (
+            ensemble_identity_from_boundaries,
+        )
+
+        return ensemble_identity_from_boundaries(cls._ensemble_snapshot_boundaries(snapshot))
+
+    @staticmethod
     def _policy_uncertainty(bucket: str) -> float:
         if "|u:high" in bucket:
             return 0.8
@@ -2231,6 +2269,33 @@ class LatentCortexEngine:
         )
         if str(receipt.virtual_quanta["reason"]).startswith("counterfactual_failed:"):
             receipt.flag("virtual_quanta_" + receipt.virtual_quanta["reason"])
+        from core.brain.llm.latent_cortex.latent_tree_search import (
+            DISABLED as LATENT_TREE_DISABLED,
+        )
+        from core.brain.llm.latent_cortex.latent_tree_search import (
+            LatentTreeSearchConfig,
+            build_empty_latent_tree_receipt,
+            run_latent_tree_search,
+        )
+        from core.brain.llm.latent_cortex.latent_tree_search import (
+            append_transaction as append_latent_tree_transaction,
+        )
+
+        latent_tree_config = LatentTreeSearchConfig.from_value(self.config.latent_tree_search)
+        latent_tree_status = (
+            "disabled" if latent_tree_config.mode == LATENT_TREE_DISABLED else "not_invoked"
+        )
+        receipt.latent_tree_search = build_empty_latent_tree_receipt(
+            episode_id=receipt.episode_id,
+            objective_sha256=receipt.input_tokens_sha256,
+            config=latent_tree_config,
+            status=latent_tree_status,
+            reason=(
+                "configured_disabled"
+                if latent_tree_status == "disabled"
+                else "branch_action_not_selected"
+            ),
+        )
         value_policy = ValueOfComputationPolicy(action_policy_evidence)
         action_controls = self._embed_action_controls()
         has_memory = any(
@@ -2455,10 +2520,348 @@ class LatentCortexEngine:
                     "branch_step_before": None,
                     "branch_step_after": None,
                 }
+                tree_search_handled = False
+                if (
+                    action is OperationKind.BRANCH
+                    and latent_tree_config.mode != LATENT_TREE_DISABLED
+                ):
+                    bounded_observer = getattr(verifier, "observe_with_bounds", None)
+                    probe_cost = self._verifier_probe_layer_apps(bridge_tokens)
+                    if verifier is None or self.tokenizer is None:
+                        receipt.latent_tree_search = build_empty_latent_tree_receipt(
+                            episode_id=receipt.episode_id,
+                            objective_sha256=receipt.input_tokens_sha256,
+                            config=latent_tree_config,
+                            status="unavailable",
+                            reason="admitted_verifier_unavailable",
+                        )
+                    elif not callable(bounded_observer):
+                        receipt.latent_tree_search = build_empty_latent_tree_receipt(
+                            episode_id=receipt.episode_id,
+                            objective_sha256=receipt.input_tokens_sha256,
+                            config=latent_tree_config,
+                            status="unavailable",
+                            reason="bounded_verifier_observation_unavailable",
+                        )
+                    elif probe_cost + safety_reserve > budget.remaining_layer_apps:
+                        receipt.latent_tree_search = build_empty_latent_tree_receipt(
+                            episode_id=receipt.episode_id,
+                            objective_sha256=receipt.input_tokens_sha256,
+                            config=latent_tree_config,
+                            status="unavailable",
+                            reason="root_probe_budget_unavailable",
+                        )
+                    else:
+                        from core.brain.llm.latent_cortex.loop_core import canonical_sha256
+
+                        tree_root_snapshot = ensemble.snapshot_ensemble_runtime()
+                        tree_root_boundaries = self._ensemble_snapshot_boundaries(
+                            tree_root_snapshot
+                        )
+                        tree_root_state_sha256, tree_root_kv_sha256 = (
+                            self._ensemble_snapshot_identity(tree_root_snapshot)
+                        )
+                        tree_target_index = prospective_target.index
+                        from core.brain.llm.latent_cortex.resource_accounting import (
+                            RESOURCE_COUNTERS,
+                        )
+
+                        root_resources_before = budget.resource_ledger.totals()
+                        root_spent_before = int(budget.spent_layer_apps)
+                        tree_probe_cache = self._episode_probe_cache
+                        root_cache_key = ""
+                        root_cache_hits_before = 0
+                        root_cache_saved_before = 0
+                        if tree_probe_cache is not None:
+                            root_cache_key = tree_probe_cache.key(
+                                prospective_target.workspace.seed_z,
+                                prospective_target.z,
+                                bridge_tokens,
+                                self.config.verifier_probe_max_tokens,
+                            )
+                            root_cache_hits_before = tree_probe_cache.hits
+                            root_cache_saved_before = tree_probe_cache.layer_apps_saved
+                        root_probe = self._decode_probe(
+                            prospective_target,
+                            cache,
+                            runner,
+                            budget,
+                            bridge_tokens=bridge_tokens,
+                        )
+                        root_observation = bounded_observer(self.tokenizer.decode(root_probe))
+                        root_resources_after = budget.resource_ledger.totals()
+                        root_probe_tokens = [int(token) for token in root_probe]
+                        root_evaluation = {
+                            "spent_layer_apps": (int(budget.spent_layer_apps) - root_spent_before),
+                            "resource_delta": {
+                                name: int(root_resources_after[name])
+                                - int(root_resources_before[name])
+                                for name in RESOURCE_COUNTERS
+                            },
+                            "probe_tokens_sha256": canonical_sha256(root_probe_tokens),
+                            "probe_token_count": len(root_probe_tokens),
+                            "target_branch": tree_target_index,
+                            "probe_cache_hit": bool(
+                                tree_probe_cache is not None
+                                and tree_probe_cache.hits > root_cache_hits_before
+                            ),
+                            "probe_cache_key_sha256": root_cache_key,
+                            "probe_cache_layer_apps_saved": (
+                                0
+                                if tree_probe_cache is None
+                                else tree_probe_cache.layer_apps_saved - root_cache_saved_before
+                            ),
+                        }
+                        authority_observation = (
+                            prospective_target.verified_best_observation or root_observation
+                        )
+                        tree_actions = tuple(
+                            candidate.value
+                            for candidate in (
+                                OperationKind.DECOMPOSE,
+                                OperationKind.FALSIFY,
+                                OperationKind.CHECK_ASSUMPTION,
+                                OperationKind.SIMULATE,
+                                OperationKind.FORMALIZE,
+                                OperationKind.BLIND_RESOLVE,
+                            )
+                            if candidate in action_controls
+                        )
+
+                        def restore_tree_snapshot(snapshot):
+                            ensemble.restore_ensemble_runtime(snapshot)
+                            restored = ensemble.snapshot_ensemble_runtime()
+                            return self._ensemble_snapshot_identity(restored)
+
+                        def recurrent_tree_call_inventory(
+                            *,
+                            _op_start: int = op.start,
+                            _op_end: int = op.end,
+                        ) -> list[int]:
+                            return [
+                                int(row["ordinal"])
+                                for row in runner.kv_bound_receipt()["calls"]
+                                if row["persist"] is False
+                                and row["start"] == _op_start
+                                and row["end"] == _op_end
+                            ]
+
+                        def expand_tree_state(
+                            action_name: str,
+                            parent_index: int,
+                            child_index: int,
+                            *,
+                            _action_step: int = action_index,
+                            _bounded_observer=bounded_observer,
+                            _op_start: int = op.start,
+                            _op_end: int = op.end,
+                            _op_alpha: float = op.alpha,
+                            _probe_cost: int = probe_cost,
+                            _stop_context=stop_context,
+                            _target_index: int = tree_target_index,
+                        ) -> dict[str, Any]:
+                            tree_action = OperationKind(action_name)
+                            control = action_controls.get(tree_action)
+                            if control is None:
+                                raise RuntimeError("tree_action_control_unavailable")
+                            recurrent_ordinals_before = set(recurrent_tree_call_inventory())
+                            operator_rows = ensemble.apply_cognitive_operators(
+                                control,
+                                action=f"latent_tree:{action_name}",
+                                action_step=_action_step,
+                                budget=budget,
+                            )
+                            admitted = ensemble.step_all(
+                                runner,
+                                cache,
+                                _op_start,
+                                _op_end,
+                                budget=budget,
+                                alpha_override=_op_alpha,
+                                reserve_layer_apps=safety_reserve,
+                                stop_context=_stop_context,
+                                transaction_purpose=f"latent_tree:{action_name}",
+                            )
+                            if not admitted:
+                                raise RuntimeError("tree_transition_budget_refused")
+                            if _probe_cost + safety_reserve > budget.remaining_layer_apps:
+                                raise RuntimeError("tree_probe_budget_refused")
+                            target = next(
+                                branch
+                                for branch in ensemble.branches
+                                if branch.index == _target_index
+                            )
+                            probe_cache = self._episode_probe_cache
+                            probe_cache_key = ""
+                            probe_cache_hits_before = 0
+                            probe_cache_saved_before = 0
+                            if probe_cache is not None:
+                                probe_cache_key = probe_cache.key(
+                                    target.workspace.seed_z,
+                                    target.z,
+                                    bridge_tokens,
+                                    self.config.verifier_probe_max_tokens,
+                                )
+                                probe_cache_hits_before = probe_cache.hits
+                                probe_cache_saved_before = probe_cache.layer_apps_saved
+                            probe = self._decode_probe(
+                                target,
+                                cache,
+                                runner,
+                                budget,
+                                bridge_tokens=bridge_tokens,
+                            )
+                            observation = _bounded_observer(self.tokenizer.decode(probe))
+                            probe_tokens = [int(token) for token in probe]
+                            child_snapshot = ensemble.snapshot_ensemble_runtime()
+                            child_boundaries = self._ensemble_snapshot_boundaries(child_snapshot)
+                            state_sha256, kv_sha256 = self._ensemble_snapshot_identity(
+                                child_snapshot
+                            )
+                            recurrent_kv_call_ordinals = sorted(
+                                set(recurrent_tree_call_inventory()) - recurrent_ordinals_before
+                            )
+                            transition_sha256 = canonical_sha256(
+                                {
+                                    "episode_id": receipt.episode_id,
+                                    "objective_sha256": receipt.input_tokens_sha256,
+                                    "action_step": _action_step,
+                                    "parent_index": parent_index,
+                                    "child_index": child_index,
+                                    "action": action_name,
+                                    "state_sha256": state_sha256,
+                                    "kv_boundary_sha256": kv_sha256,
+                                    "target_branch": _target_index,
+                                    "operator_receipts": [
+                                        canonical_sha256(row) for row in operator_rows
+                                    ],
+                                }
+                            )
+                            return {
+                                "snapshot": child_snapshot,
+                                "state_sha256": state_sha256,
+                                "kv_boundary_sha256": kv_sha256,
+                                "observation": observation,
+                                "transition_sha256": transition_sha256,
+                                "target_branch": _target_index,
+                                "probe_tokens_sha256": canonical_sha256(probe_tokens),
+                                "probe_token_count": len(probe_tokens),
+                                "branch_boundaries": child_boundaries,
+                                "probe_cache_hit": bool(
+                                    probe_cache is not None
+                                    and probe_cache.hits > probe_cache_hits_before
+                                ),
+                                "probe_cache_key_sha256": probe_cache_key,
+                                "probe_cache_layer_apps_saved": (
+                                    0
+                                    if probe_cache is None
+                                    else probe_cache.layer_apps_saved - probe_cache_saved_before
+                                ),
+                                "recurrent_kv_call_ordinals": recurrent_kv_call_ordinals,
+                            }
+
+                        transaction = run_latent_tree_search(
+                            episode_id=receipt.episode_id,
+                            objective_sha256=receipt.input_tokens_sha256,
+                            action_step=action_index,
+                            root_snapshot=tree_root_snapshot,
+                            root_state_sha256=tree_root_state_sha256,
+                            root_kv_boundary_sha256=tree_root_kv_sha256,
+                            root_branch_boundaries=tree_root_boundaries,
+                            root_observation=root_observation,
+                            root_evaluation=root_evaluation,
+                            authority_observation=authority_observation,
+                            actions=tree_actions,
+                            config=latent_tree_config,
+                            budget=budget,
+                            restore_snapshot=restore_tree_snapshot,
+                            expand=expand_tree_state,
+                            recurrent_call_inventory=recurrent_tree_call_inventory,
+                            cancel_check=cancel_check,
+                        )
+                        append_latent_tree_transaction(
+                            receipt.latent_tree_search,
+                            transaction,
+                        )
+                        tree_search_handled = True
+                        affected_branches = len(ensemble.branches)
+                        outcome = f"latent_tree_{transaction['status']}"
+                        if transaction["status"] == "committed":
+                            winner_node = int(transaction["winner_node"])
+                            winner = transaction["nodes"][winner_node]
+                            winner_observation = winner["observation"]
+                            winner_target_boundary = next(
+                                boundary
+                                for boundary in winner["branch_boundaries"]
+                                if boundary["index"] == tree_target_index
+                            )
+                            root_target_boundary = next(
+                                boundary
+                                for boundary in tree_root_boundaries
+                                if boundary["index"] == tree_target_index
+                            )
+                            from core.brain.llm.latent_cortex.verified_best import (
+                                validate_observation,
+                            )
+
+                            committed_observation = validate_observation(winner_observation)
+                            raw_committed_observation = {
+                                key: committed_observation[key]
+                                for key in (
+                                    "schema",
+                                    "score",
+                                    "lower_bound",
+                                    "upper_bound",
+                                    "sample_count",
+                                    "basis",
+                                    "independent",
+                                    "evidence_sha256",
+                                )
+                            }
+                            target = next(
+                                branch
+                                for branch in ensemble.branches
+                                if branch.index == tree_target_index
+                            )
+                            observation, best_decision, best_restored = (
+                                ensemble.observe_verified_best(
+                                    target,
+                                    raw_committed_observation,
+                                    action_step=action_index,
+                                    restore_target_state_sha256=tensor_sha256(
+                                        target_runtime_snapshot["z"]
+                                    ),
+                                    budget=budget,
+                                )
+                            )
+                            if best_decision != "promote" or best_restored:
+                                raise RuntimeError(
+                                    "latent tree authority diverged after committed search"
+                                )
+                            probe_score = observation.score
+                            accepted_verifier_score = observation.score
+                            verification = {
+                                "target_branch": tree_target_index,
+                                "observation": observation.to_dict(),
+                                "decision": best_decision,
+                                "restored": False,
+                                "attempt_parent_state_sha256": tree_root_state_sha256,
+                                "constraint_input_state_sha256": "",
+                                "candidate_state_sha256": winner_target_boundary["state_sha256"],
+                                "restore_target_state_sha256": "",
+                                "kv_boundary_before_sha256": root_target_boundary[
+                                    "kv_boundary_sha256"
+                                ],
+                                "kv_boundary_after_sha256": winner_target_boundary[
+                                    "kv_boundary_sha256"
+                                ],
+                                "branch_step_before": target_runtime_snapshot["steps"],
+                                "branch_step_after": target.steps,
+                            }
 
                 if action is OperationKind.REGENERATE_FROM_PREFIX:
                     affected_branches += ensemble.revert_all_to_savepoint()
-                if action in _ACTION_CONTROL_TEXT:
+                if action in _ACTION_CONTROL_TEXT and not tree_search_handled:
                     operator_receipts = ensemble.apply_cognitive_operators(
                         action_controls[action],
                         action=action.value,
@@ -2493,18 +2896,22 @@ class LatentCortexEngine:
                         )
                         prospective_target.workspace.update(prospective_target.z)
                         receipt.flag("transient_negative_constraint_applied")
-                if action in {
-                    OperationKind.DECOMPOSE,
-                    OperationKind.BLIND_RESOLVE,
-                    OperationKind.BRANCH,
-                    OperationKind.SEARCH_MEMORY,
-                    OperationKind.RETRIEVE_EVIDENCE,
-                    OperationKind.SIMULATE,
-                    OperationKind.FALSIFY,
-                    OperationKind.CHECK_ASSUMPTION,
-                    OperationKind.REGENERATE_FROM_PREFIX,
-                    OperationKind.FORMALIZE,
-                }:
+                if (
+                    action
+                    in {
+                        OperationKind.DECOMPOSE,
+                        OperationKind.BLIND_RESOLVE,
+                        OperationKind.BRANCH,
+                        OperationKind.SEARCH_MEMORY,
+                        OperationKind.RETRIEVE_EVIDENCE,
+                        OperationKind.SIMULATE,
+                        OperationKind.FALSIFY,
+                        OperationKind.CHECK_ASSUMPTION,
+                        OperationKind.REGENERATE_FROM_PREFIX,
+                        OperationKind.FORMALIZE,
+                    }
+                    and not tree_search_handled
+                ):
                     try:
                         admitted = ensemble.step_all(
                             runner,
@@ -3122,12 +3529,20 @@ class LatentCortexEngine:
             divergence_ratio=self.config.recurrence.divergence_ratio,
             fixed_depth=self.config.recurrence.fixed_depth,
         )
+        discarded_tree_kv_ordinals = sorted(
+            {
+                int(ordinal)
+                for transaction in receipt.latent_tree_search.get("transactions", [])
+                for ordinal in transaction["discarded_recurrent_kv_call_ordinals"]
+            }
+        )
         receipt.loop_stability = build_loop_stability_receipt(
             branches=list(ensemble.branches),
             selected_branch=winner.index,
             loop_core=loop_core,
             kv_bound=runner.kv_bound_receipt(),
             recurrent_grounding=receipt.recurrent_grounding,
+            excluded_speculative_kv_call_ordinals=discarded_tree_kv_ordinals,
         )
         from core.brain.llm.latent_cortex.update_gate import (
             LEARNED as LEARNED_UPDATE_GATE,

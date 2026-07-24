@@ -489,6 +489,48 @@ prune flags, node hashes, final-node omissions, and attempted rejected-child
 reuse. This proves the cache-lineage mechanism, not resident-32B reasoning
 gain or frontier capability.
 
+## Verified latent tree/forest search (SPARK-038)
+
+The recurrent engine can now search a bounded tree of complete neural runtime
+states when the value-of-computation controller selects `BRANCH`. UCT, beam,
+and breadth-first strategies operate over private ensemble snapshots. A node is
+not a prose hypothesis or an orchestration label: it is the exact set of branch
+latent commitments, KV boundaries, step counters, operators, and halt states
+that the engine can restore and execute.
+
+Every expansion restores its parent, applies one real embedded cognitive
+operator, advances every active branch through the recurrent transformer
+window, and decodes a fixed bounded verifier probe. The search controller has
+no authority to score its own work. Only an independently admitted exact or
+calibrated interval observation can authorize a child, and the winner's lower
+bound must exceed both the root and prior verified-best upper bounds. If no
+candidate dominates, cancellation fires, a callback fails, or the final state
+cannot be restored exactly, the root remains live.
+
+The public transaction reconstructs UCT visits and value sums, deterministic
+action order, beam/BFS selection, topology, depth, duplicate declarations,
+winner ancestry, and final state. It stores no latent tensors, reasoning text,
+or answer text. Branch-local verified-best promotion uses the selected branch's
+own tensor and KV commitments; the separate aggregate identity continues to
+bind the complete ensemble.
+
+Search compute is never erased from accounting. Root probes, successful child
+probes, cache reuse, and failed expansion windows all retain complete resource
+deltas. The KV receipt inventories every recurrent call made during search,
+including calls from branches that later fail or lose. The transaction
+partitions those ordinals into the committed winner ancestry and discarded
+speculative work. Loop-stability keeps the full ledger but excludes exactly the
+discarded set from the surviving fixed-point claim. The service rejects both
+missing calls and a valid recurrent call substituted into the wrong partition.
+
+Synthetic controller tests cover all three strategies, duplicate pruning,
+cancellation, no-winner restoration, failure-after-compute, tampering, and
+external bindings. A real initialized tiny-Qwen episode forces BRANCH actions,
+executes the neural search, commits confidence-bound winners, completes the
+remaining recurrent/decode pipeline, and passes independent service
+reconstruction. This proves causal mechanics and proof integrity. It is not a
+resident-32B capability-gain or frontier-reasoning result.
+
 ## Governed transient negative constraints (SPARK-036)
 
 Verified failure avoidance now acts at the latent transition boundary without

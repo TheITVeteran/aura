@@ -26591,3 +26591,73 @@ count completion is approximately 56.2%-88.4%, with a midpoint planning
 estimate of 68.7%. Next: publish CP351, then implement SPARK-038's bounded
 latent tree/forest search. Final multi-hour soaks remain deferred until every
 shorter gate is green.
+
+## Checkpoint 2026-07-24-352: Verified Neural Search Keeps Speculation Honest
+
+SPARK-038 adds bounded UCT, beam, and breadth-first search over complete private
+recurrent-ensemble snapshots. Each node commits every branch's latent-state and
+KV boundary, step, operator, and halt state without serializing tensors, hidden
+reasoning, or answer text. Every expansion restores its exact parent, applies a
+real embedded cognitive operator, executes real recurrent transformer work,
+and obtains an independently admitted bounded verifier observation.
+
+The search controller reconstructs deterministic action scheduling, topology,
+depth, duplicate state-plus-KV pruning, UCT visits/value sums, beam/BFS parent
+choice, cancellation, winner ancestry, and final restoration. A child commits
+only when its lower confidence bound clears both root and incumbent-authority
+upper bounds by the configured margin. No-winner, cancellation, callback
+failure, and final-restore failure remain root-preserving. Verified-best
+promotion now binds the selected branch's tensor/KV identity rather than the
+ensemble aggregate commitment.
+
+Resource and KV provenance remain complete across success and failure. Root
+and child probes carry full resource windows; cache hits require key and
+saved-layer evidence; failed expansions retain consumed resources. The KV
+ledger inventories every recurrent call created by search, including work from
+an expansion that later throws. Winner ancestry names committed calls and all
+other calls are marked discarded speculative compute. Loop-stability keeps the
+complete ledger but excludes exactly that discarded set from the surviving
+trajectory. Direct validation and the parent service bind both views and
+reject a valid recurrent ordinal substituted into the wrong partition.
+
+Direct tree contracts pass 12/12. The real initialized tiny-Qwen proof forces
+BRANCH decisions, commits verifier-authorized neural children, completes the
+episode, validates the full service boundary, and proves the committed versus
+discarded KV split. The focused tree plus real-model gate passes 13/13. The
+affected engine, service, worker-origin, KV-tree, value-of-computation,
+virtual-quanta, verified-best, and wiring boundary passes 213/213 in 160.83
+seconds. After rebasing onto the concurrently published F6 pass-divergence
+work, the fixed 64-file RLC, recurrence, resident-campaign, global-workspace,
+GWT, and execution-controller ownership snapshot passes 1150/1150 in 799.62
+seconds. After rebasing over the concurrent Live Runtime Production-Grade and
+Homeostate deadlock repairs, the focused neural-search proof passes 13/13 and
+the falsification, model-load ownership, resource-observation, frozen-baseline,
+state-causality, Homeostate, and triad regression set passes 114/114 in 117.46
+seconds. Strict Ruff, bytecode compilation, JSON parsing, and diff hygiene
+pass. After the final rebase, CP352 plus the incoming Homeostate lock,
+process-table cache, and restorative-consolidation regressions pass 21/21 in
+6.40 seconds.
+
+The clean all-line closeout audit mechanically enumerates 7,894 tracked files,
+including 4,874 code files and 1,540,623 code lines, and passes every configured
+gate. Model-load ownership reports 45 governed paths, 57 load references, and
+zero findings; resource-observation ownership scans 2,889 Python files with
+zero findings. The semantic ledger now contains 1,534 current entries and 424
+fully reviewed code files, so full semantic closeout remains explicitly open.
+The 20-item closeout rubric passes. The zero-debt enterprise ratchet remains
+red at 180 findings, 50 high/critical findings, and 11 regression categories;
+an exact scan of parent `7edcd511a` produces the same counts and finding
+identities after normalizing insertion-only line shifts. CP352 therefore adds
+no enterprise-scanner debt while leaving the inherited debt visible.
+
+This checkpoint proves bounded causal search mechanics and proof integrity. It
+does not prove resident-32B utility, durable learning, adapter/RLC positive
+interaction, reasoning gain, or frontier capability; those remain fresh
+powered campaign claims.
+
+This is total checkpoint record 413. The revised forecast remains 466-733 total
+records, now approximately 53-320 records after this checkpoint. Checkpoint-
+count completion is approximately 56.3%-88.6%, with a midpoint planning
+estimate of 68.9%. Next: publish CP352, then implement SPARK-039's atomic
+decomposition verifier boundary. Final multi-hour soaks remain deferred until
+every shorter gate is green.

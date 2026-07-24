@@ -32,11 +32,13 @@ import fnmatch
 import logging
 import threading
 import time
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any
 
 from core.runtime.errors import record_degradation
+from core.runtime.resource_observation import get_resource_observer
 
 logger = logging.getLogger("Aura.Runtime.Homeostate")
 
@@ -195,6 +197,9 @@ def grains(*, refresh: bool = False) -> dict[str, Any]:
     import platform
     import sys
 
+    observer = get_resource_observer()
+    compute = observer.compute()
+    memory = observer.memory(include_process_tree=False)
     facts: dict[str, Any] = {
         "os": platform.system().lower(),
         "os_release": platform.release(),
@@ -203,16 +208,11 @@ def grains(*, refresh: bool = False) -> dict[str, Any]:
         "python_version": platform.python_version(),
         "python_executable": sys.executable,
         "pid": os.getpid(),
-        "cpu_count": os.cpu_count() or 0,
+        "cpu_count": int(compute.cpu_count) if compute.available else 0,
     }
-    try:
-        import psutil
-
-        vm = psutil.virtual_memory()
-        facts["memory_total_gb"] = round(vm.total / (1024 ** 3), 2)
-        facts["memory_available_gb"] = round(vm.available / (1024 ** 3), 2)
-    except (ImportError, OSError, RuntimeError):
-        pass
+    if memory.available:
+        facts["memory_total_gb"] = round(memory.total_bytes / (1024**3), 2)
+        facts["memory_available_gb"] = round(memory.available_bytes / (1024**3), 2)
     _grains_cache = facts
     return dict(facts)
 

@@ -310,6 +310,17 @@
         "mlx_lm"
       ],
       "ownership_mode": "standalone_process",
+      "path": "tools/measure_pass_divergence.py",
+      "purpose": "evaluation"
+    },
+    {
+      "expected_load_references": 1,
+      "guard_symbol": "standalone_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "standalone_process",
       "path": "tools/nonparametric_proof.py"
     },
     {
@@ -363,6 +374,28 @@
       ],
       "ownership_mode": "standalone_process",
       "path": "tools/run_latent_cortex_paired_campaign.py"
+    },
+    {
+      "expected_load_references": 1,
+      "guard_symbol": "acquire_standalone_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "standalone_process",
+      "path": "tools/run_falsification_matrix.py",
+      "purpose": "evaluation"
+    },
+    {
+      "expected_load_references": 1,
+      "guard_symbol": "acquire_standalone_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "standalone_process",
+      "path": "tools/run_state_causality_semantic.py",
+      "purpose": "evaluation"
     },
     {
       "expected_load_references": 1,

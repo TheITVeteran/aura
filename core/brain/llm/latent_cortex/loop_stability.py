@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from typing import Any
 
 from core.brain.llm.latent_cortex.loop_core import (
@@ -30,6 +31,19 @@ def _finite(value: Any) -> bool:
         and not isinstance(value, bool)
         and math.isfinite(float(value))
     )
+
+
+def _ordinal_inventory(value: Any, *, name: str) -> list[int]:
+    if (
+        not isinstance(value, Sequence)
+        or isinstance(value, (str, bytes, bytearray))
+        or any(type(ordinal) is not int or ordinal < 0 for ordinal in value)
+    ):
+        raise ValueError(f"{name} is invalid")
+    normalized = list(value)
+    if normalized != sorted(set(normalized)):
+        raise ValueError(f"{name} must be sorted and unique")
+    return normalized
 
 
 def _branch_summary(branch: Any) -> dict[str, Any]:
@@ -66,12 +80,17 @@ def build_loop_stability_receipt(
     loop_core: dict[str, Any],
     kv_bound: dict[str, Any],
     recurrent_grounding: dict[str, Any],
+    excluded_speculative_kv_call_ordinals: Sequence[int] = (),
 ) -> dict[str, Any]:
     """Build a receipt over public dynamics, not private latent contents."""
 
     core = validate_loop_core_contract(loop_core)
     kv = validate_kv_bound_receipt(kv_bound)
     branch_rows = [_branch_summary(branch) for branch in branches]
+    excluded_ordinals = _ordinal_inventory(
+        excluded_speculative_kv_call_ordinals,
+        name="loop-stability speculative KV exclusions",
+    )
     clip = float(core["rms_clip_ratio"])
     payload = {
         "schema": SCHEMA,
@@ -79,6 +98,7 @@ def build_loop_stability_receipt(
         "kv_bound": kv,
         "selected_branch": selected_branch,
         "branches": branch_rows,
+        "excluded_speculative_kv_call_ordinals": excluded_ordinals,
         "all_finite": all(
             row["all_finite"] is True
             for branch in branch_rows
@@ -127,7 +147,7 @@ def validate_loop_stability_receipt(
 ) -> dict[str, Any]:
     """Independently reconstruct fixed-point summaries and state links."""
 
-    fields = {
+    base_fields = {
         "schema",
         "loop_core",
         "kv_bound",
@@ -141,8 +161,10 @@ def validate_loop_stability_receipt(
         "shared_train_inference_core",
         "receipt_sha256",
     }
-    if not isinstance(value, dict) or set(value) != fields:
+    extended_fields = base_fields | {"excluded_speculative_kv_call_ordinals"}
+    if not isinstance(value, dict) or set(value) not in (base_fields, extended_fields):
         raise ValueError("loop-stability receipt fields do not match schema")
+    fields = set(value)
     payload = {key: value[key] for key in fields - {"receipt_sha256"}}
     if value["receipt_sha256"] != canonical_sha256(payload):
         raise ValueError("loop-stability receipt commitment mismatch")
@@ -150,7 +172,22 @@ def validate_loop_stability_receipt(
         value["loop_core"],
         expected=expected_loop_core,
     )
-    validate_kv_bound_receipt(value["kv_bound"])
+    kv_bound = validate_kv_bound_receipt(value["kv_bound"])
+    excluded_ordinals = _ordinal_inventory(
+        value.get("excluded_speculative_kv_call_ordinals", ()),
+        name="loop-stability speculative KV exclusions",
+    )
+    excluded_set = set(excluded_ordinals)
+    calls_by_ordinal = {row["ordinal"]: row for row in kv_bound["calls"]}
+    for ordinal in excluded_ordinals:
+        row = calls_by_ordinal.get(ordinal)
+        if (
+            row is None
+            or row["persist"] is not False
+            or row["start"] != core["prelude_end"]
+            or row["end"] != core["coda_start"]
+        ):
+            raise ValueError("loop-stability speculative KV exclusion is invalid")
     grounding_branches = recurrent_grounding.get("branches")
     branches = value["branches"]
     if (
@@ -447,10 +484,11 @@ def validate_loop_stability_receipt(
     )
     recurrent_kv_calls = [
         row
-        for row in value["kv_bound"]["calls"]
+        for row in kv_bound["calls"]
         if row["persist"] is False
         and row["start"] == core["prelude_end"]
         and row["end"] == core["coda_start"]
+        and row["ordinal"] not in excluded_set
     ]
     if (
         value["all_finite"] is not True

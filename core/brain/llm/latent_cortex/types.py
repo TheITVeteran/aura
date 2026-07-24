@@ -509,6 +509,10 @@ class CortexConfig:
     # defaults. Authority requires a real matched-compute verifier win; text,
     # caller vectors, and self-reported contribution cannot create a quantum.
     virtual_quanta: dict[str, Any] | None = None
+    # SPARK-038 bounded search over complete recurrent/KV state snapshots.
+    # None enables a small live UCT transaction when the value controller
+    # selects BRANCH and an independently admitted bounded verifier exists.
+    latent_tree_search: dict[str, Any] | None = None
     # Checked historical branch-error correlations. None is an explicit
     # bootstrap state: duplicate programs still collapse, but no empirical
     # relationship is invented before independently graded paired outcomes.
@@ -924,6 +928,18 @@ class CortexConfig:
                     VirtualQuantaConfig.from_value(self.virtual_quanta)
                 except (TypeError, ValueError) as exc:
                     problems.append(str(exc))
+        if self.latent_tree_search is not None:
+            if not isinstance(self.latent_tree_search, dict):
+                problems.append("latent_tree_search must be a mapping or null")
+            else:
+                try:
+                    from core.brain.llm.latent_cortex.latent_tree_search import (
+                        LatentTreeSearchConfig,
+                    )
+
+                    LatentTreeSearchConfig.from_value(self.latent_tree_search)
+                except (TypeError, ValueError) as exc:
+                    problems.append(str(exc))
         if self.escape is not None:
             if not isinstance(self.escape, dict):
                 problems.append("escape must be a mapping or null")
@@ -1253,6 +1269,8 @@ class EpisodeReceipt:
     # no-op/matched-random/guided probes prove a bounded contribution. The
     # private direction is zeroized after its one use.
     virtual_quanta: dict[str, Any] = field(default_factory=dict)
+    # Bounded MCTS/beam/BFS evidence over exact recurrent and KV snapshots.
+    latent_tree_search: dict[str, Any] = field(default_factory=dict)
     # Objective hidden-state correctness probability and predictive entropy.
     # Unavailable mode is explicit and emits no observations.
     neural_uncertainty: dict[str, Any] = field(default_factory=dict)
@@ -1483,6 +1501,7 @@ class EpisodeReceipt:
             "verified_best_state": dict(self.verified_best_state),
             "transient_negative_constraints": dict(self.transient_negative_constraints),
             "virtual_quanta": dict(self.virtual_quanta),
+            "latent_tree_search": dict(self.latent_tree_search),
             "neural_uncertainty": dict(self.neural_uncertainty),
             "mistake_locator": dict(self.mistake_locator),
             "bidirectional_reflector": dict(self.bidirectional_reflector),

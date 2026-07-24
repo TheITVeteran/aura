@@ -150,6 +150,24 @@ def _accounting_fields(
     }
 
 
+def _latent_tree_fields(config, *, episode_id: str) -> dict:
+    from core.brain.llm.latent_cortex.latent_tree_search import (
+        LatentTreeSearchConfig,
+        build_empty_latent_tree_receipt,
+    )
+    from core.brain.llm.latent_cortex.worker_handler import config_from_job
+
+    executed = config_from_job(config)
+    tree_config = LatentTreeSearchConfig.from_value(executed.latent_tree_search)
+    return {
+        "latent_tree_search": build_empty_latent_tree_receipt(
+            episode_id=episode_id,
+            objective_sha256="7" * 64,
+            config=tree_config,
+        )
+    }
+
+
 def _branch_isolation_fields(config, *, exchanges=0):
     count = config["n_branches"]
     required = config["isolation_steps"]
@@ -2432,6 +2450,7 @@ def test_service_routes_through_client_and_records_receipt(monkeypatch):
                         kwargs["config"],
                         episode_id="abc",
                     ),
+                    **_latent_tree_fields(kwargs["config"], episode_id="abc"),
                     "params_unchanged": True,
                     "budget": {
                         "max_layer_apps": 1_000,
@@ -3570,6 +3589,7 @@ def _full_success_stub_client(captured):
                         kwargs["config"],
                         episode_id="ep-gwt",
                     ),
+                    **_latent_tree_fields(kwargs["config"], episode_id="ep-gwt"),
                     "params_unchanged": True,
                     "budget": {
                         "max_layer_apps": 1_000,

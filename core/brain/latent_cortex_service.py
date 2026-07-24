@@ -1104,6 +1104,32 @@ class LatentCortexService:
             )
         except (ImportError, TypeError, ValueError):
             errors.append("virtual_quanta_unproven")
+        try:
+            from core.brain.llm.latent_cortex.latent_tree_search import (
+                LatentTreeSearchConfig,
+                validate_latent_tree_receipt,
+            )
+            from core.brain.llm.latent_cortex.worker_handler import config_from_job
+
+            executed_config = config_from_job(config)
+            tree_receipt = receipt.get("latent_tree_search")
+            validate_latent_tree_receipt(
+                tree_receipt,
+                episode_id=str(receipt.get("episode_id") or ""),
+                objective_sha256=str(receipt.get("input_tokens_sha256") or ""),
+                expected_config=LatentTreeSearchConfig.from_value(
+                    executed_config.latent_tree_search
+                ),
+                kv_state_tree=receipt.get("kv_state_tree"),
+                cognitive_action_trace=receipt.get("cognitive_action_trace"),
+                resource_accounting=resource_accounting,
+                loop_stability=receipt.get("loop_stability"),
+                require_external_bindings=bool(
+                    isinstance(tree_receipt, dict) and tree_receipt.get("transactions")
+                ),
+            )
+        except (ImportError, TypeError, ValueError):
+            errors.append("latent_tree_search_unproven")
         one_shot_slots = [
             row
             for row in (receipt.get("cognitive_slots") or [])

@@ -15,7 +15,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import subprocess
 import sys
 import time
@@ -51,6 +50,7 @@ from core.brain.llm.latent_cortex.recurrence_adapter_identity_v2 import (  # noq
 from core.learning.recurrence_curriculum import (  # noqa: E402
     RECURRENCE_TRAINING_FAMILIES,
 )
+from core.runtime.resource_observation import get_resource_observer  # noqa: E402
 
 DEFAULT_MODEL = "training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118"
 DEFAULT_EXECUTION_SPEC = (
@@ -288,6 +288,12 @@ def _freeze(arguments: argparse.Namespace) -> int:
         )
         file_payloads[bundle_path] = payload
 
+    observer = get_resource_observer()
+    memory = observer.memory(include_process_tree=False)
+    compute = observer.compute()
+    if not memory.available or not compute.available:
+        return _fail("host resource observation unavailable for frozen baseline")
+
     material = {
         "schema": "aura.latent_cortex.spark_frozen_baseline.v1",
         "baseline_id": arguments.baseline_id
@@ -301,9 +307,8 @@ def _freeze(arguments: argparse.Namespace) -> int:
         "worktree_clean": not dirty,
         "environment": {
             "runtime": runtime_environment_identity(),
-            "observed_physical_memory_bytes": os.sysconf("SC_PAGE_SIZE")
-            * os.sysconf("SC_PHYS_PAGES"),
-            "observed_cpu_count": os.cpu_count() or 1,
+            "observed_physical_memory_bytes": int(memory.total_bytes),
+            "observed_cpu_count": max(1, int(compute.cpu_count)),
         },
         "model": {
             "path": str(model_root.resolve()),

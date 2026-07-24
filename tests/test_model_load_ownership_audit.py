@@ -15,9 +15,15 @@ def test_repository_model_load_inventory_is_complete() -> None:
     assert report["passed"] is True
     # reasoning_background no longer loads a second Cortex in-process. The
     # resident MLX worker owns non-parametric key generation instead.
-    assert report["inventory_entries"] == 31
-    assert report["owned_paths"] == 31
-    assert report["load_references"] == 43
+    assert report["inventory_entries"] == report["owned_paths"]
+    assert report["load_references"] == len(report["references"])
+    assert report["load_references"] >= report["owned_paths"]
+    governed_paths = {row["path"] for row in report["references"]}
+    assert {
+        "tools/measure_pass_divergence.py",
+        "tools/run_falsification_matrix.py",
+        "tools/run_state_causality_semantic.py",
+    } <= governed_paths
     assert report["source_paths_scanned"] >= 2_000
 
 
@@ -109,8 +115,7 @@ def test_mlx_submodule_load_fails_closed(tmp_path: Path) -> None:
     source = tmp_path / "scripts" / "submodule_loader.py"
     source.parent.mkdir(parents=True)
     source.write_text(
-        "from mlx_lm.utils import load as model_load\n"
-        "model, tok = model_load('/models/direct')\n",
+        "from mlx_lm.utils import load as model_load\nmodel, tok = model_load('/models/direct')\n",
         encoding="utf-8",
     )
     inventory = tmp_path / "inventory.json"

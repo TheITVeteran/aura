@@ -606,6 +606,133 @@ def test_real_tiny_qwen_applies_virtual_quantum_before_recurrence_and_proves_rec
         )
 
 
+def test_real_tiny_qwen_branch_action_runs_verified_latent_tree_and_service_accepts():
+    from core.brain.llm.latent_cortex.latent_tree_search import (
+        LatentTreeSearchConfig,
+        validate_latent_tree_receipt,
+    )
+
+    engine, _ = _tiny_engine(seed=18, allow_vanilla_fallback=False)
+    engine.config.branches = BranchConfig(n_branches=2, exchange_interval=1)
+    engine.config.virtual_quanta = {"mode": "disabled"}
+    engine.config.latent_tree_search = {
+        "strategy": "uct",
+        "max_nodes": 3,
+        "max_depth": 1,
+        "branching_factor": 2,
+        "min_verifier_margin": 0.0,
+    }
+    cells = {}
+    for action in OperationKind:
+        cell = ActionEvidence()
+        for _ in range(8):
+            cell = cell.append(
+                gain=1.0 if action is OperationKind.BRANCH else -1.0,
+                cost=0.1,
+            )
+        cells[action] = cell
+    evidence = build_evidence_snapshot(
+        bucket="verified-tree|none|short|s:mid|u:mid",
+        cells=cells,
+    )
+    result = engine.reason(
+        token_ids=[5, 9, 17, 3, 42, 7],
+        budget=ComputeBudget(max_layer_apps=1_000_000, wall_clock_s=30.0),
+        verifier=_BoundedVerifier(),
+        action_policy_evidence=evidence,
+    )
+
+    assert result.ok is True
+    receipt = result.receipt.to_dict()
+    tree = receipt["latent_tree_search"]
+    assert tree["status"] == "executed"
+    assert tree["transactions"]
+    assert any(row["status"] == "committed" for row in tree["transactions"])
+    discarded_ordinals = sorted(
+        {
+            ordinal
+            for transaction in tree["transactions"]
+            for ordinal in transaction["discarded_recurrent_kv_call_ordinals"]
+        }
+    )
+    committed_ordinals = sorted(
+        {
+            ordinal
+            for transaction in tree["transactions"]
+            for ordinal in transaction["committed_recurrent_kv_call_ordinals"]
+        }
+    )
+    assert discarded_ordinals
+    assert committed_ordinals
+    assert receipt["loop_stability"]["excluded_speculative_kv_call_ordinals"] == discarded_ordinals
+    kv_ordinals = {row["ordinal"] for row in receipt["loop_stability"]["kv_bound"]["calls"]}
+    assert set(discarded_ordinals) <= kv_ordinals
+    validate_latent_tree_receipt(
+        tree,
+        episode_id=receipt["episode_id"],
+        objective_sha256=receipt["input_tokens_sha256"],
+        expected_config=LatentTreeSearchConfig.from_value(engine.config.latent_tree_search),
+        kv_state_tree=receipt["kv_state_tree"],
+        cognitive_action_trace=receipt["cognitive_action_trace"],
+        resource_accounting=receipt["budget"]["resource_accounting"],
+        loop_stability=receipt["loop_stability"],
+        require_external_bindings=True,
+    )
+    contract_errors = LatentCortexService._receipt_contract_errors(
+        receipt,
+        {
+            "n_slots": 4,
+            "n_branches": 2,
+            "min_steps": 1,
+            "max_steps": 4,
+            "verifier_probe_max_tokens": 16,
+            "virtual_quanta": {"mode": "disabled"},
+            "latent_tree_search": engine.config.latent_tree_search,
+        },
+    )
+    assert "latent_tree_search_unproven" not in contract_errors
+
+    mismatched = copy.deepcopy(receipt)
+    mismatched_loop = mismatched["loop_stability"]
+    loop_core = mismatched_loop["loop_core"]
+    replacement_ordinal = next(
+        row["ordinal"]
+        for row in mismatched_loop["kv_bound"]["calls"]
+        if row["persist"] is False
+        and row["start"] == loop_core["prelude_end"]
+        and row["end"] == loop_core["coda_start"]
+        and row["ordinal"] not in discarded_ordinals
+    )
+    mismatched_loop["excluded_speculative_kv_call_ordinals"] = sorted(
+        [replacement_ordinal, *discarded_ordinals[1:]]
+    )
+    mismatched_loop["receipt_sha256"] = canonical_sha256(
+        {key: value for key, value in mismatched_loop.items() if key != "receipt_sha256"}
+    )
+    from core.brain.llm.latent_cortex.loop_stability import (
+        validate_loop_stability_receipt,
+    )
+
+    validate_loop_stability_receipt(
+        mismatched_loop,
+        recurrent_grounding=mismatched["recurrent_grounding"],
+        expected_loop_core=loop_core,
+    )
+    mismatched_errors = LatentCortexService._receipt_contract_errors(
+        mismatched,
+        {
+            "n_slots": 4,
+            "n_branches": 2,
+            "min_steps": 1,
+            "max_steps": 4,
+            "verifier_probe_max_tokens": 16,
+            "virtual_quanta": {"mode": "disabled"},
+            "latent_tree_search": engine.config.latent_tree_search,
+        },
+    )
+    assert "latent_tree_search_unproven" in mismatched_errors
+
+
 def test_real_tiny_qwen_engine_meters_and_receipts_bounded_verifier_authority():
     args = ModelArgs(
         model_type="qwen2",

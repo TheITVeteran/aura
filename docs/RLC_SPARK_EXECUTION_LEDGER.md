@@ -1428,9 +1428,54 @@ before those dependencies close is not admissible.
   cleanup. It does not prove resident-32B utility, durable learning,
   adapter/RLC interaction, reasoning gain, or frontier capability. Those
   remain fresh powered campaign claims under RLC-VIRTUAL-QUANTA-001.
-- [ ] **SPARK-038 - Latent tree/forest search.** Implement bounded MCTS/beam/BFS
+- [x] **SPARK-038 - Latent tree/forest search.** Implement bounded MCTS/beam/BFS
   over verified neural states with UCT/value estimates, backtracking, duplicate
   detection, cancellation, and exact compute accounting.
+
+  Accepted at CP352 at the live recurrent-engine, public worker-receipt, and
+  independent service-reconstruction boundary. The controller supports bounded
+  UCT, beam, and breadth-first selection over private ensemble snapshots. Each
+  node commits the complete branch-state/KV boundary set without serializing a
+  latent tensor, hidden chain, or answer text. Parent restoration is exact
+  before every expansion; duplicate state-plus-KV identities are pruned; search
+  cancellation and no-authority outcomes restore the root exactly.
+
+  Expansion is not a symbolic score-only tree. Each child applies a real
+  cognitive operator, executes real recurrent transformer work, decodes a
+  bounded probe, and receives an independently admitted interval observation.
+  A candidate may replace the root only when its lower bound clears both the
+  root and incumbent-authority upper bounds by the configured margin. UCT
+  visits/value sums, beam/BFS parent choice, deterministic action scheduling,
+  ancestry, winner authority, final restoration, and branch-local verified-best
+  promotion are independently reconstructed.
+
+  Every root and child probe carries a complete resource window. Cache hits
+  require their key and saved-layer evidence and cannot claim transformer or
+  output-head work. Failed expansions retain their consumed resource delta.
+  The recurrent KV ledger inventories every call created by search, including
+  work performed by an expansion that later throws. Winner ancestry identifies
+  the committed calls; all other calls are explicitly discarded speculative
+  compute. The full KV ledger remains public, while loop-stability excludes only
+  that receipt-bound discarded set from the surviving fixed-point trajectory.
+  Direct validation and the parent service bind the tree partition to the same
+  KV-call ledger and reject a valid-but-wrong exclusion substitution.
+
+  Direct search contracts pass 12/12. The real initialized tiny-Qwen proof
+  forces repeated BRANCH decisions, commits verifier-authorized children,
+  executes recurrence through the accepted snapshots, validates service
+  reconstruction, and proves committed/discarded KV partitioning. The focused
+  tree plus real-model proof passes 13/13, and the affected engine, service,
+  worker-origin, KV-tree, value-of-computation, virtual-quanta, verified-best,
+  and wiring boundary passes 213/213. After rebasing onto the concurrently
+  published F6 pass-divergence work, the fixed 64-file RLC, recurrence,
+  resident-campaign, global-workspace, GWT, and execution-controller ownership
+  snapshot passes 1150/1150 in 799.62 seconds. Strict Ruff and diff hygiene
+  pass.
+
+  SPARK-038 proves bounded search mechanics and causal state selection. It does
+  not prove resident-32B utility, durable learning, adapter/RLC positive
+  interaction, reasoning gain, or frontier capability; those remain fresh
+  powered campaign claims.
 
 ## E. Verifier mesh and local repair
 

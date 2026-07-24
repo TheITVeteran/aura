@@ -13,6 +13,7 @@ proves the harness and records the untrained-baseline dry-run evidence.
 from __future__ import annotations
 
 import argparse
+import atexit
 import json
 import os
 import sys
@@ -106,6 +107,7 @@ def main() -> int:
         RecurrenceConfig,
         WorkspaceConfig,
     )
+    from core.runtime.model_lane_control import acquire_standalone_model_lane
 
     families = [item.strip() for item in arguments.families.split(",") if item.strip()]
     depths = [int(item) for item in arguments.depths.split(",")]
@@ -114,6 +116,14 @@ def main() -> int:
     start = time.monotonic()
 
     print(f"loading {arguments.model} ...", flush=True)
+    model_lane = acquire_standalone_model_lane(
+        owner_id=f"falsification-matrix:{output_root.name}",
+        model_path=arguments.model,
+        purpose="evaluation",
+        preemptible=False,
+        metadata={"tool": "run_falsification_matrix", "operator_launched": True},
+    )
+    atexit.register(model_lane.release)
     model, tokenizer = load(arguments.model)
 
     def make_engine(
@@ -336,6 +346,8 @@ def main() -> int:
             else ""
         )
         print(f"  {row['status']:9s} {row['row_id']}{blockers} {tiers[:120]}")
+    model_lane.release()
+    atexit.unregister(model_lane.release)
     return 0
 
 

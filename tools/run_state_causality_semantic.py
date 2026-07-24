@@ -12,6 +12,7 @@ artifacts/closeout/latent_cortex/spark013_state_causality/.
 from __future__ import annotations
 
 import argparse
+import atexit
 import json
 import os
 import sys
@@ -63,8 +64,17 @@ def main() -> int:
         RecurrenceConfig,
         WorkspaceConfig,
     )
+    from core.runtime.model_lane_control import acquire_standalone_model_lane
 
     print(f"loading {arguments.model} ...", flush=True)
+    model_lane = acquire_standalone_model_lane(
+        owner_id=f"state-causality:{output_root.name}",
+        model_path=arguments.model,
+        purpose="evaluation",
+        preemptible=False,
+        metadata={"tool": "run_state_causality_semantic", "operator_launched": True},
+    )
+    atexit.register(model_lane.release)
     model, tokenizer = load(arguments.model)
 
     def build_engine() -> LatentCortexEngine:
@@ -150,6 +160,8 @@ def main() -> int:
                 f"substitution_tracks={evidence['substitution_tracks_rate']:.2f} "
                 f"readable={evidence['channel_readable']}"
             )
+    model_lane.release()
+    atexit.unregister(model_lane.release)
     return 0
 
 
